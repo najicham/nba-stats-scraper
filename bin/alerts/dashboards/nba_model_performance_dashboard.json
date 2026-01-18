@@ -1,0 +1,413 @@
+{
+  "displayName": "NBA Model Performance Dashboard",
+  "mosaicLayout": {
+    "columns": 12,
+    "tiles": [
+      {
+        "width": 12,
+        "height": 2,
+        "widget": {
+          "title": "Dashboard Note",
+          "text": {
+            "content": "This dashboard tracks ML model performance metrics. For detailed accuracy analysis, query BigQuery tables: nba_predictions.prediction_grades and prediction_accuracy_summary.",
+            "format": "MARKDOWN"
+          }
+        }
+      },
+      {
+        "yPos": 2,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "CatBoost V8 Model: Prediction Success Rate",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"prediction-worker\" AND (textPayload=~\"CatBoost V8.*prediction:\" OR jsonPayload.system_id=\"catboost_v8\")",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_COUNT"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1"
+              }
+            ],
+            "yAxis": {
+              "label": "Predictions/hour",
+              "scale": "LINEAR"
+            },
+            "chartOptions": {
+              "mode": "COLOR"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 2,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "XGBoost V1 Model: Prediction Success Rate",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"prediction-worker\" AND (textPayload=~\"XGBoost V1.*prediction:\" OR jsonPayload.system_id=\"xgboost_v1\")",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_COUNT"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1"
+              }
+            ],
+            "yAxis": {
+              "label": "Predictions/hour",
+              "scale": "LINEAR"
+            },
+            "chartOptions": {
+              "mode": "COLOR"
+            }
+          }
+        }
+      },
+      {
+        "yPos": 6,
+        "width": 12,
+        "height": 4,
+        "widget": {
+          "title": "High Confidence Predictions (>= 0.70)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"prediction-worker\" AND jsonPayload.confidence_score >= 0.70",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_COUNT"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1"
+              }
+            ],
+            "yAxis": {
+              "label": "High confidence predictions/hour",
+              "scale": "LINEAR"
+            },
+            "chartOptions": {
+              "mode": "COLOR"
+            }
+          }
+        }
+      },
+      {
+        "yPos": 10,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "OVER Recommendations",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"prediction-worker\" AND jsonPayload.recommendation=\"OVER\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_COUNT"
+                    }
+                  }
+                },
+                "plotType": "STACKED_BAR",
+                "targetAxis": "Y1"
+              }
+            ],
+            "yAxis": {
+              "label": "OVER recommendations/hour",
+              "scale": "LINEAR"
+            },
+            "chartOptions": {
+              "mode": "COLOR"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 10,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "UNDER Recommendations",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"prediction-worker\" AND jsonPayload.recommendation=\"UNDER\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_COUNT"
+                    }
+                  }
+                },
+                "plotType": "STACKED_BAR",
+                "targetAxis": "Y1"
+              }
+            ],
+            "yAxis": {
+              "label": "UNDER recommendations/hour",
+              "scale": "LINEAR"
+            },
+            "chartOptions": {
+              "mode": "COLOR"
+            }
+          }
+        }
+      },
+      {
+        "yPos": 14,
+        "width": 12,
+        "height": 4,
+        "widget": {
+          "title": "Model Loading Success at Startup",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"prediction-worker\" AND (textPayload=~\"CatBoost V8 model loaded successfully\" OR textPayload=~\"XGBoost V1 model loaded successfully\")",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_COUNT"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1"
+              }
+            ],
+            "yAxis": {
+              "label": "Successful loads/hour",
+              "scale": "LINEAR"
+            },
+            "chartOptions": {
+              "mode": "COLOR"
+            }
+          }
+        }
+      },
+      {
+        "yPos": 18,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Prediction Errors and Exceptions",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"prediction-worker\" AND severity >= \"ERROR\" AND (textPayload=~\"prediction.*failed\" OR textPayload=~\"Exception\" OR jsonPayload.error != \"\")",
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_COUNT"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1"
+              }
+            ],
+            "yAxis": {
+              "label": "Errors/5min",
+              "scale": "LINEAR"
+            },
+            "thresholds": [
+              // Note: Only value field supported
+              {
+                "value": 1,
+                "color": "YELLOW",
+                "direction": "ABOVE"
+              },
+              {
+                "value": 5,
+                "color": "RED",
+                "direction": "ABOVE"
+              }
+            ],
+            "chartOptions": {
+              "mode": "COLOR"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 18,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Low Confidence / PASS Recommendations",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"prediction-worker\" AND (jsonPayload.recommendation=\"PASS\" OR jsonPayload.confidence_score = 0.50)",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_COUNT"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1"
+              }
+            ],
+            "yAxis": {
+              "label": "PASS recommendations/hour",
+              "scale": "LINEAR"
+            },
+            "thresholds": [
+              // Note: Only value field supported
+              {
+                "value": 50,
+                "color": "YELLOW",
+                "direction": "ABOVE",
+                "label": "Elevated PASS rate"
+              }
+            ],
+            "chartOptions": {
+              "mode": "COLOR"
+            }
+          }
+        }
+      },
+      {
+        "yPos": 22,
+        "width": 4,
+        "height": 3,
+        "widget": {
+          "title": "System Health Status",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesFilter": {
+                "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"prediction-worker\" AND metric.type=\"run.googleapis.com/request_count\" AND metric.labels.response_code_class=\"2xx\"",
+                "aggregation": {
+                  "alignmentPeriod": "3600s",
+                  "perSeriesAligner": "ALIGN_RATE",
+                  "crossSeriesReducer": "REDUCE_SUM"
+                }
+              }
+            },
+            "sparkChartView": {
+              "sparkChartType": "SPARK_LINE"
+            },
+            "thresholds": [
+              // Note: Only value field supported
+              {
+                "value": 10,
+                "color": "GREEN",
+                "direction": "ABOVE"
+              },
+              {
+                "value": 5,
+                "color": "YELLOW",
+                "direction": "BELOW"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "xPos": 4,
+        "yPos": 22,
+        "width": 4,
+        "height": 3,
+        "widget": {
+          "title": "Current Active Alerts",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesFilter": {
+                "filter": "metric.type=\"logging.googleapis.com/user/nba_model_load_failures\" OR metric.type=\"logging.googleapis.com/user/nba_env_var_changes\" OR metric.type=\"logging.googleapis.com/user/nba_fallback_predictions\"",
+                "aggregation": {
+                  "alignmentPeriod": "300s",
+                  "perSeriesAligner": "ALIGN_RATE",
+                  "crossSeriesReducer": "REDUCE_SUM"
+                }
+              }
+            },
+            "sparkChartView": {
+              "sparkChartType": "SPARK_BAR"
+            },
+            "thresholds": [
+              // Note: Only value field supported
+              {
+                "value": 0,
+                "color": "GREEN",
+                "direction": "BELOW"
+              },
+              {
+                "value": 1,
+                "color": "RED",
+                "direction": "ABOVE"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "xPos": 8,
+        "yPos": 22,
+        "width": 4,
+        "height": 3,
+        "widget": {
+          "title": "Health Check Success Rate (Last Hour)",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesFilter": {
+                "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"prediction-worker\" AND metric.type=\"run.googleapis.com/request_count\" AND metric.labels.response_code_class=\"2xx\" AND textPayload=~\"/health\"",
+                "aggregation": {
+                  "alignmentPeriod": "3600s",
+                  "perSeriesAligner": "ALIGN_RATE",
+                  "crossSeriesReducer": "REDUCE_SUM"
+                }
+              }
+            },
+            "sparkChartView": {
+              "sparkChartType": "SPARK_LINE"
+            },
+            "thresholds": [
+              // Note: Only value field supported
+              {
+                "value": 0,
+                "color": "GREEN",
+                "direction": "ABOVE"
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}

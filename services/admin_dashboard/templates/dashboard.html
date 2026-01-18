@@ -69,6 +69,27 @@
                 Coverage Metrics
             </button>
             <button
+                @click="activeTab = 'calibration'"
+                :class="activeTab === 'calibration' ? 'border-green-500 text-green-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+            >
+                Calibration
+            </button>
+            <button
+                @click="activeTab = 'roi'"
+                :class="activeTab === 'roi' ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+            >
+                ROI Analysis
+            </button>
+            <button
+                @click="activeTab = 'players'"
+                :class="activeTab === 'players' ? 'border-purple-500 text-purple-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+            >
+                Player Insights
+            </button>
+            <button
                 @click="activeTab = 'reliability'"
                 :class="activeTab === 'reliability' ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
                 class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
@@ -259,6 +280,72 @@
                      hx-get="/partials/coverage-metrics?sport={{ sport or 'nba' }}"
                      hx-trigger="load">
                     <div class="text-gray-500 text-center py-8">Loading coverage metrics...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Calibration Tab -->
+        <div x-show="activeTab === 'calibration'" x-cloak>
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-medium text-gray-900">Confidence Calibration Analysis</h3>
+                    <button
+                        hx-get="/partials/calibration?sport={{ sport or 'nba' }}&days=7"
+                        hx-target="#calibration-content"
+                        hx-swap="innerHTML"
+                        class="text-sm text-blue-600 hover:text-blue-800"
+                    >
+                        Refresh
+                    </button>
+                </div>
+                <div id="calibration-content"
+                     hx-get="/partials/calibration?sport={{ sport or 'nba' }}&days=7"
+                     hx-trigger="load">
+                    <div class="text-gray-500 text-center py-8">Loading calibration data...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ROI Analysis Tab -->
+        <div x-show="activeTab === 'roi'" x-cloak>
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-medium text-gray-900">ROI Betting Simulation</h3>
+                    <button
+                        hx-get="/partials/roi?sport={{ sport or 'nba' }}&days=16"
+                        hx-target="#roi-content"
+                        hx-swap="innerHTML"
+                        class="text-sm text-blue-600 hover:text-blue-800"
+                    >
+                        Refresh
+                    </button>
+                </div>
+                <div id="roi-content"
+                     hx-get="/partials/roi?sport={{ sport or 'nba' }}&days=16"
+                     hx-trigger="load">
+                    <div class="text-gray-500 text-center py-8">Loading ROI data...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Player Insights Tab -->
+        <div x-show="activeTab === 'players'" x-cloak>
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-medium text-gray-900">Player Predictability Analysis</h3>
+                    <button
+                        hx-get="/partials/player-insights?sport={{ sport or 'nba' }}"
+                        hx-target="#player-insights-content"
+                        hx-swap="innerHTML"
+                        class="text-sm text-blue-600 hover:text-blue-800"
+                    >
+                        Refresh
+                    </button>
+                </div>
+                <div id="player-insights-content"
+                     hx-get="/partials/player-insights?sport={{ sport or 'nba' }}"
+                     hx-trigger="load">
+                    <div class="text-gray-500 text-center py-8">Loading player insights...</div>
                 </div>
             </div>
         </div>

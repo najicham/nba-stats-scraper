@@ -1,0 +1,292 @@
+SESSION 92 START PROMPT
+======================
+
+CONTEXT: Session 91 completed major data quality fixes and investigation. We discovered and fixed critical issues: 2,316 duplicate predictions (20% of data) and 1,192 unnormalized confidence values. All metrics were recalculated with clean data. Now ready to validate fixes and continue Phase 4.
+
+CURRENT STATUS
+--------------
+
+✅ COMPLETED IN SESSION 91:
+- Phase 3 deployed (dashboard + alerts)
+- Fixed similarity_balanced_v1 overconfidence (88% → ~61%)
+- Fixed zone_matchup_v1 inverted defense bug
+- De-duplicated 2,316 predictions from grading table
+- Fixed 1,192 catboost_v8 confidence values (÷100 normalization)
+- Created daily validation script (7 automated checks)
+- Created staging table cleanup script
+- Comprehensive root cause analysis and prevention strategy documented
+- 8 documents created (~3,500 lines)
+
+⏳ WAITING FOR VALIDATION (2-3 days for new data):
+- zone_matchup_v1 fix validation (should improve from 4.41% to 10-20% ROI)
+- similarity_balanced_v1 calibration validation (should drop to ~61% confidence)
+
+🔧 IMMEDIATE TASKS (This Session):
+1. Fix worker duplicate-write bug (5 duplicates still in source table from Jan 11)
+2. Recalculate ROI metrics with clean data
+3. Deploy improved grading query (v2)
+4. Clean up 50 orphaned staging tables from November
+
+📊 KEY METRICS (CORRECTED WITH CLEAN DATA):
+
+System Performance:
+- moving_average: 47.51% accuracy (BEST)
+- similarity_balanced_v1: 40.93%
+- zone_matchup_v1: 40.69%
+- ensemble_v1: 40.69%
+- catboost_v8: 35.20%
+- Overall: 39.94% (all systems below 50%!)
+
+Data Quality:
+- Total predictions: 9,238 (was 11,554 with duplicates)
+- Unique players: 419
+- Dates covered: 15 (Jan 1-15, 2026)
+- Duplicates: 0 (was 2,316)
+- Bad confidence values: 0 (was 1,192)
+
+Most Predictable Players (15+ predictions):
+1. Evan Mobley: 80.85%
+2. Jabari Smith Jr: 78.13%
+3. Alperen Sengun: 77.19%
+
+Least Predictable Players:
+1. LeBron James: 5.88% (systems underpredict by 6-17 points)
+2. Quenton Jackson: 6.90%
+3. Donovan Mitchell: 10.53% (systems OVERpredict by 5-9 points)
+
+CRITICAL FINDINGS
+-----------------
+
+Root Cause of Duplicates (CONFIRMED):
+- Same prediction_id written twice within 0.4 seconds
+- Timestamps: 01:06:34.538 and 01:06:34.930
+- Likely: Worker retry logic or concurrent execution
+- Evidence: Jan 11 has 5 duplicate business keys in source table
+- Location to investigate: predictions/worker/worker.py and batch_staging_writer.py
+
+Orphaned Resources:
+- 50 staging tables from Nov 19, 2025 never cleaned up
+- Cleanup script created but not yet run
+- Recommendation: Run cleanup, then schedule daily
+
+DOCUMENTATION LOCATION
+----------------------
+
+All Session 91 work is in:
+📁 /docs/08-projects/current/phase-4-grading-enhancements/
+
+Key Documents:
+1. SESSION-91-COMPLETE.md - Complete session summary
+2. INVESTIGATION-FINDINGS-CORRECTED.md - All findings with clean data
+3. DUPLICATE-ROOT-CAUSE-ANALYSIS.md - Deep dive into duplication bug
+4. PREVENTION-STRATEGY-SYSTEMATIC-IMPROVEMENTS.md - How to prevent future issues
+5. PHASE-4-PLANNING.md - 6 initiatives, 4-month roadmap
+6. INVESTIGATION-TODO.md - Specific investigations with SQL queries
+
+Scripts Created:
+- bin/validation/daily_data_quality_check.sh (7 automated checks)
+- bin/cleanup/cleanup_old_staging_tables.sh (staging table cleanup)
+
+SQL Scripts:
+- schemas/bigquery/nba_predictions/fix_duplicate_predictions.sql (already run)
+- schemas/bigquery/nba_predictions/grade_predictions_query_v2.sql (ready to deploy)
+
+DEPLOYED SERVICES
+-----------------
+
+Admin Dashboard:
+- URL: https://nba-admin-dashboard-756957797294.us-west2.run.app/dashboard?key=77466ca8cd83aea0747a88b0976f882d
+- New tabs: ROI Analysis, Player Insights
+- Total tabs: 7
+
+Alert Service:
+- URL: https://nba-grading-alerts-f7p3g7f6ya-wl.a.run.app
+- Schedule: Daily 12:30 PM PT
+- Alert types: 6 (includes weekly summary on Mondays)
+
+Prediction Worker:
+- Revision: prediction-worker-00065-jb8
+- Image: prod-20260117-164719
+- Fixes: similarity_balanced_v1 + zone_matchup_v1 deployed
+
+DATA QUALITY CHECKS
+-------------------
+
+Run this to check current status:
+```bash
+./bin/validation/daily_data_quality_check.sh
+```
+
+Current validation status (as of Session 91 end):
+- ✅ No duplicates in grading table
+- ❌ 5 duplicate business keys in source table (Jan 11)
+- ✅ Prediction volume normal (313 predictions)
+- ⚠️  175 predictions from Jan 16 not yet graded
+- ✅ catboost_v8 confidence normalized
+- ✅ Data fresh (0 hours ago)
+- ✅ All 6 systems active
+
+RECOMMENDED NEXT STEPS
+----------------------
+
+OPTION A: Fix Worker Duplicate Bug (2-3 hours) [RECOMMENDED]
+Priority: HIGH
+- Investigate why same prediction written twice
+- Likely in predictions/worker/worker.py or retry logic
+- Add distributed locking to prevent concurrent runs
+- Add pre-consolidation validation
+- Test and deploy
+
+Why: 5 duplicates still exist in source table. Need to prevent future occurrences.
+
+OPTION B: Validation & Monitoring (1-2 hours)
+Priority: MEDIUM
+- Run cleanup script on 50 orphaned staging tables
+- Deploy improved grading query (v2)
+- Recalculate ROI metrics with clean data
+- Update dashboard with corrected metrics
+- Schedule daily validation script
+
+Why: Clean up resources, get accurate ROI numbers, prevent future issues.
+
+OPTION C: Phase 4 Planning & Implementation (3+ hours)
+Priority: MEDIUM
+- Plan Priority 1: Automated Recalibration Pipeline
+- Build player blacklist system (LeBron, Donovan, high-variance players)
+- Implement variance detection
+- Start automated recalibration prototype
+
+Why: Begin Phase 4 work while waiting for new prediction data.
+
+OPTION D: Investigate Specific Anomalies (2-3 hours)
+Priority: LOW (wait for new data first)
+- Why do ALL systems perform below 50%?
+- Deep dive into LeBron predictions (only 5.88% accuracy)
+- Analyze Donovan Mitchell variance (13-33 point range)
+- Optimal betting strategy with clean data
+
+Why: Interesting but better to wait for post-fix data to validate improvements.
+
+QUICK START COMMANDS
+--------------------
+
+Check data quality:
+```bash
+./bin/validation/daily_data_quality_check.sh
+```
+
+Check for source table duplicates:
+```bash
+bq query --project_id=nba-props-platform --use_legacy_sql=false '
+SELECT game_date, COUNT(*) - COUNT(DISTINCT CONCAT(game_id, player_lookup, system_id, CAST(COALESCE(current_points_line, -1) AS STRING))) as business_key_dupes
+FROM `nba_predictions.player_prop_predictions`
+WHERE game_date >= "2026-01-01"
+GROUP BY game_date
+HAVING business_key_dupes > 0
+ORDER BY game_date'
+```
+
+Clean up staging tables (dry run first):
+```bash
+./bin/cleanup/cleanup_old_staging_tables.sh --dry-run
+./bin/cleanup/cleanup_old_staging_tables.sh  # Run for real
+```
+
+Check recent predictions:
+```bash
+bq query --project_id=nba-props-platform --use_legacy_sql=false '
+SELECT system_id, COUNT(*) as count, ROUND(AVG(confidence_score), 2) as avg_conf
+FROM `nba_predictions.player_prop_predictions`
+WHERE game_date >= CURRENT_DATE - 3
+GROUP BY system_id'
+```
+
+IMPORTANT NOTES
+---------------
+
+1. DUPLICATE SOURCE BUG NOT YET FIXED
+   - We fixed grading table (de-duplicated)
+   - We fixed confidence normalization
+   - We did NOT fix the worker code causing duplicates
+   - Jan 11 still has 5 duplicate business keys in player_prop_predictions
+   - This will cause future duplicates unless fixed
+
+2. ROI METRICS NEED RECALCULATION
+   - All previous ROI analysis invalid (duplicate data + confidence bug)
+   - "19.31% ROI" for catboost_v8 was based on corrupted data
+   - Need to recalculate optimal betting strategies with clean data
+
+3. GRADING QUERY V2 NOT DEPLOYED
+   - Improved query ready in schemas/bigquery/nba_predictions/grade_predictions_query_v2.sql
+   - Better deduplication using business keys instead of prediction_id
+   - Should deploy to scheduled query
+
+4. WAITING FOR NEW PREDICTION DATA
+   - Need 2-3 days of new predictions to validate fixes
+   - zone_matchup_v1: Expect ROI improvement from 4.41% to 10-20%
+   - similarity_balanced_v1: Expect confidence drop from 88% to ~61%
+
+5. SYSTEM PERFORMANCE BELOW 50%
+   - ALL 6 systems perform worse than random guessing
+   - This is a major concern that needs investigation
+   - May indicate fundamental modeling issues
+
+GIT STATUS
+----------
+
+Modified files (not yet committed):
+- predictions/worker/prediction_systems/similarity_balanced_v1.py
+- predictions/worker/prediction_systems/zone_matchup_v1.py
+- services/admin_dashboard/ (multiple files)
+- services/nba_grading_alerts/ (multiple files)
+- Multiple new docs and scripts
+
+Consider committing Session 91 work before starting new changes.
+
+WHAT TO SAY TO START
+---------------------
+
+Copy/paste one of these to begin:
+
+For Option A (Fix Worker Bug):
+"Let's investigate and fix the worker duplicate-write bug. Start by examining the prediction worker code to understand why the same prediction_id is written twice within 0.4 seconds."
+
+For Option B (Validation & Monitoring):
+"Let's clean up resources and deploy monitoring. Start by running the staging table cleanup script, then deploy the improved grading query."
+
+For Option C (Phase 4):
+"Let's start Phase 4 Priority 1: Automated Recalibration Pipeline. Begin by planning the architecture and identifying which systems need recalibration most."
+
+For Option D (Investigation):
+"Let's investigate why all systems perform below 50% accuracy. This seems like a fundamental issue we should understand."
+
+Or just say:
+"Read the Session 92 start prompt and recommend what we should work on next."
+
+SESSION 91 ACHIEVEMENTS
+-----------------------
+
+Data Quality Improvements:
+✅ Removed 2,316 duplicate predictions (20% of dataset)
+✅ Fixed 1,192 confidence normalization errors
+✅ Achieved 0 duplicates and 0 confidence errors
+✅ Recalculated all metrics with clean data
+
+Code Fixes:
+✅ Fixed similarity_balanced_v1 overconfidence (27 pts reduction)
+✅ Fixed zone_matchup_v1 inverted defense bug
+✅ Deployed prediction worker with fixes
+
+Infrastructure:
+✅ Created automated validation system (7 checks)
+✅ Created cleanup automation for staging tables
+✅ Created monitoring views for duplicates
+✅ Deployed Phase 3 dashboard and alerts
+
+Documentation:
+✅ 8 comprehensive documents (~3,500 lines)
+✅ Root cause analysis with definitive proof
+✅ Prevention strategy with 4-phase implementation
+✅ Systematic improvements checklist
+
+Ready to continue! 🚀

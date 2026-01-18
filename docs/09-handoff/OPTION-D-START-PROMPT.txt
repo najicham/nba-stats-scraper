@@ -1,0 +1,146 @@
+Context from Previous Sessions:
+- Session 82: NBA platform operational, predictions working
+- Option C: Historical backfill in progress or complete (REQUIRED FIRST)
+- Current state: Using mock/placeholder ML models
+- Goal: Deploy REAL trained ML models for production predictions
+- See: docs/09-handoff/OPTION-D-PHASE5-DEPLOYMENT-HANDOFF.md
+
+Starting Option D: Phase 5 Production ML Deployment
+===================================================
+
+⚠️ **PREREQUISITE**: Option C (Backfill Pipeline) must be substantially complete
+- Need: Historical data from Nov 2021 → Present for model training
+- Minimum: 80%+ date coverage with quality data
+- Check Option C completion status before starting this session
+
+Goal: Train and deploy real production ML models to replace mocks,
+enabling full end-to-end automated prediction system.
+
+Business Value:
+- Real ML predictions (not mock/placeholder)
+- Automated model training pipeline
+- Backtesting capability
+- Production-grade prediction coordinator
+- Foundation for continuous model improvement
+
+What to Build:
+
+Phase 5A: Model Training Infrastructure (4-5 hours)
+- [ ] Feature engineering pipeline for training
+- [ ] XGBoost model training script
+- [ ] Training data validation
+- [ ] Model evaluation and metrics
+- [ ] Model versioning and storage (GCS)
+
+Phase 5B: Model Deployment (3-4 hours)
+- [ ] Update prediction-worker to load trained models
+- [ ] Model serving infrastructure
+- [ ] A/B testing capability (optional)
+- [ ] Rollback mechanism
+
+Phase 5C: Prediction Coordinator (4-5 hours)
+- [ ] Orchestration of prediction flow
+- [ ] Ensemble model coordination (if multiple models)
+- [ ] Prediction aggregation and consensus
+- [ ] Quality scoring and filtering
+
+Phase 5D: Automation & Monitoring (2-3 hours)
+- [ ] Automated daily/weekly retraining schedule
+- [ ] Model performance monitoring
+- [ ] Training job failure alerts
+- [ ] Model drift detection
+
+Expected Time: 13-16 hours total
+- Phase 5A: 4-5 hours (training infrastructure)
+- Phase 5B: 3-4 hours (deployment)
+- Phase 5C: 4-5 hours (coordinator)
+- Phase 5D: 2-3 hours (automation)
+
+Deliverables:
+- [ ] Production ML model training pipeline
+- [ ] Trained XGBoost models deployed
+- [ ] Prediction coordinator service
+- [ ] Automated retraining schedule
+- [ ] Model performance monitoring
+- [ ] Complete end-to-end ML system
+- [ ] Create OPTION-D-PHASE5-COMPLETE.md handoff
+
+Implementation Guide: docs/09-handoff/OPTION-D-PHASE5-DEPLOYMENT-HANDOFF.md
+
+Current System State:
+- Prediction worker: Using fallback/mock predictions in some cases
+- Historical data: Available after Option C backfill
+- Feature store: Operational (ml_feature_store_v2)
+- Infrastructure: Cloud Run, BigQuery, GCS ready
+
+What Changes:
+BEFORE (Current):
+- Mock/placeholder model predictions
+- No automated training
+- Limited ML capabilities
+
+AFTER (Option D):
+- Real trained XGBoost models
+- Automated training pipeline
+- Production ML predictions
+- Backtesting capability
+- Continuous improvement possible
+
+Key Components:
+
+1. **Training Pipeline**:
+   - Input: Historical data from Option C backfill
+   - Features: ml_feature_store_v2 + derived features
+   - Output: Trained XGBoost model → GCS
+
+2. **Model Serving**:
+   - Load trained model from GCS
+   - Serve predictions via prediction-worker
+   - Version management and rollback
+
+3. **Prediction Coordinator**:
+   - Orchestrate prediction requests
+   - Ensemble multiple models (if applicable)
+   - Quality filtering and consensus
+
+4. **Automation**:
+   - Cloud Scheduler → Training job
+   - Daily/weekly retraining
+   - Automated deployment (with approval)
+
+Success Metrics:
+- Model training completes successfully
+- Predictions using real ML model (not fallback)
+- Prediction accuracy > baseline (from Session 85 grading)
+- Automated retraining working
+- No production incidents during deployment
+
+Risk Level: MEDIUM-HIGH
+- Deploying new ML models to production
+- Need thorough testing before rollout
+- Gradual rollout recommended (e.g., 10% → 50% → 100%)
+- Requires Option C data to be complete
+
+Prerequisites Check:
+Before starting this session, verify:
+- [ ] Option C backfill is 80%+ complete
+- [ ] Historical data quality is validated
+- [ ] Feature store has complete historical features
+- [ ] Session 85 grading system is deployed (to measure improvement)
+- [ ] You have capacity for testing and validation
+
+Recommended Approach:
+1. **Week 1**: Build training pipeline, train first model
+2. **Week 2**: Deploy to staging, test thoroughly
+3. **Week 3**: Gradual production rollout (10% → 50% → 100%)
+4. **Week 4**: Automate retraining, monitor performance
+
+This is a milestone deployment - moving from placeholder to real ML.
+Take time to test thoroughly and roll out carefully.
+
+Start by reading the full implementation guide in OPTION-D-PHASE5-DEPLOYMENT-HANDOFF.md.
+
+Note: Do NOT start this until Option C (backfill) is substantially complete.
+You need that historical data to train meaningful models.
+
+Once deployed, you'll have a complete, production-grade ML prediction system!

@@ -1,0 +1,205 @@
+<!-- ROI Analysis Component -->
+<div class="space-y-6">
+    <!-- ROI Summary Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        {% set total_profit = roi_summary|sum(attribute='flat_betting_total_profit') %}
+        {% set total_bets = roi_summary|sum(attribute='total_bets') %}
+        {% set total_wins = roi_summary|sum(attribute='total_wins') %}
+        {% set overall_win_rate = (total_wins / (total_bets if total_bets > 0 else 1) * 100) %}
+
+        <div class="bg-white rounded-lg shadow p-4 border-l-4 {% if total_profit > 0 %}border-green-500{% else %}border-red-500{% endif %}">
+            <div class="text-sm text-gray-600 mb-1">Total Profit (Flat Betting)</div>
+            <div class="text-2xl font-bold {% if total_profit > 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                ${{ "%.2f"|format(total_profit) }}
+            </div>
+            <div class="text-xs text-gray-500 mt-1">Across all systems</div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow p-4 border-l-4 border-blue-500">
+            <div class="text-sm text-gray-600 mb-1">Total Bets</div>
+            <div class="text-2xl font-bold text-gray-900">{{ total_bets }}</div>
+            <div class="text-xs text-gray-500 mt-1">Clean predictions graded</div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow p-4 border-l-4 border-purple-500">
+            <div class="text-sm text-gray-600 mb-1">Overall Win Rate</div>
+            <div class="text-2xl font-bold text-gray-900">{{ "%.1f"|format(overall_win_rate) }}%</div>
+            <div class="text-xs text-gray-500 mt-1">{{ total_wins }} wins / {{ total_bets }} total</div>
+        </div>
+
+        <div class="bg-white rounded-lg shadow p-4 border-l-4 border-yellow-500">
+            <div class="text-sm text-gray-600 mb-1">Best System</div>
+            {% set best_system = roi_summary|sort(attribute='flat_betting_roi_pct', reverse=True)|first %}
+            <div class="text-lg font-bold text-gray-900">{{ best_system.system_id|replace('_', ' ')|title }}</div>
+            <div class="text-xs text-green-600 font-semibold mt-1">+{{ "%.2f"|format(best_system.flat_betting_roi_pct) }}% ROI</div>
+        </div>
+    </div>
+
+    <!-- Strategy Comparison Guide -->
+    <div class="bg-blue-50 border-l-4 border-blue-400 p-4">
+        <div class="flex">
+            <div class="flex-shrink-0">
+                <svg class="h-5 w-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+                </svg>
+            </div>
+            <div class="ml-3">
+                <h4 class="text-sm font-semibold text-blue-800">Understanding Betting Strategies</h4>
+                <div class="mt-2 text-sm text-blue-700 space-y-1">
+                    <p><strong>Flat Betting:</strong> Bet $100 on every prediction regardless of confidence</p>
+                    <p><strong>High-Confidence (&gt;70%):</strong> Only bet on predictions with confidence ≥70%</p>
+                    <p><strong>Very High-Confidence (&gt;80%):</strong> Only bet on predictions with confidence ≥80%</p>
+                    <p><strong>Standard Odds:</strong> All calculations assume -110 odds (bet $110 to win $100, or win $90.91 per $100 bet)</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ROI by System Table -->
+    <div>
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">ROI by Prediction System</h4>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">System</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Bets</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Win Rate</th>
+                        <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Profit</th>
+                        <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">ROI %</th>
+                        <th class="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">EV/Bet</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Days</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for row in roi_summary %}
+                    <tr class="{% if row.flat_betting_roi_pct > 10 %}bg-green-50{% elif row.flat_betting_roi_pct < 0 %}bg-red-50{% endif %}">
+                        <td class="px-3 py-2 whitespace-nowrap font-medium text-gray-900">{{ row.system_id }}</td>
+                        <td class="px-3 py-2 text-center text-gray-700">{{ row.total_bets }}</td>
+                        <td class="px-3 py-2 text-center">
+                            <span class="{% if row.win_rate_pct >= 55 %}text-green-600 font-semibold{% elif row.win_rate_pct < 50 %}text-red-600{% else %}text-gray-700{% endif %}">
+                                {{ "%.2f"|format(row.win_rate_pct) }}%
+                            </span>
+                        </td>
+                        <td class="px-3 py-2 text-right {% if row.flat_betting_total_profit > 0 %}text-green-600 font-semibold{% else %}text-red-600{% endif %}">
+                            ${{ "%.2f"|format(row.flat_betting_total_profit) }}
+                        </td>
+                        <td class="px-3 py-2 text-right">
+                            <span class="{% if row.flat_betting_roi_pct > 10 %}text-green-600 font-bold{% elif row.flat_betting_roi_pct > 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                                {% if row.flat_betting_roi_pct > 0 %}+{% endif %}{{ "%.2f"|format(row.flat_betting_roi_pct) }}%
+                            </span>
+                        </td>
+                        <td class="px-3 py-2 text-right {% if row.flat_betting_ev_per_bet > 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                            ${{ "%.2f"|format(row.flat_betting_ev_per_bet) }}
+                        </td>
+                        <td class="px-3 py-2 text-center text-gray-600">{{ row.days_of_data }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- High-Confidence Strategy Comparison -->
+    <div>
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Strategy Comparison: Flat vs High-Confidence Betting</h4>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th rowspan="2" class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase border-r">System</th>
+                        <th colspan="3" class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase border-r">Flat Betting (All Predictions)</th>
+                        <th colspan="3" class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase border-r">High-Confidence (&gt;70%)</th>
+                        <th colspan="3" class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Very High-Confidence (&gt;80%)</th>
+                    </tr>
+                    <tr>
+                        <th class="px-2 py-1 text-xs font-medium text-gray-500">Bets</th>
+                        <th class="px-2 py-1 text-xs font-medium text-gray-500">Win%</th>
+                        <th class="px-2 py-1 text-xs font-medium text-gray-500 border-r">ROI%</th>
+                        <th class="px-2 py-1 text-xs font-medium text-gray-500">Bets</th>
+                        <th class="px-2 py-1 text-xs font-medium text-gray-500">Win%</th>
+                        <th class="px-2 py-1 text-xs font-medium text-gray-500 border-r">ROI%</th>
+                        <th class="px-2 py-1 text-xs font-medium text-gray-500">Bets</th>
+                        <th class="px-2 py-1 text-xs font-medium text-gray-500">Win%</th>
+                        <th class="px-2 py-1 text-xs font-medium text-gray-500">ROI%</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for row in roi_summary %}
+                    <tr>
+                        <td class="px-3 py-2 whitespace-nowrap font-medium text-gray-900 border-r">{{ row.system_id }}</td>
+
+                        <!-- Flat Betting -->
+                        <td class="px-2 py-2 text-center text-gray-700">{{ row.total_bets }}</td>
+                        <td class="px-2 py-2 text-center text-gray-700">{{ "%.1f"|format(row.win_rate_pct) }}%</td>
+                        <td class="px-2 py-2 text-center border-r {% if row.flat_betting_roi_pct > 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                            {% if row.flat_betting_roi_pct > 0 %}+{% endif %}{{ "%.1f"|format(row.flat_betting_roi_pct) }}%
+                        </td>
+
+                        <!-- High-Confidence -->
+                        {% if row.high_conf_bets > 0 %}
+                        <td class="px-2 py-2 text-center text-gray-700">{{ row.high_conf_bets }}</td>
+                        <td class="px-2 py-2 text-center text-gray-700">{{ "%.1f"|format(row.high_conf_win_rate_pct) }}%</td>
+                        <td class="px-2 py-2 text-center border-r {% if row.high_conf_roi_pct > row.flat_betting_roi_pct %}text-green-600 font-semibold{% elif row.high_conf_roi_pct > 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                            {% if row.high_conf_roi_pct > 0 %}+{% endif %}{{ "%.1f"|format(row.high_conf_roi_pct) }}%
+                            {% if row.high_conf_roi_pct > row.flat_betting_roi_pct %}<span class="text-xs">⬆</span>{% endif %}
+                        </td>
+                        {% else %}
+                        <td colspan="3" class="px-2 py-2 text-center border-r text-gray-400 italic">No high-conf bets</td>
+                        {% endif %}
+
+                        <!-- Very High-Confidence -->
+                        {% if row.very_high_conf_bets > 0 %}
+                        <td class="px-2 py-2 text-center text-gray-700">{{ row.very_high_conf_bets }}</td>
+                        <td class="px-2 py-2 text-center text-gray-700">{{ "%.1f"|format(row.very_high_conf_win_rate_pct) }}%</td>
+                        <td class="px-2 py-2 text-center {% if row.very_high_conf_roi_pct > row.flat_betting_roi_pct %}text-green-600 font-semibold{% elif row.very_high_conf_roi_pct > 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                            {% if row.very_high_conf_roi_pct > 0 %}+{% endif %}{{ "%.1f"|format(row.very_high_conf_roi_pct) }}%
+                            {% if row.very_high_conf_roi_pct > row.high_conf_roi_pct %}<span class="text-xs">⬆</span>{% endif %}
+                        </td>
+                        {% else %}
+                        <td colspan="3" class="px-2 py-2 text-center text-gray-400 italic">No very-high-conf bets</td>
+                        {% endif %}
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Key Insights -->
+    <div class="bg-green-50 border-l-4 border-green-400 p-4">
+        <div class="flex">
+            <div class="flex-shrink-0">
+                <svg class="h-5 w-5 text-green-400" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+                </svg>
+            </div>
+            <div class="ml-3">
+                <h4 class="text-sm font-semibold text-green-800">Key Insights</h4>
+                <ul class="mt-2 text-sm text-green-700 list-disc list-inside space-y-1">
+                    {% set best_overall = roi_summary|sort(attribute='flat_betting_roi_pct', reverse=True)|first %}
+                    {% set best_high_conf = roi_summary|selectattr('high_conf_roi_pct', 'defined')|sort(attribute='high_conf_roi_pct', reverse=True)|first %}
+
+                    <li><strong>Best overall system:</strong> {{ best_overall.system_id }} with {{ "%.2f"|format(best_overall.flat_betting_roi_pct) }}% ROI ({{ best_overall.total_bets }} bets)</li>
+
+                    {% if best_high_conf %}
+                    <li><strong>Best high-confidence strategy:</strong> {{ best_high_conf.system_id }} at &gt;70% confidence with {{ "%.2f"|format(best_high_conf.high_conf_roi_pct) }}% ROI</li>
+                    {% endif %}
+
+                    {% set profitable_systems = roi_summary|selectattr('flat_betting_roi_pct', '>', 0)|list|length %}
+                    <li><strong>Profitable systems:</strong> {{ profitable_systems }} out of {{ roi_summary|length }} systems show positive ROI</li>
+
+                    <li><strong>Breakeven threshold:</strong> Need ~52.4% win rate to breakeven at -110 odds</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer Notes -->
+    <div class="text-xs text-gray-500 space-y-1">
+        <p><strong>Note:</strong> All calculations use standard sportsbook odds of -110 (bet $110 to win $100).</p>
+        <p><strong>Data Range:</strong> {% if roi_summary|length > 0 %}{{ roi_summary[0].first_game_date }} to {{ roi_summary[0].last_game_date }} ({{ roi_summary[0].days_of_data }} days){% else %}No data available{% endif %}</p>
+        <p><strong>Formula:</strong> ROI% = (Total Wins × $90.91 - Total Losses × $100) / (Total Bets × $100) × 100</p>
+        <p><strong>EV/Bet:</strong> Expected Value per $100 bet = Net Profit / Total Bets</p>
+    </div>
+</div>

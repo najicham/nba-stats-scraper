@@ -16,6 +16,7 @@ from datetime import date, timedelta, datetime
 from typing import List, Dict, Optional
 import logging
 
+from google.cloud import bigquery
 from shared.utils.player_name_normalizer import normalize_name_for_lookup
 
 logger = logging.getLogger(__name__)
@@ -329,7 +330,8 @@ class CompletenessChecker:
         """
 
         logger.debug(f"Expected games query:\n{query}")
-        return self.bq_client.query(query).to_dataframe()
+        job_config = bigquery.QueryJobConfig(default_dataset=f"{self.project_id}.nba_raw")
+        return self.bq_client.query(query, job_config=job_config).to_dataframe()
 
     def _query_expected_games_player(
         self,
@@ -564,7 +566,8 @@ class CompletenessChecker:
         """
 
         logger.debug(f"Actual games query:\n{query}")
-        return self.bq_client.query(query).to_dataframe()
+        job_config = bigquery.QueryJobConfig(default_dataset=f"{self.project_id}.{upstream_table.split('.')[0]}")
+        return self.bq_client.query(query, job_config=job_config).to_dataframe()
 
     def _get_count(self, df: 'DataFrame', entity_id: str) -> int:
         """Extract count for entity from DataFrame."""

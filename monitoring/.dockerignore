@@ -1,0 +1,4 @@
+# Include only the monitoring scripts
+!monitor_feature_staleness.sh
+!monitor_confidence_drift.sh
+!Dockerfile

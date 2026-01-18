@@ -1,65 +1,70 @@
-I need you to continue work on the NBA stats pipeline monitoring system. The previous session successfully deployed Layers 5 & 6 monitoring and fixed all processor stats tracking bugs.
+I'm continuing Week 3 deployment for the NBA Alerting & Monitoring project (Option B).
 
-**START HERE:**
-Read this handoff document first:
-- File: `docs/09-handoff/2026-01-02-SESSION-COMPLETE.md`
-- It has complete session summary, next priorities, and implementation steps
+## Current Status
 
-**CURRENT STATE:**
-✅ Layer 5 (Processor Output Validation) - DEPLOYED & WORKING
-✅ Layer 6 (Real-Time Completeness Check) - DEPLOYED & WORKING
-✅ Layer 7 (Daily Batch Verification) - DEPLOYED & WORKING
-✅ All 24 processors verified, 3 stats bugs fixed
-✅ Detection lag: 10 hours → 2 minutes (98% improvement)
-✅ Zero false positives
+**What's Deployed:**
+1. ✅ Cloud Monitoring Dashboard (NBA Prediction Metrics) - LIVE
+   - URL: https://console.cloud.google.com/monitoring/dashboards/custom/eccdf927-4b7a-4194-a7e5-c266758cd251?project=nba-props-platform
+   - 7 widgets tracking request rate, latency, fallback rate, errors, etc.
 
-**YOUR TASK - Choose One Priority:**
+2. ✅ BigQuery Audit Infrastructure - CREATED
+   - Table: nba_orchestration.env_var_audit
+   - View: nba_orchestration.recent_env_changes
+   - Both created and ready
 
-**OPTION 1 (RECOMMENDED FIRST - 30 min):**
-Monitor & Verify - Check that both layers working correctly with real traffic
-- Run SQL queries from handoff doc to check validation results
-- Verify no false positives from last 24 hours
-- Create simple monitoring dashboard/query
+3. ✅ Updated Prediction Worker - DEPLOYED
+   - Revision: prediction-worker-00061-nrq
+   - Includes updated env_monitor.py with BigQuery logging code
 
-**OPTION 2 (MOST IMPACTFUL - 3-4 hours):**
-Implement Layer 1: Scraper Output Validation
-- Catches data gaps at the source (before processing)
-- Complete implementation guide in handoff doc
-- Reference: `ULTRA-DEEP-THINK-DETECTION-ARCHITECTURE.md`
+**What's NOT Working:**
+- ⚠️ BigQuery audit logging not inserting rows (code deployed but not executing)
+  - Test: curl -X POST https://prediction-worker-f7p3g7f6ya-wl.a.run.app/internal/check-env
+  - Returns: {"status":"OK"} but no BigQuery rows appear
+  - Table exists but has 0 rows
 
-**OPTION 3 (HIGH VALUE - 4-6 hours):**
-Fix Gamebook Run-History Architecture
-- Currently 62% backfill failure rate (16 games missing)
-- Change from date-level to game-level tracking
-- Full problem description in `GAMEBOOK-RUN-HISTORY-ARCHITECTURAL-ISSUE.md`
+**What's NOT Deployed:**
+- Daily Slack summary Cloud Function (needs Slack webhook URL)
+- 2 additional dashboards (JSON configs have threshold format issues)
 
-**OPTION 4 (PREVENTION - 2-3 hours):**
-Add Base Class Validation
-- Prevent future stats tracking bugs automatically
-- Add runtime check in ProcessorBase
+## What I Need You To Do
 
-**OPTION 5 (PREVENTION - 2-3 hours):**
-Create Linter Rule
-- Catch stats tracking bugs at code review time
-- Custom pylint/flake8 rule
+**Priority 1: Debug BigQuery Audit Logging**
+1. Check if log_to_bigquery() is being called in env_monitor.py
+2. Check worker logs for BigQuery errors
+3. Verify service account has bigquery.dataEditor permission
+4. Test if BigQuery insert works manually
 
-**KEY DOCUMENTATION:**
-- `docs/09-handoff/2026-01-02-SESSION-COMPLETE.md` - Session handoff (START HERE)
-- `docs/08-projects/current/pipeline-reliability-improvements/README.md` - Project overview
-- `docs/08-projects/current/pipeline-reliability-improvements/ULTRA-DEEP-THINK-DETECTION-ARCHITECTURE.md` - Full monitoring architecture
-- `docs/08-projects/current/pipeline-reliability-improvements/GAMEBOOK-RUN-HISTORY-ARCHITECTURAL-ISSUE.md` - Gamebook problem details
+**Priority 2: Deploy Daily Slack Summary (if webhook available)**
+- Location: bin/alerts/daily_summary/
+- Script: ./bin/alerts/deploy_daily_summary.sh nba-props-platform us-west2 prod
+- Needs: SLACK_WEBHOOK_URL environment variable
 
-**WORKING DIRECTORY:** `/home/naji/code/nba-stats-scraper`
+**Priority 3: Fix Remaining Dashboards**
+- Fix JSON configs (remove threshold color/label/direction fields, keep only value)
+- Deploy: bin/alerts/dashboards/nba_data_pipeline_health_dashboard.json
+- Deploy: bin/alerts/dashboards/nba_model_performance_dashboard.json
 
-**WHAT THE PREVIOUS SESSION DID:**
-1. Deployed Layer 5 & 6 monitoring (2.5 hours)
-2. Layer 5 caught a bug: processors saving data but not updating stats
-3. Used agent to systematically search all 24 processors
-4. Fixed all 3 processors with the bug
-5. Deployed fixes to production (revision 00062-trv)
-6. Verified monitoring working correctly
+## Key Files
 
-**EVERYTHING IS DOCUMENTED:**
-All implementation details, code examples, SQL schemas, and step-by-step instructions are in the handoff doc. Just pick a priority and follow the implementation steps!
+**Deployment Status:** WEEK-3-DEPLOYMENT-STATUS.md (comprehensive status)
+**Implementation Docs:** docs/08-projects/option-b-alerting/WEEK-3-IMPLEMENTATION-COMPLETE.md
+**Code:** predictions/worker/env_monitor.py (BigQuery logging - lines 197-260)
+**Schemas:** schemas/bigquery/nba_orchestration/*.sql
 
-Please start by reading the handoff document and let me know which priority you'd like to work on (or ask questions if you need clarification).
+## Quick Commands
+
+# Test env check
+curl -X POST https://prediction-worker-f7p3g7f6ya-wl.a.run.app/internal/check-env
+
+# Query audit table
+bq query --use_legacy_sql=false --project_id=nba-props-platform \
+  'SELECT * FROM `nba_orchestration.env_var_audit` ORDER BY timestamp DESC LIMIT 5'
+
+# Check worker logs
+gcloud run services logs read prediction-worker \
+  --project=nba-props-platform --region=us-west2 --limit=20
+
+# List dashboards
+gcloud monitoring dashboards list --project=nba-props-platform
+
+Start with debugging the BigQuery logging issue - that's the most critical piece that's not working.

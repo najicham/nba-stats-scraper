@@ -1,0 +1,49 @@
+Context from Session 82 (2026-01-17):
+- Week 1 critical alerts deployed and healthy
+  • [CRITICAL] NBA Model Loading Failures
+  • [CRITICAL] NBA High Fallback Prediction Rate
+- Model loading fixed, CATBOOST_V8_MODEL_PATH preserved
+- Prediction worker revision: prediction-worker-00055-mlj (100% traffic)
+- All systems operational and validated
+- Alert runbooks created: docs/04-deployment/ALERT-RUNBOOKS.md
+- See complete status: docs/09-handoff/SESSION-82-IMPLEMENTATION-COMPLETE.md
+
+Starting Session 83: Week 2 Warning-Level Alerts
+=================================================
+
+Goal: Implement 3-4 warning-level alerts to catch issues before they become critical
+
+What to Build:
+1. Stale Predictions Alert (WARNING) - No predictions for 2+ hours
+2. DLQ Depth Alert (WARNING) - Messages accumulating in dead letter queue
+3. Feature Pipeline Staleness (WARNING) - ml_feature_store_v2 not updating
+4. Confidence Distribution Drift (WARNING) - Unusual confidence score patterns
+
+Expected Time: 2-3 hours
+
+Deliverables:
+- [ ] 3-4 warning-level alerts in Cloud Monitoring
+- [ ] Runbook sections for each alert in ALERT-RUNBOOKS.md
+- [ ] Test that alerts can trigger
+- [ ] Update IMPLEMENTATION-ROADMAP.md to mark Week 2 complete
+- [ ] Create SESSION-83-WEEK2-ALERTS-COMPLETE.md handoff
+
+Implementation Guide: docs/09-handoff/SESSION-83-WEEK2-ALERTS.md
+
+Current System State:
+- Project: nba-props-platform
+- Region: us-west2
+- Predictions: 100% ML-based (no fallback)
+- Data quality: 100% gold tier
+- DLQ: Empty (healthy)
+
+Alert Naming Convention:
+[WARNING] NBA [Description]
+
+Examples:
+- [WARNING] NBA Stale Predictions
+- [WARNING] NBA High DLQ Depth
+- [WARNING] NBA Feature Pipeline Stale
+- [WARNING] NBA Confidence Distribution Drift
+
+Start by reading the full implementation guide, then begin with creating the first alert.

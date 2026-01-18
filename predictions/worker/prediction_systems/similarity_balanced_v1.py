@@ -454,57 +454,64 @@ class SimilarityBalancedV1:
     ) -> float:
         """
         Calculate confidence score
-        
+
         Factors:
-        - Number of similar games found (±20 points)
-        - Average similarity score (±20 points)
+        - Number of similar games found (±15 points)
+        - Average similarity score (±15 points)
         - Outcome consistency in similar games (±10 points)
-        
+
+        RECALIBRATED (Jan 2026): Reduced from 88% to ~61% to match actual accuracy.
+        Previous overconfidence: 27 points. Adjustments:
+        - Base reduced from 50 → 35 (-15 pts)
+        - Sample size bonus reduced from ±20 → ±12 pts
+        - Similarity quality reduced from ±20 → ±12 pts
+        - Consistency bonus kept similar but reduced top tier
+
         Args:
             similar_games: List of similar games
             features: Current game features
-        
+
         Returns:
             float: Confidence score (0-100)
         """
-        confidence = 50.0  # Base confidence
-        
-        # Sample size bonus (±20 points with stronger penalties for low counts)
+        confidence = 35.0  # Base confidence (recalibrated from 50)
+
+        # Sample size bonus (±12 points, recalibrated from ±20)
         count = len(similar_games)
         if count >= 15:
-            confidence += 20
+            confidence += 12  # Was +20
         elif count >= 10:
-            confidence += 15
+            confidence += 9   # Was +15
         elif count >= 7:
-            confidence += 10
+            confidence += 6   # Was +10
         elif count >= 5:
-            confidence -= 15  # Minimum required, apply strong penalty for low count
+            confidence -= 10  # Was -15
         else:
-            confidence -= 20  # Below minimum, shouldn't happen
-        
-        # Similarity quality bonus (±20 points)
+            confidence -= 15  # Was -20
+
+        # Similarity quality bonus (±12 points, recalibrated from ±20)
         avg_similarity = np.mean([g['similarity_score'] for g in similar_games])
         if avg_similarity >= 85:
-            confidence += 20
+            confidence += 12  # Was +20
         elif avg_similarity >= 75:
-            confidence += 15
+            confidence += 9   # Was +15
         elif avg_similarity >= 70:
-            confidence += 10
+            confidence += 6   # Was +10
         else:
-            confidence += 5
-        
-        # Outcome consistency bonus (±15 points with stronger penalties)
+            confidence += 3   # Was +5
+
+        # Outcome consistency bonus (±10 points, slightly reduced)
         points = [g.get('points', 0) for g in similar_games]
         std_dev = np.std(points)
         if std_dev < 4:
-            confidence += 15  # Very consistent
+            confidence += 10  # Was +15
         elif std_dev < 6:
-            confidence += 8   # Moderately consistent
+            confidence += 6   # Was +8
         elif std_dev < 8:
-            confidence += 3   # Some variance
+            confidence += 2   # Was +3
         else:
-            confidence -= 5   # High variance - penalty!
-        
+            confidence -= 5   # Same
+
         return max(0, min(100, confidence))
     
     def _generate_recommendation(

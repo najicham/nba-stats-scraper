@@ -302,6 +302,162 @@ class MLBPitcherLoader:
         return {row['timing_bucket']: dict(row) for row in result}
 
 
+def load_batch_features(
+    game_date: date,
+    pitcher_lookups: Optional[List[str]] = None,
+    project_id: str = None
+) -> Dict[str, Dict]:
+    """
+    Load features for multiple pitchers in a single BigQuery query.
+
+    This is the SHARED feature loader used by all prediction systems to avoid
+    redundant BigQuery queries during batch processing.
+
+    Optimization: Instead of each system (v1_baseline, v1_6_rolling, ensemble_v1)
+    calling batch_predict() and executing the same query 3 times, we load features
+    ONCE and pass them to each system's predict() method.
+
+    Expected improvement: 66% reduction in BigQuery queries, 30-40% faster batch times.
+
+    Args:
+        game_date: Game date to predict for
+        pitcher_lookups: Optional list of pitcher lookups to filter (None = all starting pitchers)
+        project_id: GCP project ID (default: env var GCP_PROJECT_ID)
+
+    Returns:
+        Dict[pitcher_lookup, features]: Mapping of pitcher_lookup to feature dict
+
+    Example:
+        >>> features_by_pitcher = load_batch_features(date(2026, 6, 15))
+        >>> features = features_by_pitcher['gerrit-cole']
+        >>> prediction = predictor.predict('gerrit-cole', features=features, strikeouts_line=6.5)
+    """
+    proj_id = project_id or PROJECT_ID
+    client = bigquery.Client(project=proj_id)
+
+    # Build pitcher filter clause
+    if pitcher_lookups:
+        pitcher_filter = "AND pgs.player_lookup IN UNNEST(@pitcher_lookups)"
+    else:
+        pitcher_filter = ""
+
+    # Query: Same as PitcherStrikeoutsPredictor.batch_predict() but returns features
+    # Joins 3 tables:
+    # 1. mlb_analytics.pitcher_game_summary - Core features
+    # 2. mlb_analytics.pitcher_rolling_statcast - Statcast features (V1.6)
+    # 3. mlb_raw.bp_pitcher_props - BettingPros projections (V1.6)
+    query = f"""
+    WITH latest_features AS (
+        SELECT
+            pgs.player_lookup,
+            pgs.game_date as feature_date,
+            pgs.team_abbr,
+            pgs.opponent_team_abbr,
+            pgs.is_home,
+            pgs.is_postseason,
+            pgs.days_rest,
+            pgs.k_avg_last_3,
+            pgs.k_avg_last_5,
+            pgs.k_avg_last_10,
+            pgs.k_std_last_10,
+            pgs.ip_avg_last_5,
+            pgs.season_k_per_9,
+            pgs.era_rolling_10,
+            pgs.whip_rolling_10,
+            pgs.season_games_started,
+            pgs.season_strikeouts,
+            pgs.season_innings,
+            -- V1.4 features
+            pgs.opponent_team_k_rate,
+            pgs.ballpark_k_factor,
+            pgs.month_of_season,
+            pgs.days_into_season,
+            pgs.vs_opponent_k_per_9 as avg_k_vs_opponent,
+            pgs.vs_opponent_games as games_vs_opponent,
+            -- Workload
+            pgs.games_last_30_days,
+            pgs.pitch_count_avg_last_5,
+            pgs.data_completeness_score,
+            pgs.rolling_stats_games,
+            ROW_NUMBER() OVER (PARTITION BY pgs.player_lookup ORDER BY pgs.game_date DESC) as rn
+        FROM `{proj_id}.mlb_analytics.pitcher_game_summary` pgs
+        WHERE pgs.game_date < @game_date
+          AND pgs.game_date >= DATE_SUB(@game_date, INTERVAL 30 DAY)
+          AND pgs.rolling_stats_games >= 3
+          {pitcher_filter}
+    ),
+    -- V1.6: Rolling Statcast features (most recent before game_date)
+    statcast_latest AS (
+        SELECT
+            player_lookup,
+            swstr_pct_last_3,
+            fb_velocity_last_3,
+            swstr_pct_last_5,
+            swstr_pct_season_prior,
+            ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as rn
+        FROM `{proj_id}.mlb_analytics.pitcher_rolling_statcast`
+        WHERE game_date < @game_date
+    ),
+    -- V1.6: BettingPros projections for game date
+    bp_features AS (
+        SELECT
+            player_lookup,
+            projection_value as bp_projection,
+            over_line as bp_over_line,
+            -- Calculate performance percentages
+            SAFE_DIVIDE(perf_last_5_over, perf_last_5_over + perf_last_5_under) as perf_last_5_pct,
+            SAFE_DIVIDE(perf_last_10_over, perf_last_10_over + perf_last_10_under) as perf_last_10_pct
+        FROM `{proj_id}.mlb_raw.bp_pitcher_props`
+        WHERE game_date = @game_date
+          AND market_name = 'pitcher-strikeouts'
+    )
+    SELECT
+        lf.*,
+        -- Rolling Statcast (f50-f53)
+        s.swstr_pct_last_3,
+        s.fb_velocity_last_3,
+        COALESCE(s.swstr_pct_last_3 - s.swstr_pct_season_prior, 0) as swstr_trend,
+        COALESCE(s.fb_velocity_last_3, 0) as velocity_last_3,
+        -- BettingPros (f40-f44)
+        bp.bp_projection,
+        COALESCE(bp.bp_projection - bp.bp_over_line, 0) as projection_diff,
+        bp.perf_last_5_pct,
+        bp.perf_last_10_pct,
+        bp.bp_over_line as strikeouts_line
+    FROM latest_features lf
+    LEFT JOIN statcast_latest s ON lf.player_lookup = s.player_lookup AND s.rn = 1
+    LEFT JOIN bp_features bp ON lf.player_lookup = bp.player_lookup
+    WHERE lf.rn = 1
+    """
+
+    try:
+        # Build query parameters
+        params = [
+            bigquery.ScalarQueryParameter("game_date", "DATE", game_date.isoformat()),
+        ]
+        if pitcher_lookups:
+            params.append(
+                bigquery.ArrayQueryParameter("pitcher_lookups", "STRING", pitcher_lookups)
+            )
+
+        job_config = bigquery.QueryJobConfig(query_parameters=params)
+        result = client.query(query, job_config=job_config).result()
+
+        # Build dictionary mapping pitcher_lookup -> features
+        features_by_pitcher = {}
+        for row in result:
+            features = dict(row)
+            pitcher_lookup = features['player_lookup']
+            features_by_pitcher[pitcher_lookup] = features
+
+        logger.info(f"Loaded features for {len(features_by_pitcher)} pitchers on {game_date}")
+        return features_by_pitcher
+
+    except Exception as e:
+        logger.error(f"Failed to load batch features: {e}")
+        return {}
+
+
 # CLI for testing
 if __name__ == "__main__":
     import argparse

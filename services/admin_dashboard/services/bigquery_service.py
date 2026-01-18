@@ -342,24 +342,29 @@ class BigQueryService:
         """
         Get grading status for recent days.
 
-        Shows prediction counts vs graded counts.
+        Shows prediction counts vs graded counts with accuracy metrics.
+        Updated to use prediction_grades table (Session 85).
         """
         query = f"""
         WITH predictions AS (
             SELECT
                 game_date,
                 COUNT(*) as prediction_count
-            FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+            FROM `{PROJECT_ID}.{self.datasets['predictions']}.player_prop_predictions`
             WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
               AND game_date < CURRENT_DATE()
+              AND is_active = TRUE
             GROUP BY game_date
         ),
         graded AS (
             SELECT
                 game_date,
                 COUNT(*) as graded_count,
-                ROUND(AVG(absolute_error), 2) as mae
-            FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+                ROUND(AVG(margin_of_error), 2) as mae,
+                COUNTIF(prediction_correct) as correct,
+                COUNTIF(NOT prediction_correct) as incorrect,
+                ROUND(100.0 * COUNTIF(prediction_correct) / COUNTIF(prediction_correct IS NOT NULL), 1) as accuracy_pct
+            FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_grades`
             WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
               AND game_date < CURRENT_DATE()
             GROUP BY game_date
@@ -369,6 +374,7 @@ class BigQueryService:
             p.prediction_count,
             COALESCE(g.graded_count, 0) as graded_count,
             g.mae,
+            g.accuracy_pct,
             CASE
                 WHEN COALESCE(g.graded_count, 0) = 0 THEN 'NOT_GRADED'
                 WHEN g.graded_count < p.prediction_count * 0.8 THEN 'PARTIAL'
@@ -387,6 +393,7 @@ class BigQueryService:
                     'prediction_count': row.prediction_count,
                     'graded_count': row.graded_count,
                     'mae': row.mae,
+                    'accuracy_pct': row.accuracy_pct,
                     'grading_status': row.grading_status
                 }
                 for row in result
@@ -394,6 +401,287 @@ class BigQueryService:
         except Exception as e:
             logger.error(f"Error querying grading status: {e}")
             return []
+
+    def get_grading_by_system(self, days: int = 7) -> List[Dict]:
+        """
+        Get grading breakdown by prediction system.
+
+        Returns accuracy metrics for each system over the last N days.
+        Uses prediction_accuracy_summary view (Session 85).
+        """
+        query = f"""
+        SELECT
+            system_id,
+            SUM(total_predictions) as total_predictions,
+            SUM(correct_predictions) as correct_predictions,
+            SUM(incorrect_predictions) as incorrect_predictions,
+            ROUND(100.0 * SUM(correct_predictions) / NULLIF(SUM(correct_predictions) + SUM(incorrect_predictions), 0), 1) as accuracy_pct,
+            ROUND(AVG(avg_margin_of_error), 1) as avg_margin_of_error,
+            ROUND(AVG(avg_confidence), 1) as avg_confidence,
+            COUNT(DISTINCT game_date) as days_with_data
+        FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_accuracy_summary`
+        WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+          AND game_date < CURRENT_DATE()
+        GROUP BY system_id
+        ORDER BY accuracy_pct DESC
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'system_id': row.system_id,
+                    'total_predictions': row.total_predictions,
+                    'correct_predictions': row.correct_predictions,
+                    'incorrect_predictions': row.incorrect_predictions,
+                    'accuracy_pct': row.accuracy_pct,
+                    'avg_margin_of_error': row.avg_margin_of_error,
+                    'avg_confidence': row.avg_confidence,
+                    'days_with_data': row.days_with_data
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying grading by system: {e}")
+            return []
+
+    def get_calibration_data(self, days: int = 7) -> List[Dict]:
+        """
+        Get confidence calibration data for prediction systems.
+
+        Returns calibration metrics showing how well confidence scores
+        match actual accuracy. Positive calibration_error = overconfident.
+        """
+        query = f"""
+        SELECT
+            system_id,
+            confidence_bucket,
+            total_predictions,
+            correct_predictions,
+            actual_accuracy_pct,
+            avg_confidence,
+            calibration_error,
+            avg_margin_of_error,
+            first_prediction_date,
+            last_prediction_date
+        FROM `{PROJECT_ID}.{self.datasets['predictions']}.confidence_calibration`
+        WHERE last_prediction_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+        ORDER BY system_id, confidence_bucket DESC
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'system_id': row.system_id,
+                    'confidence_bucket': row.confidence_bucket,
+                    'total_predictions': row.total_predictions,
+                    'correct_predictions': row.correct_predictions,
+                    'actual_accuracy_pct': row.actual_accuracy_pct,
+                    'avg_confidence': row.avg_confidence,
+                    'calibration_error': row.calibration_error,
+                    'avg_margin_of_error': row.avg_margin_of_error,
+                    'first_prediction_date': str(row.first_prediction_date),
+                    'last_prediction_date': str(row.last_prediction_date)
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying calibration data: {e}")
+            return []
+
+    def get_calibration_summary(self, days: int = 7) -> List[Dict]:
+        """
+        Get summary of calibration health by system.
+
+        Returns systems with average calibration error and flags
+        for poor calibration (>15 point error).
+        """
+        query = f"""
+        SELECT
+            system_id,
+            COUNT(DISTINCT confidence_bucket) as confidence_buckets,
+            SUM(total_predictions) as total_predictions,
+            ROUND(AVG(ABS(calibration_error)), 2) as avg_abs_calibration_error,
+            ROUND(MAX(ABS(calibration_error)), 2) as max_abs_calibration_error,
+            ROUND(AVG(calibration_error), 2) as avg_calibration_error,
+            CASE
+                WHEN AVG(ABS(calibration_error)) > 15 THEN 'POOR'
+                WHEN AVG(ABS(calibration_error)) > 10 THEN 'FAIR'
+                WHEN AVG(ABS(calibration_error)) > 5 THEN 'GOOD'
+                ELSE 'EXCELLENT'
+            END as calibration_health
+        FROM `{PROJECT_ID}.{self.datasets['predictions']}.confidence_calibration`
+        WHERE last_prediction_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+          AND confidence_bucket >= 65  -- Focus on high-confidence predictions
+        GROUP BY system_id
+        ORDER BY avg_abs_calibration_error DESC
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'system_id': row.system_id,
+                    'confidence_buckets': row.confidence_buckets,
+                    'total_predictions': row.total_predictions,
+                    'avg_abs_calibration_error': row.avg_abs_calibration_error,
+                    'max_abs_calibration_error': row.max_abs_calibration_error,
+                    'avg_calibration_error': row.avg_calibration_error,
+                    'calibration_health': row.calibration_health
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying calibration summary: {e}")
+            return []
+
+    def get_roi_summary(self, days: int = 7) -> List[Dict]:
+        """
+        Get ROI summary by system with flat betting and confidence-based strategies.
+
+        Returns aggregated ROI metrics for all systems with betting simulations.
+        """
+        query = f"""
+        SELECT *
+        FROM `{PROJECT_ID}.{self.datasets['predictions']}.roi_summary`
+        WHERE last_game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+        ORDER BY flat_betting_roi_pct DESC
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'system_id': row.system_id,
+                    'total_bets': row.total_bets,
+                    'total_wins': row.total_wins,
+                    'total_losses': row.total_losses,
+                    'win_rate_pct': row.win_rate_pct,
+                    'flat_betting_total_profit': row.flat_betting_total_profit,
+                    'flat_betting_roi_pct': row.flat_betting_roi_pct,
+                    'flat_betting_ev_per_bet': row.flat_betting_ev_per_bet,
+                    'high_conf_bets': row.high_conf_bets,
+                    'high_conf_wins': row.high_conf_wins,
+                    'high_conf_losses': row.high_conf_losses,
+                    'high_conf_win_rate_pct': row.high_conf_win_rate_pct,
+                    'high_conf_roi_pct': row.high_conf_roi_pct,
+                    'high_conf_ev_per_bet': row.high_conf_ev_per_bet,
+                    'very_high_conf_bets': row.very_high_conf_bets,
+                    'very_high_conf_wins': row.very_high_conf_wins,
+                    'very_high_conf_losses': row.very_high_conf_losses,
+                    'very_high_conf_win_rate_pct': row.very_high_conf_win_rate_pct,
+                    'very_high_conf_roi_pct': row.very_high_conf_roi_pct,
+                    'very_high_conf_ev_per_bet': row.very_high_conf_ev_per_bet,
+                    'first_game_date': row.first_game_date.isoformat() if row.first_game_date else None,
+                    'last_game_date': row.last_game_date.isoformat() if row.last_game_date else None,
+                    'days_of_data': row.days_of_data
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying ROI summary: {e}")
+            return []
+
+    def get_roi_daily_breakdown(self, days: int = 7) -> List[Dict]:
+        """
+        Get daily ROI breakdown by system.
+
+        Returns per-day ROI metrics for trend analysis.
+        """
+        query = f"""
+        SELECT *
+        FROM `{PROJECT_ID}.{self.datasets['predictions']}.roi_simulation`
+        WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+        ORDER BY game_date DESC, flat_betting_roi_pct DESC
+        LIMIT 500
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'system_id': row.system_id,
+                    'game_date': row.game_date.isoformat() if row.game_date else None,
+                    'total_bets': row.total_bets,
+                    'wins': row.wins,
+                    'losses': row.losses,
+                    'win_rate_pct': row.win_rate_pct,
+                    'flat_betting_profit': row.flat_betting_profit,
+                    'flat_betting_roi_pct': row.flat_betting_roi_pct,
+                    'flat_betting_ev': row.flat_betting_ev,
+                    'high_conf_bets': row.high_conf_bets,
+                    'high_conf_roi_pct': row.high_conf_roi_pct,
+                    'very_high_conf_bets': row.very_high_conf_bets,
+                    'very_high_conf_roi_pct': row.very_high_conf_roi_pct
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying ROI daily breakdown: {e}")
+            return []
+
+    def get_player_insights(self, limit_top: int = 10, limit_bottom: int = 10) -> Dict:
+        """
+        Get most and least predictable players.
+
+        Returns dict with 'most_predictable' and 'least_predictable' lists.
+        """
+        query_top = f"""
+        SELECT *
+        FROM `{PROJECT_ID}.{self.datasets['predictions']}.player_insights_summary`
+        ORDER BY avg_accuracy_pct DESC
+        LIMIT {limit_top}
+        """
+
+        query_bottom = f"""
+        SELECT *
+        FROM `{PROJECT_ID}.{self.datasets['predictions']}.player_insights_summary`
+        ORDER BY avg_accuracy_pct ASC
+        LIMIT {limit_bottom}
+        """
+
+        try:
+            most_predictable = list(self.client.query(query_top).result(timeout=60))
+            least_predictable = list(self.client.query(query_bottom).result(timeout=60))
+
+            return {
+                'most_predictable': [
+                    {
+                        'player_lookup': row.player_lookup,
+                        'systems_tracking': row.systems_tracking,
+                        'total_predictions': row.total_predictions,
+                        'total_correct': row.total_correct,
+                        'total_incorrect': row.total_incorrect,
+                        'avg_accuracy_pct': row.avg_accuracy_pct,
+                        'avg_margin_of_error': row.avg_margin_of_error,
+                        'over_predictions': row.over_predictions,
+                        'under_predictions': row.under_predictions,
+                        'best_system': row.best_system,
+                        'best_system_accuracy': row.best_system_accuracy
+                    }
+                    for row in most_predictable
+                ],
+                'least_predictable': [
+                    {
+                        'player_lookup': row.player_lookup,
+                        'systems_tracking': row.systems_tracking,
+                        'total_predictions': row.total_predictions,
+                        'total_correct': row.total_correct,
+                        'total_incorrect': row.total_incorrect,
+                        'avg_accuracy_pct': row.avg_accuracy_pct,
+                        'avg_margin_of_error': row.avg_margin_of_error,
+                        'over_predictions': row.over_predictions,
+                        'under_predictions': row.under_predictions,
+                        'best_system': row.best_system,
+                        'best_system_accuracy': row.best_system_accuracy
+                    }
+                    for row in least_predictable
+                ]
+            }
+        except Exception as e:
+            logger.error(f"Error querying player insights: {e}")
+            return {'most_predictable': [], 'least_predictable': []}
 
     # =========================================================================
     # MLB-specific methods

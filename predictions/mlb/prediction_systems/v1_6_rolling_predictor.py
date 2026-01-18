@@ -361,6 +361,20 @@ class V1_6RollingPredictor(BaseMLBPredictor):
             # Calculate base confidence
             confidence = self._calculate_confidence(features, feature_vector)
 
+            # Calculate feature coverage
+            coverage_pct, missing_features = self._calculate_feature_coverage(features, self.feature_order)
+
+            # Adjust confidence based on feature coverage
+            confidence = self._adjust_confidence_for_coverage(confidence, coverage_pct)
+
+            # Log low coverage predictions
+            if coverage_pct < 80.0:
+                logger.warning(
+                    f"[{self.system_id}] Low feature coverage for {pitcher_lookup}: "
+                    f"{coverage_pct:.1f}% ({len(missing_features)} missing features)"
+                )
+                logger.debug(f"[{self.system_id}] Missing features: {missing_features[:10]}")  # Log first 10
+
             # Generate initial recommendation
             recommendation = self._generate_recommendation(
                 predicted_strikeouts,
@@ -395,7 +409,8 @@ class V1_6RollingPredictor(BaseMLBPredictor):
                 'system_id': self.system_id,
                 'model_mae': self.model_metadata.get('test_mae') if self.model_metadata else None,
                 'red_flags': red_flag_result.flags,
-                'skip_reason': red_flag_result.skip_reason
+                'skip_reason': red_flag_result.skip_reason,
+                'feature_coverage_pct': round(coverage_pct, 1)
             }
 
         # Apply confidence multiplier from soft red flags
@@ -425,5 +440,6 @@ class V1_6RollingPredictor(BaseMLBPredictor):
             'system_id': self.system_id,
             'model_mae': self.model_metadata.get('test_mae') if self.model_metadata else None,
             'red_flags': red_flag_result.flags if red_flag_result.flags else None,
-            'confidence_multiplier': round(red_flag_result.confidence_multiplier, 2) if red_flag_result.confidence_multiplier < 1.0 else None
+            'confidence_multiplier': round(red_flag_result.confidence_multiplier, 2) if red_flag_result.confidence_multiplier < 1.0 else None,
+            'feature_coverage_pct': round(coverage_pct, 1)
         }

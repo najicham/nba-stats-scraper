@@ -230,32 +230,33 @@ class ZoneMatchupV1:
         return total_zone_adjustment
     
     def _calculate_zone_score(
-        self, 
-        player_usage: float, 
+        self,
+        player_usage: float,
         opponent_defense: float,
         zone_type: str
     ) -> float:
         """
         Calculate matchup score for a single zone
-        
+
         Logic:
         - Elite defense (105): Harder to score (-1.5 to -3.0)
         - Average defense (110): Neutral (0.0)
         - Weak defense (115+): Easier to score (+1.5 to +3.0)
-        
+
         Adjusted by zone type (paint defense matters more than perimeter)
-        
+
         Args:
             player_usage: Player's usage % in this zone (0.0-1.0)
             opponent_defense: Opponent's defensive rating (100-120 range)
             zone_type: 'paint', 'mid_range', 'three', 'free_throw'
-        
+
         Returns:
             Float score (-3.0 to +3.0)
         """
         # Calculate how much opponent defense deviates from average (110)
-        defense_diff = 110.0 - opponent_defense
-        
+        # FIXED (Jan 2026): Was 110.0 - opponent_defense (inverted logic)
+        defense_diff = opponent_defense - 110.0
+
         # Convert to matchup score
         # Positive = weak defense (easier to score)
         # Negative = strong defense (harder to score)

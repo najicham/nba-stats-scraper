@@ -1,0 +1,46 @@
+Session 88: Resume NBA Backfill Validation
+==========================================
+
+Context: Session 87 initiated Phase 4 backfill for 915 dates (Nov 2021 → Jan 2026).
+5 parallel jobs were running. Need to check status and validate completion.
+
+Quick Start:
+-----------
+cd /home/naji/code/nba-stats-scraper
+
+# 1. Check if backfill completed
+for year in 2021 2022 2023 2024 2025; do
+  progress=$(grep "Processing game date" /tmp/backfill_$year.log 2>/dev/null | tail -1 | grep -oP '\d+/\d+' || echo "0/0")
+  success=$(grep -c "✓ Success" /tmp/backfill_$year.log 2>/dev/null || echo "0")
+  echo "$year: $progress ($success successful)"
+done
+
+# 2. If complete, validate results
+./bin/backfill/monitor_backfill_progress.sh --update
+
+# 3. Read handoff for next steps
+cat /home/naji/code/nba-stats-scraper/docs/09-handoff/SESSION-87-NBA-BACKFILL-HANDOFF.md
+
+Tasks:
+------
+1. Check backfill completion status
+2. If complete: Validate Phase 4 coverage (should be ~915 dates)
+3. Generate final coverage report
+4. Check for remaining gaps
+5. Create completion handoff document
+
+Background:
+-----------
+- Fixed 3 critical bugs blocking backfill
+- Built complete automation infrastructure
+- Initiated backfill for 915 dates across 2021-2025
+- All documentation in /docs/08-projects/current/nba-backfill-2021-2026/
+
+Success Criteria:
+-----------------
+- All 5 year backfills completed
+- Phase 4 coverage >95% across all years
+- 102 original gaps filled
+- All 4 processors complete (TDZA, PSZA, PCF, MLFS)
+
+See full handoff: /docs/09-handoff/SESSION-87-NBA-BACKFILL-HANDOFF.md
