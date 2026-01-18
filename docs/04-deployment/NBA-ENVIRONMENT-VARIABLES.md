@@ -94,7 +94,7 @@ If email alerts are desired, **ALL** must be set:
 
 #### `BREVO_SMTP_USERNAME`
 - **Required**: YES (if email enabled)
-- **Example**: `YOUR_EMAIL@smtp-brevo.com`
+- **Example**: `YOUR_EMAILYOUR_EMAIL@smtp-brevo.com`
 - **Purpose**: Brevo SMTP authentication username
 
 #### `BREVO_SMTP_PASSWORD`
@@ -301,7 +301,7 @@ Same variables as prediction-worker email alerting section.
   "DEPLOY_TIMESTAMP": "2026-01-13T00:37:06Z",
   "BREVO_SMTP_HOST": "smtp-relay.brevo.com",
   "BREVO_SMTP_PORT": "587",
-  "BREVO_SMTP_USERNAME": "YOUR_EMAIL@smtp-brevo.com",
+  "BREVO_SMTP_USERNAME": "YOUR_EMAILYOUR_EMAIL@smtp-brevo.com",
   "BREVO_SMTP_PASSWORD": "xsmtpsib-...",
   "BREVO_FROM_EMAIL": "alert@989.ninja",
   "BREVO_FROM_NAME": "PK",
@@ -413,7 +413,7 @@ Same as nba-phase1-scrapers.
   "DEPLOY_TIMESTAMP": "2026-01-16T18:36:38Z",
   "BREVO_SMTP_HOST": "smtp-relay.brevo.com",
   "BREVO_SMTP_PORT": "587",
-  "BREVO_SMTP_USERNAME": "YOUR_EMAIL@smtp-brevo.com",
+  "BREVO_SMTP_USERNAME": "YOUR_EMAILYOUR_EMAIL@smtp-brevo.com",
   "BREVO_SMTP_PASSWORD": "xsmtpsib-...",
   "BREVO_FROM_EMAIL": "alert@989.ninja",
   "BREVO_FROM_NAME": "PK",
@@ -559,7 +559,7 @@ These variables are used across multiple NBA services:
 All services can use the same email configuration:
 - `BREVO_SMTP_HOST` = `smtp-relay.brevo.com`
 - `BREVO_SMTP_PORT` = `587`
-- `BREVO_SMTP_USERNAME` = `YOUR_EMAIL@smtp-brevo.com`
+- `BREVO_SMTP_USERNAME` = `YOUR_EMAILYOUR_EMAIL@smtp-brevo.com`
 - `BREVO_SMTP_PASSWORD` = `xsmtpsib-YOUR_SMTP_KEY_HERE`
 - `BREVO_FROM_EMAIL` = `alert@989.ninja`
 - `BREVO_FROM_NAME` = Varies by service
