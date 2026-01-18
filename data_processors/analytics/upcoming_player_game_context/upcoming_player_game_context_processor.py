@@ -2255,6 +2255,7 @@ class UpcomingPlayerGameContextProcessor(
         pace_differential = self._calculate_pace_differential(team_abbr, opponent_team_abbr, self.target_date)
         opponent_pace_last_10 = self._get_opponent_pace_last_10(opponent_team_abbr, self.target_date)
         opponent_ft_rate_allowed = self._get_opponent_ft_rate_allowed(opponent_team_abbr, self.target_date)
+        opponent_def_rating = self._get_opponent_def_rating_last_10(opponent_team_abbr, self.target_date)
 
         # Get has_prop_line from player_info (passed from extract)
         has_prop_line = player_info.get('has_prop_line', False)
@@ -2333,7 +2334,10 @@ class UpcomingPlayerGameContextProcessor(
             
             # Performance metrics
             **performance_metrics,
-            
+
+            # Override opponent metrics with calculated values
+            'opponent_def_rating_last_10': opponent_def_rating,
+
             # Forward-looking schedule (TODO: future)
             'next_game_days_rest': 0,
             'games_in_next_7_days': 0,
@@ -2790,6 +2794,42 @@ class UpcomingPlayerGameContextProcessor(
 
         except Exception as e:
             logger.error(f"Error getting FT rate allowed for {opponent_abbr}: {e}")
+            return 0.0
+
+    def _get_opponent_def_rating_last_10(self, opponent_abbr: str, game_date: date) -> float:
+        """
+        Get opponent's defensive rating over last 10 games.
+
+        Args:
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Average defensive rating over last 10 games, rounded to 2 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_games AS (
+                SELECT defensive_rating
+                FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
+                WHERE defending_team_abbr = '{opponent_abbr}'
+                  AND game_date < '{game_date}'
+                  AND game_date >= '2024-10-01'
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT ROUND(AVG(defensive_rating), 2) as avg_def_rating
+            FROM recent_games
+            """
+
+            result = self.bq_client.query(query).result()
+            for row in result:
+                return row.avg_def_rating if row.avg_def_rating is not None else 0.0
+
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error getting opponent def rating for {opponent_abbr}: {e}")
             return 0.0
 
     def _calculate_data_quality(self, historical_data: pd.DataFrame,

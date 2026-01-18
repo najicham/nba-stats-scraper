@@ -708,6 +708,56 @@ class TestPaceMetricsCalculation:
 
         assert result == 0.0
 
+    def test_get_opponent_def_rating_last_10_normal(self, processor):
+        """Test opponent defensive rating calculation with normal data."""
+        mock_row = Mock()
+        mock_row.avg_def_rating = 112.5
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_def_rating_last_10('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(112.5, abs=0.1)
+        assert processor.bq_client.query.called
+
+    def test_get_opponent_def_rating_last_10_elite_defense(self, processor):
+        """Test opponent defensive rating with elite defense."""
+        mock_row = Mock()
+        mock_row.avg_def_rating = 105.2
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_def_rating_last_10('BOS', date(2025, 1, 20))
+
+        assert result == pytest.approx(105.2, abs=0.1)
+
+    def test_get_opponent_def_rating_last_10_poor_defense(self, processor):
+        """Test opponent defensive rating with poor defense."""
+        mock_row = Mock()
+        mock_row.avg_def_rating = 120.8
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_def_rating_last_10('WAS', date(2025, 1, 20))
+
+        assert result == pytest.approx(120.8, abs=0.1)
+
+    def test_get_opponent_def_rating_last_10_no_data(self, processor):
+        """Test opponent defensive rating when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_opponent_def_rating_last_10('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_def_rating_last_10_query_error(self, processor):
+        """Test opponent defensive rating handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_opponent_def_rating_last_10('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
 
 # Run tests with: pytest test_unit.py -v
 # Run specific class: pytest test_unit.py::TestFatigueMetricsCalculation -v
