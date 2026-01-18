@@ -90,7 +90,12 @@ class BaseMLBPredictor(ABC):
     def _get_current_il_pitchers(self) -> set:
         """
         Get set of pitcher_lookup values currently on IL.
+
         Caches result based on config TTL to avoid repeated queries.
+        Uses retry logic with exponential backoff for BigQuery failures.
+
+        Safety: On BigQuery failure after retries, returns empty set (no skips)
+        rather than stale cache to avoid missing recently recovered pitchers.
 
         Returns:
             set: pitcher_lookup values on IL
@@ -107,32 +112,56 @@ class BaseMLBPredictor(ABC):
                 logger.debug(f"IL cache hit (age: {cache_age})")
                 return BaseMLBPredictor._il_cache
 
-        try:
-            client = self._get_bq_client()
-            query = """
-            SELECT DISTINCT REPLACE(player_lookup, '_', '') as player_lookup
-            FROM `nba-props-platform.mlb_raw.bdl_injuries`
-            WHERE snapshot_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-              AND is_pitcher = TRUE
-              AND injury_status IN ('10-Day-IL', '15-Day-IL', '60-Day-IL', 'Out')
-            """
-            result = client.query(query).result()
-            il_pitchers = {row.player_lookup for row in result}
+        # Query with retry logic (3 attempts with exponential backoff)
+        client = self._get_bq_client()
+        query = """
+        SELECT DISTINCT REPLACE(player_lookup, '_', '') as player_lookup
+        FROM `nba-props-platform.mlb_raw.bdl_injuries`
+        WHERE snapshot_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+          AND is_pitcher = TRUE
+          AND injury_status IN ('10-Day-IL', '15-Day-IL', '60-Day-IL', 'Out')
+        """
 
-            # Cache result with timestamp
-            BaseMLBPredictor._il_cache = il_pitchers
-            BaseMLBPredictor._il_cache_timestamp = now
+        max_retries = 3
+        base_delay = 1.0  # seconds
 
-            logger.info(f"Loaded {len(il_pitchers)} pitchers on IL (cache refreshed)")
-            return il_pitchers
+        for attempt in range(max_retries):
+            try:
+                result = client.query(query).result()
+                il_pitchers = {row.player_lookup for row in result}
 
-        except Exception as e:
-            logger.error(f"Failed to load IL status from BigQuery: {e}")
-            # Return stale cache if available (fail-safe)
-            if BaseMLBPredictor._il_cache is not None:
-                logger.warning("Returning stale IL cache after error")
-                return BaseMLBPredictor._il_cache
-            return set()
+                # Cache result with timestamp
+                BaseMLBPredictor._il_cache = il_pitchers
+                BaseMLBPredictor._il_cache_timestamp = now
+
+                logger.info(f"Loaded {len(il_pitchers)} pitchers on IL (cache refreshed)")
+                return il_pitchers
+
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    # Exponential backoff
+                    delay = base_delay * (2 ** attempt)
+                    logger.warning(f"IL query failed (attempt {attempt + 1}/{max_retries}), retrying in {delay}s: {e}")
+                    import time
+                    time.sleep(delay)
+                else:
+                    # Final attempt failed
+                    cache_age_hours = ((now - BaseMLBPredictor._il_cache_timestamp).total_seconds() / 3600
+                                      if BaseMLBPredictor._il_cache_timestamp else None)
+
+                    logger.error(
+                        f"IL query failed after {max_retries} attempts: {e}",
+                        extra={
+                            "error_type": type(e).__name__,
+                            "cache_age_hours": cache_age_hours,
+                            "fallback_action": "return_empty_set"
+                        }
+                    )
+
+                    # FAIL SAFE: Return empty set (no IL skips) rather than stale cache
+                    # This is safer - we'd rather NOT skip a pitcher than skip them
+                    # based on outdated IL status
+                    return set()
 
     def _calculate_confidence(self, features: Dict, feature_vector: np.ndarray = None) -> float:
         """
@@ -181,6 +210,83 @@ class BaseMLBPredictor(ABC):
             confidence -= 5
 
         return max(0, min(100, confidence))
+
+    def _calculate_feature_coverage(self, features: Dict, required_features: list) -> tuple:
+        """
+        Calculate feature coverage percentage for a prediction.
+
+        Feature coverage measures what percentage of expected features are present
+        (non-null). This helps detect low-data scenarios where predictions may be
+        unreliable due to missing features.
+
+        Args:
+            features: Feature dict from pitcher_game_summary
+            required_features: List of feature names expected by the model
+
+        Returns:
+            tuple: (coverage_pct, missing_features)
+                - coverage_pct: Percentage of features with non-null values (0-100)
+                - missing_features: List of feature names that are null/missing
+        """
+        if not required_features:
+            # If no required features list, can't calculate coverage
+            return 100.0, []
+
+        total_features = len(required_features)
+        present_features = 0
+        missing_features = []
+
+        for feature in required_features:
+            value = features.get(feature)
+            # Check if value is present and not null/None
+            if value is not None and not (isinstance(value, float) and np.isnan(value)):
+                present_features += 1
+            else:
+                missing_features.append(feature)
+
+        coverage_pct = (present_features / total_features) * 100 if total_features > 0 else 100.0
+
+        return coverage_pct, missing_features
+
+    def _adjust_confidence_for_coverage(self, confidence: float, coverage_pct: float) -> float:
+        """
+        Adjust confidence score based on feature coverage.
+
+        Low feature coverage indicates missing data, which reduces prediction reliability.
+        This method applies graduated confidence penalties based on coverage level.
+
+        Coverage thresholds and penalties:
+        - >= 90%: No reduction (full confidence)
+        - 80-89%: -5 confidence points
+        - 70-79%: -10 confidence points
+        - 60-69%: -15 confidence points
+        - < 60%: -25 confidence points (severe data gaps)
+
+        Args:
+            confidence: Base confidence score (0-100)
+            coverage_pct: Feature coverage percentage (0-100)
+
+        Returns:
+            float: Adjusted confidence score (0-100)
+        """
+        if coverage_pct >= 90:
+            # Excellent coverage - no reduction
+            penalty = 0
+        elif coverage_pct >= 80:
+            # Good coverage - minor reduction
+            penalty = 5
+        elif coverage_pct >= 70:
+            # Acceptable coverage - moderate reduction
+            penalty = 10
+        elif coverage_pct >= 60:
+            # Poor coverage - significant reduction
+            penalty = 15
+        else:
+            # Very poor coverage - severe reduction
+            penalty = 25
+
+        adjusted_confidence = confidence - penalty
+        return max(0, min(100, adjusted_confidence))
 
     def _generate_recommendation(
         self,
