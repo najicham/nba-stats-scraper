@@ -23,6 +23,12 @@ from typing import Dict, List, Optional, Any
 
 from google.cloud import bigquery
 
+# SESSION 97 FIX: Import distributed lock to prevent race conditions
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
+from predictions.worker.distributed_lock import DistributedLock, LockAcquisitionError
+
 logger = logging.getLogger(__name__)
 
 PROJECT_ID = 'nba-props-platform'
@@ -83,8 +89,11 @@ class SystemDailyPerformanceProcessor:
                 'records_written': 0
             }
 
-        # Write to BigQuery
-        written = self._write_summaries(summaries, target_date)
+        # Write to BigQuery (SESSION 97 FIX: with distributed lock and validation)
+        written = self._write_summaries(summaries, target_date, use_lock=True)
+
+        # SESSION 97 FIX: Check for duplicates after write
+        duplicate_count = self._check_for_duplicates(target_date) if written > 0 else 0
 
         logger.info(f"Wrote {written} system daily performance records for {target_date}")
 
@@ -92,7 +101,8 @@ class SystemDailyPerformanceProcessor:
             'status': 'success' if written > 0 else 'write_failed',
             'date': target_date.isoformat(),
             'systems': len(summaries),
-            'records_written': written
+            'records_written': written,
+            'duplicate_count': duplicate_count
         }
 
     def process_date_range(
@@ -267,9 +277,63 @@ class SystemDailyPerformanceProcessor:
             logger.error(f"Error computing daily summaries: {e}")
             return []
 
-    def _write_summaries(self, summaries: List[Dict], target_date: date) -> int:
+    def _check_for_duplicates(self, target_date: date) -> int:
         """
-        Write summaries to BigQuery with idempotency (DELETE + INSERT).
+        Check for duplicate business keys after writing (SESSION 97 FIX).
+
+        Business key: (game_date, system_id)
+
+        Args:
+            target_date: Date to check for duplicates
+
+        Returns:
+            Count of duplicate business keys (0 = success)
+        """
+        query = f"""
+        SELECT COUNT(*) as duplicate_count
+        FROM (
+            SELECT game_date, system_id, COUNT(*) as cnt
+            FROM `{DAILY_PERF_TABLE}`
+            WHERE game_date = '{target_date}'
+            GROUP BY game_date, system_id
+            HAVING COUNT(*) > 1
+        )
+        """
+
+        try:
+            result = list(self.bq_client.query(query).result(timeout=60))
+            duplicate_count = result[0].duplicate_count if result else 0
+
+            if duplicate_count > 0:
+                logger.error(f"⚠️  DUPLICATES DETECTED: {duplicate_count} duplicate business keys for {target_date}")
+
+                # Log details for first 20 duplicates
+                detail_query = f"""
+                SELECT game_date, system_id, COUNT(*) as count
+                FROM `{DAILY_PERF_TABLE}`
+                WHERE game_date = '{target_date}'
+                GROUP BY game_date, system_id
+                HAVING COUNT(*) > 1
+                ORDER BY count DESC
+                LIMIT 20
+                """
+                details = list(self.bq_client.query(detail_query).result(timeout=60))
+                for row in details:
+                    logger.error(f"  Duplicate: date={row.game_date}, system={row.system_id}, count={row.count}")
+            else:
+                logger.info(f"✅ Validation passed: No duplicates for {target_date}")
+
+            return duplicate_count
+
+        except Exception as e:
+            logger.error(f"Error checking for duplicates: {e}")
+            return -1  # Return -1 to indicate check failed (vs 0 = no duplicates)
+
+    def _write_with_validation(self, summaries: List[Dict], target_date: date) -> int:
+        """
+        Write summaries with post-write validation (SESSION 97 FIX Layer 2).
+
+        This method performs DELETE + INSERT + VALIDATE within a locked context.
 
         Args:
             summaries: List of summary dicts to write
@@ -282,7 +346,7 @@ class SystemDailyPerformanceProcessor:
             return 0
 
         try:
-            # IDEMPOTENCY: Delete existing records for this date
+            # STEP 1: Delete existing records for this date
             delete_query = f"""
             DELETE FROM `{DAILY_PERF_TABLE}`
             WHERE game_date = '{target_date}'
@@ -293,7 +357,7 @@ class SystemDailyPerformanceProcessor:
             if deleted > 0:
                 logger.info(f"  Deleted {deleted} existing records for {target_date}")
 
-            # Insert using batch loading
+            # STEP 2: Insert using batch loading
             table_ref = self.bq_client.get_table(DAILY_PERF_TABLE)
             job_config = bigquery.LoadJobConfig(
                 schema=table_ref.schema,
@@ -313,11 +377,71 @@ class SystemDailyPerformanceProcessor:
             if load_job.errors:
                 logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
 
-            return load_job.output_rows or len(summaries)
+            rows_written = load_job.output_rows or len(summaries)
+
+            # STEP 3: Validate no duplicates (SESSION 97 FIX)
+            duplicate_count = self._check_for_duplicates(target_date)
+            if duplicate_count > 0:
+                logger.warning(f"Duplicates detected after write: {duplicate_count}")
+
+            return rows_written
 
         except Exception as e:
             logger.error(f"Error writing summaries: {e}")
             return 0
+
+    def _write_summaries(self, summaries: List[Dict], target_date: date, use_lock: bool = True) -> int:
+        """
+        Write summaries to BigQuery with distributed locking (SESSION 97 FIX).
+
+        Uses 3-layer defense:
+        1. Distributed lock prevents concurrent writes for same date
+        2. Post-write validation detects duplicates
+        3. Caller can alert on duplicate_count > 0
+
+        Args:
+            summaries: List of summary dicts to write
+            target_date: Date being processed
+            use_lock: Use distributed lock (default True, can disable for testing)
+
+        Returns:
+            Number of records written
+        """
+        if not summaries:
+            return 0
+
+        game_date_str = target_date.isoformat()
+
+        # SESSION 97 FIX: Use distributed lock to prevent concurrent grading
+        if use_lock:
+            try:
+                lock = DistributedLock(project_id=self.project_id, lock_type="daily_performance")
+
+                with lock.acquire(
+                    game_date=game_date_str,
+                    operation_id=f"daily_performance_{game_date_str}",
+                    max_wait_seconds=300
+                ):
+                    # Lock acquired - run write inside locked context
+                    logger.info(f"Acquired daily_performance lock for {game_date_str}")
+                    return self._write_with_validation(summaries, target_date)
+
+            except LockAcquisitionError as e:
+                # Graceful degradation - log error and proceed WITHOUT lock
+                error_msg = (
+                    f"Failed to acquire daily_performance lock for {game_date_str}: {e}\n"
+                    f"This is a CRITICAL issue - another operation may be running concurrently.\n"
+                    f"Proceeding WITHOUT lock increases risk of duplicate rows."
+                )
+                logger.error(error_msg)
+                logger.warning(f"⚠️  Proceeding with daily performance write WITHOUT lock for {game_date_str}")
+
+                # Proceed without lock (defense in depth - validation will still catch duplicates)
+                return self._write_with_validation(summaries, target_date)
+        else:
+            # Lock disabled (testing only)
+            logger.warning(f"Distributed lock DISABLED for {game_date_str} (testing mode)")
+            return self._write_with_validation(summaries, target_date)
 
     def get_dates_with_accuracy_data(
         self,
