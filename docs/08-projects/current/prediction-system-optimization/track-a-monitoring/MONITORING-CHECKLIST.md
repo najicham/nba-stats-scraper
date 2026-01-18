@@ -1,9 +1,16 @@
 # XGBoost V1 V2 - 5-Day Monitoring Checklist
 
-**Start Date:** 2026-01-19 (Day 1 - First grading)
-**End Date:** 2026-01-23 (Day 5 - Decision point)
+**Start Date:** 2026-01-20 (Day 1 - When NBA games resume) ⚠️ UPDATED
+**End Date:** 2026-01-24 (Day 5 - Decision point)
 **Frequency:** Daily (5 minutes each morning)
 **Purpose:** Validate XGBoost V1 V2 production performance before Track B (Ensemble)
+
+**⚠️ Timeline Adjustment (Jan 18, 2026):**
+- Original plan: Start Jan 19
+- **Revised:** Start Jan 20+ (when NBA games resume)
+- **Reason:** No games scheduled Jan 18-19 (MLK Day weekend)
+- **Impact:** 1-day delay (not a problem - system validated as healthy)
+- **See:** `track-c-infrastructure/COORDINATOR-WATCH-2026-01-18.md` for details
 
 ---
 
@@ -25,11 +32,12 @@ Or run Query 1 directly:
 
 | Date | MAE | Win Rate | Volume | Status | Notes |
 |------|-----|----------|--------|--------|-------|
-| Jan 19 (D1) | ___ | ___% | ___ | ✅/⚠️/🚨 | ___ |
-| Jan 20 (D2) | ___ | ___% | ___ | ✅/⚠️/🚨 | ___ |
-| Jan 21 (D3) | ___ | ___% | ___ | ✅/⚠️/🚨 | ___ |
-| Jan 22 (D4) | ___ | ___% | ___ | ✅/⚠️/🚨 | ___ |
-| Jan 23 (D5) | ___ | ___% | ___ | ✅/⚠️/🚨 | ___ |
+| Jan 18-19 | N/A | N/A | 0 | ⏸️ | No games (MLK weekend) |
+| Jan 20 (D1) | ___ | ___% | ___ | ✅/⚠️/🚨 | First monitoring day |
+| Jan 21 (D2) | ___ | ___% | ___ | ✅/⚠️/🚨 | ___ |
+| Jan 22 (D3) | ___ | ___% | ___ | ✅/⚠️/🚨 | ___ |
+| Jan 23 (D4) | ___ | ___% | ___ | ✅/⚠️/🚨 | ___ |
+| Jan 24 (D5) | ___ | ___% | ___ | ✅/⚠️/🚨 | Decision day |
 
 **Step 3: Check Alert Flags (1 min)**
 - 🚨 HIGH MAE (> 4.2) → Investigate immediately
@@ -49,7 +57,7 @@ Or run Query 1 directly:
 
 ## 📊 Success Criteria
 
-### Day 1 (Jan 19) - First Grading ✅
+### Day 1 (Jan 20) - First Grading ✅ (Updated date)
 **Must Have:**
 - [x] XGBoost V1 predictions graded successfully
 - [ ] MAE ≤ 5.0 (initial production data)
@@ -69,7 +77,7 @@ Or run Query 1 directly:
 
 ---
 
-### Days 2-3 (Jan 20-21) - Stabilization
+### Days 2-3 (Jan 21-22) - Stabilization (Updated dates)
 **Must Have:**
 - [ ] MAE trend stable (not increasing daily)
 - [ ] Win rate ≥ 48%
@@ -89,7 +97,7 @@ Or run Query 1 directly:
 
 ---
 
-### Days 4-5 (Jan 22-23) - Decision Point
+### Days 4-5 (Jan 23-24) - Decision Point (Updated dates)
 **Must Have:**
 - [ ] 5-day average MAE ≤ 4.5
 - [ ] 5-day average win rate ≥ 50%
