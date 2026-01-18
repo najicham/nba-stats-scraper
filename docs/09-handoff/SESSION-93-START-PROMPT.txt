@@ -1,0 +1,223 @@
+SESSION 93 START PROMPT
+======================
+
+CONTEXT: Session 92 deployed distributed lock fix for worker duplicate-write bug. Need to validate fix is working and monitor for any issues.
+
+PREVIOUS SESSION (92)
+---------------------
+✅ Fixed worker duplicate-write bug (root cause: race condition in concurrent consolidations)
+✅ Implemented distributed locking using Firestore (ConsolidationLock class)
+✅ Added post-consolidation validation to detect duplicates
+✅ Deployed to production: prediction-worker-00066-sm8
+✅ Created comprehensive documentation
+
+CURRENT STATUS
+--------------
+
+🚀 DEPLOYED (Ready for Validation):
+- Distributed lock mechanism active
+- Post-consolidation validation enabled
+- Lock scoped to game_date (prevents ALL concurrent consolidations)
+- 5-minute timeout, auto-cleanup via Firestore TTL
+
+⏳ PENDING VALIDATION:
+- Verify no duplicates in first prediction batch
+- Confirm lock acquisition works correctly
+- Check post-validation passes
+- Monitor consolidation performance
+
+📊 KEY FILES:
+- Fix: predictions/worker/distributed_lock.py (NEW)
+- Fix: predictions/worker/batch_staging_writer.py (UPDATED)
+- Docs: docs/08-projects/current/session-92-duplicate-write-fix/
+- Handoff: docs/09-handoff/SESSION-92-COMPLETE.md
+
+IMMEDIATE TASKS (This Session)
+-------------------------------
+
+OPTION A: Validate Duplicate-Write Fix (1-2 hours) [RECOMMENDED]
+Priority: HIGH
+- Check for duplicates after first prediction batch
+- Monitor consolidation logs for lock acquisition
+- Verify post-consolidation validation passes
+- Confirm no lock acquisition failures
+- Test concurrent consolidation scenario (if possible)
+
+Commands:
+```bash
+# Check for duplicates in today's data
+bq query --use_legacy_sql=false "
+  SELECT COUNT(*) as duplicate_business_keys
+  FROM (
+    SELECT game_id, player_lookup, system_id, current_points_line, COUNT(*) as cnt
+    FROM \`nba_predictions.player_prop_predictions\`
+    WHERE game_date = CURRENT_DATE
+    GROUP BY 1,2,3,4
+    HAVING cnt > 1
+  )
+"
+
+# Monitor consolidation logs
+gcloud logging read "resource.type=cloud_run_revision AND \
+  resource.labels.service_name=prediction-coordinator AND \
+  (textPayload=~'Acquiring consolidation lock' OR \
+   textPayload=~'Post-consolidation validation')" \
+  --project=nba-props-platform \
+  --limit=20
+
+# Run daily validation
+./bin/validation/daily_data_quality_check.sh
+```
+
+OPTION B: Fix prediction_accuracy Table (1-2 hours)
+Priority: MEDIUM (from Session 91)
+- De-duplicate 214 rows in prediction_accuracy table
+- Fix confidence normalization
+- Recalculate accurate hit rates
+- See: docs/08-projects/current/phase-4-grading-enhancements/INVESTIGATION-TODO.md
+
+OPTION C: Continue Phase 4 Planning (3+ hours)
+Priority: MEDIUM
+- Start automated recalibration pipeline (Priority 1)
+- Build player blacklist system (LeBron, Donovan, high-variance players)
+- Implement variance detection
+- See: docs/08-projects/current/phase-4-grading-enhancements/PHASE-4-PLANNING.md
+
+OPTION D: Clean Up Orphaned Resources (30 minutes)
+Priority: LOW
+- Run staging table cleanup script (50 orphaned tables from Nov 19)
+- Verify cleanup works correctly
+- Schedule daily cleanup
+
+Commands:
+```bash
+./bin/cleanup/cleanup_old_staging_tables.sh --dry-run
+./bin/cleanup/cleanup_old_staging_tables.sh  # Run for real
+```
+
+RECOMMENDED START
+-----------------
+
+Option A is HIGHLY RECOMMENDED:
+1. First session after deployment MUST validate the fix works
+2. Catch any issues early before they compound
+3. Build confidence in the distributed lock mechanism
+4. Confirm performance impact is acceptable
+
+What to say to start:
+"Let's validate the duplicate-write fix deployed in Session 92. Check for duplicates in today's predictions and monitor the consolidation logs to confirm the distributed lock is working correctly."
+
+Or just:
+"Read Session 92 complete summary and validate the duplicate-write fix is working."
+
+EXPECTED OUTCOMES
+-----------------
+
+Success Criteria:
+✅ 0 duplicates in today's predictions
+✅ Lock acquisition logs show expected pattern
+✅ Post-consolidation validation passes
+✅ Consolidation time < 60 seconds
+✅ No lock acquisition failures
+
+If Issues Found:
+- Investigate logs immediately
+- Check Firestore locks collection
+- Review staging tables if validation fails
+- Consider rollback if critical issues
+
+DOCUMENTATION LOCATION
+----------------------
+
+All Session 92 work:
+📁 /docs/08-projects/current/session-92-duplicate-write-fix/
+📁 /docs/09-handoff/SESSION-92-COMPLETE.md
+
+Key Documents:
+1. SESSION-92-DUPLICATE-WRITE-FIX.md - Complete technical analysis
+2. DEPLOYMENT-GUIDE.md - Deployment and troubleshooting
+3. SESSION-92-COMPLETE.md - Session summary
+
+Code:
+1. predictions/worker/distributed_lock.py (NEW)
+2. predictions/worker/batch_staging_writer.py (UPDATED)
+
+QUICK REFERENCE
+---------------
+
+Check Duplicates:
+```bash
+bq query --use_legacy_sql=false '
+  SELECT game_date, COUNT(*) as dupes
+  FROM (
+    SELECT game_id, player_lookup, system_id, current_points_line, game_date, COUNT(*) as cnt
+    FROM `nba_predictions.player_prop_predictions`
+    WHERE game_date >= CURRENT_DATE - 1
+    GROUP BY 1,2,3,4,5
+    HAVING cnt > 1
+  )
+  GROUP BY game_date
+'
+```
+
+Monitor Logs:
+```bash
+gcloud logging read "resource.type=cloud_run_revision AND \
+  resource.labels.service_name=prediction-coordinator AND \
+  textPayload=~'consolidation'" \
+  --project=nba-props-platform \
+  --limit=50 \
+  --format=json
+```
+
+Check Firestore Locks:
+```bash
+gcloud alpha firestore documents list \
+  --collection-path=consolidation_locks \
+  --project=nba-props-platform
+```
+
+IMPORTANT NOTES
+---------------
+
+1. FIRST VALIDATION IS CRITICAL
+   - This is first session after deploying the duplicate-write fix
+   - Must validate fix works before assuming it's successful
+   - Catch any issues early
+
+2. LOCK MECHANISM IS NEW
+   - Never used distributed locking in this codebase before
+   - Monitor for any unexpected behavior
+   - Check Firestore costs (should be negligible)
+
+3. WAITING FOR NEW DATA
+   - Need new predictions to validate fix
+   - If no predictions today, check tomorrow
+   - Don't validate with old data from before fix
+
+4. PERFORMANCE MONITORING
+   - Consolidation time should remain < 60s
+   - Lock overhead should be < 100ms
+   - No significant cost increase
+
+WHAT TO SAY TO START
+---------------------
+
+For Option A (Validation):
+"Let's validate the Session 92 duplicate-write fix. Check if any duplicates occurred in today's predictions and verify the distributed lock is working correctly by examining the consolidation logs."
+
+For Option B (prediction_accuracy fix):
+"Let's fix the prediction_accuracy table issue identified in Session 91. De-duplicate the 214 rows and fix the confidence normalization."
+
+For Option C (Phase 4):
+"Let's continue Phase 4 work. Start planning the automated recalibration pipeline (Priority 1) and player blacklist system."
+
+For Option D (Cleanup):
+"Let's clean up the 50 orphaned staging tables from November. Run the cleanup script and verify it works correctly."
+
+Or just say:
+"Read the Session 93 start prompt and recommend what we should work on next."
+
+---
+
+Ready to validate the fix! 🚀

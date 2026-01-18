@@ -158,7 +158,7 @@ def check_scheduler_health(request):
 # Set Slack webhook (get URL from Slack workspace settings)
 gcloud functions update nba-monitoring-alerts \
   --region=us-west2 \
-  --set-env-vars SLACK_WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL" \
+  --set-env-vars SLACK_WEBHOOK_URL="https://hooks.slack.com/services/YOUR_WORKSPACE/YOUR_CHANNEL/YOUR_WEBHOOK_TOKEN" \
   --project=nba-props-platform
 ```
 

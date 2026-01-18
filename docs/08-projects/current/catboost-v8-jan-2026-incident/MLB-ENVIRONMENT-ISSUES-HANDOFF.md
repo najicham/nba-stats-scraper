@@ -98,7 +98,7 @@ ENV_VARS="${ENV_VARS},MLB_ENSEMBLE_V1_6_WEIGHT=0.5"
 if [[ -n "${BREVO_SMTP_PASSWORD:-}" ]]; then
     ENV_VARS="${ENV_VARS},BREVO_SMTP_HOST=smtp-relay.brevo.com"
     ENV_VARS="${ENV_VARS},BREVO_SMTP_PORT=587"
-    ENV_VARS="${ENV_VARS},BREVO_SMTP_USERNAME=YOUR_EMAIL@smtp-brevo.com"
+    ENV_VARS="${ENV_VARS},BREVO_SMTP_USERNAME=98104dYOUR_EMAIL@smtp-brevo.com"
     ENV_VARS="${ENV_VARS},BREVO_SMTP_PASSWORD=${BREVO_SMTP_PASSWORD}"
     ENV_VARS="${ENV_VARS},BREVO_FROM_EMAIL=alert@989.ninja"
     ENV_VARS="${ENV_VARS},BREVO_FROM_NAME=MLB Prediction System"
@@ -353,7 +353,7 @@ gcloud run services update mlb-phase1-scrapers \
   "COMMIT_SHA": "6eabcf9",
   "BREVO_SMTP_HOST": "smtp-relay.brevo.com",
   "BREVO_SMTP_PORT": "587",
-  "BREVO_SMTP_USERNAME": "YOUR_EMAIL@smtp-brevo.com",
+  "BREVO_SMTP_USERNAME": "98104dYOUR_EMAIL@smtp-brevo.com",
   "BREVO_SMTP_PASSWORD": "xsmtpsib-...",
   "BREVO_FROM_EMAIL": "alert@989.ninja",
   "BREVO_FROM_NAME": "PK",
@@ -381,7 +381,7 @@ gcloud run services update mlb-phase3-analytics-processors \
   --update-env-vars="\
 BREVO_SMTP_HOST=smtp-relay.brevo.com,\
 BREVO_SMTP_PORT=587,\
-BREVO_SMTP_USERNAME=YOUR_EMAIL@smtp-brevo.com,\
+BREVO_SMTP_USERNAME=98104dYOUR_EMAIL@smtp-brevo.com,\
 BREVO_SMTP_PASSWORD=xsmtpsib-YOUR_SMTP_KEY_HERE,\
 BREVO_FROM_EMAIL=alert@989.ninja,\
 BREVO_FROM_NAME=MLB Analytics,\
@@ -403,7 +403,7 @@ Add email configuration section (see NBA script for reference):
 if [[ -n "${BREVO_SMTP_PASSWORD:-}" && -n "${EMAIL_ALERTS_TO:-}" ]]; then
     ENV_VARS="${ENV_VARS},BREVO_SMTP_HOST=smtp-relay.brevo.com"
     ENV_VARS="${ENV_VARS},BREVO_SMTP_PORT=587"
-    ENV_VARS="${ENV_VARS},BREVO_SMTP_USERNAME=YOUR_EMAIL@smtp-brevo.com"
+    ENV_VARS="${ENV_VARS},BREVO_SMTP_USERNAME=98104dYOUR_EMAIL@smtp-brevo.com"
     ENV_VARS="${ENV_VARS},BREVO_SMTP_PASSWORD=${BREVO_SMTP_PASSWORD}"
     ENV_VARS="${ENV_VARS},BREVO_FROM_EMAIL=alert@989.ninja"
     ENV_VARS="${ENV_VARS},BREVO_FROM_NAME=MLB Analytics"

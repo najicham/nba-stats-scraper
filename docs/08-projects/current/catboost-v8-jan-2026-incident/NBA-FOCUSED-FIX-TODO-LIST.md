@@ -89,7 +89,7 @@ WHERE system_id = 'catboost_v8'
 gcloud run services update nba-monitoring-alerts \
   --region=us-west2 \
   --project=nba-props-platform \
-  --update-env-vars=SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR_WORKSPACE/YOUR_CHANNEL/YOUR_TOKEN
+  --update-env-vars=SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR_WORKSPACE/YOUR_CHANNEL/YOUR_TOKEN_WORKSPACE/YOUR_CHANNEL/YOUR_WEBHOOK_TOKENbpkyh2Z8D9TLk50v1CHB8u
 ```
 
 **Verify**:

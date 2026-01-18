@@ -34,7 +34,7 @@
 7. Click **"Allow"**
 8. **Copy the Webhook URL** - it looks like:
    ```
-   https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXX
+   https://hooks.slack.com/services/YOUR_WORKSPACE/YOUR_CHANNEL/YOUR_TOKEN_WORKSPACE/YOUR_CHANNEL/YOUR_WEBHOOK_TOKEN
    ```
 
 ### Option B: Create New Slack App (Recommended if starting fresh)
@@ -54,7 +54,7 @@
 10. Click **"Allow"**
 11. **Copy the Webhook URL** - it looks like:
     ```
-    https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXX
+    https://hooks.slack.com/services/YOUR_WORKSPACE/YOUR_CHANNEL/YOUR_TOKEN_WORKSPACE/YOUR_CHANNEL/YOUR_WEBHOOK_TOKEN
     ```
 
 **⚠️ Keep this URL secure!** It allows posting to your Slack channel.
@@ -67,7 +67,7 @@ Before deploying, test that it works:
 
 ```bash
 # Replace with your actual webhook URL
-WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+WEBHOOK_URL="https://hooks.slack.com/services/YOUR_WORKSPACE/YOUR_CHANNEL/YOUR_TOKEN_WORKSPACE/YOUR_CHANNEL/YOUR_WEBHOOK_TOKEN"
 
 # Send test message
 curl -X POST -H 'Content-type: application/json' \
@@ -83,7 +83,7 @@ curl -X POST -H 'Content-type: application/json' \
 
 ```bash
 # Set your webhook URL
-WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+WEBHOOK_URL="https://hooks.slack.com/services/YOUR_WORKSPACE/YOUR_CHANNEL/YOUR_TOKEN_WORKSPACE/YOUR_CHANNEL/YOUR_WEBHOOK_TOKEN"
 
 # Store it securely in Secret Manager
 echo "$WEBHOOK_URL" | gcloud secrets create nba-grading-slack-webhook \
@@ -121,7 +121,7 @@ echo "✅ Service account can now read the webhook URL"
 
 Your webhook URL should look exactly like this:
 ```
-https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXX
+https://hooks.slack.com/services/YOUR_WORKSPACE/YOUR_CHANNEL/YOUR_TOKEN_WORKSPACE/YOUR_CHANNEL/YOUR_WEBHOOK_TOKEN
                                  ^          ^          ^
                                  |          |          |
                           Workspace ID   Channel ID   Secret Token
@@ -129,7 +129,7 @@ https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXX
 
 **Example** (fake):
 ```
-https://hooks.slack.com/services/YOUR_WORKSPACE/YOUR_CHANNEL/YOUR_TOKEN
+https://hooks.slack.com/services/YOUR_WORKSPACE/YOUR_CHANNEL/YOUR_TOKEN_WORKSPACE/YOUR_CHANNEL/YOUR_WEBHOOK_TOKENa1b2c3d4e5f6g7h8i9j0k1l2
 ```
 
 ---
@@ -231,7 +231,7 @@ To notify specific people:
 ## Troubleshooting
 
 ### Webhook URL not working
-- **Check format**: Must start with `https://hooks.slack.com/services/`
+- **Check format**: Must start with `https://hooks.slack.com/services/YOUR_WORKSPACE/YOUR_CHANNEL/YOUR_TOKEN_WORKSPACE/YOUR_CHANNEL/YOUR_WEBHOOK_TOKEN`
 - **Re-generate**: Delete old webhook, create new one
 - **Test with curl**: See Step 3 above
 

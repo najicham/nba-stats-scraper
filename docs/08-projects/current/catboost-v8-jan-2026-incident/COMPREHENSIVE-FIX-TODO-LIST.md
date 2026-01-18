@@ -52,7 +52,7 @@ gcloud run services describe mlb-prediction-worker \
 gcloud run services update nba-monitoring-alerts \
   --region=us-west2 \
   --project=nba-props-platform \
-  --update-env-vars=SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR_WORKSPACE/YOUR_CHANNEL/YOUR_TOKEN
+  --update-env-vars=SLACK_WEBHOOK_URL=https://hooks.slack.com/services/YOUR_WORKSPACE/YOUR_CHANNEL/YOUR_TOKEN_WORKSPACE/YOUR_CHANNEL/YOUR_WEBHOOK_TOKENbpkyh2Z8D9TLk50v1CHB8u
 
 # Verify
 gcloud run services describe nba-monitoring-alerts \
@@ -415,7 +415,7 @@ gcloud run services update mlb-phase3-analytics-processors \
   --update-env-vars="\
 BREVO_SMTP_HOST=smtp-relay.brevo.com,\
 BREVO_SMTP_PORT=587,\
-BREVO_SMTP_USERNAME=YOUR_EMAIL@smtp-brevo.com,\
+BREVO_SMTP_USERNAME=98104dYOUR_EMAIL@smtp-brevo.com,\
 BREVO_SMTP_PASSWORD=xsmtpsib-...,\
 BREVO_FROM_EMAIL=alert@989.ninja,\
 BREVO_FROM_NAME=MLB Analytics,\
