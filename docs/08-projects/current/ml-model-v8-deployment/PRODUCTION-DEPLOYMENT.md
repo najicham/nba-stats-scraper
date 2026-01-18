@@ -172,8 +172,63 @@ This is separate from production predictions and useful for validating new model
 
 ---
 
+---
+
+## Deployment History
+
+### XGBoost V1 (Real Model) - V2 Deployment
+**Date**: January 18, 2026
+**Status**: ✅ DEPLOYED
+
+Replaced initial XGBoost V1 with production model trained on full backfill dataset.
+
+| Metric | V2 (New) | V1 (Old) | Improvement |
+|--------|----------|----------|-------------|
+| MAE | 3.726 | 3.98 | 6.4% better |
+| Training Samples | 101,692 | 115,333 | Correct historical data |
+| Date Range | 2021-2025 | 2021-2025 | Same |
+| Features | 33 | 33 | Same |
+
+**What Changed:**
+- Retrained on complete NBA backfill (739 dates, 104,842 records)
+- Better validation performance (3.726 vs 3.98 MAE)
+- Only 9.6% behind CatBoost V8 (3.40 MAE)
+
+**Configuration:**
+```bash
+# Updated environment variable in Cloud Run
+XGBOOST_V1_MODEL_PATH=gs://nba-scraped-data/ml-models/xgboost_v1_33features_20260118_103153.json
+```
+
+**Training Command:**
+```bash
+PYTHONPATH=. python ml_models/nba/train_xgboost_v1.py \
+  --start-date 2021-11-01 \
+  --end-date 2025-04-13 \
+  --upload-gcs
+```
+
+**Source:** Session 88-89 backfill completion
+
+---
+
+### CatBoost V8 (Initial Production)
+**Date**: January 9, 2026
+**Status**: ✅ DEPLOYED (Still Active)
+
+CatBoost V8 replaced the mock XGBoostV1 in the Phase 5 prediction worker.
+
+| Metric | V8 (New) | Mock (Old) | Improvement |
+|--------|----------|------------|-------------|
+| MAE | 3.40 | 4.80 | 29% better |
+| Betting Accuracy | 71.6% | ~60% | +11.6% |
+| Features | 33 | 25 | +8 features |
+
+---
+
 ## Related Documentation
 
 - [MODEL-SUMMARY.md](./MODEL-SUMMARY.md) - V8 architecture and features
+- [XGBOOST-V1-PERFORMANCE-GUIDE.md](./XGBOOST-V1-PERFORMANCE-GUIDE.md) - XGBoost V1 tracking
 - [ML-EXPERIMENT-ARCHITECTURE.md](./ML-EXPERIMENT-ARCHITECTURE.md) - Multi-model comparison pipeline
 - [SHADOW-MODE-GUIDE.md](./SHADOW-MODE-GUIDE.md) - Shadow mode for testing
