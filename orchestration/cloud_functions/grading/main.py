@@ -381,6 +381,45 @@ def run_system_daily_performance(target_date: str) -> Dict:
     return result
 
 
+def send_duplicate_alert(target_date: str, duplicate_count: int):
+    """
+    Send Slack alert when duplicates are detected (SESSION 94 FIX).
+
+    Args:
+        target_date: Date that was graded
+        duplicate_count: Number of duplicate business keys found
+    """
+    import requests
+    from google.cloud import secretmanager
+
+    try:
+        # Get Slack webhook from Secret Manager
+        client = secretmanager.SecretManagerServiceClient()
+        secret_name = f"projects/{PROJECT_ID}/secrets/slack-webhook-url/versions/latest"
+        response = client.access_secret_version(request={"name": secret_name})
+        webhook_url = response.payload.data.decode("UTF-8")
+
+        # Send alert
+        message = {
+            "text": f"🔴 *Grading Duplicate Alert*\n\n"
+                   f"*Date:* {target_date}\n"
+                   f"*Duplicates:* {duplicate_count} business keys\n"
+                   f"*Status:* Grading completed but with duplicates\n"
+                   f"*Action Required:* Investigate and run deduplication\n"
+                   f"*See:* SESSION-94-FIX-DESIGN.md"
+        }
+
+        resp = requests.post(webhook_url, json=message, timeout=10)
+        if resp.status_code == 200:
+            logger.info(f"Sent duplicate alert for {target_date}")
+        else:
+            logger.warning(f"Slack alert failed: {resp.status_code} - {resp.text}")
+
+    except Exception as e:
+        logger.warning(f"Failed to send duplicate alert: {e}")
+        # Don't fail grading if alert fails
+
+
 @functions_framework.cloud_event
 def main(cloud_event):
     """
@@ -417,6 +456,13 @@ def main(cloud_event):
     try:
         # Step 1: Run prediction accuracy grading
         grading_result = run_prediction_accuracy_grading(target_date)
+
+        # SESSION 94 FIX: Check for duplicates and alert if found
+        if grading_result.get('status') == 'success':
+            duplicate_count = grading_result.get('duplicate_count', 0)
+            if duplicate_count > 0:
+                logger.warning(f"Duplicates detected for {target_date}: {duplicate_count} business keys")
+                send_duplicate_alert(target_date, duplicate_count)
 
         # Step 2: Run system daily performance aggregation (if enabled)
         if run_aggregation and grading_result.get('status') == 'success':

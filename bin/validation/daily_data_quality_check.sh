@@ -7,6 +7,9 @@
 # 3. Prediction volume anomalies
 # 4. Grading completion status
 # 5. Confidence score normalization (catboost_v8)
+# 6. Data freshness
+# 7. System coverage
+# 8. Grading accuracy table duplicates (SESSION 94 FIX)
 #
 # Usage: ./bin/validation/daily_data_quality_check.sh [--alert-slack]
 #
@@ -236,6 +239,37 @@ elif [ "$ACTIVE_SYSTEMS" -lt "$EXPECTED_SYSTEMS" ]; then
     WARNINGS=$((WARNINGS + 1))
 else
     echo "✅ All $ACTIVE_SYSTEMS prediction systems active"
+fi
+
+# Check 8: Grading accuracy table duplicates (SESSION 94 FIX)
+echo ""
+echo "Check 8: Grading accuracy table duplicate business keys (last 7 days)..."
+ACCURACY_DUPES=$(bq query --project_id=$PROJECT_ID --use_legacy_sql=false --format=csv '
+  SELECT COUNT(*) as duplicate_count
+  FROM (
+    SELECT
+      player_lookup,
+      game_id,
+      system_id,
+      line_value,
+      COUNT(*) as cnt
+    FROM `nba_predictions.prediction_accuracy`
+    WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+    GROUP BY 1,2,3,4
+    HAVING cnt > 1
+  )
+' 2>/dev/null | tail -1)
+
+if [ -z "$ACCURACY_DUPES" ]; then
+    echo "⚠️  WARNING: Failed to query accuracy table duplicates"
+    WARNINGS=$((WARNINGS + 1))
+elif [ "$ACCURACY_DUPES" -gt 0 ]; then
+    echo "❌ CRITICAL: Found $ACCURACY_DUPES duplicate business keys in prediction_accuracy table (last 7 days)"
+    echo "   Action: Check SESSION-94-FIX-DESIGN.md and run deduplication"
+    send_slack_alert "🔴 CRITICAL: Found $ACCURACY_DUPES duplicate grading records in last 7 days! See SESSION-94-FIX-DESIGN.md" "error"
+    FAILURES=$((FAILURES + 1))
+else
+    echo "✅ No duplicate business keys in grading accuracy table (last 7 days)"
 fi
 
 # Summary

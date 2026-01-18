@@ -1,33 +1,40 @@
 # predictions/worker/distributed_lock.py
 
 """
-Distributed Lock for Preventing Concurrent Consolidations
+Distributed Lock for Preventing Concurrent Operations
 
 Uses Firestore to implement a distributed lock that prevents race conditions
-in concurrent consolidation operations. This prevents the duplicate-write bug
-where two MERGE operations both INSERT the same business key with different
-prediction_ids.
+in concurrent operations. This prevents duplicate-write bugs where two operations
+both INSERT the same business key.
 
-Root Cause:
-- When two consolidations run concurrently for overlapping data (same game_date)
+Supported Lock Types:
+- consolidation: Prevents concurrent prediction consolidations
+- grading: Prevents concurrent grading operations
+
+Root Cause of Duplicates:
+- When two operations run concurrently for same game_date
 - Both check main table for existing rows with same business key
-- Both find "NOT MATCHED" (before either commits)
-- Both INSERT → duplicate rows with different prediction_ids
+- Both find "NOT MATCHED" or empty table (before either commits)
+- Both INSERT → duplicate rows with different IDs
 
 Fix:
 - Use Firestore document with TTL as distributed lock
-- Lock key is game_date (prevents concurrent consolidations for same date)
+- Lock key is game_date (prevents concurrent operations for same date)
 - 5-minute timeout to prevent deadlocks from crashed processes
 - Automatic cleanup via Firestore TTL
 
 Usage:
-    from distributed_lock import ConsolidationLock
+    from distributed_lock import DistributedLock
 
-    lock = ConsolidationLock(project_id=PROJECT_ID)
-
-    with lock.acquire(game_date="2026-01-17", batch_id="batch123"):
-        # Only one consolidation can run at a time for this game_date
+    # For consolidation
+    lock = DistributedLock(project_id=PROJECT_ID, lock_type="consolidation")
+    with lock.acquire(game_date="2026-01-17", operation_id="batch123"):
         result = consolidator.consolidate_batch(batch_id, game_date)
+
+    # For grading
+    lock = DistributedLock(project_id=PROJECT_ID, lock_type="grading")
+    with lock.acquire(game_date="2026-01-17", operation_id="grading"):
+        result = processor.process_date(game_date)
 """
 
 import logging
@@ -42,7 +49,6 @@ from google.api_core import exceptions as gcp_exceptions
 logger = logging.getLogger(__name__)
 
 # Lock configuration
-LOCK_COLLECTION = "consolidation_locks"
 LOCK_TIMEOUT_SECONDS = 300  # 5 minutes - prevents deadlocks from crashed processes
 MAX_ACQUIRE_ATTEMPTS = 60  # Max retries (60 * 5s = 5 minutes total wait)
 RETRY_DELAY_SECONDS = 5  # Wait between lock acquisition attempts
@@ -53,53 +59,63 @@ class LockAcquisitionError(Exception):
     pass
 
 
-class ConsolidationLock:
+class DistributedLock:
     """
-    Distributed lock for preventing concurrent consolidations.
+    Distributed lock for preventing concurrent operations.
 
-    Uses Firestore to ensure only one consolidation runs at a time
+    Uses Firestore to ensure only one operation runs at a time
     for a given game_date. This prevents race conditions that cause
-    duplicate rows with different prediction_ids.
+    duplicate rows.
 
-    The lock is scoped to game_date (not batch_id) because multiple
-    batches can target the same game_date (e.g., retry + scheduled run).
+    Supports multiple lock types:
+    - "consolidation": For prediction consolidation operations
+    - "grading": For grading operations
+
+    The lock is scoped to game_date (not operation_id) because multiple
+    operations can target the same game_date (e.g., retry + scheduled run).
 
     Features:
     - Automatic timeout (5 minutes) to prevent deadlocks
     - Retry logic with backoff
     - Context manager for automatic release
     - Firestore TTL for cleanup of stale locks
+    - Separate collections per lock type
     """
 
-    def __init__(self, project_id: str):
+    def __init__(self, project_id: str, lock_type: str = "consolidation"):
         """
         Initialize the distributed lock.
 
         Args:
             project_id: GCP project ID
+            lock_type: Type of lock ("consolidation" or "grading")
         """
         self.project_id = project_id
+        self.lock_type = lock_type
+        self.collection_name = f"{lock_type}_locks"
         self.db = firestore.Client(project=project_id)
         self.lock_doc_ref: Optional[firestore.DocumentReference] = None
+
+        logger.info(f"Initialized DistributedLock (type={lock_type}, collection={self.collection_name})")
 
     def _generate_lock_key(self, game_date: str) -> str:
         """
         Generate a unique lock key for a game_date.
 
-        Lock is scoped to game_date (not batch_id) because:
-        - Multiple batches can target the same game_date
-        - We need to prevent ALL concurrent consolidations for a date
-        - Race condition occurs when MERGING to same date's data
+        Lock is scoped to game_date (not operation_id) because:
+        - Multiple operations can target the same game_date
+        - We need to prevent ALL concurrent operations for a date
+        - Race condition occurs when writing to same date's data
 
         Args:
             game_date: Game date in YYYY-MM-DD format
 
         Returns:
-            Lock key string
+            Lock key string (e.g., "consolidation_2026-01-17" or "grading_2026-01-17")
         """
-        return f"consolidation_{game_date}"
+        return f"{self.lock_type}_{game_date}"
 
-    def _try_acquire(self, lock_key: str, batch_id: str, holder_id: str) -> bool:
+    def _try_acquire(self, lock_key: str, operation_id: str, holder_id: str) -> bool:
         """
         Attempt to acquire the lock (single try).
 
@@ -107,13 +123,13 @@ class ConsolidationLock:
 
         Args:
             lock_key: Unique lock identifier
-            batch_id: Batch identifier (for tracking)
+            operation_id: Operation identifier (for tracking)
             holder_id: Unique identifier for this lock holder
 
         Returns:
             True if lock acquired, False if already held
         """
-        lock_ref = self.db.collection(LOCK_COLLECTION).document(lock_key)
+        lock_ref = self.db.collection(self.collection_name).document(lock_key)
 
         @firestore.transactional
         def acquire_in_transaction(transaction):
@@ -127,23 +143,24 @@ class ConsolidationLock:
 
                 if expires_at and expires_at.timestamp() > time.time():
                     # Lock still valid and held by someone else
-                    current_holder = lock_data.get('batch_id', 'unknown')
+                    current_holder = lock_data.get('operation_id', 'unknown')
                     logger.info(
-                        f"Lock {lock_key} is held by batch {current_holder}, "
+                        f"Lock {lock_key} is held by operation {current_holder}, "
                         f"expires in {int(expires_at.timestamp() - time.time())}s"
                     )
                     return False
                 else:
                     # Lock expired - can acquire
                     logger.warning(
-                        f"Lock {lock_key} expired (held by {lock_data.get('batch_id')}), "
-                        f"acquiring for batch {batch_id}"
+                        f"Lock {lock_key} expired (held by {lock_data.get('operation_id')}), "
+                        f"acquiring for operation {operation_id}"
                     )
 
             # Lock doesn't exist or expired - acquire it
             lock_data = {
-                'batch_id': batch_id,
+                'operation_id': operation_id,
                 'holder_id': holder_id,
+                'lock_type': self.lock_type,
                 'acquired_at': firestore.SERVER_TIMESTAMP,
                 'expires_at': datetime.utcnow() + timedelta(seconds=LOCK_TIMEOUT_SECONDS),
                 'lock_key': lock_key
@@ -158,8 +175,8 @@ class ConsolidationLock:
             if acquired:
                 self.lock_doc_ref = lock_ref
                 logger.info(
-                    f"✅ Acquired consolidation lock: {lock_key} "
-                    f"(batch={batch_id}, timeout={LOCK_TIMEOUT_SECONDS}s)"
+                    f"✅ Acquired {self.lock_type} lock: {lock_key} "
+                    f"(operation={operation_id}, timeout={LOCK_TIMEOUT_SECONDS}s)"
                 )
             return acquired
         except gcp_exceptions.GoogleAPICallError as e:
@@ -170,7 +187,7 @@ class ConsolidationLock:
     def acquire(
         self,
         game_date: str,
-        batch_id: str,
+        operation_id: str,
         max_wait_seconds: Optional[int] = None,
         holder_id: Optional[str] = None
     ):
@@ -182,9 +199,9 @@ class ConsolidationLock:
 
         Args:
             game_date: Game date to lock (YYYY-MM-DD)
-            batch_id: Batch identifier (for tracking)
+            operation_id: Operation identifier (for tracking)
             max_wait_seconds: Maximum seconds to wait for lock (default: 5 minutes)
-            holder_id: Unique identifier for this holder (default: batch_id)
+            holder_id: Unique identifier for this holder (default: operation_id)
 
         Yields:
             None (lock is held during yield)
@@ -193,28 +210,33 @@ class ConsolidationLock:
             LockAcquisitionError: If unable to acquire lock after max_wait_seconds
 
         Example:
-            lock = ConsolidationLock(project_id)
-            with lock.acquire(game_date="2026-01-17", batch_id="batch123"):
-                # Only one consolidation runs at a time for this game_date
+            # Consolidation
+            lock = DistributedLock(project_id, lock_type="consolidation")
+            with lock.acquire(game_date="2026-01-17", operation_id="batch123"):
                 consolidator.consolidate_batch(batch_id, game_date)
+
+            # Grading
+            lock = DistributedLock(project_id, lock_type="grading")
+            with lock.acquire(game_date="2026-01-17", operation_id="grading"):
+                processor.process_date(game_date)
         """
         lock_key = self._generate_lock_key(game_date)
-        holder_id = holder_id or batch_id
+        holder_id = holder_id or operation_id
         max_wait = max_wait_seconds or (MAX_ACQUIRE_ATTEMPTS * RETRY_DELAY_SECONDS)
 
         start_time = time.time()
         attempts = 0
 
         logger.info(
-            f"Attempting to acquire consolidation lock for game_date={game_date}, "
-            f"batch={batch_id}, max_wait={max_wait}s"
+            f"Attempting to acquire {self.lock_type} lock for game_date={game_date}, "
+            f"operation={operation_id}, max_wait={max_wait}s"
         )
 
         # Try to acquire lock with retries
         acquired = False
         while not acquired and (time.time() - start_time) < max_wait:
             attempts += 1
-            acquired = self._try_acquire(lock_key, batch_id, holder_id)
+            acquired = self._try_acquire(lock_key, operation_id, holder_id)
 
             if not acquired:
                 elapsed = int(time.time() - start_time)
@@ -227,24 +249,24 @@ class ConsolidationLock:
         if not acquired:
             elapsed = int(time.time() - start_time)
             error_msg = (
-                f"Failed to acquire consolidation lock for game_date={game_date} "
+                f"Failed to acquire {self.lock_type} lock for game_date={game_date} "
                 f"after {attempts} attempts ({elapsed}s). "
-                f"Another consolidation may be running or a lock is stuck. "
-                f"Check Firestore collection '{LOCK_COLLECTION}' for lock: {lock_key}"
+                f"Another {self.lock_type} operation may be running or a lock is stuck. "
+                f"Check Firestore collection '{self.collection_name}' for lock: {lock_key}"
             )
             logger.error(error_msg)
             raise LockAcquisitionError(error_msg)
 
         try:
             # Lock acquired - yield to caller
-            logger.info(f"Lock acquired after {attempts} attempt(s), proceeding with consolidation")
+            logger.info(f"Lock acquired after {attempts} attempt(s), proceeding with {self.lock_type}")
             yield
 
         finally:
             # Always release lock (even if exception occurs)
-            self._release(lock_key, batch_id)
+            self._release(lock_key, operation_id)
 
-    def _release(self, lock_key: str, batch_id: str):
+    def _release(self, lock_key: str, operation_id: str):
         """
         Release the distributed lock.
 
@@ -252,7 +274,7 @@ class ConsolidationLock:
 
         Args:
             lock_key: Lock key to release
-            batch_id: Batch identifier (for logging)
+            operation_id: Operation identifier (for logging)
         """
         if not self.lock_doc_ref:
             logger.warning(f"No lock reference to release for {lock_key}")
@@ -260,7 +282,7 @@ class ConsolidationLock:
 
         try:
             self.lock_doc_ref.delete()
-            logger.info(f"🔓 Released consolidation lock: {lock_key} (batch={batch_id})")
+            logger.info(f"🔓 Released {self.lock_type} lock: {lock_key} (operation={operation_id})")
             self.lock_doc_ref = None
         except gcp_exceptions.NotFound:
             # Lock already deleted (e.g., TTL expired)
@@ -274,20 +296,24 @@ class ConsolidationLock:
         """
         Force release a lock for a game_date.
 
-        USE WITH CAUTION: Only call this if you're certain no consolidation
+        USE WITH CAUTION: Only call this if you're certain no operation
         is running and the lock is stuck (e.g., process crashed).
 
         Args:
             game_date: Game date whose lock to release
         """
         lock_key = self._generate_lock_key(game_date)
-        lock_ref = self.db.collection(LOCK_COLLECTION).document(lock_key)
+        lock_ref = self.db.collection(self.collection_name).document(lock_key)
 
         try:
             lock_ref.delete()
-            logger.warning(f"⚠️  FORCE RELEASED lock: {lock_key}")
+            logger.warning(f"⚠️  FORCE RELEASED {self.lock_type} lock: {lock_key}")
         except gcp_exceptions.NotFound:
             logger.info(f"Lock {lock_key} not found (already released)")
         except Exception as e:
             logger.error(f"Error force releasing lock {lock_key}: {e}")
             raise
+
+
+# Backward compatibility alias
+ConsolidationLock = DistributedLock

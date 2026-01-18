@@ -26,7 +26,7 @@ Race Condition Bug:
 Architecture:
 - BatchStagingWriter: Used by workers to write to individual staging tables
 - BatchConsolidator: Used by coordinator to merge all staging tables
-- ConsolidationLock: Distributed lock (Firestore) to prevent concurrent merges
+- DistributedLock: Distributed lock (Firestore) to prevent concurrent merges
 
 Benefits:
 - No DML concurrency errors (workers use INSERT, not MERGE)
@@ -45,7 +45,7 @@ from google.cloud import bigquery
 from google.api_core import exceptions as gcp_exceptions
 
 # Import distributed lock to prevent race conditions
-from distributed_lock import ConsolidationLock, LockAcquisitionError
+from distributed_lock import DistributedLock, LockAcquisitionError
 
 logger = logging.getLogger(__name__)
 
@@ -545,7 +545,7 @@ class BatchConsolidator:
         # can target the same game_date and cause duplicate INSERTs
         if use_lock:
             try:
-                lock = ConsolidationLock(project_id=self.project_id)
+                lock = DistributedLock(project_id=self.project_id, lock_type="consolidation")
                 logger.info(
                     f"Acquiring consolidation lock for game_date={game_date}, batch={batch_id}"
                 )
@@ -554,7 +554,7 @@ class BatchConsolidator:
                     flush=True
                 )
 
-                with lock.acquire(game_date=game_date, batch_id=batch_id):
+                with lock.acquire(game_date=game_date, operation_id=batch_id):
                     # Lock acquired - run consolidation inside locked context
                     return self._consolidate_with_lock(
                         batch_id=batch_id,
