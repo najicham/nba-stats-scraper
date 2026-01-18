@@ -1,0 +1,4 @@
+functions-framework==3.*
+google-cloud-bigquery==3.11.4
+google-cloud-logging==3.5.0
+flask==3.0.0
