@@ -168,6 +168,11 @@ class MLBEnsembleV1(BaseMLBPredictor):
         v1_6_conf = v1_6_pred.get('confidence', 0)
         base_confidence = (v1_conf + v1_6_conf) / 2.0
 
+        # Feature coverage (minimum of component coverages - worst case)
+        v1_coverage = v1_pred.get('feature_coverage_pct', 100.0)
+        v1_6_coverage = v1_6_pred.get('feature_coverage_pct', 100.0)
+        feature_coverage_pct = min(v1_coverage, v1_6_coverage)
+
         # Agreement adjustment
         agreement_diff = abs(v1_strikeouts - v1_6_strikeouts)
         confidence_multiplier = 1.0
@@ -209,6 +214,7 @@ class MLBEnsembleV1(BaseMLBPredictor):
                 'system_id': self.system_id,
                 'red_flags': red_flag_result.flags,
                 'skip_reason': red_flag_result.skip_reason,
+                'feature_coverage_pct': round(feature_coverage_pct, 1),
                 'component_predictions': {
                     'v1_baseline': round(v1_strikeouts, 2),
                     'v1_6_rolling': round(v1_6_strikeouts, 2)
@@ -242,6 +248,7 @@ class MLBEnsembleV1(BaseMLBPredictor):
             'model_version': f'ensemble_v1 (V1:{self.v1_weight:.0%}, V1.6:{self.v1_6_weight:.0%})',
             'red_flags': red_flag_result.flags if red_flag_result.flags else None,
             'confidence_multiplier': round(red_flag_result.confidence_multiplier, 2) if red_flag_result.confidence_multiplier < 1.0 else None,
+            'feature_coverage_pct': round(feature_coverage_pct, 1),
             'agreement_note': agreement_note,
             'component_predictions': {
                 'v1_baseline': round(v1_strikeouts, 2),

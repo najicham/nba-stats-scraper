@@ -1,0 +1,127 @@
+Context from Session 82 (2026-01-17):
+- Week 1 critical alerts deployed and healthy
+  • [CRITICAL] NBA Model Loading Failures
+  • [CRITICAL] NBA High Fallback Prediction Rate
+- Alert runbooks created with Week 1 sections
+- Recent incident: 3-day CatBoost failure went undetected
+- Need: Comprehensive monitoring to prevent similar incidents
+- See: docs/09-handoff/SESSION-82-IMPLEMENTATION-COMPLETE.md
+
+Starting Option B: NBA Alerting & Monitoring (Weeks 2-4)
+========================================================
+
+Goal: Build comprehensive alerting and monitoring infrastructure to prevent
+incidents like the 3-day CatBoost model loading failure.
+
+Business Value:
+- Prevent silent failures (early detection)
+- Comprehensive visibility into platform health
+- Proactive issue detection vs reactive firefighting
+- Reduce MTTR (Mean Time To Resolution)
+
+What to Build:
+
+Week 2: Warning-Level Alerts (8-10 hours)
+- [ ] Stale Predictions Alert
+- [ ] DLQ Depth Alert
+- [ ] Feature Pipeline Staleness
+- [ ] Confidence Distribution Drift
+- [ ] Environment Variable Monitoring (NEW - catches CatBoost-style issues)
+- [ ] Data Source Health Checks
+- [ ] Prediction Latency Alerts
+
+Week 3: Infrastructure Monitoring (10-12 hours)
+- [ ] Cloud Monitoring Dashboards
+  • Prediction metrics dashboard
+  • Data pipeline health dashboard
+  • Model performance dashboard
+- [ ] Environment Variable Tracking System
+  • Log all env var changes
+  • Alert on unexpected changes
+  • Audit trail for deployments
+- [ ] Resource Utilization Alerts
+  • Memory/CPU warnings
+  • Cost spike detection
+
+Week 4: Operational Excellence (6-8 hours)
+- [ ] Daily Slack Summary
+  • Automated digest of platform health
+  • Key metrics and trends
+  • Action items if needed
+- [ ] Weekly Health Reports
+  • Prediction accuracy trends
+  • Data quality metrics
+  • Infrastructure health
+- [ ] Alert Fatigue Prevention
+  • Tune thresholds based on real data
+  • Composite alerts (multiple conditions)
+  • Smart grouping and suppression
+
+Expected Time: 24-30 hours total
+- Week 2: 8-10 hours
+- Week 3: 10-12 hours
+- Week 4: 6-8 hours
+
+Deliverables:
+- [ ] 10-15 alerts across CRITICAL/WARNING/INFO levels
+- [ ] 3+ Cloud Monitoring dashboards
+- [ ] Environment variable monitoring system
+- [ ] Daily Slack summary automation
+- [ ] Complete runbook documentation
+- [ ] Alert response playbooks
+- [ ] Create OPTION-B-NBA-ALERTING-COMPLETE.md handoff
+
+Implementation Guide: docs/09-handoff/OPTION-B-NBA-ALERTING-HANDOFF.md
+
+Current System State:
+- Project: nba-props-platform
+- Week 1 alerts: ✅ Deployed (Model Loading, Fallback Rate)
+- Gaps: No env var monitoring, no dashboards, no daily summaries
+- Recent lesson: CatBoost CATBOOST_V8_MODEL_PATH deleted, undetected for 3 days
+
+Key Lessons from CatBoost Incident:
+1. **Environment variables need monitoring** - Would have caught CATBOOST_V8_MODEL_PATH deletion
+2. **Startup validation helps but isn't enough** - Need ongoing monitoring
+3. **Silent failures are dangerous** - Predictions were degraded but no alerts
+4. **Daily summaries would help** - Would have noticed 50% confidence anomaly
+
+Alert Philosophy (from incident):
+- **CRITICAL**: System broken, immediate action needed
+- **WARNING**: Degraded but functional, investigate soon (2-4 hours)
+- **INFO**: Trends and awareness, review daily
+
+This is NOT Session 83/84 (quick wins):
+- Session 83: 4 alerts in 2-3 hours (basic coverage)
+- Option B: 10-15 alerts + infrastructure in 26 hours (comprehensive)
+
+Choose Option B if:
+- You want to do alerting RIGHT, not just quick
+- You have 26 hours to invest over 2-3 weeks
+- You want to prevent the next CatBoost-style incident
+- You value comprehensive visibility
+
+Recommended Approach:
+1. **Week 2 First** (8-10 hours):
+   - Build core warning alerts
+   - Add environment variable monitoring
+   - This gives you the most important coverage
+
+2. **Week 3 Second** (10-12 hours):
+   - Build dashboards for visibility
+   - Implement env var tracking system
+   - Makes debugging much easier
+
+3. **Week 4 Last** (6-8 hours):
+   - Automate daily summaries
+   - Fine-tune alerts
+   - Polish the system
+
+Can be done in 3 weekend sessions or spread over 2-3 weeks of evenings.
+
+Start by reading the full implementation guide in OPTION-B-NBA-ALERTING-HANDOFF.md.
+
+Note: This is the comprehensive version. If you already started Session 83 (quick alerts), you can either:
+- Complete Session 83 as a quick win, then do Option B later to expand it
+- Abandon Session 83 and do Option B from scratch for comprehensive coverage
+
+I recommend completing Session 83 first if you already started it, then doing Option B as "Session 83 Extended" to build out full infrastructure.

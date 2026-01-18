@@ -570,9 +570,9 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         """Helper to determine current processing step for error context."""
         if not self.bq_client:
             return "initialization"
-        elif not self.raw_data:
+        elif self.raw_data is None or (hasattr(self.raw_data, 'empty') and self.raw_data.empty):
             return "extract"
-        elif not self.transformed_data:
+        elif self.transformed_data is None or (hasattr(self.transformed_data, 'empty') and self.transformed_data.empty):
             return "calculate"
         else:
             return "save"

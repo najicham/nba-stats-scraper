@@ -1,0 +1,39 @@
+Hi! Continuing NBA Grading Phase 3 from Session 89.
+
+Context:
+- Session 89: Implemented Calibration Insights (Phase 3A) ✅
+  - Dashboard tab showing confidence calibration metrics
+  - Alert service enhancement for poor calibration detection
+  - Identified critical issue: similarity_balanced_v1 is 27 pts overconfident
+- Sessions 85 + Phases 1-2: Core grading system + alerts + dashboard complete
+- 4,720 predictions graded (Jan 14-16, 2026)
+
+Current state:
+- Calibration dashboard ready to deploy
+- Alert service monitoring calibration health daily
+- Need more historical data for better statistical significance
+
+What I want to build next (Phase 3 continuation):
+
+Priority 1 - Historical Backfill (30 min):
+- Grade all predictions from Jan 1-13, 2026
+- Gives us 16 days of data instead of 3
+- Better statistical significance for all metrics
+- Foundation for ROI calculator and other features
+
+Priority 2 - ROI Calculator (2-3 hours):
+- Create BigQuery view simulating betting returns
+- Dashboard integration showing theoretical P&L
+- Metrics: win rate, ROI%, expected value, net profit
+- Assume -110 odds (standard sportsbook)
+- Compare flat betting vs confidence-weighted strategies
+
+Optional if time:
+- Player Insights (top/bottom performers)
+- Weekly summary alerts
+
+Reference docs:
+- Handoff: docs/09-handoff/SESSION-89-CALIBRATION-COMPLETE.md
+- Phase 3 Plan: docs/09-handoff/PHASE-3-START-HERE.md
+
+Can you help continue Phase 3 implementation starting with historical backfill?

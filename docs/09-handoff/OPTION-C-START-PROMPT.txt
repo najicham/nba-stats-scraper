@@ -1,0 +1,80 @@
+Context from Session 82 (2026-01-17):
+- NBA platform operational and healthy
+- Data pipeline (Phases 1-4) working correctly
+- Current backfill status: Partial historical data exists
+- Need: Complete historical dataset for ML model training
+- See: docs/09-handoff/SESSION-82-IMPLEMENTATION-COMPLETE.md
+
+Starting Option C: Backfill Pipeline Advancement
+================================================
+
+Goal: Complete historical backfill from Nov 2021 → Present (~1,121 dates)
+This is required for training production ML models and backtesting strategies.
+
+Business Value:
+- Enable real ML model training (not mocks)
+- Support backtesting and strategy validation
+- Build complete historical dataset
+- Foundation for Option D (Phase 5 Deployment)
+
+What to Build:
+1. Automated backfill orchestration
+   - Date range: 2021-11-01 → 2026-01-17 (~1,121 dates)
+   - All phases: Raw → Analytics → Precompute → Predictions
+
+2. Progress tracking & monitoring
+   - BigQuery table to track completion by date/phase
+   - Dashboards to visualize progress
+   - Error handling and retry logic
+
+3. Quality validation
+   - Data completeness checks
+   - Quality tier verification
+   - Missing game detection
+
+Expected Time: 15-25 hours (mostly automated running time)
+- Setup: 3-4 hours
+- Monitoring: 2-3 hours over several days
+- The rest is automated execution
+
+Deliverables:
+- [ ] Backfill orchestration script/workflow
+- [ ] Progress tracking table in BigQuery
+- [ ] Quality validation checks
+- [ ] ~1,121 dates of historical data backfilled
+- [ ] Completion report with coverage metrics
+- [ ] Create OPTION-C-BACKFILL-COMPLETE.md handoff
+
+Implementation Guide: docs/09-handoff/OPTION-C-BACKFILL-ADVANCEMENT-HANDOFF.md
+
+Current State:
+- Project: nba-props-platform
+- Recent dates: Working (2026-01-16, 2026-01-17)
+- Historical gaps: Need to fill Nov 2021 → early 2026
+- Data sources available: BDL, NBA.com (historical access needed)
+
+Key Considerations:
+1. Rate limiting: Don't overwhelm APIs
+2. Cost management: Monitor BigQuery/Cloud Run costs
+3. Incremental approach: Backfill in batches (e.g., month at a time)
+4. Resume capability: Track progress, handle failures gracefully
+5. Data quality: Some historical data may be lower quality
+
+Recommended Approach:
+1. Start with recent history (last 3 months) to validate
+2. Work backwards in time
+3. Run in batches overnight/weekends
+4. Monitor for issues, adjust as needed
+5. Prioritize dates with more games (avoid off-season gaps)
+
+Success Metrics:
+- 95%+ date coverage (some dates may have no games)
+- Gold/Silver tier data quality for 80%+ of records
+- All 4 phases complete for each date
+- No critical data integrity issues
+
+This is a "set it and forget it" task - you'll set up the automation, let it run for several days, and monitor progress. Most of the 15-25 hours is waiting time, not active work.
+
+Start by reading the full implementation guide in OPTION-C-BACKFILL-ADVANCEMENT-HANDOFF.md.
+
+Note: This is a prerequisite for Option D (Phase 5 Deployment). Once backfill is substantially complete (80%+), you can start Option D in parallel.

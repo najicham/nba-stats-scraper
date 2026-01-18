@@ -667,24 +667,42 @@ class TeamDefenseZoneAnalysisProcessor(
         # NEW (Week 1): Batch completeness checking
         # ============================================================
         # Check if all teams have complete historical data (L15 games)
-        logger.info(f"Checking completeness for {len(all_teams)} teams...")
+        # Skip in backfill mode to avoid expensive queries
+        if self.is_backfill_mode:
+            logger.info(f"⏭️  BACKFILL MODE: Skipping completeness check for {len(all_teams)} teams")
+            # Create stub completeness results (all teams considered complete in backfill mode)
+            completeness_results = {
+                team: {
+                    'expected_count': self.min_games_required,
+                    'actual_count': self.min_games_required,
+                    'completeness_pct': 100.0,
+                    'missing_count': 0,
+                    'is_complete': True,
+                    'is_production_ready': True
+                }
+                for team in all_teams
+            }
+            is_bootstrap = False
+            is_season_boundary = False
+        else:
+            logger.info(f"Checking completeness for {len(all_teams)} teams...")
 
-        completeness_results = self.completeness_checker.check_completeness_batch(
-            entity_ids=list(all_teams),
-            entity_type='team',
-            analysis_date=analysis_date,
-            upstream_table='nba_analytics.team_defense_game_summary',
-            upstream_entity_field='defending_team_abbr',
-            lookback_window=self.min_games_required,
-            window_type='games',
-            season_start_date=self.season_start_date
-        )
+            completeness_results = self.completeness_checker.check_completeness_batch(
+                entity_ids=list(all_teams),
+                entity_type='team',
+                analysis_date=analysis_date,
+                upstream_table='nba_analytics.team_defense_game_summary',
+                upstream_entity_field='defending_team_abbr',
+                lookback_window=self.min_games_required,
+                window_type='games',
+                season_start_date=self.season_start_date
+            )
 
-        # Check bootstrap mode
-        is_bootstrap = self.completeness_checker.is_bootstrap_mode(
-            analysis_date, self.season_start_date
-        )
-        is_season_boundary = self.completeness_checker.is_season_boundary(analysis_date)
+            # Check bootstrap mode
+            is_bootstrap = self.completeness_checker.is_bootstrap_mode(
+                analysis_date, self.season_start_date
+            )
+            is_season_boundary = self.completeness_checker.is_season_boundary(analysis_date)
 
         logger.info(
             f"Completeness check complete. Bootstrap mode: {is_bootstrap}, "

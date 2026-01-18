@@ -1,0 +1,178 @@
+<!-- Calibration Analysis Component -->
+<div class="space-y-6">
+    <!-- Calibration Health Summary -->
+    <div>
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Calibration Health Summary (Last {{ days }} Days)</h4>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">System</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Predictions</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Avg Error</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Max Error</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Health</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Action</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for row in calibration_summary %}
+                    <tr class="{% if row.calibration_health == 'POOR' %}bg-red-50{% elif row.calibration_health == 'FAIR' %}bg-yellow-50{% endif %}">
+                        <td class="px-3 py-2 whitespace-nowrap font-medium text-gray-900">{{ row.system_id }}</td>
+                        <td class="px-3 py-2 text-center text-gray-700">{{ row.total_predictions }}</td>
+                        <td class="px-3 py-2 text-center">
+                            <span class="{% if row.avg_abs_calibration_error > 15 %}text-red-600 font-semibold{% elif row.avg_abs_calibration_error > 10 %}text-yellow-600 font-semibold{% else %}text-gray-700{% endif %}">
+                                {{ row.avg_abs_calibration_error }} pts
+                            </span>
+                        </td>
+                        <td class="px-3 py-2 text-center text-gray-700">{{ row.max_abs_calibration_error }} pts</td>
+                        <td class="px-3 py-2 text-center">
+                            {% if row.calibration_health == 'EXCELLENT' %}
+                            <span class="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">Excellent</span>
+                            {% elif row.calibration_health == 'GOOD' %}
+                            <span class="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">Good</span>
+                            {% elif row.calibration_health == 'FAIR' %}
+                            <span class="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full">Fair</span>
+                            {% elif row.calibration_health == 'POOR' %}
+                            <span class="px-2 py-1 bg-red-100 text-red-800 text-xs rounded-full">Poor</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-3 py-2 text-center text-xs">
+                            {% if row.calibration_health in ['POOR', 'FAIR'] %}
+                            <span class="text-red-600 font-medium">Recalibrate</span>
+                            {% else %}
+                            <span class="text-gray-400">None</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Calibration Guide -->
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <h5 class="text-sm font-semibold text-blue-900 mb-2">Understanding Calibration</h5>
+        <div class="text-xs text-blue-800 space-y-1">
+            <p><strong>Calibration Error</strong>: How far confidence scores are from actual accuracy</p>
+            <ul class="list-disc list-inside ml-2 space-y-1">
+                <li><strong>Positive error</strong>: Model is overconfident (e.g., 85% confidence → 65% actual)</li>
+                <li><strong>Negative error</strong>: Model is underconfident (e.g., 65% confidence → 85% actual)</li>
+                <li><strong>&lt;5 pts</strong>: Excellent calibration</li>
+                <li><strong>5-10 pts</strong>: Good calibration</li>
+                <li><strong>10-15 pts</strong>: Fair calibration (monitor)</li>
+                <li><strong>&gt;15 pts</strong>: Poor calibration (recalibration needed)</li>
+            </ul>
+        </div>
+    </div>
+
+    <!-- Detailed Calibration by System -->
+    <div>
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Calibration Detail by Confidence Bucket</h4>
+        {% for system_id in calibration_data|map(attribute='system_id')|unique %}
+        {% set system_data = calibration_data|selectattr('system_id', 'equalto', system_id)|list %}
+        <div class="mb-6">
+            <h5 class="text-xs font-semibold text-gray-600 mb-2 uppercase">{{ system_id }}</h5>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200 text-sm">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Confidence</th>
+                            <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Predictions</th>
+                            <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Correct</th>
+                            <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Actual Acc</th>
+                            <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Avg Conf</th>
+                            <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Error</th>
+                            <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Interpretation</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        {% for row in system_data|sort(attribute='confidence_bucket', reverse=True) %}
+                        <tr class="{% if row.calibration_error|abs > 15 %}bg-red-50{% elif row.calibration_error|abs > 10 %}bg-yellow-50{% endif %}">
+                            <td class="px-3 py-2 whitespace-nowrap">{{ row.confidence_bucket }}%</td>
+                            <td class="px-3 py-2 text-center text-gray-700">{{ row.total_predictions }}</td>
+                            <td class="px-3 py-2 text-center text-gray-700">{{ row.correct_predictions }}</td>
+                            <td class="px-3 py-2 text-center font-semibold {% if row.actual_accuracy_pct >= 60 %}text-green-600{% else %}text-gray-900{% endif %}">
+                                {{ row.actual_accuracy_pct }}%
+                            </td>
+                            <td class="px-3 py-2 text-center text-gray-700">{{ row.avg_confidence }}%</td>
+                            <td class="px-3 py-2 text-center font-semibold {% if row.calibration_error|abs > 15 %}text-red-600{% elif row.calibration_error|abs > 10 %}text-yellow-600{% elif row.calibration_error|abs > 5 %}text-blue-600{% else %}text-green-600{% endif %}">
+                                {{ '+' if row.calibration_error > 0 else '' }}{{ row.calibration_error }}
+                            </td>
+                            <td class="px-3 py-2 text-center text-xs">
+                                {% if row.calibration_error > 15 %}
+                                <span class="text-red-600 font-medium">Very Overconfident</span>
+                                {% elif row.calibration_error > 10 %}
+                                <span class="text-yellow-600 font-medium">Overconfident</span>
+                                {% elif row.calibration_error > 5 %}
+                                <span class="text-blue-600">Slightly Over</span>
+                                {% elif row.calibration_error < -15 %}
+                                <span class="text-red-600 font-medium">Very Underconfident</span>
+                                {% elif row.calibration_error < -10 %}
+                                <span class="text-yellow-600 font-medium">Underconfident</span>
+                                {% elif row.calibration_error < -5 %}
+                                <span class="text-blue-600">Slightly Under</span>
+                                {% else %}
+                                <span class="text-green-600">Well-Calibrated</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Summary Stats -->
+    <div class="grid grid-cols-3 gap-4 mt-4">
+        <div class="bg-gray-50 rounded-lg p-3 text-center">
+            {% set systems_needing_recal = calibration_summary|selectattr('calibration_health', 'in', ['POOR', 'FAIR'])|list|length %}
+            <div class="text-2xl font-bold {% if systems_needing_recal > 0 %}text-red-600{% else %}text-green-600{% endif %}">
+                {{ systems_needing_recal }}
+            </div>
+            <div class="text-xs text-gray-500">Systems Needing Recalibration</div>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-3 text-center">
+            {% set avg_error = (calibration_summary|map(attribute='avg_abs_calibration_error')|sum / calibration_summary|length)|round(1) %}
+            <div class="text-2xl font-bold {% if avg_error > 10 %}text-red-600{% elif avg_error > 5 %}text-yellow-600{% else %}text-green-600{% endif %}">
+                {{ avg_error }} pts
+            </div>
+            <div class="text-xs text-gray-500">Average Calibration Error</div>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-3 text-center">
+            {% set total_predictions = calibration_summary|map(attribute='total_predictions')|sum %}
+            <div class="text-2xl font-bold text-blue-600">
+                {{ total_predictions }}
+            </div>
+            <div class="text-xs text-gray-500">Total High-Confidence Predictions</div>
+        </div>
+    </div>
+
+    <!-- Recommendations -->
+    {% set poor_systems = calibration_summary|selectattr('calibration_health', 'equalto', 'POOR')|list %}
+    {% if poor_systems|length > 0 %}
+    <div class="bg-red-50 border border-red-200 rounded-lg p-4">
+        <h5 class="text-sm font-semibold text-red-900 mb-2">⚠️ Recalibration Recommended</h5>
+        <div class="text-xs text-red-800 space-y-2">
+            <p>The following systems have poor calibration (>15 point average error):</p>
+            <ul class="list-disc list-inside ml-2">
+                {% for system in poor_systems %}
+                <li><strong>{{ system.system_id }}</strong>: {{ system.avg_abs_calibration_error }} pts average error
+                    {% if system.avg_calibration_error > 0 %}(overconfident){% else %}(underconfident){% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+            <p class="mt-2"><strong>Suggested Actions:</strong></p>
+            <ul class="list-disc list-inside ml-2">
+                <li>Apply temperature scaling to confidence scores</li>
+                <li>Review feature importance and model architecture</li>
+                <li>Retrain with balanced confidence targets</li>
+                <li>Consider ensemble confidence fusion</li>
+            </ul>
+        </div>
+    </div>
+    {% endif %}
+</div>

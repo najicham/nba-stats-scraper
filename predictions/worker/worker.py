@@ -35,7 +35,7 @@ logger.info("✓ Flask imported")
 import json
 import os
 import sys
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from datetime import datetime, date
 import uuid
 import base64
@@ -332,6 +332,57 @@ def health_check():
     return jsonify({'status': 'healthy'}), 200
 
 
+def validate_line_quality(predictions: List[Dict], player_lookup: str, game_date_str: str) -> Tuple[bool, Optional[str]]:
+    """
+    PHASE 1 FIX: Validate line quality before BigQuery write.
+
+    Blocks placeholder lines (20.0) from entering the database.
+    This is the last line of defense against data corruption.
+
+    Args:
+        predictions: List of prediction dicts to validate
+        player_lookup: Player identifier for error messages
+        game_date_str: Game date for error messages
+
+    Returns:
+        (is_valid, error_message) - False if validation fails
+    """
+    placeholder_count = 0
+    issues = []
+
+    for pred in predictions:
+        line_value = pred.get('current_points_line')
+        line_source = pred.get('line_source')
+        system_id = pred.get('system_id', 'unknown')
+
+        # Check 1: Explicit placeholder 20.0
+        if line_value == 20.0:
+            placeholder_count += 1
+            issues.append(f"{system_id}: line_value=20.0 (PLACEHOLDER)")
+
+        # Check 2: Missing or invalid line source
+        if line_source in [None, 'NEEDS_BOOTSTRAP']:
+            issues.append(f"{system_id}: invalid line_source={line_source}")
+            placeholder_count += 1
+
+        # Check 3: NULL line with actual prop claim (data inconsistency)
+        if line_value is None and pred.get('has_prop_line') == True:
+            issues.append(f"{system_id}: NULL line but has_prop_line=TRUE")
+            placeholder_count += 1
+
+    if placeholder_count > 0:
+        error_msg = (
+            f"❌ LINE QUALITY VALIDATION FAILED\n"
+            f"Player: {player_lookup}\n"
+            f"Date: {game_date_str}\n"
+            f"Failed: {placeholder_count}/{len(predictions)} predictions\n"
+            f"Issues: {', '.join(issues[:5])}"  # First 5 issues
+        )
+        return False, error_msg
+
+    return True, None
+
+
 @app.route('/predict', methods=['POST'])
 def handle_prediction_request():
     """
@@ -450,6 +501,14 @@ def handle_prediction_request():
 
         predictions = result['predictions']
         metadata = result['metadata']
+
+        # VALIDATION GATE: Block placeholder lines from entering database
+        if predictions:
+            validation_passed, validation_error = validate_line_quality(predictions, player_lookup, game_date_str)
+            if not validation_passed:
+                logger.error(f"LINE QUALITY VALIDATION FAILED: {validation_error}")
+                # Return 500 to trigger Pub/Sub retry - this prevents data corruption
+                return ('Line quality validation failed - triggering retry', 500)
 
         if not predictions:
             # Log failure (no predictions generated)
@@ -1481,7 +1540,100 @@ def publish_completion_event(player_lookup: str, game_date: str, prediction_coun
         # Don't raise - log and continue
 
 
+logger.info("=" * 80)
+logger.info("🔧 WEEK 2 ALERTING ENDPOINTS LOADING...")
+logger.info("  - /health/deep")
+logger.info("  - /internal/check-env")
+logger.info("  - /internal/deployment-started")
+logger.info("=" * 80)
+
+
+@app.route('/health/deep', methods=['GET'])
+def deep_health_check():
+    """
+    Deep health check endpoint.
+    Validates all dependencies: GCS, BigQuery, model loading, configuration.
+
+    Returns:
+        200: All checks passed (healthy)
+        503: One or more checks failed (unhealthy)
+    """
+    try:
+        from health_checks import HealthChecker
+
+        checker = HealthChecker(project_id=PROJECT_ID)
+        result = checker.run_all_checks(parallel=True)
+
+        status_code = 200 if result['status'] == 'healthy' else 503
+
+        return jsonify(result), status_code
+
+    except Exception as e:
+        logger.error(f"Deep health check failed: {e}")
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'checks': [],
+            'total_duration_ms': 0
+        }), 503
+
+
+@app.route('/internal/check-env', methods=['POST'])
+def check_env_vars():
+    """
+    Internal endpoint for environment variable change detection.
+    Called by Cloud Scheduler every 5 minutes.
+
+    Returns:
+        200: Check completed (may include alert in logs)
+        500: Check failed
+    """
+    try:
+        from env_monitor import EnvVarMonitor
+
+        monitor = EnvVarMonitor(project_id=PROJECT_ID)
+        result = monitor.check_for_changes()
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        logger.error(f"Environment check failed: {e}")
+        return jsonify({
+            'status': 'ERROR',
+            'message': str(e)
+        }), 500
+
+
+@app.route('/internal/deployment-started', methods=['POST'])
+def mark_deployment_started():
+    """
+    Internal endpoint to mark that a deployment has started.
+    This activates the deployment grace period to prevent false alerts.
+
+    Should be called at the START of deployment (before env vars change).
+
+    Returns:
+        200: Deployment grace period activated
+        500: Failed to mark deployment
+    """
+    try:
+        from env_monitor import EnvVarMonitor
+
+        monitor = EnvVarMonitor(project_id=PROJECT_ID)
+        result = monitor.mark_deployment_started()
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        logger.error(f"Failed to mark deployment started: {e}")
+        return jsonify({
+            'status': 'ERROR',
+            'message': str(e)
+        }), 500
+
+
 if __name__ == '__main__':
     # For local testing
+    # Week 2 alerting endpoints added: /health/deep, /internal/check-env, /internal/deployment-started
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False)
