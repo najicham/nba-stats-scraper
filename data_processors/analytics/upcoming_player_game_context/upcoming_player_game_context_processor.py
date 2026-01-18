@@ -2256,6 +2256,8 @@ class UpcomingPlayerGameContextProcessor(
         opponent_pace_last_10 = self._get_opponent_pace_last_10(opponent_team_abbr, self.target_date)
         opponent_ft_rate_allowed = self._get_opponent_ft_rate_allowed(opponent_team_abbr, self.target_date)
         opponent_def_rating = self._get_opponent_def_rating_last_10(opponent_team_abbr, self.target_date)
+        opponent_off_rating = self._get_opponent_off_rating_last_10(opponent_team_abbr, self.target_date)
+        opponent_rebounding_rate = self._get_opponent_rebounding_rate(opponent_team_abbr, self.target_date)
 
         # Get has_prop_line from player_info (passed from extract)
         has_prop_line = player_info.get('has_prop_line', False)
@@ -2337,6 +2339,8 @@ class UpcomingPlayerGameContextProcessor(
 
             # Override opponent metrics with calculated values
             'opponent_def_rating_last_10': opponent_def_rating,
+            'opponent_off_rating_last_10': opponent_off_rating,
+            'opponent_rebounding_rate': opponent_rebounding_rate,
 
             # Forward-looking schedule (TODO: future)
             'next_game_days_rest': 0,
@@ -2830,6 +2834,79 @@ class UpcomingPlayerGameContextProcessor(
 
         except Exception as e:
             logger.error(f"Error getting opponent def rating for {opponent_abbr}: {e}")
+            return 0.0
+
+    def _get_opponent_off_rating_last_10(self, opponent_abbr: str, game_date: date) -> float:
+        """
+        Get opponent's offensive rating over last 10 games.
+
+        Args:
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Average offensive rating over last 10 games, rounded to 2 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_games AS (
+                SELECT offensive_rating
+                FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+                WHERE team_abbr = '{opponent_abbr}'
+                  AND game_date < '{game_date}'
+                  AND game_date >= '2024-10-01'
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT ROUND(AVG(offensive_rating), 2) as avg_off_rating
+            FROM recent_games
+            """
+
+            result = self.bq_client.query(query).result()
+            for row in result:
+                return row.avg_off_rating if row.avg_off_rating is not None else 0.0
+
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error getting opponent off rating for {opponent_abbr}: {e}")
+            return 0.0
+
+    def _get_opponent_rebounding_rate(self, opponent_abbr: str, game_date: date) -> float:
+        """
+        Get opponent's rebounding rate (rebounds per possession) over last 10 games.
+
+        Args:
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Rebounding rate (rebounds/possession) over last 10 games, rounded to 2 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_games AS (
+                SELECT total_rebounds, possessions
+                FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+                WHERE team_abbr = '{opponent_abbr}'
+                  AND game_date < '{game_date}'
+                  AND game_date >= '2024-10-01'
+                  AND possessions > 0
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT ROUND(AVG(total_rebounds) / NULLIF(AVG(possessions), 0), 2) as rebounding_rate
+            FROM recent_games
+            """
+
+            result = self.bq_client.query(query).result()
+            for row in result:
+                return row.rebounding_rate if row.rebounding_rate is not None else 0.0
+
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error getting opponent rebounding rate for {opponent_abbr}: {e}")
             return 0.0
 
     def _calculate_data_quality(self, historical_data: pd.DataFrame,

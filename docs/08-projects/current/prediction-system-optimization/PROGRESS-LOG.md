@@ -103,6 +103,51 @@
 
 **Time Spent:** 3.25 hours total (2h setup + 1h monitoring + 0.25h Track D verification)
 
+#### Session 4: Investigation Resolution + 6-System Architecture Discovery (2 hours)
+
+**Investigation Resolved:**
+- ✅ **XGBoost V1 "grading gap" - NOT A BUG**
+- ✅ Investigated complete system architecture via agents
+- ✅ Discovered XGBoost V1 was removed (Jan 8), then restored alongside CatBoost V8 (Jan 17)
+- ✅ Confirmed NEW XGBoost V1 V2 model deployed Jan 18 (3.726 MAE validation)
+
+**System Architecture Update - 6 Concurrent Systems:**
+- ✅ **System 1:** Moving Average Baseline
+- ✅ **System 2:** Zone Matchup V1
+- ✅ **System 3:** Similarity Balanced V1
+- ✅ **System 4:** XGBoost V1 V2 (NEW - deployed Jan 18, 280 predictions)
+- ✅ **System 5:** CatBoost V8 (Champion - 3.40 MAE, 293 predictions)
+- ✅ **System 6:** Ensemble V1 (uses CatBoost internally)
+
+**Key Discovery Timeline:**
+- **Jan 8:** XGBoost V1 → CatBoost V8 (replacement, commit 87d2038c)
+- **Jan 11-16:** Only 5 systems running (no XGBoost V1)
+- **Jan 17:** Champion/Challenger framework - both XGBoost V1 + CatBoost V8 (commit 289bbb7f)
+- **Jan 18 (TODAY):** New XGBoost V1 V2 model deployed with full backfill training
+
+**Investigation Document Updated:**
+- ✅ INVESTIGATION-XGBOOST-GRADING-GAP.md marked as RESOLVED
+- ✅ Timeline documented with commits and evidence
+- ✅ Confirmed grading will resume Jan 19 (no bug exists)
+
+**Critical Insight:**
+- Grading processor has NO system-specific filtering
+- XGBoost V1 predictions will be graded tomorrow (Jan 19) when Jan 18 games complete
+- The "gap" was simply when XGBoost V1 didn't exist in the system (Jan 8-16)
+
+**Session 102 Optimizations Confirmed:**
+- ✅ Batch loading: 75-110x speedup (225s → 2-3s)
+- ✅ Persistent state: Firestore-based (survives container restarts)
+- ✅ Staging tables: No DML concurrency limits
+- ✅ Circuit breakers: Graceful degradation per system
+
+**Next Steps:**
+1. Establish XGBoost V1 V2 Day 0 baseline (run Track A queries)
+2. Monitor 3-5 days of production performance
+3. Decide: Track B (Ensemble) if stable, OR Track E (E2E Testing)
+
+**Time Spent:** 5.25 hours total (3.25h + 2h investigation)
+
 ---
 
 ## 🎯 Milestone Tracker
