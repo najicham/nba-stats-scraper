@@ -758,6 +758,106 @@ class TestPaceMetricsCalculation:
 
         assert result == 0.0
 
+    def test_get_opponent_off_rating_last_10_normal(self, processor):
+        """Test opponent offensive rating calculation with normal data."""
+        mock_row = Mock()
+        mock_row.avg_off_rating = 115.3
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_off_rating_last_10('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(115.3, abs=0.1)
+        assert processor.bq_client.query.called
+
+    def test_get_opponent_off_rating_last_10_elite_offense(self, processor):
+        """Test opponent offensive rating with elite offense."""
+        mock_row = Mock()
+        mock_row.avg_off_rating = 122.5
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_off_rating_last_10('BOS', date(2025, 1, 20))
+
+        assert result == pytest.approx(122.5, abs=0.1)
+
+    def test_get_opponent_off_rating_last_10_poor_offense(self, processor):
+        """Test opponent offensive rating with poor offense."""
+        mock_row = Mock()
+        mock_row.avg_off_rating = 108.2
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_off_rating_last_10('DET', date(2025, 1, 20))
+
+        assert result == pytest.approx(108.2, abs=0.1)
+
+    def test_get_opponent_off_rating_last_10_no_data(self, processor):
+        """Test opponent offensive rating when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_opponent_off_rating_last_10('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_off_rating_last_10_query_error(self, processor):
+        """Test opponent offensive rating handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_opponent_off_rating_last_10('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_rebounding_rate_normal(self, processor):
+        """Test opponent rebounding rate calculation with normal data."""
+        mock_row = Mock()
+        mock_row.rebounding_rate = 0.42
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_rebounding_rate('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(0.42, abs=0.01)
+        assert processor.bq_client.query.called
+
+    def test_get_opponent_rebounding_rate_high_rebounding(self, processor):
+        """Test opponent rebounding rate with high rebounding team."""
+        mock_row = Mock()
+        mock_row.rebounding_rate = 0.52
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_rebounding_rate('DEN', date(2025, 1, 20))
+
+        assert result == pytest.approx(0.52, abs=0.01)
+
+    def test_get_opponent_rebounding_rate_low_rebounding(self, processor):
+        """Test opponent rebounding rate with low rebounding team."""
+        mock_row = Mock()
+        mock_row.rebounding_rate = 0.35
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_rebounding_rate('HOU', date(2025, 1, 20))
+
+        assert result == pytest.approx(0.35, abs=0.01)
+
+    def test_get_opponent_rebounding_rate_no_data(self, processor):
+        """Test opponent rebounding rate when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_opponent_rebounding_rate('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_rebounding_rate_query_error(self, processor):
+        """Test opponent rebounding rate handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_opponent_rebounding_rate('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
 
 # Run tests with: pytest test_unit.py -v
 # Run specific class: pytest test_unit.py::TestFatigueMetricsCalculation -v

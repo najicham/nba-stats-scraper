@@ -1,15 +1,54 @@
 # Investigation: XGBoost V1 Grading Gap
 
 **Created:** 2026-01-18
-**Status:** 🔍 NEEDS INVESTIGATION
-**Priority:** HIGH
-**Estimated Time:** 1-2 hours
+**Investigated:** 2026-01-18 (Same day)
+**Status:** ✅ RESOLVED
+**Priority:** ~~HIGH~~ N/A (No longer an issue)
+**Time Spent:** 2 hours (codebase exploration)
 
 ---
 
-## 🎯 Problem Statement
+## ✅ RESOLUTION SUMMARY
+
+**Root Cause Identified:** NOT A BUG - Intentional system architecture changes
+
+**Timeline of Events:**
+1. **Jan 8, 2026** - XGBoost V1 replaced with CatBoost V8 (commit 87d2038c)
+2. **Jan 11-16** - NO xgboost_v1 predictions generated (system didn't exist)
+3. **Jan 17, 2026** - Both XGBoost V1 and CatBoost V8 restored concurrently (commit 289bbb7f)
+4. **Jan 18, 2026** - New XGBoost V1 V2 model deployed (3.726 MAE validation)
+
+**Current Status (2026-01-18):**
+- ✅ XGBoost V1 V2: 280 predictions generated on Jan 18
+- ✅ CatBoost V8: 293 predictions generated on Jan 17-18
+- ✅ All 6 systems: Healthy and generating predictions
+- ⏳ Grading: Last ran Jan 17 (Jan 18 games not complete yet)
+
+**Verdict:** No grading bug exists. XGBoost V1 predictions will be graded tomorrow (Jan 19) once Jan 18 games complete. The "grading gap" was simply a period when XGBoost V1 didn't exist in the system.
+
+**Evidence:**
+```
+Predictions (Jan 15-18):
+- xgboost_v1: 280 (first: Jan 18, last: Jan 18) ← NEW model!
+- catboost_v8: 293 (first: Jan 17, last: Jan 18)
+- ensemble_v1: 1,284 predictions
+- All 6 systems active
+
+Grading (Jan 10-17):
+- catboost_v8: 335 graded (last: Jan 17) ✅
+- ensemble_v1: 439 graded (last: Jan 17) ✅
+- xgboost_v1: 96 graded (last: Jan 10) ← Normal, system was removed Jan 8-16
+```
+
+**No Action Needed:** Grading processor has no system-specific filtering. It will grade xgboost_v1 predictions starting Jan 19 when games complete.
+
+---
+
+## 🎯 Original Problem Statement (Now Resolved)
 
 **XGBoost V1 predictions are not being graded since 2026-01-10** (8 days ago), preventing validation of the newly deployed XGBoost V1 V2 model's production performance.
+
+**UPDATE:** This was due to XGBoost V1 being removed from the system (Jan 8-16), not a grading bug.
 
 ---
 
