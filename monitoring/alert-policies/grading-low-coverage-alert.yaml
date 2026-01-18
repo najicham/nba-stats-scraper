@@ -1,0 +1,75 @@
+# Cloud Monitoring Alert Policy for Low Grading Coverage
+#
+# This alert triggers when grading coverage drops below 70% for predictions
+# from games 2+ days ago (allowing time for boxscores to be published).
+#
+# Deploy with:
+#   gcloud alpha monitoring policies create --policy-from-file=grading-low-coverage-alert.yaml
+#
+# Note: This requires a log-based metric to be created first.
+# See: monitoring/setup-grading-alerts.sh
+
+displayName: "Grading Coverage Below 70% (Critical)"
+documentation:
+  content: |
+    ## Grading Coverage Alert
+
+    **Severity:** Critical
+    **Impact:** ML model evaluation incomplete, missing training data
+
+    ### What This Means
+    Grading coverage has dropped below 70% for predictions from 2+ days ago.
+    This indicates that predictions are not being graded against actual boxscore data.
+
+    ### Immediate Actions
+    1. Check if boxscores exist for the date:
+       ```sql
+       SELECT game_date, COUNT(*) as boxscores
+       FROM `nba-props-platform.nba_analytics.player_game_summary`
+       WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 2 DAY)
+       GROUP BY game_date
+       ```
+
+    2. Check for Phase 3 503 errors:
+       ```bash
+       gcloud functions logs read phase5b-grading --region=us-west2 --limit=100 | grep "503"
+       ```
+
+    3. Check grading function logs:
+       ```bash
+       gcloud functions logs read phase5b-grading --region=us-west2 --limit=50
+       ```
+
+    ### Reference
+    - Troubleshooting: docs/02-operations/GRADING-TROUBLESHOOTING-RUNBOOK.md
+    - Monitoring Guide: docs/02-operations/GRADING-MONITORING-GUIDE.md
+    - Phase 3 Fix: docs/09-handoff/SESSION-99-PHASE3-FIX-COMPLETE.md
+  mimeType: text/markdown
+
+# Note: The actual metric and conditions would be defined here
+# This is a template - actual implementation requires log-based metrics
+# or BigQuery scheduled queries with Cloud Logging integration
+
+conditions:
+  - displayName: "Grading Coverage < 70%"
+    conditionThreshold:
+      # This would monitor a log-based metric created from BigQuery scheduled query
+      # aggregations:
+      #   - alignmentPeriod: 3600s  # 1 hour
+      #     perSeriesAligner: ALIGN_MEAN
+      # comparison: COMPARISON_LT
+      # thresholdValue: 70  # Alert if coverage < 70%
+      # duration: 7200s  # Must persist for 2 hours
+
+combiner: OR
+
+enabled: true
+
+# Notification channels would be configured here
+# notificationChannels:
+#   - projects/nba-props-platform/notificationChannels/SLACK_CHANNEL_ID
+
+alertStrategy:
+  autoClose: 604800s  # 7 days
+  notificationRateLimit:
+    period: 3600s  # Maximum 1 notification per hour
