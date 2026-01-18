@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 # Alert thresholds (can be overridden by environment variables)
 ACCURACY_MIN = float(os.environ.get('ALERT_THRESHOLD_ACCURACY_MIN', 55.0))
 UNGRADEABLE_MAX = float(os.environ.get('ALERT_THRESHOLD_UNGRADEABLE_MAX', 20.0))
+COVERAGE_MIN = float(os.environ.get('ALERT_THRESHOLD_COVERAGE_MIN', 70.0))  # Alert if <70% coverage
 CHECK_DAYS = int(os.environ.get('ALERT_THRESHOLD_DAYS', 7))
 SEND_DAILY_SUMMARY = os.environ.get('SEND_DAILY_SUMMARY', 'false').lower() == 'true'
 
@@ -40,6 +41,42 @@ def send_slack_alert(webhook_url: str, message: dict) -> int:
     except Exception as e:
         logger.error(f"Failed to send Slack alert: {e}")
         raise
+
+
+def check_grading_coverage(client: bigquery.Client, game_date: str) -> Dict:
+    """Check grading coverage: predictions made vs predictions graded."""
+    query = f"""
+    WITH predictions AS (
+        SELECT COUNT(DISTINCT CONCAT(player_lookup, '|', system_id)) as total_preds
+        FROM `nba-props-platform.nba_predictions.player_prop_predictions`
+        WHERE DATE(created_at) = '{game_date}'
+    ),
+    graded AS (
+        SELECT COUNT(DISTINCT CONCAT(player_lookup, '|', system_id)) as graded_preds
+        FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+        WHERE game_date = '{game_date}'
+    )
+    SELECT
+        p.total_preds,
+        COALESCE(g.graded_preds, 0) as graded_preds,
+        ROUND(100.0 * COALESCE(g.graded_preds, 0) / NULLIF(p.total_preds, 0), 1) as coverage_pct
+    FROM predictions p, graded g
+    """
+
+    try:
+        result = list(client.query(query).result())
+        if not result:
+            return {'total_preds': 0, 'graded_preds': 0, 'coverage_pct': 0.0}
+
+        row = result[0]
+        return {
+            'total_preds': row.total_preds,
+            'graded_preds': row.graded_preds,
+            'coverage_pct': row.coverage_pct or 0.0
+        }
+    except Exception as e:
+        logger.error(f"Error checking grading coverage: {e}")
+        return {'total_preds': 0, 'graded_preds': 0, 'coverage_pct': 0.0}
 
 
 def check_grading_health(client: bigquery.Client, game_date: str) -> Dict:
@@ -537,6 +574,49 @@ def build_alert_message(alert_type: str, data: Dict) -> Dict:
             ]
         }
 
+    elif alert_type == 'coverage_alert':
+        coverage_pct = data.get('coverage_pct', 0.0)
+        severity_emoji = "🚨" if coverage_pct < 40 else "⚠️"
+        severity_text = "CRITICAL" if coverage_pct < 40 else "WARNING"
+
+        return {
+            "text": f"{severity_emoji} NBA Grading Alert: Low coverage ({coverage_pct}%)",
+            "blocks": [
+                {
+                    "type": "header",
+                    "text": {"type": "plain_text", "text": f"{severity_emoji} Low Grading Coverage ({severity_text})"}
+                },
+                {
+                    "type": "section",
+                    "fields": [
+                        {"type": "mrkdwn", "text": f"*Date:*\n{data['game_date']}"},
+                        {"type": "mrkdwn", "text": f"*Coverage:*\n{coverage_pct}% (threshold: {COVERAGE_MIN}%)"}
+                    ]
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"*Details:*\n• Total predictions: {data['total_preds']:,}\n• Graded predictions: {data['graded_preds']:,}\n• Missing grades: {data['total_preds'] - data['graded_preds']:,}"
+                    }
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "*Possible Causes:*\n• Boxscores not yet available/ingested\n• Grading scheduled query failed\n• Games postponed/rescheduled\n• Phase 3 503 errors blocking grading"
+                    }
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": "*Action Required:*\n• Check <https://console.cloud.google.com/bigquery/scheduled-queries|scheduled query execution>\n• Verify boxscore ingestion completed\n• Review grading function logs for errors\n• Run manual grading if needed"
+                    }
+                }
+            ]
+        }
+
     return {"text": f"NBA Grading Alert: {alert_type}"}
 
 
@@ -561,7 +641,15 @@ def main(request):
 
         alerts = []
 
-        # Check 1: Grading ran successfully
+        # Check 1: Grading coverage (predictions vs graded)
+        coverage = check_grading_coverage(client, yesterday)
+        logger.info(f"Grading coverage: {coverage}")
+
+        if coverage['coverage_pct'] < COVERAGE_MIN:
+            logger.warning(f"Low grading coverage: {coverage['coverage_pct']}% (threshold: {COVERAGE_MIN}%)")
+            alerts.append(('coverage_alert', {'game_date': yesterday, **coverage}))
+
+        # Check 2: Grading ran successfully
         health = check_grading_health(client, yesterday)
         logger.info(f"Grading health: {health}")
 
@@ -572,26 +660,26 @@ def main(request):
             logger.warning(f"High ungradeable rate: {health['issue_pct']}%")
             alerts.append(('data_quality', {'game_date': yesterday, **health}))
 
-        # Check 2: Accuracy drop across systems
+        # Check 3: Accuracy drop across systems
         low_accuracy_systems = check_accuracy_health(client, days=CHECK_DAYS)
         if low_accuracy_systems:
             logger.warning(f"Found {len(low_accuracy_systems)} systems with low accuracy")
             alerts.append(('accuracy_drop', {'systems': low_accuracy_systems, 'days': CHECK_DAYS}))
 
-        # Check 3: Calibration health (poor calibration = >15 point error)
+        # Check 4: Calibration health (poor calibration = >15 point error)
         calibration_threshold = float(os.environ.get('ALERT_THRESHOLD_CALIBRATION', 15.0))
         poor_calibration_systems = check_calibration_health(client, days=CHECK_DAYS, threshold=calibration_threshold)
         if poor_calibration_systems:
             logger.warning(f"Found {len(poor_calibration_systems)} systems with poor calibration")
             alerts.append(('calibration_alert', {'systems': poor_calibration_systems, 'days': CHECK_DAYS}))
 
-        # Check 4: System ranking change (weekly check)
+        # Check 5: System ranking change (weekly check)
         ranking_change = check_ranking_change(client)
         if ranking_change:
             logger.info(f"System ranking changed: {ranking_change['previous_best']} -> {ranking_change['current_best']}")
             alerts.append(('ranking_change', ranking_change))
 
-        # Check 5: Weekly summary (sent on Mondays)
+        # Check 6: Weekly summary (sent on Mondays)
         today = datetime.now()
         is_monday = today.weekday() == 0  # Monday = 0
         send_weekly = os.environ.get('SEND_WEEKLY_SUMMARY', 'false').lower() == 'true'
