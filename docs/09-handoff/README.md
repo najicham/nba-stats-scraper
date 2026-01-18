@@ -57,9 +57,11 @@
 - 2026-01-04-BACKFILL-IN-PROGRESS-HANDOFF.md
 - 2026-01-03-PHASE4-BACKFILL-COMPLETE-HANDOFF.md
 
-**ML Training:**
+**ML Training & Monitoring:**
 - 2026-01-03-SESSION-COMPLETE-SUMMARY.md
 - 2026-01-03-ML-IMPROVEMENT-PLAN-NEW-SESSION.md
+- [SLACK-REMINDERS-SETUP.md](./SLACK-REMINDERS-SETUP.md) - Automated monitoring reminders
+- [../02-operations/ML-MONITORING-REMINDERS.md](../02-operations/ML-MONITORING-REMINDERS.md) - XGBoost V1 monitoring schedule
 
 **Bug Fixes:**
 - 2026-01-04-GAME-ID-BUG-FIX-AND-BACKFILL.md
@@ -85,6 +87,11 @@
 ---
 
 ## 🔗 Quick Links
+
+**ML Monitoring:**
+- [ML-MONITORING-REMINDERS.md](../02-operations/ML-MONITORING-REMINDERS.md) - XGBoost V1 monitoring milestones (next: 2026-01-24)
+- [SLACK-REMINDERS-SETUP.md](./SLACK-REMINDERS-SETUP.md) - Automated Slack reminder system
+- Slack channel: `#reminders` - Receives automated notifications at 9 AM
 
 **Execution Scripts:**
 - `/tmp/run_phase4_overnight.sh` - Orchestrator for Phase 4
