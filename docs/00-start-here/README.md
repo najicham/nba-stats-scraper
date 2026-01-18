@@ -38,6 +38,7 @@
 | **Run a backfill** | [BACKFILL-VERIFICATION-GUIDE.md](BACKFILL-VERIFICATION-GUIDE.md) |
 | **Monitor system health** | [../07-monitoring/unified-monitoring-guide.md](../07-monitoring/unified-monitoring-guide.md) |
 | **Train ML model** | [../05-development/ml/training-procedures.md](../05-development/ml/training-procedures.md) |
+| **Check ML monitoring reminders** | [../02-operations/ML-MONITORING-REMINDERS.md](../02-operations/ML-MONITORING-REMINDERS.md) |
 | **Documentation guide** | [DOCUMENTATION-GUIDE.md](DOCUMENTATION-GUIDE.md) |
 | **Learn about a phase** | [../03-phases/](../03-phases/README.md) |
 | **Quick processor lookup** | [../06-reference/processor-cards/](../06-reference/processor-cards/README.md) |
@@ -136,6 +137,7 @@ Beyond the numbered directories, these specialized collections serve specific ne
 - **Morning check**: [Unified Monitoring Guide](../07-monitoring/unified-monitoring-guide.md)
 - **Backfill data**: [Backfill Master Guide](../02-operations/backfill/master-guide.md)
 - **Train ML model**: [ML Training Procedures](../05-development/ml/training-procedures.md)
+- **ML monitoring reminders**: Automated Slack reminders to `#reminders` channel ([Setup](../09-handoff/SLACK-REMINDERS-SETUP.md))
 
 ### When Things Break
 - **Pipeline failure**: [Troubleshooting Matrix](../02-operations/troubleshooting-matrix.md) (if exists)

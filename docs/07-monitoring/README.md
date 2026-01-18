@@ -13,6 +13,7 @@ Quick scripts for daily pipeline monitoring:
 | Tool | Purpose | Command |
 |------|---------|---------|
 | **Daily Health Check** | Comprehensive morning check | `./bin/monitoring/daily_health_check.sh` |
+| **ML Monitoring Reminders** | Automated XGBoost V1 monitoring reminders | Slack `#reminders` (automated at 9 AM) |
 | **Orchestration State** | Debug Phase 3/4 state | `PYTHONPATH=. python3 bin/monitoring/check_orchestration_state.py` |
 | **Pipeline Status View** | BigQuery status view | `SELECT * FROM nba_orchestration.daily_phase_status` |
 
@@ -35,6 +36,12 @@ bq query --use_legacy_sql=false "SELECT * FROM nba_orchestration.daily_phase_sta
 - Recent errors (last 2 hours)
 - Service health status
 - Summary with pipeline status
+
+**ML Monitoring Reminders:**
+- Automated Slack reminders for XGBoost V1 performance milestones
+- Sent to `#reminders` channel at 9:00 AM on key dates
+- See [../02-operations/ML-MONITORING-REMINDERS.md](../02-operations/ML-MONITORING-REMINDERS.md) for full schedule and queries
+- Next milestone: 2026-01-24 (Initial 7-day performance check)
 
 ---
 
