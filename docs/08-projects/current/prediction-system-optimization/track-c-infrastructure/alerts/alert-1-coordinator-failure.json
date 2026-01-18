@@ -1,0 +1,33 @@
+{
+  "displayName": "Prediction Coordinator - High Error Rate or No Runs",
+  "documentation": {
+    "content": "The prediction coordinator has either experienced a high error rate (>5%) or has not run successfully in the past 25 hours. This may indicate:\n- Cloud Run service failure\n- Cloud Scheduler misconfiguration\n- Feature store unavailability\n- Model serving errors\n\nAction Required:\n1. Check Cloud Run logs for prediction-coordinator\n2. Verify Cloud Scheduler job is enabled\n3. Check feature store availability\n4. Review recent deployments\n\nDocs: docs/08-projects/current/prediction-system-optimization/track-c-infrastructure/RUNBOOK.md",
+    "mimeType": "text/markdown"
+  },
+  "conditions": [
+    {
+      "displayName": "High Error Rate (>5%)",
+      "conditionThreshold": {
+        "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"prediction-coordinator\" AND metric.type=\"run.googleapis.com/request_count\"",
+        "aggregations": [
+          {
+            "alignmentPeriod": "300s",
+            "perSeriesAligner": "ALIGN_RATE",
+            "crossSeriesReducer": "REDUCE_SUM",
+            "groupByFields": [
+              "resource.service_name"
+            ]
+          }
+        ],
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 0.05,
+        "duration": "300s"
+      }
+    }
+  ],
+  "combiner": "OR",
+  "enabled": true,
+  "alertStrategy": {
+    "autoClose": "86400s"
+  }
+}
