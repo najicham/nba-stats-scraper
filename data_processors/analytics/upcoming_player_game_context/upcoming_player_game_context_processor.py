@@ -2260,6 +2260,9 @@ class UpcomingPlayerGameContextProcessor(
         opponent_rebounding_rate = self._get_opponent_rebounding_rate(opponent_team_abbr, self.target_date)
         opponent_pace_variance = self._get_opponent_pace_variance(opponent_team_abbr, self.target_date)
 
+        # Calculate star teammates out (Session 106)
+        star_teammates_out = self._get_star_teammates_out(team_abbr, self.target_date)
+
         # Get has_prop_line from player_info (passed from extract)
         has_prop_line = player_info.get('has_prop_line', False)
 
@@ -2358,6 +2361,7 @@ class UpcomingPlayerGameContextProcessor(
             # Real-time updates
             'player_status': self.injuries.get(player_lookup, {}).get('status'),
             'injury_report': self.injuries.get(player_lookup, {}).get('report'),
+            'star_teammates_out': star_teammates_out,  # Session 106
             'questionable_teammates': None,  # TODO: future
             'probable_teammates': None,  # TODO: future
             
@@ -2582,7 +2586,6 @@ class UpcomingPlayerGameContextProcessor(
                 'l10_sample_quality': 'insufficient',
                 'prop_over_streak': 0,
                 'prop_under_streak': 0,
-                'star_teammates_out': None,
                 'opponent_def_rating_last_10': None,
                 'shooting_pct_decline_last_5': None,
                 'fourth_quarter_production_last_7': None
@@ -2613,7 +2616,6 @@ class UpcomingPlayerGameContextProcessor(
             'l10_sample_quality': self._determine_sample_quality(l10_games_used, 10),
             'prop_over_streak': prop_over_streak,
             'prop_under_streak': prop_under_streak,
-            'star_teammates_out': None,
             'opponent_def_rating_last_10': None,
             'shooting_pct_decline_last_5': None,
             'fourth_quarter_production_last_7': None
@@ -2946,6 +2948,81 @@ class UpcomingPlayerGameContextProcessor(
         except Exception as e:
             logger.error(f"Error getting opponent pace variance for {opponent_abbr}: {e}")
             return 0.0
+
+    def _get_star_teammates_out(self, team_abbr: str, game_date: date) -> int:
+        """
+        Count star teammates who are OUT or DOUBTFUL for the game.
+
+        Star criteria (last 10 games):
+        - Average points >= 18 PPG OR
+        - Average minutes >= 28 MPG OR
+        - Usage rate >= 25%
+
+        Args:
+            team_abbr: Team abbreviation (e.g., 'LAL')
+            game_date: Game date to check
+
+        Returns:
+            int: Number of star teammates out (0-5 typical range)
+        """
+        try:
+            query = f"""
+            WITH team_roster AS (
+                SELECT player_lookup
+                FROM `{self.project_id}.nba_raw.espn_team_rosters`
+                WHERE team_abbr = '{team_abbr}'
+                  AND roster_date = (
+                      SELECT MAX(roster_date)
+                      FROM `{self.project_id}.nba_raw.espn_team_rosters`
+                      WHERE roster_date <= '{game_date}'
+                        AND team_abbr = '{team_abbr}'
+                  )
+            ),
+            player_recent_stats AS (
+                SELECT
+                    player_lookup,
+                    AVG(points) as avg_points,
+                    AVG(minutes_played) as avg_minutes,
+                    AVG(usage_rate) as avg_usage
+                FROM `{self.project_id}.nba_analytics.player_game_summary`
+                WHERE game_date >= DATE_SUB('{game_date}', INTERVAL 10 DAY)
+                  AND game_date < '{game_date}'
+                  AND team_abbr = '{team_abbr}'
+                GROUP BY player_lookup
+            ),
+            star_players AS (
+                SELECT s.player_lookup
+                FROM player_recent_stats s
+                INNER JOIN team_roster r ON s.player_lookup = r.player_lookup
+                WHERE s.avg_points >= 18
+                   OR s.avg_minutes >= 28
+                   OR s.avg_usage >= 25
+            ),
+            injured_players AS (
+                SELECT DISTINCT player_lookup
+                FROM `{self.project_id}.nba_raw.nbac_injury_report`
+                WHERE game_date = '{game_date}'
+                  AND team = '{team_abbr}'
+                  AND UPPER(injury_status) IN ('OUT', 'DOUBTFUL')
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup
+                    ORDER BY report_hour DESC
+                ) = 1
+            )
+            SELECT COUNT(*) as star_teammates_out
+            FROM star_players s
+            INNER JOIN injured_players i ON s.player_lookup = i.player_lookup
+            """
+
+            result = self.bq_client.query(query).result()
+            for row in result:
+                return int(row.star_teammates_out) if row.star_teammates_out is not None else 0
+
+            return 0
+
+        except Exception as e:
+            logger.error(f"Error getting star teammates out for {team_abbr}: {e}")
+            return 0
 
     def _calculate_data_quality(self, historical_data: pd.DataFrame,
                                 game_lines_info: Dict) -> Dict:

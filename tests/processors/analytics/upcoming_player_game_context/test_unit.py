@@ -898,6 +898,56 @@ class TestPaceMetricsCalculation:
         assert result == 0.0
 
 
+class TestStarTeammatesOut:
+    """Test star teammates out calculation."""
+
+    @pytest.fixture
+    def processor(self):
+        """Create processor instance with mocked BigQuery."""
+        proc = UpcomingPlayerGameContextProcessor()
+        proc.bq_client = Mock()
+        proc.project_id = 'test-project'
+        proc.target_date = date(2025, 1, 20)
+        return proc
+
+    def test_get_star_teammates_out_normal(self, processor):
+        """Test with 2 star players out."""
+        mock_row = Mock()
+        mock_row.star_teammates_out = 2
+        processor.bq_client.query.return_value.result.return_value = [mock_row]
+
+        result = processor._get_star_teammates_out('LAL', date(2025, 1, 20))
+
+        assert result == 2
+        assert processor.bq_client.query.called
+
+    def test_get_star_teammates_out_no_stars_out(self, processor):
+        """Test with all stars healthy."""
+        mock_row = Mock()
+        mock_row.star_teammates_out = 0
+        processor.bq_client.query.return_value.result.return_value = [mock_row]
+
+        result = processor._get_star_teammates_out('LAL', date(2025, 1, 20))
+
+        assert result == 0
+
+    def test_get_star_teammates_out_no_data(self, processor):
+        """Test when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_star_teammates_out('LAL', date(2025, 1, 20))
+
+        assert result == 0
+
+    def test_get_star_teammates_out_query_error(self, processor):
+        """Test error handling."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_star_teammates_out('LAL', date(2025, 1, 20))
+
+        assert result == 0
+
+
 # Run tests with: pytest test_unit.py -v
 # Run specific class: pytest test_unit.py::TestFatigueMetricsCalculation -v
 # Run with coverage: pytest test_unit.py --cov=data_processors.analytics.upcoming_player_game_context --cov-report=html
