@@ -51,6 +51,9 @@ COPY predictions/coordinator/gunicorn_config.py /app/gunicorn_config.py
 # Copy batch staging writer (needed for BatchConsolidator)
 COPY predictions/worker/batch_staging_writer.py /app/batch_staging_writer.py
 
+# Copy distributed lock (needed by batch_staging_writer for Firestore locking)
+COPY predictions/worker/distributed_lock.py /app/distributed_lock.py
+
 # Copy data loaders (needed for batch historical games optimization)
 COPY predictions/worker/data_loaders.py /app/data_loaders.py
 
