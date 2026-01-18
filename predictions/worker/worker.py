@@ -1333,7 +1333,7 @@ def format_prediction_for_bigquery(
     if system_id == 'similarity_balanced_v1' and 'metadata' in prediction:
         metadata = prediction['metadata']
         adjustments = metadata.get('adjustments', {})
-        
+
         record.update({
             'similarity_baseline': metadata.get('baseline_from_similar'),
             'similar_games_count': metadata.get('similar_games_count'),
@@ -1343,9 +1343,10 @@ def format_prediction_for_bigquery(
             'shot_zone_adjustment': adjustments.get('zone_matchup'),
             'pace_adjustment': adjustments.get('pace'),
             'usage_spike_adjustment': adjustments.get('usage'),
-            'home_away_adjustment': adjustments.get('venue')
+            'home_away_adjustment': adjustments.get('venue'),
+            'model_version': 'v1'  # Set model version for tracking
         })
-    
+
     elif system_id == 'catboost_v8' and 'metadata' in prediction:
         metadata = prediction['metadata']
         record.update({
@@ -1370,6 +1371,25 @@ def format_prediction_for_bigquery(
                 'agreement_type': agreement.get('type')
             }),
             'model_version': 'ensemble_v1'
+        })
+
+    elif system_id == 'moving_average':
+        # Set model version for tracking
+        record.update({
+            'model_version': 'v1'
+        })
+
+    elif system_id == 'zone_matchup_v1':
+        # Set model version for tracking
+        record.update({
+            'model_version': 'v1'
+        })
+
+    elif system_id == 'xgboost_v1' and 'metadata' in prediction:
+        # xgboost has metadata field
+        metadata = prediction['metadata']
+        record.update({
+            'model_version': metadata.get('model_version', 'v1')
         })
 
     # Add completeness metadata (Phase 5)
