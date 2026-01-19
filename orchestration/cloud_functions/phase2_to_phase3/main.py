@@ -37,6 +37,7 @@ from typing import Dict, List, Optional, Set
 from google.cloud import firestore, bigquery
 import functions_framework
 import requests
+from shared.clients.bigquery_pool import get_bigquery_client
 
 # Configure logging - use structured logging for Cloud Run
 import google.cloud.logging
@@ -157,7 +158,7 @@ def verify_phase2_data_ready(game_date: str) -> tuple:
         tuple: (is_ready: bool, missing_tables: list, table_counts: dict)
     """
     try:
-        bq_client = bigquery.Client()
+        bq_client = get_bigquery_client(project_id=os.environ.get('GCP_PROJECT', 'nba-props-platform'))
         missing = []
         table_counts = {}
 

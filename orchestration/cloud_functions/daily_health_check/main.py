@@ -23,6 +23,7 @@ import requests
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple
 from google.cloud import firestore, bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -45,7 +46,7 @@ SERVICES = [
 
 # Initialize clients
 db = firestore.Client()
-bq = bigquery.Client()
+bq = get_bigquery_client(project_id=PROJECT_ID)
 
 
 class HealthCheckResult:
