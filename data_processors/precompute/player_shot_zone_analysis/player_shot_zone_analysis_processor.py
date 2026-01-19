@@ -406,9 +406,8 @@ class PlayerShotZoneAnalysisProcessor(
         self.min_games_required = 10  # Minimum games for quality analysis
         self.sample_window = 10       # Primary analysis window
         self.trend_window = 20        # Broader trend window
-        
-        # BigQuery client initialization (CRITICAL)
-        self.bq_client = bigquery.Client()
+
+        # BigQuery client already initialized by PrecomputeProcessorBase with pooling
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
 
         # Initialize completeness checker (Week 2 - Phase 4 Completeness Checking)
