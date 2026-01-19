@@ -1,0 +1,24 @@
+I'm continuing work from Session 110 (Ensemble V1.1 deployment).
+
+Please read this handoff document first:
+docs/09-handoff/2026-01-19-NEXT-SESSION-IMMEDIATE-PRIORITIES.md
+
+## What I need to do:
+
+PRIORITY 1 (45-60 min): Deploy Session 107 Metrics
+- Session 107 documentation says "✅ COMPLETE" but verification shows 6+ metrics were NEVER deployed
+- Missing: 5 variance metrics + 2 enhanced star tracking fields
+- This is blocking models from using valuable features
+
+PRIORITY 2 (15 min): Verify Ensemble V1.1 is working
+- Deployed Jan 18 (revision 00072-cz2) but need to verify predictions generating
+- Check model_version field is set correctly (was 62.5% NULL before fix)
+
+PRIORITY 3 (45-60 min, if time): Forward-Looking Schedule Metrics
+- 4 new metrics with copy-paste ready code templates in the doc
+
+## Start with:
+
+Check if Session 107 code exists and deploy it. The handoff doc has step-by-step instructions.
+
+Let's begin with Priority 1 - deploying those missing Session 107 metrics.
