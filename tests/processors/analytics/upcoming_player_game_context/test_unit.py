@@ -1054,6 +1054,58 @@ class TestOpponentOffRatingVariance:
         assert result == 0.0
 
 
+class TestOpponentReboundingRateVariance:
+    """Test opponent rebounding rate variance calculation."""
+
+    @pytest.fixture
+    def processor(self):
+        """Create processor instance with mocked BigQuery."""
+        proc = UpcomingPlayerGameContextProcessor()
+        proc.bq_client = Mock()
+        proc.project_id = 'test-project'
+        proc.target_date = date(2025, 1, 20)
+        return proc
+
+    def test_get_opponent_rebounding_rate_variance_normal(self, processor):
+        """Test opponent rebounding rate variance calculation with normal data."""
+        mock_row = Mock()
+        mock_row.rebounding_rate_stddev = 0.025
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_rebounding_rate_variance('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(0.025, abs=0.001)
+        assert processor.bq_client.query.called
+
+    def test_get_opponent_rebounding_rate_variance_high_variance(self, processor):
+        """Test opponent rebounding rate variance with inconsistent team."""
+        mock_row = Mock()
+        mock_row.rebounding_rate_stddev = 0.058
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_rebounding_rate_variance('LAL', date(2025, 1, 20))
+
+        assert result == pytest.approx(0.058, abs=0.001)
+
+    def test_get_opponent_rebounding_rate_variance_no_data(self, processor):
+        """Test opponent rebounding rate variance when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_opponent_rebounding_rate_variance('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_rebounding_rate_variance_query_error(self, processor):
+        """Test opponent rebounding rate variance handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_opponent_rebounding_rate_variance('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+
 class TestStarTeammatesOut:
     """Test star teammates out calculation."""
 

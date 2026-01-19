@@ -2262,6 +2262,7 @@ class UpcomingPlayerGameContextProcessor(
         opponent_ft_rate_variance = self._get_opponent_ft_rate_variance(opponent_team_abbr, self.target_date)
         opponent_def_rating_variance = self._get_opponent_def_rating_variance(opponent_team_abbr, self.target_date)
         opponent_off_rating_variance = self._get_opponent_off_rating_variance(opponent_team_abbr, self.target_date)
+        opponent_rebounding_rate_variance = self._get_opponent_rebounding_rate_variance(opponent_team_abbr, self.target_date)
 
         # Calculate star teammates out (Session 106)
         star_teammates_out = self._get_star_teammates_out(team_abbr, self.target_date)
@@ -2352,6 +2353,7 @@ class UpcomingPlayerGameContextProcessor(
             'opponent_ft_rate_variance': opponent_ft_rate_variance,  # Session 107
             'opponent_def_rating_variance': opponent_def_rating_variance,  # Session 107
             'opponent_off_rating_variance': opponent_off_rating_variance,  # Session 107
+            'opponent_rebounding_rate_variance': opponent_rebounding_rate_variance,  # Session 107
 
             # Forward-looking schedule (TODO: future)
             'next_game_days_rest': 0,
@@ -3061,6 +3063,44 @@ class UpcomingPlayerGameContextProcessor(
 
         except Exception as e:
             logger.error(f"Error getting opponent off rating variance for {opponent_abbr}: {e}")
+            return 0.0
+
+    def _get_opponent_rebounding_rate_variance(self, opponent_abbr: str, game_date: date) -> float:
+        """
+        Get opponent's rebounding rate variance (consistency) over last 10 games.
+
+        Args:
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Standard deviation of rebounding rate over last 10 games, rounded to 3 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_games AS (
+                SELECT
+                    total_rebounds / NULLIF(possessions, 0) as rebounding_rate
+                FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+                WHERE team_abbr = '{opponent_abbr}'
+                  AND game_date < '{game_date}'
+                  AND game_date >= '2024-10-01'
+                  AND possessions > 0
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT ROUND(STDDEV(rebounding_rate), 3) as rebounding_rate_stddev
+            FROM recent_games
+            """
+
+            result = self.bq_client.query(query).result()
+            for row in result:
+                return row.rebounding_rate_stddev if row.rebounding_rate_stddev is not None else 0.0
+
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error getting opponent rebounding rate variance for {opponent_abbr}: {e}")
             return 0.0
 
     def _get_star_teammates_out(self, team_abbr: str, game_date: date) -> int:
