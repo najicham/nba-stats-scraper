@@ -356,4 +356,33 @@ Use this for tracking during the session:
 
 ---
 
+## 🔧 Deployment Notes from Session 110
+
+**If you need to deploy prediction worker again**, use this proven approach:
+
+```bash
+# Build locally (from repo root)
+docker build -f predictions/worker/Dockerfile \
+  -t gcr.io/nba-props-platform/prediction-worker:TAG .
+
+# Push to GCR
+docker push gcr.io/nba-props-platform/prediction-worker:TAG
+
+# Deploy pre-built image
+gcloud run deploy prediction-worker \
+  --image=gcr.io/nba-props-platform/prediction-worker:TAG \
+  --region=us-west2 \
+  --project=nba-props-platform \
+  --memory=2Gi \
+  --cpu=2 \
+  --timeout=600
+```
+
+**Why not use `gcloud run deploy --source`?**
+- Timeouts during Cloud Build (10+ min dependency resolution)
+- Dockerfile needs repo root context (shared/ modules)
+- Local build is faster and more reliable
+
+---
+
 **Start Here:** Deploy Session 107 metrics - it's the highest priority finding from Session 110.
