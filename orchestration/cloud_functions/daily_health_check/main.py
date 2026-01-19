@@ -6,13 +6,14 @@ Triggered by Cloud Scheduler every morning at 8 AM ET to validate pipeline healt
 This function performs comprehensive health checks:
 1. Service health endpoints (all 6 production services)
 2. Pipeline execution status (Phase 3→4→5 completion)
-3. Yesterday's grading completeness
-4. Today's prediction readiness
+3. Today's prediction readiness
+4. Yesterday's game completeness (R-009)
 
 Results are sent to Slack and logged to Cloud Logging.
 
-Version: 1.0
+Version: 1.1 - Added R-009 game completeness validation
 Created: 2026-01-19
+Updated: 2026-01-19
 """
 
 import functions_framework
@@ -204,6 +205,57 @@ def check_predictions(game_date: str) -> Tuple[str, str]:
         return ('warn', f'Error checking predictions: {str(e)[:100]}')
 
 
+def check_game_completeness(game_date: str) -> Tuple[str, str]:
+    """
+    Check if all expected games have complete data.
+
+    Validates that games scheduled for game_date have corresponding data
+    in the raw and analytics tables.
+
+    Returns:
+        Tuple of (status, message)
+    """
+    try:
+        # Query schedule for expected games
+        schedule_query = f"""
+            SELECT COUNT(DISTINCT game_id) as expected_games
+            FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+            WHERE game_date = '{game_date}'
+            AND game_status IN ('Final', 'Completed', 'final')
+        """
+
+        schedule_results = list(bq.query(schedule_query).result())
+        expected_games = schedule_results[0].expected_games if schedule_results else 0
+
+        if expected_games == 0:
+            return ('warn', 'No completed games found in schedule (off-day or early morning check)')
+
+        # Query actual games with data in player boxscores (primary data source)
+        data_query = f"""
+            SELECT COUNT(DISTINCT game_id) as games_with_data
+            FROM `{PROJECT_ID}.nba_raw.bdl_player_boxscores`
+            WHERE game_date = '{game_date}'
+        """
+
+        data_results = list(bq.query(data_query).result())
+        games_with_data = data_results[0].games_with_data if data_results else 0
+
+        # Calculate completeness
+        completeness_pct = (games_with_data / expected_games * 100) if expected_games > 0 else 0
+
+        if completeness_pct >= 95:
+            return ('pass', f'{games_with_data}/{expected_games} games ({completeness_pct:.0f}% complete)')
+        elif completeness_pct >= 90:
+            return ('warn', f'{games_with_data}/{expected_games} games ({completeness_pct:.0f}% complete - acceptable)')
+        elif completeness_pct >= 50:
+            return ('fail', f'{games_with_data}/{expected_games} games ({completeness_pct:.0f}% complete - INCOMPLETE)')
+        else:
+            return ('critical', f'{games_with_data}/{expected_games} games ({completeness_pct:.0f}% complete - CRITICAL FAILURE)')
+
+    except Exception as e:
+        return ('warn', f'Error checking game completeness: {str(e)[:100]}')
+
+
 def send_slack_notification(results: HealthCheckResult):
     """Send health check results to Slack."""
     if not SLACK_WEBHOOK_URL:
@@ -322,6 +374,14 @@ def daily_health_check(request):
 
     status, message = check_predictions(today)
     results.add(f"Predictions ({today})", status, message)
+
+    # ========================================================================
+    # CHECK 4: Game Completeness
+    # ========================================================================
+    logger.info(f"Checking game completeness for {yesterday}...")
+
+    status, message = check_game_completeness(yesterday)
+    results.add(f"Game Completeness ({yesterday})", status, message)
 
     # ========================================================================
     # Send Results
