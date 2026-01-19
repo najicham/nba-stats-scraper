@@ -26,9 +26,9 @@ Phase 3 Processors:
 - upcoming_player_game_context
 - upcoming_team_game_context
 
-Version: 1.2 - Added mode-aware orchestration and health checks
+Version: 1.3 - Added R-008 data freshness validation
 Created: 2025-11-29
-Updated: 2026-01-18
+Updated: 2026-01-19
 """
 
 import base64
@@ -38,7 +38,7 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Set, Tuple
 
-from google.cloud import firestore, pubsub_v1
+from google.cloud import firestore, pubsub_v1, bigquery
 import functions_framework
 import pytz
 import requests
@@ -50,6 +50,7 @@ logger = logging.getLogger(__name__)
 # Constants
 PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
 PHASE4_TRIGGER_TOPIC = 'nba-phase4-trigger'
+SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
 
 # Health check configuration
 ANALYTICS_PROCESSOR_URL = os.environ.get('ANALYTICS_PROCESSOR_URL', '')
@@ -322,6 +323,148 @@ def check_phase4_services_health() -> Tuple[bool, Dict[str, Dict]]:
         logger.info("PRECOMPUTE_PROCESSOR_URL not set, skipping health check")
 
     return (all_healthy, health_status)
+
+
+# ============================================================================
+# DATA FRESHNESS VALIDATION
+# ============================================================================
+
+# R-008: Data freshness validation for Phase 3 analytics tables
+# Required Phase 3 tables that must have data before Phase 4 can proceed
+REQUIRED_PHASE3_TABLES = [
+    ('nba_analytics', 'player_game_summary', 'game_date'),
+    ('nba_analytics', 'team_defense_game_summary', 'game_date'),
+    ('nba_analytics', 'team_offense_game_summary', 'game_date'),
+    ('nba_analytics', 'upcoming_player_game_context', 'game_date'),
+    ('nba_analytics', 'upcoming_team_game_context', 'game_date'),
+]
+
+
+def verify_phase3_data_ready(game_date: str) -> tuple:
+    """
+    R-008: Verify Phase 3 analytics tables have fresh data for game_date.
+
+    This is a belt-and-suspenders check - even if all processors report success,
+    verify the data actually exists in BigQuery.
+
+    Args:
+        game_date: The date to verify (YYYY-MM-DD)
+
+    Returns:
+        tuple: (is_ready: bool, missing_tables: list, table_counts: dict)
+    """
+    try:
+        bq_client = bigquery.Client()
+        missing = []
+        table_counts = {}
+
+        for dataset, table, date_col in REQUIRED_PHASE3_TABLES:
+            try:
+                query = f"""
+                SELECT COUNT(*) as cnt
+                FROM `{PROJECT_ID}.{dataset}.{table}`
+                WHERE {date_col} = '{game_date}'
+                """
+                result = list(bq_client.query(query).result())
+                count = result[0].cnt if result else 0
+                table_counts[f"{dataset}.{table}"] = count
+
+                if count == 0:
+                    missing.append(f"{dataset}.{table}")
+                    logger.warning(f"R-008: Missing data in {dataset}.{table} for {game_date}")
+
+            except Exception as query_error:
+                # If query fails (table doesn't exist, etc.), treat as missing
+                logger.error(f"R-008: Failed to verify {dataset}.{table}: {query_error}")
+                missing.append(f"{dataset}.{table}")
+                table_counts[f"{dataset}.{table}"] = -1  # Error marker
+
+        is_ready = len(missing) == 0
+        if is_ready:
+            logger.info(f"R-008: All Phase 3 tables verified for {game_date}: {table_counts}")
+        else:
+            logger.warning(f"R-008: Data freshness check FAILED for {game_date}. Missing: {missing}")
+
+        return (is_ready, missing, table_counts)
+
+    except Exception as e:
+        logger.error(f"R-008: Data freshness verification failed: {e}")
+        # On error, return False with empty details
+        return (False, ['verification_error'], {'error': str(e)})
+
+
+def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_counts: Dict) -> bool:
+    """
+    Send Slack alert when Phase 3 data freshness check fails.
+
+    Args:
+        game_date: The date being processed
+        missing_tables: List of tables with no data
+        table_counts: Dict of table -> row count
+
+    Returns:
+        True if alert sent successfully, False otherwise
+    """
+    if not SLACK_WEBHOOK_URL:
+        logger.warning("SLACK_WEBHOOK_URL not configured, skipping data freshness alert")
+        return False
+
+    try:
+        # Format table counts for display
+        counts_text = "\n".join([f"• {t}: {c}" for t, c in table_counts.items()])
+
+        payload = {
+            "attachments": [{
+                "color": "#FFA500",  # Orange for warning
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": ":warning: R-008: Phase 3 Data Freshness Alert",
+                            "emoji": True
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Data freshness check failed!* Some Phase 3 analytics tables are missing data for {game_date}."
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
+                            {"type": "mrkdwn", "text": f"*Missing Tables:*\n{', '.join(missing_tables)}"},
+                        ]
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Table Row Counts:*\n```{counts_text}```"
+                        }
+                    },
+                    {
+                        "type": "context",
+                        "elements": [{
+                            "type": "mrkdwn",
+                            "text": "Phase 4 precompute will proceed, but may use incomplete data. Review Phase 3 processor logs."
+                        }]
+                    }
+                ]
+            }]
+        }
+
+        response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
+        response.raise_for_status()
+        logger.info(f"Data freshness alert sent successfully for {game_date}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send data freshness alert: {e}")
+        return False
 
 
 def normalize_processor_name(raw_name: str, output_table: Optional[str] = None) -> str:
@@ -601,7 +744,7 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
 
     Combines entities_changed from all Phase 3 processors for efficient downstream processing.
 
-    **ENHANCED**: Now includes orchestration mode and trigger reason for downstream processing.
+    **ENHANCED**: Now includes orchestration mode, trigger reason, and R-008 data freshness validation.
 
     Message published to: nba-phase4-trigger
 
@@ -618,8 +761,10 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
             "teams": ["LAL", "GSW"]
         },
         "is_incremental": true,
-        "mode": "overnight",  # NEW: orchestration mode
-        "trigger_reason": "all_complete"  # NEW: why was Phase 4 triggered
+        "mode": "overnight",  # orchestration mode
+        "trigger_reason": "all_complete",  # why was Phase 4 triggered
+        "data_freshness_verified": true,  # R-008: data freshness validation result
+        "missing_tables": []  # R-008: missing tables if validation failed
     }
 
     Args:
@@ -634,6 +779,17 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
         Message ID if published successfully, None if failed
     """
     try:
+        # R-008: Verify Phase 3 data exists before triggering Phase 4
+        # This is a belt-and-suspenders check even when all processors report success
+        is_ready, missing_tables, table_counts = verify_phase3_data_ready(game_date)
+
+        if not is_ready:
+            logger.warning(
+                f"R-008: Data freshness check FAILED for {game_date}. "
+                f"Missing tables: {missing_tables}. Proceeding with trigger anyway."
+            )
+            # Send alert but continue triggering (same behavior as timeout)
+            send_data_freshness_alert(game_date, missing_tables, table_counts)
         # Read Firestore to get all processor data (including entities_changed)
         doc_snapshot = doc_ref.get()
         all_processors = doc_snapshot.to_dict() if doc_snapshot.exists else {}
@@ -688,9 +844,14 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
             'entities_changed': combined_entities,
             'is_incremental': any_incremental,
 
-            # NEW: Mode-aware orchestration metadata
+            # Mode-aware orchestration metadata
             'mode': mode,  # overnight, same_day, or tomorrow
             'trigger_reason': trigger_reason,  # all_complete, critical_plus_majority_XX, etc.
+
+            # R-008: Include data freshness verification results
+            'data_freshness_verified': is_ready,
+            'missing_tables': missing_tables if not is_ready else [],
+            'table_row_counts': table_counts,
 
             # Optional metadata from upstream
             'parent_execution_id': upstream_message.get('execution_id'),
@@ -820,7 +981,10 @@ def health(request):
         'status': 'healthy',
         'function': 'phase3_to_phase4',
         'expected_processors': EXPECTED_PROCESSOR_COUNT,
-        'version': '1.1'
+        'mode_aware_enabled': MODE_AWARE_ENABLED,
+        'health_check_enabled': HEALTH_CHECK_ENABLED,
+        'data_freshness_validation': 'enabled',
+        'version': '1.3'
     }), 200, {'Content-Type': 'application/json'}
 
 
