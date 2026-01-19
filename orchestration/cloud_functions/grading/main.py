@@ -139,8 +139,9 @@ def validate_grading_prerequisites(target_date: str) -> Dict:
         - can_auto_heal: bool
     """
     from google.cloud import bigquery
+    from shared.clients.bigquery_pool import get_bigquery_client
 
-    bq_client = bigquery.Client(project=PROJECT_ID)
+    bq_client = get_bigquery_client(project_id=PROJECT_ID)
 
     # Check predictions
     predictions_query = f"""
