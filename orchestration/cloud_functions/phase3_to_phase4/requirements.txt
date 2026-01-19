@@ -7,3 +7,4 @@ functions-framework==3.*
 # Google Cloud libraries
 google-cloud-firestore==2.*
 google-cloud-pubsub==2.*
+google-cloud-secret-manager==2.16.0

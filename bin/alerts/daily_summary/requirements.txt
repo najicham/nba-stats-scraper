@@ -11,3 +11,4 @@ google-cloud-pubsub==2.19.*
 
 # HTTP requests
 requests==2.31.*
+google-cloud-secret-manager==2.16.0
