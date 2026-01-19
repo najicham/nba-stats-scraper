@@ -1633,11 +1633,13 @@ def publish_completion_event(player_lookup: str, game_date: str, prediction_coun
 logger.info("=" * 80)
 logger.info("🔧 WEEK 2 ALERTING ENDPOINTS LOADING...")
 logger.info("  - /health/deep")
+logger.info("  - /ready")
 logger.info("  - /internal/check-env")
 logger.info("  - /internal/deployment-started")
 logger.info("=" * 80)
 
 
+@app.route('/ready', methods=['GET'])
 @app.route('/health/deep', methods=['GET'])
 def deep_health_check():
     """

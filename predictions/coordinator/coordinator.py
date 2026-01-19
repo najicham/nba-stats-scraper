@@ -43,8 +43,6 @@ from coverage_monitor import PredictionCoverageMonitor
 from batch_state_manager import get_batch_state_manager, BatchStateManager, BatchState
 
 # Import batch consolidator for staging table merging
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../worker'))
 from batch_staging_writer import BatchConsolidator
 
 # Import unified publishing (lazy import to avoid cold start)
@@ -54,6 +52,7 @@ from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
 from shared.config.orchestration_config import get_orchestration_config
 from shared.utils.env_validation import validate_required_env_vars
 from shared.utils.auth_utils import get_api_key
+from shared.endpoints.health import create_health_blueprint, HealthChecker
 
 # Configure logging
 logging.basicConfig(
@@ -155,6 +154,20 @@ COORDINATOR_API_KEY = get_api_key(
 )
 if not COORDINATOR_API_KEY:
     logger.warning("COORDINATOR_API_KEY not available from Secret Manager or environment - authenticated endpoints will reject all requests")
+
+# Health check endpoints (Phase 1 - Task 1.1: Add Health Endpoints)
+# See: docs/08-projects/current/pipeline-reliability-improvements/
+health_checker = HealthChecker(
+    project_id=PROJECT_ID,
+    service_name='prediction-coordinator',
+    check_bigquery=True,  # Coordinator queries BigQuery for player data
+    check_firestore=False,  # Coordinator doesn't use Firestore directly
+    check_gcs=False,  # Coordinator doesn't access GCS directly
+    required_env_vars=['GCP_PROJECT_ID', 'PREDICTION_REQUEST_TOPIC', 'PREDICTION_READY_TOPIC'],
+    optional_env_vars=['BATCH_SUMMARY_TOPIC', 'COORDINATOR_API_KEY', 'ENVIRONMENT']
+)
+app.register_blueprint(create_health_blueprint(health_checker))
+logger.info("Health check endpoints registered: /health, /ready, /health/deep")
 
 
 def require_api_key(f):
@@ -276,10 +289,8 @@ def index():
     }), 200
 
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Kubernetes/Cloud Run health check"""
-    return jsonify({'status': 'healthy'}), 200
+# Health check endpoint removed - now provided by shared health blueprint (see lines 161-173)
+# The blueprint provides: /health (liveness), /ready (readiness), /health/deep (deep checks)
 
 
 @app.route('/start', methods=['POST'])

@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 # Import path setup needed before shared imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from shared.utils.env_validation import validate_required_env_vars
+from shared.endpoints.health import create_health_blueprint, HealthChecker
 validate_required_env_vars(
     ['GCP_PROJECT_ID', 'ADMIN_DASHBOARD_API_KEY'],
     service_name='AdminDashboard'
@@ -333,6 +334,19 @@ def rate_limit(f):
 
 app = Flask(__name__)
 
+# Health check endpoints (Phase 1 - Task 1.1: Add Health Endpoints)
+health_checker = HealthChecker(
+    project_id=os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+    service_name='admin-dashboard',
+    check_bigquery=True,  # Dashboard queries BigQuery for pipeline data
+    check_firestore=True,  # Dashboard queries Firestore for orchestration state
+    check_gcs=False,  # Dashboard doesn't directly access GCS
+    required_env_vars=['GCP_PROJECT_ID', 'ADMIN_DASHBOARD_API_KEY'],
+    optional_env_vars=['RECONCILIATION_FUNCTION_URL', 'ENVIRONMENT']
+)
+app.register_blueprint(create_health_blueprint(health_checker))
+logger.info("Health check endpoints registered: /health, /ready, /health/deep")
+
 # Import services
 from services.bigquery_service import BigQueryService
 from services.firestore_service import FirestoreService
@@ -532,16 +546,18 @@ PARAM_BOUNDS = {
 # =============================================================================
 
 @app.route('/')
-@app.route('/health')
 @rate_limit
-def health():
-    """Health check endpoint."""
+def index():
+    """Root endpoint - basic service info."""
     return jsonify({
         'status': 'healthy',
         'service': 'admin-dashboard',
         'supported_sports': SUPPORTED_SPORTS,
         'timestamp': datetime.utcnow().isoformat() + 'Z'
     })
+
+# /health endpoint now provided by shared health blueprint (see initialization above)
+# The blueprint provides: /health (liveness), /ready (readiness), /health/deep (deep checks)
 
 
 # =============================================================================

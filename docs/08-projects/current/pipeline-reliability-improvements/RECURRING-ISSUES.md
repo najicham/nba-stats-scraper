@@ -177,6 +177,59 @@
 
 ---
 
+## Latest Incident: 2026-01-18
+
+### 14. Missing Dependency Management Across Services
+**Incident:** Jan 18 - Firestore import error in prediction-worker
+
+**Pattern:** Dependencies added to one service but not related services
+
+**Example:** Distributed lock feature (Session 92) added Firestore to coordinator but not worker
+
+**Fix Needed:**
+- Centralized dependency management
+- Dependency audit script
+- Pre-commit hooks to validate dependencies
+- Integration tests that catch import errors
+
+**Status:** 🔴 NEW PATTERN - Documented in incidents/2026-01-18/
+
+---
+
+### 15. All-or-Nothing Orchestration Too Strict
+**Incident:** Jan 18 - Phase 4 not triggered due to 2/5 Phase 3 processors complete
+
+**Pattern:** Single processor failure blocks entire pipeline
+
+**Example:** Phase 3→4 requires ALL 5 processors; if 1 fails, Phase 4 never runs
+
+**Fix Needed:**
+- Critical-processor-only trigger mode
+- Separate critical path from optional tasks
+- Graceful degradation with quality flags
+- Already designed: See incidents/2026-01-18/FIX-AND-ROBUSTNESS-PLAN.md
+
+**Status:** 🔴 HIGH PRIORITY - Fix ready for implementation
+
+---
+
+### 16. Data Availability Timing Issues
+**Incident:** Jan 18 - Phase 3 created 1 record instead of 156 (Jan 17), then 156 records 21 hours later
+
+**Pattern:** Fixed schedules fail when external data has variable availability
+
+**Example:** Betting lines for Sunday games not published until Saturday afternoon
+
+**Fix Needed:**
+- Event-driven triggers instead of fixed schedules
+- Data availability signals before processing
+- Retry logic when data incomplete
+- Already designed: See plans/EVENT-DRIVEN-ORCHESTRATION-DESIGN.md
+
+**Status:** 🔴 RECURRING - 3rd occurrence, fix designed
+
+---
+
 ## Files Referenced
 
 | Document | Location |
@@ -186,7 +239,10 @@
 | Boxscore Gaps Analysis | live-data-reliability/BOXSCORE-DATA-GAPS-ANALYSIS.md |
 | Live Data Analysis | live-data-reliability/LIVE-DATA-PIPELINE-ANALYSIS.md |
 | Morning Pipeline Fixes | session-handoffs/2025-12/2025-12-30-MORNING-PIPELINE-FIXES.md |
+| **2026-01-18 Incident** | **incidents/2026-01-18/** |
 
 ---
+
+**Last Updated:** January 18, 2026
 
 *This analysis should drive prioritization of systemic fixes over reactive patches.*

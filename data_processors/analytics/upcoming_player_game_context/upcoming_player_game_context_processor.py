@@ -994,7 +994,7 @@ class UpcomingPlayerGameContextProcessor(
         - Game start times
         - Back-to-back detection (requires looking at surrounding dates)
         """
-        game_ids = list(set([p['game_id'] for p in self.players_to_process]))
+        game_ids = list(set([p['game_id'] for p in self.players_to_process if p.get('game_id')]))
         game_ids_str = "', '".join(game_ids)
         
         # Get schedule for target date plus surrounding dates for back-to-back detection

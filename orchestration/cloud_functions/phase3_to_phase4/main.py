@@ -15,6 +15,9 @@ Critical Features:
 - Correlation ID preservation (traces back to original scraper run)
 - Entity change propagation (combines entities_changed from all processors)
 - Centralized config: Expected processors loaded from orchestration_config.py
+- **MODE-AWARE ORCHESTRATION**: Different processor expectations for overnight vs same-day vs tomorrow
+- **HEALTH CHECK INTEGRATION**: Validates downstream services before triggering
+- **GRACEFUL DEGRADATION**: Triggers if critical processors + majority complete
 
 Phase 3 Processors:
 - player_game_summary
@@ -23,20 +26,22 @@ Phase 3 Processors:
 - upcoming_player_game_context
 - upcoming_team_game_context
 
-Version: 1.1 - Now uses centralized orchestration config
+Version: 1.2 - Added mode-aware orchestration and health checks
 Created: 2025-11-29
-Updated: 2025-12-02
+Updated: 2026-01-18
 """
 
 import base64
 import json
 import logging
 import os
-from datetime import datetime, timezone
-from typing import Dict, List, Optional, Set
+from datetime import datetime, timezone, timedelta
+from typing import Dict, List, Optional, Set, Tuple
 
 from google.cloud import firestore, pubsub_v1
 import functions_framework
+import pytz
+import requests
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -45,6 +50,15 @@ logger = logging.getLogger(__name__)
 # Constants
 PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
 PHASE4_TRIGGER_TOPIC = 'nba-phase4-trigger'
+
+# Health check configuration
+ANALYTICS_PROCESSOR_URL = os.environ.get('ANALYTICS_PROCESSOR_URL', '')
+PRECOMPUTE_PROCESSOR_URL = os.environ.get('PRECOMPUTE_PROCESSOR_URL', '')
+HEALTH_CHECK_ENABLED = os.environ.get('HEALTH_CHECK_ENABLED', 'true').lower() == 'true'
+HEALTH_CHECK_TIMEOUT = int(os.environ.get('HEALTH_CHECK_TIMEOUT', '5'))
+
+# Mode-aware configuration
+MODE_AWARE_ENABLED = os.environ.get('MODE_AWARE_ENABLED', 'true').lower() == 'true'
 
 # Import expected processors from centralized config
 # This ensures consistency across the codebase (Issue A fix)
@@ -72,6 +86,242 @@ except ImportError:
 # Initialize clients (reused across invocations)
 db = firestore.Client()
 publisher = pubsub_v1.PublisherClient()
+
+
+# ============================================================================
+# MODE-AWARE ORCHESTRATION FUNCTIONS
+# ============================================================================
+
+def detect_orchestration_mode(game_date: str, current_time: Optional[datetime] = None) -> str:
+    """
+    Detect orchestration mode based on game_date and current time.
+
+    Modes:
+    - 'overnight': Processing yesterday's completed games (runs 6-8 AM ET)
+    - 'same_day': Processing today's upcoming games (runs 10:30 AM ET)
+    - 'tomorrow': Processing tomorrow's games (runs 5:00 PM ET)
+
+    Args:
+        game_date: Target game date (YYYY-MM-DD)
+        current_time: Current timestamp (defaults to now in ET)
+
+    Returns:
+        Mode string: 'overnight', 'same_day', or 'tomorrow'
+    """
+    if current_time is None:
+        et_tz = pytz.timezone('America/New_York')
+        current_time = datetime.now(et_tz)
+
+    try:
+        game_dt = datetime.strptime(game_date, '%Y-%m-%d').date()
+        current_date = current_time.date()
+
+        # Determine mode based on date relationship
+        if game_dt < current_date:
+            return 'overnight'  # Processing yesterday's games
+        elif game_dt == current_date:
+            return 'same_day'  # Processing today's games
+        else:
+            return 'tomorrow'  # Processing tomorrow's games
+    except Exception as e:
+        logger.warning(f"Error detecting mode for game_date={game_date}: {e}, defaulting to 'overnight'")
+        return 'overnight'
+
+
+def get_expected_processors_for_mode(mode: str) -> Tuple[int, Set[str], Set[str]]:
+    """
+    Get expected processor configuration based on orchestration mode.
+
+    Overnight mode (6-8 AM ET):
+        - Expected: ALL 5 processors
+        - Critical: player_game_summary, upcoming_player_game_context
+        - Optional: team summaries, upcoming_team_game_context
+
+    Same-day/Tomorrow mode (10:30 AM / 5 PM ET):
+        - Expected: 1-2 processors
+        - Critical: upcoming_player_game_context (required for predictions)
+        - Optional: upcoming_team_game_context
+
+    Args:
+        mode: Orchestration mode ('overnight', 'same_day', 'tomorrow')
+
+    Returns:
+        Tuple of (expected_count, critical_processors, optional_processors)
+    """
+    if mode == 'overnight':
+        return (
+            5,  # Expected count
+            {   # Critical processors (must have these)
+                'player_game_summary',
+                'upcoming_player_game_context'
+            },
+            {   # Optional processors (nice to have)
+                'team_defense_game_summary',
+                'team_offense_game_summary',
+                'upcoming_team_game_context'
+            }
+        )
+    elif mode in ['same_day', 'tomorrow']:
+        return (
+            1,  # Expected count (minimum)
+            {   # Critical processors
+                'upcoming_player_game_context'
+            },
+            {   # Optional processors
+                'upcoming_team_game_context'
+            }
+        )
+    else:
+        # Unknown mode - default to overnight (safest/most comprehensive)
+        logger.warning(f"Unknown mode '{mode}', defaulting to overnight expectations")
+        return (5, {'player_game_summary', 'upcoming_player_game_context'},
+                {'team_defense_game_summary', 'team_offense_game_summary', 'upcoming_team_game_context'})
+
+
+def should_trigger_phase4(
+    completed_processors: Set[str],
+    mode: str,
+    expected_count: int,
+    critical_processors: Set[str],
+    optional_processors: Set[str]
+) -> Tuple[bool, str]:
+    """
+    Determine if Phase 4 should be triggered based on completion status.
+
+    Triggering logic:
+    1. ALL expected complete → trigger (ideal case)
+    2. ALL critical + 60% of optional → trigger (graceful degradation)
+    3. Otherwise → wait
+
+    Args:
+        completed_processors: Set of completed processor names
+        mode: Current orchestration mode
+        expected_count: Expected number of processors for this mode
+        critical_processors: Set of critical processor names
+        optional_processors: Set of optional processor names
+
+    Returns:
+        Tuple of (should_trigger: bool, reason: str)
+    """
+    total_complete = len(completed_processors)
+    critical_complete = critical_processors.issubset(completed_processors)
+
+    # Case 1: All expected processors complete (ideal)
+    if total_complete >= expected_count:
+        return (True, "all_complete")
+
+    # Case 2: Graceful degradation - critical + majority of optional
+    if critical_complete:
+        total_expected = len(critical_processors) + len(optional_processors)
+        completion_ratio = total_complete / total_expected if total_expected > 0 else 0
+
+        if completion_ratio >= 0.6:  # 60% threshold
+            return (True, f"critical_plus_majority_{int(completion_ratio * 100)}pct")
+
+    # Case 3: Not enough processors complete
+    return (False, f"waiting_critical={critical_complete}_total={total_complete}/{expected_count}")
+
+
+# ============================================================================
+# HEALTH CHECK FUNCTIONS
+# ============================================================================
+
+def check_service_health(service_url: str, timeout: int = 5) -> Dict[str, any]:
+    """
+    Check if a downstream service is healthy and ready to process requests.
+
+    Calls the /ready endpoint which performs dependency checks (BigQuery, Firestore, etc).
+
+    Args:
+        service_url: Base URL of the service (e.g., https://analytics-processor...)
+        timeout: Request timeout in seconds
+
+    Returns:
+        Dict with:
+            - healthy: bool (True if status is 'ready' or 'degraded')
+            - status: str ('ready', 'degraded', 'unhealthy', or 'unreachable')
+            - details: dict (full health check response)
+            - error: str (if unreachable)
+    """
+    try:
+        response = requests.get(
+            f"{service_url}/ready",
+            timeout=timeout
+        )
+        response.raise_for_status()
+        health_data = response.json()
+
+        status = health_data.get('status', 'unknown')
+        # Consider 'degraded' as healthy (some non-critical checks failing)
+        is_healthy = status in ['ready', 'degraded']
+
+        return {
+            "healthy": is_healthy,
+            "status": status,
+            "details": health_data
+        }
+    except requests.exceptions.Timeout:
+        logger.error(f"Health check timeout for {service_url}")
+        return {
+            "healthy": False,
+            "status": "timeout",
+            "error": f"Request timed out after {timeout}s"
+        }
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Health check failed for {service_url}: {e}")
+        return {
+            "healthy": False,
+            "status": "unreachable",
+            "error": str(e)
+        }
+    except Exception as e:
+        logger.error(f"Unexpected error checking health for {service_url}: {e}")
+        return {
+            "healthy": False,
+            "status": "error",
+            "error": str(e)
+        }
+
+
+def check_phase4_services_health() -> Tuple[bool, Dict[str, Dict]]:
+    """
+    Check health of all Phase 4 downstream services.
+
+    Services checked:
+    - Analytics Processor (processes analytical queries)
+    - Precompute Processor (generates feature store)
+
+    Returns:
+        Tuple of (all_healthy: bool, health_status: dict)
+    """
+    if not HEALTH_CHECK_ENABLED:
+        logger.info("Health checks disabled via HEALTH_CHECK_ENABLED=false")
+        return (True, {"health_checks": "disabled"})
+
+    health_status = {}
+    all_healthy = True
+
+    # Check analytics processor
+    if ANALYTICS_PROCESSOR_URL:
+        analytics_health = check_service_health(ANALYTICS_PROCESSOR_URL, HEALTH_CHECK_TIMEOUT)
+        health_status['analytics_processor'] = analytics_health
+        if not analytics_health['healthy']:
+            all_healthy = False
+            logger.warning(f"Analytics Processor not ready: {analytics_health['status']}")
+    else:
+        logger.info("ANALYTICS_PROCESSOR_URL not set, skipping health check")
+
+    # Check precompute processor
+    if PRECOMPUTE_PROCESSOR_URL:
+        precompute_health = check_service_health(PRECOMPUTE_PROCESSOR_URL, HEALTH_CHECK_TIMEOUT)
+        health_status['precompute_processor'] = precompute_health
+        if not precompute_health['healthy']:
+            all_healthy = False
+            logger.warning(f"Precompute Processor not ready: {precompute_health['status']}")
+    else:
+        logger.info("PRECOMPUTE_PROCESSOR_URL not set, skipping health check")
+
+    return (all_healthy, health_status)
 
 
 def normalize_processor_name(raw_name: str, output_table: Optional[str] = None) -> str:
@@ -180,7 +430,7 @@ def orchestrate_phase3_to_phase4(cloud_event):
 
         # Create transaction and execute atomic update
         transaction = db.transaction()
-        should_trigger = update_completion_atomic(
+        should_trigger, mode, trigger_reason = update_completion_atomic(
             transaction,
             doc_ref,
             processor_name,
@@ -192,19 +442,44 @@ def orchestrate_phase3_to_phase4(cloud_event):
                 'execution_id': message_data.get('execution_id'),
                 'is_incremental': is_incremental,
                 'entities_changed': entities_changed
-            }
+            },
+            game_date  # Pass game_date for mode detection
         )
 
         if should_trigger:
-            # All processors complete - trigger Phase 4
-            trigger_phase4(game_date, correlation_id, doc_ref, message_data)
             logger.info(
-                f"✅ All {EXPECTED_PROCESSOR_COUNT} Phase 3 processors complete for {game_date}, "
-                f"triggered Phase 4 (correlation_id={correlation_id})"
+                f"Phase 3 ready to trigger Phase 4: mode={mode}, reason={trigger_reason}, "
+                f"game_date={game_date}"
             )
+
+            # Check health of downstream services before triggering
+            services_healthy, health_status = check_phase4_services_health()
+
+            if services_healthy:
+                # All services healthy - trigger Phase 4
+                trigger_phase4(game_date, correlation_id, doc_ref, message_data, mode, trigger_reason)
+                logger.info(
+                    f"✅ Phase 4 triggered successfully: mode={mode}, reason={trigger_reason}, "
+                    f"game_date={game_date}, correlation_id={correlation_id}"
+                )
+            else:
+                # Services not healthy - log warning but don't block
+                # (Phase 4 trigger will be published but may fail - Pub/Sub will retry)
+                logger.warning(
+                    f"⚠️ Phase 4 services not fully healthy, but triggering anyway "
+                    f"(Pub/Sub will retry if fails): {health_status}"
+                )
+                trigger_phase4(game_date, correlation_id, doc_ref, message_data, mode, trigger_reason)
+                logger.info(
+                    f"⚠️ Phase 4 triggered with unhealthy services: mode={mode}, "
+                    f"reason={trigger_reason}, health={health_status}"
+                )
         else:
             # Still waiting for more processors
-            logger.info(f"Registered completion for {processor_name}, waiting for others")
+            logger.info(
+                f"Registered completion for {processor_name}, mode={mode}, "
+                f"trigger_reason={trigger_reason}"
+            )
 
     except Exception as e:
         logger.error(f"Error in Phase 3→4 orchestrator: {e}", exc_info=True)
@@ -212,9 +487,12 @@ def orchestrate_phase3_to_phase4(cloud_event):
 
 
 @firestore.transactional
-def update_completion_atomic(transaction: firestore.Transaction, doc_ref, processor_name: str, completion_data: Dict) -> bool:
+def update_completion_atomic(transaction: firestore.Transaction, doc_ref, processor_name: str,
+                             completion_data: Dict, game_date: str) -> Tuple[bool, str, str]:
     """
     Atomically update processor completion and determine if should trigger next phase.
+
+    **ENHANCED WITH MODE-AWARE ORCHESTRATION**
 
     This function uses Firestore transactions to prevent race conditions when multiple
     processors complete simultaneously.
@@ -223,18 +501,21 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
     1. Read current state (locked)
     2. Check if processor already registered (idempotency)
     3. Add processor completion data
-    4. Count total completions
-    5. If all complete AND not yet triggered → mark triggered and return True
-    6. Write atomically (released lock)
+    4. Detect orchestration mode (overnight vs same-day vs tomorrow)
+    5. Get expected processors for this mode
+    6. Determine if should trigger using mode-aware logic
+    7. If should trigger AND not yet triggered → mark triggered and return True
+    8. Write atomically (released lock)
 
     Args:
         transaction: Firestore transaction object
         doc_ref: Firestore document reference for this game_date
         processor_name: Name of completing processor
         completion_data: Completion metadata
+        game_date: Date being processed (for mode detection)
 
     Returns:
-        bool: True if this update completes the phase and should trigger Phase 4
+        Tuple of (should_trigger: bool, mode: str, trigger_reason: str)
     """
     # Read current state within transaction (locked)
     doc_snapshot = doc_ref.get(transaction=transaction)
@@ -243,40 +524,84 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
     # Idempotency check: skip if this processor already registered
     if processor_name in current:
         logger.debug(f"Processor {processor_name} already registered (duplicate Pub/Sub message)")
-        return False
+        return (False, 'unknown', 'duplicate')
 
     # Add this processor's completion data
     current[processor_name] = completion_data
 
     # Count completed processors (exclude metadata fields starting with _)
-    completed_count = len([k for k in current.keys() if not k.startswith('_')])
+    completed_processor_names = [k for k in current.keys() if not k.startswith('_')]
+    completed_processors = set(completed_processor_names)
+    completed_count = len(completed_processors)
+
+    # Detect mode and get expectations
+    if MODE_AWARE_ENABLED:
+        mode = detect_orchestration_mode(game_date)
+        expected_count, critical_processors, optional_processors = get_expected_processors_for_mode(mode)
+
+        logger.info(
+            f"Mode-aware orchestration: mode={mode}, expected={expected_count}, "
+            f"critical={len(critical_processors)}, optional={len(optional_processors)}, "
+            f"completed={completed_count}"
+        )
+    else:
+        # Fallback to original all-or-nothing logic
+        mode = 'legacy'
+        expected_count = EXPECTED_PROCESSOR_COUNT
+        critical_processors = set()
+        optional_processors = set()
+        logger.info(f"Legacy orchestration: expected={expected_count}, completed={completed_count}")
+
+    # Determine if should trigger
+    if MODE_AWARE_ENABLED:
+        should_trigger, trigger_reason = should_trigger_phase4(
+            completed_processors,
+            mode,
+            expected_count,
+            critical_processors,
+            optional_processors
+        )
+    else:
+        # Legacy logic: all-or-nothing
+        should_trigger = completed_count >= expected_count
+        trigger_reason = "all_complete" if should_trigger else f"waiting_{completed_count}/{expected_count}"
 
     # Check if this completes the phase AND hasn't been triggered yet
-    if completed_count >= EXPECTED_PROCESSOR_COUNT and not current.get('_triggered'):
+    if should_trigger and not current.get('_triggered'):
         # Mark as triggered to prevent duplicate triggers
         current['_triggered'] = True
         current['_triggered_at'] = firestore.SERVER_TIMESTAMP
         current['_completed_count'] = completed_count
+        current['_mode'] = mode
+        current['_trigger_reason'] = trigger_reason
 
         # Write atomically
         transaction.set(doc_ref, current)
 
-        return True  # Trigger Phase 4
+        return (True, mode, trigger_reason)  # Trigger Phase 4
     else:
         # Not yet complete, or already triggered
         current['_completed_count'] = completed_count
+        current['_mode'] = mode
+        current['_last_update'] = firestore.SERVER_TIMESTAMP
 
         # Write atomically
         transaction.set(doc_ref, current)
 
-        return False  # Don't trigger
+        if current.get('_triggered'):
+            return (False, mode, 'already_triggered')
+        else:
+            return (False, mode, trigger_reason)  # Don't trigger
 
 
-def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_message: Dict) -> Optional[str]:
+def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_message: Dict,
+                   mode: str, trigger_reason: str) -> Optional[str]:
     """
     Publish message to trigger Phase 4 precompute processing.
 
     Combines entities_changed from all Phase 3 processors for efficient downstream processing.
+
+    **ENHANCED**: Now includes orchestration mode and trigger reason for downstream processing.
 
     Message published to: nba-phase4-trigger
 
@@ -292,7 +617,9 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
             "players": ["lebron-james", "stephen-curry"],
             "teams": ["LAL", "GSW"]
         },
-        "is_incremental": true
+        "is_incremental": true,
+        "mode": "overnight",  # NEW: orchestration mode
+        "trigger_reason": "all_complete"  # NEW: why was Phase 4 triggered
     }
 
     Args:
@@ -300,6 +627,8 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
         correlation_id: Original correlation ID from scraper run
         doc_ref: Firestore document with all processor completions
         upstream_message: Original Phase 3 completion message
+        mode: Orchestration mode (overnight, same_day, tomorrow)
+        trigger_reason: Reason for triggering (all_complete, critical_plus_majority_XX, etc.)
 
     Returns:
         Message ID if published successfully, None if failed
@@ -358,6 +687,10 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
             # Selective processing metadata
             'entities_changed': combined_entities,
             'is_incremental': any_incremental,
+
+            # NEW: Mode-aware orchestration metadata
+            'mode': mode,  # overnight, same_day, or tomorrow
+            'trigger_reason': trigger_reason,  # all_complete, critical_plus_majority_XX, etc.
 
             # Optional metadata from upstream
             'parent_execution_id': upstream_message.get('execution_id'),

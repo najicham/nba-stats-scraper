@@ -6,9 +6,14 @@ Handles Pub/Sub messages when raw data processing completes
 """
 
 import os
+import sys
 import json
 import logging
 from flask import Flask, request, jsonify
+
+# Add project root to path for shared imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+from shared.endpoints.health import create_health_blueprint, HealthChecker
 from datetime import datetime, timezone, date, timedelta
 import base64
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -23,6 +28,19 @@ from data_processors.analytics.upcoming_team_game_context.upcoming_team_game_con
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Health check endpoints (Phase 1 - Task 1.1: Add Health Endpoints)
+health_checker = HealthChecker(
+    project_id=os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+    service_name='analytics-processor',
+    check_bigquery=True,  # Processor reads and writes BigQuery
+    check_firestore=False,  # Processor doesn't use Firestore
+    check_gcs=False,  # Processor doesn't directly access GCS
+    required_env_vars=['GCP_PROJECT_ID'],
+    optional_env_vars=['ENVIRONMENT']
+)
+app.register_blueprint(create_health_blueprint(health_checker))
+logger.info("Health check endpoints registered: /health, /ready, /health/deep")
 
 def run_single_analytics_processor(processor_class, opts):
     """
@@ -74,9 +92,8 @@ ANALYTICS_TRIGGERS = {
 }
 
 @app.route('/', methods=['GET'])
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint."""
+def index():
+    """Root endpoint - service info."""
     return jsonify({
         "status": "healthy",
         "service": "analytics_processors",

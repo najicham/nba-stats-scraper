@@ -1681,7 +1681,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
                 write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
                 autodetect=(table_schema is None),  # Auto-detect schema on first run when table doesn't exist
-                schema_update_options=None
+                schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION]  # Allow adding new fields (Session 107 metrics)
             )
             
             # Load to target table
@@ -1813,8 +1813,12 @@ class AnalyticsProcessorBase(RunHistoryMixin):
 
         # Get all field names from schema or fallback to row keys
         if table_schema and len(table_schema) > 0:
-            all_fields = [field.name for field in table_schema]
-            logger.debug(f"Using schema with {len(all_fields)} fields")
+            schema_fields = [field.name for field in table_schema]
+            # Also include fields from data that might not be in schema yet (Session 107 metrics)
+            data_fields = list(sanitized_rows[0].keys()) if sanitized_rows else []
+            # Merge: schema fields first, then any new fields from data
+            all_fields = schema_fields + [f for f in data_fields if f not in schema_fields]
+            logger.debug(f"Using {len(schema_fields)} schema fields + {len(all_fields) - len(schema_fields)} new data fields = {len(all_fields)} total")
         else:
             # Fallback: use keys from first row
             all_fields = list(sanitized_rows[0].keys()) if sanitized_rows else []
@@ -1913,7 +1917,8 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 schema=table_schema,
                 source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
                 write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
-                autodetect=(table_schema is None)
+                autodetect=(table_schema is None),
+                schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION] if table_schema else None  # Allow adding new fields
             )
 
             load_job = self.bq_client.load_table_from_file(
@@ -2070,7 +2075,8 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             schema=table_schema,
             source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
             write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-            autodetect=(table_schema is None)
+            autodetect=(table_schema is None),
+            schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION]  # Allow adding new fields (Session 107 metrics)
         )
 
         try:
