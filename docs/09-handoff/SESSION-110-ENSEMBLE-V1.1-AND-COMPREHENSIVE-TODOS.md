@@ -87,9 +87,10 @@ gcloud run deploy prediction-worker \
   --timeout=600
 ```
 
-**Status:** ❌ Build timeouts (dependency resolution issue)
-**Issue:** grpcio-status dependency backtracking causes 10+ minute builds that timeout
-**Next Attempt:** Use pre-built image or optimize requirements.txt
+**Status:** ✅ SUCCESSFULLY DEPLOYED
+**Revision:** prediction-worker-00072-cz2
+**Deployed:** 2026-01-19 02:17:35 UTC (Jan 18 10:17 PM PST)
+**URL:** https://prediction-worker-756957797294.us-west2.run.app
 
 **Commits:**
 - `26bdd406` - feat(predictions): Implement Ensemble V1.1 with performance-based weights
@@ -137,6 +138,62 @@ gcloud run deploy prediction-worker \
 ```
 
 **Recommended:** Option 1 (pin grpcio-status), then retry `gcloud run deploy --source`
+
+### ✅ Deployment Resolution (Final Solution)
+
+After multiple failed attempts with `gcloud run deploy --source`, the deployment was successful using this approach:
+
+**Problem:** `gcloud run deploy --source` kept timing out during Cloud Build, even with pinned dependencies
+
+**Root Cause:** The Dockerfile needs build context from repository root (not just predictions/worker) to access:
+- `shared/` module
+- `predictions/shared/` module
+- `predictions/worker/` code
+
+**Solution:** Build Docker image locally and push to GCR
+
+```bash
+# 1. Pin dependencies in requirements.txt (prevents pip backtracking)
+# Already done: grpcio==1.76.0, grpcio-status==1.62.3
+
+# 2. Build Docker image from repository root
+docker build -f predictions/worker/Dockerfile \
+  -t gcr.io/nba-props-platform/prediction-worker:ensemble-v1.1 .
+
+# 3. Push to Google Container Registry
+docker push gcr.io/nba-props-platform/prediction-worker:ensemble-v1.1
+
+# 4. Deploy pre-built image to Cloud Run
+gcloud run deploy prediction-worker \
+  --image=gcr.io/nba-props-platform/prediction-worker:ensemble-v1.1 \
+  --region=us-west2 \
+  --project=nba-props-platform \
+  --memory=2Gi \
+  --cpu=2 \
+  --timeout=600
+```
+
+**Time:** ~5 minutes total (3 min build + 1 min push + 1 min deploy)
+
+**Verification:**
+```bash
+curl https://prediction-worker-756957797294.us-west2.run.app/ | jq '.systems'
+```
+
+**Result:**
+```json
+{
+  "catboost_v8": "...",
+  "ensemble": "Ensemble V1 (v2.0) - 4 Systems",
+  "ensemble_v1_1": "Ensemble V1.1 (v1.1) - 5 Systems",  ← NEW!
+  "moving_average": "...",
+  "similarity": "...",
+  "xgboost_v1": "...",
+  "zone_matchup": "..."
+}
+```
+
+✅ **Ensemble V1.1 is live and ready for predictions!**
 
 ---
 
