@@ -16,6 +16,7 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime, timezone, timedelta
 
 from google.cloud import storage, bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 
 from .base_exporter import BaseExporter
 
@@ -62,7 +63,7 @@ class StatusExporter(BaseExporter):
     def _get_bq_client(self):
         """Get or create BigQuery client."""
         if self._bigquery_client is None:
-            self._bigquery_client = bigquery.Client()
+            self._bigquery_client = get_bigquery_client(project_id=self.project_id)
         return self._bigquery_client
 
     def generate_json(self, target_date: str = None) -> Dict[str, Any]:

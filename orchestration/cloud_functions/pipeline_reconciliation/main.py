@@ -50,6 +50,7 @@ from typing import Dict, List, Tuple
 from zoneinfo import ZoneInfo
 
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 import functions_framework
 import requests
 
@@ -73,7 +74,7 @@ class PipelineReconciler:
     """Reconciles data across all pipeline phases."""
 
     def __init__(self):
-        self.client = bigquery.Client()
+        self.client = get_bigquery_client(project_id=PROJECT_ID)
         self.gaps: List[Dict] = []  # List of detected gaps
         self.warnings: List[str] = []  # Non-critical warnings
         self.stats: Dict = {}  # Statistics per phase

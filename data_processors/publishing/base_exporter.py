@@ -12,6 +12,7 @@ from typing import Dict, List, Any, Optional
 
 from google.cloud import bigquery
 from google.cloud import storage
+from shared.clients.bigquery_pool import get_bigquery_client
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +32,7 @@ class BaseExporter(ABC):
     def __init__(self, project_id: str = PROJECT_ID, bucket_name: str = BUCKET_NAME):
         self.project_id = project_id
         self.bucket_name = bucket_name
-        self.bq_client = bigquery.Client(project=project_id)
+        self.bq_client = get_bigquery_client(project_id=project_id)
         self.gcs_client = storage.Client(project=project_id)
 
     @abstractmethod

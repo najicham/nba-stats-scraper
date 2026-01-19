@@ -36,6 +36,7 @@ from typing import Dict, Any, List
 import functions_framework
 from flask import jsonify
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 
 # Import notification system with fallback
 try:
@@ -79,7 +80,7 @@ def cleanup_upcoming_tables(request) -> Dict[str, Any]:
     logger.info("=" * 80)
 
     start_time = datetime.utcnow()
-    client = bigquery.Client(project=PROJECT_ID)
+    client = get_bigquery_client(project_id=PROJECT_ID)
 
     summary = {
         'cleanup_time': start_time.isoformat(),

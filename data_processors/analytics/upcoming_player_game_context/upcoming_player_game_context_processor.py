@@ -116,9 +116,8 @@ class UpcomingPlayerGameContextProcessor(
         # Initialize target_date (set later in extract_raw_data)
         self.target_date = None
 
-        # CRITICAL: Initialize BigQuery client and project ID
+        # BigQuery client already initialized by AnalyticsProcessorBase with pooling
         # Don't specify location to allow querying datasets in any location (US and us-west2)
-        self.bq_client = bigquery.Client()
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
 
         # Initialize completeness checker (Week 5 - Phase 3 Multi-Window)

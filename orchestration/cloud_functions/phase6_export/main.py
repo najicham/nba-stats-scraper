@@ -76,8 +76,9 @@ def validate_predictions_exist(target_date: str, min_predictions: int = 50) -> D
         - missing_reason: str (if not ready)
     """
     from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 
-    bq_client = bigquery.Client(project=PROJECT_ID)
+    bq_client = get_bigquery_client(project_id=PROJECT_ID)
 
     query = f"""
     SELECT

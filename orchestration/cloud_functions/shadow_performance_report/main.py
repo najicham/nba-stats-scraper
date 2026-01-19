@@ -40,6 +40,7 @@ from datetime import date, timedelta
 from typing import Dict, List, Optional
 
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 import functions_framework
 
 # Configure logging
@@ -366,7 +367,7 @@ def send_shadow_report(request):
         logger.info(f"Generating shadow performance report (weeks_back={weeks_back}, dry_run={dry_run})")
 
         # Get data
-        bq_client = bigquery.Client(project=PROJECT_ID)
+        bq_client = get_bigquery_client(project_id=PROJECT_ID)
 
         shadow_data = get_shadow_performance(bq_client, weeks_back)
         active_performance = get_active_tier_performance(bq_client, weeks_back)
