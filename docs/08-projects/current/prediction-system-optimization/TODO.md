@@ -1,103 +1,172 @@
 # Prediction System Optimization - TODO List
 
 **Created:** 2026-01-18 (Session 98)
-**Last Updated:** 2026-01-18
-**Current Phase:** Passive Monitoring (Track A)
+**Last Updated:** 2026-01-18 (Session 109 - Updated with Quick Win)
+**Current Phase:** Quick Win Implementation + Dual Monitoring
 
 ---
 
-## 🎯 Current Priority: Daily Monitoring (Jan 19-23)
+## 🚀 TOP PRIORITY: Ensemble V1.1 Quick Win (Jan 19)
+
+**Status:** ⏳ READY TO IMPLEMENT
+**Time Commitment:** 2-3 hours
+**Goal:** Fix Ensemble V1 by adding CatBoost V8, improve MAE from 5.41 → 4.9-5.1
+**Implementation Plan:** `/docs/10-planning/ENSEMBLE-V1.1-QUICK-WIN-IMPLEMENTATION-PLAN.md`
+
+### Implementation Tasks (Jan 19)
+
+#### Phase 1: Code Modifications (1 hour)
+- [ ] Copy `ensemble_v1.py` → `ensemble_v1_1.py`
+- [ ] Add CatBoost V8 as 5th system
+- [ ] Implement fixed performance-based weights:
+  - CatBoost V8: 45% (best system)
+  - Similarity: 25% (complementarity)
+  - Moving Average: 20% (momentum)
+  - Zone Matchup: 10% (reduced from 25%)
+  - XGBoost: 0% (skip mock)
+- [ ] Update system_id to `ensemble_v1_1`
+- [ ] Update version to `1.1`
+- [ ] Replace confidence weighting with fixed weights
+- [ ] Add metadata tracking
+
+#### Phase 2: Local Testing (30 min)
+- [ ] Create test script `test_ensemble_v1_1.py`
+- [ ] Test with 5 sample players
+- [ ] Verify all 5 systems called
+- [ ] Verify weights applied correctly
+- [ ] Validate predictions reasonable
+
+#### Phase 3: Integration (30 min)
+- [ ] Update `worker.py` to instantiate Ensemble V1.1
+- [ ] Add to coordinator's system list
+- [ ] Test end-to-end locally
+
+#### Phase 4: Deployment (30 min)
+- [ ] Deploy to Cloud Run (shadow mode)
+- [ ] Verify system runs in production
+- [ ] Check logs for errors
+- [ ] Validate predictions generated
+
+**Success Criteria:**
+- ✅ Ensemble V1.1 deploys without errors
+- ✅ Generates predictions alongside other systems
+- ✅ All 5 component systems contribute
+- ✅ Ready for monitoring on Jan 20
+
+---
+
+## 🎯 Updated Priority: Dual System Monitoring (Jan 20-24)
 
 **Status:** ⏳ WAITING TO START
 **Time Commitment:** 5 minutes/day for 5 days
-**Goal:** Validate XGBoost V1 V2 production performance before Track B
+**Goal:** Monitor BOTH XGBoost V1 V2 AND Ensemble V1.1 performance
 
-### Daily Tasks (Jan 19-23)
+### Daily Tasks (Jan 20-24) - UPDATED TIMELINE
 
-#### Day 1: Jan 19 (Monday) - CRITICAL FIRST CHECK
-- [ ] **Morning:** Run monitoring query (see PLAN-NEXT-SESSION.md)
-- [ ] **Verify:** XGBoost V1 predictions graded for Jan 18
-- [ ] **Record:** MAE = ___, Win Rate = ___%, Volume = ___
-- [ ] **Check:** Status flag (✅ GOOD / ⚠️ WARNING / 🚨 CRITICAL)
+**Note:** NBA games resume Jan 20 (MLK Day weekend had no games)
+
+#### Day 1: Jan 20 (Tuesday) - FIRST MONITORING DAY 🎬
+- [ ] **Morning:** Run dual monitoring query (XGBoost V1 V2 + Ensemble V1.1)
+- [ ] **Record XGBoost V1 V2:** MAE = ___, Win Rate = ___%, Volume = ___
+- [ ] **Record Ensemble V1.1:** MAE = ___, Win Rate = ___%, Volume = ___
+- [ ] **Record CatBoost V8:** MAE = ___ (comparison baseline)
+- [ ] **Check:** Status flags (✅ GOOD / ⚠️ WARNING / 🚨 CRITICAL)
 - [ ] **Validate:**
-  - [ ] Grading working (volume > 0)
-  - [ ] MAE ≤ 5.0 (acceptable first day)
-  - [ ] Win Rate ≥ 45% (acceptable first day)
+  - [ ] Both systems generating predictions
+  - [ ] Ensemble V1.1 MAE ≤ 5.2 (acceptable first day)
+  - [ ] XGBoost V1 V2 MAE ≤ 5.0 (acceptable first day)
+  - [ ] Win Rates ≥ 45%
   - [ ] Zero placeholders
-- [ ] **Action:** If any 🚨 alerts → follow investigation plan
+- [ ] **Compare:** Ensemble V1 vs V1.1 (improvement visible?)
 
 **Success Criteria:**
-- Grading completed ✅
-- MAE reasonable (≤ 5.0)
+- Both systems working ✅
+- Ensemble V1.1 shows early improvement signs
 - No critical errors
 
 ---
 
-#### Day 2: Jan 20 (Tuesday) - STABILITY CHECK
-- [ ] **Morning:** Run monitoring query
-- [ ] **Record:** MAE = ___, Win Rate = ___%, Volume = ___
-- [ ] **Compare:** Day 1 vs Day 2 (improving/stable/declining?)
-- [ ] **Check:** Status flag
+#### Day 2: Jan 21 (Wednesday) - STABILITY CHECK
+- [ ] **Morning:** Run dual monitoring query
+- [ ] **Record Both Systems:** MAE, Win Rate, Volume
+- [ ] **Compare:** Day 1 vs Day 2 trends
+- [ ] **Check:** Status flags
 - [ ] **Validate:**
-  - [ ] Volume normal (200-400 predictions)
-  - [ ] MAE stable (not increasing)
+  - [ ] Consistent volume (200-400 predictions each)
+  - [ ] MAE stable or improving
   - [ ] Win Rate ≥ 48%
+- [ ] **Head-to-Head:** Ensemble V1.1 beating V1?
 
 **Success Criteria:**
 - MAE not increasing
-- Win Rate improving or stable
+- Ensemble V1.1 performance advantage visible
 - Consistent volume
 
 ---
 
-#### Day 3: Jan 21 (Wednesday) - TREND ANALYSIS
-- [ ] **Morning:** Run monitoring query
-- [ ] **Record:** MAE = ___, Win Rate = ___%, Volume = ___
-- [ ] **Analyze:** 3-day trend visible
-- [ ] **Check:** Status flag
-- [ ] **Calculate:** 3-day average MAE and Win Rate
-- [ ] **Evaluate:** Is trend positive?
+#### Day 3: Jan 22 (Thursday) - TREND ANALYSIS
+- [ ] **Morning:** Run dual monitoring query
+- [ ] **Record Both Systems:** MAE, Win Rate, Volume
+- [ ] **Analyze:** 3-day trends for both systems
+- [ ] **Calculate:** 3-day averages
+- [ ] **Evaluate:** Are trends positive?
+- [ ] **Compare:** V1.1 win rate vs V1
 
 **Success Criteria:**
-- Clear trend emerging
-- Average MAE ≤ 4.5
-- Average Win Rate ≥ 50%
+- Clear trends emerging
+- Ensemble V1.1 avg MAE ≤ 5.0
+- XGBoost V1 V2 avg MAE ≤ 4.5
+- Both systems stable
 
 ---
 
-#### Day 4: Jan 22 (Thursday) - PRE-DECISION
-- [ ] **Morning:** Run monitoring query
-- [ ] **Record:** MAE = ___, Win Rate = ___%, Volume = ___
-- [ ] **Check:** Status flag
-- [ ] **Calculate:** 4-day average
-- [ ] **Assess:** Likely decision outcome?
+#### Day 4: Jan 23 (Friday) - PRE-DECISION
+- [ ] **Morning:** Run dual monitoring query
+- [ ] **Record Both Systems:** MAE, Win Rate, Volume
+- [ ] **Calculate:** 4-day averages
+- [ ] **Assess:** Likely decision outcomes?
+- [ ] **Prepare:** Decision queries for tomorrow
 
 **Success Criteria:**
-- Trend clear and stable
-- Preparing for Day 5 decision
+- Trends clear and stable
+- Preparing for Day 5 decisions
 
 ---
 
-#### Day 5: Jan 23 (Friday) - DECISION DAY ⭐
-- [ ] **Morning:** Run monitoring query
-- [ ] **Record:** MAE = ___, Win Rate = ___%, Volume = ___
-- [ ] **Run:** 5-day aggregate query (see PLAN-NEXT-SESSION.md)
+#### Day 5: Jan 24 (Saturday) - DUAL DECISION DAY ⭐⭐
+
+**Decision 1: Ensemble V1.1 Promotion**
+- [ ] **Morning:** Run 5-day aggregate for Ensemble V1.1
 - [ ] **Calculate:**
-  - [ ] 5-day average MAE = ___
-  - [ ] 5-day average Win Rate = ___
+  - [ ] 5-day avg MAE = ___
+  - [ ] 5-day avg Win Rate = ___
+  - [ ] Win rate vs Ensemble V1 = ___%
+- [ ] **Decide:** Promote Ensemble V1.1?
+  - [ ] MAE ≤ 5.0 AND Win rate vs V1 > 55% → ✅ PROMOTE
+  - [ ] 5.0 < MAE < 5.2 → ⚠️ KEEP MONITORING
+  - [ ] MAE > 5.2 → 🚨 ROLLBACK
+- [ ] **Document:** Ensemble V1.1 decision
+
+**Decision 2: XGBoost V1 V2 Next Steps**
+- [ ] **Run:** 5-day aggregate for XGBoost V1 V2
+- [ ] **Calculate:**
+  - [ ] 5-day avg MAE = ___
+  - [ ] 5-day avg Win Rate = ___
   - [ ] Std Dev MAE = ___
-  - [ ] Performance status = ___
 - [ ] **Decide:** Use decision matrix
   - [ ] MAE ≤ 4.0 → ✅ EXCELLENT → Track B
   - [ ] MAE 4.0-4.2 → ✅ GOOD → Track B
   - [ ] MAE 4.2-4.5 → ⚠️ ACCEPTABLE → Track E first
   - [ ] MAE > 4.5 → 🚨 POOR → Investigate
-- [ ] **Document:** Update PROGRESS-LOG.md with decision
+- [ ] **Consider:** Add XGBoost V1 V2 to Ensemble V1.1?
+
+**Final Tasks:**
+- [ ] **Document:** Update PROGRESS-LOG.md with both decisions
 - [ ] **Create:** Handoff for next session
-- [ ] **Plan:** Schedule next session based on decision
+- [ ] **Plan:** Schedule next session based on decisions
 
 **Success Criteria:**
-- Clear decision made
+- Both decisions made with data
 - Next steps documented
 - Ready to proceed
 
@@ -347,7 +416,22 @@
 
 ## ✅ Completed Tasks
 
-### Session 98 (Jan 18)
+### Session 109 (Jan 18 - Afternoon/Evening)
+- [x] **Deep system analysis** via 3 parallel agents (documentation, architecture, monitoring)
+- [x] **Performance analysis** discovered Ensemble V1 flaw (excludes CatBoost, includes poor Zone Matchup)
+- [x] **Root cause identified:** Ensemble V1 performs 12.5% worse than best system (should be better!)
+- [x] **Strategic planning:** Evaluated 3 approaches, chose Quick Win
+- [x] **Ridge meta-learner training script created** (377 lines, saved for future use)
+- [x] **Ensemble V1.1 implementation plan created** (580+ lines, step-by-step guide)
+- [x] **Documentation created:**
+  - Performance analysis report (14 sections, comprehensive)
+  - Ensemble retraining recommendations
+  - Reusable BigQuery analysis queries
+  - Complete implementation plan with test scripts
+- [x] Updated TODO.md with Ensemble V1.1 priority
+- [x] Total deliverables: 6 documents, ~3,000 lines of code/docs
+
+### Session 98 (Jan 18 - Morning)
 - [x] Investigated "XGBoost grading gap" (RESOLVED - not a bug)
 - [x] Discovered 6-system concurrent architecture
 - [x] Established XGBoost V1 V2 Day 0 baseline
