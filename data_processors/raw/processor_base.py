@@ -42,12 +42,13 @@ from shared.utils.notification_system import (
 # Import run history mixin
 from shared.processors.mixins import RunHistoryMixin
 
-# Import BigQuery retry utilities
+# Import BigQuery retry utilities and connection pooling
 from shared.utils.bigquery_retry import (
     is_serialization_error,
     SERIALIZATION_RETRY,
     QUOTA_RETRY
 )
+from shared.clients.bigquery_pool import get_bigquery_client
 
 # Import sport configuration for multi-sport support
 from shared.config.sport_config import (
@@ -478,7 +479,7 @@ class ProcessorBase(RunHistoryMixin):
         try:
             # Use project_id from opts, falling back to sport_config
             project_id = self.opts.get("project_id", self.project_id)
-            self.bq_client = bigquery.Client(project=project_id)
+            self.bq_client = get_bigquery_client(project_id=project_id)
             self.gcs_client = storage.Client(project=project_id)
         except Exception as e:
             logger.error(f"Failed to initialize GCP clients: {e}")
