@@ -60,7 +60,34 @@ gcloud functions logs read phase5b-grading --region=us-west2 --limit=100 | grep 
 
 ---
 
-## 🔧 Recent Changes (Session 97-99)
+## 🔧 Recent Changes (Session 97-112)
+
+### Session 112 (2026-01-19) 🎉
+✅ **Prediction Worker Firestore Fix - CRITICAL**
+- Fixed 37+ hour prediction pipeline outage
+- Root cause: Missing `google-cloud-firestore==2.14.0` dependency
+- All 7 prediction systems restored (including Ensemble V1.1)
+- Verified: 614 predictions generated for Jan 19 games
+- Reference: `docs/09-handoff/SESSION-112-PREDICTION-WORKER-FIRESTORE-FIX.md`
+
+### Session 111 (2026-01-19)
+✅ **Session 107 Metrics Deployed**
+- Deployed 7 missing Session 107 metrics (variance + star tracking)
+- Fixed analytics processor schema evolution
+- Jan 19: 100% populated, Jan 17-18 need backfill
+- Reference: `docs/09-handoff/SESSION-111-SESSION-107-METRICS-AND-PREDICTION-DEBUGGING.md`
+
+⚠️ **Prediction Pipeline Investigation**
+- Identified prediction worker crashes (fixed in Session 112)
+- Fixed prediction coordinator deployment script
+- Discovered issue started 12 hours BEFORE Session 110
+
+### Session 110 (2026-01-18)
+✅ **Ensemble V1.1 Deployed**
+- Performance-based weighted ensemble (vs confidence-based)
+- Expected MAE: 4.9-5.1 (6-9% improvement)
+- Integration tested and operational
+- Reference: `docs/09-handoff/SESSION-110-ENSEMBLE-V1.1-AND-COMPREHENSIVE-TODOS.md`
 
 ### Session 99 (2026-01-18)
 ✅ **Phase 3 Analytics 503 Fix**
@@ -69,23 +96,12 @@ gcloud functions logs read phase5b-grading --region=us-west2 --limit=100 | grep 
 - Cost: ~$12-15/month
 - Reference: `docs/09-handoff/SESSION-99-PHASE3-FIX-COMPLETE.md`
 
-✅ **Comprehensive Monitoring**
-- Created monitoring guide
-- Created troubleshooting runbook
-- Created staging cleanup script
-- Created health check script
-
 ### Session 97-98 (2026-01-17-18)
 ✅ **Distributed Locking Deployed**
 - Prevents duplicate grading records
 - 3-layer defense: Lock → Validation → Alerting
 - Zero duplicates since deployment
 - Reference: `docs/09-handoff/SESSION-97-MONITORING-COMPLETE.md`
-
-✅ **Data Validation Complete**
-- All tables verified clean (0 duplicates)
-- No cleanup needed
-- Reference: `docs/09-handoff/SESSION-98-VALIDATION-COMPLETE.md`
 
 ---
 
