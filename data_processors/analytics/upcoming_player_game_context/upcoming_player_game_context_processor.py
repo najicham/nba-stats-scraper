@@ -2267,6 +2267,10 @@ class UpcomingPlayerGameContextProcessor(
         # Calculate star teammates out (Session 106)
         star_teammates_out = self._get_star_teammates_out(team_abbr, self.target_date)
 
+        # Enhanced star tracking (Session 107)
+        questionable_star_teammates = self._get_questionable_star_teammates(team_abbr, self.target_date)
+        star_tier_out = self._get_star_tier_out(team_abbr, self.target_date)
+
         # Get has_prop_line from player_info (passed from extract)
         has_prop_line = player_info.get('has_prop_line', False)
 
@@ -2370,7 +2374,8 @@ class UpcomingPlayerGameContextProcessor(
             'player_status': self.injuries.get(player_lookup, {}).get('status'),
             'injury_report': self.injuries.get(player_lookup, {}).get('report'),
             'star_teammates_out': star_teammates_out,  # Session 106
-            'questionable_teammates': None,  # TODO: future
+            'questionable_star_teammates': questionable_star_teammates,  # Session 107
+            'star_tier_out': star_tier_out,  # Session 107
             'probable_teammates': None,  # TODO: future
             
             # Source tracking
@@ -3176,6 +3181,162 @@ class UpcomingPlayerGameContextProcessor(
 
         except Exception as e:
             logger.error(f"Error getting star teammates out for {team_abbr}: {e}")
+            return 0
+
+    def _get_questionable_star_teammates(self, team_abbr: str, game_date: date) -> int:
+        """
+        Count star teammates who are QUESTIONABLE for the game.
+
+        Star criteria (last 10 games):
+        - Average points >= 18 PPG OR
+        - Average minutes >= 28 MPG OR
+        - Usage rate >= 25%
+
+        Args:
+            team_abbr: Team abbreviation (e.g., 'LAL')
+            game_date: Game date to check
+
+        Returns:
+            int: Number of star teammates questionable (0-5 typical range)
+        """
+        try:
+            query = f"""
+            WITH team_roster AS (
+                SELECT player_lookup
+                FROM `{self.project_id}.nba_raw.espn_team_rosters`
+                WHERE team_abbr = '{team_abbr}'
+                  AND roster_date = (
+                      SELECT MAX(roster_date)
+                      FROM `{self.project_id}.nba_raw.espn_team_rosters`
+                      WHERE roster_date <= '{game_date}'
+                        AND team_abbr = '{team_abbr}'
+                  )
+            ),
+            player_recent_stats AS (
+                SELECT
+                    player_lookup,
+                    AVG(points) as avg_points,
+                    AVG(minutes_played) as avg_minutes,
+                    AVG(usage_rate) as avg_usage
+                FROM `{self.project_id}.nba_analytics.player_game_summary`
+                WHERE game_date >= DATE_SUB('{game_date}', INTERVAL 10 DAY)
+                  AND game_date < '{game_date}'
+                  AND team_abbr = '{team_abbr}'
+                GROUP BY player_lookup
+            ),
+            star_players AS (
+                SELECT s.player_lookup
+                FROM player_recent_stats s
+                INNER JOIN team_roster r ON s.player_lookup = r.player_lookup
+                WHERE s.avg_points >= 18
+                   OR s.avg_minutes >= 28
+                   OR s.avg_usage >= 25
+            ),
+            questionable_players AS (
+                SELECT DISTINCT player_lookup
+                FROM `{self.project_id}.nba_raw.nbac_injury_report`
+                WHERE game_date = '{game_date}'
+                  AND team = '{team_abbr}'
+                  AND UPPER(injury_status) = 'QUESTIONABLE'
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup
+                    ORDER BY report_hour DESC
+                ) = 1
+            )
+            SELECT COUNT(*) as questionable_star_teammates
+            FROM star_players s
+            INNER JOIN questionable_players q ON s.player_lookup = q.player_lookup
+            """
+
+            result = self.bq_client.query(query).result()
+            for row in result:
+                return int(row.questionable_star_teammates) if row.questionable_star_teammates is not None else 0
+
+            return 0
+
+        except Exception as e:
+            logger.error(f"Error getting questionable star teammates for {team_abbr}: {e}")
+            return 0
+
+    def _get_star_tier_out(self, team_abbr: str, game_date: date) -> int:
+        """
+        Calculate weighted tier score for OUT/DOUBTFUL star teammates.
+
+        Star tiers (based on PPG last 10 games):
+        - Tier 1 (Superstar): 25+ PPG = 3 points
+        - Tier 2 (Star): 18-24.99 PPG = 2 points
+        - Tier 3 (Quality starter): <18 PPG but 28+ MPG or 25%+ usage = 1 point
+
+        Args:
+            team_abbr: Team abbreviation (e.g., 'LAL')
+            game_date: Game date to check
+
+        Returns:
+            int: Weighted tier score (0-15 typical range)
+        """
+        try:
+            query = f"""
+            WITH team_roster AS (
+                SELECT player_lookup
+                FROM `{self.project_id}.nba_raw.espn_team_rosters`
+                WHERE team_abbr = '{team_abbr}'
+                  AND roster_date = (
+                      SELECT MAX(roster_date)
+                      FROM `{self.project_id}.nba_raw.espn_team_rosters`
+                      WHERE roster_date <= '{game_date}'
+                        AND team_abbr = '{team_abbr}'
+                  )
+            ),
+            player_recent_stats AS (
+                SELECT
+                    player_lookup,
+                    AVG(points) as avg_points,
+                    AVG(minutes_played) as avg_minutes,
+                    AVG(usage_rate) as avg_usage
+                FROM `{self.project_id}.nba_analytics.player_game_summary`
+                WHERE game_date >= DATE_SUB('{game_date}', INTERVAL 10 DAY)
+                  AND game_date < '{game_date}'
+                  AND team_abbr = '{team_abbr}'
+                GROUP BY player_lookup
+            ),
+            star_players_with_tier AS (
+                SELECT
+                    s.player_lookup,
+                    CASE
+                        WHEN s.avg_points >= 25 THEN 3
+                        WHEN s.avg_points >= 18 THEN 2
+                        ELSE 1
+                    END as tier_weight
+                FROM player_recent_stats s
+                INNER JOIN team_roster r ON s.player_lookup = r.player_lookup
+                WHERE s.avg_points >= 18
+                   OR s.avg_minutes >= 28
+                   OR s.avg_usage >= 25
+            ),
+            injured_players AS (
+                SELECT DISTINCT player_lookup
+                FROM `{self.project_id}.nba_raw.nbac_injury_report`
+                WHERE game_date = '{game_date}'
+                  AND team = '{team_abbr}'
+                  AND UPPER(injury_status) IN ('OUT', 'DOUBTFUL')
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup
+                    ORDER BY report_hour DESC
+                ) = 1
+            )
+            SELECT SUM(s.tier_weight) as star_tier_out
+            FROM star_players_with_tier s
+            INNER JOIN injured_players i ON s.player_lookup = i.player_lookup
+            """
+
+            result = self.bq_client.query(query).result()
+            for row in result:
+                return int(row.star_tier_out) if row.star_tier_out is not None else 0
+
+            return 0
+
+        except Exception as e:
+            logger.error(f"Error getting star tier out for {team_abbr}: {e}")
             return 0
 
     def _calculate_data_quality(self, historical_data: pd.DataFrame,

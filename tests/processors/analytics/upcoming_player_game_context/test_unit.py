@@ -1156,6 +1156,106 @@ class TestStarTeammatesOut:
         assert result == 0
 
 
+class TestQuestionableStarTeammates:
+    """Test questionable star teammates calculation."""
+
+    @pytest.fixture
+    def processor(self):
+        """Create processor instance with mocked BigQuery."""
+        proc = UpcomingPlayerGameContextProcessor()
+        proc.bq_client = Mock()
+        proc.project_id = 'test-project'
+        proc.target_date = date(2025, 1, 20)
+        return proc
+
+    def test_get_questionable_star_teammates_normal(self, processor):
+        """Test with 1 star player questionable."""
+        mock_row = Mock()
+        mock_row.questionable_star_teammates = 1
+        processor.bq_client.query.return_value.result.return_value = [mock_row]
+
+        result = processor._get_questionable_star_teammates('LAL', date(2025, 1, 20))
+
+        assert result == 1
+        assert processor.bq_client.query.called
+
+    def test_get_questionable_star_teammates_multiple(self, processor):
+        """Test with multiple stars questionable."""
+        mock_row = Mock()
+        mock_row.questionable_star_teammates = 3
+        processor.bq_client.query.return_value.result.return_value = [mock_row]
+
+        result = processor._get_questionable_star_teammates('LAL', date(2025, 1, 20))
+
+        assert result == 3
+
+    def test_get_questionable_star_teammates_no_data(self, processor):
+        """Test when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_questionable_star_teammates('LAL', date(2025, 1, 20))
+
+        assert result == 0
+
+    def test_get_questionable_star_teammates_query_error(self, processor):
+        """Test error handling."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_questionable_star_teammates('LAL', date(2025, 1, 20))
+
+        assert result == 0
+
+
+class TestStarTierOut:
+    """Test star tier out weighted scoring."""
+
+    @pytest.fixture
+    def processor(self):
+        """Create processor instance with mocked BigQuery."""
+        proc = UpcomingPlayerGameContextProcessor()
+        proc.bq_client = Mock()
+        proc.project_id = 'test-project'
+        proc.target_date = date(2025, 1, 20)
+        return proc
+
+    def test_get_star_tier_out_normal(self, processor):
+        """Test with mixed tier stars out."""
+        mock_row = Mock()
+        mock_row.star_tier_out = 5  # e.g., 1 tier-1 (3pts) + 1 tier-2 (2pts)
+        processor.bq_client.query.return_value.result.return_value = [mock_row]
+
+        result = processor._get_star_tier_out('LAL', date(2025, 1, 20))
+
+        assert result == 5
+        assert processor.bq_client.query.called
+
+    def test_get_star_tier_out_superstar(self, processor):
+        """Test with single superstar out."""
+        mock_row = Mock()
+        mock_row.star_tier_out = 3  # 1 tier-1 player
+        processor.bq_client.query.return_value.result.return_value = [mock_row]
+
+        result = processor._get_star_tier_out('LAL', date(2025, 1, 20))
+
+        assert result == 3
+
+    def test_get_star_tier_out_no_data(self, processor):
+        """Test when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_star_tier_out('LAL', date(2025, 1, 20))
+
+        assert result == 0
+
+    def test_get_star_tier_out_query_error(self, processor):
+        """Test error handling."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_star_tier_out('LAL', date(2025, 1, 20))
+
+        assert result == 0
+
+
 # Run tests with: pytest test_unit.py -v
 # Run specific class: pytest test_unit.py::TestFatigueMetricsCalculation -v
 # Run with coverage: pytest test_unit.py --cov=data_processors.analytics.upcoming_player_game_context --cov-report=html
