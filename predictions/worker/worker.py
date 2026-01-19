@@ -1426,6 +1426,23 @@ def format_prediction_for_bigquery(
             'model_version': 'ensemble_v1'
         })
 
+    elif system_id == 'ensemble_v1_1' and 'metadata' in prediction:
+        metadata = prediction['metadata']
+        agreement = metadata.get('agreement', {})
+
+        # Store ensemble V1.1 metadata in feature_importance as JSON (schema-compatible)
+        record.update({
+            'feature_importance': json.dumps({
+                'variance': agreement.get('variance'),
+                'agreement_percentage': agreement.get('agreement_percentage'),
+                'systems_used': metadata.get('systems_used'),
+                'weights_used': metadata.get('weights_used'),  # NEW: track performance-based weights
+                'predictions': metadata.get('predictions'),
+                'agreement_type': agreement.get('type')
+            }),
+            'model_version': 'ensemble_v1_1'
+        })
+
     elif system_id == 'moving_average':
         # Set model version for tracking
         record.update({
