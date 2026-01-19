@@ -221,7 +221,7 @@ def check_game_completeness(game_date: str) -> Tuple[str, str]:
             SELECT COUNT(DISTINCT game_id) as expected_games
             FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
             WHERE game_date = '{game_date}'
-            AND game_status IN ('Final', 'Completed', 'final')
+            AND LOWER(CAST(game_status AS STRING)) IN ('final', 'completed')
         """
 
         schedule_results = list(bq.query(schedule_query).result())
