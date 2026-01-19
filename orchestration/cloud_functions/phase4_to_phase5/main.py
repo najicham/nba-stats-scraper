@@ -36,7 +36,7 @@ import logging
 import os
 import requests
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from google.cloud import firestore, pubsub_v1, bigquery
 import functions_framework
@@ -73,6 +73,10 @@ PREDICTION_COORDINATOR_URL = os.environ.get(
     'https://prediction-coordinator-756957797294.us-west2.run.app'
 )
 SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
+
+# Health check configuration
+HEALTH_CHECK_ENABLED = os.environ.get('HEALTH_CHECK_ENABLED', 'true').lower() == 'true'
+HEALTH_CHECK_TIMEOUT = int(os.environ.get('HEALTH_CHECK_TIMEOUT', '5'))
 
 # Import expected processors from centralized config
 try:
@@ -203,6 +207,108 @@ def send_timeout_alert(game_date: str, completed_count: int, expected_count: int
         logger.error(f"Failed to send timeout alert: {e}")
         return False
 
+
+# ============================================================================
+# HEALTH CHECK FUNCTIONS
+# ============================================================================
+
+def check_service_health(service_url: str, timeout: int = 5) -> Dict[str, any]:
+    """
+    Check if a downstream service is healthy and ready to process requests.
+
+    Calls the /ready endpoint which performs dependency checks (BigQuery, Firestore, etc).
+
+    Args:
+        service_url: Base URL of the service (e.g., https://prediction-coordinator...)
+        timeout: Request timeout in seconds
+
+    Returns:
+        Dict with:
+            - healthy: bool (True if status is 'ready' or 'degraded')
+            - status: str ('ready', 'degraded', 'unhealthy', or 'unreachable')
+            - details: dict (full health check response)
+            - error: str (if unreachable)
+    """
+    try:
+        response = requests.get(
+            f"{service_url}/ready",
+            timeout=timeout
+        )
+        # Don't raise for 503 - degraded state is acceptable
+        if response.status_code in [200, 503]:
+            health_data = response.json()
+            status = health_data.get('status', 'unknown')
+            # Consider 'degraded' and 'healthy' as acceptable
+            is_healthy = status in ['ready', 'degraded', 'healthy']
+        else:
+            response.raise_for_status()
+            health_data = response.json()
+            status = health_data.get('status', 'unknown')
+            is_healthy = status in ['ready', 'degraded', 'healthy']
+
+        return {
+            "healthy": is_healthy,
+            "status": status,
+            "details": health_data
+        }
+    except requests.exceptions.Timeout:
+        logger.error(f"Health check timeout for {service_url}")
+        return {
+            "healthy": False,
+            "status": "timeout",
+            "error": f"Request timed out after {timeout}s"
+        }
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Health check failed for {service_url}: {e}")
+        return {
+            "healthy": False,
+            "status": "unreachable",
+            "error": str(e)
+        }
+    except Exception as e:
+        logger.error(f"Unexpected error checking health for {service_url}: {e}")
+        return {
+            "healthy": False,
+            "status": "error",
+            "error": str(e)
+        }
+
+
+def check_coordinator_health() -> Tuple[bool, Dict[str, Dict]]:
+    """
+    Check health of the Prediction Coordinator service.
+
+    This is critical - if the coordinator is down, predictions cannot run.
+    However, we still trigger even if unhealthy to let Pub/Sub retry handle it.
+
+    Returns:
+        Tuple of (all_healthy: bool, health_status: dict)
+    """
+    if not HEALTH_CHECK_ENABLED:
+        logger.info("Health checks disabled via HEALTH_CHECK_ENABLED=false")
+        return (True, {"health_checks": "disabled"})
+
+    health_status = {}
+
+    if PREDICTION_COORDINATOR_URL:
+        coordinator_health = check_service_health(PREDICTION_COORDINATOR_URL, HEALTH_CHECK_TIMEOUT)
+        health_status['prediction_coordinator'] = coordinator_health
+
+        if not coordinator_health['healthy']:
+            logger.warning(
+                f"⚠️ Prediction Coordinator not ready: {coordinator_health['status']}. "
+                f"Will trigger anyway - Pub/Sub will retry if it fails."
+            )
+            return (False, health_status)
+    else:
+        logger.warning("PREDICTION_COORDINATOR_URL not set, skipping health check")
+
+    return (True, health_status)
+
+
+# ============================================================================
+# DATA FRESHNESS VALIDATION
+# ============================================================================
 
 # R-006: Data freshness validation before triggering Phase 5
 # Required Phase 4 tables that must have data before triggering predictions
@@ -599,6 +705,17 @@ def trigger_phase5(game_date: str, correlation_id: str, upstream_message: Dict) 
         logger.info(
             f"Published Phase 5 trigger: message_id={message_id}, game_date={game_date}"
         )
+
+        # Check health of prediction coordinator before calling it directly
+        coordinator_healthy, health_status = check_coordinator_health()
+
+        if coordinator_healthy:
+            logger.info(f"✅ Prediction Coordinator is healthy, triggering via HTTP")
+        else:
+            logger.warning(
+                f"⚠️ Prediction Coordinator health check failed: {health_status}. "
+                f"Will attempt trigger anyway - Pub/Sub message already sent."
+            )
 
         # Also call prediction coordinator directly (HTTP trigger)
         try:
