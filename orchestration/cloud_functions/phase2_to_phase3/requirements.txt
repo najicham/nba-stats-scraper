@@ -6,6 +6,10 @@ functions-framework==3.*
 
 # Google Cloud libraries
 google-cloud-firestore==2.*
+google-cloud-bigquery==3.*
 google-cloud-logging>=3.0.0
 # NOTE: google-cloud-pubsub removed - no longer publishing to nba-phase3-trigger
 google-cloud-secret-manager==2.16.0
+
+# HTTP and alerting
+requests==2.*
