@@ -1111,13 +1111,12 @@ class UpcomingPlayerGameContextProcessor(
         3. nba_raw.nbac_gamebook_player_stats (last resort)
         """
         player_lookups = [p['player_lookup'] for p in self.players_to_process]
-        player_lookups_str = "', '".join(player_lookups)
-        
+
         start_date = self.target_date - timedelta(days=self.lookback_days)
-        
+
         # Try BDL first (PRIMARY)
         query = f"""
-        SELECT 
+        SELECT
             player_lookup,
             game_date,
             team_abbr,
@@ -1132,14 +1131,21 @@ class UpcomingPlayerGameContextProcessor(
             free_throws_made,
             free_throws_attempted
         FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
-        WHERE player_lookup IN ('{player_lookups_str}')
-          AND game_date >= '{start_date}'
-          AND game_date < '{self.target_date}'
+        WHERE player_lookup IN UNNEST(@player_lookups)
+          AND game_date >= @start_date
+          AND game_date < @target_date
         ORDER BY player_lookup, game_date DESC
         """
-        
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups),
+                bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                bigquery.ScalarQueryParameter("target_date", "DATE", self.target_date),
+            ]
+        )
+
         try:
-            df = self.bq_client.query(query).to_dataframe()
+            df = self.bq_client.query(query, job_config=job_config).to_dataframe()
             
             # Convert minutes string to decimal
             if 'minutes' in df.columns:
@@ -1199,7 +1205,6 @@ class UpcomingPlayerGameContextProcessor(
         """Extract prop lines from Odds API using batch query for efficiency."""
         # Build batch query - get opening and current lines for all players in one query
         player_lookups = list(set([p[0] for p in player_game_pairs]))
-        player_lookups_str = "', '".join(player_lookups)
 
         batch_query = f"""
         WITH opening_lines AS (
@@ -1213,8 +1218,8 @@ class UpcomingPlayerGameContextProcessor(
                     ORDER BY snapshot_timestamp ASC
                 ) as rn
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE player_lookup IN ('{player_lookups_str}')
-              AND game_date = '{self.target_date}'
+            WHERE player_lookup IN UNNEST(@player_lookups)
+              AND game_date = @game_date
         ),
         current_lines AS (
             SELECT
@@ -1227,8 +1232,8 @@ class UpcomingPlayerGameContextProcessor(
                     ORDER BY snapshot_timestamp DESC
                 ) as rn
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE player_lookup IN ('{player_lookups_str}')
-              AND game_date = '{self.target_date}'
+            WHERE player_lookup IN UNNEST(@player_lookups)
+              AND game_date = @game_date
         )
         SELECT
             COALESCE(o.player_lookup, c.player_lookup) as player_lookup,
@@ -1242,9 +1247,15 @@ class UpcomingPlayerGameContextProcessor(
             ON o.player_lookup = c.player_lookup AND o.game_id = c.game_id
         WHERE (o.rn = 1 OR o.rn IS NULL) AND (c.rn = 1 OR c.rn IS NULL)
         """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups),
+                bigquery.ScalarQueryParameter("game_date", "DATE", self.target_date),
+            ]
+        )
 
         try:
-            df = self.bq_client.query(batch_query).to_dataframe()
+            df = self.bq_client.query(batch_query, job_config=job_config).to_dataframe()
             logger.info(f"Odds API batch query returned {len(df)} prop line records")
 
             # Create lookup dict keyed by (player_lookup, game_id)
@@ -1299,7 +1310,6 @@ class UpcomingPlayerGameContextProcessor(
         """
         # Batch query for efficiency - get all players at once
         player_lookups = list(set([p[0] for p in player_game_pairs]))
-        player_lookups_str = "', '".join(player_lookups)
 
         batch_query = f"""
         WITH best_lines AS (
@@ -1314,8 +1324,8 @@ class UpcomingPlayerGameContextProcessor(
                     ORDER BY is_best_line DESC, bookmaker_last_update DESC
                 ) as rn
             FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
-            WHERE player_lookup IN ('{player_lookups_str}')
-              AND game_date = '{self.target_date}'
+            WHERE player_lookup IN UNNEST(@player_lookups)
+              AND game_date = @game_date
               AND is_active = TRUE
         )
         SELECT
@@ -1326,9 +1336,15 @@ class UpcomingPlayerGameContextProcessor(
         FROM best_lines
         WHERE rn = 1
         """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups),
+                bigquery.ScalarQueryParameter("game_date", "DATE", self.target_date),
+            ]
+        )
 
         try:
-            df = self.bq_client.query(batch_query).to_dataframe()
+            df = self.bq_client.query(batch_query, job_config=job_config).to_dataframe()
 
             # Create lookup dict
             bp_props = {}
@@ -1791,13 +1807,26 @@ class UpcomingPlayerGameContextProcessor(
         (processor_name, entity_id, analysis_date, attempt_number, attempted_at,
          completeness_pct, skip_reason, circuit_breaker_tripped, circuit_breaker_until,
          manual_override_applied, notes)
-        VALUES ('{self.table_name}', '{entity_id}', DATE('{analysis_date}'), {next_attempt},
-                CURRENT_TIMESTAMP(), {completeness_pct}, '{skip_reason}', {circuit_breaker_tripped},
-                {'TIMESTAMP("' + circuit_breaker_until.isoformat() + '")' if circuit_breaker_until else 'NULL'},
-                FALSE, 'Attempt {next_attempt}: {completeness_pct:.1f}% complete')
+        VALUES (@processor_name, @entity_id, @analysis_date, @attempt_number,
+                CURRENT_TIMESTAMP(), @completeness_pct, @skip_reason, @circuit_breaker_tripped,
+                @circuit_breaker_until,
+                FALSE, @notes)
         """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("processor_name", "STRING", self.table_name),
+                bigquery.ScalarQueryParameter("entity_id", "STRING", entity_id),
+                bigquery.ScalarQueryParameter("analysis_date", "DATE", analysis_date),
+                bigquery.ScalarQueryParameter("attempt_number", "INT64", next_attempt),
+                bigquery.ScalarQueryParameter("completeness_pct", "FLOAT64", completeness_pct),
+                bigquery.ScalarQueryParameter("skip_reason", "STRING", skip_reason),
+                bigquery.ScalarQueryParameter("circuit_breaker_tripped", "BOOL", circuit_breaker_tripped),
+                bigquery.ScalarQueryParameter("circuit_breaker_until", "TIMESTAMP", circuit_breaker_until),
+                bigquery.ScalarQueryParameter("notes", "STRING", f'Attempt {next_attempt}: {completeness_pct:.1f}% complete'),
+            ]
+        )
         try:
-            self.bq_client.query(insert_query).result(timeout=60)
+            self.bq_client.query(insert_query, job_config=job_config).result(timeout=60)
         except Exception as e:
             logger.warning(f"Failed to record reprocess attempt for {entity_id}: {e}")
 

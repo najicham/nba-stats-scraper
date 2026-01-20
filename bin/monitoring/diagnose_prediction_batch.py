@@ -25,12 +25,19 @@ from typing import Dict, List, Optional
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
 from google.cloud import bigquery, firestore, logging as cloud_logging
+from shared.utils.validation import validate_game_date, validate_project_id, ValidationError
 
 
 class PredictionBatchDiagnostics:
     """Comprehensive prediction batch diagnostics."""
 
     def __init__(self, project_id: str = 'nba-props-platform'):
+        # Input validation (Issue #4: Input Validation)
+        try:
+            project_id = validate_project_id(project_id)
+        except ValidationError as e:
+            raise ValueError(f"Invalid project_id: {e}")
+
         self.project_id = project_id
         self.bq_client = bigquery.Client(project=project_id)
         self.fs_client = firestore.Client(project=project_id)
@@ -47,6 +54,13 @@ class PredictionBatchDiagnostics:
         Returns:
             Dictionary with diagnostic results
         """
+        # Input validation (Issue #4: Input Validation)
+        try:
+            game_date = validate_game_date(game_date)
+        except ValidationError as e:
+            print(f"❌ Invalid game_date: {e}")
+            return {"error": f"Invalid input: {e}"}
+
         print(f"=== Diagnosing Prediction Batch for {game_date} ===\n")
 
         results = {}
@@ -260,20 +274,84 @@ class PredictionBatchDiagnostics:
             AND timestamp<"{game_date}T23:59:59Z"
             '''
 
-            # Note: Cloud Logging API has limits, this is a rough count
-            # For exact count, use logging client with pagination
-            return 0  # Placeholder - would need logging client setup
-        except Exception:
+            # Use the logging client to count errors
+            error_count = 0
+            try:
+                # List log entries matching the filter
+                # Note: This counts up to 1000 entries (Cloud Logging API default page size)
+                # For exact counts over 1000, would need pagination
+                entries = self.log_client.list_entries(
+                    filter_=log_filter,
+                    page_size=1000,
+                    max_results=1000
+                )
+
+                # Count the entries
+                for entry in entries:
+                    error_count += 1
+
+            except Exception as log_error:
+                # If logging query fails, log the error but don't crash
+                print(f"Warning: Failed to query Cloud Logging: {log_error}")
+                return 0
+
+            return error_count
+
+        except Exception as e:
+            print(f"Error in _count_worker_errors: {e}")
             return 0
 
     def _check_worker_errors(self, game_date: str) -> Dict:
         """Get detailed worker error logs."""
-        # This would fetch actual log entries
-        # For now, return placeholder
-        return {
-            "count": self._count_worker_errors(game_date),
-            "sample_errors": []
-        }
+        try:
+            # Query Cloud Logging for prediction-worker errors
+            log_filter = f'''
+            resource.type="cloud_run_revision"
+            AND resource.labels.service_name="prediction-worker"
+            AND severity>=ERROR
+            AND timestamp>="{game_date}T00:00:00Z"
+            AND timestamp<"{game_date}T23:59:59Z"
+            '''
+
+            error_entries = []
+            error_count = 0
+
+            try:
+                # Fetch actual log entries (limit to 20 for display)
+                entries = self.log_client.list_entries(
+                    filter_=log_filter,
+                    page_size=20,
+                    max_results=20
+                )
+
+                for entry in entries:
+                    error_count += 1
+                    error_entries.append({
+                        "timestamp": str(entry.timestamp),
+                        "severity": entry.severity,
+                        "message": entry.payload.get("message", str(entry.payload)) if hasattr(entry.payload, "get") else str(entry.payload),
+                        "trace": entry.trace if hasattr(entry, "trace") else None
+                    })
+
+            except Exception as log_error:
+                print(f"Warning: Failed to fetch detailed logs: {log_error}")
+                return {
+                    "count": 0,
+                    "sample_errors": [],
+                    "error": str(log_error)
+                }
+
+            return {
+                "count": error_count,
+                "sample_errors": error_entries[:10]  # Limit to 10 for display
+            }
+
+        except Exception as e:
+            return {
+                "count": 0,
+                "sample_errors": [],
+                "error": str(e)
+            }
 
     # Print helpers
     def _print_predictions_result(self, result: Dict):

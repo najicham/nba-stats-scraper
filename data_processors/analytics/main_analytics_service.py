@@ -15,6 +15,7 @@ from flask import Flask, request, jsonify
 # Add project root to path for shared imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from shared.endpoints.health import create_health_blueprint, HealthChecker
+from shared.utils.validation import validate_game_date, validate_project_id, ValidationError
 from datetime import datetime, timezone, date, timedelta
 import base64
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -95,6 +96,21 @@ def verify_boxscore_completeness(game_date: str, project_id: str) -> dict:
             - actual_games: int (games with boxscores)
             - missing_games: list of dicts (games without boxscores)
     """
+    # Input validation (Issue #4: Input Validation)
+    try:
+        game_date = validate_game_date(game_date)
+        project_id = validate_project_id(project_id)
+    except ValidationError as e:
+        logger.error(f"Input validation failed: {e}")
+        return {
+            "complete": False,
+            "error": f"Invalid input: {e}",
+            "coverage_pct": 0.0,
+            "expected_games": 0,
+            "actual_games": 0,
+            "missing_games": []
+        }
+
     try:
         bq_client = bigquery.Client(project=project_id)
 

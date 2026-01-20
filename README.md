@@ -113,6 +113,14 @@ Phase 6: Publishing     →  API endpoints, dashboards
 
 ## 🚨 Recent Changes
 
+### Week 0 Security (2026-01-19) 🔒
+- ✅ **Fixed 13 critical security vulnerabilities** (97+ individual issues)
+- ✅ **SQL injection**: 47 queries converted to parameterized format
+- ✅ **Authentication**: Added API key validation to analytics service
+- ✅ **Removed RCE risks**: Fixed eval() and pickle deserialization
+- ✅ **Input validation**: New validation library for all user inputs
+- 📝 [Security log](./docs/08-projects/current/daily-orchestration-improvements/WEEK-0-SECURITY-LOG.md)
+
 ### Session 112 (2026-01-19) 🎉
 - ✅ **Fixed prediction pipeline outage** (37+ hours down)
 - ✅ **Root cause**: Missing `google-cloud-firestore==2.14.0` dependency
@@ -141,6 +149,23 @@ See full timeline: [`docs/STATUS-DASHBOARD.md`](./docs/STATUS-DASHBOARD.md)
 - Google Cloud SDK
 - BigQuery access
 - Service account with appropriate permissions
+
+### Environment Variables
+
+**Required (All Services):**
+- `GCP_PROJECT_ID` - GCP project identifier (e.g., `nba-props-platform`)
+- `ENVIRONMENT` - Environment name (`dev`, `staging`, `prod`)
+
+**Security (Week 0 - Required as of 2026-01-19):**
+- `VALID_API_KEYS` - Comma-separated API keys for analytics service authentication
+- `BETTINGPROS_API_KEY` - BettingPros API key (moved from hardcoded)
+- `SENTRY_DSN` - Sentry monitoring DSN (moved from hardcoded)
+
+**Optional:**
+- `SLACK_WEBHOOK_URL` - Slack notifications
+- `GOOGLE_APPLICATION_CREDENTIALS` - Path to service account key file
+
+See [deployment guide](./docs/04-deployment/) for configuration details.
 
 ### Quick Commands
 
