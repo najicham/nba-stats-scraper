@@ -46,6 +46,7 @@ import json
 import logging
 import os
 import requests
+from shared.clients.http_pool import get_http_session
 import sys
 import time
 from datetime import datetime, timezone, timedelta
@@ -408,7 +409,7 @@ class NbaInjuryBackfillJob:
         """Download single injury report via Cloud Run service."""
         try:
             # Make request to your existing Cloud Run service
-            response = requests.post(
+            response = get_http_session().post(
                 f"{self.scraper_service_url}/scrape",
                 json={
                     "scraper": "nbac_injury_report",

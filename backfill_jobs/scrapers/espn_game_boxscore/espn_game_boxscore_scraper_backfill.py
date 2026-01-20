@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 
 import requests
+from shared.clients.http_pool import get_http_session
 from google.cloud import storage
 
 # Setup logging
@@ -133,7 +134,7 @@ class EspnBoxscoreBackfill:
         try:
             # Note: ESPN scraper uses game_id parameter
             # The scraper may need to resolve NBA.com game_id to ESPN game_id
-            response = requests.get(
+            response = get_http_session().get(
                 f"{self.service_url}/espn_game_boxscore",
                 params={
                     "game_id": game_id,  # NBA.com game_id

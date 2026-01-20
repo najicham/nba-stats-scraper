@@ -34,6 +34,7 @@ sentry_sdk.init(
 import enum
 from typing import Callable
 import requests
+from shared.clients.http_pool import get_http_session
 
 try:                                         # Playwright core
     from playwright.sync_api import sync_playwright
@@ -1337,7 +1338,7 @@ class ScraperBase:
         """
         Create a requests.Session with a custom retry strategy & adapter.
         """
-        self.http_downloader = requests.Session()
+        self.http_downloader = get_http_session()
         # If a single proxy_url was supplied, use it for all schemes
         if self.proxy_url:
             self.http_downloader.proxies.update({"http": self.proxy_url, "https": self.proxy_url})

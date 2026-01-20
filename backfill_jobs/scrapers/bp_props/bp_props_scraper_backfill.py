@@ -74,6 +74,7 @@ import json
 import logging
 import os
 import requests
+from shared.clients.http_pool import get_http_session
 import sys
 import time
 from datetime import datetime, timezone, date
@@ -686,7 +687,7 @@ class BettingProsBackfillJob:
     def _run_scraper(self, scraper_name: str, game_date: str) -> bool:
         """Run a single scraper via Cloud Run service."""
         try:
-            response = requests.post(
+            response = get_http_session().post(
                 f"{self.scraper_service_url}/scrape",
                 json={
                     "scraper": scraper_name,

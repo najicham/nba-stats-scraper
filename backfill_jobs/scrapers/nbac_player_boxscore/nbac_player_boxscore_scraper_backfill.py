@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 
 import requests
+from shared.clients.http_pool import get_http_session
 from google.cloud import storage
 
 # Setup logging
@@ -136,7 +137,7 @@ class NbacPlayerBoxscoreBackfill:
             # Convert YYYY-MM-DD to YYYYMMDD for the scraper
             gamedate_formatted = game_date.replace('-', '')
 
-            response = requests.get(
+            response = get_http_session().get(
                 f"{self.service_url}/nbac_player_boxscore",
                 params={
                     "gamedate": gamedate_formatted,

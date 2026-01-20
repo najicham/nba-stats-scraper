@@ -25,6 +25,7 @@ import json
 import logging
 import os
 import requests
+from shared.clients.http_pool import get_http_session
 import time
 from datetime import datetime
 from pathlib import Path
@@ -117,7 +118,7 @@ class AggressiveRetryRunner:
 
             logger.debug(f"[Attempt {attempt}/{self.max_retries}] Scraping {game_date}")
 
-            response = requests.post(
+            response = get_http_session().post(
                 f"{self.service_url}/scrape",
                 json=payload,
                 timeout=self.timeout
