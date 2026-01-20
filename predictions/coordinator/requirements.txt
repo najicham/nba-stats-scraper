@@ -12,6 +12,10 @@ google-cloud-firestore>=2.23.0  # For future multi-instance state management (Py
 google-cloud-storage==2.14.0
 google-cloud-secret-manager==2.16.4  # For API key authentication
 
+# gRPC pinning (matches worker to prevent build timeout and version conflicts)
+grpcio==1.76.0
+grpcio-status==1.62.3
+
 # Utilities
 python-dateutil==2.8.2
 pandas>=2.0.0
