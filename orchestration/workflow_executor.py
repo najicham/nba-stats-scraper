@@ -186,8 +186,9 @@ class WorkflowExecutor:
         
         # Query for unexecuted RUN decisions from the last hour
         # CRITICAL: LEFT JOIN prevents duplicate executions
+        # Week 1: Added DATE() filter for partition pruning (cost optimization)
         query = """
-            SELECT 
+            SELECT
                 d.decision_id,
                 d.workflow_name,
                 d.scrapers_triggered,
@@ -197,6 +198,7 @@ class WorkflowExecutor:
             LEFT JOIN `nba-props-platform.nba_orchestration.workflow_executions` e
                 ON d.decision_id = e.decision_id
             WHERE d.action = 'RUN'
+              AND DATE(d.decision_time) = CURRENT_DATE()
               AND d.decision_time > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)
               AND e.execution_id IS NULL
             ORDER BY d.decision_time DESC
