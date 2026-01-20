@@ -22,6 +22,9 @@ import requests
 import logging
 import os
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Retry logic for transient errors (prevents self-heal failures)
 try:
     from shared.utils.retry_with_jitter import retry_with_jitter
@@ -31,9 +34,6 @@ except ImportError:
         def decorator(func):
             return func
         return decorator
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Service URLs
 PHASE3_URL = "https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app"
