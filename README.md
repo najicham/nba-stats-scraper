@@ -241,3 +241,27 @@ Proprietary - All Rights Reserved
 **GCP Project**: `nba-props-platform`
 **Region**: `us-west2` (Los Angeles)
 **Documentation**: [`docs/`](./docs/)
+
+---
+
+## 🚀 Week 1-4 Improvement Plan (NEW!)
+
+**Status:** Ready to execute after Week 0 validation
+**Timeline:** 4 weeks, 42 hours total
+**Goal:** 99.7% reliability + $170/month savings + 5x performance
+
+### Quick Links
+- 📋 **[Week 1-4 Master Plan](docs/10-week-1/README.md)** - Complete roadmap
+- 🎯 **[Strategic Plan](docs/10-week-1/STRATEGIC-PLAN.md)** - Full strategy & ROI
+- 📅 **[Week 1 Plan](docs/10-week-1/WEEK-1-PLAN.md)** - Day-by-day execution
+- 🔧 **[Feature Flags](docs/10-week-1/feature-flags/CONFIGURATION.md)** - Safe rollout config
+- 📊 **[Progress Tracker](docs/10-week-1/tracking/PROGRESS-TRACKER.md)** - Daily updates
+
+### Week 1 Focus: Cost & Reliability Sprint (12 hours)
+- 💰 BigQuery optimization: **-$60-90/month savings**
+- 🔧 Critical scalability fixes
+- 🛡️ Idempotency & data integrity
+- 📈 Structured logging & metrics
+
+**Next:** Validate Quick Win #1 tomorrow (Jan 21, 8:30 AM ET), then begin Week 1!
+
