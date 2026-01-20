@@ -29,6 +29,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from orchestration.parameter_resolver import ParameterResolver
 from shared.utils.bigquery_utils import execute_bigquery, insert_bigquery_rows
+from orchestration.shared.utils.circuit_breaker import (
+    CircuitBreakerManager,
+    CircuitBreakerConfig,
+    CircuitBreakerOpenError
+)
 from shared.clients.http_pool import get_http_session
 
 logger = logging.getLogger(__name__)
@@ -116,6 +121,23 @@ class WorkflowExecutor:
     def __init__(self):
         """Initialize executor with parameter resolver."""
         self.parameter_resolver = ParameterResolver()
+
+        # Circuit breaker manager for handling flaky scrapers
+        self.circuit_breaker_enabled = os.getenv("ENABLE_CIRCUIT_BREAKER", "true").lower() == "true"
+
+        if self.circuit_breaker_enabled:
+            self.circuit_breaker_manager = CircuitBreakerManager(
+                config=CircuitBreakerConfig(
+                    max_failures=5,        # Open circuit after 5 failures
+                    timeout_seconds=300,   # Test recovery after 5 minutes
+                    half_open_attempts=3,  # Need 3 successes to close
+                    failure_threshold_window=60  # Count failures in 60s window
+                )
+            )
+            logger.info("✅ Circuit breaker enabled for scrapers")
+        else:
+            self.circuit_breaker_manager = None
+            logger.warning("⚠️  Circuit breaker DISABLED")
 
     @staticmethod
     def _calculate_jittered_backoff(attempt: int, base_delay: float = 1.0, max_delay: float = 30.0) -> float:
@@ -571,6 +593,8 @@ class WorkflowExecutor:
         """
         Call a scraper endpoint via HTTP with automatic retry on transient errors.
 
+        Includes circuit breaker protection to fail fast on consistently failing scrapers.
+
         Retries on:
         - HTTP 429 (rate limit)
         - HTTP 5xx (server errors)
@@ -580,12 +604,65 @@ class WorkflowExecutor:
         Does NOT retry on:
         - HTTP 4xx (except 429) - client errors
         - HTTP 200 with no_data - expected response
+        - Circuit breaker open (fails immediately)
 
         Args:
             scraper_name: Name of scraper to call
             parameters: Parameters to pass to scraper
             workflow_name: Workflow name for logging
             max_retries: Maximum retry attempts (default: 3)
+
+        Returns:
+            ScraperExecution with result
+        """
+        # Check circuit breaker before attempting
+        if self.circuit_breaker_enabled and self.circuit_breaker_manager:
+            breaker = self.circuit_breaker_manager.get_breaker(scraper_name)
+
+            try:
+                # Use circuit breaker to protect scraper call
+                return breaker.call(
+                    self._call_scraper_internal,
+                    scraper_name,
+                    parameters,
+                    workflow_name,
+                    max_retries
+                )
+            except CircuitBreakerOpenError as e:
+                logger.warning(f"⚡ {e}")
+                # Return failed execution without attempting scraper
+                return ScraperExecution(
+                    scraper_name=scraper_name,
+                    status='circuit_open',
+                    duration_seconds=0,
+                    error_message=f"Circuit breaker open: {str(e)}"
+                )
+        else:
+            # No circuit breaker - call directly
+            return self._call_scraper_internal(
+                scraper_name,
+                parameters,
+                workflow_name,
+                max_retries
+            )
+
+    def _call_scraper_internal(
+        self,
+        scraper_name: str,
+        parameters: Dict[str, Any],
+        workflow_name: str,
+        max_retries: int = 3
+    ) -> ScraperExecution:
+        """
+        Internal method that performs actual scraper HTTP call.
+
+        Separated from _call_scraper() to allow circuit breaker wrapping.
+
+        Args:
+            scraper_name: Name of scraper to call
+            parameters: Parameters to pass to scraper
+            workflow_name: Workflow name for logging
+            max_retries: Maximum retry attempts
 
         Returns:
             ScraperExecution with result

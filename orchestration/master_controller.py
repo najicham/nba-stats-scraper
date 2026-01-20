@@ -13,6 +13,7 @@ which should run based on:
 
 import logging
 import uuid
+import os
 from datetime import datetime, timedelta, time
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass, asdict
@@ -23,6 +24,7 @@ import json
 from orchestration.config_loader import WorkflowConfig
 from shared.utils.schedule import NBAScheduleService, GameType
 from shared.utils.bigquery_utils import execute_bigquery, insert_bigquery_rows
+from orchestration.shared.utils.distributed_lock import DistributedLock, LockAcquisitionError
 
 # Import orchestration config for schedule staleness settings
 try:
@@ -110,20 +112,76 @@ class MasterWorkflowController:
         self.config = WorkflowConfig(config_path)
         self.schedule_service = NBAScheduleService()
         self.ET = pytz.timezone('America/New_York')
+
+        # Distributed lock to prevent race conditions when multiple instances run
+        self.project_id = os.getenv("GCP_PROJECT", "nba-props-platform")
+        self.use_distributed_lock = os.getenv("ENABLE_CONTROLLER_LOCK", "true").lower() == "true"
+
+        if self.use_distributed_lock:
+            self.lock = DistributedLock(
+                project_id=self.project_id,
+                lock_type="workflow_controller"
+            )
+            logger.info("✅ Distributed lock enabled for workflow controller")
+        else:
+            self.lock = None
+            logger.warning("⚠️  Distributed lock DISABLED - race conditions possible!")
     
     def evaluate_all_workflows(self, current_time: Optional[datetime] = None) -> List[WorkflowDecision]:
         """
         Main entry point: Evaluate ALL workflows and decide RUN/SKIP/ABORT.
-        
+
+        Uses distributed lock to prevent race conditions when multiple controller
+        instances run simultaneously (e.g., manual trigger during scheduled run).
+
         Args:
             current_time: Optional override for testing (defaults to now ET)
-        
+
         Returns:
             List of WorkflowDecision objects
         """
         if current_time is None:
             current_time = datetime.now(self.ET)
-        
+
+        # Use distributed lock to prevent duplicate decisions
+        if self.use_distributed_lock and self.lock:
+            # Lock key is current hour - prevents multiple evaluations in same hour
+            lock_key = current_time.strftime('%Y-%m-%d-%H')
+            operation_id = f"controller_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+
+            try:
+                with self.lock.acquire(
+                    game_date=lock_key,
+                    operation_id=operation_id,
+                    max_wait_seconds=30  # Don't wait long - if another instance is running, skip
+                ):
+                    return self._evaluate_all_workflows_internal(current_time)
+
+            except LockAcquisitionError as e:
+                logger.warning(
+                    f"⚠️  Another controller instance is running for hour {lock_key}. "
+                    f"Skipping evaluation to prevent duplicate decisions. {e}"
+                )
+                # Return empty list - another instance is handling this evaluation
+                return []
+
+        else:
+            # No lock - run directly (for testing or single-instance scenarios)
+            logger.info("🔓 Running without distributed lock")
+            return self._evaluate_all_workflows_internal(current_time)
+
+    def _evaluate_all_workflows_internal(self, current_time: datetime) -> List[WorkflowDecision]:
+        """
+        Internal method that performs actual workflow evaluation.
+
+        Separated from evaluate_all_workflows() to allow lock wrapping.
+
+        Args:
+            current_time: Current time in ET timezone
+
+        Returns:
+            List of WorkflowDecision objects
+        """
         logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         logger.info("🎯 Master Controller: Evaluating all workflows")
         logger.info(f"   Time: {current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
