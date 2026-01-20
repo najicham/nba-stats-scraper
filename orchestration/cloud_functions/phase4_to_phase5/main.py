@@ -49,8 +49,33 @@ logger = logging.getLogger(__name__)
 # Constants
 PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
 PHASE5_TRIGGER_TOPIC = 'nba-predictions-trigger'  # Downstream topic for predictions
-MAX_WAIT_HOURS = 4  # Maximum hours to wait for all processors before timeout
+
+# TIERED TIMEOUT CONFIGURATION (Implements progressive triggering based on completion)
+# Instead of waiting 4 hours for all processors, trigger faster with partial completion
+#
+# Tier 1: Wait up to 30 min for ALL 5 processors (ideal case)
+TIER1_TIMEOUT_SECONDS = int(os.environ.get('TIER1_TIMEOUT_SECONDS', '1800'))  # 30 min
+TIER1_REQUIRED_PROCESSORS = 5  # All processors
+
+# Tier 2: After 1 hour, trigger with 4/5 processors (acceptable case)
+TIER2_TIMEOUT_SECONDS = int(os.environ.get('TIER2_TIMEOUT_SECONDS', '3600'))  # 1 hour
+TIER2_REQUIRED_PROCESSORS = 4  # 80% of processors
+
+# Tier 3: After 2 hours, trigger with 3/5 processors (degraded case)
+TIER3_TIMEOUT_SECONDS = int(os.environ.get('TIER3_TIMEOUT_SECONDS', '7200'))  # 2 hours
+TIER3_REQUIRED_PROCESSORS = 3  # 60% of processors
+
+# Final fallback: After 4 hours, trigger regardless of count
+MAX_WAIT_HOURS = 4
 MAX_WAIT_SECONDS = MAX_WAIT_HOURS * 3600
+
+logger.info(
+    f"Tiered timeout config: "
+    f"Tier1({TIER1_TIMEOUT_SECONDS}s, {TIER1_REQUIRED_PROCESSORS} procs), "
+    f"Tier2({TIER2_TIMEOUT_SECONDS}s, {TIER2_REQUIRED_PROCESSORS} procs), "
+    f"Tier3({TIER3_TIMEOUT_SECONDS}s, {TIER3_REQUIRED_PROCESSORS} procs), "
+    f"Max({MAX_WAIT_SECONDS}s)"
+)
 
 # Processor name normalization - maps various formats to config names
 # Phase 4 processors publish class names or table names, but config uses simple names
@@ -586,6 +611,7 @@ def orchestrate_phase4_to_phase5(cloud_event):
         )
 
         if should_trigger:
+            # All tier-based triggers should activate Phase 5
             if trigger_reason == 'all_complete':
                 # All processors complete - trigger Phase 5 (predictions)
                 trigger_phase5(game_date, correlation_id, message_data)
@@ -593,14 +619,62 @@ def orchestrate_phase4_to_phase5(cloud_event):
                     f"✅ All {EXPECTED_PROCESSOR_COUNT} Phase 4 processors complete for {game_date}, "
                     f"triggered Phase 5 predictions (correlation_id={correlation_id})"
                 )
+
+            elif trigger_reason in ['tier1_timeout', 'tier2_timeout', 'tier3_timeout', 'max_timeout']:
+                # Tiered timeout reached - trigger with available processors
+                trigger_phase5(game_date, correlation_id, message_data)
+
+                completed_count = EXPECTED_PROCESSOR_COUNT - len(missing)
+
+                # Log appropriate message based on tier
+                if trigger_reason == 'tier1_timeout':
+                    logger.info(
+                        f"⏰ Tier 1: All processors complete after 30min. "
+                        f"Triggering Phase 5 for {game_date} (correlation_id={correlation_id})"
+                    )
+                elif trigger_reason == 'tier2_timeout':
+                    logger.warning(
+                        f"⚠️ Tier 2: Triggering Phase 5 for {game_date} with {completed_count}/{EXPECTED_PROCESSOR_COUNT} processors after 1 hour. "
+                        f"Missing: {missing} (correlation_id={correlation_id})"
+                    )
+                    send_timeout_alert(
+                        game_date=game_date,
+                        completed_count=completed_count,
+                        expected_count=EXPECTED_PROCESSOR_COUNT,
+                        missing_processors=missing,
+                        wait_hours=1.0
+                    )
+                elif trigger_reason == 'tier3_timeout':
+                    logger.error(
+                        f"🔴 Tier 3 DEGRADED: Triggering Phase 5 for {game_date} with only {completed_count}/{EXPECTED_PROCESSOR_COUNT} processors after 2 hours. "
+                        f"Missing: {missing}. Quality may be impacted! (correlation_id={correlation_id})"
+                    )
+                    send_timeout_alert(
+                        game_date=game_date,
+                        completed_count=completed_count,
+                        expected_count=EXPECTED_PROCESSOR_COUNT,
+                        missing_processors=missing,
+                        wait_hours=2.0
+                    )
+                elif trigger_reason == 'max_timeout':
+                    logger.critical(
+                        f"🚨 MAX TIMEOUT: Triggering Phase 5 for {game_date} with {completed_count}/{EXPECTED_PROCESSOR_COUNT} processors after 4 hours. "
+                        f"Missing: {missing}. CRITICAL quality issues expected! (correlation_id={correlation_id})"
+                    )
+                    send_timeout_alert(
+                        game_date=game_date,
+                        completed_count=completed_count,
+                        expected_count=EXPECTED_PROCESSOR_COUNT,
+                        missing_processors=missing,
+                        wait_hours=MAX_WAIT_HOURS
+                    )
             elif trigger_reason == 'timeout':
-                # Timeout reached - trigger with partial data
+                # Legacy timeout handling (fallback for compatibility)
                 trigger_phase5(game_date, correlation_id, message_data)
                 logger.warning(
-                    f"⚠️ TIMEOUT: Triggering Phase 5 for {game_date} with partial data. "
+                    f"⚠️ LEGACY TIMEOUT: Triggering Phase 5 for {game_date} with partial data. "
                     f"Missing processors: {missing}"
                 )
-                # Send Slack alert for timeout
                 completed_count = EXPECTED_PROCESSOR_COUNT - len(missing)
                 send_timeout_alert(
                     game_date=game_date,
@@ -609,6 +683,7 @@ def orchestrate_phase4_to_phase5(cloud_event):
                     missing_processors=missing,
                     wait_hours=MAX_WAIT_HOURS
                 )
+
         elif trigger_reason == 'waiting':
             # Still waiting for more processors
             logger.info(f"Registered completion for {processor_name}, waiting for {len(missing)} more: {missing}")
@@ -677,31 +752,69 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
 
         return (True, 'all_complete', [])
 
-    # Check for timeout - trigger with partial completion
+    # TIERED TIMEOUT LOGIC: Progressive triggering based on completion count and time
+    # Enables faster predictions with partial completion instead of all-or-nothing at 4 hours
     first_completion_str = current.get('_first_completion_at')
     if first_completion_str:
         first_completion = datetime.fromisoformat(first_completion_str.replace('Z', '+00:00'))
         wait_seconds = (now - first_completion).total_seconds()
 
-        if wait_seconds > MAX_WAIT_SECONDS:
-            logger.warning(
-                f"TIMEOUT: Waited {wait_seconds/3600:.1f} hours for Phase 4 completion. "
-                f"Got {completed_count}/{EXPECTED_PROCESSOR_COUNT} processors. "
-                f"Missing: {missing_processors}. Triggering Phase 5 anyway."
+        # Determine which tier threshold we've crossed
+        trigger_reason = None
+        tier_name = None
+
+        # Check each tier in order (strictest to most lenient)
+        if completed_count >= TIER1_REQUIRED_PROCESSORS and wait_seconds > TIER1_TIMEOUT_SECONDS:
+            # Tier 1: All processors but took too long (ideal → acceptable transition)
+            trigger_reason = 'tier1_timeout'
+            tier_name = 'Tier1'
+            logger.info(
+                f"Tier 1 timeout: Have all {completed_count}/{EXPECTED_PROCESSOR_COUNT} processors, "
+                f"but waited {wait_seconds:.0f}s > {TIER1_TIMEOUT_SECONDS}s. Triggering now."
             )
 
-            # Mark as triggered with timeout reason
+        elif completed_count >= TIER2_REQUIRED_PROCESSORS and wait_seconds > TIER2_TIMEOUT_SECONDS:
+            # Tier 2: 4/5 processors after 1 hour (acceptable case)
+            trigger_reason = 'tier2_timeout'
+            tier_name = 'Tier2'
+            logger.warning(
+                f"Tier 2 timeout: Have {completed_count}/{EXPECTED_PROCESSOR_COUNT} processors "
+                f"after {wait_seconds/60:.1f} min. Missing: {missing_processors}. Triggering with partial data."
+            )
+
+        elif completed_count >= TIER3_REQUIRED_PROCESSORS and wait_seconds > TIER3_TIMEOUT_SECONDS:
+            # Tier 3: 3/5 processors after 2 hours (degraded case)
+            trigger_reason = 'tier3_timeout'
+            tier_name = 'Tier3'
+            logger.warning(
+                f"Tier 3 timeout: Have {completed_count}/{EXPECTED_PROCESSOR_COUNT} processors "
+                f"after {wait_seconds/3600:.1f} hours. Missing: {missing_processors}. Triggering degraded."
+            )
+
+        elif wait_seconds > MAX_WAIT_SECONDS:
+            # Final fallback: Max timeout regardless of count (original behavior)
+            trigger_reason = 'max_timeout'
+            tier_name = 'MaxTimeout'
+            logger.error(
+                f"MAX TIMEOUT: Waited {wait_seconds/3600:.1f} hours for Phase 4 completion. "
+                f"Only got {completed_count}/{EXPECTED_PROCESSOR_COUNT} processors. "
+                f"Missing: {missing_processors}. Triggering Phase 5 anyway (may have quality issues)."
+            )
+
+        # If any tier triggered, mark and return
+        if trigger_reason:
             current['_triggered'] = True
             current['_triggered_at'] = firestore.SERVER_TIMESTAMP
             current['_completed_count'] = completed_count
-            current['_trigger_reason'] = 'timeout'
+            current['_trigger_reason'] = trigger_reason
+            current['_tier_name'] = tier_name
             current['_missing_processors'] = missing_processors
             current['_wait_seconds'] = wait_seconds
 
             # Write atomically
             transaction.set(doc_ref, current)
 
-            return (True, 'timeout', missing_processors)
+            return (True, trigger_reason, missing_processors)
 
     # Not yet complete, update state
     current['_completed_count'] = completed_count
