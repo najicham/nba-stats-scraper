@@ -3229,12 +3229,12 @@ class UpcomingPlayerGameContextProcessor(
             WITH team_roster AS (
                 SELECT player_lookup
                 FROM `{self.project_id}.nba_raw.espn_team_rosters`
-                WHERE team_abbr = '{team_abbr}'
+                WHERE team_abbr = @team_abbr
                   AND roster_date = (
                       SELECT MAX(roster_date)
                       FROM `{self.project_id}.nba_raw.espn_team_rosters`
-                      WHERE roster_date <= '{game_date}'
-                        AND team_abbr = '{team_abbr}'
+                      WHERE roster_date <= @game_date
+                        AND team_abbr = @team_abbr
                   )
             ),
             player_recent_stats AS (
@@ -3244,9 +3244,9 @@ class UpcomingPlayerGameContextProcessor(
                     AVG(minutes_played) as avg_minutes,
                     AVG(usage_rate) as avg_usage
                 FROM `{self.project_id}.nba_analytics.player_game_summary`
-                WHERE game_date >= DATE_SUB('{game_date}', INTERVAL 10 DAY)
-                  AND game_date < '{game_date}'
-                  AND team_abbr = '{team_abbr}'
+                WHERE game_date >= DATE_SUB(@game_date, INTERVAL 10 DAY)
+                  AND game_date < @game_date
+                  AND team_abbr = @team_abbr
                 GROUP BY player_lookup
             ),
             star_players AS (
@@ -3260,8 +3260,8 @@ class UpcomingPlayerGameContextProcessor(
             injured_players AS (
                 SELECT DISTINCT player_lookup
                 FROM `{self.project_id}.nba_raw.nbac_injury_report`
-                WHERE game_date = '{game_date}'
-                  AND team = '{team_abbr}'
+                WHERE game_date = @game_date
+                  AND team = @team_abbr
                   AND UPPER(injury_status) IN ('OUT', 'DOUBTFUL')
                 QUALIFY ROW_NUMBER() OVER (
                     PARTITION BY player_lookup
@@ -3272,8 +3272,14 @@ class UpcomingPlayerGameContextProcessor(
             FROM star_players s
             INNER JOIN injured_players i ON s.player_lookup = i.player_lookup
             """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("team_abbr", "STRING", team_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
 
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query, job_config=job_config).result()
             for row in result:
                 return int(row.star_teammates_out) if row.star_teammates_out is not None else 0
 
@@ -3304,12 +3310,12 @@ class UpcomingPlayerGameContextProcessor(
             WITH team_roster AS (
                 SELECT player_lookup
                 FROM `{self.project_id}.nba_raw.espn_team_rosters`
-                WHERE team_abbr = '{team_abbr}'
+                WHERE team_abbr = @team_abbr
                   AND roster_date = (
                       SELECT MAX(roster_date)
                       FROM `{self.project_id}.nba_raw.espn_team_rosters`
-                      WHERE roster_date <= '{game_date}'
-                        AND team_abbr = '{team_abbr}'
+                      WHERE roster_date <= @game_date
+                        AND team_abbr = @team_abbr
                   )
             ),
             player_recent_stats AS (
@@ -3319,9 +3325,9 @@ class UpcomingPlayerGameContextProcessor(
                     AVG(minutes_played) as avg_minutes,
                     AVG(usage_rate) as avg_usage
                 FROM `{self.project_id}.nba_analytics.player_game_summary`
-                WHERE game_date >= DATE_SUB('{game_date}', INTERVAL 10 DAY)
-                  AND game_date < '{game_date}'
-                  AND team_abbr = '{team_abbr}'
+                WHERE game_date >= DATE_SUB(@game_date, INTERVAL 10 DAY)
+                  AND game_date < @game_date
+                  AND team_abbr = @team_abbr
                 GROUP BY player_lookup
             ),
             star_players AS (
@@ -3335,8 +3341,8 @@ class UpcomingPlayerGameContextProcessor(
             questionable_players AS (
                 SELECT DISTINCT player_lookup
                 FROM `{self.project_id}.nba_raw.nbac_injury_report`
-                WHERE game_date = '{game_date}'
-                  AND team = '{team_abbr}'
+                WHERE game_date = @game_date
+                  AND team = @team_abbr
                   AND UPPER(injury_status) = 'QUESTIONABLE'
                 QUALIFY ROW_NUMBER() OVER (
                     PARTITION BY player_lookup
@@ -3347,8 +3353,14 @@ class UpcomingPlayerGameContextProcessor(
             FROM star_players s
             INNER JOIN questionable_players q ON s.player_lookup = q.player_lookup
             """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("team_abbr", "STRING", team_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
 
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query, job_config=job_config).result()
             for row in result:
                 return int(row.questionable_star_teammates) if row.questionable_star_teammates is not None else 0
 
@@ -3379,12 +3391,12 @@ class UpcomingPlayerGameContextProcessor(
             WITH team_roster AS (
                 SELECT player_lookup
                 FROM `{self.project_id}.nba_raw.espn_team_rosters`
-                WHERE team_abbr = '{team_abbr}'
+                WHERE team_abbr = @team_abbr
                   AND roster_date = (
                       SELECT MAX(roster_date)
                       FROM `{self.project_id}.nba_raw.espn_team_rosters`
-                      WHERE roster_date <= '{game_date}'
-                        AND team_abbr = '{team_abbr}'
+                      WHERE roster_date <= @game_date
+                        AND team_abbr = @team_abbr
                   )
             ),
             player_recent_stats AS (
@@ -3394,9 +3406,9 @@ class UpcomingPlayerGameContextProcessor(
                     AVG(minutes_played) as avg_minutes,
                     AVG(usage_rate) as avg_usage
                 FROM `{self.project_id}.nba_analytics.player_game_summary`
-                WHERE game_date >= DATE_SUB('{game_date}', INTERVAL 10 DAY)
-                  AND game_date < '{game_date}'
-                  AND team_abbr = '{team_abbr}'
+                WHERE game_date >= DATE_SUB(@game_date, INTERVAL 10 DAY)
+                  AND game_date < @game_date
+                  AND team_abbr = @team_abbr
                 GROUP BY player_lookup
             ),
             star_players_with_tier AS (
@@ -3416,8 +3428,8 @@ class UpcomingPlayerGameContextProcessor(
             injured_players AS (
                 SELECT DISTINCT player_lookup
                 FROM `{self.project_id}.nba_raw.nbac_injury_report`
-                WHERE game_date = '{game_date}'
-                  AND team = '{team_abbr}'
+                WHERE game_date = @game_date
+                  AND team = @team_abbr
                   AND UPPER(injury_status) IN ('OUT', 'DOUBTFUL')
                 QUALIFY ROW_NUMBER() OVER (
                     PARTITION BY player_lookup
@@ -3428,8 +3440,14 @@ class UpcomingPlayerGameContextProcessor(
             FROM star_players_with_tier s
             INNER JOIN injured_players i ON s.player_lookup = i.player_lookup
             """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("team_abbr", "STRING", team_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
 
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query, job_config=job_config).result()
             for row in result:
                 return int(row.star_tier_out) if row.star_tier_out is not None else 0
 
