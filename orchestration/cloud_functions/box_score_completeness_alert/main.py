@@ -43,6 +43,7 @@ from zoneinfo import ZoneInfo
 from google.cloud import bigquery
 import functions_framework
 import requests
+from shared.utils.slack_retry import send_slack_webhook_with_retry
 
 
 def get_bigquery_client(project_id: str) -> bigquery.Client:
@@ -251,10 +252,10 @@ def send_slack_alert(status: str, message: str, context: Dict) -> bool:
                 }
             })
 
-        response = requests.post(webhook_url, json=payload, timeout=10)
-        response.raise_for_status()
-        logger.info(f"Slack alert sent successfully: {status}")
-        return True
+        success = send_slack_webhook_with_retry(webhook_url, payload, timeout=10)
+        if success:
+            logger.info(f"Slack alert sent successfully: {status}")
+        return success
 
     except Exception as e:
         logger.error(f"Failed to send Slack alert: {e}")

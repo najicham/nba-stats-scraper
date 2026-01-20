@@ -28,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from google.cloud import bigquery
+    from shared.utils.slack_retry import send_slack_webhook_with_retry
 except ImportError:
     print("Error: google-cloud-bigquery not installed")
     sys.exit(1)
@@ -169,9 +170,11 @@ def send_slack_alert(result: dict, webhook_url: str = None):
     payload = {"blocks": blocks}
 
     try:
-        response = requests.post(webhook_url, json=payload)
-        response.raise_for_status()
-        print(f"Slack alert sent successfully")
+        success = send_slack_webhook_with_retry(webhook_url, payload, timeout=10)
+        if success:
+            print(f"Slack alert sent successfully")
+        else:
+            print(f"Failed to send Slack alert after retries")
     except Exception as e:
         print(f"Failed to send Slack alert: {e}")
 

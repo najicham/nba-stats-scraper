@@ -45,6 +45,7 @@ from zoneinfo import ZoneInfo
 
 from google.cloud import bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
+from shared.utils.slack_retry import send_slack_webhook_with_retry
 import functions_framework
 import requests
 
@@ -434,10 +435,14 @@ def send_slack_summary(results: Dict) -> bool:
             }]
         }
 
-        response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
-        response.raise_for_status()
-        logger.info("Health summary sent to Slack")
-        return True
+        success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
+
+        if success:
+            logger.info("Health summary sent to Slack")
+        else:
+            logger.error("Failed to send Slack summary after retries")
+
+        return success
 
     except Exception as e:
         logger.error(f"Failed to send Slack summary: {e}")

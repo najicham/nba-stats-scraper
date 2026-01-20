@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple
 from google.cloud import firestore, bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
+from shared.utils.slack_retry import send_slack_webhook_with_retry
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -322,9 +323,12 @@ def send_slack_notification(results: HealthCheckResult):
             }]
         }
 
-        response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
-        response.raise_for_status()
-        logger.info("Slack notification sent successfully")
+        success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
+
+        if success:
+            logger.info("Slack notification sent successfully")
+        else:
+            logger.error("Failed to send Slack notification after retries")
 
     except Exception as e:
         logger.error(f"Failed to send Slack notification: {e}")

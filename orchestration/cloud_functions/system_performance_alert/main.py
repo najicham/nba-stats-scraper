@@ -31,6 +31,7 @@ from typing import Dict, List, Optional, Any
 
 from google.cloud import bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
+from shared.utils.slack_retry import send_slack_webhook_with_retry
 import functions_framework
 import requests
 
@@ -282,18 +283,14 @@ def send_slack_alert(message: Dict) -> bool:
         logger.warning("No Slack webhook configured, skipping alert")
         return False
 
-    try:
-        response = requests.post(
-            SLACK_WEBHOOK_URL,
-            json=message,
-            timeout=10
-        )
-        response.raise_for_status()
+    success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, message, timeout=10)
+
+    if success:
         logger.info("Slack alert sent successfully")
-        return True
-    except Exception as e:
-        logger.error(f"Failed to send Slack alert: {e}")
-        return False
+    else:
+        logger.error("Failed to send Slack alert after retries")
+
+    return success
 
 
 @functions_framework.http
