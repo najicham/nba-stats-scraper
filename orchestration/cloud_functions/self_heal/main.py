@@ -25,15 +25,26 @@ import os
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Retry logic for transient errors (prevents self-heal failures)
-try:
-    from shared.utils.retry_with_jitter import retry_with_jitter
-except ImportError:
-    logger.warning("Could not import retry_with_jitter, HTTP calls will not retry on failure")
-    def retry_with_jitter(*args, **kwargs):
-        def decorator(func):
-            return func
-        return decorator
+# Simple retry decorator for HTTP calls (prevents self-heal failures on transient errors)
+import time
+import random
+
+def retry_with_backoff(max_attempts=3, base_delay=2.0, max_delay=30.0, exceptions=(Exception,)):
+    """Simple retry decorator with exponential backoff"""
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            for attempt in range(1, max_attempts + 1):
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    if attempt >= max_attempts:
+                        logger.error(f"{func.__name__} failed after {max_attempts} attempts: {e}")
+                        raise
+                    delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+                    logger.warning(f"{func.__name__} attempt {attempt}/{max_attempts} failed: {e}. Retrying in {delay}s...")
+                    time.sleep(delay)
+        return wrapper
+    return decorator
 
 # Service URLs
 PHASE3_URL = "https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app"
@@ -226,7 +237,7 @@ def trigger_phase3_only(target_date):
         "skip_dependency_check": True
     }
 
-    @retry_with_jitter(
+    @retry_with_backoff(
         max_attempts=3,
         base_delay=2.0,
         max_delay=30.0,
@@ -291,7 +302,7 @@ def trigger_phase3(target_date):
         "skip_dependency_check": True
     }
 
-    @retry_with_jitter(
+    @retry_with_backoff(
         max_attempts=3,
         base_delay=2.0,
         max_delay=30.0,
@@ -343,7 +354,7 @@ def trigger_phase4(target_date):
         "skip_dependency_check": True
     }
 
-    @retry_with_jitter(
+    @retry_with_backoff(
         max_attempts=3,
         base_delay=2.0,
         max_delay=30.0,
@@ -379,7 +390,7 @@ def trigger_predictions(target_date):
 
     payload = {"game_date": target_date}
 
-    @retry_with_jitter(
+    @retry_with_backoff(
         max_attempts=3,
         base_delay=2.0,
         max_delay=30.0,
