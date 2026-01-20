@@ -135,7 +135,7 @@ if TYPE_CHECKING:
     from batch_staging_writer import BatchStagingWriter, get_worker_id
     from predictions.shared.injury_filter import InjuryFilter, InjuryStatus
 
-from write_metrics import PredictionWriteMetrics
+from predictions.worker.write_metrics import PredictionWriteMetrics
 
 logger.info("✓ Heavy imports deferred (will lazy-load on first request)")
 

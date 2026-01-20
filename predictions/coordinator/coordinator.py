@@ -36,14 +36,14 @@ import time
 if TYPE_CHECKING:
     from google.cloud import bigquery, pubsub_v1
 
-from player_loader import PlayerLoader
-from progress_tracker import ProgressTracker
-from run_history import CoordinatorRunHistory
-from coverage_monitor import PredictionCoverageMonitor
-from batch_state_manager import get_batch_state_manager, BatchStateManager, BatchState
+from predictions.coordinator.player_loader import PlayerLoader
+from predictions.coordinator.progress_tracker import ProgressTracker
+from predictions.coordinator.run_history import CoordinatorRunHistory
+from predictions.coordinator.coverage_monitor import PredictionCoverageMonitor
+from predictions.coordinator.batch_state_manager import get_batch_state_manager, BatchStateManager, BatchState
 
 # Import batch consolidator for staging table merging
-from batch_staging_writer import BatchConsolidator
+from predictions.coordinator.batch_staging_writer import BatchConsolidator
 
 # Import unified publishing (lazy import to avoid cold start)
 import sys

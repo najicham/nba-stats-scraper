@@ -45,7 +45,7 @@ from google.cloud import bigquery
 from google.api_core import exceptions as gcp_exceptions
 
 # Import distributed lock to prevent race conditions
-from distributed_lock import DistributedLock, LockAcquisitionError
+from predictions.worker.distributed_lock import DistributedLock, LockAcquisitionError
 
 logger = logging.getLogger(__name__)
 
