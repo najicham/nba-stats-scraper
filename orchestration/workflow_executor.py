@@ -19,6 +19,7 @@ import logging
 import uuid
 import os
 import time
+import random
 import requests
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
@@ -108,11 +109,40 @@ class WorkflowExecutor:
     
     # Timeout for scraper HTTP calls (3 minutes)
     SCRAPER_TIMEOUT = 180
+
+    # Future timeout for parallel execution (slightly higher than HTTP timeout for overhead)
+    FUTURE_TIMEOUT = SCRAPER_TIMEOUT + 10  # 190 seconds
     
     def __init__(self):
         """Initialize executor with parameter resolver."""
         self.parameter_resolver = ParameterResolver()
-    
+
+    @staticmethod
+    def _calculate_jittered_backoff(attempt: int, base_delay: float = 1.0, max_delay: float = 30.0) -> float:
+        """
+        Calculate exponential backoff with jitter to prevent thundering herd.
+
+        Uses decorrelated jitter algorithm (AWS recommended):
+        delay = base * (2 ** attempt) * random.uniform(0.5, 1.5)
+
+        Args:
+            attempt: Current retry attempt number (1-based)
+            base_delay: Base delay in seconds
+            max_delay: Maximum delay cap
+
+        Returns:
+            Delay in seconds with jitter applied
+        """
+        # Exponential component: 2^attempt
+        exponential = base_delay * (2 ** (attempt - 1))
+
+        # Add jitter: random factor between 0.5 and 1.5
+        # This spreads retries across time instead of synchronized bursts
+        jittered = exponential * random.uniform(0.5, 1.5)
+
+        # Cap at max_delay
+        return min(jittered, max_delay)
+
     def execute_pending_workflows(self) -> Dict[str, Any]:
         """
         Main entry point: Execute all pending RUN decisions.
@@ -387,14 +417,14 @@ class WorkflowExecutor:
                 for future in as_completed(futures):
                     scraper_name = futures[future]
                     try:
-                        results = future.result(timeout=300)  # 5 min timeout per scraper
+                        results = future.result(timeout=self.FUTURE_TIMEOUT)  # Aligned with HTTP timeout
                         scraper_executions.extend(results)
                     except TimeoutError:
-                        logger.error(f"⏱️ Scraper {scraper_name} timed out after 5 minutes")
+                        logger.error(f"⏱️ Scraper {scraper_name} timed out after {self.FUTURE_TIMEOUT}s")
                         scraper_executions.append(ScraperExecution(
                             scraper_name=scraper_name,
                             status='failed',
-                            error_message='Timeout after 5 minutes'
+                            error_message=f'Timeout after {self.FUTURE_TIMEOUT}s'
                         ))
                     except Exception as e:
                         logger.error(f"❌ Failed to get result from {scraper_name}: {e}")
@@ -634,9 +664,9 @@ class WorkflowExecutor:
                     logger.warning(f"Retryable error: {error_msg}")
 
                     if attempt < max_retries:
-                        # Exponential backoff: 2^attempt seconds
-                        wait_time = 2 ** attempt
-                        logger.info(f"   ⏳ Waiting {wait_time}s before retry...")
+                        # Exponential backoff with jitter (prevents thundering herd)
+                        wait_time = self._calculate_jittered_backoff(attempt)
+                        logger.info(f"   ⏳ Waiting {wait_time:.2f}s before retry...")
                         time.sleep(wait_time)
                         continue
                     else:
@@ -657,8 +687,8 @@ class WorkflowExecutor:
                 logger.warning(f"Timeout: {error_msg}")
 
                 if attempt < max_retries:
-                    wait_time = 2 ** attempt
-                    logger.info(f"   ⏳ Waiting {wait_time}s before retry...")
+                    wait_time = self._calculate_jittered_backoff(attempt)
+                    logger.info(f"   ⏳ Waiting {wait_time:.2f}s before retry...")
                     time.sleep(wait_time)
                     continue
                 else:
@@ -678,8 +708,8 @@ class WorkflowExecutor:
                 logger.warning(f"Exception: {error_msg}")
 
                 if attempt < max_retries:
-                    wait_time = 2 ** attempt
-                    logger.info(f"   ⏳ Waiting {wait_time}s before retry...")
+                    wait_time = self._calculate_jittered_backoff(attempt)
+                    logger.info(f"   ⏳ Waiting {wait_time:.2f}s before retry...")
                     time.sleep(wait_time)
                     continue
                 else:
@@ -733,4 +763,6 @@ class WorkflowExecutor:
             logger.debug(f"✅ Logged workflow execution to BigQuery: {execution.execution_id}")
         except Exception as e:
             logger.error(f"Failed to log workflow execution: {e}")
-            # Don't fail the workflow if logging fails
+            # Don't fail the workflow if logging fails - execution already completed
+            # TODO: Add monitoring/alerting for logging failures to detect BigQuery issues
+            # Metric: workflow_execution_logging_errors_total

@@ -930,3 +930,6 @@ class MasterWorkflowController:
             logger.info(f"✅ Logged {len(records)} workflow decisions to BigQuery")
         except Exception as e:
             logger.error(f"Failed to log decisions to BigQuery: {e}")
+            # CRITICAL: Decision logging failure is a serious audit issue - propagate error
+            # This allows monitoring/alerting systems to detect and respond
+            raise

@@ -622,8 +622,10 @@ def handle_completion_event():
         except Exception as e:
             print(f"❌ ERROR in completion handler: {e}", flush=True)
             logger.error(f"Error recording completion to Firestore: {e}", exc_info=True)
-            # Don't fail the request - worker already succeeded
-            # Return 204 so Pub/Sub doesn't retry
+            # CRITICAL: Return 500 so Pub/Sub retries - completion event cannot be lost!
+            # Worker already succeeded, but we MUST track completion for batch consolidation
+            # TODO: Add idempotency checks to prevent duplicate processing on retry
+            return ('Internal Server Error: Failed to record completion', 500)
 
         return ('', 204)  # Success
 
