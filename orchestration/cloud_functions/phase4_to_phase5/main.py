@@ -378,7 +378,10 @@ def verify_phase4_data_ready(game_date: str) -> tuple:
 
 def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_counts: Dict) -> bool:
     """
-    Send Slack alert when Phase 4 data freshness check fails.
+    Send Slack alert when Phase 4 data freshness check fails or circuit breaker trips.
+
+    UPDATED: Now sends CRITICAL alert when circuit breaker trips (blocks predictions).
+    Sends WARNING alert when degraded mode allowed (quality threshold met).
 
     Args:
         game_date: The date being processed
@@ -396,49 +399,108 @@ def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_c
         # Format table counts for display
         counts_text = "\n".join([f"• {t}: {c}" for t, c in table_counts.items()])
 
-        payload = {
-            "attachments": [{
-                "color": "#FFA500",  # Orange for warning
-                "blocks": [
-                    {
-                        "type": "header",
-                        "text": {
-                            "type": "plain_text",
-                            "text": ":warning: R-006: Phase 4 Data Freshness Alert",
-                            "emoji": True
-                        }
-                    },
-                    {
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": f"*Data freshness check failed!* Some Phase 4 tables are missing data for {game_date}."
-                        }
-                    },
-                    {
-                        "type": "section",
-                        "fields": [
-                            {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
-                            {"type": "mrkdwn", "text": f"*Missing Tables:*\n{', '.join(missing_tables)}"},
-                        ]
-                    },
-                    {
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": f"*Table Row Counts:*\n```{counts_text}```"
-                        }
-                    },
-                    {
-                        "type": "context",
-                        "elements": [{
-                            "type": "mrkdwn",
-                            "text": "Phase 5 predictions will proceed, but may use incomplete data. Review Phase 4 processor logs."
-                        }]
-                    }
-                ]
-            }]
+        # Determine severity based on circuit breaker logic
+        critical_processors = {
+            'nba_precompute.player_daily_cache',
+            'nba_predictions.ml_feature_store_v2'
         }
+        tables_with_data = {t for t, count in table_counts.items() if count > 0}
+        critical_complete = critical_processors.issubset(tables_with_data)
+        total_complete = len(tables_with_data)
+        circuit_breaker_tripped = (total_complete < 3) or (not critical_complete)
+
+        if circuit_breaker_tripped:
+            # CRITICAL: Circuit breaker has tripped - predictions BLOCKED
+            payload = {
+                "attachments": [{
+                    "color": "#FF0000",  # Red for critical
+                    "blocks": [
+                        {
+                            "type": "header",
+                            "text": {
+                                "type": "plain_text",
+                                "text": ":octagonal_sign: R-006: Circuit Breaker TRIPPED - Predictions BLOCKED",
+                                "emoji": True
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"*CRITICAL: Phase 5 predictions BLOCKED!* Insufficient Phase 4 data quality for {game_date}."
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "fields": [
+                                {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
+                                {"type": "mrkdwn", "text": f"*Processors:*\n{total_complete}/5 complete"},
+                                {"type": "mrkdwn", "text": f"*Critical:*\n{'✅ Complete' if critical_complete else '❌ MISSING'}"},
+                                {"type": "mrkdwn", "text": f"*Missing:*\n{', '.join(missing_tables) if missing_tables else 'None'}"},
+                            ]
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"*Table Row Counts:*\n```{counts_text}```"
+                            }
+                        },
+                        {
+                            "type": "context",
+                            "elements": [{
+                                "type": "mrkdwn",
+                                "text": ":no_entry: Predictions will NOT run until Phase 4 meets quality threshold (≥3/5 processors + both critical). Review Phase 4 logs and backfill if needed."
+                            }]
+                        }
+                    ]
+                }]
+            }
+        else:
+            # WARNING: Degraded mode - some data missing but quality threshold met
+            payload = {
+                "attachments": [{
+                    "color": "#FFA500",  # Orange for warning
+                    "blocks": [
+                        {
+                            "type": "header",
+                            "text": {
+                                "type": "plain_text",
+                                "text": ":warning: R-006: Phase 4 Degraded Mode",
+                                "emoji": True
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"*Some Phase 4 tables missing data for {game_date}, but quality threshold MET. Proceeding with degraded predictions.*"
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "fields": [
+                                {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
+                                {"type": "mrkdwn", "text": f"*Missing Tables:*\n{', '.join(missing_tables)}"},
+                            ]
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"*Table Row Counts:*\n```{counts_text}```"
+                            }
+                        },
+                        {
+                            "type": "context",
+                            "elements": [{
+                                "type": "mrkdwn",
+                                "text": "Predictions proceeding with {total_complete}/5 processors (threshold: ≥3 + critical complete). Review Phase 4 logs."
+                            }]
+                        }
+                    ]
+                }]
+            }
 
         response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
         response.raise_for_status()
@@ -649,9 +711,11 @@ def trigger_phase5(game_date: str, correlation_id: str, upstream_message: Dict) 
     Trigger Phase 5 predictions when Phase 4 is complete.
 
     Does three things:
-    1. R-006: Verifies Phase 4 data actually exists in BigQuery
-    2. Publishes message to nba-phase4-precompute-complete topic
-    3. Calls prediction coordinator /start endpoint directly
+    1. R-006: Verifies Phase 4 data actually exists in BigQuery (BLOCKING circuit breaker)
+    2. Verifies minimum coverage: ≥3/5 processors + both critical (PDC, MLFS)
+    3. If checks pass: Publishes message + calls prediction coordinator
+
+    UPDATED: Now implements circuit breaker pattern - BLOCKS predictions if quality threshold not met.
 
     Args:
         game_date: Date that was processed
@@ -660,18 +724,57 @@ def trigger_phase5(game_date: str, correlation_id: str, upstream_message: Dict) 
 
     Returns:
         Message ID if published successfully, None if failed
+
+    Raises:
+        ValueError: If circuit breaker trips (insufficient Phase 4 data quality)
     """
     try:
         # R-006: Verify Phase 4 data exists before triggering predictions
         # This is a belt-and-suspenders check even when all processors report success
         is_ready, missing_tables, table_counts = verify_phase4_data_ready(game_date)
 
+        # Circuit breaker logic: Check minimum quality thresholds
+        critical_processors = {
+            'nba_precompute.player_daily_cache',  # PDC - Critical for predictions
+            'nba_predictions.ml_feature_store_v2'  # MLFS - Critical for predictions
+        }
+
+        tables_with_data = {t for t, count in table_counts.items() if count > 0}
+        critical_complete = critical_processors.issubset(tables_with_data)
+        total_complete = len(tables_with_data)
+        min_required = 3  # Require at least 3/5 processors
+
+        # Circuit breaker trips if:
+        # 1. Less than 3 processors completed, OR
+        # 2. Missing either critical processor (PDC or MLFS)
+        circuit_breaker_tripped = (total_complete < min_required) or (not critical_complete)
+
+        if circuit_breaker_tripped:
+            logger.error(
+                f"R-006: Circuit breaker TRIPPED for {game_date}. "
+                f"Processors: {total_complete}/5, Critical: {critical_complete}, "
+                f"Missing: {missing_tables}. BLOCKING Phase 5 predictions."
+            )
+            # Send critical alert
+            send_data_freshness_alert(game_date, missing_tables, table_counts)
+
+            # CRITICAL: Raise exception to BLOCK predictions with insufficient data
+            # This prevents poor-quality predictions (10-15% of weekly quality issues)
+            raise ValueError(
+                f"Phase 4 circuit breaker tripped for {game_date}. "
+                f"Insufficient data quality: {total_complete}/5 processors complete, "
+                f"critical processors {'complete' if critical_complete else 'MISSING'}. "
+                f"Missing tables: {missing_tables}. "
+                f"Cannot generate predictions without minimum Phase 4 coverage."
+            )
+
         if not is_ready:
             logger.warning(
-                f"R-006: Data freshness check FAILED for {game_date}. "
-                f"Missing tables: {missing_tables}. Proceeding with trigger anyway."
+                f"R-006: Data freshness check shows missing tables for {game_date}. "
+                f"Missing: {missing_tables}. However, circuit breaker threshold MET "
+                f"({total_complete}/5 processors, critical complete). Proceeding with degraded mode."
             )
-            # Send alert but continue triggering (same behavior as timeout)
+            # Send warning alert but continue (quality threshold met even if not all tables present)
             send_data_freshness_alert(game_date, missing_tables, table_counts)
 
         topic_path = publisher.topic_path(PROJECT_ID, PHASE5_TRIGGER_TOPIC)

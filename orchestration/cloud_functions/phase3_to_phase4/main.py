@@ -398,6 +398,8 @@ def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_c
     """
     Send Slack alert when Phase 3 data freshness check fails.
 
+    UPDATED: Now sends CRITICAL alert since Phase 4 trigger is BLOCKED (validation gate).
+
     Args:
         game_date: The date being processed
         missing_tables: List of tables with no data
@@ -416,13 +418,13 @@ def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_c
 
         payload = {
             "attachments": [{
-                "color": "#FFA500",  # Orange for warning
+                "color": "#FF0000",  # Red for critical (changed from orange - this now BLOCKS)
                 "blocks": [
                     {
                         "type": "header",
                         "text": {
                             "type": "plain_text",
-                            "text": ":warning: R-008: Phase 3 Data Freshness Alert",
+                            "text": ":rotating_light: R-008: Phase 4 BLOCKED - Data Validation Gate",
                             "emoji": True
                         }
                     },
@@ -430,7 +432,7 @@ def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_c
                         "type": "section",
                         "text": {
                             "type": "mrkdwn",
-                            "text": f"*Data freshness check failed!* Some Phase 3 analytics tables are missing data for {game_date}."
+                            "text": f"*CRITICAL: Phase 4 trigger BLOCKED!* Phase 3 analytics tables are missing data for {game_date}."
                         }
                     },
                     {
@@ -451,7 +453,7 @@ def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_c
                         "type": "context",
                         "elements": [{
                             "type": "mrkdwn",
-                            "text": "Phase 4 precompute will proceed, but may use incomplete data. Review Phase 3 processor logs."
+                            "text": ":no_entry: Phase 4 will NOT run until Phase 3 data is complete. This prevents cascade failures. Review Phase 3 processor logs and backfill if needed."
                         }]
                     }
                 ]
@@ -785,12 +787,20 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
         is_ready, missing_tables, table_counts = verify_phase3_data_ready(game_date)
 
         if not is_ready:
-            logger.warning(
+            logger.error(
                 f"R-008: Data freshness check FAILED for {game_date}. "
-                f"Missing tables: {missing_tables}. Proceeding with trigger anyway."
+                f"Missing tables: {missing_tables}. BLOCKING Phase 4 trigger."
             )
-            # Send alert but continue triggering (same behavior as timeout)
+            # Send alert AND block trigger (validation gate)
             send_data_freshness_alert(game_date, missing_tables, table_counts)
+
+            # CRITICAL: Raise exception to BLOCK Phase 4 from running with incomplete data
+            # This prevents cascade failures (20-30% of weekly issues)
+            raise ValueError(
+                f"Phase 3 data incomplete for {game_date}. "
+                f"Missing tables: {missing_tables}. "
+                f"Cannot trigger Phase 4 with incomplete upstream data."
+            )
         # Read Firestore to get all processor data (including entities_changed)
         doc_snapshot = doc_ref.get()
         all_processors = doc_snapshot.to_dict() if doc_snapshot.exists else {}
