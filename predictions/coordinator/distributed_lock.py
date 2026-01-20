@@ -43,10 +43,15 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Optional
 
-from google.cloud import firestore
 from google.api_core import exceptions as gcp_exceptions
 
 logger = logging.getLogger(__name__)
+
+# Lazy-load firestore to avoid Python 3.13 import errors at module load time
+def _get_firestore_client():
+    """Lazy-load Firestore client to avoid import errors."""
+    from google.cloud import firestore
+    return firestore
 
 # Lock configuration
 LOCK_TIMEOUT_SECONDS = 300  # 5 minutes - prevents deadlocks from crashed processes
@@ -93,8 +98,9 @@ class DistributedLock:
         self.project_id = project_id
         self.lock_type = lock_type
         self.collection_name = f"{lock_type}_locks"
+        firestore = _get_firestore_client()
         self.db = firestore.Client(project=project_id)
-        self.lock_doc_ref: Optional[firestore.DocumentReference] = None
+        self.lock_doc_ref: Optional[object] = None  # firestore.DocumentReference lazy-loaded
 
         logger.info(f"Initialized DistributedLock (type={lock_type}, collection={self.collection_name})")
 
@@ -131,6 +137,8 @@ class DistributedLock:
         """
         lock_ref = self.db.collection(self.collection_name).document(lock_key)
 
+        firestore = _get_firestore_client()
+
         @firestore.transactional
         def acquire_in_transaction(transaction):
             """Atomically check and acquire lock in transaction."""
@@ -161,7 +169,7 @@ class DistributedLock:
                 'operation_id': operation_id,
                 'holder_id': holder_id,
                 'lock_type': self.lock_type,
-                'acquired_at': firestore.SERVER_TIMESTAMP,
+                'acquired_at': _get_firestore_client().SERVER_TIMESTAMP,
                 'expires_at': datetime.utcnow() + timedelta(seconds=LOCK_TIMEOUT_SECONDS),
                 'lock_key': lock_key
             }

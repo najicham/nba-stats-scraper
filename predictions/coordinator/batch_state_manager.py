@@ -36,11 +36,20 @@ Date: January 1, 2026
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Set, Optional
-from google.cloud import firestore
-from google.cloud.firestore import ArrayUnion, Increment, SERVER_TIMESTAMP
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Lazy-load firestore to avoid Python 3.13 import errors at module load time
+def _get_firestore():
+    """Lazy-load Firestore module to avoid import errors."""
+    from google.cloud import firestore
+    return firestore
+
+def _get_firestore_helpers():
+    """Lazy-load Firestore helper functions."""
+    from google.cloud.firestore import ArrayUnion, Increment, SERVER_TIMESTAMP
+    return ArrayUnion, Increment, SERVER_TIMESTAMP
 
 
 @dataclass
@@ -68,16 +77,19 @@ class BatchState:
         """Convert to Firestore-compatible dictionary"""
         data = asdict(self)
 
+        # Lazy-load Firestore helpers
+        _, _, SERVER_TIMESTAMP = _get_firestore_helpers()
+
         # Firestore doesn't like None timestamps - remove them
         if data.get('start_time') is None:
-            data['start_time'] = firestore.SERVER_TIMESTAMP
+            data['start_time'] = SERVER_TIMESTAMP
         if data.get('completion_time') is None:
             del data['completion_time']
 
         # Add metadata
-        data['updated_at'] = firestore.SERVER_TIMESTAMP
+        data['updated_at'] = SERVER_TIMESTAMP
         if 'created_at' not in data:
-            data['created_at'] = firestore.SERVER_TIMESTAMP
+            data['created_at'] = SERVER_TIMESTAMP
 
         return data
 
@@ -146,6 +158,9 @@ class BatchStateManager:
             project_id: GCP project ID
         """
         self.project_id = project_id
+
+        # Lazy-load Firestore client
+        firestore = _get_firestore()
         self.db = firestore.Client(project=project_id)
         self.collection = self.db.collection(self.COLLECTION_NAME)
 
@@ -301,6 +316,10 @@ class BatchStateManager:
         """
         doc_ref = self.collection.document(batch_id)
 
+        # Lazy-load Firestore helpers
+        firestore = _get_firestore()
+        _, _, SERVER_TIMESTAMP = _get_firestore_helpers()
+
         @firestore.transactional
         def update_in_transaction(transaction):
             snapshot = doc_ref.get(transaction=transaction)
@@ -317,7 +336,7 @@ class BatchStateManager:
 
                 transaction.update(doc_ref, {
                     'failed_players': failed_players,
-                    'updated_at': firestore.SERVER_TIMESTAMP
+                    'updated_at': SERVER_TIMESTAMP
                 })
 
                 logger.warning(
@@ -335,11 +354,14 @@ class BatchStateManager:
         Args:
             batch_id: Batch identifier
         """
+        # Lazy-load Firestore helpers
+        _, _, SERVER_TIMESTAMP = _get_firestore_helpers()
+
         doc_ref = self.collection.document(batch_id)
         doc_ref.update({
             'is_complete': True,
-            'completion_time': firestore.SERVER_TIMESTAMP,
-            'updated_at': firestore.SERVER_TIMESTAMP
+            'completion_time': SERVER_TIMESTAMP,
+            'updated_at': SERVER_TIMESTAMP
         })
 
         logger.info(f"Marked batch as complete: {batch_id}")
@@ -420,10 +442,13 @@ class BatchStateManager:
             f"marking complete with partial results"
         )
 
+        # Lazy-load Firestore helpers
+        _, _, SERVER_TIMESTAMP = _get_firestore_helpers()
+
         doc_ref.update({
             'is_complete': True,
-            'completion_time': firestore.SERVER_TIMESTAMP,
-            'updated_at': firestore.SERVER_TIMESTAMP,
+            'completion_time': SERVER_TIMESTAMP,
+            'updated_at': SERVER_TIMESTAMP,
             'stall_completed': True,  # Flag to indicate partial completion
             'stall_reason': f"No progress for {stall_threshold_minutes} min at {completion_pct:.1f}%"
         })
