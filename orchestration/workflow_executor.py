@@ -398,9 +398,11 @@ class WorkflowExecutor:
         execution_id = str(uuid.uuid4())
         start_time = datetime.now(timezone.utc)
 
-        # Detect if this workflow should run in parallel
-        parallel_workflows = ['morning_operations']
-        use_parallel = workflow_name in parallel_workflows
+        # Week 1: Use config to detect if this workflow should run in parallel
+        from shared.config.orchestration_config import get_orchestration_config
+        orch_config = get_orchestration_config()
+        use_parallel = orch_config.workflow_execution.is_parallel(workflow_name)
+        max_workers = orch_config.workflow_execution.max_workers
 
         logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         logger.info(f"▶️  Executing Workflow: {workflow_name}")
@@ -408,6 +410,8 @@ class WorkflowExecutor:
         logger.info(f"   Decision ID: {decision_id or 'manual'}")
         logger.info(f"   Scrapers: {len(scrapers)}")
         logger.info(f"   Execution Mode: {'🚀 PARALLEL' if use_parallel else 'Sequential'}")
+        if use_parallel:
+            logger.info(f"   Max Workers: {max_workers}")
         if target_games:
             logger.info(f"   Target Games: {len(target_games)}")
         if target_date:
@@ -427,10 +431,11 @@ class WorkflowExecutor:
 
         # Execute scrapers (parallel or sequential)
         if use_parallel:
-            # PARALLEL EXECUTION for morning_operations
-            logger.info(f"🚀 Running {len(scrapers)} scrapers in PARALLEL")
+            # Week 1: PARALLEL EXECUTION (now config-driven!)
+            actual_workers = min(max_workers, len(scrapers))
+            logger.info(f"🚀 Running {len(scrapers)} scrapers in PARALLEL (max_workers={actual_workers})")
 
-            with ThreadPoolExecutor(max_workers=len(scrapers)) as executor:
+            with ThreadPoolExecutor(max_workers=actual_workers) as executor:
                 # Submit all scrapers for parallel execution
                 futures = {
                     executor.submit(self._execute_single_scraper, scraper_name, context, workflow_name): scraper_name
