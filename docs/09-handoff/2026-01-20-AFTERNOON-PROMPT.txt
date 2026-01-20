@@ -1,0 +1,51 @@
+URGENT: Props scraping failed at 10:00 AM. Deploying fix now (10:13 AM PST).
+
+SITUATION:
+- Time: 10:13 AM PST (1:13 PM ET)
+- Props scraping triggered at 10:00 AM but FAILED (3 scrapers, 0 succeeded)
+- Root cause: Incomplete dotenv fix - missed scrapers/scraper_flask_mixin.py
+- Fix: Made all dotenv imports optional (commit 9cab85e7)
+- Deployment: In progress (task b6f7a19)
+- ETA: ~5-10 minutes
+
+WHAT WENT WRONG:
+- Earlier today we fixed dotenv in __init__.py and main_scraper_service.py
+- But scraper_flask_mixin.py (base class for ALL scrapers) also imports dotenv
+- When scrapers tried to run at 10:00 AM, they crashed with ModuleNotFoundError
+
+IMMEDIATE NEXT STEPS:
+1. Wait for deployment to complete (~5 min)
+2. Test Phase 1 health endpoint
+3. Manually retrigger betting_lines workflow OR trigger individual scrapers
+4. Monitor props data appearing in BigQuery
+5. Phase 3 (Quick Win #1) needs to run at 11:00 AM - we have 45 minutes
+
+CRITICAL TIMING:
+- 10:00-10:15 AM: Props scraping window (MISSED - need manual trigger)
+- 11:00 AM: Phase 3 Analytics (Quick Win #1 validation!)
+- We can recover if we trigger scrapers in next 30 minutes
+
+GIT STATUS:
+- Branch: week-0-security-fixes
+- Latest commit: 9cab85e7 (complete Phase 1 dotenv fix)
+- Deployment: Phase 1 Scrapers (revision 00106 expected)
+
+ALL SERVICES STATUS:
+✅ Phase 1: 🚨 Deploying fix now
+✅ Phase 2: Healthy
+✅ Phase 3: Healthy (Quick Win #1 ready)
+✅ Phase 4: Healthy (Quick Win #1 ready)
+✅ Worker: Healthy (00007-z6m)
+✅ Coordinator: Healthy (00064-vs5)
+
+COMMANDS READY:
+# After deployment completes:
+curl https://nba-phase1-scrapers-756957797294.us-west2.run.app/health
+
+# Check deployment:
+tail -f /tmp/claude/-home-naji-code-nba-stats-scraper/tasks/b6f7a19.output
+
+# Monitor props:
+./scripts/monitor_props_scraping.sh
+
+Week 0 is 95% complete - just need to recover props scraping and validate Quick Win #1!
