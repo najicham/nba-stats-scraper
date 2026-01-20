@@ -505,8 +505,8 @@ def start_prediction_batch():
                                 for row in bq_client.query(query, job_config=job_config).result()}
 
                 # Filter requests based on quality threshold
-                for request in requests:
-                    player_lookup = request.get('player_lookup')
+                for pred_request in requests:
+                    player_lookup = pred_request.get('player_lookup')
                     quality_score = quality_scores.get(player_lookup, 0)
 
                     if quality_score < 70 and quality_score > 0:
@@ -516,7 +516,7 @@ def start_prediction_batch():
                         )
                         filtered_count += 1
                     else:
-                        viable_requests.append(request)
+                        viable_requests.append(pred_request)
 
                 logger.info(
                     f"PRE-FLIGHT FILTER: {len(viable_requests)}/{len(requests)} viable "
