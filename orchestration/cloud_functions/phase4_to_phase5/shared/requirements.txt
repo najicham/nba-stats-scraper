@@ -1,0 +1,57 @@
+# Core Google Cloud dependencies (heavy, rarely change)
+google-cloud-storage==2.10.0
+google-cloud-bigquery==3.13.0
+google-cloud-core==2.4.3
+google-auth==2.40.2
+google-api-core==2.25.0rc1
+googleapis-common-protos==1.70.0
+google-crc32c==1.7.1
+google-resumable-media==2.7.2
+
+pandas==2.3.0
+db-dtypes>=1.2.0  # Required for BigQuery pandas integration (to_dataframe())
+google-cloud-pubsub>=2.31.1
+google-cloud-firestore>=2.11.0
+
+# Core web framework (stable, shared across services)
+flask==2.3.3
+gunicorn==21.2.0
+jinja2==3.1.2
+werkzeug==2.3.7
+itsdangerous==2.1.2
+click==8.1.7
+blinker==1.7.0
+
+# Core utilities (stable, shared)
+requests==2.32.3
+python-dotenv==1.0.0
+urllib3==2.4.0
+python-dateutil==2.9.0.post0
+pytz==2025.2
+certifi==2025.4.26
+charset-normalizer==3.4.2
+idna==3.10
+
+# AWS SDK for SES email sending
+boto3==1.35.76
+botocore==1.35.76
+
+# Cryptography (heavy, stable)
+rsa==4.9.1
+pyasn1==0.6.1
+pyasn1-modules==0.4.2
+pycryptodome==3.23.0
+
+# Error tracking and monitoring
+sentry-sdk==1.38.0
+
+# Common utilities
+six==1.17.0
+cachetools==5.5.2
+
+# Fuzzy string matching (for team name mapping)
+fuzzywuzzy==0.18.0
+python-Levenshtein==0.21.1
+google-cloud-logging>=3.12.0
+google-cloud-workflows>=1.18.0
+google-cloud-secret-manager==2.16.0

@@ -140,9 +140,10 @@ def check_already_graded(target_date: str) -> bool:
     """
     bq_client = get_bq_client()
 
+    # FIX: Changed from prediction_accuracy to prediction_grades (correct table)
     query = f"""
     SELECT COUNT(*) as graded_count
-    FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+    FROM `{PROJECT_ID}.nba_predictions.prediction_grades`
     WHERE game_date = '{target_date}'
     """
 

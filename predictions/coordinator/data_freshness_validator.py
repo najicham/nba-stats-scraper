@@ -115,7 +115,7 @@ class DataFreshnessValidator:
                 COUNT(*) as total_records,
                 COUNT(DISTINCT player_lookup) as unique_players,
                 MAX(created_at) as newest_record
-            FROM `{self.project_id}.nba_analytics.ml_feature_store_v2`
+            FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
             WHERE game_date = '{game_date.isoformat()}'
             """
 

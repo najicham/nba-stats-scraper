@@ -1,5 +1,6 @@
 {
   "displayName": "NBA Data Pipeline Health Dashboard",
+  "etag": "c4d2f2966fc1835e5a567680975015da",
   "mosaicLayout": {
     "columns": 12,
     "tiles": [
@@ -30,7 +31,6 @@
               "scale": "LINEAR"
             },
             "thresholds": [
-              // Note: Only value field supported
               {
                 "value": 0,
                 "color": "YELLOW",
@@ -72,7 +72,6 @@
               "scale": "LINEAR"
             },
             "thresholds": [
-              // Note: Only value field supported
               {
                 "value": 0,
                 "color": "YELLOW",
@@ -114,7 +113,6 @@
               "scale": "LINEAR"
             },
             "thresholds": [
-              // Note: Only value field supported
               {
                 "value": 5000,
                 "color": "YELLOW",
@@ -227,7 +225,6 @@
               "scale": "LINEAR"
             },
             "thresholds": [
-              // Note: Only value field supported
               {
                 "value": 50,
                 "color": "YELLOW",
@@ -276,7 +273,6 @@
               "scale": "LINEAR"
             },
             "thresholds": [
-              // Note: Only value field supported
               {
                 "value": 3600,
                 "color": "YELLOW",
@@ -394,6 +390,274 @@
             "chartOptions": {
               "mode": "COLOR"
             }
+          }
+        }
+      },
+      {
+        "yPos": 24,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Circuit Breaker: Phase 3→4 Gate Blocks (7d)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_function\" AND resource.labels.function_name=\"phase3-to-phase4\" AND severity>=ERROR AND textPayload=~\"Phase 4 BLOCKED\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_SUM"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1"
+              }
+            ],
+            "yAxis": {
+              "label": "Blocks/hour",
+              "scale": "LINEAR"
+            },
+            "thresholds": [
+              {
+                "value": 0,
+                "color": "GREEN",
+                "direction": "ABOVE",
+                "label": "Target: Zero blocks"
+              },
+              {
+                "value": 1,
+                "color": "RED",
+                "direction": "ABOVE",
+                "label": "Alert: Gate blocking"
+              }
+            ],
+            "chartOptions": {
+              "mode": "COLOR"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 24,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Circuit Breaker: Phase 4→5 Trips (7d)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_function\" AND resource.labels.function_name=\"phase4-to-phase5\" AND severity>=ERROR AND textPayload=~\"Circuit Breaker TRIPPED\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_SUM"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1"
+              }
+            ],
+            "yAxis": {
+              "label": "Trips/hour",
+              "scale": "LINEAR"
+            },
+            "thresholds": [
+              {
+                "value": 0,
+                "color": "GREEN",
+                "direction": "ABOVE",
+                "label": "Target: Zero trips"
+              },
+              {
+                "value": 1,
+                "color": "RED",
+                "direction": "ABOVE",
+                "label": "Alert: Circuit breaker active"
+              }
+            ],
+            "chartOptions": {
+              "mode": "COLOR"
+            }
+          }
+        }
+      },
+      {
+        "yPos": 28,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Cloud Function: phase3-to-phase4 Execution Count",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_function\" AND resource.labels.function_name=\"phase3-to-phase4\" AND metric.type=\"cloudfunctions.googleapis.com/function/execution_count\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["metric.labels.status"]
+                    }
+                  }
+                },
+                "plotType": "STACKED_AREA",
+                "targetAxis": "Y1"
+              }
+            ],
+            "yAxis": {
+              "label": "Executions/hour",
+              "scale": "LINEAR"
+            },
+            "chartOptions": {
+              "mode": "COLOR"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 28,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Cloud Function: phase4-to-phase5 Execution Count",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_function\" AND resource.labels.function_name=\"phase4-to-phase5\" AND metric.type=\"cloudfunctions.googleapis.com/function/execution_count\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["metric.labels.status"]
+                    }
+                  }
+                },
+                "plotType": "STACKED_AREA",
+                "targetAxis": "Y1"
+              }
+            ],
+            "yAxis": {
+              "label": "Executions/hour",
+              "scale": "LINEAR"
+            },
+            "chartOptions": {
+              "mode": "COLOR"
+            }
+          }
+        }
+      },
+      {
+        "yPos": 32,
+        "width": 12,
+        "height": 4,
+        "widget": {
+          "title": "Cloud Scheduler: Job Success Rates (24h)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_scheduler_job\" AND (resource.labels.job_id=\"overnight-phase4-7am-et\" OR resource.labels.job_id=\"same-day-predictions\" OR resource.labels.job_id=\"same-day-phase4\") AND metric.type=\"cloudscheduler.googleapis.com/job/attempt_count\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_DELTA",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["resource.labels.job_id", "metric.labels.response_class"]
+                    }
+                  }
+                },
+                "plotType": "STACKED_AREA",
+                "targetAxis": "Y1"
+              }
+            ],
+            "yAxis": {
+              "label": "Attempts/hour",
+              "scale": "LINEAR"
+            },
+            "chartOptions": {
+              "mode": "COLOR"
+            }
+          }
+        }
+      },
+      {
+        "yPos": 36,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Cloud Run: nba-scrapers Service Requests",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"nba-scrapers\" AND metric.type=\"run.googleapis.com/request_count\"",
+                    "aggregation": {
+                      "alignmentPeriod": "300s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["metric.labels.response_code_class"]
+                    }
+                  }
+                },
+                "plotType": "STACKED_AREA",
+                "targetAxis": "Y1"
+              }
+            ],
+            "yAxis": {
+              "label": "Requests/5min",
+              "scale": "LINEAR"
+            },
+            "chartOptions": {
+              "mode": "COLOR"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 36,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "BDL Scraper: Retry Success Rate",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesFilter": {
+                "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"nba-scrapers\" AND metric.type=\"logging.googleapis.com/user/bdl_retry_success\"",
+                "aggregation": {
+                  "alignmentPeriod": "86400s",
+                  "perSeriesAligner": "ALIGN_MEAN",
+                  "crossSeriesReducer": "REDUCE_MEAN"
+                }
+              }
+            },
+            "sparkChartView": {
+              "sparkChartType": "SPARK_LINE"
+            },
+            "thresholds": [
+              {
+                "value": 0.95,
+                "color": "GREEN",
+                "direction": "ABOVE"
+              },
+              {
+                "value": 0.80,
+                "color": "YELLOW",
+                "direction": "ABOVE"
+              }
+            ]
           }
         }
       }
