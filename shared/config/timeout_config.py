@@ -1,318 +1,261 @@
 """
-Centralized Timeout Configuration
+Week 1: Centralized Timeout Configuration
 
-This module consolidates all timeout values across the codebase into
-a single source of truth. Previously, 1,070+ timeout values were
-scattered across files.
+Single source of truth for all timeout values across the codebase.
+
+Previously: 1,070+ hardcoded timeout values scattered across files
+Now: All timeouts defined here with clear documentation
 
 Usage:
     from shared.config.timeout_config import TimeoutConfig
 
-    timeout = TimeoutConfig.SCRAPER_HTTP_TIMEOUT
-    response = requests.post(url, timeout=timeout)
+    timeouts = TimeoutConfig()
+    requests.get(url, timeout=timeouts.HTTP_REQUEST)
+
+Environment Variable Overrides:
+    All timeouts can be overridden via environment variables:
+    - TIMEOUT_HTTP_REQUEST=30
+    - TIMEOUT_BIGQUERY_QUERY=120
+    etc.
+
+Created: 2026-01-20 (Week 1, Day 4)
 """
 
-from dataclasses import dataclass
 import os
+from dataclasses import dataclass
 
 
 @dataclass
 class TimeoutConfig:
     """
-    Centralized timeout configuration for all components.
+    Centralized timeout configuration.
 
-    All values are in seconds unless otherwise specified.
-    Can be overridden via environment variables.
+    All values in seconds unless otherwise noted.
     """
 
-    # ========================================
-    # HTTP Timeouts
-    # ========================================
+    # ============================================================================
+    # HTTP/API Timeouts
+    # ============================================================================
 
-    # Scraper HTTP calls (3 minutes)
-    SCRAPER_HTTP_TIMEOUT: int = 180
+    # Standard HTTP requests (scraping, API calls)
+    HTTP_REQUEST: int = 30
 
-    # Future timeout for parallel execution
-    # Should be slightly higher than HTTP timeout for overhead
-    FUTURE_TIMEOUT: int = 190  # SCRAPER_HTTP_TIMEOUT + 10
+    # Scraper HTTP calls in workflow executor
+    SCRAPER_HTTP: int = 180  # 3 minutes (scrapers can be slow)
 
-    # Health check endpoint timeout (10 seconds)
-    HEALTH_CHECK_TIMEOUT: int = 10
+    # Scraper future timeout (parallel execution)
+    SCRAPER_FUTURE: int = 190  # 10s overhead over HTTP timeout
 
-    # Internal service-to-service calls (30 seconds)
-    INTERNAL_SERVICE_TIMEOUT: int = 30
+    # Cloud Run health checks
+    HEALTH_CHECK: int = 10
 
-    # External API calls (general) (60 seconds)
-    EXTERNAL_API_TIMEOUT: int = 60
+    # Slack webhook notifications
+    SLACK_WEBHOOK: int = 10
 
-    # ========================================
+    # Basketball-Reference.com (can be slow)
+    BR_SCRAPER: int = 45
+
+    # NBA.com API (can be slow)
+    NBAC_API: int = 60
+
+    # BigDataBall API
+    BDB_API: int = 30
+
+    # OddsAPI
+    ODDS_API: int = 30
+
+    # BallDontLie API
+    BDL_API: int = 30
+
+    # ============================================================================
     # BigQuery Timeouts
-    # ========================================
+    # ============================================================================
 
-    # Standard BigQuery query timeout (60 seconds)
-    BIGQUERY_QUERY_TIMEOUT: int = 60
+    # Standard BigQuery query
+    BIGQUERY_QUERY: int = 60  # 1 minute
 
-    # Long-running analytics query (5 minutes)
-    BIGQUERY_LONG_QUERY_TIMEOUT: int = 300
+    # Large BigQuery query (batch operations)
+    BIGQUERY_LARGE_QUERY: int = 300  # 5 minutes
 
-    # BigQuery job completion wait (10 minutes)
-    BIGQUERY_JOB_TIMEOUT: int = 600
+    # BigQuery load job
+    BIGQUERY_LOAD: int = 60
 
-    # ========================================
+    # BigQuery streaming insert
+    BIGQUERY_STREAMING: int = 30
+
+    # ============================================================================
     # Firestore Timeouts
-    # ========================================
+    # ============================================================================
 
-    # Standard Firestore operations (30 seconds)
-    FIRESTORE_OPERATION_TIMEOUT: int = 30
+    # Standard Firestore read
+    FIRESTORE_READ: int = 10
 
-    # Batch write operations (60 seconds)
-    FIRESTORE_BATCH_TIMEOUT: int = 60
+    # Firestore write
+    FIRESTORE_WRITE: int = 10
 
-    # Transaction timeout (60 seconds)
-    FIRESTORE_TRANSACTION_TIMEOUT: int = 60
+    # Firestore transaction
+    FIRESTORE_TRANSACTION: int = 30
 
-    # Distributed lock acquisition (30 seconds)
-    FIRESTORE_LOCK_TIMEOUT: int = 30
+    # Firestore batch write
+    FIRESTORE_BATCH: int = 60
 
-    # Lock polling interval (10 seconds)
-    FIRESTORE_LOCK_POLL_INTERVAL: int = 10
-
-    # ========================================
-    # Orchestration Timeouts
-    # ========================================
-
-    # Workflow execution timeout (10 minutes)
-    WORKFLOW_EXECUTION_TIMEOUT: int = 600
-
-    # Phase transition timeout (10 minutes)
-    PHASE_TRANSITION_TIMEOUT: int = 600
-
-    # Phase 2 completion deadline (30 minutes)
-    PHASE2_COMPLETION_TIMEOUT: int = 1800
-
-    # Phase 4→5 Tiered timeouts (in seconds)
-    PHASE4_TIER1_TIMEOUT: int = 1800  # 30 min (all 5 processors)
-    PHASE4_TIER2_TIMEOUT: int = 3600  # 1 hour (4/5 processors)
-    PHASE4_TIER3_TIMEOUT: int = 7200  # 2 hours (3/5 processors)
-    PHASE4_MAX_TIMEOUT: int = 14400   # 4 hours (fallback)
-
-    # Coordinator stall detection (10 minutes after 95% complete)
-    COORDINATOR_STALL_TIMEOUT: int = 600
-
-    # ========================================
-    # Retry & Circuit Breaker Timeouts
-    # ========================================
-
-    # Circuit breaker timeout (5 minutes)
-    CIRCUIT_BREAKER_TIMEOUT: int = 300
-
-    # Retry base delay (1 second)
-    RETRY_BASE_DELAY: float = 1.0
-
-    # Retry max delay (60 seconds)
-    RETRY_MAX_DELAY: float = 60.0
-
-    # ========================================
-    # Cloud Run Timeouts
-    # ========================================
-
-    # Cloud Run request timeout (maximum: 60 minutes)
-    CLOUD_RUN_REQUEST_TIMEOUT: int = 3600  # 1 hour
-
-    # Cloud Run startup probe timeout
-    CLOUD_RUN_STARTUP_TIMEOUT: int = 240  # 4 minutes
-
-    # Cloud Run liveness probe timeout
-    CLOUD_RUN_LIVENESS_TIMEOUT: int = 60  # 1 minute
-
-    # ========================================
+    # ============================================================================
     # Pub/Sub Timeouts
-    # ========================================
+    # ============================================================================
 
-    # Pub/Sub acknowledge deadline (10 minutes)
-    PUBSUB_ACK_DEADLINE: int = 600
+    # Pub/Sub publish
+    PUBSUB_PUBLISH: int = 60
 
-    # Pub/Sub message retention (7 days in seconds)
-    PUBSUB_MESSAGE_RETENTION: int = 604800
+    # Pub/Sub batch publish
+    PUBSUB_BATCH_PUBLISH: int = 120
 
-    # ========================================
-    # Testing Timeouts
-    # ========================================
+    # ============================================================================
+    # Workflow/Orchestration Timeouts
+    # ============================================================================
 
-    # Unit test timeout (5 seconds)
-    UNIT_TEST_TIMEOUT: int = 5
+    # Workflow execution timeout
+    WORKFLOW_EXECUTION: int = 600  # 10 minutes
 
-    # Integration test timeout (60 seconds)
-    INTEGRATION_TEST_TIMEOUT: int = 60
+    # Phase 2 processor timeout
+    PHASE2_PROCESSOR: int = 600  # 10 minutes
 
-    # Load test timeout (5 minutes)
-    LOAD_TEST_TIMEOUT: int = 300
+    # Week 1: Phase 2 completion deadline (minutes)
+    PHASE2_COMPLETION_DEADLINE: int = 30  # minutes
 
-    @classmethod
-    def from_env(cls):
-        """
-        Create TimeoutConfig with values from environment variables.
+    # Phase 3 processor timeout
+    PHASE3_PROCESSOR: int = 600
 
-        Environment variables override defaults.
-        Variable names: TIMEOUT_<CONSTANT_NAME>
+    # Phase 4 processor timeout
+    PHASE4_PROCESSOR: int = 600
 
-        Example:
-            TIMEOUT_SCRAPER_HTTP_TIMEOUT=240
-        """
-        config = cls()
+    # Phase 5 prediction worker timeout
+    PHASE5_WORKER: int = 300  # 5 minutes
 
-        # Iterate over all class attributes
-        for attr_name in dir(config):
-            if attr_name.isupper():  # Only process constants
-                env_var = f"TIMEOUT_{attr_name}"
-                env_value = os.getenv(env_var)
+    # Cloud Scheduler job timeout
+    SCHEDULER_JOB: int = 600  # 10 minutes (default for all scheduler jobs)
 
-                if env_value:
-                    try:
-                        # Try integer first
-                        setattr(config, attr_name, int(env_value))
-                    except ValueError:
-                        try:
-                            # Try float
-                            setattr(config, attr_name, float(env_value))
-                        except ValueError:
-                            # Keep default
-                            pass
+    # ============================================================================
+    # Machine Learning Timeouts
+    # ============================================================================
 
-        return config
+    # Model inference
+    ML_INFERENCE: int = 30
 
-    @classmethod
-    def get_all_timeouts(cls) -> dict:
-        """
-        Get all timeout values as a dictionary.
+    # Model training
+    ML_TRAINING: int = 3600  # 1 hour
 
-        Returns:
-            dict: All timeout constants and their values
-        """
-        config = cls()
-        return {
-            attr_name: getattr(config, attr_name)
-            for attr_name in dir(config)
-            if attr_name.isupper()
-        }
+    # Feature computation
+    ML_FEATURES: int = 120  # 2 minutes
 
-    @classmethod
-    def validate(cls) -> list:
-        """
-        Validate timeout configuration.
+    # ============================================================================
+    # Database Connection Timeouts
+    # ============================================================================
 
-        Returns:
-            list: List of validation warnings/errors
-        """
-        warnings = []
-        config = cls()
+    # Database connection timeout
+    DB_CONNECT: int = 30
 
-        # Validation: Future timeout should be > HTTP timeout
-        if config.FUTURE_TIMEOUT <= config.SCRAPER_HTTP_TIMEOUT:
-            warnings.append(
-                f"FUTURE_TIMEOUT ({config.FUTURE_TIMEOUT}s) should be greater than "
-                f"SCRAPER_HTTP_TIMEOUT ({config.SCRAPER_HTTP_TIMEOUT}s)"
-            )
+    # Database query timeout
+    DB_QUERY: int = 60
 
-        # Validation: Tiered timeouts should be ascending
-        if not (
-            config.PHASE4_TIER1_TIMEOUT
-            < config.PHASE4_TIER2_TIMEOUT
-            < config.PHASE4_TIER3_TIMEOUT
-            < config.PHASE4_MAX_TIMEOUT
-        ):
-            warnings.append("Phase 4 tiered timeouts should be in ascending order")
+    # Connection pool checkout
+    DB_POOL_CHECKOUT: int = 30
 
-        # Validation: Cloud Run timeout should accommodate longest operation
-        max_operation_timeout = max(
-            config.WORKFLOW_EXECUTION_TIMEOUT,
-            config.BIGQUERY_JOB_TIMEOUT,
-            config.PHASE_TRANSITION_TIMEOUT,
-        )
-        if config.CLOUD_RUN_REQUEST_TIMEOUT < max_operation_timeout:
-            warnings.append(
-                f"CLOUD_RUN_REQUEST_TIMEOUT ({config.CLOUD_RUN_REQUEST_TIMEOUT}s) "
-                f"is less than longest operation ({max_operation_timeout}s)"
-            )
+    # ============================================================================
+    # Retry/Backoff Timeouts
+    # ============================================================================
 
-        return warnings
+    # Circuit breaker timeout (seconds)
+    CIRCUIT_BREAKER: int = 300  # 5 minutes
 
+    # Retry backoff base (seconds)
+    RETRY_BACKOFF_BASE: float = 1.0
 
-# Global instance for easy import
-timeout_config = TimeoutConfig()
+    # Retry backoff max (seconds)
+    RETRY_BACKOFF_MAX: float = 30.0
 
+    # ============================================================================
+    # Application-Specific Timeouts
+    # ============================================================================
 
-# Convenience function
-def get_timeout(timeout_name: str, default: int = 30) -> int:
-    """
-    Get timeout value by name.
+    # Batch consolidation timeout
+    BATCH_CONSOLIDATION: int = 300  # 5 minutes
 
-    Args:
-        timeout_name: Name of timeout constant (e.g., 'SCRAPER_HTTP_TIMEOUT')
-        default: Default value if not found
+    # Data loader batch operation
+    DATA_LOADER_BATCH: int = 120  # 2 minutes (increased from 30s for 300-400 players)
 
-    Returns:
-        int: Timeout value in seconds
-    """
-    return getattr(timeout_config, timeout_name, default)
+    # Stall detection (seconds)
+    STALL_DETECTION: int = 600  # 10 minutes
+
+    # Session timeout
+    SESSION_TIMEOUT: int = 3600  # 1 hour
+
+    # ============================================================================
+    # Environment Variable Overrides
+    # ============================================================================
+
+    def __post_init__(self):
+        """Apply environment variable overrides."""
+        # HTTP/API
+        self.HTTP_REQUEST = int(os.getenv('TIMEOUT_HTTP_REQUEST', self.HTTP_REQUEST))
+        self.SCRAPER_HTTP = int(os.getenv('TIMEOUT_SCRAPER_HTTP', self.SCRAPER_HTTP))
+        self.HEALTH_CHECK = int(os.getenv('TIMEOUT_HEALTH_CHECK', self.HEALTH_CHECK))
+        self.SLACK_WEBHOOK = int(os.getenv('TIMEOUT_SLACK_WEBHOOK', self.SLACK_WEBHOOK))
+
+        # BigQuery
+        self.BIGQUERY_QUERY = int(os.getenv('TIMEOUT_BIGQUERY_QUERY', self.BIGQUERY_QUERY))
+        self.BIGQUERY_LARGE_QUERY = int(os.getenv('TIMEOUT_BIGQUERY_LARGE_QUERY', self.BIGQUERY_LARGE_QUERY))
+        self.BIGQUERY_LOAD = int(os.getenv('TIMEOUT_BIGQUERY_LOAD', self.BIGQUERY_LOAD))
+
+        # Firestore
+        self.FIRESTORE_READ = int(os.getenv('TIMEOUT_FIRESTORE_READ', self.FIRESTORE_READ))
+        self.FIRESTORE_WRITE = int(os.getenv('TIMEOUT_FIRESTORE_WRITE', self.FIRESTORE_WRITE))
+        self.FIRESTORE_TRANSACTION = int(os.getenv('TIMEOUT_FIRESTORE_TRANSACTION', self.FIRESTORE_TRANSACTION))
+
+        # Pub/Sub
+        self.PUBSUB_PUBLISH = int(os.getenv('TIMEOUT_PUBSUB_PUBLISH', self.PUBSUB_PUBLISH))
+
+        # Workflow
+        self.WORKFLOW_EXECUTION = int(os.getenv('TIMEOUT_WORKFLOW_EXECUTION', self.WORKFLOW_EXECUTION))
+        self.SCHEDULER_JOB = int(os.getenv('TIMEOUT_SCHEDULER_JOB', self.SCHEDULER_JOB))
+
+        # ML
+        self.ML_INFERENCE = int(os.getenv('TIMEOUT_ML_INFERENCE', self.ML_INFERENCE))
+        self.ML_TRAINING = int(os.getenv('TIMEOUT_ML_TRAINING', self.ML_TRAINING))
+
+        # Application
+        self.BATCH_CONSOLIDATION = int(os.getenv('TIMEOUT_BATCH_CONSOLIDATION', self.BATCH_CONSOLIDATION))
+        self.DATA_LOADER_BATCH = int(os.getenv('TIMEOUT_DATA_LOADER_BATCH', self.DATA_LOADER_BATCH))
+        self.STALL_DETECTION = int(os.getenv('TIMEOUT_STALL_DETECTION', self.STALL_DETECTION))
 
 
-# Example usage and testing
-if __name__ == '__main__':
-    # Display all timeouts
-    print("=== Centralized Timeout Configuration ===\n")
+# Singleton instance
+_timeouts: TimeoutConfig = None
 
-    config = TimeoutConfig()
 
-    # Group by category
-    categories = {
-        'HTTP': [
-            'SCRAPER_HTTP_TIMEOUT',
-            'FUTURE_TIMEOUT',
-            'HEALTH_CHECK_TIMEOUT',
-            'INTERNAL_SERVICE_TIMEOUT',
-            'EXTERNAL_API_TIMEOUT',
-        ],
-        'BigQuery': [
-            'BIGQUERY_QUERY_TIMEOUT',
-            'BIGQUERY_LONG_QUERY_TIMEOUT',
-            'BIGQUERY_JOB_TIMEOUT',
-        ],
-        'Firestore': [
-            'FIRESTORE_OPERATION_TIMEOUT',
-            'FIRESTORE_BATCH_TIMEOUT',
-            'FIRESTORE_TRANSACTION_TIMEOUT',
-            'FIRESTORE_LOCK_TIMEOUT',
-            'FIRESTORE_LOCK_POLL_INTERVAL',
-        ],
-        'Orchestration': [
-            'WORKFLOW_EXECUTION_TIMEOUT',
-            'PHASE_TRANSITION_TIMEOUT',
-            'PHASE2_COMPLETION_TIMEOUT',
-            'PHASE4_TIER1_TIMEOUT',
-            'PHASE4_TIER2_TIMEOUT',
-            'PHASE4_TIER3_TIMEOUT',
-            'PHASE4_MAX_TIMEOUT',
-            'COORDINATOR_STALL_TIMEOUT',
-        ],
-    }
+def get_timeout_config() -> TimeoutConfig:
+    """Get the singleton timeout configuration."""
+    global _timeouts
+    if _timeouts is None:
+        _timeouts = TimeoutConfig()
+    return _timeouts
 
-    for category, timeouts in categories.items():
-        print(f"{category} Timeouts:")
-        for timeout_name in timeouts:
-            value = getattr(config, timeout_name)
-            if value >= 60:
-                display = f"{value}s ({value//60}m)"
-            else:
-                display = f"{value}s"
-            print(f"  {timeout_name:35s} {display}")
-        print()
 
-    # Validate configuration
-    warnings = TimeoutConfig.validate()
-    if warnings:
-        print("⚠️  Validation Warnings:")
-        for warning in warnings:
-            print(f"  - {warning}")
-    else:
-        print("✅ All timeout validations passed")
+# Convenience exports for common timeouts
+def get_http_timeout() -> int:
+    """Get standard HTTP request timeout."""
+    return get_timeout_config().HTTP_REQUEST
+
+
+def get_bigquery_timeout() -> int:
+    """Get standard BigQuery query timeout."""
+    return get_timeout_config().BIGQUERY_QUERY
+
+
+def get_scraper_timeout() -> int:
+    """Get scraper HTTP timeout."""
+    return get_timeout_config().SCRAPER_HTTP
+
+
+def get_workflow_timeout() -> int:
+    """Get workflow execution timeout."""
+    return get_timeout_config().WORKFLOW_EXECUTION
