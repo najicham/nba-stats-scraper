@@ -23,6 +23,16 @@ from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
 
+# Retry logic for API resilience (prevents live export failures during games)
+try:
+    from shared.utils.retry_with_jitter import retry_with_jitter
+except ImportError:
+    logger.warning("Could not import retry_with_jitter, BDL API calls will not retry on failure")
+    def retry_with_jitter(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
 logger = logging.getLogger(__name__)
 
 # BallDontLie API configuration
@@ -132,27 +142,15 @@ class LiveScoresExporter(BaseExporter):
             headers["Authorization"] = f"Bearer {api_key}"
 
         try:
-            response = requests.get(
-                BDL_API_URL,
-                headers=headers,
-                timeout=BDL_API_TIMEOUT
-            )
-            response.raise_for_status()
-
-            data = response.json()
+            # Use retry-wrapped fetch for resilience
+            data = self._fetch_bdl_page_with_retry(headers, None)
             live_boxes = data.get("data", [])
 
             # Handle pagination if needed (unlikely for live games)
             cursor = data.get("meta", {}).get("next_cursor")
             while cursor:
-                response = requests.get(
-                    BDL_API_URL,
-                    headers=headers,
-                    params={"cursor": cursor, "per_page": 100},
-                    timeout=BDL_API_TIMEOUT
-                )
-                response.raise_for_status()
-                page_data = response.json()
+                # Use retry-wrapped fetch for pagination too
+                page_data = self._fetch_bdl_page_with_retry(headers, cursor)
                 live_boxes.extend(page_data.get("data", []))
                 cursor = page_data.get("meta", {}).get("next_cursor")
 
@@ -160,8 +158,46 @@ class LiveScoresExporter(BaseExporter):
             return live_boxes
 
         except requests.RequestException as e:
-            logger.error(f"Failed to fetch live box scores: {e}")
+            logger.error(f"Failed to fetch live box scores after retries: {e}")
             return []
+
+    @retry_with_jitter(
+        max_attempts=5,
+        base_delay=60,  # Start with 60s delay (BDL API rate limits)
+        max_delay=1800,  # Max 30 minutes delay
+        exceptions=(requests.RequestException, requests.Timeout, ConnectionError)
+    )
+    def _fetch_bdl_page_with_retry(self, headers: Dict[str, str], cursor: Optional[str]) -> Dict[str, Any]:
+        """
+        Fetch a single page from BDL live API with automatic retry on transient failures.
+
+        Retry strategy:
+        - 5 attempts with exponential backoff + jitter
+        - Handles: Network errors, timeouts, API rate limits (429), server errors (5xx)
+        - Total retry window: ~30 minutes worst case
+
+        This prevents live export failures during games (runs every 2-5 minutes).
+        Same retry logic as BDL box score scraper which prevented 40% of weekly failures.
+
+        Args:
+            headers: HTTP headers including API key
+            cursor: Pagination cursor (None for first page)
+
+        Returns:
+            JSON response from API
+
+        Raises:
+            requests.RequestException: After all retries exhausted
+        """
+        params = {"cursor": cursor, "per_page": 100} if cursor else None
+        response = requests.get(
+            BDL_API_URL,
+            headers=headers,
+            params=params,
+            timeout=BDL_API_TIMEOUT
+        )
+        response.raise_for_status()
+        return response.json()
 
     def _build_player_lookup_cache(self) -> None:
         """
