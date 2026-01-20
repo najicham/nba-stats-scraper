@@ -199,10 +199,11 @@ def send_timeout_alert(game_date: str, completed_count: int, expected_count: int
             }]
         }
 
-        response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
-        response.raise_for_status()
-        logger.info(f"Timeout alert sent successfully for {game_date}")
-        return True
+        from shared.utils.slack_retry import send_slack_webhook_with_retry
+        success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
+        if success:
+            logger.info(f"Timeout alert sent successfully for {game_date}")
+        return success
 
     except Exception as e:
         logger.error(f"Failed to send timeout alert: {e}")
@@ -502,10 +503,11 @@ def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_c
                 }]
             }
 
-        response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
-        response.raise_for_status()
-        logger.info(f"Data freshness alert sent successfully for {game_date}")
-        return True
+        from shared.utils.slack_retry import send_slack_webhook_with_retry
+        success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
+        if success:
+            logger.info(f"Data freshness alert sent successfully for {game_date}")
+        return success
 
     except Exception as e:
         logger.error(f"Failed to send data freshness alert: {e}")
