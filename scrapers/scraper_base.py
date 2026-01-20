@@ -15,21 +15,29 @@ A base class 'ScraperBase' that handles:
  - Phase 1 orchestration logging to BigQuery
 """
 
+import logging
+import os
 import sentry_sdk
 from .utils.env_utils import is_local
-import os
+
+# Initialize logger for this module
+logger = logging.getLogger(__name__)
 
 # Initialize Sentry with environment-specific configuration
 ENV = "development" if is_local() else "production"
-sentry_dsn = os.getenv("SENTRY_DSN", "https://96f5d7efbb7105ef2c05aa551fa5f4e0@o102085.ingest.us.sentry.io/4509460047790080")
+sentry_dsn = os.getenv("SENTRY_DSN", "")
 
-sentry_sdk.init(
-    dsn=sentry_dsn,
-    environment=ENV,
-    traces_sample_rate=1.0 if ENV == "development" else 0.1,
-    profiles_sample_rate=1.0 if ENV == "development" else 0.01,
-    send_default_pii=False,
-)
+if sentry_dsn:
+    sentry_sdk.init(
+        dsn=sentry_dsn,
+        environment=ENV,
+        traces_sample_rate=1.0 if ENV == "development" else 0.1,
+        profiles_sample_rate=1.0 if ENV == "development" else 0.01,
+        send_default_pii=False,
+    )
+    logger.info(f"Sentry initialized for {ENV} environment")
+else:
+    logger.info("Sentry DSN not configured - error monitoring disabled")
 
 import enum
 from typing import Callable
@@ -54,7 +62,7 @@ except ImportError:
         _STEALTH_FN = None
 _STEALTH_AVAILABLE = callable(_STEALTH_FN)
 
-import logging, urllib.parse
+import urllib.parse
 import time
 import sys
 import traceback
