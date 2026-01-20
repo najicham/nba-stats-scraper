@@ -22,6 +22,16 @@ import requests
 import logging
 import os
 
+# Retry logic for transient errors (prevents self-heal failures)
+try:
+    from shared.utils.retry_with_jitter import retry_with_jitter
+except ImportError:
+    logger.warning("Could not import retry_with_jitter, HTTP calls will not retry on failure")
+    def retry_with_jitter(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -216,15 +226,29 @@ def trigger_phase3_only(target_date):
         "skip_dependency_check": True
     }
 
-    response = requests.post(
-        f"{PHASE3_URL}/process-date-range",
-        headers=headers,
-        json=payload,
-        timeout=180  # 3 minutes for just Phase 3
+    @retry_with_jitter(
+        max_attempts=3,
+        base_delay=2.0,
+        max_delay=30.0,
+        exceptions=(requests.RequestException, requests.Timeout, ConnectionError)
     )
+    def _make_request():
+        response = requests.post(
+            f"{PHASE3_URL}/process-date-range",
+            headers=headers,
+            json=payload,
+            timeout=180  # 3 minutes for just Phase 3
+        )
+        response.raise_for_status()
+        return response
 
-    logger.info(f"Phase 3 only response for {target_date}: {response.status_code} - {response.text[:200]}")
-    return response.status_code == 200
+    try:
+        response = _make_request()
+        logger.info(f"Phase 3 only response for {target_date}: {response.status_code} - {response.text[:200]}")
+        return True
+    except Exception as e:
+        logger.error(f"Phase 3 only failed for {target_date} after retries: {e}")
+        return False
 
 
 def clear_stuck_run_history():
@@ -267,15 +291,29 @@ def trigger_phase3(target_date):
         "skip_dependency_check": True
     }
 
-    response = requests.post(
-        f"{PHASE3_URL}/process-date-range",
-        headers=headers,
-        json=payload,
-        timeout=120
+    @retry_with_jitter(
+        max_attempts=3,
+        base_delay=2.0,
+        max_delay=30.0,
+        exceptions=(requests.RequestException, requests.Timeout, ConnectionError)
     )
+    def _make_request():
+        response = requests.post(
+            f"{PHASE3_URL}/process-date-range",
+            headers=headers,
+            json=payload,
+            timeout=120
+        )
+        response.raise_for_status()
+        return response
 
-    logger.info(f"Phase 3 response: {response.status_code} - {response.text[:200]}")
-    return response.status_code == 200
+    try:
+        response = _make_request()
+        logger.info(f"Phase 3 response: {response.status_code} - {response.text[:200]}")
+        return True
+    except Exception as e:
+        logger.error(f"Phase 3 failed after retries: {e}")
+        return False
 
 
 def trigger_phase4(target_date):
@@ -305,16 +343,30 @@ def trigger_phase4(target_date):
         "skip_dependency_check": True
     }
 
-    # Increased timeout to 300s (5 min) since we now run all 5 processors
-    response = requests.post(
-        f"{PHASE4_URL}/process-date",
-        headers=headers,
-        json=payload,
-        timeout=300
+    @retry_with_jitter(
+        max_attempts=3,
+        base_delay=2.0,
+        max_delay=30.0,
+        exceptions=(requests.RequestException, requests.Timeout, ConnectionError)
     )
+    def _make_request():
+        # Increased timeout to 300s (5 min) since we now run all 5 processors
+        response = requests.post(
+            f"{PHASE4_URL}/process-date",
+            headers=headers,
+            json=payload,
+            timeout=300
+        )
+        response.raise_for_status()
+        return response
 
-    logger.info(f"Phase 4 response: {response.status_code} - {response.text[:200]}")
-    return response.status_code == 200
+    try:
+        response = _make_request()
+        logger.info(f"Phase 4 response: {response.status_code} - {response.text[:200]}")
+        return True
+    except Exception as e:
+        logger.error(f"Phase 4 failed after retries: {e}")
+        return False
 
 
 def trigger_predictions(target_date):
@@ -327,15 +379,29 @@ def trigger_predictions(target_date):
 
     payload = {"game_date": target_date}
 
-    response = requests.post(
-        f"{COORDINATOR_URL}/start",
-        headers=headers,
-        json=payload,
-        timeout=120
+    @retry_with_jitter(
+        max_attempts=3,
+        base_delay=2.0,
+        max_delay=30.0,
+        exceptions=(requests.RequestException, requests.Timeout, ConnectionError)
     )
+    def _make_request():
+        response = requests.post(
+            f"{COORDINATOR_URL}/start",
+            headers=headers,
+            json=payload,
+            timeout=120
+        )
+        response.raise_for_status()
+        return response
 
-    logger.info(f"Coordinator response: {response.status_code} - {response.text[:200]}")
-    return response.status_code == 200
+    try:
+        response = _make_request()
+        logger.info(f"Coordinator response: {response.status_code} - {response.text[:200]}")
+        return True
+    except Exception as e:
+        logger.error(f"Coordinator failed after retries: {e}")
+        return False
 
 
 def heal_for_date(target_date, result):
