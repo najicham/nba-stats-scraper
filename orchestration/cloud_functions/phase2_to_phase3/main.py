@@ -22,9 +22,9 @@ Critical Features:
 - Idempotency (handles duplicate Pub/Sub messages)
 - Correlation ID preservation (traces back to original scraper run)
 
-Version: 2.0 - Monitoring-only mode (no longer triggers Phase 3)
+Version: 2.1 - Added R-007 data freshness validation
 Created: 2025-11-29
-Updated: 2025-12-23
+Updated: 2026-01-19
 """
 
 import base64
@@ -34,8 +34,10 @@ import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
 
-from google.cloud import firestore
+from google.cloud import firestore, bigquery
 import functions_framework
+import requests
+from shared.clients.bigquery_pool import get_bigquery_client
 
 # Configure logging - use structured logging for Cloud Run
 import google.cloud.logging
@@ -53,6 +55,7 @@ print("Phase2-to-Phase3 Orchestrator module loaded")
 
 # Constants
 PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
+SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
 
 # Import expected processors from centralized config
 # This ensures consistency across the codebase (Issue A fix)
@@ -123,6 +126,149 @@ def normalize_processor_name(raw_name: str, output_table: Optional[str] = None) 
 
     logger.debug(f"Normalized '{raw_name}' -> '{name}'")
     return name
+
+
+# ============================================================================
+# DATA FRESHNESS VALIDATION
+# ============================================================================
+
+# R-007: Data freshness validation for Phase 2 raw data tables
+# Required Phase 2 tables that must have data before Phase 3 can proceed
+REQUIRED_PHASE2_TABLES = [
+    ('nba_raw', 'bdl_player_boxscores', 'game_date'),
+    ('nba_raw', 'nbac_gamebook_player_stats', 'game_date'),
+    ('nba_raw', 'nbac_team_boxscore', 'game_date'),
+    ('nba_raw', 'odds_api_game_lines', 'game_date'),
+    ('nba_raw', 'nbac_schedule', 'game_date'),
+    ('nba_raw', 'bigdataball_play_by_play', 'game_date'),
+]
+
+
+def verify_phase2_data_ready(game_date: str) -> tuple:
+    """
+    R-007: Verify Phase 2 raw tables have fresh data for game_date.
+
+    This is a belt-and-suspenders check - even if all processors report success,
+    verify the data actually exists in BigQuery.
+
+    Args:
+        game_date: The date to verify (YYYY-MM-DD)
+
+    Returns:
+        tuple: (is_ready: bool, missing_tables: list, table_counts: dict)
+    """
+    try:
+        bq_client = get_bigquery_client(project_id=os.environ.get('GCP_PROJECT', 'nba-props-platform'))
+        missing = []
+        table_counts = {}
+
+        for dataset, table, date_col in REQUIRED_PHASE2_TABLES:
+            try:
+                query = f"""
+                SELECT COUNT(*) as cnt
+                FROM `{PROJECT_ID}.{dataset}.{table}`
+                WHERE {date_col} = '{game_date}'
+                """
+                result = list(bq_client.query(query).result())
+                count = result[0].cnt if result else 0
+                table_counts[f"{dataset}.{table}"] = count
+
+                if count == 0:
+                    missing.append(f"{dataset}.{table}")
+                    logger.warning(f"R-007: Missing data in {dataset}.{table} for {game_date}")
+
+            except Exception as query_error:
+                # If query fails (table doesn't exist, etc.), treat as missing
+                logger.error(f"R-007: Failed to verify {dataset}.{table}: {query_error}")
+                missing.append(f"{dataset}.{table}")
+                table_counts[f"{dataset}.{table}"] = -1  # Error marker
+
+        is_ready = len(missing) == 0
+        if is_ready:
+            logger.info(f"R-007: All Phase 2 tables verified for {game_date}: {table_counts}")
+        else:
+            logger.warning(f"R-007: Data freshness check FAILED for {game_date}. Missing: {missing}")
+
+        return (is_ready, missing, table_counts)
+
+    except Exception as e:
+        logger.error(f"R-007: Data freshness verification failed: {e}")
+        # On error, return False with empty details
+        return (False, ['verification_error'], {'error': str(e)})
+
+
+def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_counts: Dict) -> bool:
+    """
+    Send Slack alert when Phase 2 data freshness check fails.
+
+    Args:
+        game_date: The date being processed
+        missing_tables: List of tables with no data
+        table_counts: Dict of table -> row count
+
+    Returns:
+        True if alert sent successfully, False otherwise
+    """
+    if not SLACK_WEBHOOK_URL:
+        logger.warning("SLACK_WEBHOOK_URL not configured, skipping data freshness alert")
+        return False
+
+    try:
+        # Format table counts for display
+        counts_text = "\n".join([f"• {t}: {c}" for t, c in table_counts.items()])
+
+        payload = {
+            "attachments": [{
+                "color": "#FFA500",  # Orange for warning
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": ":warning: R-007: Phase 2 Data Freshness Alert",
+                            "emoji": True
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Data freshness check failed!* Some Phase 2 raw tables are missing data for {game_date}."
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
+                            {"type": "mrkdwn", "text": f"*Missing Tables:*\n{', '.join(missing_tables)}"},
+                        ]
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Table Row Counts:*\n```{counts_text}```"
+                        }
+                    },
+                    {
+                        "type": "context",
+                        "elements": [{
+                            "type": "mrkdwn",
+                            "text": "Phase 3 analytics will proceed, but may use incomplete data. Review Phase 2 processor logs."
+                        }]
+                    }
+                ]
+            }]
+        }
+
+        response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
+        response.raise_for_status()
+        logger.info(f"Data freshness alert sent successfully for {game_date}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send data freshness alert: {e}")
+        return False
 
 
 @functions_framework.cloud_event
@@ -210,6 +356,20 @@ def orchestrate_phase2_to_phase3(cloud_event):
                 f"✅ MONITORING: All {EXPECTED_PROCESSOR_COUNT} expected Phase 2 processors "
                 f"complete for {game_date} (correlation_id={correlation_id})"
             )
+
+            # R-007: Verify Phase 2 data exists in BigQuery
+            # This is monitoring-only - we don't block Phase 3 (it's triggered via Pub/Sub)
+            is_ready, missing_tables, table_counts = verify_phase2_data_ready(game_date)
+
+            if not is_ready:
+                logger.warning(
+                    f"R-007: Data freshness check FAILED for {game_date}. "
+                    f"Missing tables: {missing_tables}. Monitoring alert sent."
+                )
+                # Send alert for visibility
+                send_data_freshness_alert(game_date, missing_tables, table_counts)
+            else:
+                logger.info(f"R-007: Data freshness check PASSED for {game_date}")
         else:
             # Still waiting for more processors
             logger.info(f"MONITORING: Registered {processor_name} completion, waiting for others")
@@ -404,7 +564,8 @@ def health(request):
         'function': 'phase2_to_phase3',
         'mode': 'monitoring-only',
         'expected_processors': EXPECTED_PROCESSOR_COUNT,
-        'version': '2.0'
+        'data_freshness_validation': 'enabled',
+        'version': '2.1'
     }), 200, {'Content-Type': 'application/json'}
 
 

@@ -41,6 +41,7 @@ import json
 import logging
 import os
 import requests
+from shared.clients.http_pool import get_http_session
 import sys
 import time
 from datetime import datetime, timezone, timedelta
@@ -345,7 +346,7 @@ class OddsApiSeasonBackfillJob:
     def _collect_events_for_date(self, game_date: str) -> bool:
         """Collect events for a specific date."""
         try:
-            response = requests.post(
+            response = get_http_session().post(
                 f"{self.scraper_service_url}/scrape",
                 json={
                     "scraper": "oddsa_events_his",
@@ -382,7 +383,7 @@ class OddsApiSeasonBackfillJob:
                 logger.debug("No event ID found for game %s", matchup)
                 return False
             
-            response = requests.post(
+            response = get_http_session().post(
                 f"{self.scraper_service_url}/scrape",
                 json={
                     "scraper": "oddsa_player_props_his",

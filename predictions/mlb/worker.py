@@ -44,6 +44,9 @@ logger = logging.getLogger(__name__)
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
+# Import shared health endpoints
+from shared.endpoints.health import create_health_blueprint, HealthChecker
+
 # Environment configuration
 PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
 MODEL_PATH = os.environ.get(
@@ -57,6 +60,20 @@ PREDICTIONS_TABLE = os.environ.get(
 
 # Flask app
 app = Flask(__name__)
+
+# Health check endpoints (Phase 1 - Task 1.1: Add Health Endpoints)
+health_checker = HealthChecker(
+    project_id=PROJECT_ID,
+    service_name='mlb-prediction-worker',
+    check_bigquery=True,  # Worker writes predictions to BigQuery
+    check_firestore=False,  # Worker doesn't use Firestore
+    check_gcs=True,  # Worker loads models from GCS
+    gcs_buckets=['nba-scraped-data'],  # Model storage bucket
+    required_env_vars=['GCP_PROJECT_ID', 'MLB_MODEL_PATH', 'MLB_PREDICTIONS_TABLE'],
+    optional_env_vars=['BACKFILL_MODE', 'ENVIRONMENT']
+)
+app.register_blueprint(create_health_blueprint(health_checker))
+logger.info("Health check endpoints registered: /health, /ready, /health/deep")
 
 # Initialize AlertManager (with backfill mode detection)
 def get_mlb_alert_manager():
@@ -218,10 +235,8 @@ def index():
     }), 200
 
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint for Cloud Run"""
-    return jsonify({'status': 'healthy'}), 200
+# Health check endpoint removed - now provided by shared health blueprint
+# The blueprint provides: /health (liveness), /ready (readiness), /health/deep (deep checks)
 
 
 @app.route('/predict', methods=['POST'])

@@ -8,6 +8,7 @@ Test the NBA.com Gamebook processor with sample files.
 import sys
 import os
 import argparse
+import ast
 import json
 import logging
 from google.cloud import storage
@@ -40,8 +41,13 @@ def test_processor(gcs_file_path: str, load_to_bigquery: bool = False):
     try:
         data = json.loads(content)
     except json.JSONDecodeError:
-        # Try eval for dict-like strings
-        data = eval(content)
+        try:
+            # SAFE: ast.literal_eval() only evaluates Python literals
+            # Blocks all function calls, imports, code execution
+            data = ast.literal_eval(content)
+        except (ValueError, SyntaxError) as e:
+            logger.error(f"Invalid data format: {e}")
+            raise ValueError(f"Invalid data format: {e}")
     
     # Validate
     logger.info("Validating data...")

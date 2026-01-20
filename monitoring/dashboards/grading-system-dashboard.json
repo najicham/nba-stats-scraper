@@ -1,0 +1,361 @@
+{
+  "displayName": "NBA Grading System - Health & Performance",
+  "mosaicLayout": {
+    "columns": 12,
+    "tiles": [
+      {
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Phase 3 Analytics 503 Errors (Last 7 Days)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" severity=\"ERROR\" jsonPayload.event_type=\"phase3_trigger_failed\" jsonPayload.details.reason=~\"503.*\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_COUNT",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["jsonPayload.game_date"]
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1"
+              }
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "503 Error Count",
+              "scale": "LINEAR"
+            },
+            "chartOptions": {
+              "mode": "COLOR"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Auto-Heal Success Rate (Last 7 Days)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" jsonPayload.event_type=\"phase3_trigger_success\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_COUNT",
+                      "crossSeriesReducer": "REDUCE_SUM"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "legendTemplate": "Successful"
+              },
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" jsonPayload.event_type=\"phase3_trigger_failed\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_COUNT",
+                      "crossSeriesReducer": "REDUCE_SUM"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "legendTemplate": "Failed"
+              }
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "Auto-Heal Attempts",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "yPos": 4,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Grading Function Execution Time",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" metric.type=\"cloudfunctions.googleapis.com/function/execution_times\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_MEAN",
+                      "crossSeriesReducer": "REDUCE_MEAN"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "legendTemplate": "Average"
+              },
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" metric.type=\"cloudfunctions.googleapis.com/function/execution_times\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_PERCENTILE_95",
+                      "crossSeriesReducer": "REDUCE_PERCENTILE_95"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1",
+                "legendTemplate": "P95"
+              }
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "Execution Time (ms)",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 4,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Grading Function Invocations & Errors",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" metric.type=\"cloudfunctions.googleapis.com/function/execution_count\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_RATE",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["metric.status"]
+                    }
+                  }
+                },
+                "plotType": "STACKED_AREA",
+                "targetAxis": "Y1"
+              }
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "Invocations/min",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "yPos": 8,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Lock Acquisitions (Last 7 Days)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" jsonPayload.event_type=\"lock_acquired\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_COUNT",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["jsonPayload.lock_type"]
+                    }
+                  }
+                },
+                "plotType": "STACKED_BAR",
+                "targetAxis": "Y1"
+              }
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "Lock Acquisitions",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 8,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Lock Failures & Timeouts",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" jsonPayload.event_type=~\"lock_timeout|lock_failed\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_COUNT",
+                      "crossSeriesReducer": "REDUCE_SUM",
+                      "groupByFields": ["jsonPayload.lock_type", "jsonPayload.event_type"]
+                    }
+                  }
+                },
+                "plotType": "STACKED_BAR",
+                "targetAxis": "Y1"
+              }
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "Lock Failures",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "yPos": 12,
+        "width": 12,
+        "height": 4,
+        "widget": {
+          "title": "Auto-Heal Retry Distribution",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" jsonPayload.event_type=\"phase3_trigger_success\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_MEAN",
+                      "crossSeriesReducer": "REDUCE_MEAN",
+                      "groupByFields": ["jsonPayload.details.retries"]
+                    }
+                  }
+                },
+                "plotType": "STACKED_AREA",
+                "targetAxis": "Y1"
+              }
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "Average Retries Needed",
+              "scale": "LINEAR"
+            }
+          }
+        }
+      },
+      {
+        "yPos": 16,
+        "width": 4,
+        "height": 3,
+        "widget": {
+          "title": "Total Grading Runs (7 Days)",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesFilter": {
+                "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" metric.type=\"cloudfunctions.googleapis.com/function/execution_count\"",
+                "aggregation": {
+                  "alignmentPeriod": "604800s",
+                  "perSeriesAligner": "ALIGN_SUM",
+                  "crossSeriesReducer": "REDUCE_SUM"
+                }
+              }
+            },
+            "sparkChartView": {
+              "sparkChartType": "SPARK_LINE"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 4,
+        "yPos": 16,
+        "width": 4,
+        "height": 3,
+        "widget": {
+          "title": "Auto-Heal Attempts (7 Days)",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesFilter": {
+                "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" jsonPayload.event_type=~\"phase3_trigger.*\"",
+                "aggregation": {
+                  "alignmentPeriod": "604800s",
+                  "perSeriesAligner": "ALIGN_COUNT",
+                  "crossSeriesReducer": "REDUCE_SUM"
+                }
+              }
+            },
+            "sparkChartView": {
+              "sparkChartType": "SPARK_LINE"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 8,
+        "yPos": 16,
+        "width": 4,
+        "height": 3,
+        "widget": {
+          "title": "Lock Failures (7 Days)",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesFilter": {
+                "filter": "resource.type=\"cloud_function\" resource.labels.function_name=\"phase5b-grading\" jsonPayload.event_type=~\"lock_timeout|lock_failed\"",
+                "aggregation": {
+                  "alignmentPeriod": "604800s",
+                  "perSeriesAligner": "ALIGN_COUNT",
+                  "crossSeriesReducer": "REDUCE_SUM"
+                }
+              }
+            },
+            "sparkChartView": {
+              "sparkChartType": "SPARK_LINE"
+            },
+            "thresholds": [
+              {
+                "value": 1.0,
+                "color": "YELLOW",
+                "direction": "ABOVE"
+              },
+              {
+                "value": 5.0,
+                "color": "RED",
+                "direction": "ABOVE"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "yPos": 19,
+        "width": 12,
+        "height": 1,
+        "widget": {
+          "title": "📊 Grading System Health Dashboard - Last Updated: Auto",
+          "text": {
+            "content": "This dashboard monitors the NBA grading system health, auto-heal performance, and Phase 3 analytics reliability.\n\n**Key Metrics:**\n- **503 Errors**: Should be near zero with minScale=1 fix\n- **Auto-Heal Success Rate**: Track Phase 3 trigger success/failure\n- **Lock Health**: Monitor distributed locking performance\n- **Execution Time**: Grading function performance trends\n\n**Alert Thresholds:**\n- 🔴 CRITICAL: Lock failures > 5 in 7 days\n- 🟡 WARNING: 503 errors > 0 in 24 hours\n- ℹ️ INFO: Auto-heal retries increasing over time\n\n**Related Documentation:**\n- Monitoring Guide: docs/02-operations/GRADING-MONITORING-GUIDE.md\n- Troubleshooting Runbook: docs/02-operations/GRADING-TROUBLESHOOTING-RUNBOOK.md\n- Phase 3 Fix: docs/09-handoff/SESSION-99-PHASE3-FIX-COMPLETE.md",
+            "format": "MARKDOWN"
+          }
+        }
+      }
+    ]
+  }
+}

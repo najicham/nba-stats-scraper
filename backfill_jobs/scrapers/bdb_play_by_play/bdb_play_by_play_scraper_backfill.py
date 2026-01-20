@@ -39,6 +39,7 @@ import json
 import logging
 import os
 import requests
+from shared.clients.http_pool import get_http_session
 import sys
 import time
 from datetime import datetime, timedelta, timezone, date
@@ -151,7 +152,7 @@ class BigDataBallBackfillJob:
         """Test basic API connectivity."""
         try:
             health_url = f"{self.scraper_service_url}/health"
-            response = requests.get(health_url, timeout=10)
+            response = get_http_session().get(health_url, timeout=10)
             response.raise_for_status()
             
             health_data = response.json()
@@ -217,7 +218,7 @@ class BigDataBallBackfillJob:
                 }
                 
                 logger.debug("Discovering games for %s", date_str)
-                response = requests.post(discovery_url, json=payload, timeout=30)
+                response = get_http_session().post(discovery_url, json=payload, timeout=30)
                 response.raise_for_status()
                 
                 discovery_data = response.json()
@@ -357,7 +358,7 @@ class BigDataBallBackfillJob:
                 'export_groups': 'prod'  # Save to GCS
             }
             
-            response = requests.post(pbp_url, json=payload, timeout=120)  # 2 minute timeout
+            response = get_http_session().post(pbp_url, json=payload, timeout=120)  # 2 minute timeout
             response.raise_for_status()
             
             # Check if the download was successful

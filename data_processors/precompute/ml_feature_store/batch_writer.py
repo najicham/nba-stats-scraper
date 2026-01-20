@@ -22,16 +22,13 @@ import uuid
 from datetime import datetime, date, timezone
 from typing import Dict, List, Optional
 from google.cloud import bigquery
+from shared.utils.bigquery_retry import SERIALIZATION_RETRY, QUOTA_RETRY
 
 logger = logging.getLogger(__name__)
 
 
 class BatchWriter:
     """Write features to BigQuery using MERGE pattern."""
-
-    # Configuration
-    MAX_RETRIES = 3
-    RETRY_DELAY_SECONDS = 5
 
     def __init__(self, bq_client: bigquery.Client, project_id: str):
         """
@@ -303,44 +300,35 @@ class BatchWriter:
         Returns:
             bool: True if successful
         """
-        for attempt in range(self.MAX_RETRIES):
-            try:
-                # Sanitize rows to prevent JSON parsing errors
-                sanitized_rows = [self._sanitize_row(row) for row in rows]
+        # Sanitize rows to prevent JSON parsing errors
+        sanitized_rows = [self._sanitize_row(row) for row in rows]
 
-                # Convert to NDJSON
-                ndjson_data = "\n".join(json.dumps(row) for row in sanitized_rows)
-                ndjson_bytes = ndjson_data.encode('utf-8')
+        # Convert to NDJSON
+        ndjson_data = "\n".join(json.dumps(row) for row in sanitized_rows)
+        ndjson_bytes = ndjson_data.encode('utf-8')
 
-                # Configure load job with schema enforcement
-                job_config = bigquery.LoadJobConfig(
-                    schema=schema,
-                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                    write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
-                    autodetect=False  # Critical: never autodetect
-                )
+        # Configure load job with schema enforcement
+        job_config = bigquery.LoadJobConfig(
+            schema=schema,
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+            autodetect=False  # Critical: never autodetect
+        )
 
-                # Execute load job
-                load_job = self.bq_client.load_table_from_file(
-                    io.BytesIO(ndjson_bytes),
-                    temp_table_id,
-                    job_config=job_config
-                )
+        # Execute load with automatic retry on serialization conflicts
+        @SERIALIZATION_RETRY
+        def execute_load():
+            """Load data to temp table with automatic retry on serialization conflicts."""
+            load_job = self.bq_client.load_table_from_file(
+                io.BytesIO(ndjson_bytes),
+                temp_table_id,
+                job_config=job_config
+            )
+            # Wait for completion (with timeout to prevent infinite hangs)
+            return load_job.result(timeout=300)  # 5 minutes max
 
-                # Wait for completion (with timeout to prevent infinite hangs)
-                load_job.result(timeout=300)  # 5 minutes max
-
-                return True
-
-            except Exception as e:
-                if attempt < self.MAX_RETRIES - 1:
-                    logger.warning(f"Load attempt {attempt + 1} failed: {e}")
-                    time.sleep(self.RETRY_DELAY_SECONDS)
-                else:
-                    logger.error(f"Load failed after {self.MAX_RETRIES} attempts: {e}")
-                    raise
-
-        return False
+        execute_load()
+        return True
 
     def _merge_to_target(self, target_table_id: str, temp_table_id: str,
                         game_date: date) -> bool:
@@ -414,32 +402,33 @@ class BatchWriter:
             INSERT ROW
         """
 
-        for attempt in range(self.MAX_RETRIES):
-            try:
-                merge_job = self.bq_client.query(merge_query)
-                result = merge_job.result(timeout=300)  # 5 minutes max
+        # Execute MERGE with automatic retry on serialization and quota errors
+        @QUOTA_RETRY          # Outer: Handle quota exceeded (sustained load)
+        @SERIALIZATION_RETRY  # Inner: Handle concurrent updates (transient)
+        def execute_merge():
+            """Execute MERGE with automatic retry on serialization and quota errors."""
+            merge_job = self.bq_client.query(merge_query)
+            result = merge_job.result(timeout=300)  # 5 minutes max
 
-                # Log merge stats
-                if merge_job.num_dml_affected_rows is not None:
-                    logger.info(f"MERGE affected {merge_job.num_dml_affected_rows} rows")
+            # Log merge stats
+            if merge_job.num_dml_affected_rows is not None:
+                logger.info(f"MERGE affected {merge_job.num_dml_affected_rows} rows")
 
-                return True
+            return True
 
-            except Exception as e:
-                error_msg = str(e).lower()
+        try:
+            return execute_merge()
+        except Exception as e:
+            error_msg = str(e).lower()
 
-                # Don't retry streaming buffer errors
-                if "streaming buffer" in error_msg:
-                    raise
+            # Streaming buffer errors are non-retriable - re-raise
+            if "streaming buffer" in error_msg:
+                logger.warning("MERGE blocked by streaming buffer - will succeed on next run")
+                raise
 
-                if attempt < self.MAX_RETRIES - 1:
-                    logger.warning(f"MERGE attempt {attempt + 1} failed: {e}")
-                    time.sleep(self.RETRY_DELAY_SECONDS)
-                else:
-                    logger.error(f"MERGE failed after {self.MAX_RETRIES} attempts: {e}")
-                    raise
-
-        return False
+            # All other errors already retried by decorators
+            logger.error(f"MERGE failed after retries: {e}")
+            raise
 
     # =========================================================================
     # LEGACY METHOD (kept for backward compatibility if needed)

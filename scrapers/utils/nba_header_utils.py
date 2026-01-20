@@ -11,7 +11,11 @@ Each helper returns a *copy* so callers can safely mutate individual fields.
 """
 
 from copy import deepcopy
+import logging
+import os
 import random
+
+logger = logging.getLogger(__name__)
 
 USER_AGENTS = [
     # Updated to Chrome 140 (matches nba_api Sept 2025 update - PR #571)
@@ -136,6 +140,12 @@ def bettingpros_headers() -> dict:
     1. scraper_base.py now handles manual brotli decompression as fallback
     2. CDN may cache responses with different encodings
     """
+    api_key = os.environ.get('BETTINGPROS_API_KEY', '')
+    if not api_key:
+        logger.warning(
+            "BETTINGPROS_API_KEY environment variable not set - API calls will fail"
+        )
+
     base = {
         "User-Agent": _ua(),
         "Accept": "application/json, text/plain, */*",
@@ -151,6 +161,6 @@ def bettingpros_headers() -> dict:
         "Sec-Fetch-Dest": "empty",
         "Sec-Fetch-Mode": "cors",
         "Sec-Fetch-Site": "same-site",
-        "X-Api-Key": "CHi8Hy5CEE4khd46XNYL23dCFX96oUdw6qOt1Dnh",
+        "X-Api-Key": api_key,
     }
     return deepcopy(base)

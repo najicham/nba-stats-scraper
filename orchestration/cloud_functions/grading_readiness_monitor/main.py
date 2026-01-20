@@ -30,7 +30,8 @@ from typing import Dict, Optional, Tuple
 
 import functions_framework
 from flask import Request
-from google.cloud import bigquery, pubsub_v1
+from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client, pubsub_v1
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -49,7 +50,7 @@ def get_bq_client():
     """Get or create BigQuery client."""
     global _bq_client
     if _bq_client is None:
-        _bq_client = bigquery.Client(project=PROJECT_ID)
+        _bq_client = get_bigquery_client(project_id=PROJECT_ID)
     return _bq_client
 
 

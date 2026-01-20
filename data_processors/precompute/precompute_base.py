@@ -26,6 +26,9 @@ from typing import Dict, List, Optional
 from google.cloud import bigquery
 import sentry_sdk
 
+# Import BigQuery connection pooling
+from shared.clients.bigquery_pool import get_bigquery_client
+
 # Import notification system
 from shared.utils.notification_system import (
     notify_error,
@@ -227,8 +230,8 @@ class PrecomputeProcessorBase(RunHistoryMixin):
 
         # GCP clients - specify location for regional dataset consistency
         bq_location = os.environ.get('BQ_LOCATION', 'us-west2')
-        self.bq_client = bigquery.Client(location=bq_location)
         self.project_id = os.environ.get('GCP_PROJECT_ID', get_project_id())
+        self.bq_client = get_bigquery_client(project_id=self.project_id, location=bq_location)
 
         # Set dataset from sport_config if not overridden by child class
         if self.dataset_id is None:
@@ -1166,7 +1169,7 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         """Initialize GCP clients with error notification."""
         try:
             self.project_id = self.opts.get("project_id", "nba-props-platform")
-            self.bq_client = bigquery.Client(project=self.project_id)
+            self.bq_client = get_bigquery_client(project_id=self.project_id)
         except Exception as e:
             logger.error(f"Failed to initialize BigQuery client: {e}")
             try:

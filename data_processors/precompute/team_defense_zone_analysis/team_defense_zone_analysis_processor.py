@@ -121,8 +121,7 @@ class TeamDefenseZoneAnalysisProcessor(
     def __init__(self):
         super().__init__()
 
-        # Initialize clients
-        self.bq_client = bigquery.Client()
+        # Client already initialized by PrecomputeProcessorBase with pooling
         self.project_id = self.bq_client.project
 
         # Initialize team mapper

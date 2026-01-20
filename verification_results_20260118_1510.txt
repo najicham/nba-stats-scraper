@@ -1,0 +1,183 @@
+=========================================
+Sessions 102, 103, 104 & 105 Verification Results
+Run at: Sunday, January 18, 2026 3:10 PM PST
+=========================================
+
+📊 SUMMARY
+=========================================
+
+✅ Session 103: VERIFIED - Opponent Metrics Deployed
+❓ Session 104: NOT FOUND - Missing columns in schema
+❓ Session 105: NOT FOUND - Missing columns in schema
+❓ Session 102: INCONCLUSIVE - No batch loading logs found
+❓ Session 101: INCONCLUSIVE - Model version query timed out
+
+=========================================
+
+1️⃣  Verification 1: Coordinator Batch Loading (Session 102)
+-----------------------------------------
+STATUS: ❓ INCONCLUSIVE
+
+Searched for "Batch" messages in prediction-coordinator logs
+Time Range: Jan 17-18, 2026
+Result: No batch loading messages found
+
+Possible reasons:
+- Batch loading feature may not log with "Batch" keyword
+- Logs may have aged out
+- Feature may not be actively used
+
+RECOMMENDATION: Check coordinator code to verify expected log format
+
+=========================================
+
+2️⃣  Verification 2: Model Version Fix (Session 101)
+-----------------------------------------
+STATUS: ❓ INCONCLUSIVE
+
+BigQuery query timed out after 30+ seconds
+Table: nba_predictions.player_prop_predictions
+
+Recent prediction counts (working):
+- Jan 17: 37,379 predictions
+- Jan 18: 20,663 predictions
+
+RECOMMENDATION: Run model version query with smaller time window
+
+=========================================
+
+3️⃣  Verification 3: Opponent Metrics (Sessions 103, 104, 105)
+-----------------------------------------
+
+SESSION 103: ✅ VERIFIED (4 metrics deployed)
+----------------------------------------
+Total players in upcoming games: 300
+Metrics populated: 292 players (97.33%)
+
+Metrics found and populated:
+✅ pace_differential - 97.33% populated
+✅ opponent_pace_last_10 - 97.33% populated  
+✅ opponent_ft_rate_allowed - 97.33% populated
+✅ opponent_def_rating_last_10 - 97.33% populated
+
+Sample values (5 random players):
+- luketravers (CLE vs OKC): pace_diff=5.4, opp_pace=95.6, ft_rate=21.4, def_rating=106.92
+- lonzoball (CLE vs OKC): pace_diff=5.4, opp_pace=95.6, ft_rate=21.4, def_rating=106.92
+- brucebrown (DEN vs CHA): pace_diff=2.7, opp_pace=91.6, ft_rate=20.3, def_rating=113.56
+- alexantetokounmpo (MIL vs ATL): pace_diff=3.2, opp_pace=106.5, ft_rate=25.7, def_rating=110.41
+- nikolatopic (OKC vs CLE): pace_diff=-5.4, opp_pace=100.9, ft_rate=21.7, def_rating=112.95
+
+Values appear reasonable and consistent with NBA statistics.
+
+SESSION 104: ❌ NOT FOUND (2 metrics missing)
+----------------------------------------
+Expected metrics NOT in schema:
+❌ opponent_off_rating_last_10 - Column does not exist
+❌ opponent_rebounding_rate - Column does not exist
+
+SESSION 105: ❌ NOT FOUND (1 metric missing)
+----------------------------------------
+Expected metric NOT in schema:
+❌ opponent_pace_variance - Column does not exist
+
+=========================================
+
+📋 SCHEMA ANALYSIS
+=========================================
+
+Opponent-related columns found in upcoming_player_game_context:
+- next_opponent_win_pct
+- opponent_days_rest
+- opponent_def_rating_last_10 ✓ (Session 103)
+- opponent_ft_rate_allowed ✓ (Session 103)
+- opponent_games_in_next_7_days
+- opponent_next_game_days_rest
+- opponent_pace_last_10 ✓ (Session 103)
+- opponent_team_abbr
+
+Pace/Rating/Rebounding columns found:
+- pace_differential ✓ (Session 103)
+- opponent_pace_last_10 ✓ (Session 103)
+- opponent_def_rating_last_10 ✓ (Session 103)
+
+Missing expected columns:
+- opponent_off_rating_last_10 (Session 104)
+- opponent_rebounding_rate (Session 104)
+- opponent_pace_variance (Session 105)
+
+=========================================
+
+🎯 CONCLUSIONS
+=========================================
+
+Session 103: ✅ SUCCESS
+- All 4 opponent metrics deployed and working
+- 97.33% population rate (excellent)
+- Values are reasonable and consistent
+
+Sessions 104 & 105: ⚠️ UNCLEAR STATUS
+- Expected columns not found in BigQuery schema
+- Either:
+  a) Sessions 104-105 were not deployed to production
+  b) Column names are different than expected
+  c) Metrics are calculated differently (not stored columns)
+
+Session 102: ⚠️ UNCLEAR STATUS
+- No batch loading log evidence
+- Need to verify logging implementation
+
+Session 101: ⚠️ UNCLEAR STATUS  
+- Model version query needs optimization
+- Recent predictions exist (good sign)
+
+=========================================
+
+📌 RECOMMENDATIONS
+=========================================
+
+1. IMMEDIATE: Check Session 104-105 deployment status
+   - Were analytics processors deployed with these metrics?
+   - Check Phase 3 code for column names
+   - Review Session 104-105 handoff docs
+
+2. IMMEDIATE: Verify Session 102 batch loading
+   - Check coordinator code for actual log messages
+   - Run manual test with batch loading enabled
+   - Verify performance improvement
+
+3. OPTIONAL: Optimize model version query
+   - Add date filter to reduce scan size
+   - Check if model_version column is indexed
+
+4. VERIFY: Check if Sessions 104-105 are in flight
+   - May be scheduled for future deployment
+   - Check git commits for these sessions
+   - Review deployment pipeline
+
+=========================================
+END OF VERIFICATION REPORT
+=========================================
+
+=========================================
+UPDATE: Model Version Query Results
+=========================================
+
+The BigQuery query that timed out earlier has now completed:
+
+Model Version Distribution (Jan 17-18, 2026):
+- NULL: 62.5% (35,451 predictions) ⚠️
+- ensemble_v1: 18.76% (10,639 predictions)
+- v8: 18.75% (10,636 predictions)
+
+FINDING: Session 101 model version fix is INCOMPLETE
+- Over 60% of predictions still have NULL model_version
+- This suggests either:
+  a) The fix was not fully deployed
+  b) Some prediction systems don't populate model_version
+  c) The fix only applies to specific model types
+
+RECOMMENDATION: Investigate which prediction systems are creating
+NULL model_version entries and ensure all systems properly populate
+this field.
+
+=========================================

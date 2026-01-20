@@ -42,6 +42,14 @@ from shared.utils.notification_system import (
 # Import run history mixin
 from shared.processors.mixins import RunHistoryMixin
 
+# Import BigQuery retry utilities and connection pooling
+from shared.utils.bigquery_retry import (
+    is_serialization_error,
+    SERIALIZATION_RETRY,
+    QUOTA_RETRY
+)
+from shared.clients.bigquery_pool import get_bigquery_client
+
 # Import sport configuration for multi-sport support
 from shared.config.sport_config import (
     get_raw_dataset,
@@ -57,25 +65,6 @@ logging.basicConfig(
     format="%(levelname)s:%(name)s:%(message)s"
 )
 logger = logging.getLogger("processor_base")
-
-
-def _is_serialization_conflict(exc):
-    """
-    Check if exception is a BigQuery serialization conflict.
-
-    These occur when multiple processes try to access the same table
-    simultaneously (e.g., live scrapers during backfill operations).
-
-    Returns True if we should retry, False otherwise.
-    """
-    if isinstance(exc, api_exceptions.BadRequest):
-        error_msg = str(exc).lower()
-        return (
-            "could not serialize" in error_msg or
-            "concurrent update" in error_msg or
-            "concurrent write" in error_msg
-        )
-    return False
 
 
 def _categorize_failure(error: Exception, step: str, stats: Dict = None) -> str:
@@ -490,7 +479,7 @@ class ProcessorBase(RunHistoryMixin):
         try:
             # Use project_id from opts, falling back to sport_config
             project_id = self.opts.get("project_id", self.project_id)
-            self.bq_client = bigquery.Client(project=project_id)
+            self.bq_client = get_bigquery_client(project_id=project_id)
             self.gcs_client = storage.Client(project=project_id)
         except Exception as e:
             logger.error(f"Failed to initialize GCP clients: {e}")
@@ -1246,7 +1235,7 @@ class ProcessorBase(RunHistoryMixin):
 
             # Wait for completion with retry logic for serialization conflicts
             retry_config = retry.Retry(
-                predicate=_is_serialization_conflict,
+                predicate=is_serialization_error,
                 initial=1.0,      # Start with 1 second
                 maximum=60.0,     # Max 60 seconds between retries
                 multiplier=2.0,   # Double delay each retry
@@ -1268,7 +1257,7 @@ class ProcessorBase(RunHistoryMixin):
                     self.stats["rows_skipped"] = len(rows)
                     return  # Graceful failure
                 # Log if this was a serialization conflict that exhausted retries
-                elif _is_serialization_conflict(load_e):
+                elif is_serialization_error(load_e):
                     logger.error(f"❌ BigQuery serialization conflict - retries exhausted after 5 minutes")
                     logger.error(f"This may indicate live scrapers running during backfill")
                     raise load_e

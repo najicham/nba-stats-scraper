@@ -16,6 +16,7 @@ UPDATED 2026-01-12: Added Phase 3 data validation
 import functions_framework
 from flask import jsonify
 from google.cloud import bigquery, firestore
+from shared.clients.bigquery_pool import get_bigquery_client
 from datetime import datetime, timedelta, timezone
 import requests
 import logging
@@ -409,7 +410,7 @@ def self_heal_check(request):
     }
 
     try:
-        bq_client = bigquery.Client()
+        bq_client = get_bigquery_client(project_id=PROJECT_ID)
 
         # =================================================================
         # PHASE 3 DATA CHECK (NEW)

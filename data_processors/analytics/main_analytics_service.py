@@ -6,9 +6,15 @@ Handles Pub/Sub messages when raw data processing completes
 """
 
 import os
+import sys
 import json
 import logging
+from functools import wraps
 from flask import Flask, request, jsonify
+
+# Add project root to path for shared imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+from shared.endpoints.health import create_health_blueprint, HealthChecker
 from datetime import datetime, timezone, date, timedelta
 import base64
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -20,9 +26,236 @@ from data_processors.analytics.team_defense_game_summary.team_defense_game_summa
 from data_processors.analytics.upcoming_player_game_context.upcoming_player_game_context_processor import UpcomingPlayerGameContextProcessor
 from data_processors.analytics.upcoming_team_game_context.upcoming_team_game_context_processor import UpcomingTeamGameContextProcessor
 
+# Import BigQuery client for completeness checks
+from google.cloud import bigquery
+
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# AUTHENTICATION (Issue #9: Add Authentication)
+# ============================================================================
+
+def require_auth(f):
+    """
+    Decorator to require API key authentication.
+
+    Validates requests against VALID_API_KEYS environment variable.
+    Returns 401 Unauthorized for missing or invalid API keys.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        api_key = request.headers.get('X-API-Key')
+        valid_keys_str = os.getenv('VALID_API_KEYS', '')
+        valid_keys = [k.strip() for k in valid_keys_str.split(',') if k.strip()]
+
+        if not api_key or api_key not in valid_keys:
+            logger.warning(
+                f"Unauthorized access attempt to {request.path} "
+                f"(API key {'missing' if not api_key else 'invalid'})"
+            )
+            return jsonify({"error": "Unauthorized"}), 401
+
+        return f(*args, **kwargs)
+    return decorated_function
+
+# Health check endpoints (Phase 1 - Task 1.1: Add Health Endpoints)
+health_checker = HealthChecker(
+    project_id=os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+    service_name='analytics-processor',
+    check_bigquery=True,  # Processor reads and writes BigQuery
+    check_firestore=False,  # Processor doesn't use Firestore
+    check_gcs=False,  # Processor doesn't directly access GCS
+    required_env_vars=['GCP_PROJECT_ID'],
+    optional_env_vars=['ENVIRONMENT']
+)
+app.register_blueprint(create_health_blueprint(health_checker))
+logger.info("Health check endpoints registered: /health, /ready, /health/deep")
+
+# ============================================================================
+# BOXSCORE COMPLETENESS CHECK (Phase 1.2)
+# ============================================================================
+
+def verify_boxscore_completeness(game_date: str, project_id: str) -> dict:
+    """
+    Phase 1.2: Verify all scheduled games have final boxscores before triggering Phase 3.
+
+    This prevents incomplete analytics when some games haven't been scraped yet.
+
+    Args:
+        game_date: The date to verify (YYYY-MM-DD)
+        project_id: GCP project ID
+
+    Returns:
+        dict with keys:
+            - complete: bool (all games have boxscores)
+            - coverage_pct: float (percentage of games with boxscores)
+            - expected_games: int (scheduled games)
+            - actual_games: int (games with boxscores)
+            - missing_games: list of dicts (games without boxscores)
+    """
+    try:
+        bq_client = bigquery.Client(project=project_id)
+
+        # Q1: How many games scheduled and completed?
+        # Use parameterized query to prevent SQL injection
+        scheduled_query = f"""
+        SELECT
+            game_id,
+            home_team_tricode,
+            away_team_tricode
+        FROM `{project_id}.nba_raw.nbac_schedule`
+        WHERE game_date = @game_date
+          AND game_status_text = 'Final'
+        """
+
+        job_config_scheduled = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+            ]
+        )
+
+        scheduled_result = list(bq_client.query(scheduled_query, job_config=job_config_scheduled).result())
+        scheduled_games = {row.game_id: (row.home_team_tricode, row.away_team_tricode) for row in scheduled_result}
+        expected_count = len(scheduled_games)
+
+        # Q2: How many games have boxscores? (Use BDL format: YYYYMMDD_AWAY_HOME)
+        # Note: BDL uses different game ID format than NBA.com schedule
+        # Use parameterized query to prevent SQL injection
+        boxscore_query = f"""
+        SELECT DISTINCT game_id
+        FROM `{project_id}.nba_raw.bdl_player_boxscores`
+        WHERE game_date = @game_date
+        """
+
+        job_config_boxscore = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+            ]
+        )
+
+        boxscore_result = list(bq_client.query(boxscore_query, job_config=job_config_boxscore).result())
+        boxscore_game_ids = {row.game_id for row in boxscore_result}
+        actual_count = len(boxscore_game_ids)
+
+        # Q3: Which games are missing?
+        # Convert NBA.com game IDs to expected BDL format for comparison
+        # BDL format: YYYYMMDD_AWAY_HOME (e.g., 20260118_BKN_CHI)
+        missing_games = []
+        date_part = game_date.replace('-', '')  # 2026-01-18 -> 20260118
+
+        for nba_game_id, (home, away) in scheduled_games.items():
+            bdl_game_id = f"{date_part}_{away}_{home}"
+            if bdl_game_id not in boxscore_game_ids:
+                missing_games.append({
+                    "game_id_nba": nba_game_id,
+                    "game_id_bdl": bdl_game_id,
+                    "home_team": home,
+                    "away_team": away
+                })
+
+        # Calculate coverage
+        coverage = (actual_count / expected_count * 100) if expected_count > 0 else 100
+
+        is_complete = len(missing_games) == 0
+
+        result = {
+            "complete": is_complete,
+            "coverage_pct": coverage,
+            "expected_games": expected_count,
+            "actual_games": actual_count,
+            "missing_games": missing_games
+        }
+
+        if is_complete:
+            logger.info(f"✅ Boxscore completeness check PASSED for {game_date}: {actual_count}/{expected_count} games")
+        else:
+            logger.warning(
+                f"⚠️ Boxscore completeness check FAILED for {game_date}: {actual_count}/{expected_count} games "
+                f"({coverage:.1f}% coverage). Missing: {len(missing_games)} games"
+            )
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Boxscore completeness check failed: {e}", exc_info=True)
+
+        # Issue #3: Fail-closed by default to prevent processing with incomplete data
+        # Degraded mode escape hatch: set ALLOW_DEGRADED_MODE=true to bypass
+        allow_degraded = os.getenv('ALLOW_DEGRADED_MODE', 'false').lower() == 'true'
+
+        if allow_degraded:
+            logger.warning(
+                "⚠️ DEGRADED MODE: Allowing analytics to proceed despite completeness check failure"
+            )
+            return {
+                "complete": True,
+                "coverage_pct": 0,
+                "expected_games": 0,
+                "actual_games": 0,
+                "missing_games": [],
+                "error": str(e),
+                "degraded_mode": True
+            }
+        else:
+            # Fail-closed: mark as incomplete to block analytics processing
+            return {
+                "complete": False,
+                "coverage_pct": 0,
+                "expected_games": 0,
+                "actual_games": 0,
+                "missing_games": [],
+                "error": str(e),
+                "is_error_state": True
+            }
+
+
+def trigger_missing_boxscore_scrapes(missing_games: list, game_date: str) -> int:
+    """
+    Trigger BDL boxscore scraper for the entire date (will catch all missing games).
+
+    Note: BDL box_scores scraper operates on full dates, not individual games.
+    This is simpler and ensures we don't miss any games.
+
+    Args:
+        missing_games: List of missing game dictionaries
+        game_date: Date to re-scrape (YYYY-MM-DD)
+
+    Returns:
+        Number of scrape requests triggered (always 1 for date-based scraping)
+    """
+    try:
+        from google.cloud import pubsub_v1
+
+        publisher = pubsub_v1.PublisherClient()
+        topic_path = publisher.topic_path('nba-props-platform', 'nba-scraper-trigger')
+
+        # Trigger BDL box scores scraper for the entire date
+        message_data = {
+            "scraper_name": "bdl_box_scores",
+            "date": game_date,
+            "retry_count": 0,
+            "reason": "incomplete_boxscore_coverage_detected",
+            "missing_count": len(missing_games)
+        }
+
+        future = publisher.publish(
+            topic_path,
+            json.dumps(message_data).encode('utf-8')
+        )
+        message_id = future.result(timeout=10)
+
+        logger.info(
+            f"🔄 Triggered BDL box scores re-scrape for {game_date} "
+            f"(missing {len(missing_games)} games, message_id={message_id})"
+        )
+
+        return 1
+
+    except Exception as e:
+        logger.error(f"Failed to trigger missing boxscore scrapes: {e}", exc_info=True)
+        return 0
 
 def run_single_analytics_processor(processor_class, opts):
     """
@@ -74,9 +307,8 @@ ANALYTICS_TRIGGERS = {
 }
 
 @app.route('/', methods=['GET'])
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint."""
+def index():
+    """Root endpoint - service info."""
     return jsonify({
         "status": "healthy",
         "service": "analytics_processors",
@@ -162,6 +394,62 @@ def process_analytics():
             'triggered_by': source_table
         }
 
+        # Phase 1.2: Boxscore completeness pre-flight check
+        # Only run this check when triggered by bdl_player_boxscores completion
+        # This ensures all scheduled games have boxscores before analytics run
+        if source_table == 'bdl_player_boxscores' and game_date:
+            logger.info(f"🔍 Running boxscore completeness check for {game_date}")
+            completeness = verify_boxscore_completeness(game_date, opts['project_id'])
+
+            if not completeness.get("complete"):
+                # Issue #3: Check if this is an error state (fail-closed)
+                if completeness.get("is_error_state"):
+                    # Completeness check itself failed (BigQuery error, etc.)
+                    logger.error(
+                        f"❌ Boxscore completeness check ERROR for {game_date}: {completeness.get('error')} "
+                        f"(Set ALLOW_DEGRADED_MODE=true to bypass)"
+                    )
+                    return jsonify({
+                        "status": "error",
+                        "reason": "completeness_check_failed",
+                        "game_date": game_date,
+                        "error": completeness.get("error"),
+                        "action": "Fix underlying issue or set ALLOW_DEGRADED_MODE=true to bypass"
+                    }), 500
+
+                # Not all games have boxscores yet (normal incompleteness)
+                missing_count = len(completeness.get("missing_games", []))
+                coverage_pct = completeness.get("coverage_pct", 0)
+
+                logger.warning(
+                    f"⚠️ Boxscore completeness check FAILED for {game_date}: "
+                    f"{completeness['actual_games']}/{completeness['expected_games']} games "
+                    f"({coverage_pct:.1f}% coverage). Missing: {missing_count} games"
+                )
+
+                # Trigger missing boxscore scrapes
+                trigger_missing_boxscore_scrapes(completeness["missing_games"], game_date)
+
+                # Return 500 to trigger Pub/Sub retry
+                # When missing scrapes complete, they'll republish and retry analytics
+                return jsonify({
+                    "status": "delayed",
+                    "reason": "incomplete_boxscores",
+                    "game_date": game_date,
+                    "completeness": {
+                        "expected": completeness["expected_games"],
+                        "actual": completeness["actual_games"],
+                        "coverage_pct": coverage_pct,
+                        "missing_count": missing_count
+                    },
+                    "action": "Triggered re-scrape and will retry analytics when complete"
+                }), 500  # 500 triggers Pub/Sub retry
+            else:
+                logger.info(
+                    f"✅ Boxscore completeness check PASSED for {game_date}: "
+                    f"{completeness['actual_games']}/{completeness['expected_games']} games"
+                )
+
         # Execute processors in PARALLEL for 75% speedup (20 min → 5 min)
         logger.info(f"🚀 Running {len(processors_to_run)} analytics processors in PARALLEL for {game_date}")
         results = []
@@ -240,9 +528,12 @@ def process_analytics():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/process-date-range', methods=['POST'])
+@require_auth
 def process_date_range():
     """
     Process analytics for a date range (manual trigger).
+    Requires X-API-Key header for authentication.
+
     POST body: {
         "start_date": "2024-01-01",
         "end_date": "2024-01-07",

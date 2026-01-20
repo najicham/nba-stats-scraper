@@ -109,11 +109,12 @@ def check_player_game_summary_for_yesterday() -> Dict:
         - status: 'healthy', 'warning', or 'critical'
     """
     from google.cloud import bigquery
+    from shared.clients.bigquery_pool import get_bigquery_client
 
     yesterday = (datetime.now(timezone.utc).date() - timedelta(days=1)).isoformat()
 
     try:
-        bq_client = bigquery.Client(project=PROJECT_ID)
+        bq_client = get_bigquery_client(project_id=PROJECT_ID)
 
         query = f"""
         SELECT COUNT(*) as cnt

@@ -47,3 +47,4 @@ google-cloud-pubsub>=2.13.0
 
 # RSS feed parsing (news scraper)
 feedparser>=6.0.0
+google-cloud-secret-manager==2.16.0

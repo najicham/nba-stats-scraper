@@ -27,6 +27,7 @@ from datetime import datetime, date, timezone
 from typing import Dict, List, Optional
 
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 
 # SESSION 94 FIX: Import distributed lock to prevent race conditions
 import sys
@@ -58,7 +59,7 @@ class PredictionAccuracyProcessor:
         self._math = math
         self.project_id = project_id
         self.dataset_prefix = dataset_prefix
-        self.bq_client = bigquery.Client(project=project_id)
+        self.bq_client = get_bigquery_client(project_id=project_id)
 
         # Construct table names with optional prefix
         predictions_dataset = f"{dataset_prefix}_nba_predictions" if dataset_prefix else "nba_predictions"

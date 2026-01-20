@@ -21,6 +21,7 @@ Created: 2026-01-12 (Session 21)
 import functions_framework
 from flask import jsonify
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 from datetime import datetime, timezone
 import logging
 import os
@@ -130,7 +131,7 @@ def cleanup_stale_running(request):
     }
 
     try:
-        client = bigquery.Client()
+        client = get_bigquery_client(project_id=PROJECT_ID)
 
         # Get details before cleanup (for logging and Slack)
         stale_details = get_stale_running_details(client)

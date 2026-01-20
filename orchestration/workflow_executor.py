@@ -28,6 +28,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from orchestration.parameter_resolver import ParameterResolver
 from shared.utils.bigquery_utils import execute_bigquery, insert_bigquery_rows
+from shared.clients.http_pool import get_http_session
 
 logger = logging.getLogger(__name__)
 
@@ -579,11 +580,9 @@ class WorkflowExecutor:
                 logger.debug(f"Calling scraper service: POST {url}")
                 logger.debug(f"Payload: {json.dumps(parameters, indent=2)}")
 
-                response = requests.post(
-                    url,
-                    json=parameters,
-                    timeout=self.SCRAPER_TIMEOUT
-                )
+                # Use pooled HTTP session for connection reuse
+                session = get_http_session(timeout=self.SCRAPER_TIMEOUT)
+                response = session.post(url, json=parameters)
 
                 duration = (datetime.now(timezone.utc) - start_time).total_seconds()
 

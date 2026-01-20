@@ -44,6 +44,7 @@ from typing import Dict, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 import functions_framework
 import requests
 
@@ -75,7 +76,7 @@ class HealthChecker:
     """Checks pipeline health by querying BigQuery."""
 
     def __init__(self):
-        self.client = bigquery.Client()
+        self.client = get_bigquery_client(project_id=PROJECT_ID)
         self.issues: List[str] = []
         self.warnings: List[str] = []
 

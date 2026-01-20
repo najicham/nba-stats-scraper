@@ -23,6 +23,7 @@ from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Optional, Any
 
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 
 # SESSION 97 FIX: Import distributed lock to prevent race conditions
 import sys
@@ -48,7 +49,7 @@ class PerformanceSummaryProcessor:
 
     def __init__(self, project_id: str = PROJECT_ID):
         self.project_id = project_id
-        self.bq_client = bigquery.Client(project=project_id)
+        self.bq_client = get_bigquery_client(project_id=project_id)
 
     def process(self, as_of_date: Optional[date] = None) -> Dict[str, Any]:
         """

@@ -2,3 +2,4 @@ functions-framework==3.*
 google-cloud-bigquery
 google-cloud-storage
 google-cloud-pubsub
+google-cloud-secret-manager==2.16.0

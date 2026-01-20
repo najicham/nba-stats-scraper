@@ -1,0 +1,28 @@
+=========================================
+Sessions 102, 103, 104 & 105 Verification Script
+Run at: Sun Jan 18 22:12:13 UTC 2026
+=========================================
+
+1️⃣  Verification 1: Coordinator Batch Loading
+-----------------------------------------
+
+2️⃣  Verification 2: Model Version Fix
+-----------------------------------------
+[]
+
+3️⃣  Verification 3: Metrics Count (All 7)
+-----------------------------------------
+Error in query string: Error processing job 'nba-props-
+platform:bqjob_raac16b4e17a0c0d_0000019bd32a8e13_1': Unrecognized name:
+opponent_off_rating_last_10; Did you mean opponent_def_rating_last_10? at
+[12:11]
+
+3️⃣  Verification 3: Sample Metrics (All 7)
+-----------------------------------------
+Error in query string: Error processing job 'nba-props-
+platform:bqjob_r23ded24b987c8983_0000019bd32a9999_1': Unrecognized name:
+opponent_off_rating_last_10; Did you mean opponent_def_rating_last_10? at [14:5]
+
+=========================================
+Verification Complete!
+=========================================

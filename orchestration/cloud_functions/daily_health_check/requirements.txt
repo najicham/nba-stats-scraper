@@ -1,0 +1,11 @@
+# Daily Health Check Cloud Function Requirements
+
+# Cloud Functions framework
+functions-framework==3.*
+
+# Google Cloud libraries
+google-cloud-firestore==2.*
+google-cloud-bigquery>=3.0.0
+
+# HTTP requests for service health checks and Slack
+requests==2.*

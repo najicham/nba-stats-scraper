@@ -30,6 +30,7 @@ from datetime import date, timedelta
 from typing import Dict, List, Optional, Any
 
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 import functions_framework
 import requests
 
@@ -304,7 +305,7 @@ def check_system_performance(request):
     """
     logger.info("Starting system performance check")
 
-    bq_client = bigquery.Client(project=PROJECT_ID)
+    bq_client = get_bigquery_client(project_id=PROJECT_ID)
 
     # Get champion performance
     champion_7d = get_system_performance(bq_client, CHAMPION_SYSTEM, 7)

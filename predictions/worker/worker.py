@@ -127,6 +127,7 @@ if TYPE_CHECKING:
     from prediction_systems.similarity_balanced_v1 import SimilarityBalancedV1
     from prediction_systems.catboost_v8 import CatBoostV8  # v8 ML model (3.40 MAE)
     from prediction_systems.ensemble_v1 import EnsembleV1
+    from prediction_systems.ensemble_v1_1 import EnsembleV1_1
     from data_loaders import PredictionDataLoader, normalize_confidence, validate_features
     from system_circuit_breaker import SystemCircuitBreaker
     from execution_logger import ExecutionLogger
@@ -180,6 +181,7 @@ _similarity: Optional['SimilarityBalancedV1'] = None
 _xgboost: Optional['XGBoostV1'] = None
 _catboost: Optional['CatBoostV8'] = None
 _ensemble: Optional['EnsembleV1'] = None
+_ensemble_v1_1: Optional['EnsembleV1_1'] = None
 _staging_writer: Optional['BatchStagingWriter'] = None
 _injury_filter: Optional['InjuryFilter'] = None
 
@@ -256,8 +258,9 @@ def get_prediction_systems() -> tuple:
     from prediction_systems.xgboost_v1 import XGBoostV1
     from prediction_systems.catboost_v8 import CatBoostV8
     from prediction_systems.ensemble_v1 import EnsembleV1
+    from prediction_systems.ensemble_v1_1 import EnsembleV1_1
 
-    global _moving_average, _zone_matchup, _similarity, _xgboost, _catboost, _ensemble
+    global _moving_average, _zone_matchup, _similarity, _xgboost, _catboost, _ensemble, _ensemble_v1_1
     if _ensemble is None:
         logger.info("Initializing prediction systems...")
         _moving_average = MovingAverageBaseline()
@@ -271,8 +274,15 @@ def get_prediction_systems() -> tuple:
             similarity_system=_similarity,
             xgboost_system=_catboost  # Ensemble uses champion (CatBoost)
         )
-        logger.info("All prediction systems initialized (6 systems: XGBoost V1, CatBoost V8, + 4 others)")
-    return _moving_average, _zone_matchup, _similarity, _xgboost, _catboost, _ensemble
+        _ensemble_v1_1 = EnsembleV1_1(
+            moving_average_system=_moving_average,
+            zone_matchup_system=_zone_matchup,
+            similarity_system=_similarity,
+            xgboost_system=_xgboost,
+            catboost_system=_catboost
+        )
+        logger.info("All prediction systems initialized (7 systems: XGBoost V1, CatBoost V8, Ensemble V1, Ensemble V1.1, + 3 others)")
+    return _moving_average, _zone_matchup, _similarity, _xgboost, _catboost, _ensemble, _ensemble_v1_1
 
 _circuit_breaker: Optional['SystemCircuitBreaker'] = None
 _execution_logger: Optional['ExecutionLogger'] = None
@@ -314,7 +324,8 @@ def index():
             'similarity': str(_similarity),
             'xgboost_v1': str(_xgboost),
             'catboost_v8': str(_catboost),
-            'ensemble': str(_ensemble)
+            'ensemble': str(_ensemble),
+            'ensemble_v1_1': str(_ensemble_v1_1)
         }
     else:
         systems_info = {'status': 'not yet loaded (will lazy-load on first prediction)'}
@@ -405,7 +416,7 @@ def handle_prediction_request():
     bq_client = get_bq_client()
     pubsub_publisher = get_pubsub_publisher()
     player_registry = get_player_registry()
-    moving_average, zone_matchup, similarity, xgboost, catboost, ensemble = get_prediction_systems()
+    moving_average, zone_matchup, similarity, xgboost, catboost, ensemble, ensemble_v1_1 = get_prediction_systems()
     circuit_breaker = get_circuit_breaker()
     execution_logger = get_execution_logger()
 
@@ -683,7 +694,7 @@ def process_player_predictions(
             'estimation_method': None
         }
     # Lazy-load prediction systems
-    moving_average, zone_matchup, similarity, xgboost, catboost, ensemble = get_prediction_systems()
+    moving_average, zone_matchup, similarity, xgboost, catboost, ensemble, ensemble_v1_1 = get_prediction_systems()
 
     all_predictions = []
 
@@ -1141,7 +1152,49 @@ def process_player_predictions(
             metadata['systems_failed'].append(system_id)
             metadata['system_errors'][system_id] = error_msg
             system_predictions['ensemble_v1'] = None
-        
+
+        # System 7: Ensemble V1.1 (performance-based weighted ensemble with CatBoost V8)
+        system_id = 'ensemble_v1_1'
+        metadata['systems_attempted'].append(system_id)
+        try:
+            # Check circuit breaker
+            state, skip_reason = circuit_breaker.check_circuit(system_id)
+            if state == 'OPEN':
+                logger.warning(f"Circuit breaker OPEN for {system_id}: {skip_reason}")
+                metadata['circuit_breaker_triggered'] = True
+                metadata['circuits_opened'].append(system_id)
+                metadata['systems_failed'].append(system_id)
+                metadata['system_errors'][system_id] = f'Circuit breaker open: {skip_reason}'
+                system_predictions[system_id] = None
+            else:
+                pred, conf, rec, ensemble_meta = ensemble_v1_1.predict(
+                    features=features,
+                    player_lookup=player_lookup,
+                    game_date=game_date,
+                    prop_line=line_value,
+                    historical_games=historical_games if historical_games else None
+                )
+                # Record success
+                circuit_breaker.record_success(system_id)
+                metadata['systems_succeeded'].append(system_id)
+
+                system_predictions['ensemble_v1_1'] = {
+                    'predicted_points': pred,
+                    'confidence': conf,
+                    'recommendation': rec,
+                    'system_type': 'tuple',
+                    'metadata': ensemble_meta
+                }
+        except Exception as e:
+            # Record failure
+            error_msg = str(e)
+            circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
+
+            logger.error(f"Ensemble V1.1 failed for {player_lookup}: {e}")
+            metadata['systems_failed'].append(system_id)
+            metadata['system_errors'][system_id] = error_msg
+            system_predictions['ensemble_v1_1'] = None
+
         # Convert system predictions to BigQuery format
         for system_id, prediction in system_predictions.items():
             if prediction is None:
@@ -1333,7 +1386,7 @@ def format_prediction_for_bigquery(
     if system_id == 'similarity_balanced_v1' and 'metadata' in prediction:
         metadata = prediction['metadata']
         adjustments = metadata.get('adjustments', {})
-        
+
         record.update({
             'similarity_baseline': metadata.get('baseline_from_similar'),
             'similar_games_count': metadata.get('similar_games_count'),
@@ -1343,9 +1396,10 @@ def format_prediction_for_bigquery(
             'shot_zone_adjustment': adjustments.get('zone_matchup'),
             'pace_adjustment': adjustments.get('pace'),
             'usage_spike_adjustment': adjustments.get('usage'),
-            'home_away_adjustment': adjustments.get('venue')
+            'home_away_adjustment': adjustments.get('venue'),
+            'model_version': 'v1'  # Set model version for tracking
         })
-    
+
     elif system_id == 'catboost_v8' and 'metadata' in prediction:
         metadata = prediction['metadata']
         record.update({
@@ -1370,6 +1424,42 @@ def format_prediction_for_bigquery(
                 'agreement_type': agreement.get('type')
             }),
             'model_version': 'ensemble_v1'
+        })
+
+    elif system_id == 'ensemble_v1_1' and 'metadata' in prediction:
+        metadata = prediction['metadata']
+        agreement = metadata.get('agreement', {})
+
+        # Store ensemble V1.1 metadata in feature_importance as JSON (schema-compatible)
+        record.update({
+            'feature_importance': json.dumps({
+                'variance': agreement.get('variance'),
+                'agreement_percentage': agreement.get('agreement_percentage'),
+                'systems_used': metadata.get('systems_used'),
+                'weights_used': metadata.get('weights_used'),  # NEW: track performance-based weights
+                'predictions': metadata.get('predictions'),
+                'agreement_type': agreement.get('type')
+            }),
+            'model_version': 'ensemble_v1_1'
+        })
+
+    elif system_id == 'moving_average':
+        # Set model version for tracking
+        record.update({
+            'model_version': 'v1'
+        })
+
+    elif system_id == 'zone_matchup_v1':
+        # Set model version for tracking
+        record.update({
+            'model_version': 'v1'
+        })
+
+    elif system_id == 'xgboost_v1' and 'metadata' in prediction:
+        # xgboost has metadata field
+        metadata = prediction['metadata']
+        record.update({
+            'model_version': metadata.get('model_version', 'v1')
         })
 
     # Add completeness metadata (Phase 5)
@@ -1543,11 +1633,13 @@ def publish_completion_event(player_lookup: str, game_date: str, prediction_coun
 logger.info("=" * 80)
 logger.info("🔧 WEEK 2 ALERTING ENDPOINTS LOADING...")
 logger.info("  - /health/deep")
+logger.info("  - /ready")
 logger.info("  - /internal/check-env")
 logger.info("  - /internal/deployment-started")
 logger.info("=" * 80)
 
 
+@app.route('/ready', methods=['GET'])
 @app.route('/health/deep', methods=['GET'])
 def deep_health_check():
     """
