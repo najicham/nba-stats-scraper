@@ -478,8 +478,59 @@ def start_prediction_batch():
             # Don't fail the batch if run history logging fails
             logger.warning(f"Failed to log batch start (non-fatal): {e}")
 
-        # Publish all requests to Pub/Sub (with batch historical data if available)
-        published_count = publish_prediction_requests(requests, batch_id, batch_historical_games, dataset_prefix)
+        # PRE-FLIGHT QUALITY FILTER: Check feature quality before publishing to Pub/Sub
+        # This prevents workers from processing low-quality predictions that will fail anyway
+        # Added: Jan 20, 2026 - Quick Win #3 from Agent Findings (15-25% faster batch processing)
+        viable_requests = []
+        filtered_count = 0
+
+        try:
+            from google.cloud import bigquery
+            bq_client = bigquery.Client(project=PROJECT_ID)
+
+            # Query feature quality scores for all players in this batch
+            player_lookups = [r.get('player_lookup') for r in requests if r.get('player_lookup')]
+            if player_lookups:
+                query = f"""
+                    SELECT player_lookup, feature_quality_score
+                    FROM `{PROJECT_ID}.{dataset_prefix}precompute.ml_feature_store_v2`
+                    WHERE player_lookup IN UNNEST(@player_lookups)
+                """
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups)
+                    ]
+                )
+                quality_scores = {row.player_lookup: row.feature_quality_score
+                                for row in bq_client.query(query, job_config=job_config).result()}
+
+                # Filter requests based on quality threshold
+                for request in requests:
+                    player_lookup = request.get('player_lookup')
+                    quality_score = quality_scores.get(player_lookup, 0)
+
+                    if quality_score < 70 and quality_score > 0:
+                        logger.warning(
+                            f"PRE-FLIGHT FILTER: Skipping {player_lookup} (quality={quality_score:.1f}% < 70%)",
+                            extra={'player_lookup': player_lookup, 'quality_score': quality_score, 'filter_reason': 'quality_too_low'}
+                        )
+                        filtered_count += 1
+                    else:
+                        viable_requests.append(request)
+
+                logger.info(
+                    f"PRE-FLIGHT FILTER: {len(viable_requests)}/{len(requests)} viable "
+                    f"({filtered_count} filtered for low quality)"
+                )
+            else:
+                viable_requests = requests
+        except Exception as e:
+            # Non-fatal: If pre-flight filter fails, publish all requests (workers will handle filtering)
+            logger.warning(f"PRE-FLIGHT FILTER: Failed to check quality scores (publishing all): {e}")
+            viable_requests = requests
+
+        # Publish viable requests to Pub/Sub (with batch historical data if available)
+        published_count = publish_prediction_requests(viable_requests, batch_id, batch_historical_games, dataset_prefix)
         
         logger.info(f"Published {published_count}/{len(requests)} prediction requests")
         

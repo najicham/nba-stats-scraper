@@ -21,7 +21,7 @@ class QualityScorer:
     # Source weights
     SOURCE_WEIGHTS = {
         'phase4': 100,
-        'phase3': 75,
+        'phase3': 87,  # Increased from 75 based on Agent Findings (Jan 19, 2026) - +10-12% quality improvement
         'default': 40,
         'calculated': 100  # Calculated features always high quality
     }
