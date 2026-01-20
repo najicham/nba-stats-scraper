@@ -2120,9 +2120,12 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             return False, "roster_ahead_of_gamebook"
             
         except Exception as e:
-            logger.warning(f"Error checking gamebook precedence (proceeding with caution): {e}")
-            # On error, fail open but log warning - don't block processing
-            return False, f"check_failed: {str(e)}"
+            # Issue #3: Fail-closed to prevent stale roster data
+            logger.error(
+                f"Error checking gamebook precedence - BLOCKING to prevent stale data: {e}",
+                exc_info=True
+            )
+            return True, f"check_failed: {str(e)}"
 
     def build_historical_registry(self, seasons: List[str] = None) -> Dict:
         """Build registry from historical roster data."""

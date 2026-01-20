@@ -9,6 +9,7 @@ import os
 import sys
 import json
 import logging
+from functools import wraps
 from flask import Flask, request, jsonify
 
 # Add project root to path for shared imports
@@ -31,6 +32,33 @@ from google.cloud import bigquery
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# AUTHENTICATION (Issue #9: Add Authentication)
+# ============================================================================
+
+def require_auth(f):
+    """
+    Decorator to require API key authentication.
+
+    Validates requests against VALID_API_KEYS environment variable.
+    Returns 401 Unauthorized for missing or invalid API keys.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        api_key = request.headers.get('X-API-Key')
+        valid_keys_str = os.getenv('VALID_API_KEYS', '')
+        valid_keys = [k.strip() for k in valid_keys_str.split(',') if k.strip()]
+
+        if not api_key or api_key not in valid_keys:
+            logger.warning(
+                f"Unauthorized access attempt to {request.path} "
+                f"(API key {'missing' if not api_key else 'invalid'})"
+            )
+            return jsonify({"error": "Unauthorized"}), 401
+
+        return f(*args, **kwargs)
+    return decorated_function
 
 # Health check endpoints (Phase 1 - Task 1.1: Add Health Endpoints)
 health_checker = HealthChecker(
@@ -138,16 +166,35 @@ def verify_boxscore_completeness(game_date: str, project_id: str) -> dict:
 
     except Exception as e:
         logger.error(f"Boxscore completeness check failed: {e}", exc_info=True)
-        # On error, assume complete to allow analytics to proceed
-        # (better to process with potentially incomplete data than block entirely)
-        return {
-            "complete": True,  # Fail open
-            "coverage_pct": 0,
-            "expected_games": 0,
-            "actual_games": 0,
-            "missing_games": [],
-            "error": str(e)
-        }
+
+        # Issue #3: Fail-closed by default to prevent processing with incomplete data
+        # Degraded mode escape hatch: set ALLOW_DEGRADED_MODE=true to bypass
+        allow_degraded = os.getenv('ALLOW_DEGRADED_MODE', 'false').lower() == 'true'
+
+        if allow_degraded:
+            logger.warning(
+                "⚠️ DEGRADED MODE: Allowing analytics to proceed despite completeness check failure"
+            )
+            return {
+                "complete": True,
+                "coverage_pct": 0,
+                "expected_games": 0,
+                "actual_games": 0,
+                "missing_games": [],
+                "error": str(e),
+                "degraded_mode": True
+            }
+        else:
+            # Fail-closed: mark as incomplete to block analytics processing
+            return {
+                "complete": False,
+                "coverage_pct": 0,
+                "expected_games": 0,
+                "actual_games": 0,
+                "missing_games": [],
+                "error": str(e),
+                "is_error_state": True
+            }
 
 
 def trigger_missing_boxscore_scrapes(missing_games: list, game_date: str) -> int:
@@ -341,7 +388,22 @@ def process_analytics():
             completeness = verify_boxscore_completeness(game_date, opts['project_id'])
 
             if not completeness.get("complete"):
-                # Not all games have boxscores yet
+                # Issue #3: Check if this is an error state (fail-closed)
+                if completeness.get("is_error_state"):
+                    # Completeness check itself failed (BigQuery error, etc.)
+                    logger.error(
+                        f"❌ Boxscore completeness check ERROR for {game_date}: {completeness.get('error')} "
+                        f"(Set ALLOW_DEGRADED_MODE=true to bypass)"
+                    )
+                    return jsonify({
+                        "status": "error",
+                        "reason": "completeness_check_failed",
+                        "game_date": game_date,
+                        "error": completeness.get("error"),
+                        "action": "Fix underlying issue or set ALLOW_DEGRADED_MODE=true to bypass"
+                    }), 500
+
+                # Not all games have boxscores yet (normal incompleteness)
                 missing_count = len(completeness.get("missing_games", []))
                 coverage_pct = completeness.get("coverage_pct", 0)
 
@@ -452,9 +514,12 @@ def process_analytics():
         return jsonify({"error": str(e)}), 500
 
 @app.route('/process-date-range', methods=['POST'])
+@require_auth
 def process_date_range():
     """
     Process analytics for a date range (manual trigger).
+    Requires X-API-Key header for authentication.
+
     POST body: {
         "start_date": "2024-01-01",
         "end_date": "2024-01-07",

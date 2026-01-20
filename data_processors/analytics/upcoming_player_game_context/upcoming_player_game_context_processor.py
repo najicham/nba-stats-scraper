@@ -1850,22 +1850,13 @@ class UpcomingPlayerGameContextProcessor(
                 f"Bootstrap mode: {is_bootstrap}, Season boundary: {is_season_boundary}"
             )
         except Exception as e:
-            logger.warning(
-                f"Completeness checking failed ({type(e).__name__}: {e}). "
-                f"Using default 'all ready' values to allow processing to continue."
+            # Issue #3: Fail-closed - raise exception instead of returning fake data
+            logger.error(
+                f"Completeness checking FAILED ({type(e).__name__}: {e}). "
+                f"Cannot proceed with unreliable data.",
+                exc_info=True
             )
-            # Create default "all ready" completeness for all players
-            default_ready = {
-                'expected_count': 10, 'actual_count': 10, 'completeness_pct': 100.0,
-                'missing_count': 0, 'is_complete': True, 'is_production_ready': True
-            }
-            comp_l5 = {player: default_ready.copy() for player in all_players}
-            comp_l10 = {player: default_ready.copy() for player in all_players}
-            comp_l7d = {player: default_ready.copy() for player in all_players}
-            comp_l14d = {player: default_ready.copy() for player in all_players}
-            comp_l30d = {player: default_ready.copy() for player in all_players}
-            is_bootstrap = False
-            is_season_boundary = False
+            raise
         # ============================================================
 
         # Feature flag for player-level parallelization
