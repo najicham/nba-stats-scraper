@@ -1,5 +1,9 @@
 from pathlib import Path
-from dotenv import load_dotenv
 
-env_path = Path(__file__).resolve().parent.parent / ".env"
-load_dotenv(env_path)        # quietly no‑ops if file missing
+try:
+    from dotenv import load_dotenv
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    load_dotenv(env_path)  # quietly no-ops if file missing
+except ImportError:
+    # dotenv not available in production (Cloud Run), skip loading
+    pass

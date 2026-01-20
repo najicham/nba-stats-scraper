@@ -12,7 +12,10 @@ import sys
 import logging
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
 import pytz
 
 # Import from centralized registry
@@ -68,7 +71,8 @@ def extract_scrapers_from_execution_plan(execution_plan):
 def create_app():
     """Create the main scraper routing service with orchestration."""
     app = Flask(__name__)
-    load_dotenv()
+    if load_dotenv:
+        load_dotenv()
     
     # Configure logging for Cloud Run
     if not app.debug:
@@ -540,6 +544,9 @@ def create_app():
     
     return app
 
+
+# Create app instance for gunicorn
+app = create_app()
 
 if __name__ == "__main__":
     import argparse
