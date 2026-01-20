@@ -629,7 +629,10 @@ def orchestrate_phase3_to_phase4(cloud_event):
 
     except Exception as e:
         logger.error(f"Error in Phase 3→4 orchestrator: {e}", exc_info=True)
-        # Don't raise - let Pub/Sub retry if transient, or drop if permanent
+        # CRITICAL: Re-raise to NACK message so Pub/Sub will retry
+        # This prevents "silent failures" where work appears complete but didn't actually run
+        # See: PDC-INVESTIGATION-FINDINGS-JAN-20.md for root cause analysis
+        raise
 
 
 @firestore.transactional
