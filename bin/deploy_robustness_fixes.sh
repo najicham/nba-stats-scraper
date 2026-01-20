@@ -94,12 +94,15 @@ deploy_bdl_scraper() {
 
     echo "Deploying scrapers service with retry logic..."
 
-    # Build and deploy (using existing Dockerfile or buildpacks)
+    # Build and deploy with correct SERVICE environment variable
+    # CRITICAL: Procfile requires SERVICE=scrapers to route to correct app
     if gcloud run deploy $SCRAPERS_SERVICE \
         --source=. \
         --region=$REGION_WEST \
         --platform=managed \
         --allow-unauthenticated \
+        --set-env-vars="SERVICE=scrapers" \
+        --timeout=600 \
         --quiet; then
         print_success "BDL scraper deployed with retry logic"
 
@@ -144,6 +147,17 @@ deploy_phase3_gate() {
 
     echo "Deploying Phase 3→4 validation gate..."
 
+    # CRITICAL: Copy shared module into function directory
+    # Gen2 Cloud Functions need all dependencies packaged with source
+    print_info "Copying shared module into function directory..."
+    if [[ -d "shared" ]]; then
+        cp -r shared "$FUNCTION_DIR/"
+        print_success "Shared module copied"
+    else
+        print_error "shared/ directory not found in project root"
+        return 1
+    fi
+
     cd "$FUNCTION_DIR"
 
     if gcloud functions deploy $FUNCTION_NAME \
@@ -154,6 +168,8 @@ deploy_phase3_gate() {
         --entry-point=orchestrate_phase3_to_phase4 \
         --trigger-topic=nba-phase3-analytics-complete \
         --set-env-vars=GCP_PROJECT=$PROJECT_ID \
+        --timeout=540 \
+        --memory=512MB \
         --quiet; then
 
         cd - > /dev/null
@@ -196,6 +212,16 @@ deploy_phase4_circuit_breaker() {
 
     echo "Deploying Phase 4→5 circuit breaker..."
 
+    # CRITICAL: Copy shared module into function directory
+    print_info "Copying shared module into function directory..."
+    if [[ -d "shared" ]]; then
+        cp -r shared "$FUNCTION_DIR/"
+        print_success "Shared module copied"
+    else
+        print_error "shared/ directory not found in project root"
+        return 1
+    fi
+
     cd "$FUNCTION_DIR"
 
     if gcloud functions deploy $FUNCTION_NAME \
@@ -205,7 +231,9 @@ deploy_phase4_circuit_breaker() {
         --source=. \
         --entry-point=orchestrate_phase4_to_phase5 \
         --trigger-topic=nba-phase4-precompute-complete \
-        --set-env-vars=GCP_PROJECT=$PROJECT_ID \
+        --set-env-vars=GCP_PROJECT=$PROJECT_ID,PREDICTION_COORDINATOR_URL=https://prediction-coordinator-756957797294.us-west2.run.app \
+        --timeout=540 \
+        --memory=512MB \
         --quiet; then
 
         cd - > /dev/null
