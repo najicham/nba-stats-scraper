@@ -146,6 +146,10 @@ PREDICTION_REQUEST_TOPIC = os.environ.get('PREDICTION_REQUEST_TOPIC', 'predictio
 PREDICTION_READY_TOPIC = os.environ.get('PREDICTION_READY_TOPIC', 'prediction-ready-prod')
 BATCH_SUMMARY_TOPIC = os.environ.get('BATCH_SUMMARY_TOPIC', 'prediction-batch-complete')
 
+# Week 1: Idempotency feature flags
+ENABLE_IDEMPOTENCY_KEYS = os.environ.get('ENABLE_IDEMPOTENCY_KEYS', 'false').lower() == 'true'
+DEDUP_TTL_DAYS = int(os.environ.get('DEDUP_TTL_DAYS', '7'))
+
 # API Key authentication (required for /start and /complete endpoints)
 # Try Secret Manager first, fallback to environment variable for local dev
 COORDINATOR_API_KEY = get_api_key(
@@ -553,15 +557,72 @@ def start_prediction_batch():
         }), 500
 
 
+def check_and_mark_message_processed(message_id: str) -> bool:
+    """
+    Week 1: Check if Pub/Sub message already processed (idempotency).
+
+    Uses Firestore deduplication collection with TTL to prevent
+    duplicate processing of Pub/Sub messages.
+
+    Args:
+        message_id: Pub/Sub message ID
+
+    Returns:
+        True if message already processed (duplicate), False if new
+    """
+    if not ENABLE_IDEMPOTENCY_KEYS:
+        return False  # Idempotency disabled, treat as new
+
+    try:
+        # Lazy load Firestore
+        from google.cloud import firestore
+
+        db = firestore.Client(project=PROJECT_ID)
+        dedup_ref = db.collection('pubsub_deduplication').document(message_id)
+
+        # Atomic transaction to check-and-set
+        transaction = db.transaction()
+
+        @firestore.transactional
+        def check_and_mark(transaction):
+            doc = dedup_ref.get(transaction=transaction)
+
+            if doc.exists:
+                # Already processed - duplicate message
+                logger.info(f"Duplicate message detected: {message_id}")
+                return True
+
+            # Mark as processed with TTL
+            from datetime import datetime, timedelta, timezone
+            expiry = datetime.now(timezone.utc) + timedelta(days=DEDUP_TTL_DAYS)
+
+            transaction.set(dedup_ref, {
+                'message_id': message_id,
+                'processed_at': firestore.SERVER_TIMESTAMP,
+                'expires_at': expiry  # For manual cleanup (Firestore TTL not available)
+            })
+
+            return False  # New message
+
+        return check_and_mark(transaction)
+
+    except Exception as e:
+        logger.error(f"Idempotency check failed for {message_id}: {e}")
+        # On error, treat as new to avoid blocking legitimate messages
+        return False
+
+
 @app.route('/complete', methods=['POST'])
 @require_api_key
 def handle_completion_event():
     """
     Handle prediction-ready events from workers
-    
+
+    Week 1 Update: Added idempotency checking to prevent duplicate processing.
+
     This endpoint is called by Pub/Sub push subscription when
     a worker completes predictions for a player.
-    
+
     Message format:
     {
         'player_lookup': 'lebron-james',
@@ -571,19 +632,27 @@ def handle_completion_event():
     }
     """
     global current_tracker
-    
+
     try:
         # Parse Pub/Sub message
         envelope = request.get_json()
         if not envelope:
             logger.error("No Pub/Sub message received")
             return ('Bad Request: no Pub/Sub message received', 400)
-        
+
         pubsub_message = envelope.get('message', {})
         if not pubsub_message:
             logger.error("No message field in envelope")
             return ('Bad Request: invalid Pub/Sub message format', 400)
-        
+
+        # Week 1: Extract message ID for idempotency
+        message_id = pubsub_message.get('messageId') or pubsub_message.get('message_id')
+
+        # Week 1: Check for duplicate message
+        if message_id and check_and_mark_message_processed(message_id):
+            logger.info(f"Duplicate message ignored: {message_id}")
+            return ('', 204)  # Success - already processed
+
         # Decode message data
         message_data = base64.b64decode(pubsub_message['data']).decode('utf-8')
         event = json.loads(message_data)
@@ -624,7 +693,7 @@ def handle_completion_event():
             logger.error(f"Error recording completion to Firestore: {e}", exc_info=True)
             # CRITICAL: Return 500 so Pub/Sub retries - completion event cannot be lost!
             # Worker already succeeded, but we MUST track completion for batch consolidation
-            # TODO: Add idempotency checks to prevent duplicate processing on retry
+            # Week 1: Idempotency prevents duplicate processing on retry
             return ('Internal Server Error: Failed to record completion', 500)
 
         return ('', 204)  # Success
