@@ -99,29 +99,43 @@ def verify_boxscore_completeness(game_date: str, project_id: str) -> dict:
         bq_client = bigquery.Client(project=project_id)
 
         # Q1: How many games scheduled and completed?
+        # Use parameterized query to prevent SQL injection
         scheduled_query = f"""
         SELECT
             game_id,
             home_team_tricode,
             away_team_tricode
         FROM `{project_id}.nba_raw.nbac_schedule`
-        WHERE game_date = '{game_date}'
+        WHERE game_date = @game_date
           AND game_status_text = 'Final'
         """
 
-        scheduled_result = list(bq_client.query(scheduled_query).result())
+        job_config_scheduled = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+            ]
+        )
+
+        scheduled_result = list(bq_client.query(scheduled_query, job_config=job_config_scheduled).result())
         scheduled_games = {row.game_id: (row.home_team_tricode, row.away_team_tricode) for row in scheduled_result}
         expected_count = len(scheduled_games)
 
         # Q2: How many games have boxscores? (Use BDL format: YYYYMMDD_AWAY_HOME)
         # Note: BDL uses different game ID format than NBA.com schedule
+        # Use parameterized query to prevent SQL injection
         boxscore_query = f"""
         SELECT DISTINCT game_id
         FROM `{project_id}.nba_raw.bdl_player_boxscores`
-        WHERE game_date = '{game_date}'
+        WHERE game_date = @game_date
         """
 
-        boxscore_result = list(bq_client.query(boxscore_query).result())
+        job_config_boxscore = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+            ]
+        )
+
+        boxscore_result = list(bq_client.query(boxscore_query, job_config=job_config_boxscore).result())
         boxscore_game_ids = {row.game_id for row in boxscore_result}
         actual_count = len(boxscore_game_ids)
 

@@ -465,9 +465,18 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                 # MUST include game_date filter for partitioned table
                 game_id = rows[0]['game_id']
                 game_date = rows[0]['game_date']
-                delete_query = f"DELETE FROM `{table_id}` WHERE game_id = '{game_id}' AND game_date = '{game_date}'"
+
+                # Use parameterized query to prevent SQL injection
+                delete_query = f"DELETE FROM `{table_id}` WHERE game_id = @game_id AND game_date = @game_date"
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter("game_id", "STRING", game_id),
+                        bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                    ]
+                )
+
                 logging.info(f"Deleting existing data for game_id: {game_id}, game_date: {game_date}")
-                self.bq_client.query(delete_query).result(timeout=60)
+                self.bq_client.query(delete_query, job_config=job_config).result(timeout=60)
             
             # Insert new data using batch loading (not streaming insert)
             # This avoids the 20 DML limit and streaming buffer issues

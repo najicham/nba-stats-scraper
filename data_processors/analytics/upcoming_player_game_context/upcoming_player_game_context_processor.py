@@ -583,11 +583,16 @@ class UpcomingPlayerGameContextProcessor(
         gamebook_check_query = f"""
         SELECT COUNT(*) as cnt
         FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
-        WHERE game_date = '{self.target_date}'
+        WHERE game_date = @game_date
         """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", self.target_date),
+            ]
+        )
 
         try:
-            result = self.bq_client.query(gamebook_check_query).result(timeout=60)
+            result = self.bq_client.query(gamebook_check_query, job_config=job_config).result(timeout=60)
             row = next(result, None)
             gamebook_count = row.cnt if row else 0
 
@@ -672,7 +677,7 @@ class UpcomingPlayerGameContextProcessor(
                 home_team_tricode as home_team_abbr,
                 away_team_tricode as away_team_abbr
             FROM `{self.project_id}.nba_raw.nbac_schedule`
-            WHERE game_date = '{self.target_date}'
+            WHERE game_date = @game_date
         ),
         teams_playing AS (
             -- Get all teams playing today (both home and away)
@@ -685,8 +690,8 @@ class UpcomingPlayerGameContextProcessor(
             -- FIX: Previous query found global MAX, but different teams may have different latest dates
             SELECT team_abbr, MAX(roster_date) as roster_date
             FROM `{self.project_id}.nba_raw.espn_team_rosters`
-            WHERE roster_date >= '{roster_start}'
-              AND roster_date <= '{roster_end}'
+            WHERE roster_date >= @roster_start
+              AND roster_date <= @roster_end
             GROUP BY team_abbr
         ),
         roster_players AS (
@@ -699,8 +704,8 @@ class UpcomingPlayerGameContextProcessor(
             INNER JOIN latest_roster_per_team lr
                 ON r.team_abbr = lr.team_abbr
                 AND r.roster_date = lr.roster_date
-            WHERE r.roster_date >= '{roster_start}'
-              AND r.roster_date <= '{roster_end}'
+            WHERE r.roster_date >= @roster_start
+              AND r.roster_date <= @roster_end
               AND r.team_abbr IN (SELECT team_abbr FROM teams_playing)
               AND r.player_lookup IS NOT NULL
         ),
@@ -723,7 +728,7 @@ class UpcomingPlayerGameContextProcessor(
                 player_lookup,
                 injury_status
             FROM `{self.project_id}.nba_raw.nbac_injury_report`
-            WHERE report_date = '{self.target_date}'
+            WHERE report_date = @game_date
               AND player_lookup IS NOT NULL
         ),
         props AS (
@@ -733,7 +738,7 @@ class UpcomingPlayerGameContextProcessor(
                 points_line,
                 'odds_api' as prop_source
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE game_date = '{self.target_date}'
+            WHERE game_date = @game_date
               AND player_lookup IS NOT NULL
             UNION DISTINCT
             SELECT DISTINCT
@@ -741,7 +746,7 @@ class UpcomingPlayerGameContextProcessor(
                 points_line,
                 'bettingpros' as prop_source
             FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
-            WHERE game_date = '{self.target_date}'
+            WHERE game_date = @game_date
               AND is_active = TRUE
               AND player_lookup IS NOT NULL
         )
@@ -762,9 +767,16 @@ class UpcomingPlayerGameContextProcessor(
         WHERE i.injury_status IS NULL
            OR i.injury_status NOT IN ('Out', 'OUT', 'Doubtful', 'DOUBTFUL')
         """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", self.target_date),
+                bigquery.ScalarQueryParameter("roster_start", "DATE", roster_start),
+                bigquery.ScalarQueryParameter("roster_end", "DATE", roster_end),
+            ]
+        )
 
         try:
-            df = self.bq_client.query(daily_query).to_dataframe()
+            df = self.bq_client.query(daily_query, job_config=job_config).to_dataframe()
 
             # Track source usage
             self.source_tracking['props']['rows_found'] = len(df)
@@ -839,7 +851,7 @@ class UpcomingPlayerGameContextProcessor(
                 home_team_tricode,
                 away_team_tricode
             FROM `{self.project_id}.nba_raw.nbac_schedule`
-            WHERE game_date = '{self.target_date}'
+            WHERE game_date = @game_date
         ),
         players_with_games AS (
             -- Get ALL active players from gamebook who have games on target date
@@ -854,7 +866,7 @@ class UpcomingPlayerGameContextProcessor(
             FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats` g
             LEFT JOIN schedule_data s
                 ON g.game_id = s.nba_game_id  -- Join on NBA official ID
-            WHERE g.game_date = '{self.target_date}'
+            WHERE g.game_date = @game_date
               AND g.player_lookup IS NOT NULL
               AND (g.player_status IS NULL OR g.player_status NOT IN ('DNP', 'DND', 'NWT'))
         ),
@@ -865,7 +877,7 @@ class UpcomingPlayerGameContextProcessor(
                 points_line,
                 'odds_api' as prop_source
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE game_date = '{self.target_date}'
+            WHERE game_date = @game_date
               AND player_lookup IS NOT NULL
             UNION DISTINCT
             SELECT DISTINCT
@@ -873,7 +885,7 @@ class UpcomingPlayerGameContextProcessor(
                 points_line,
                 'bettingpros' as prop_source
             FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
-            WHERE game_date = '{self.target_date}'
+            WHERE game_date = @game_date
               AND is_active = TRUE
               AND player_lookup IS NOT NULL
         )
@@ -890,9 +902,14 @@ class UpcomingPlayerGameContextProcessor(
         FROM players_with_games p
         LEFT JOIN props pr ON p.player_lookup = pr.player_lookup
         """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", self.target_date),
+            ]
+        )
 
         try:
-            df = self.bq_client.query(backfill_query).to_dataframe()
+            df = self.bq_client.query(backfill_query, job_config=job_config).to_dataframe()
 
             # Track source usage
             self.source_tracking['props']['rows_found'] = len(df)
@@ -943,7 +960,7 @@ class UpcomingPlayerGameContextProcessor(
                 -- Use validated_team if available, otherwise player_team
                 COALESCE(bp.validated_team, bp.player_team) as player_team
             FROM `{self.project_id}.nba_raw.bettingpros_player_points_props` bp
-            WHERE bp.game_date = '{self.target_date}'
+            WHERE bp.game_date = @game_date
               AND bp.player_lookup IS NOT NULL
               AND bp.is_active = TRUE
         ),
@@ -961,7 +978,7 @@ class UpcomingPlayerGameContextProcessor(
                 home_team_tricode as home_team_abbr,
                 away_team_tricode as away_team_abbr
             FROM `{self.project_id}.nba_raw.nbac_schedule`
-            WHERE game_date = '{self.target_date}'
+            WHERE game_date = @game_date
         )
         SELECT DISTINCT
             bp.player_lookup,
@@ -975,9 +992,14 @@ class UpcomingPlayerGameContextProcessor(
             AND (bp.player_team = s.home_team_abbr OR bp.player_team = s.away_team_abbr)
         WHERE s.game_id IS NOT NULL
         """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", self.target_date),
+            ]
+        )
 
         try:
-            df = self.bq_client.query(bettingpros_query).to_dataframe()
+            df = self.bq_client.query(bettingpros_query, job_config=job_config).to_dataframe()
             logger.info(f"BettingPros fallback: Found {len(df)} players for {self.target_date}")
             return df
         except Exception as e:
@@ -1017,13 +1039,19 @@ class UpcomingPlayerGameContextProcessor(
             is_primetime,
             season_year
         FROM `{self.project_id}.nba_raw.nbac_schedule`
-        WHERE game_date >= '{start_date}'
-          AND game_date <= '{end_date}'
+        WHERE game_date >= @start_date
+          AND game_date <= @end_date
         ORDER BY game_date, game_date_est
         """
-        
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+            ]
+        )
+
         try:
-            df = self.bq_client.query(query).to_dataframe()
+            df = self.bq_client.query(query, job_config=job_config).to_dataframe()
             
             # Track source usage (count only target date games)
             # FIX: use timezone-aware datetime
@@ -1422,10 +1450,10 @@ class UpcomingPlayerGameContextProcessor(
         WITH earliest_snapshot AS (
             SELECT MIN(snapshot_timestamp) as earliest
             FROM `{self.project_id}.nba_raw.odds_api_game_lines`
-            WHERE game_date = '{self.target_date}'
-              AND home_team_abbr = '{home_team}'
-              AND away_team_abbr = '{away_team}'
-              AND market_key = '{market_key}'
+            WHERE game_date = @game_date
+              AND home_team_abbr = @home_team
+              AND away_team_abbr = @away_team
+              AND market_key = @market_key
         ),
         opening_lines AS (
             SELECT
@@ -1433,10 +1461,10 @@ class UpcomingPlayerGameContextProcessor(
                 bookmaker_key
             FROM `{self.project_id}.nba_raw.odds_api_game_lines` lines
             CROSS JOIN earliest_snapshot
-            WHERE lines.game_date = '{self.target_date}'
-              AND lines.home_team_abbr = '{home_team}'
-              AND lines.away_team_abbr = '{away_team}'
-              AND lines.market_key = '{market_key}'
+            WHERE lines.game_date = @game_date
+              AND lines.home_team_abbr = @home_team
+              AND lines.away_team_abbr = @away_team
+              AND lines.market_key = @market_key
               AND lines.snapshot_timestamp = earliest_snapshot.earliest
         ),
         median_calc AS (
@@ -1457,17 +1485,17 @@ class UpcomingPlayerGameContextProcessor(
         FROM median_calc
         CROSS JOIN agg_calc
         """
-        
+
         # Get current line (latest snapshot, median across bookmakers)
         # FIXED: Join on game_date + teams instead of hash game_id
         current_query = f"""
         WITH latest_snapshot AS (
             SELECT MAX(snapshot_timestamp) as latest
             FROM `{self.project_id}.nba_raw.odds_api_game_lines`
-            WHERE game_date = '{self.target_date}'
-              AND home_team_abbr = '{home_team}'
-              AND away_team_abbr = '{away_team}'
-              AND market_key = '{market_key}'
+            WHERE game_date = @game_date
+              AND home_team_abbr = @home_team
+              AND away_team_abbr = @away_team
+              AND market_key = @market_key
         ),
         current_lines AS (
             SELECT
@@ -1475,10 +1503,10 @@ class UpcomingPlayerGameContextProcessor(
                 bookmaker_key
             FROM `{self.project_id}.nba_raw.odds_api_game_lines` lines
             CROSS JOIN latest_snapshot
-            WHERE lines.game_date = '{self.target_date}'
-              AND lines.home_team_abbr = '{home_team}'
-              AND lines.away_team_abbr = '{away_team}'
-              AND lines.market_key = '{market_key}'
+            WHERE lines.game_date = @game_date
+              AND lines.home_team_abbr = @home_team
+              AND lines.away_team_abbr = @away_team
+              AND lines.market_key = @market_key
               AND lines.snapshot_timestamp = latest_snapshot.latest
         ),
         median_calc AS (
@@ -1499,10 +1527,18 @@ class UpcomingPlayerGameContextProcessor(
         FROM median_calc
         CROSS JOIN agg_calc
         """
-        
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", self.target_date),
+                bigquery.ScalarQueryParameter("home_team", "STRING", home_team),
+                bigquery.ScalarQueryParameter("away_team", "STRING", away_team),
+                bigquery.ScalarQueryParameter("market_key", "STRING", market_key),
+            ]
+        )
+
         try:
-            opening_df = self.bq_client.query(opening_query).to_dataframe()
-            current_df = self.bq_client.query(current_query).to_dataframe()
+            opening_df = self.bq_client.query(opening_query, job_config=job_config).to_dataframe()
+            current_df = self.bq_client.query(current_query, job_config=job_config).to_dataframe()
             
             prefix = 'spread' if market_key == 'spreads' else 'total'
             
@@ -1712,13 +1748,20 @@ class UpcomingPlayerGameContextProcessor(
         query = f"""
         SELECT attempt_number, attempted_at, circuit_breaker_tripped, circuit_breaker_until
         FROM `{self.project_id}.nba_orchestration.reprocess_attempts`
-        WHERE processor_name = '{self.table_name}'
-          AND entity_id = '{entity_id}'
-          AND analysis_date = DATE('{analysis_date}')
+        WHERE processor_name = @processor_name
+          AND entity_id = @entity_id
+          AND analysis_date = @analysis_date
         ORDER BY attempt_number DESC LIMIT 1
         """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("processor_name", "STRING", self.table_name),
+                bigquery.ScalarQueryParameter("entity_id", "STRING", entity_id),
+                bigquery.ScalarQueryParameter("analysis_date", "DATE", analysis_date),
+            ]
+        )
         try:
-            result = list(self.bq_client.query(query).result(timeout=60))
+            result = list(self.bq_client.query(query, job_config=job_config).result(timeout=60))
             if not result:
                 return {'active': False, 'attempts': 0, 'until': None}
             row = result[0]
@@ -2705,8 +2748,8 @@ class UpcomingPlayerGameContextProcessor(
             WITH recent_team AS (
                 SELECT pace
                 FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
-                WHERE team_abbr = '{team_abbr}'
-                  AND game_date < '{game_date}'
+                WHERE team_abbr = @team_abbr
+                  AND game_date < @game_date
                   AND game_date >= '2024-10-01'
                 ORDER BY game_date DESC
                 LIMIT 10
@@ -2714,8 +2757,8 @@ class UpcomingPlayerGameContextProcessor(
             recent_opponent AS (
                 SELECT pace
                 FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
-                WHERE team_abbr = '{opponent_abbr}'
-                  AND game_date < '{game_date}'
+                WHERE team_abbr = @opponent_abbr
+                  AND game_date < @game_date
                   AND game_date >= '2024-10-01'
                 ORDER BY game_date DESC
                 LIMIT 10
@@ -2723,8 +2766,15 @@ class UpcomingPlayerGameContextProcessor(
             SELECT
                 ROUND((SELECT AVG(pace) FROM recent_team) - (SELECT AVG(pace) FROM recent_opponent), 2) as pace_diff
             """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("team_abbr", "STRING", team_abbr),
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
 
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query, job_config=job_config).result()
             for row in result:
                 return row.pace_diff if row.pace_diff is not None else 0.0
 
@@ -2751,8 +2801,8 @@ class UpcomingPlayerGameContextProcessor(
             WITH recent_games AS (
                 SELECT pace
                 FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
-                WHERE team_abbr = '{opponent_abbr}'
-                  AND game_date < '{game_date}'
+                WHERE team_abbr = @opponent_abbr
+                  AND game_date < @game_date
                   AND game_date >= '2024-10-01'
                 ORDER BY game_date DESC
                 LIMIT 10
@@ -2760,8 +2810,14 @@ class UpcomingPlayerGameContextProcessor(
             SELECT ROUND(AVG(pace), 2) as avg_pace
             FROM recent_games
             """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
 
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query, job_config=job_config).result()
             for row in result:
                 return row.avg_pace if row.avg_pace is not None else 0.0
 
@@ -2787,8 +2843,8 @@ class UpcomingPlayerGameContextProcessor(
             WITH recent_games AS (
                 SELECT opp_ft_attempts
                 FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
-                WHERE defending_team_abbr = '{opponent_abbr}'
-                  AND game_date < '{game_date}'
+                WHERE defending_team_abbr = @opponent_abbr
+                  AND game_date < @game_date
                   AND game_date >= '2024-10-01'
                 ORDER BY game_date DESC
                 LIMIT 10
@@ -2796,8 +2852,14 @@ class UpcomingPlayerGameContextProcessor(
             SELECT ROUND(AVG(opp_ft_attempts), 2) as avg_opp_fta
             FROM recent_games
             """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
 
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query, job_config=job_config).result()
             for row in result:
                 return row.avg_opp_fta if row.avg_opp_fta is not None else 0.0
 
@@ -2823,8 +2885,8 @@ class UpcomingPlayerGameContextProcessor(
             WITH recent_games AS (
                 SELECT defensive_rating
                 FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
-                WHERE defending_team_abbr = '{opponent_abbr}'
-                  AND game_date < '{game_date}'
+                WHERE defending_team_abbr = @opponent_abbr
+                  AND game_date < @game_date
                   AND game_date >= '2024-10-01'
                 ORDER BY game_date DESC
                 LIMIT 10
@@ -2832,8 +2894,14 @@ class UpcomingPlayerGameContextProcessor(
             SELECT ROUND(AVG(defensive_rating), 2) as avg_def_rating
             FROM recent_games
             """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
 
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query, job_config=job_config).result()
             for row in result:
                 return row.avg_def_rating if row.avg_def_rating is not None else 0.0
 
@@ -2859,8 +2927,8 @@ class UpcomingPlayerGameContextProcessor(
             WITH recent_games AS (
                 SELECT offensive_rating
                 FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
-                WHERE team_abbr = '{opponent_abbr}'
-                  AND game_date < '{game_date}'
+                WHERE team_abbr = @opponent_abbr
+                  AND game_date < @game_date
                   AND game_date >= '2024-10-01'
                 ORDER BY game_date DESC
                 LIMIT 10
@@ -2868,8 +2936,14 @@ class UpcomingPlayerGameContextProcessor(
             SELECT ROUND(AVG(offensive_rating), 2) as avg_off_rating
             FROM recent_games
             """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
 
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query, job_config=job_config).result()
             for row in result:
                 return row.avg_off_rating if row.avg_off_rating is not None else 0.0
 
@@ -2895,8 +2969,8 @@ class UpcomingPlayerGameContextProcessor(
             WITH recent_games AS (
                 SELECT total_rebounds, possessions
                 FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
-                WHERE team_abbr = '{opponent_abbr}'
-                  AND game_date < '{game_date}'
+                WHERE team_abbr = @opponent_abbr
+                  AND game_date < @game_date
                   AND game_date >= '2024-10-01'
                   AND possessions > 0
                 ORDER BY game_date DESC
@@ -2905,8 +2979,14 @@ class UpcomingPlayerGameContextProcessor(
             SELECT ROUND(AVG(total_rebounds) / NULLIF(AVG(possessions), 0), 2) as rebounding_rate
             FROM recent_games
             """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
 
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query, job_config=job_config).result()
             for row in result:
                 return row.rebounding_rate if row.rebounding_rate is not None else 0.0
 
@@ -2932,8 +3012,8 @@ class UpcomingPlayerGameContextProcessor(
             WITH recent_games AS (
                 SELECT pace
                 FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
-                WHERE team_abbr = '{opponent_abbr}'
-                  AND game_date < '{game_date}'
+                WHERE team_abbr = @opponent_abbr
+                  AND game_date < @game_date
                   AND game_date >= '2024-10-01'
                 ORDER BY game_date DESC
                 LIMIT 10
@@ -2941,8 +3021,14 @@ class UpcomingPlayerGameContextProcessor(
             SELECT ROUND(STDDEV(pace), 2) as pace_stddev
             FROM recent_games
             """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
 
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query, job_config=job_config).result()
             for row in result:
                 return row.pace_stddev if row.pace_stddev is not None else 0.0
 
@@ -2968,8 +3054,8 @@ class UpcomingPlayerGameContextProcessor(
             WITH recent_games AS (
                 SELECT opp_ft_attempts
                 FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
-                WHERE defending_team_abbr = '{opponent_abbr}'
-                  AND game_date < '{game_date}'
+                WHERE defending_team_abbr = @opponent_abbr
+                  AND game_date < @game_date
                   AND game_date >= '2024-10-01'
                 ORDER BY game_date DESC
                 LIMIT 10
@@ -2977,8 +3063,14 @@ class UpcomingPlayerGameContextProcessor(
             SELECT ROUND(STDDEV(opp_ft_attempts), 2) as ft_rate_stddev
             FROM recent_games
             """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
 
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query, job_config=job_config).result()
             for row in result:
                 return row.ft_rate_stddev if row.ft_rate_stddev is not None else 0.0
 
@@ -3004,8 +3096,8 @@ class UpcomingPlayerGameContextProcessor(
             WITH recent_games AS (
                 SELECT defensive_rating
                 FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
-                WHERE defending_team_abbr = '{opponent_abbr}'
-                  AND game_date < '{game_date}'
+                WHERE defending_team_abbr = @opponent_abbr
+                  AND game_date < @game_date
                   AND game_date >= '2024-10-01'
                 ORDER BY game_date DESC
                 LIMIT 10
@@ -3013,8 +3105,14 @@ class UpcomingPlayerGameContextProcessor(
             SELECT ROUND(STDDEV(defensive_rating), 2) as def_rating_stddev
             FROM recent_games
             """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
 
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query, job_config=job_config).result()
             for row in result:
                 return row.def_rating_stddev if row.def_rating_stddev is not None else 0.0
 
@@ -3040,8 +3138,8 @@ class UpcomingPlayerGameContextProcessor(
             WITH recent_games AS (
                 SELECT offensive_rating
                 FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
-                WHERE team_abbr = '{opponent_abbr}'
-                  AND game_date < '{game_date}'
+                WHERE team_abbr = @opponent_abbr
+                  AND game_date < @game_date
                   AND game_date >= '2024-10-01'
                 ORDER BY game_date DESC
                 LIMIT 10
@@ -3049,8 +3147,14 @@ class UpcomingPlayerGameContextProcessor(
             SELECT ROUND(STDDEV(offensive_rating), 2) as off_rating_stddev
             FROM recent_games
             """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
 
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query, job_config=job_config).result()
             for row in result:
                 return row.off_rating_stddev if row.off_rating_stddev is not None else 0.0
 
@@ -3077,8 +3181,8 @@ class UpcomingPlayerGameContextProcessor(
                 SELECT
                     total_rebounds / NULLIF(possessions, 0) as rebounding_rate
                 FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
-                WHERE team_abbr = '{opponent_abbr}'
-                  AND game_date < '{game_date}'
+                WHERE team_abbr = @opponent_abbr
+                  AND game_date < @game_date
                   AND game_date >= '2024-10-01'
                   AND possessions > 0
                 ORDER BY game_date DESC
@@ -3087,8 +3191,14 @@ class UpcomingPlayerGameContextProcessor(
             SELECT ROUND(STDDEV(rebounding_rate), 3) as rebounding_rate_stddev
             FROM recent_games
             """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
 
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query, job_config=job_config).result()
             for row in result:
                 return row.rebounding_rate_stddev if row.rebounding_rate_stddev is not None else 0.0
 

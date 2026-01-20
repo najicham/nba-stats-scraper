@@ -2045,18 +2045,25 @@ class AnalyticsProcessorBase(RunHistoryMixin):
 
         if game_dates:
             # Step 1: DELETE existing records for these dates
+            # Use parameterized query to prevent SQL injection
             if len(game_dates) == 1:
-                date_filter = f"game_date = DATE('{game_dates[0]}')"
+                delete_query = f"DELETE FROM `{table_id}` WHERE game_date = @game_date"
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter("game_date", "DATE", game_dates[0]),
+                    ]
+                )
             else:
-                # Build proper IN clause: DATE('2026-01-13'), DATE('2026-01-14')
-                dates_list = [f"DATE('{d}')" for d in game_dates]
-                date_filter = f"game_date IN ({', '.join(dates_list)})"
-
-            delete_query = f"DELETE FROM `{table_id}` WHERE {date_filter}"
+                delete_query = f"DELETE FROM `{table_id}` WHERE game_date IN UNNEST(@game_dates)"
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ArrayQueryParameter("game_dates", "DATE", game_dates),
+                    ]
+                )
 
             try:
                 logger.info(f"Deleting existing records for {len(game_dates)} date(s)")
-                delete_job = self.bq_client.query(delete_query)
+                delete_job = self.bq_client.query(delete_query, job_config=job_config)
                 delete_job.result(timeout=300)
                 deleted = delete_job.num_dml_affected_rows or 0
                 logger.info(f"✅ Deleted {deleted} existing rows")
