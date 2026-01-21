@@ -59,6 +59,10 @@ from datetime import datetime, timezone
 from typing import Dict, List, Set, Optional
 import logging
 import os
+import sys
+
+# Add path for slack utilities
+sys.path.append('/home/naji/code/nba-stats-scraper/orchestration/cloud_functions/self_heal')
 
 logger = logging.getLogger(__name__)
 
@@ -531,11 +535,42 @@ class BatchStateManager:
             subcoll_count = self._get_completion_count_subcollection(batch_id)
 
             if array_count != subcoll_count:
-                logger.warning(
+                error_msg = (
                     f"⚠️ CONSISTENCY MISMATCH: Batch {batch_id} has {array_count} "
                     f"in array but {subcoll_count} in subcollection!"
                 )
-                # TODO: Send Slack alert if needed
+                logger.warning(error_msg)
+
+                # Send Slack alert to #nba-alerts channel
+                try:
+                    from shared.utils.slack_channels import send_to_slack
+                    webhook_url = os.environ.get('SLACK_WEBHOOK_URL_WARNING')
+                    if webhook_url:
+                        alert_text = f"""🚨 *Dual-Write Consistency Mismatch*
+
+*Batch*: `{batch_id}`
+*Array Count*: {array_count}
+*Subcollection Count*: {subcoll_count}
+*Difference*: {abs(array_count - subcoll_count)}
+
+This indicates a problem with the Week 1 dual-write migration. Investigate immediately.
+
+_Check Cloud Logging for detailed error traces._"""
+
+                        sent = send_to_slack(
+                            webhook_url=webhook_url,
+                            text=alert_text,
+                            username="Prediction Coordinator",
+                            icon_emoji=":rotating_light:"
+                        )
+                        if sent:
+                            logger.info(f"Sent consistency mismatch alert to Slack for batch {batch_id}")
+                        else:
+                            logger.error(f"Failed to send Slack alert for batch {batch_id}")
+                    else:
+                        logger.warning("SLACK_WEBHOOK_URL_WARNING not configured, skipping alert")
+                except Exception as slack_error:
+                    logger.error(f"Error sending Slack alert: {slack_error}", exc_info=True)
         except Exception as e:
             logger.error(f"Failed to validate dual-write consistency: {e}")
 

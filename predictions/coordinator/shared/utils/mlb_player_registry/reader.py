@@ -327,11 +327,39 @@ class MLBRegistryReader:
         if not self._unresolved:
             return 0
 
-        # TODO: Implement BigQuery insert for unresolved tracking
-        # For now, just log them
+        # Log unresolved players
         logger.warning(f"Unresolved MLB players ({len(self._unresolved)}):")
         for player in self._unresolved.values():
             logger.warning(f"  {player.player_lookup} ({player.player_type}): {player.count} occurrences")
+
+        # Insert to BigQuery for tracking and review
+        try:
+            table_id = f"{self.project_id}.mlb_reference.unresolved_players"
+
+            # Convert unresolved players to BigQuery rows
+            rows_to_insert = []
+            for player in self._unresolved.values():
+                rows_to_insert.append({
+                    "player_lookup": player.player_lookup,
+                    "player_type": player.player_type,
+                    "source": player.source,
+                    "first_seen": player.first_seen.isoformat(),
+                    "occurrence_count": player.count,
+                    "reported_at": datetime.utcnow().isoformat(),
+                })
+
+            # Insert rows
+            errors = self.bq_client.insert_rows_json(table_id, rows_to_insert)
+
+            if errors:
+                logger.error(f"Failed to insert {len(errors)} unresolved players to BigQuery: {errors}")
+                # Still clear cache even if insert fails - we've logged them
+            else:
+                logger.info(f"Successfully inserted {len(rows_to_insert)} unresolved players to {table_id}")
+
+        except Exception as e:
+            logger.error(f"Error flushing unresolved players to BigQuery: {e}", exc_info=True)
+            # Continue execution - logging is still captured above
 
         count = len(self._unresolved)
         self._unresolved.clear()
