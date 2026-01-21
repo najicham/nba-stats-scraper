@@ -36,11 +36,6 @@ class PubSubTopics:
     def PHASE1_SCRAPERS_COMPLETE(self) -> str:
         return _topic('phase1-scrapers-complete')
 
-    # Legacy topic (dual publishing during migration)
-    @property
-    def LEGACY_SCRAPER_COMPLETE(self) -> str:
-        return _topic('scraper-complete')
-
     # =========================================================================
     # PHASE 2: RAW PROCESSORS
     # =========================================================================
@@ -136,7 +131,6 @@ class PubSubTopics:
         """
         return {
             'PHASE1_SCRAPERS_COMPLETE': self.PHASE1_SCRAPERS_COMPLETE,
-            'LEGACY_SCRAPER_COMPLETE': self.LEGACY_SCRAPER_COMPLETE,
             'PHASE2_RAW_COMPLETE': self.PHASE2_RAW_COMPLETE,
             'PHASE3_TRIGGER': self.PHASE3_TRIGGER,
             'PHASE3_ANALYTICS_COMPLETE': self.PHASE3_ANALYTICS_COMPLETE,
