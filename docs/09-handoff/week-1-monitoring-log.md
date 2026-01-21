@@ -22,19 +22,34 @@
 
 ### Day 0 - January 20, 2026 (Deployment Day)
 
-**Time**: 19:45 UTC
-**Checks Run**: Manual verification
+**Time**: 19:45 UTC (initial) + 21:03 UTC (final check)
+**Checks Run**: Manual verification + automated script (`./bin/monitoring/week_1_daily_checks.sh`)
 **Results**:
 - ✅ Service health: Healthy (200 OK)
 - ✅ Consistency mismatches: 0
 - ✅ Subcollection errors: 0
+- ✅ Recent errors: 0
 
-**Status**: ✅ Baseline established
-**Notes**:
-- Robustness improvements deployed (revision 00076-dsv)
-- Slack channel configured (#week-1-consistency-monitoring)
-- BigQuery table created (mlb_reference.unresolved_players)
-- All monitoring infrastructure ready
+**Status**: ✅ Baseline established - All systems operational
+**Deployments Completed**:
+1. **Coordinator** (revision 00076-dsv):
+   - Slack alerts for consistency mismatches
+   - BigQuery tracking for unresolved MLB players
+   - AlertManager integration for Pub/Sub failures
+   - Standardized logging (15 print→logger conversions)
+
+2. **Analytics** (revision 00091-twp):
+   - Staleness threshold fix: 6h → 12h
+   - Addresses late game timing issues
+   - Prevents daily production failures
+
+3. **Infrastructure**:
+   - #week-1-consistency-monitoring Slack channel active
+   - mlb_reference.unresolved_players BigQuery table created
+   - Daily monitoring script tested and working
+   - Monitoring log template established
+
+**Worker Note**: Code changes committed (deae4521) but deployment pending due to network connectivity issue with Artifact Registry. Not blocking - can deploy later.
 
 **Next**: Begin daily checks on Day 1 (Jan 21)
 
