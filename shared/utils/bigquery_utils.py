@@ -90,7 +90,7 @@ def execute_bigquery(
             return list(results)
 
     except Exception as e:
-        logger.error(f"BigQuery query failed: {e}")
+        logger.error(f"BigQuery query failed: {e}", exc_info=True)
         logger.debug(f"Failed query: {query}")
         return []
 
@@ -159,7 +159,7 @@ def insert_bigquery_rows(
         return True
 
     except Exception as e:
-        logger.error(f"Failed to insert rows into {table_id}: {e}")
+        logger.error(f"Failed to insert rows into {table_id}: {e}", exc_info=True)
         return False
 
 
@@ -194,7 +194,7 @@ def table_exists(
     except NotFound:
         return False
     except Exception as e:
-        logger.error(f"Error checking if table exists: {e}")
+        logger.error(f"Error checking if table exists: {e}", exc_info=True)
         return False
 
 
@@ -230,7 +230,7 @@ def get_table_row_count(
         logger.warning(f"Table not found: {table_id}")
         return 0
     except Exception as e:
-        logger.error(f"Error getting row count: {e}")
+        logger.error(f"Error getting row count: {e}", exc_info=True)
         return 0
 
 
@@ -286,7 +286,7 @@ def execute_bigquery_with_params(
         return [dict(row) for row in results]
         
     except Exception as e:
-        logger.error(f"Parameterized query failed: {e}")
+        logger.error(f"Parameterized query failed: {e}", exc_info=True)
         logger.debug(f"Failed query: {query}, params: {params}")
         return []
 
@@ -326,7 +326,7 @@ def update_bigquery_rows(
         return 0
         
     except Exception as e:
-        logger.error(f"DML query failed: {e}")
+        logger.error(f"DML query failed: {e}", exc_info=True)
         logger.debug(f"Failed query: {query}")
         return 0
 
