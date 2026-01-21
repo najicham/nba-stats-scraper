@@ -355,7 +355,7 @@ class MLBDataCollector:
                     ip = float(whole) + float(frac) / 3
                 else:
                     ip = float(ip_str)
-            except:
+            except (ValueError, TypeError):
                 ip = 0.0
 
             pitchers_list.append({

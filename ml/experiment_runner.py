@@ -91,7 +91,7 @@ def get_enabled_models(client: bigquery.Client) -> List[ModelInfo]:
         if row.feature_list:
             try:
                 feature_list = json.loads(row.feature_list)
-            except:
+            except (json.JSONDecodeError, ValueError):
                 pass
 
         models.append(ModelInfo(

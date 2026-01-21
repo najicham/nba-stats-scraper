@@ -153,7 +153,7 @@ class MLBDataCollector:
                         ip = int(whole) + int(frac) / 3
                     else:
                         ip = float(ip_str)
-                except:
+                except (ValueError, TypeError, AttributeError):
                     ip = 0.0
 
                 # Get pitcher handedness from game data

@@ -413,7 +413,7 @@ class MLBBettingProsBackfill:
         """Safely extract performance value."""
         try:
             return performance.get(period, {}).get(side)
-        except:
+        except (AttributeError, TypeError, KeyError):
             return None
 
     def save_to_gcs(self, market_id: int, date: str, props: List[Dict]) -> bool:
