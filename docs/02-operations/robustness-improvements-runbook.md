@@ -36,8 +36,14 @@ This indicates a problem with the Week 1 dual-write migration. Investigate immed
 
 **Configuration Required**:
 ```bash
+# Option 1: Dedicated Week 1 consistency monitoring channel (recommended)
+export SLACK_WEBHOOK_URL_CONSISTENCY="<webhook-url-for-week-1-channel>"
+
+# Option 2: Use existing #nba-alerts channel (fallback)
 export SLACK_WEBHOOK_URL_WARNING="<webhook-url-for-nba-alerts-channel>"
 ```
+
+**Recommended**: Create a temporary `#week-1-consistency-monitoring` channel for the 15-day migration period (Jan 21 - Feb 5). This keeps Week 1 alerts separate from general warnings and can be archived after migration is complete.
 
 **Troubleshooting**:
 - Check Cloud Logging for detailed error traces
@@ -369,6 +375,10 @@ gcloud logging read \
 
 **Slack Alerting**:
 ```bash
+# Week 1 consistency monitoring (recommended - dedicated channel)
+SLACK_WEBHOOK_URL_CONSISTENCY="<webhook-url>"  # For #week-1-consistency-monitoring
+
+# OR fallback to existing warnings channel
 SLACK_WEBHOOK_URL_WARNING="<webhook-url>"  # For #nba-alerts channel
 ```
 
@@ -425,10 +435,10 @@ alert_mgr.send_alert(
 
 ### Disable Slack Alerts
 ```bash
-# Unset environment variable
+# Unset environment variable(s)
 gcloud run services update prediction-coordinator \
   --region us-west2 \
-  --remove-env-vars SLACK_WEBHOOK_URL_WARNING
+  --remove-env-vars SLACK_WEBHOOK_URL_CONSISTENCY,SLACK_WEBHOOK_URL_WARNING
 ```
 
 ### Disable BigQuery Inserts for Unresolved Players

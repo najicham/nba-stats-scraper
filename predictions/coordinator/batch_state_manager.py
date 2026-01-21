@@ -541,10 +541,13 @@ class BatchStateManager:
                 )
                 logger.warning(error_msg)
 
-                # Send Slack alert to #nba-alerts channel
+                # Send Slack alert to dedicated Week 1 consistency monitoring channel
                 try:
                     from shared.utils.slack_channels import send_to_slack
-                    webhook_url = os.environ.get('SLACK_WEBHOOK_URL_WARNING')
+                    # Use dedicated consistency channel (e.g., #week-1-consistency-monitoring)
+                    # Falls back to general warnings channel if not set
+                    webhook_url = os.environ.get('SLACK_WEBHOOK_URL_CONSISTENCY') or \
+                                  os.environ.get('SLACK_WEBHOOK_URL_WARNING')
                     if webhook_url:
                         alert_text = f"""🚨 *Dual-Write Consistency Mismatch*
 
