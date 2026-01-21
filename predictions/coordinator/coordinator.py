@@ -162,13 +162,8 @@ if not COORDINATOR_API_KEY:
 # Health check endpoints (Phase 1 - Task 1.1: Add Health Endpoints)
 # See: docs/08-projects/current/pipeline-reliability-improvements/
 health_checker = HealthChecker(
-    project_id=PROJECT_ID,
     service_name='prediction-coordinator',
-    check_bigquery=True,  # Coordinator queries BigQuery for player data
-    check_firestore=False,  # Coordinator doesn't use Firestore directly
-    check_gcs=False,  # Coordinator doesn't access GCS directly
-    required_env_vars=['GCP_PROJECT_ID', 'PREDICTION_REQUEST_TOPIC', 'PREDICTION_READY_TOPIC'],
-    optional_env_vars=['BATCH_SUMMARY_TOPIC', 'COORDINATOR_API_KEY', 'ENVIRONMENT']
+    version='1.0'
 )
 app.register_blueprint(create_health_blueprint(health_checker))
 logger.info("Health check endpoints registered: /health, /ready, /health/deep")
