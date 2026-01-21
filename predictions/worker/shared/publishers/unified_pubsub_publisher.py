@@ -299,18 +299,47 @@ class UnifiedPubSubPublisher:
 
     def _alert_publish_failure(self, topic: str, message: Dict, error: Exception) -> None:
         """
-        Alert on publish failure (placeholder - will integrate with AlertManager).
+        Alert on publish failure using AlertManager (rate-limited).
 
         Args:
             topic: Topic that failed
             message: Message that failed to publish
             error: Exception that occurred
         """
-        # TODO: Integrate with AlertManager in next step
+        processor_name = message.get('processor_name', 'unknown')
+        error_type = type(error).__name__
+
         logger.warning(
-            f"Pub/Sub publishing failed for {message.get('processor_name')}. "
-            f"Downstream will use scheduler backup."
+            f"Pub/Sub publishing failed for {processor_name} to topic {topic}. "
+            f"Error: {error_type}: {error}. Downstream will use scheduler backup."
         )
+
+        # Integrate with AlertManager for rate-limited notifications
+        try:
+            from shared.alerts import get_alert_manager, should_send_alert
+
+            # Check if we should send alert (rate limited)
+            if should_send_alert(
+                processor_name=processor_name,
+                error_type=f"PubSubPublishFailure_{error_type}"
+            ):
+                alert_mgr = get_alert_manager()
+                alert_mgr.send_alert(
+                    severity='warning',
+                    title=f'Pub/Sub Publish Failure: {processor_name} (Worker)',
+                    message=f"""
+Processor: {processor_name}
+Topic: {topic}
+Error: {error_type}: {error}
+Game Date: {message.get('game_date', 'unknown')}
+Correlation ID: {message.get('correlation_id', 'unknown')}
+
+Note: Downstream orchestration will use scheduler backup. This is not critical but indicates a potential infrastructure issue.
+""".strip(),
+                    category=f"pubsub_failure_{processor_name}_worker"
+                )
+        except Exception as alert_error:
+            logger.error(f"Failed to send alert for Pub/Sub failure: {alert_error}", exc_info=True)
 
     def publish_batch(
         self,

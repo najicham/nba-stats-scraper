@@ -547,11 +547,7 @@ class BatchConsolidator:
             try:
                 lock = DistributedLock(project_id=self.project_id, lock_type="consolidation")
                 logger.info(
-                    f"Acquiring consolidation lock for game_date={game_date}, batch={batch_id}"
-                )
-                print(
-                    f"🔒 Acquiring consolidation lock for game_date={game_date}, batch={batch_id}",
-                    flush=True
+                    f"🔒 Acquiring consolidation lock for game_date={game_date}, batch={batch_id}"
                 )
 
                 with lock.acquire(game_date=game_date, operation_id=batch_id):
@@ -566,8 +562,7 @@ class BatchConsolidator:
             except LockAcquisitionError as e:
                 # Failed to acquire lock after max retries
                 error_msg = f"Cannot acquire consolidation lock: {e}"
-                print(f"❌ Lock acquisition failed: {error_msg}", flush=True)
-                logger.error(error_msg)
+                logger.error(f"❌ Lock acquisition failed: {error_msg}")
                 return ConsolidationResult(
                     rows_affected=0,
                     staging_tables_merged=0,
@@ -613,10 +608,9 @@ class BatchConsolidator:
         # Find all staging tables for this batch
         staging_tables = self._find_staging_tables(batch_id)
 
-        print(f"🔍 Found {len(staging_tables)} staging tables for batch={batch_id}", flush=True)
+        logger.info(f"🔍 Found {len(staging_tables)} staging tables for batch={batch_id}")
         if not staging_tables:
-            print(f"⚠️  WARNING: No staging tables found for batch={batch_id}", flush=True)
-            logger.warning(f"No staging tables found for batch={batch_id}")
+            logger.warning(f"⚠️ No staging tables found for batch={batch_id}")
             return ConsolidationResult(
                 rows_affected=0,
                 staging_tables_merged=0,
@@ -629,13 +623,8 @@ class BatchConsolidator:
             # Build and execute the MERGE query
             merge_query = self._build_merge_query(staging_tables, game_date)
 
-            print(
-                f"🔄 Executing MERGE for batch={batch_id} with {len(staging_tables)} staging tables",
-                flush=True
-            )
             logger.info(
-                f"Executing consolidation MERGE for batch={batch_id} "
-                f"with {len(staging_tables)} staging tables"
+                f"🔄 Executing consolidation MERGE for batch={batch_id} with {len(staging_tables)} staging tables"
             )
 
             merge_job = self.bq_client.query(merge_query)
@@ -644,24 +633,15 @@ class BatchConsolidator:
             rows_affected = merge_job.num_dml_affected_rows or 0
 
             elapsed_ms = (time.time() - start_time) * 1000
-            print(
-                f"✅ MERGE complete: {rows_affected} rows affected in {elapsed_ms:.1f}ms (batch={batch_id})",
-                flush=True
-            )
             logger.info(
-                f"Consolidation MERGE complete: {rows_affected} rows affected "
-                f"in {elapsed_ms:.1f}ms (batch={batch_id})"
+                f"✅ MERGE complete: {rows_affected} rows affected in {elapsed_ms:.1f}ms (batch={batch_id})"
             )
 
             # CRITICAL: Check if MERGE actually wrote data
             if rows_affected == 0:
-                print(
-                    f"⚠️  WARNING: MERGE returned 0 rows for batch={batch_id}! "
-                    f"Staging tables had {len(staging_tables)} tables. NOT cleaning up for investigation.",
-                    flush=True
-                )
                 logger.error(
-                    f"MERGE returned 0 rows for batch={batch_id} with {len(staging_tables)} staging tables. "
+                    f"⚠️ MERGE returned 0 rows for batch={batch_id}! Staging tables had {len(staging_tables)} tables. "
+                    f"NOT cleaning up for investigation. "
                     f"This suggests data loss - staging tables NOT cleaned up for investigation."
                 )
                 return ConsolidationResult(
@@ -674,7 +654,7 @@ class BatchConsolidator:
 
             # SESSION 92 FIX: Post-consolidation validation to detect duplicates
             # This catches any duplicates that might slip through despite the lock
-            print(f"🔍 Running post-consolidation validation for game_date={game_date}...", flush=True)
+            logger.info(f"🔍 Running post-consolidation validation for game_date={game_date}...")
             duplicate_count = self._check_for_duplicates(game_date)
 
             if duplicate_count > 0:
@@ -684,7 +664,6 @@ class BatchConsolidator:
                     f"This indicates a race condition or lock failure. "
                     f"NOT cleaning up staging tables for investigation."
                 )
-                print(error_msg, flush=True)
                 logger.error(error_msg)
                 return ConsolidationResult(
                     rows_affected=rows_affected,
@@ -694,15 +673,14 @@ class BatchConsolidator:
                     error_message=f"Duplicate business keys detected: {duplicate_count}"
                 )
             else:
-                print(f"✅ Post-consolidation validation PASSED (0 duplicates)", flush=True)
-                logger.info(f"Post-consolidation validation passed: 0 duplicates for game_date={game_date}")
+                logger.info(f"✅ Post-consolidation validation PASSED: 0 duplicates for game_date={game_date}")
 
             # Clean up staging tables if requested AND rows were merged AND validation passed
             cleaned_count = 0
             if cleanup:
-                print(f"🧹 Cleaning up {len(staging_tables)} staging tables...", flush=True)
+                logger.info(f"🧹 Cleaning up {len(staging_tables)} staging tables...")
                 cleaned_count = self._cleanup_staging_tables(batch_id)
-                print(f"✅ Cleaned up {cleaned_count}/{len(staging_tables)} staging tables", flush=True)
+                logger.info(f"✅ Cleaned up {cleaned_count}/{len(staging_tables)} staging tables")
 
             return ConsolidationResult(
                 rows_affected=rows_affected,
@@ -714,8 +692,7 @@ class BatchConsolidator:
 
         except gcp_exceptions.BadRequest as e:
             error_msg = f"Invalid MERGE query: {e}"
-            print(f"❌ BadRequest error in MERGE: {error_msg}", flush=True)
-            logger.error(error_msg)
+            logger.error(f"❌ BadRequest error in MERGE: {error_msg}")
             return ConsolidationResult(
                 rows_affected=0,
                 staging_tables_merged=0,
@@ -726,8 +703,7 @@ class BatchConsolidator:
 
         except gcp_exceptions.Conflict as e:
             error_msg = f"DML conflict during consolidation: {e}"
-            print(f"❌ Conflict error in MERGE: {error_msg}", flush=True)
-            logger.error(error_msg)
+            logger.error(f"❌ Conflict error in MERGE: {error_msg}")
             return ConsolidationResult(
                 rows_affected=0,
                 staging_tables_merged=0,
@@ -738,8 +714,7 @@ class BatchConsolidator:
 
         except Exception as e:
             error_msg = f"Unexpected error during consolidation: {type(e).__name__}: {e}"
-            print(f"❌ Unexpected error in consolidation: {error_msg}", flush=True)
-            logger.error(error_msg, exc_info=True)
+            logger.error(f"❌ Unexpected error in consolidation: {error_msg}", exc_info=True)
             return ConsolidationResult(
                 rows_affected=0,
                 staging_tables_merged=0,
