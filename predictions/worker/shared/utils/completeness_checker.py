@@ -329,7 +329,8 @@ class CompletenessChecker:
         """
 
         logger.debug(f"Expected games query:\n{query}")
-        return self.bq_client.query(query).to_dataframe()
+        query_job = self.bq_client.query(query)
+        return query_job.result(timeout=60).to_dataframe()
 
     def _query_expected_games_player(
         self,
@@ -512,7 +513,8 @@ class CompletenessChecker:
         )
 
         logger.debug(f"Expected games query (player-based):\n{query}")
-        df = self.bq_client.query(query, job_config=job_config).to_dataframe()
+        query_job = self.bq_client.query(query, job_config=job_config)
+        df = query_job.result(timeout=60).to_dataframe()
 
         # Log summary for debugging
         if not df.empty:
@@ -564,7 +566,8 @@ class CompletenessChecker:
         """
 
         logger.debug(f"Actual games query:\n{query}")
-        return self.bq_client.query(query).to_dataframe()
+        query_job = self.bq_client.query(query)
+        return query_job.result(timeout=60).to_dataframe()
 
     def _get_count(self, df: 'DataFrame', entity_id: str) -> int:
         """Extract count for entity from DataFrame."""

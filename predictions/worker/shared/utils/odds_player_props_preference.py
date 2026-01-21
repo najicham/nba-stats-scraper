@@ -166,7 +166,8 @@ def get_preferred_player_props(
     job_config = bigquery.QueryJobConfig(query_parameters=query_params)
     
     # Execute query
-    df = client.query(query, job_config=job_config).to_dataframe()
+    query_job = client.query(query, job_config=job_config)
+    df = query_job.result(timeout=60).to_dataframe()
     
     return df
 
@@ -261,7 +262,8 @@ def get_props_for_game(
     ]
     
     job_config = bigquery.QueryJobConfig(query_parameters=query_params)
-    df = client.query(query, job_config=job_config).to_dataframe()
+    query_job = client.query(query, job_config=job_config)
+    df = query_job.result(timeout=60).to_dataframe()
     
     return df
 
@@ -333,7 +335,8 @@ def compare_bookmakers(
     ]
     
     job_config = bigquery.QueryJobConfig(query_parameters=query_params)
-    df = client.query(query, job_config=job_config).to_dataframe()
+    query_job = client.query(query, job_config=job_config)
+    df = query_job.result(timeout=60).to_dataframe()
     
     return df
 
@@ -385,7 +388,8 @@ def get_line_movement(
     ]
     
     job_config = bigquery.QueryJobConfig(query_parameters=query_params)
-    df = client.query(query, job_config=job_config).to_dataframe()
+    query_job = client.query(query, job_config=job_config)
+    df = query_job.result(timeout=60).to_dataframe()
     
     return df
 
@@ -433,7 +437,8 @@ def get_bookmaker_coverage_stats(
     ]
     
     job_config = bigquery.QueryJobConfig(query_parameters=query_params)
-    result = client.query(query, job_config=job_config).to_dataframe()
+    query_job = client.query(query, job_config=job_config)
+    result = query_job.result(timeout=60).to_dataframe()
     
     stats = result.iloc[0].to_dict()
     
