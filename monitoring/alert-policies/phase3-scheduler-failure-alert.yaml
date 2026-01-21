@@ -1,0 +1,107 @@
+# Cloud Monitoring Alert Policy for Phase 3 Scheduler Failures
+#
+# This alert triggers when the same-day-phase3-tomorrow scheduler fails to execute
+# or returns an error status, preventing upstream data from being ready for predictions.
+#
+# Deploy with:
+#   gcloud alpha monitoring policies create --policy-from-file=phase3-scheduler-failure-alert.yaml
+#
+# Background:
+#   On Jan 17, 2026, Phase 3 created only 1 record instead of 156, causing 14 players
+#   to miss predictions. This alert detects scheduler execution failures early.
+
+displayName: "Phase 3 Scheduler Failure (Critical)"
+documentation:
+  content: |
+    ## Phase 3 Scheduler Failure Alert
+
+    **Severity:** Critical
+    **Impact:** Predictions will run without complete upstream data, causing missing predictions
+
+    ### What This Means
+    The `same-day-phase3-tomorrow` Cloud Scheduler job failed to execute successfully.
+    This job prepares upstream player game context data for tomorrow's predictions.
+
+    **Timeline:**
+    - 5:00 PM ET: Phase 3 scheduler should run
+    - 5:45 PM ET: Data freshness validator checks
+    - 6:00 PM ET: Predictions run (will fail if Phase 3 data missing)
+
+    ### Immediate Actions
+
+    1. **Check scheduler status:**
+       ```bash
+       gcloud scheduler jobs describe same-day-phase3-tomorrow --location=us-west2
+       ```
+
+    2. **Check recent executions:**
+       ```bash
+       gcloud logging read 'resource.type="cloud_scheduler_job" AND
+         resource.labels.job_id="same-day-phase3-tomorrow"' \
+         --limit=5 --format="value(timestamp,jsonPayload.message)"
+       ```
+
+    3. **Check Phase 3 processor logs for errors:**
+       ```bash
+       gcloud logging read 'resource.labels.service_name="nba-phase3-analytics-processors" AND
+         severity>=ERROR AND
+         timestamp>="$(date -u -d "30 minutes ago" +%Y-%m-%dT%H:%M:%SZ)"' \
+         --limit=20
+       ```
+
+    4. **Check current record count for tomorrow:**
+       ```bash
+       bq query --nouse_legacy_sql "
+       SELECT COUNT(*) as record_count
+       FROM \`nba-props-platform.nba_analytics.upcoming_player_game_context\`
+       WHERE game_date = DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY)
+       AND created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 HOUR)
+       "
+       ```
+
+       Expected: ~150+ records. If <50, Phase 3 failed.
+
+    5. **Manually trigger if needed (before 6 PM ET):**
+       ```bash
+       gcloud scheduler jobs run same-day-phase3-tomorrow --location=us-west2
+       ```
+
+    ### Root Cause (Jan 17, 2026 Incident)
+    Phase 3 scheduler triggered but created only 1 record instead of 156 due to:
+    - Missing upstream data (betting lines not published yet)
+    - Weekend game timing (Friday → Sunday = 2-day gap)
+    - No validation of record count after execution
+
+    ### Reference
+    - Root Cause Analysis: phase3_root_cause_analysis_20260118_1525.txt
+    - Monitoring System: docs/09-handoff/MONITORING-VALIDATION-GUIDE.md
+    - Session 107 Investigation: docs/09-handoff/SESSION-107-HANDOFF.md
+  mimeType: text/markdown
+
+conditions:
+  - displayName: "Phase 3 Scheduler Execution Failed"
+    conditionMatchedLog:
+      filter: |
+        resource.type="cloud_scheduler_job"
+        resource.labels.job_id="same-day-phase3-tomorrow"
+        (severity>=ERROR OR
+         jsonPayload.message:"failed" OR
+         jsonPayload.message:"error" OR
+         httpRequest.status>=400)
+      labelExtractors:
+        job_id: 'EXTRACT(resource.labels.job_id)'
+        error_message: 'EXTRACT(jsonPayload.message)'
+
+combiner: OR
+
+enabled: true
+
+# Notification channels
+# NBA Platform Alerts channel (includes #app-error-alerts)
+notificationChannels:
+  - projects/nba-props-platform/notificationChannels/13444328261517403081
+
+alertStrategy:
+  autoClose: 86400s  # 24 hours (one scheduler cycle)
+  notificationRateLimit:
+    period: 3600s  # Maximum 1 notification per hour to avoid spam

@@ -1,0 +1,176 @@
+=================================================================
+  January 2026 Backfill Validation - Final Report
+=================================================================
+
+Generated: 2026-01-21 00:49:14 UTC
+Validation Suite Version: 1.0
+
+=================================================================
+  Executive Summary
+=================================================================
+
+This report combines multiple validation approaches to ensure
+January 2026 backfill completed successfully:
+
+1. Data Quality Analysis - Temporal, volume, completeness checks
+2. Pipeline Validation - Per-day comprehensive validation
+3. Cross-Phase Consistency - Data flow verification
+4. Statistical Anomalies - Outlier detection
+
+=================================================================
+  1. Data Quality Analysis
+=================================================================
+
+
+[0;34m======================================================================[0m
+[0;34m  Data Quality Validation for January 2026[0m
+[0;34m======================================================================[0m
+
+
+[0;34m1. Temporal Consistency Check[0m
+-----------------------------
+Schedule has data for 21 distinct dates
+[1;33m⚠ Phase 2 (Raw): Missing 21 dates[0m
+  - 2026-01-01
+  - 2026-01-02
+  - 2026-01-03
+  - 2026-01-04
+  - 2026-01-05
+  - 2026-01-06
+  - 2026-01-07
+  - 2026-01-08
+  - 2026-01-09
+  - 2026-01-10
+  - 2026-01-11
+  - 2026-01-12
+  - 2026-01-13
+  - 2026-01-14
+  - 2026-01-15
+  - 2026-01-16
+  - 2026-01-17
+  - 2026-01-18
+  - 2026-01-19
+  - 2026-01-20
+  - 2026-01-21
+[1;33m⚠ Phase 3 (Analytics): Missing 2 dates[0m
+  - 2026-01-20
+  - 2026-01-21
+Traceback (most recent call last):
+  File "/home/naji/code/nba-stats-scraper/bin/validation/validate_data_quality_january.py", line 450, in <module>
+    main()
+  File "/home/naji/code/nba-stats-scraper/bin/validation/validate_data_quality_january.py", line 446, in main
+    validator.validate_all()
+  File "/home/naji/code/nba-stats-scraper/bin/validation/validate_data_quality_january.py", line 86, in validate_all
+    self.check_temporal_consistency()
+  File "/home/naji/code/nba-stats-scraper/bin/validation/validate_data_quality_january.py", line 142, in check_temporal_consistency
+    for row in self.client.query(query):
+  File "/home/naji/code/nba-stats-scraper/.venv/lib/python3.12/site-packages/google/cloud/bigquery/job/query.py", line 2235, in __iter__
+    return iter(self.result())
+                ^^^^^^^^^^^^^
+  File "/home/naji/code/nba-stats-scraper/.venv/lib/python3.12/site-packages/google/cloud/bigquery/job/query.py", line 1706, in result
+    while not is_job_done():
+              ^^^^^^^^^^^^^
+  File "/home/naji/code/nba-stats-scraper/.venv/lib/python3.12/site-packages/google/api_core/retry/retry_unary.py", line 294, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/home/naji/code/nba-stats-scraper/.venv/lib/python3.12/site-packages/google/api_core/retry/retry_unary.py", line 156, in retry_target
+    next_sleep = _retry_error_helper(
+                 ^^^^^^^^^^^^^^^^^^^^
+  File "/home/naji/code/nba-stats-scraper/.venv/lib/python3.12/site-packages/google/api_core/retry/retry_base.py", line 214, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/home/naji/code/nba-stats-scraper/.venv/lib/python3.12/site-packages/google/api_core/retry/retry_unary.py", line 147, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/home/naji/code/nba-stats-scraper/.venv/lib/python3.12/site-packages/google/cloud/bigquery/job/query.py", line 1655, in is_job_done
+    raise job_failed_exception
+google.api_core.exceptions.NotFound: 404 Not found: Table nba-props-platform:nba_precompute.ml_feature_store was not found in location us-west2; reason: notFound, message: Not found: Table nba-props-platform:nba_precompute.ml_feature_store was not found in location us-west2
+
+Location: us-west2
+Job ID: 608343e6-8cac-4bfb-b4c6-6346bf508b23
+
+
+=================================================================
+  Additional Validation Methods
+=================================================================
+
+To further validate January 2026 data, consider these approaches:
+
+1. SPOT CHECK VALIDATION
+   - Manually verify 3-5 random dates
+   - Check game results match ESPN/NBA.com
+   - Verify player stats match official box scores
+
+   Example:
+   $ python3 bin/validate_pipeline.py 2026-01-15 --verbose --show-missing
+
+2. GRADING ACCURACY CHECK
+   - Verify prediction grading for completed games
+   - Check grading coverage (should be 70-90%)
+
+   Query:
+   SELECT game_date, COUNT(*) as graded_predictions
+   FROM `nba_predictions.prediction_grading`
+   WHERE game_date BETWEEN '2026-01-01' AND '2026-01-21'
+   GROUP BY game_date
+   ORDER BY game_date;
+
+3. TIME SERIES ANALYSIS
+   - Plot daily player counts
+   - Look for unexpected gaps or spikes
+   - Verify consistent processing patterns
+
+4. COMPARISON WITH PREVIOUS MONTH
+   - Compare December 2025 vs January 2026
+   - Look for similar patterns and volumes
+   - Verify no degradation in coverage
+
+5. MANUAL SPOT CHECKS
+   - Pick 2-3 high-profile games
+   - Manually verify all stats for star players
+   - Check against multiple sources (NBA.com, ESPN, Basketball Reference)
+
+6. DOWNSTREAM IMPACT CHECK
+   - Verify web app is showing predictions
+   - Check GCS exports are complete
+   - Validate JSON files have expected structure
+
+=================================================================
+  Validation Artifacts
+=================================================================
+
+Output files saved to: validation_results/january_2026_complete/
+
+- final_report.txt         (this file)
+- data_quality.txt          (quality analysis results)
+
+=================================================================
+  Next Steps
+=================================================================
+
+1. Review this report for any issues
+2. Investigate any failed or partial validations
+3. Run spot checks on random dates
+4. Verify downstream systems (web app, exports)
+5. Document any findings or required fixes
+
+=================================================================
+  Approval Checklist
+=================================================================
+
+Before declaring January 2026 backfill complete, verify:
+
+[ ] All dates have data across all phases
+[ ] Player counts are within expected ranges
+[ ] No statistical anomalies detected
+[ ] Cross-phase consistency maintained
+[ ] Grading coverage is 70-90%+
+[ ] Spot checks pass for 3-5 random dates
+[ ] Web app showing predictions correctly
+[ ] GCS exports are complete
+
+=================================================================
+
+For questions or issues, see:
+- docs/02-operations/backfill-guide.md
+- docs/02-operations/daily-operations.md
+

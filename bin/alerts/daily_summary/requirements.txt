@@ -1,0 +1,14 @@
+# NBA Prediction Daily Summary Cloud Function - Dependencies
+# Created: 2026-01-17 (Week 3 - Option B Implementation)
+
+# Cloud Functions framework
+functions-framework==3.*
+
+# Google Cloud libraries
+google-cloud-bigquery==3.14.*
+google-cloud-logging==3.9.*
+google-cloud-pubsub==2.19.*
+
+# HTTP requests
+requests==2.31.*
+google-cloud-secret-manager==2.16.0

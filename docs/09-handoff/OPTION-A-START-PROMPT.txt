@@ -1,0 +1,99 @@
+Context from Recent Sessions:
+- NBA platform operational (Session 82 complete)
+- MLB prediction system functional but has optimization opportunities
+- Batch predictions can be 30-40% faster with improvements
+- Feature coverage needs better monitoring
+- See: docs/09-handoff/OPTION-A-MLB-OPTIMIZATION-HANDOFF.md
+
+Starting Option A: MLB Performance Optimization
+===============================================
+
+Goal: Optimize MLB prediction system for 30-40% faster batch predictions
+and add feature coverage monitoring.
+
+Business Value:
+- Faster prediction generation (30-40% improvement)
+- Better resource utilization (lower costs)
+- Feature coverage visibility
+- Quick wins with low risk
+
+What to Build:
+1. Batch Prediction Optimization
+   - Parallel processing improvements
+   - Query optimization in feature fetching
+   - Caching strategy for repeated lookups
+   - Reduce redundant BigQuery calls
+
+2. Feature Coverage Monitoring
+   - Track which features are missing for predictions
+   - Alert on low feature availability
+   - Dashboard for feature completeness
+
+3. Performance Metrics
+   - Prediction latency tracking
+   - Throughput measurements
+   - Resource utilization monitoring
+
+Expected Time: 4-6 hours
+- Analysis: 1-2 hours
+- Implementation: 2-3 hours
+- Testing & validation: 1 hour
+
+Deliverables:
+- [ ] Optimized batch prediction code (30-40% faster)
+- [ ] Feature coverage monitoring dashboard/alerts
+- [ ] Performance benchmarks (before/after)
+- [ ] Documentation of optimization techniques
+- [ ] Create OPTION-A-MLB-OPTIMIZATION-COMPLETE.md handoff
+
+Implementation Guide: docs/09-handoff/OPTION-A-MLB-OPTIMIZATION-HANDOFF.md
+
+Current MLB System State:
+- Prediction system: Functional
+- Batch processing: Works but can be faster
+- Feature pipeline: Stable
+- Opportunity: Parallel processing, caching, query optimization
+
+Optimization Areas:
+1. **Parallel Processing**
+   - Current: Sequential prediction generation
+   - Target: Batch parallel processing (10-20 predictions at once)
+
+2. **Query Optimization**
+   - Current: Individual feature fetches per prediction
+   - Target: Bulk feature fetching, shared queries
+
+3. **Caching Strategy**
+   - Current: No caching
+   - Target: Cache player stats, team data for batch duration
+
+4. **Feature Monitoring**
+   - Current: No visibility into missing features
+   - Target: Dashboard + alerts for feature gaps
+
+Success Metrics:
+- 30-40% reduction in batch prediction time
+- < 5% feature coverage gaps for active players
+- No accuracy degradation
+- Cost neutral or reduced (better resource usage)
+
+Risk Level: LOW
+- Changes are performance-focused, not algorithmic
+- Can be tested thoroughly before deployment
+- Easy rollback if issues arise
+- MLB system is separate from NBA (no cross-impact)
+
+Recommended Approach:
+1. Profile current performance (establish baseline)
+2. Implement parallel processing first (biggest win)
+3. Add query optimization
+4. Implement caching
+5. Add feature monitoring
+6. Benchmark and compare to baseline
+7. Deploy with gradual rollout
+
+This is a quick win project - tangible performance improvements in 4-6 hours of work.
+
+Start by reading the full implementation guide in OPTION-A-MLB-OPTIMIZATION-HANDOFF.md.
+
+Note: This is independent of NBA work and can be done anytime. Good for when you want a focused optimization task with clear, measurable results.

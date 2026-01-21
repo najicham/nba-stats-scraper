@@ -1,0 +1,67 @@
+
+[0;34m======================================================================[0m
+[0;34m  Data Quality Validation for January 2026[0m
+[0;34m======================================================================[0m
+
+
+[0;34m1. Temporal Consistency Check[0m
+-----------------------------
+Schedule has data for 21 distinct dates
+[1;33m⚠ Phase 2 (Raw): Missing 21 dates[0m
+  - 2026-01-01
+  - 2026-01-02
+  - 2026-01-03
+  - 2026-01-04
+  - 2026-01-05
+  - 2026-01-06
+  - 2026-01-07
+  - 2026-01-08
+  - 2026-01-09
+  - 2026-01-10
+  - 2026-01-11
+  - 2026-01-12
+  - 2026-01-13
+  - 2026-01-14
+  - 2026-01-15
+  - 2026-01-16
+  - 2026-01-17
+  - 2026-01-18
+  - 2026-01-19
+  - 2026-01-20
+  - 2026-01-21
+[1;33m⚠ Phase 3 (Analytics): Missing 2 dates[0m
+  - 2026-01-20
+  - 2026-01-21
+Traceback (most recent call last):
+  File "/home/naji/code/nba-stats-scraper/bin/validation/validate_data_quality_january.py", line 450, in <module>
+    main()
+  File "/home/naji/code/nba-stats-scraper/bin/validation/validate_data_quality_january.py", line 446, in main
+    validator.validate_all()
+  File "/home/naji/code/nba-stats-scraper/bin/validation/validate_data_quality_january.py", line 86, in validate_all
+    self.check_temporal_consistency()
+  File "/home/naji/code/nba-stats-scraper/bin/validation/validate_data_quality_january.py", line 142, in check_temporal_consistency
+    for row in self.client.query(query):
+  File "/home/naji/code/nba-stats-scraper/.venv/lib/python3.12/site-packages/google/cloud/bigquery/job/query.py", line 2235, in __iter__
+    return iter(self.result())
+                ^^^^^^^^^^^^^
+  File "/home/naji/code/nba-stats-scraper/.venv/lib/python3.12/site-packages/google/cloud/bigquery/job/query.py", line 1706, in result
+    while not is_job_done():
+              ^^^^^^^^^^^^^
+  File "/home/naji/code/nba-stats-scraper/.venv/lib/python3.12/site-packages/google/api_core/retry/retry_unary.py", line 294, in retry_wrapped_func
+    return retry_target(
+           ^^^^^^^^^^^^^
+  File "/home/naji/code/nba-stats-scraper/.venv/lib/python3.12/site-packages/google/api_core/retry/retry_unary.py", line 156, in retry_target
+    next_sleep = _retry_error_helper(
+                 ^^^^^^^^^^^^^^^^^^^^
+  File "/home/naji/code/nba-stats-scraper/.venv/lib/python3.12/site-packages/google/api_core/retry/retry_base.py", line 214, in _retry_error_helper
+    raise final_exc from source_exc
+  File "/home/naji/code/nba-stats-scraper/.venv/lib/python3.12/site-packages/google/api_core/retry/retry_unary.py", line 147, in retry_target
+    result = target()
+             ^^^^^^^^
+  File "/home/naji/code/nba-stats-scraper/.venv/lib/python3.12/site-packages/google/cloud/bigquery/job/query.py", line 1655, in is_job_done
+    raise job_failed_exception
+google.api_core.exceptions.NotFound: 404 Not found: Table nba-props-platform:nba_precompute.ml_feature_store was not found in location us-west2; reason: notFound, message: Not found: Table nba-props-platform:nba_precompute.ml_feature_store was not found in location us-west2
+
+Location: us-west2
+Job ID: 608343e6-8cac-4bfb-b4c6-6346bf508b23
+
