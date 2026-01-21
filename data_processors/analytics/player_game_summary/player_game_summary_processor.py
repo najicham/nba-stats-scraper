@@ -193,7 +193,7 @@ class PlayerGameSummaryProcessor(
                 'date_field': 'game_date',
                 'check_type': 'date_range',
                 'expected_count_min': 200,  # ~200+ active players per day
-                'max_age_hours_warn': 6,
+                'max_age_hours_warn': 12,  # Increased from 6h - allow for late game completion
                 'max_age_hours_fail': 24,
                 'critical': True
             },
@@ -205,7 +205,7 @@ class PlayerGameSummaryProcessor(
                 'date_field': 'game_date',
                 'check_type': 'date_range',
                 'expected_count_min': 200,
-                'max_age_hours_warn': 6,  # Increased from 4h (games finish late)
+                'max_age_hours_warn': 12,  # Increased from 6h - allow for late game completion + scraper delay
                 'max_age_hours_fail': 36,  # Increased from 12h (R-009 fix: allow overnight delays)
                 'critical': True  # Need either NBA.com OR BDL
             },
@@ -217,7 +217,7 @@ class PlayerGameSummaryProcessor(
                 'date_field': 'game_date',
                 'check_type': 'date_range',
                 'expected_count_min': 2000,  # Many shot events per day
-                'max_age_hours_warn': 6,
+                'max_age_hours_warn': 12,  # Increased from 6h - consistent with critical sources
                 'max_age_hours_fail': 24,
                 'critical': False  # Optional, has fallbacks
             },
@@ -229,7 +229,7 @@ class PlayerGameSummaryProcessor(
                 'date_field': 'game_date',
                 'check_type': 'date_range',
                 'expected_count_min': 2000,
-                'max_age_hours_warn': 6,
+                'max_age_hours_warn': 12,  # Increased from 6h - consistent with other sources
                 'max_age_hours_fail': 24,
                 'critical': False  # Backup only
             },
