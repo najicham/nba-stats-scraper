@@ -46,8 +46,8 @@ from datetime import datetime, timezone
 from typing import Dict, Optional, Tuple
 
 import functions_framework
-from google.cloud import bigquery
-from shared.clients.bigquery_pool import get_bigquery_client, pubsub_v1
+from google.cloud import bigquery, pubsub_v1
+from shared.clients.bigquery_pool import get_bigquery_client
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

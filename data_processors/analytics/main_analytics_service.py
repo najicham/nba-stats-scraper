@@ -399,7 +399,8 @@ def process_analytics():
             'start_date': start_date,
             'end_date': end_date,
             'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
-            'triggered_by': source_table
+            'triggered_by': source_table,
+            'backfill_mode': message.get('backfill_mode', False)  # Support backfill mode from Pub/Sub
         }
 
         # Phase 1.2: Boxscore completeness pre-flight check

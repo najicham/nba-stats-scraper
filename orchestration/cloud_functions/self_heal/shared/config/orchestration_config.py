@@ -29,7 +29,7 @@ class PhaseTransitionConfig:
         'odds_api_game_lines',        # Per-game odds
         'nbac_schedule',              # Schedule updates
         'nbac_gamebook_player_stats', # Post-game player stats
-        'br_roster',                  # Basketball-ref rosters
+        'br_rosters_current',         # Basketball-ref rosters
     ])
 
     # Phase 3 -> Phase 4: List of expected processors

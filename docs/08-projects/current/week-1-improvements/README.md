@@ -12,6 +12,24 @@
 - **[DEPLOYMENT-PLAN.md](../../10-week-1/WEEK-1-PLAN.md)** - Full implementation plan (in docs/10-week-1/)
 - **[HANDOFF.md](../../09-handoff/2026-01-20-HANDOFF-TO-WEEK-1.md)** - Handoff from Week 0 (in docs/09-handoff/)
 
+### Jan 21 Investigation Documentation 🔍
+
+**Quick Links**:
+- **[Investigation Index](JAN-21-INVESTIGATION-INDEX.md)** - Navigation guide for all investigation reports
+- **[Executive Summary](JAN-21-AFTERNOON-INVESTIGATION-EXECUTIVE-SUMMARY.md)** - 10-minute overview of findings
+- **[Master Status](JAN-21-DEEP-ANALYSIS-MASTER-STATUS.md)** - Comprehensive system status report
+
+**Post-Incident Analysis**:
+- [System Validation Report](SYSTEM-VALIDATION-JAN-21-2026.md) - Service health verification
+- [Database Verification](../../../DATABASE_VERIFICATION_REPORT_JAN_21_2026.md) - Data quality analysis
+- [Orchestration Flow Analysis](ORCHESTRATION-FLOW-ANALYSIS-JAN-19-21.md) - Event chain analysis
+- [Error Log Analysis](ERROR-SCAN-JAN-15-21-2026.md) - Cloud logging review
+
+**Incident Documentation**:
+- [Incident Timeline](incidents/jan-20-21-healthchecker/INCIDENT-TIMELINE.md) - Complete incident timeline
+- [Deployment Session](DEPLOYMENT-SESSION-JAN-21-2026.md) - Resolution deployment log
+- [Incidents Directory](incidents/README.md) - All incidents overview
+
 ### Implementation Guides
 Located in `docs/10-week-1/implementation-guides/`:
 1. Phase 2 Completion Deadline (Day 1)

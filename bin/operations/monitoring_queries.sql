@@ -296,3 +296,223 @@ SELECT
 
     (SELECT COUNT(DISTINCT game_date) FROM `nba-props-platform.nba_precompute.player_composite_factors`
      WHERE game_date >= '2021-10-01') as total_historical_dates_phase4;
+
+
+-------------------------------------------------------------------------------
+-- 11. DEAD LETTER QUEUE MONITORING (Added: 2026-01-21)
+-------------------------------------------------------------------------------
+
+-- Monitor messages in Dead Letter Queues that need investigation
+-- This query template should be run via gcloud CLI since DLQ messages are in Pub/Sub
+
+-- Command to check DLQ messages:
+-- gcloud pubsub subscriptions pull nba-phase1-scrapers-complete-dlq-sub --limit=10 --auto-ack=false
+-- gcloud pubsub subscriptions pull nba-phase2-raw-complete-dlq-sub --limit=10 --auto-ack=false
+-- gcloud pubsub subscriptions pull nba-phase3-analytics-complete-dlq-sub --limit=10 --auto-ack=false
+-- gcloud pubsub subscriptions pull nba-phase4-precompute-complete-dlq-sub --limit=10 --auto-ack=false
+
+-- To count messages without pulling:
+-- gcloud pubsub subscriptions describe nba-phase1-scrapers-complete-dlq-sub --format="value(numUndeliveredMessages)"
+
+
+-------------------------------------------------------------------------------
+-- 12. RAW DATA SOURCE FALLBACK TRACKING (Added: 2026-01-21)
+-------------------------------------------------------------------------------
+
+-- Track which games are using fallback data sources (nbac_gamebook instead of bdl_player_boxscores)
+-- This helps identify BDL API issues or missing data
+SELECT
+    game_date,
+    game_id,
+    primary_source_used,
+    ARRAY_TO_STRING(data_sources, ', ') as all_sources,
+    COUNT(*) as player_count,
+    -- Flag games that used fallback
+    CASE
+        WHEN primary_source_used != 'bdl_player_boxscores' THEN 'FALLBACK_USED'
+        ELSE 'PRIMARY_SOURCE'
+    END as source_status
+FROM `nba-props-platform.nba_analytics.player_game_summary`
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+GROUP BY game_date, game_id, primary_source_used, all_sources
+ORDER BY game_date DESC, game_id;
+
+
+-------------------------------------------------------------------------------
+-- 13. PHASE 2 PROCESSOR COMPLETION STATUS (Added: 2026-01-21)
+-------------------------------------------------------------------------------
+
+-- Check Phase 2 processor completion for recent dates
+-- Requires access to Firestore, run this via Python script:
+-- python -c "
+-- from google.cloud import firestore
+-- db = firestore.Client()
+-- dates = ['2026-01-19', '2026-01-20', '2026-01-21']
+-- for date in dates:
+--     doc = db.collection('phase2_completion').document(date).get()
+--     if doc.exists:
+--         data = doc.to_dict()
+--         print(f\"{date}: {data.get('processor_count', 0)}/6 processors, triggered={data.get('metadata', {}).get('_triggered', False)}\")
+--     else:
+--         print(f\"{date}: No document found\")
+-- "
+
+
+-------------------------------------------------------------------------------
+-- 14. RAW DATA COMPLETENESS BY SOURCE (Added: 2026-01-21)
+-------------------------------------------------------------------------------
+
+-- Compare raw data availability across different sources for recent dates
+WITH bdl_games AS (
+    SELECT DISTINCT game_date, game_id
+    FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
+    WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+),
+nbac_games AS (
+    SELECT DISTINCT game_date, game_id
+    FROM `nba-props-platform.nba_raw.nbac_gamebook_player_stats`
+    WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+),
+espn_games AS (
+    SELECT DISTINCT game_date, game_id
+    FROM `nba-props-platform.nba_raw.espn_boxscores`
+    WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+)
+SELECT
+    COALESCE(b.game_date, n.game_date, e.game_date) as game_date,
+    COALESCE(b.game_id, n.game_id, e.game_id) as game_id,
+    CASE WHEN b.game_id IS NOT NULL THEN '✓' ELSE '✗' END as bdl_available,
+    CASE WHEN n.game_id IS NOT NULL THEN '✓' ELSE '✗' END as nbac_available,
+    CASE WHEN e.game_id IS NOT NULL THEN '✓' ELSE '✗' END as espn_available,
+    -- Flag games missing from primary source (BDL)
+    CASE
+        WHEN b.game_id IS NULL AND (n.game_id IS NOT NULL OR e.game_id IS NOT NULL)
+        THEN 'PRIMARY_MISSING'
+        WHEN b.game_id IS NULL
+        THEN 'ALL_MISSING'
+        ELSE 'COMPLETE'
+    END as status
+FROM bdl_games b
+FULL OUTER JOIN nbac_games n ON b.game_date = n.game_date AND b.game_id = n.game_id
+FULL OUTER JOIN espn_games e ON COALESCE(b.game_date, n.game_date) = e.game_date
+                               AND COALESCE(b.game_id, n.game_id) = e.game_id
+ORDER BY game_date DESC, game_id;
+
+
+-------------------------------------------------------------------------------
+-- 15. SCRAPER EXECUTION LOG - RECENT FAILURES (Added: 2026-01-21)
+-------------------------------------------------------------------------------
+
+-- Find recent scraper failures with error details
+SELECT
+    DATE(created_at) as execution_date,
+    scraper_name,
+    workflow,
+    game_date,
+    error_type,
+    error_message,
+    retry_count,
+    duration_seconds
+FROM `nba-props-platform.nba_orchestration.scraper_execution_log`
+WHERE status = 'failed'
+  AND created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+ORDER BY created_at DESC
+LIMIT 50;
+
+
+-------------------------------------------------------------------------------
+-- 16. BIGDATABALL PBP AVAILABILITY (Added: 2026-01-21)
+-------------------------------------------------------------------------------
+
+-- Track BigDataBall play-by-play data availability
+-- Since this data comes from Google Drive, check GCS exports
+WITH expected_games AS (
+    SELECT DISTINCT game_date, game_id
+    FROM `nba-props-platform.nba_analytics.player_game_summary`
+    WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+)
+SELECT
+    eg.game_date,
+    eg.game_id,
+    -- Check if PBP data exists (assuming a bigdataball_pbp table exists)
+    CASE
+        WHEN EXISTS(
+            SELECT 1 FROM `nba-props-platform.nba_raw.bigdataball_play_by_play` pbp
+            WHERE pbp.game_date = eg.game_date AND pbp.game_id = eg.game_id
+        ) THEN 'AVAILABLE'
+        ELSE 'MISSING'
+    END as pbp_status
+FROM expected_games eg
+ORDER BY game_date DESC, game_id;
+
+
+-------------------------------------------------------------------------------
+-- 17. ORCHESTRATION TRIGGER VERIFICATION (Added: 2026-01-21)
+-------------------------------------------------------------------------------
+
+-- Verify Phase 3→4 orchestration publishes are being processed
+-- This requires checking Pub/Sub metrics via gcloud:
+--
+-- # Check publish rate to phase4-trigger topic
+-- gcloud pubsub topics list-subscriptions nba-phase4-trigger
+--
+-- # If no subscriptions, Phase 4 is scheduler-driven only
+-- # Check Phase 4 scheduler jobs:
+-- gcloud scheduler jobs list --location=us-west2 | grep phase4
+--
+-- # Verify scheduler is enabled and running:
+-- gcloud scheduler jobs describe overnight-phase4 --location=us-west2
+
+
+-------------------------------------------------------------------------------
+-- 18. PHASE 3 PROCESSOR ENTITY CHANGES (Added: 2026-01-21)
+-------------------------------------------------------------------------------
+
+-- Track which games have entity changes (for selective processing)
+-- This helps understand Phase 3→4 orchestration metadata
+-- Note: This data is in Firestore, access via Python:
+--
+-- python -c "
+-- from google.cloud import firestore
+-- db = firestore.Client()
+-- doc = db.collection('phase3_completion').document('2026-01-20').get()
+-- if doc.exists:
+--     data = doc.to_dict()
+--     print('Players changed:', len(data.get('all_player_changes', [])))
+--     print('Teams changed:', len(data.get('all_team_changes', [])))
+--     print('Mode:', data.get('mode', 'unknown'))
+-- "
+
+
+-------------------------------------------------------------------------------
+-- 19. DATA QUALITY TIER DISTRIBUTION (Added: 2026-01-21)
+-------------------------------------------------------------------------------
+
+-- Track data quality tiers over time to detect degradation
+SELECT
+    game_date,
+    data_quality_tier,
+    COUNT(*) as player_count,
+    ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (PARTITION BY game_date), 2) as pct_of_date
+FROM `nba-props-platform.nba_analytics.player_game_summary`
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+GROUP BY game_date, data_quality_tier
+ORDER BY game_date DESC, data_quality_tier;
+
+
+-------------------------------------------------------------------------------
+-- 20. PREDICTION GENERATION READINESS (Added: 2026-01-21)
+-------------------------------------------------------------------------------
+
+-- Check if upstream data is ready for prediction generation
+SELECT
+    game_date,
+    COUNT(*) as total_players,
+    COUNTIF(is_production_ready = true) as production_ready_count,
+    COUNTIF(processed_with_issues = true) as with_issues_count,
+    ROUND(100.0 * COUNTIF(is_production_ready = true) / COUNT(*), 2) as production_ready_pct,
+    ARRAY_AGG(DISTINCT data_quality_tier IGNORE NULLS) as quality_tiers
+FROM `nba-analytics.player_game_summary`
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+GROUP BY game_date
+ORDER BY game_date DESC;

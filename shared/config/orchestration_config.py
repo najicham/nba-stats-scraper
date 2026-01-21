@@ -29,7 +29,22 @@ class PhaseTransitionConfig:
         'odds_api_game_lines',        # Per-game odds
         'nbac_schedule',              # Schedule updates
         'nbac_gamebook_player_stats', # Post-game player stats
-        'br_roster',                  # Basketball-ref rosters
+        'br_rosters_current',         # Basketball-ref rosters
+    ])
+
+    # Phase 2: Required vs Optional Processors
+    # Required: MUST complete before Phase 3 can proceed (with deadline)
+    # Optional: Nice to have, but won't block Phase 3
+    phase2_required_processors: List[str] = field(default_factory=lambda: [
+        'bdl_player_boxscores',       # Critical for player predictions
+        'odds_api_game_lines',        # Critical for betting lines
+        'nbac_schedule',              # Critical for game schedule
+        'nbac_gamebook_player_stats', # Critical for post-game stats
+    ])
+
+    phase2_optional_processors: List[str] = field(default_factory=lambda: [
+        'bigdataball_play_by_play',   # External dependency, may fail
+        'br_rosters_current',         # Only runs on roster changes
     ])
 
     # Phase 3 -> Phase 4: List of expected processors
@@ -52,6 +67,11 @@ class PhaseTransitionConfig:
 
     # Trigger mode: 'all_complete' or 'majority' (>80%)
     trigger_mode: str = 'all_complete'
+
+    # Phase 2 completion deadline (Week 1 improvement)
+    # Enable timeout to prevent indefinite waits when processors fail
+    phase2_completion_deadline_enabled: bool = False
+    phase2_completion_timeout_minutes: int = 30
 
 
 @dataclass
@@ -361,6 +381,15 @@ class OrchestrationConfig:
         exec_timeout = os.environ.get('WORKFLOW_EXECUTION_TIMEOUT')
         if exec_timeout:
             config.workflow_execution.execution_timeout = int(exec_timeout)
+
+        # Week 1: Phase 2 completion deadline config
+        phase2_deadline_enabled = os.environ.get('ENABLE_PHASE2_COMPLETION_DEADLINE')
+        if phase2_deadline_enabled is not None:
+            config.phase_transitions.phase2_completion_deadline_enabled = phase2_deadline_enabled.lower() == 'true'
+
+        phase2_timeout = os.environ.get('PHASE2_COMPLETION_TIMEOUT_MINUTES')
+        if phase2_timeout:
+            config.phase_transitions.phase2_completion_timeout_minutes = int(phase2_timeout)
 
         return config
 

@@ -84,7 +84,7 @@ except ImportError:
         'odds_api_game_lines',       # Per-game odds
         'nbac_schedule',             # Schedule updates
         'nbac_gamebook_player_stats', # Post-game player stats
-        'br_roster',                 # Basketball-ref rosters
+        'br_rosters_current',        # Basketball-ref rosters
     ]
     EXPECTED_PROCESSOR_COUNT: int = len(EXPECTED_PROCESSORS)
     EXPECTED_PROCESSOR_SET: Set[str] = set(EXPECTED_PROCESSORS)

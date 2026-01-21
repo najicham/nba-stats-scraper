@@ -200,7 +200,7 @@ class BdlBoxscoresBackfill:
               AND source_file_path IN ({paths_string})
             """
             
-            results = self.bq_client.query(query)
+            results = self.bq_client.query(query).result(timeout=300)
             processed_files = {row.source_file_path for row in results}
             
             logger.info(f"Found {len(processed_files)} files already processed in BigQuery")

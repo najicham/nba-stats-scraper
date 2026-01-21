@@ -60,7 +60,7 @@ if [ "$DEPLOY_PHASE2" = true ]; then
     --allow-unauthenticated \
     --memory=2Gi \
     --timeout=540 \
-    --update-env-vars=SERVICE=phase2 \
+    --update-env-vars=SERVICE=phase2,ENABLE_PHASE2_COMPLETION_DEADLINE=true,PHASE2_COMPLETION_TIMEOUT_MINUTES=30 \
     --update-secrets=SENTRY_DSN=sentry-dsn:latest
 
   echo ""
