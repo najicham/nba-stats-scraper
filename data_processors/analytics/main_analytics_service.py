@@ -403,10 +403,15 @@ def process_analytics():
             'backfill_mode': message.get('backfill_mode', False)  # Support backfill mode from Pub/Sub
         }
 
+        # Log backfill mode status
+        if opts.get('backfill_mode'):
+            logger.info(f"🔄 BACKFILL MODE enabled for {game_date} - skipping completeness and freshness checks")
+
         # Phase 1.2: Boxscore completeness pre-flight check
         # Only run this check when triggered by bdl_player_boxscores completion
         # This ensures all scheduled games have boxscores before analytics run
-        if source_table == 'bdl_player_boxscores' and game_date:
+        # Skip this check in backfill mode (data is historical, incompleteness is expected)
+        if source_table == 'bdl_player_boxscores' and game_date and not opts.get('backfill_mode', False):
             logger.info(f"🔍 Running boxscore completeness check for {game_date}")
             completeness = verify_boxscore_completeness(game_date, opts['project_id'])
 
