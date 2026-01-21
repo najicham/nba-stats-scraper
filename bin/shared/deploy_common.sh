@@ -241,12 +241,32 @@ deploy_cloud_run_job() {
 # Function to check email configuration and add to environment variables
 add_email_config_to_env_vars() {
     local env_vars="$1"
-    
-    # Check if email variables are available
-    if [[ -n "$BREVO_SMTP_PASSWORD" && -n "$EMAIL_ALERTS_TO" ]]; then
-        echo "✅ Adding email alerting configuration..."
-        
-        # Add email-related environment variables
+
+    # Check if AWS SES email variables are available (preferred)
+    if [[ -n "$AWS_SES_ACCESS_KEY_ID" && -n "$AWS_SES_SECRET_ACCESS_KEY" && -n "$EMAIL_ALERTS_TO" ]]; then
+        echo "✅ Adding AWS SES email alerting configuration..."
+
+        # Add AWS SES environment variables
+        env_vars="$env_vars,AWS_SES_ACCESS_KEY_ID=${AWS_SES_ACCESS_KEY_ID}"
+        env_vars="$env_vars,AWS_SES_SECRET_ACCESS_KEY=${AWS_SES_SECRET_ACCESS_KEY}"
+        env_vars="$env_vars,AWS_SES_REGION=${AWS_SES_REGION:-us-west-2}"
+        env_vars="$env_vars,AWS_SES_FROM_EMAIL=${AWS_SES_FROM_EMAIL:-alert@989.ninja}"
+        env_vars="$env_vars,AWS_SES_FROM_NAME=${AWS_SES_FROM_NAME:-NBA Registry System}"
+        env_vars="$env_vars,EMAIL_ALERTS_TO=${EMAIL_ALERTS_TO}"
+        env_vars="$env_vars,EMAIL_CRITICAL_TO=${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
+
+        # Optional alert thresholds
+        env_vars="$env_vars,EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD=${EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD:-50}"
+        env_vars="$env_vars,EMAIL_ALERT_SUCCESS_RATE_THRESHOLD=${EMAIL_ALERT_SUCCESS_RATE_THRESHOLD:-90.0}"
+        env_vars="$env_vars,EMAIL_ALERT_MAX_PROCESSING_TIME=${EMAIL_ALERT_MAX_PROCESSING_TIME:-30}"
+
+        echo "$env_vars"
+        return 0
+    # Fall back to Brevo if AWS SES not configured
+    elif [[ -n "$BREVO_SMTP_PASSWORD" && -n "$EMAIL_ALERTS_TO" ]]; then
+        echo "⚠️  AWS SES not configured, falling back to Brevo..."
+
+        # Add Brevo email-related environment variables
         env_vars="$env_vars,BREVO_SMTP_HOST=${BREVO_SMTP_HOST:-smtp-relay.brevo.com}"
         env_vars="$env_vars,BREVO_SMTP_PORT=${BREVO_SMTP_PORT:-587}"
         env_vars="$env_vars,BREVO_SMTP_USERNAME=${BREVO_SMTP_USERNAME}"
@@ -255,17 +275,18 @@ add_email_config_to_env_vars() {
         env_vars="$env_vars,BREVO_FROM_NAME=${BREVO_FROM_NAME:-NBA Registry System}"
         env_vars="$env_vars,EMAIL_ALERTS_TO=${EMAIL_ALERTS_TO}"
         env_vars="$env_vars,EMAIL_CRITICAL_TO=${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
-        
+
         # Optional alert thresholds
         env_vars="$env_vars,EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD=${EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD:-50}"
         env_vars="$env_vars,EMAIL_ALERT_SUCCESS_RATE_THRESHOLD=${EMAIL_ALERT_SUCCESS_RATE_THRESHOLD:-90.0}"
         env_vars="$env_vars,EMAIL_ALERT_MAX_PROCESSING_TIME=${EMAIL_ALERT_MAX_PROCESSING_TIME:-30}"
-        
+
         echo "$env_vars"
         return 0
     else
         echo "⚠️  Email configuration missing - email alerting will be disabled"
-        echo "   Required: BREVO_SMTP_PASSWORD and EMAIL_ALERTS_TO in .env file"
+        echo "   Required: AWS_SES_ACCESS_KEY_ID, AWS_SES_SECRET_ACCESS_KEY, and EMAIL_ALERTS_TO in .env file"
+        echo "   Or: BREVO_SMTP_PASSWORD and EMAIL_ALERTS_TO for fallback"
         echo "$env_vars"
         return 1
     fi
@@ -273,8 +294,15 @@ add_email_config_to_env_vars() {
 
 # Function to display email configuration status
 display_email_status() {
-    if [[ -n "$BREVO_SMTP_PASSWORD" && -n "$EMAIL_ALERTS_TO" ]]; then
-        echo "📧 Email Alerting Status: ENABLED"
+    if [[ -n "$AWS_SES_ACCESS_KEY_ID" && -n "$AWS_SES_SECRET_ACCESS_KEY" && -n "$EMAIL_ALERTS_TO" ]]; then
+        echo "📧 Email Alerting Status: ENABLED (AWS SES)"
+        echo "   Alert Recipients: ${EMAIL_ALERTS_TO}"
+        echo "   Critical Recipients: ${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
+        echo "   From Email: ${AWS_SES_FROM_EMAIL:-alert@989.ninja}"
+        echo "   AWS Region: ${AWS_SES_REGION:-us-west-2}"
+        return 0
+    elif [[ -n "$BREVO_SMTP_PASSWORD" && -n "$EMAIL_ALERTS_TO" ]]; then
+        echo "📧 Email Alerting Status: ENABLED (Brevo - fallback)"
         echo "   Alert Recipients: ${EMAIL_ALERTS_TO}"
         echo "   Critical Recipients: ${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
         echo "   From Email: ${BREVO_FROM_EMAIL}"
@@ -303,38 +331,55 @@ load_env_file() {
 # Function to test email configuration
 test_email_config() {
     echo "🧪 Testing email configuration..."
-    
+
+    # Check AWS SES first (preferred)
+    if [[ -n "$AWS_SES_ACCESS_KEY_ID" && -n "$AWS_SES_SECRET_ACCESS_KEY" ]]; then
+        if [[ -z "$EMAIL_ALERTS_TO" ]]; then
+            echo "❌ EMAIL_ALERTS_TO not set"
+            return 1
+        fi
+
+        echo "✅ AWS SES email configuration is set"
+        echo "   AWS Region: ${AWS_SES_REGION:-us-west-2}"
+        echo "   From Email: ${AWS_SES_FROM_EMAIL:-alert@989.ninja}"
+        echo "   Alert Recipients: $EMAIL_ALERTS_TO"
+        return 0
+    fi
+
+    # Fall back to Brevo
     if [[ -z "$BREVO_SMTP_HOST" ]]; then
-        echo "❌ BREVO_SMTP_HOST not set"
+        echo "❌ Neither AWS SES nor Brevo configured"
+        echo "   AWS SES requires: AWS_SES_ACCESS_KEY_ID, AWS_SES_SECRET_ACCESS_KEY"
+        echo "   Brevo requires: BREVO_SMTP_HOST, BREVO_SMTP_USERNAME, BREVO_SMTP_PASSWORD"
         return 1
     fi
-    
+
     if [[ -z "$BREVO_SMTP_USERNAME" ]]; then
         echo "❌ BREVO_SMTP_USERNAME not set"
         return 1
     fi
-    
+
     if [[ -z "$BREVO_SMTP_PASSWORD" ]]; then
         echo "❌ BREVO_SMTP_PASSWORD not set"
         return 1
     fi
-    
+
     if [[ -z "$BREVO_FROM_EMAIL" ]]; then
         echo "❌ BREVO_FROM_EMAIL not set"
         return 1
     fi
-    
+
     if [[ -z "$EMAIL_ALERTS_TO" ]]; then
         echo "❌ EMAIL_ALERTS_TO not set"
         return 1
     fi
-    
-    echo "✅ All required email configuration variables are set"
+
+    echo "✅ Brevo email configuration is set (fallback)"
     echo "   SMTP Host: $BREVO_SMTP_HOST"
     echo "   SMTP Port: ${BREVO_SMTP_PORT:-587}"
     echo "   Username: $BREVO_SMTP_USERNAME"
     echo "   From Email: $BREVO_FROM_EMAIL"
     echo "   Alert Recipients: $EMAIL_ALERTS_TO"
-    
+
     return 0
 }

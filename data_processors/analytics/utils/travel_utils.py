@@ -6,13 +6,14 @@ Simple interface for processors to get travel distances and time zone informatio
 """
 
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 from typing import Optional, Dict, List, Tuple
 import pandas as pd
 from datetime import datetime, timedelta
 
 class NBATravel:
     def __init__(self, project_id: str = "nba-props-platform"):
-        self.client = bigquery.Client(project=project_id)
+        self.client = get_bigquery_client(project_id=project_id)
         self.project_id = project_id
         
         # Cache for frequently accessed data

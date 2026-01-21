@@ -15,25 +15,34 @@ A base class 'ScraperBase' that handles:
  - Phase 1 orchestration logging to BigQuery
 """
 
+import logging
+import os
 import sentry_sdk
 from .utils.env_utils import is_local
-import os
+
+# Initialize logger for this module
+logger = logging.getLogger(__name__)
 
 # Initialize Sentry with environment-specific configuration
 ENV = "development" if is_local() else "production"
-sentry_dsn = os.getenv("SENTRY_DSN", "https://96f5d7efbb7105ef2c05aa551fa5f4e0@o102085.ingest.us.sentry.io/4509460047790080")
+sentry_dsn = os.getenv("SENTRY_DSN", "")
 
-sentry_sdk.init(
-    dsn=sentry_dsn,
-    environment=ENV,
-    traces_sample_rate=1.0 if ENV == "development" else 0.1,
-    profiles_sample_rate=1.0 if ENV == "development" else 0.01,
-    send_default_pii=False,
-)
+if sentry_dsn:
+    sentry_sdk.init(
+        dsn=sentry_dsn,
+        environment=ENV,
+        traces_sample_rate=1.0 if ENV == "development" else 0.1,
+        profiles_sample_rate=1.0 if ENV == "development" else 0.01,
+        send_default_pii=False,
+    )
+    logger.info(f"Sentry initialized for {ENV} environment")
+else:
+    logger.info("Sentry DSN not configured - error monitoring disabled")
 
 import enum
 from typing import Callable
 import requests
+from shared.clients.http_pool import get_http_session
 
 try:                                         # Playwright core
     from playwright.sync_api import sync_playwright
@@ -53,7 +62,7 @@ except ImportError:
         _STEALTH_FN = None
 _STEALTH_AVAILABLE = callable(_STEALTH_FN)
 
-import logging, urllib.parse
+import urllib.parse
 import time
 import sys
 import traceback
@@ -1337,7 +1346,7 @@ class ScraperBase:
         """
         Create a requests.Session with a custom retry strategy & adapter.
         """
-        self.http_downloader = requests.Session()
+        self.http_downloader = get_http_session()
         # If a single proxy_url was supplied, use it for all schemes
         if self.proxy_url:
             self.http_downloader.proxies.update({"http": self.proxy_url, "https": self.proxy_url})

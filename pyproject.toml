@@ -1,12 +1,77 @@
-[build-system]
-requires = ["setuptools>=45", "wheel"]
-build-backend = "setuptools.build_meta"
-
-[project]
+[tool.poetry]
 name = "nba-stats-scraper"
-version = "0.1.0"
-description = "NBA player props prediction platform"
-requires-python = ">=3.12"
+version = "1.0.0"
+description = "NBA player props prediction platform with comprehensive health monitoring"
+authors = ["Naji <nchammas@gmail.com>"]
+readme = "README.md"
+python = "^3.12"
 
-[tool.setuptools]
-packages = ["predictions", "predictions.shared", "predictions.worker", "predictions.worker.prediction_systems"]
+[tool.poetry.dependencies]
+python = "^3.12"
+
+# Core GCP dependencies
+google-cloud-bigquery = "^3.12.0"
+google-cloud-storage = "^2.14.0"
+google-cloud-firestore = "^2.14.0"
+google-cloud-pubsub = "^2.18.4"
+google-cloud-logging = "^3.8.0"
+google-cloud-secret-manager = "^2.16.4"
+
+# Web framework
+Flask = "^3.0.0"
+requests = "^2.31.0"
+urllib3 = "^2.1.0"
+
+# Data processing
+pandas = "^2.1.4"
+numpy = "^1.26.2"
+
+# ML/Prediction
+catboost = "^1.2.2"
+scikit-learn = "^1.3.2"
+
+# Utilities
+python-dotenv = "^1.0.0"
+pytz = "^2023.3"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.0.0"
+pytest-cov = "^4.1.0"
+pytest-html = "^4.1.1"
+black = "^24.1.1"
+flake8 = "^7.0.0"
+mypy = "^1.8.0"
+
+[build-system]
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+markers = [
+    "smoke: smoke tests for deployment validation",
+    "unit: unit tests",
+    "integration: integration tests",
+]
+
+[tool.black]
+line-length = 100
+target-version = ['py312']
+include = '\.pyi?$'
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = "google.cloud.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "catboost.*"
+ignore_missing_imports = true

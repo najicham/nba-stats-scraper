@@ -23,6 +23,13 @@ from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Optional, Any
 
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
+
+# SESSION 97 FIX: Import distributed lock to prevent race conditions
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
+from predictions.worker.distributed_lock import DistributedLock, LockAcquisitionError
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +49,7 @@ class PerformanceSummaryProcessor:
 
     def __init__(self, project_id: str = PROJECT_ID):
         self.project_id = project_id
-        self.bq_client = bigquery.Client(project=project_id)
+        self.bq_client = get_bigquery_client(project_id=project_id)
 
     def process(self, as_of_date: Optional[date] = None) -> Dict[str, Any]:
         """
@@ -83,19 +90,24 @@ class PerformanceSummaryProcessor:
                 )
                 all_summaries.extend(summaries)
 
-        # Write all summaries
+        # Write all summaries (SESSION 97 FIX: with distributed lock and validation)
         if all_summaries:
-            written = self._write_summaries(all_summaries, as_of_date)
+            written = self._write_summaries(all_summaries, as_of_date, use_lock=True)
             logger.info(f"Wrote {written} summary records")
+
+            # SESSION 97 FIX: Check for duplicates after write
+            duplicate_count = self._check_for_duplicates(as_of_date) if written > 0 else 0
         else:
             written = 0
+            duplicate_count = 0
             logger.warning("No summaries computed")
 
         return {
             'status': 'success' if written > 0 else 'no_data',
             'as_of_date': as_of_date.isoformat(),
             'systems': len(systems),
-            'summaries': written
+            'summaries': written,
+            'duplicate_count': duplicate_count
         }
 
     def _get_active_systems(self, as_of_date: date) -> List[str]:
@@ -527,24 +539,87 @@ class PerformanceSummaryProcessor:
             'data_hash': data_hash
         }
 
-    def _write_summaries(self, summaries: List[Dict], as_of_date: date) -> int:
+    def _check_for_duplicates(self, as_of_date: date) -> int:
         """
-        Write summaries to BigQuery using batch loading.
+        Check for duplicate business keys after writing (SESSION 97 FIX).
 
-        Uses DELETE + INSERT pattern for idempotency.
+        Business key: summary_key
+
+        Args:
+            as_of_date: Date to check for duplicates
+
+        Returns:
+            Count of duplicate business keys (0 = success)
+        """
+        query = f"""
+        SELECT COUNT(*) as duplicate_count
+        FROM (
+            SELECT summary_key, COUNT(*) as cnt
+            FROM `{SUMMARY_TABLE}`
+            WHERE DATE(computed_at) = '{as_of_date}'
+            GROUP BY summary_key
+            HAVING COUNT(*) > 1
+        )
+        """
+
+        try:
+            result = list(self.bq_client.query(query).result(timeout=60))
+            duplicate_count = result[0].duplicate_count if result else 0
+
+            if duplicate_count > 0:
+                logger.error(f"⚠️  DUPLICATES DETECTED: {duplicate_count} duplicate summary keys for {as_of_date}")
+
+                # Log details for first 20 duplicates
+                detail_query = f"""
+                SELECT summary_key, COUNT(*) as count
+                FROM `{SUMMARY_TABLE}`
+                WHERE DATE(computed_at) = '{as_of_date}'
+                GROUP BY summary_key
+                HAVING COUNT(*) > 1
+                ORDER BY count DESC
+                LIMIT 20
+                """
+                details = list(self.bq_client.query(detail_query).result(timeout=60))
+                for row in details:
+                    logger.error(f"  Duplicate: summary_key={row.summary_key}, count={row.count}")
+            else:
+                logger.info(f"✅ Validation passed: No duplicates for {as_of_date}")
+
+            return duplicate_count
+
+        except Exception as e:
+            logger.error(f"Error checking for duplicates: {e}")
+            return -1  # Return -1 to indicate check failed (vs 0 = no duplicates)
+
+    def _write_with_validation(self, summaries: List[Dict], as_of_date: date) -> int:
+        """
+        Write summaries with post-write validation (SESSION 97 FIX Layer 2).
+
+        This method performs DELETE + INSERT + VALIDATE within a locked context.
+
+        Args:
+            summaries: List of summary dicts to write
+            as_of_date: Date being processed
+
+        Returns:
+            Number of records written
         """
         if not summaries:
             return 0
 
         try:
-            # Delete existing summaries for today's computation
+            # STEP 1: Delete existing summaries for today's computation
             delete_query = f"""
             DELETE FROM `{SUMMARY_TABLE}`
             WHERE DATE(computed_at) = '{as_of_date}'
             """
-            self.bq_client.query(delete_query).result(timeout=60)
+            delete_job = self.bq_client.query(delete_query)
+            delete_job.result(timeout=60)
+            deleted = delete_job.num_dml_affected_rows or 0
+            if deleted > 0:
+                logger.info(f"  Deleted {deleted} existing summaries for {as_of_date}")
 
-            # Insert using batch loading
+            # STEP 2: Insert using batch loading
             table_ref = self.bq_client.get_table(SUMMARY_TABLE)
             job_config = bigquery.LoadJobConfig(
                 schema=table_ref.schema,
@@ -561,11 +636,71 @@ class PerformanceSummaryProcessor:
             )
             load_job.result(timeout=60)
 
-            return load_job.output_rows or len(summaries)
+            rows_written = load_job.output_rows or len(summaries)
+
+            # STEP 3: Validate no duplicates (SESSION 97 FIX)
+            duplicate_count = self._check_for_duplicates(as_of_date)
+            if duplicate_count > 0:
+                logger.warning(f"Duplicates detected after write: {duplicate_count}")
+
+            return rows_written
 
         except Exception as e:
             logger.error(f"Error writing summaries: {e}")
             return 0
+
+    def _write_summaries(self, summaries: List[Dict], as_of_date: date, use_lock: bool = True) -> int:
+        """
+        Write summaries to BigQuery with distributed locking (SESSION 97 FIX).
+
+        Uses 3-layer defense:
+        1. Distributed lock prevents concurrent writes for same date
+        2. Post-write validation detects duplicates
+        3. Caller can alert on duplicate_count > 0
+
+        Args:
+            summaries: List of summary dicts to write
+            as_of_date: Date being processed
+            use_lock: Use distributed lock (default True, can disable for testing)
+
+        Returns:
+            Number of records written
+        """
+        if not summaries:
+            return 0
+
+        date_str = as_of_date.isoformat()
+
+        # SESSION 97 FIX: Use distributed lock to prevent concurrent operations
+        if use_lock:
+            try:
+                lock = DistributedLock(project_id=self.project_id, lock_type="performance_summary")
+
+                with lock.acquire(
+                    game_date=date_str,
+                    operation_id=f"performance_summary_{date_str}",
+                    max_wait_seconds=300
+                ):
+                    # Lock acquired - run write inside locked context
+                    logger.info(f"Acquired performance_summary lock for {date_str}")
+                    return self._write_with_validation(summaries, as_of_date)
+
+            except LockAcquisitionError as e:
+                # Graceful degradation - log error and proceed WITHOUT lock
+                error_msg = (
+                    f"Failed to acquire performance_summary lock for {date_str}: {e}\n"
+                    f"This is a CRITICAL issue - another operation may be running concurrently.\n"
+                    f"Proceeding WITHOUT lock increases risk of duplicate rows."
+                )
+                logger.error(error_msg)
+                logger.warning(f"⚠️  Proceeding with summary write WITHOUT lock for {date_str}")
+
+                # Proceed without lock (defense in depth - validation will still catch duplicates)
+                return self._write_with_validation(summaries, as_of_date)
+        else:
+            # Lock disabled (testing only)
+            logger.warning(f"Distributed lock DISABLED for {date_str} (testing mode)")
+            return self._write_with_validation(summaries, as_of_date)
 
 
 def main():

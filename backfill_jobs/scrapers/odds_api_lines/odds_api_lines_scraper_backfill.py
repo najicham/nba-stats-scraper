@@ -34,6 +34,7 @@ import json
 import logging
 import os
 import requests
+from shared.clients.http_pool import get_http_session
 import sys
 import time
 import argparse
@@ -470,7 +471,7 @@ class OddsApiLinesBackfillJob:
     def _collect_events_for_date(self, game_date: str) -> bool:
         """Collect events for date."""
         try:
-            response = requests.post(
+            response = get_http_session().post(
                 f"{self.scraper_service_url}/scrape",
                 json={
                     "scraper": "oddsa_events_his",
@@ -615,7 +616,7 @@ class OddsApiLinesBackfillJob:
             # For each timestamp, try with retries (for 5xx errors)
             for attempt in range(max_retries):
                 try:
-                    response = requests.post(
+                    response = get_http_session().post(
                         f"{self.scraper_service_url}/scrape",
                         json={
                             "scraper": "oddsa_game_lines_his",

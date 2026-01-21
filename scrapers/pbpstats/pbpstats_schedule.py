@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List
 
 import requests
+from shared.clients.http_pool import get_http_session
 
 # Support both module execution (python -m) and direct execution
 try:
@@ -145,7 +146,7 @@ class GetNbaSchedulePBPStats(ScraperBase, ScraperFlaskMixin):
             }
 
             def _get(self, url: str):
-                resp = requests.get(url, headers=self._HEADERS, timeout=30)
+                resp = get_http_session().get(url, headers=self._HEADERS, timeout=30)
                 if resp.status_code == 403:
                     raise PermissionError("403")
                 resp.raise_for_status()

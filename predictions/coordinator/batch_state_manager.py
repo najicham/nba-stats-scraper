@@ -10,14 +10,14 @@ Key Problem Solved:
 - Completion events are ignored → consolidation never triggers
 - Solution: Store all batch state in Firestore
 
-Firestore Schema:
+Firestore Schema (Legacy - ArrayUnion):
 Collection: prediction_batches
 Document ID: {batch_id}
 Fields:
   - batch_id: str (e.g., "batch_2026-01-01_1767268807")
   - game_date: str (e.g., "2026-01-01")
   - expected_players: int (e.g., 120)
-  - completed_players: list of str (e.g., ["lebron-james", ...])
+  - completed_players: list of str (e.g., ["lebron-james", ...])  ⚠️ LIMIT: 1000 elements
   - failed_players: list of str
   - predictions_by_player: map (e.g., {"lebron-james": 25, ...})
   - total_predictions: int
@@ -29,18 +29,53 @@ Fields:
   - created_at: timestamp (server timestamp)
   - updated_at: timestamp (server timestamp)
 
+Week 1 Update - Subcollection Migration:
+New Schema (unlimited scalability):
+Collection: prediction_batches/{batch_id}/completions
+Document ID: {player_lookup}
+Fields:
+  - player_lookup: str
+  - completed_at: timestamp
+  - predictions_count: int
+
+Additional batch fields for subcollection mode:
+  - completed_count: int (counter, replaces array length)
+  - total_predictions_subcoll: int (subcollection total)
+
+Migration Strategy:
+1. Dual-write mode: Write to both array AND subcollection (default)
+2. Validate consistency between both structures
+3. Switch reads to subcollection
+4. Stop writing to array
+5. Clean up array after validation
+
 Author: Claude Code
 Date: January 1, 2026
+Updated: January 20, 2026 (Week 1 - Subcollection migration)
 """
 
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from typing import Dict, List, Set, Optional
-from google.cloud import firestore
-from google.cloud.firestore import ArrayUnion, Increment, SERVER_TIMESTAMP
 import logging
+import os
+import sys
+
+# Add path for slack utilities
+sys.path.append('/home/naji/code/nba-stats-scraper/orchestration/cloud_functions/self_heal')
 
 logger = logging.getLogger(__name__)
+
+# Lazy-load firestore to avoid Python 3.13 import errors at module load time
+def _get_firestore():
+    """Lazy-load Firestore module to avoid import errors."""
+    from google.cloud import firestore
+    return firestore
+
+def _get_firestore_helpers():
+    """Lazy-load Firestore helper functions."""
+    from google.cloud.firestore import ArrayUnion, Increment, SERVER_TIMESTAMP
+    return ArrayUnion, Increment, SERVER_TIMESTAMP
 
 
 @dataclass
@@ -68,16 +103,19 @@ class BatchState:
         """Convert to Firestore-compatible dictionary"""
         data = asdict(self)
 
+        # Lazy-load Firestore helpers
+        _, _, SERVER_TIMESTAMP = _get_firestore_helpers()
+
         # Firestore doesn't like None timestamps - remove them
         if data.get('start_time') is None:
-            data['start_time'] = firestore.SERVER_TIMESTAMP
+            data['start_time'] = SERVER_TIMESTAMP
         if data.get('completion_time') is None:
             del data['completion_time']
 
         # Add metadata
-        data['updated_at'] = firestore.SERVER_TIMESTAMP
+        data['updated_at'] = SERVER_TIMESTAMP
         if 'created_at' not in data:
-            data['created_at'] = firestore.SERVER_TIMESTAMP
+            data['created_at'] = SERVER_TIMESTAMP
 
         return data
 
@@ -146,10 +184,23 @@ class BatchStateManager:
             project_id: GCP project ID
         """
         self.project_id = project_id
+
+        # Lazy-load Firestore client
+        firestore = _get_firestore()
         self.db = firestore.Client(project=project_id)
         self.collection = self.db.collection(self.COLLECTION_NAME)
 
-        logger.info(f"BatchStateManager initialized for project: {project_id}")
+        # Week 1: Feature flags for ArrayUnion → Subcollection migration
+        self.enable_subcollection = os.getenv('ENABLE_SUBCOLLECTION_COMPLETIONS', 'false').lower() == 'true'
+        self.dual_write_mode = os.getenv('DUAL_WRITE_MODE', 'true').lower() == 'true'
+        self.use_subcollection_reads = os.getenv('USE_SUBCOLLECTION_READS', 'false').lower() == 'true'
+
+        logger.info(
+            f"BatchStateManager initialized for project: {project_id} "
+            f"(subcollection_enabled={self.enable_subcollection}, "
+            f"dual_write={self.dual_write_mode}, "
+            f"subcollection_reads={self.use_subcollection_reads})"
+        )
 
     def create_batch(
         self,
@@ -220,8 +271,15 @@ class BatchStateManager:
         """
         Record a player completion event using atomic operations (no transactions!)
 
+        Week 1 Update: Now supports dual-write pattern for ArrayUnion → Subcollection migration.
+
         This avoids transaction contention when multiple workers complete simultaneously.
         Uses Firestore's atomic operations: ArrayUnion and Increment.
+
+        Migration Modes (controlled by feature flags):
+        1. Legacy mode (subcollection disabled): Write only to array
+        2. Dual-write mode (default): Write to both array AND subcollection
+        3. Subcollection-only mode: Write only to subcollection
 
         Args:
             batch_id: Batch identifier
@@ -234,13 +292,45 @@ class BatchStateManager:
         try:
             doc_ref = self.collection.document(batch_id)
 
-            # Atomic update - no read required, no contention!
-            doc_ref.update({
-                'completed_players': ArrayUnion([player_lookup]),
-                'predictions_by_player.{}'.format(player_lookup): predictions_count,
-                'total_predictions': Increment(predictions_count),
-                'updated_at': SERVER_TIMESTAMP
-            })
+            # Lazy-load Firestore helpers
+            ArrayUnion, Increment, SERVER_TIMESTAMP = _get_firestore_helpers()
+
+            # Week 1: Implement dual-write pattern
+            if self.enable_subcollection:
+                if self.dual_write_mode:
+                    # DUAL-WRITE MODE: Write to both old and new
+                    logger.debug(f"Dual-write mode: Recording {player_lookup} to both structures")
+
+                    # Write to OLD structure (ArrayUnion)
+                    doc_ref.update({
+                        'completed_players': ArrayUnion([player_lookup]),
+                        'predictions_by_player.{}'.format(player_lookup): predictions_count,
+                        'total_predictions': Increment(predictions_count),
+                        'updated_at': SERVER_TIMESTAMP
+                    })
+
+                    # Write to NEW structure (subcollection)
+                    self._record_completion_subcollection(batch_id, player_lookup, predictions_count)
+
+                    # Validate consistency (every 10th completion to reduce overhead)
+                    import random
+                    if random.random() < 0.1:  # 10% sampling
+                        self._validate_dual_write_consistency(batch_id)
+
+                else:
+                    # NEW STRUCTURE ONLY: Only write to subcollection
+                    logger.debug(f"Subcollection mode: Recording {player_lookup} to subcollection only")
+                    self._record_completion_subcollection(batch_id, player_lookup, predictions_count)
+
+            else:
+                # OLD BEHAVIOR: Only ArrayUnion (legacy mode)
+                logger.debug(f"Legacy mode: Recording {player_lookup} to array only")
+                doc_ref.update({
+                    'completed_players': ArrayUnion([player_lookup]),
+                    'predictions_by_player.{}'.format(player_lookup): predictions_count,
+                    'total_predictions': Increment(predictions_count),
+                    'updated_at': SERVER_TIMESTAMP
+                })
 
             logger.info(f"Recorded completion for {player_lookup} in batch {batch_id}")
 
@@ -251,7 +341,15 @@ class BatchStateManager:
                 return False
 
             data = snapshot.to_dict()
-            completed = len(data.get('completed_players', []))
+
+            # Week 1: Use appropriate source for completion count
+            if self.enable_subcollection and self.use_subcollection_reads:
+                # Read from subcollection counter
+                completed = data.get('completed_count', 0)
+            else:
+                # Read from array
+                completed = len(data.get('completed_players', []))
+
             expected = data.get('expected_players', 0)
 
             is_complete = completed >= expected
@@ -301,6 +399,10 @@ class BatchStateManager:
         """
         doc_ref = self.collection.document(batch_id)
 
+        # Lazy-load Firestore helpers
+        firestore = _get_firestore()
+        _, _, SERVER_TIMESTAMP = _get_firestore_helpers()
+
         @firestore.transactional
         def update_in_transaction(transaction):
             snapshot = doc_ref.get(transaction=transaction)
@@ -317,7 +419,7 @@ class BatchStateManager:
 
                 transaction.update(doc_ref, {
                     'failed_players': failed_players,
-                    'updated_at': firestore.SERVER_TIMESTAMP
+                    'updated_at': SERVER_TIMESTAMP
                 })
 
                 logger.warning(
@@ -328,6 +430,264 @@ class BatchStateManager:
         transaction = self.db.transaction()
         update_in_transaction(transaction)
 
+    # ============================================================================
+    # Week 1: Subcollection Migration Methods
+    # ============================================================================
+
+    def _record_completion_subcollection(
+        self,
+        batch_id: str,
+        player_lookup: str,
+        predictions_count: int
+    ) -> None:
+        """
+        Week 1: Record completion in subcollection (new approach).
+
+        Structure:
+        prediction_batches/{batch_id}/completions/{player_lookup}
+        {
+            completed_at: timestamp,
+            predictions_count: int,
+            player_lookup: str
+        }
+
+        Args:
+            batch_id: Batch identifier
+            player_lookup: Player identifier
+            predictions_count: Number of predictions generated
+        """
+        # Lazy-load Firestore helpers
+        _, Increment, SERVER_TIMESTAMP = _get_firestore_helpers()
+
+        batch_ref = self.collection.document(batch_id)
+        completion_ref = batch_ref.collection('completions').document(player_lookup)
+
+        # Write completion document
+        completion_ref.set({
+            'completed_at': SERVER_TIMESTAMP,
+            'predictions_count': predictions_count,
+            'player_lookup': player_lookup
+        })
+
+        # Update counters atomically
+        batch_ref.update({
+            'completed_count': Increment(1),
+            'total_predictions_subcoll': Increment(predictions_count),
+            'last_updated': SERVER_TIMESTAMP
+        })
+
+        logger.debug(f"Recorded completion for {player_lookup} in subcollection")
+
+    def _get_completed_players_subcollection(self, batch_id: str) -> List[str]:
+        """
+        Week 1: Get completed players from subcollection (new approach).
+
+        Args:
+            batch_id: Batch identifier
+
+        Returns:
+            List of player_lookup strings
+        """
+        batch_ref = self.collection.document(batch_id)
+        completions = batch_ref.collection('completions').stream()
+
+        completed_players = [comp.id for comp in completions]
+        logger.debug(f"Retrieved {len(completed_players)} completed players from subcollection")
+
+        return completed_players
+
+    def _get_completion_count_subcollection(self, batch_id: str) -> int:
+        """
+        Week 1: Get completion count from counter (efficient).
+
+        Args:
+            batch_id: Batch identifier
+
+        Returns:
+            Number of completions
+        """
+        batch_ref = self.collection.document(batch_id)
+        batch_doc = batch_ref.get()
+
+        if batch_doc.exists:
+            return batch_doc.to_dict().get('completed_count', 0)
+
+        return 0
+
+    def _validate_dual_write_consistency(self, batch_id: str) -> None:
+        """
+        Week 1: Validate that array and subcollection have same count.
+        Log warning if mismatch detected.
+
+        Args:
+            batch_id: Batch identifier
+        """
+        try:
+            # Get array count
+            batch_doc = self.collection.document(batch_id).get()
+            if not batch_doc.exists:
+                return
+
+            data = batch_doc.to_dict()
+            array_count = len(data.get('completed_players', []))
+
+            # Get subcollection count
+            subcoll_count = self._get_completion_count_subcollection(batch_id)
+
+            if array_count != subcoll_count:
+                error_msg = (
+                    f"⚠️ CONSISTENCY MISMATCH: Batch {batch_id} has {array_count} "
+                    f"in array but {subcoll_count} in subcollection!"
+                )
+                logger.warning(error_msg)
+
+                # Send Slack alert to dedicated Week 1 consistency monitoring channel
+                try:
+                    from shared.utils.slack_channels import send_to_slack
+                    # Use dedicated consistency channel (e.g., #week-1-consistency-monitoring)
+                    # Falls back to general warnings channel if not set
+                    webhook_url = os.environ.get('SLACK_WEBHOOK_URL_CONSISTENCY') or \
+                                  os.environ.get('SLACK_WEBHOOK_URL_WARNING')
+                    if webhook_url:
+                        alert_text = f"""🚨 *Dual-Write Consistency Mismatch*
+
+*Batch*: `{batch_id}`
+*Array Count*: {array_count}
+*Subcollection Count*: {subcoll_count}
+*Difference*: {abs(array_count - subcoll_count)}
+
+This indicates a problem with the Week 1 dual-write migration. Investigate immediately.
+
+_Check Cloud Logging for detailed error traces._"""
+
+                        sent = send_to_slack(
+                            webhook_url=webhook_url,
+                            text=alert_text,
+                            username="Prediction Coordinator",
+                            icon_emoji=":rotating_light:"
+                        )
+                        if sent:
+                            logger.info(f"Sent consistency mismatch alert to Slack for batch {batch_id}")
+                        else:
+                            logger.error(f"Failed to send Slack alert for batch {batch_id}")
+                    else:
+                        logger.warning("SLACK_WEBHOOK_URL_WARNING not configured, skipping alert")
+                except Exception as slack_error:
+                    logger.error(f"Error sending Slack alert: {slack_error}", exc_info=True)
+        except Exception as e:
+            logger.error(f"Failed to validate dual-write consistency: {e}")
+
+    def get_completed_players(self, batch_id: str) -> List[str]:
+        """
+        Week 1: Get completed players with feature flag support.
+
+        Args:
+            batch_id: Batch identifier
+
+        Returns:
+            List of player_lookup strings
+        """
+        if self.enable_subcollection and self.use_subcollection_reads:
+            # NEW: Read from subcollection
+            logger.debug(f"Reading completed players from subcollection for {batch_id}")
+            return self._get_completed_players_subcollection(batch_id)
+        else:
+            # OLD: Read from array
+            logger.debug(f"Reading completed players from array for {batch_id}")
+            batch_doc = self.collection.document(batch_id).get()
+            if batch_doc.exists:
+                return batch_doc.to_dict().get('completed_players', [])
+            return []
+
+    def get_completion_progress(self, batch_id: str) -> Dict:
+        """
+        Week 1: Get batch completion progress with feature flag support.
+
+        Args:
+            batch_id: Batch identifier
+
+        Returns:
+            Dictionary with completion stats
+        """
+        batch_doc = self.collection.document(batch_id).get()
+
+        if not batch_doc.exists:
+            return {
+                'batch_id': batch_id,
+                'completed': 0,
+                'total': 0,
+                'completion_pct': 0.0
+            }
+
+        data = batch_doc.to_dict()
+
+        if self.enable_subcollection and self.use_subcollection_reads:
+            # NEW: Use counter
+            completed_count = data.get('completed_count', 0)
+        else:
+            # OLD: Count array length
+            completed_count = len(data.get('completed_players', []))
+
+        total_players = data.get('expected_players', 0)
+        completion_pct = (completed_count / total_players * 100) if total_players > 0 else 0
+
+        return {
+            'batch_id': batch_id,
+            'completed': completed_count,
+            'total': total_players,
+            'completion_pct': completion_pct,
+            'is_complete': data.get('is_complete', False)
+        }
+
+    def monitor_dual_write_consistency(self) -> List[Dict]:
+        """
+        Week 1: Background job to monitor dual-write consistency.
+
+        Run this periodically (e.g., every hour) during migration to detect
+        any mismatches between array and subcollection counts.
+
+        Returns:
+            List of batches with consistency mismatches
+        """
+        if not (self.enable_subcollection and self.dual_write_mode):
+            logger.info("Dual-write not enabled, skipping consistency monitoring")
+            return []
+
+        # Get all active batches
+        batches = self.collection.where('is_complete', '==', False).stream()
+
+        mismatches = []
+
+        for batch_doc in batches:
+            batch_id = batch_doc.id
+            data = batch_doc.to_dict()
+
+            # Array count
+            array_count = len(data.get('completed_players', []))
+
+            # Subcollection count
+            subcoll_count = self._get_completion_count_subcollection(batch_id)
+
+            if array_count != subcoll_count:
+                mismatch = {
+                    'batch_id': batch_id,
+                    'array_count': array_count,
+                    'subcollection_count': subcoll_count,
+                    'diff': abs(array_count - subcoll_count)
+                }
+                mismatches.append(mismatch)
+                logger.warning(
+                    f"Consistency mismatch in {batch_id}: "
+                    f"array={array_count}, subcollection={subcoll_count}"
+                )
+
+        if mismatches:
+            logger.error(f"Found {len(mismatches)} consistency mismatches in active batches")
+        else:
+            logger.info("✅ All active batches consistent between array and subcollection")
+
+        return mismatches
+
     def mark_batch_complete(self, batch_id: str) -> None:
         """
         Explicitly mark a batch as complete
@@ -335,11 +695,14 @@ class BatchStateManager:
         Args:
             batch_id: Batch identifier
         """
+        # Lazy-load Firestore helpers
+        _, _, SERVER_TIMESTAMP = _get_firestore_helpers()
+
         doc_ref = self.collection.document(batch_id)
         doc_ref.update({
             'is_complete': True,
-            'completion_time': firestore.SERVER_TIMESTAMP,
-            'updated_at': firestore.SERVER_TIMESTAMP
+            'completion_time': SERVER_TIMESTAMP,
+            'updated_at': SERVER_TIMESTAMP
         })
 
         logger.info(f"Marked batch as complete: {batch_id}")
@@ -420,10 +783,13 @@ class BatchStateManager:
             f"marking complete with partial results"
         )
 
+        # Lazy-load Firestore helpers
+        _, _, SERVER_TIMESTAMP = _get_firestore_helpers()
+
         doc_ref.update({
             'is_complete': True,
-            'completion_time': firestore.SERVER_TIMESTAMP,
-            'updated_at': firestore.SERVER_TIMESTAMP,
+            'completion_time': SERVER_TIMESTAMP,
+            'updated_at': SERVER_TIMESTAMP,
             'stall_completed': True,  # Flag to indicate partial completion
             'stall_reason': f"No progress for {stall_threshold_minutes} min at {completion_pct:.1f}%"
         })

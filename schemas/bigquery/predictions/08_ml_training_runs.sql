@@ -64,5 +64,6 @@ PARTITION BY run_date
 CLUSTER BY model_id, run_date DESC
 OPTIONS(
   description="History of ML model training runs",
-  partition_expiration_days=1095
+  partition_expiration_days=1095,
+  require_partition_filter=TRUE
 );

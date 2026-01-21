@@ -24,6 +24,16 @@ from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
 
+# Retry logic for API resilience (prevents live grading failures during games)
+try:
+    from shared.utils.retry_with_jitter import retry_with_jitter
+except ImportError:
+    logger.warning("Could not import retry_with_jitter, BDL API calls will not retry on failure")
+    def retry_with_jitter(*args, **kwargs):
+        def decorator(func):
+            return func
+        return decorator
+
 logger = logging.getLogger(__name__)
 
 # BallDontLie API configuration
@@ -229,7 +239,7 @@ class LiveGradingExporter(BaseExporter):
             logger.error(f"Failed to build player lookup cache: {e}")
 
     def _fetch_live_box_scores(self) -> List[Dict]:
-        """Fetch live box scores from BallDontLie API."""
+        """Fetch live box scores from BallDontLie API with retry logic."""
         api_key = os.getenv("BDL_API_KEY")
 
         headers = {
@@ -240,22 +250,51 @@ class LiveGradingExporter(BaseExporter):
             headers["Authorization"] = f"Bearer {api_key}"
 
         try:
-            response = requests.get(
-                BDL_API_URL,
-                headers=headers,
-                timeout=BDL_API_TIMEOUT
-            )
-            response.raise_for_status()
-
-            data = response.json()
+            # Use retry-wrapped fetch for resilience
+            data = self._fetch_bdl_with_retry(headers)
             live_boxes = data.get("data", [])
 
             logger.info(f"Fetched {len(live_boxes)} games from BDL API")
             return live_boxes
 
         except requests.RequestException as e:
-            logger.error(f"Failed to fetch live box scores: {e}")
+            logger.error(f"Failed to fetch live box scores after retries: {e}")
             return []
+
+    @retry_with_jitter(
+        max_attempts=5,
+        base_delay=60,  # Start with 60s delay (BDL API rate limits)
+        max_delay=1800,  # Max 30 minutes delay
+        exceptions=(requests.RequestException, requests.Timeout, ConnectionError)
+    )
+    def _fetch_bdl_with_retry(self, headers: Dict[str, str]) -> Dict[str, Any]:
+        """
+        Fetch BDL live API with automatic retry on transient failures.
+
+        Retry strategy:
+        - 5 attempts with exponential backoff + jitter
+        - Handles: Network errors, timeouts, API rate limits (429), server errors (5xx)
+        - Total retry window: ~30 minutes worst case
+
+        This prevents live grading failures during games (runs every 2-5 minutes).
+        Same retry logic as BDL box score scraper which prevented 40% of weekly failures.
+
+        Args:
+            headers: HTTP headers including API key
+
+        Returns:
+            JSON response from API
+
+        Raises:
+            requests.RequestException: After all retries exhausted
+        """
+        response = requests.get(
+            BDL_API_URL,
+            headers=headers,
+            timeout=BDL_API_TIMEOUT
+        )
+        response.raise_for_status()
+        return response.json()
 
     def _build_live_scores_map(self, live_data: List[Dict], target_date: str) -> Dict[str, Dict]:
         """

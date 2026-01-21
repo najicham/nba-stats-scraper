@@ -121,8 +121,9 @@ build_and_push_image() {
     
     cd "$PROJECT_ROOT"
     
-    # Build image
+    # Build image (with --no-cache to ensure latest code is used)
     docker build \
+        --no-cache \
         -f docker/predictions-worker.Dockerfile \
         -t "$IMAGE_FULL" \
         -t "$IMAGE_LATEST" \
@@ -142,7 +143,39 @@ build_and_push_image() {
 
 deploy_cloud_run() {
     log "Deploying to Cloud Run..."
-    
+
+    # CRITICAL: Preserve existing environment variables to avoid deleting CATBOOST_V8_MODEL_PATH
+    # This was the root cause of the Jan 2026 CatBoost V8 incident
+    log "Fetching current environment variables to preserve critical settings..."
+
+    # Get current CATBOOST_V8_MODEL_PATH (if exists)
+    CATBOOST_MODEL_PATH=$(gcloud run services describe "$SERVICE_NAME" \
+        --project "$PROJECT_ID" \
+        --region "$REGION" \
+        --format=json 2>/dev/null | jq -r '.spec.template.spec.containers[0].env[] | select(.name == "CATBOOST_V8_MODEL_PATH") | .value' || echo "")
+
+    # Build environment variables string
+    ENV_VARS="GCP_PROJECT_ID=${PROJECT_ID},PREDICTIONS_TABLE=nba_predictions.player_prop_predictions,PUBSUB_READY_TOPIC=${PUBSUB_READY_TOPIC}"
+
+    # Add CATBOOST_V8_MODEL_PATH if it exists
+    if [ -n "$CATBOOST_MODEL_PATH" ]; then
+        log "Preserving CATBOOST_V8_MODEL_PATH: $CATBOOST_MODEL_PATH"
+        ENV_VARS="${ENV_VARS},CATBOOST_V8_MODEL_PATH=${CATBOOST_MODEL_PATH}"
+    else
+        log "WARNING: CATBOOST_V8_MODEL_PATH not found in current service"
+        log "WARNING: Predictions will use FALLBACK mode (50% confidence)"
+        log "Set CATBOOST_V8_MODEL_PATH after deployment using:"
+        log "  gcloud run services update $SERVICE_NAME --region $REGION --project $PROJECT_ID \\"
+        log "    --update-env-vars CATBOOST_V8_MODEL_PATH=gs://nba-props-platform-models/catboost/v8/[MODEL_FILE]"
+    fi
+
+    # Add XGBOOST_V1_MODEL_PATH (Session 93 - Updated with real trained model)
+    # Default to newly trained model from 2021-2025 data (VAL MAE: 3.98)
+    XGBOOST_V1_MODEL_PATH="${XGBOOST_V1_MODEL_PATH:-gs://nba-scraped-data/ml-models/xgboost_v1_33features_20260117_183235.json}"
+    log "Setting XGBOOST_V1_MODEL_PATH: $XGBOOST_V1_MODEL_PATH"
+    ENV_VARS="${ENV_VARS},XGBOOST_V1_MODEL_PATH=${XGBOOST_V1_MODEL_PATH}"
+
+    # Deploy with all environment variables
     gcloud run deploy "$SERVICE_NAME" \
         --image "$IMAGE_FULL" \
         --project "$PROJECT_ID" \
@@ -154,12 +187,12 @@ deploy_cloud_run() {
         --concurrency "$CONCURRENCY" \
         --min-instances "$MIN_INSTANCES" \
         --max-instances "$MAX_INSTANCES" \
-        --set-env-vars "GCP_PROJECT_ID=${PROJECT_ID},PREDICTIONS_TABLE=nba_predictions.player_prop_predictions,PUBSUB_READY_TOPIC=${PUBSUB_READY_TOPIC}" \
+        --set-env-vars "$ENV_VARS" \
         --allow-unauthenticated \
         --service-account "prediction-worker@${PROJECT_ID}.iam.gserviceaccount.com" \
         --ingress all \
         --quiet
-    
+
     log "Cloud Run deployment complete"
 }
 
@@ -223,6 +256,94 @@ verify_deployment() {
     log "Deployment verified successfully"
 }
 
+send_deployment_notification() {
+    log "Sending deployment notification..."
+
+    # Get Slack webhook from Secret Manager (if exists)
+    SLACK_WEBHOOK=$(gcloud secrets versions access latest \
+        --secret="deployment-notifications-slack-webhook" \
+        --project="$PROJECT_ID" 2>/dev/null || echo "")
+
+    if [ -z "$SLACK_WEBHOOK" ]; then
+        log "No Slack webhook configured - skipping notification"
+        return 0
+    fi
+
+    # Get service URL
+    SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
+        --project "$PROJECT_ID" \
+        --region "$REGION" \
+        --format "value(status.url)")
+
+    # Get deployer
+    DEPLOYER=$(gcloud config get-value account 2>/dev/null || echo "unknown")
+
+    # Get current timestamp
+    TIMESTAMP=$(date +"%Y-%m-%d %H:%M:%S %Z")
+
+    # Get image tag (short version for readability)
+    IMAGE_SHORT=$(echo "$IMAGE_TAG" | cut -d'-' -f1-2)
+
+    # Send notification to Slack
+    curl -X POST "$SLACK_WEBHOOK" \
+        -H "Content-Type: application/json" \
+        -d "{
+            \"text\": \"✅ NBA Prediction Worker Deployed\",
+            \"blocks\": [
+                {
+                    \"type\": \"header\",
+                    \"text\": {
+                        \"type\": \"plain_text\",
+                        \"text\": \"✅ NBA Prediction Worker Deployed\"
+                    }
+                },
+                {
+                    \"type\": \"section\",
+                    \"fields\": [
+                        {
+                            \"type\": \"mrkdwn\",
+                            \"text\": \"*Environment:*\n${ENVIRONMENT}\"
+                        },
+                        {
+                            \"type\": \"mrkdwn\",
+                            \"text\": \"*Version:*\n${IMAGE_SHORT}\"
+                        },
+                        {
+                            \"type\": \"mrkdwn\",
+                            \"text\": \"*Deployed by:*\n${DEPLOYER}\"
+                        },
+                        {
+                            \"type\": \"mrkdwn\",
+                            \"text\": \"*Timestamp:*\n${TIMESTAMP}\"
+                        }
+                    ]
+                },
+                {
+                    \"type\": \"section\",
+                    \"fields\": [
+                        {
+                            \"type\": \"mrkdwn\",
+                            \"text\": \"*Max Instances:*\n${MAX_INSTANCES}\"
+                        },
+                        {
+                            \"type\": \"mrkdwn\",
+                            \"text\": \"*Concurrency:*\n${CONCURRENCY}\"
+                        }
+                    ]
+                },
+                {
+                    \"type\": \"section\",
+                    \"text\": {
+                        \"type\": \"mrkdwn\",
+                        \"text\": \"<${SERVICE_URL}|Service URL> • <${SERVICE_URL}/health|Health Check>\"
+                    }
+                }
+            ]
+        }" 2>&1 | grep -q "ok" && \
+        log "Notification sent successfully" || \
+        log "Warning: Failed to send notification (non-fatal)"
+}
+
 show_deployment_info() {
     log "============================================"
     log "Deployment Summary"
@@ -240,13 +361,13 @@ show_deployment_info() {
     log "Timeout:           ${TIMEOUT}s"
     log "Subscription:      $PUBSUB_SUBSCRIPTION"
     log "============================================"
-    
+
     # Get service URL
     SERVICE_URL=$(gcloud run services describe "$SERVICE_NAME" \
         --project "$PROJECT_ID" \
         --region "$REGION" \
         --format "value(status.url)")
-    
+
     log "Service URL: $SERVICE_URL"
     log "Health Check: ${SERVICE_URL}/health"
     log ""
@@ -268,8 +389,9 @@ main() {
     deploy_cloud_run
     configure_pubsub
     verify_deployment
+    send_deployment_notification
     show_deployment_info
-    
+
     log "Deployment complete! 🚀"
 }
 

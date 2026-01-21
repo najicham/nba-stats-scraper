@@ -2,4 +2,4 @@
 # Dependencies for Processor Execution Monitor
 
 # Load shared requirements from project root
--r ../../shared/requirements.txt
+-r ../../shared/requirements.txtgoogle-cloud-secret-manager==2.16.0

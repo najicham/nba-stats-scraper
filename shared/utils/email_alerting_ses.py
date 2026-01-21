@@ -26,7 +26,10 @@ from dotenv import load_dotenv
 # Import alert type system
 from shared.utils.alert_types import get_alert_html_heading, detect_alert_type
 
-# Load .env file for SES credentials (AWS_SES_ACCESS_KEY_ID, etc.)
+# Import Secret Manager for secure credential retrieval
+from shared.utils.secrets import get_secret_manager
+
+# Load .env file for SES credentials (fallback only)
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -48,9 +51,17 @@ class EmailAlerterSES:
         self.from_email = os.environ.get('AWS_SES_FROM_EMAIL', 'alert@989.ninja')
         self.from_name = os.environ.get('AWS_SES_FROM_NAME', 'NBA Registry System')
 
-        # AWS credentials
-        aws_access_key = os.environ.get('AWS_SES_ACCESS_KEY_ID')
-        aws_secret_key = os.environ.get('AWS_SES_SECRET_ACCESS_KEY')
+        # AWS credentials - try Secret Manager first, fall back to env vars
+        try:
+            secret_manager = get_secret_manager()
+            aws_access_key = secret_manager.get_aws_ses_access_key_id()
+            aws_secret_key = secret_manager.get_aws_ses_secret_key()
+            logger.info("Using AWS SES credentials from Secret Manager")
+        except Exception as e:
+            logger.warning(f"Failed to get AWS SES credentials from Secret Manager: {e}")
+            logger.info("Falling back to environment variables for AWS SES credentials")
+            aws_access_key = os.environ.get('AWS_SES_ACCESS_KEY_ID')
+            aws_secret_key = os.environ.get('AWS_SES_SECRET_ACCESS_KEY')
 
         # Alert recipients
         self.alert_recipients = os.environ.get('EMAIL_ALERTS_TO', '').split(',')

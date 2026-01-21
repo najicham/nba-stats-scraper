@@ -243,6 +243,31 @@ class NewPlayerConfig:
 
 
 @dataclass
+class WorkflowExecutionConfig:
+    """
+    Week 1: Configuration for workflow execution behavior.
+
+    Makes parallel execution configurable per workflow instead of hardcoded.
+    """
+
+    # Workflows that should run in parallel
+    # Via env: PARALLEL_WORKFLOWS (comma-separated)
+    parallel_workflows: List[str] = field(default_factory=lambda: ['morning_operations'])
+
+    # Max workers for parallel execution
+    # Via env: WORKFLOW_MAX_WORKERS
+    max_workers: int = 10
+
+    # Execution timeout (seconds)
+    # Via env: WORKFLOW_EXECUTION_TIMEOUT
+    execution_timeout: int = 600  # 10 minutes
+
+    def is_parallel(self, workflow_name: str) -> bool:
+        """Check if workflow should run in parallel."""
+        return workflow_name in self.parallel_workflows
+
+
+@dataclass
 class OrchestrationConfig:
     """Main orchestration configuration."""
 
@@ -254,6 +279,7 @@ class OrchestrationConfig:
     circuit_breaker: CircuitBreakerConfig = field(default_factory=CircuitBreakerConfig)
     worker_concurrency: WorkerConcurrencyConfig = field(default_factory=WorkerConcurrencyConfig)
     self_healing: SelfHealingConfig = field(default_factory=SelfHealingConfig)
+    workflow_execution: WorkflowExecutionConfig = field(default_factory=WorkflowExecutionConfig)
 
     @classmethod
     def from_environment(cls) -> 'OrchestrationConfig':
@@ -322,6 +348,19 @@ class OrchestrationConfig:
         auto_reduce = os.environ.get('SELF_HEALING_AUTO_REDUCE_CONCURRENCY')
         if auto_reduce is not None:
             config.self_healing.auto_reduce_concurrency = auto_reduce.lower() == 'true'
+
+        # Week 1: Workflow execution config
+        parallel_workflows = os.environ.get('PARALLEL_WORKFLOWS')
+        if parallel_workflows:
+            config.workflow_execution.parallel_workflows = [w.strip() for w in parallel_workflows.split(',')]
+
+        max_workers = os.environ.get('WORKFLOW_MAX_WORKERS')
+        if max_workers:
+            config.workflow_execution.max_workers = int(max_workers)
+
+        exec_timeout = os.environ.get('WORKFLOW_EXECUTION_TIMEOUT')
+        if exec_timeout:
+            config.workflow_execution.execution_timeout = int(exec_timeout)
 
         return config
 

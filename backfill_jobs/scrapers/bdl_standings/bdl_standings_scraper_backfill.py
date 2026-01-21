@@ -25,6 +25,7 @@ import time
 from typing import List, Optional
 
 import requests
+from shared.clients.http_pool import get_http_session
 from google.cloud import storage
 
 # Setup logging
@@ -95,7 +96,7 @@ class BdlStandingsBackfill:
             return True
 
         try:
-            response = requests.get(
+            response = get_http_session().get(
                 f"{self.service_url}/bdl_standings",
                 params={
                     "season": season,

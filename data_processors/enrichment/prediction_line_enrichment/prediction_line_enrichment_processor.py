@@ -24,6 +24,7 @@ from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ class PredictionLineEnrichmentProcessor:
     def __init__(self, project_id: str = PROJECT_ID, dataset_prefix: str = ''):
         self.project_id = project_id
         self.dataset_prefix = dataset_prefix
-        self.bq_client = bigquery.Client(project=project_id)
+        self.bq_client = get_bigquery_client(project_id=project_id)
 
         # Construct table names with optional prefix (for testing)
         predictions_dataset = f"{dataset_prefix}_nba_predictions" if dataset_prefix else "nba_predictions"

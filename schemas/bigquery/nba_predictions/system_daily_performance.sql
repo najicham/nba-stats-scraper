@@ -55,7 +55,10 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.system_daily_perf
   computed_at TIMESTAMP
 )
 PARTITION BY game_date
-CLUSTER BY system_id;
+CLUSTER BY system_id
+OPTIONS (
+  require_partition_filter=TRUE
+);
 
 -- ============================================================================
 -- Aggregation Query (run after Phase 5B grading)

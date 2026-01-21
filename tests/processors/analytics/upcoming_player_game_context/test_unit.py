@@ -377,28 +377,28 @@ class TestDataQualityCalculation:
         
         result = processor._calculate_data_quality(historical_data, game_lines)
         
-        assert result['data_quality_tier'] == 'high'
+        assert result['data_quality_tier'] == 'gold'
         assert result['processed_with_issues'] is False
-    
+
     def test_medium_quality_tier(self, processor):
         """Test medium quality tier for 5-9 games."""
         # Create 7 games
         historical_data = pd.DataFrame([{'game': i} for i in range(7)])
         game_lines = {'game_spread': -3.5, 'game_total': 225.0}
-        
+
         result = processor._calculate_data_quality(historical_data, game_lines)
-        
-        assert result['data_quality_tier'] == 'medium'
-    
+
+        assert result['data_quality_tier'] == 'silver'
+
     def test_low_quality_tier(self, processor):
         """Test low quality tier for <5 games."""
         # Create 3 games
         historical_data = pd.DataFrame([{'game': i} for i in range(3)])
         game_lines = {'game_spread': -3.5, 'game_total': 225.0}
-        
+
         result = processor._calculate_data_quality(historical_data, game_lines)
-        
-        assert result['data_quality_tier'] == 'low'
+
+        assert result['data_quality_tier'] == 'bronze'
     
     def test_processed_with_issues_missing_spread(self, processor):
         """Test issues flag when game spread is missing."""
@@ -470,42 +470,35 @@ class TestSourceTrackingFields:
     def test_build_source_tracking_fields_structure(self, processor):
         """Test that all source tracking fields are included."""
         result = processor._build_source_tracking_fields()
-        
-        # Check all 4 sources × 3 fields = 12 fields
+
+        # Check all 4 hash fields (new hash-based tracking)
         expected_fields = [
-            'source_boxscore_last_updated',
-            'source_boxscore_rows_found',
-            'source_boxscore_completeness_pct',
-            'source_schedule_last_updated',
-            'source_schedule_rows_found',
-            'source_schedule_completeness_pct',
-            'source_props_last_updated',
-            'source_props_rows_found',
-            'source_props_completeness_pct',
-            'source_game_lines_last_updated',
-            'source_game_lines_rows_found',
-            'source_game_lines_completeness_pct'
+            'source_boxscore_hash',
+            'source_schedule_hash',
+            'source_props_hash',
+            'source_game_lines_hash'
         ]
-        
+
         for field in expected_fields:
             assert field in result, f"Missing field: {field}"
     
-    def test_build_source_tracking_timestamps_iso_format(self, processor):
-        """Test that timestamps are converted to ISO format."""
+    def test_build_source_tracking_hashes_format(self, processor):
+        """Test that hashes are in correct format."""
         result = processor._build_source_tracking_fields()
-        
-        # Check timestamps are strings (ISO format)
-        assert isinstance(result['source_boxscore_last_updated'], str)
-        assert 'T' in result['source_boxscore_last_updated']  # ISO format has 'T'
+
+        # Check hashes are strings or None (MD5 hash format, 16 chars)
+        if result['source_boxscore_hash'] is not None:
+            assert isinstance(result['source_boxscore_hash'], str)
+            assert len(result['source_boxscore_hash']) == 16  # 16-char hash
     
-    def test_build_source_tracking_rows_found(self, processor):
-        """Test that rows_found values are included."""
+    def test_build_source_tracking_hash_values(self, processor):
+        """Test that hash values are computed correctly."""
         result = processor._build_source_tracking_fields()
-        
-        assert result['source_boxscore_rows_found'] == 25
-        assert result['source_schedule_rows_found'] == 10
-        assert result['source_props_rows_found'] == 8
-        assert result['source_game_lines_rows_found'] == 5
+
+        # Hashes should be generated for sources with data
+        # Boxscore and schedule should have hashes, props/game_lines may be None
+        assert result['source_boxscore_hash'] is not None
+        assert result['source_schedule_hash'] is not None
     
     def test_calculate_completeness_boxscore(self, processor):
         """Test completeness calculation for boxscore source."""
@@ -571,6 +564,696 @@ class TestSeasonPhaseDetermination:
         """Test playoffs detection for May."""
         result = processor._determine_season_phase(date(2025, 5, 10))
         assert result == 'playoffs'
+
+
+class TestPaceMetricsCalculation:
+    """Test pace-related analytics calculations."""
+
+    @pytest.fixture
+    def processor(self):
+        """Create processor instance with mocked BigQuery."""
+        proc = UpcomingPlayerGameContextProcessor()
+        proc.bq_client = Mock()
+        proc.project_id = 'test-project'
+        proc.target_date = date(2025, 1, 20)
+        return proc
+
+    def test_calculate_pace_differential_normal(self, processor):
+        """Test pace differential calculation with normal data."""
+        # Mock BigQuery response
+        mock_row = Mock()
+        mock_row.pace_diff = 5.2
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._calculate_pace_differential('LAL', 'GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(5.2, abs=0.01)
+        # Verify query was called
+        assert processor.bq_client.query.called
+
+    def test_calculate_pace_differential_negative(self, processor):
+        """Test pace differential with slower team pace."""
+        mock_row = Mock()
+        mock_row.pace_diff = -3.5
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._calculate_pace_differential('LAL', 'GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(-3.5, abs=0.01)
+
+    def test_calculate_pace_differential_no_data(self, processor):
+        """Test pace differential when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._calculate_pace_differential('LAL', 'GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_calculate_pace_differential_query_error(self, processor):
+        """Test pace differential handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._calculate_pace_differential('LAL', 'GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_pace_last_10_normal(self, processor):
+        """Test opponent pace calculation with normal data."""
+        mock_row = Mock()
+        mock_row.avg_pace = 102.5
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_pace_last_10('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(102.5, abs=0.1)
+        assert processor.bq_client.query.called
+
+    def test_get_opponent_pace_last_10_high_pace(self, processor):
+        """Test opponent pace with high-paced team."""
+        mock_row = Mock()
+        mock_row.avg_pace = 110.2
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_pace_last_10('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(110.2, abs=0.1)
+
+    def test_get_opponent_pace_last_10_no_data(self, processor):
+        """Test opponent pace when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_opponent_pace_last_10('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_pace_last_10_query_error(self, processor):
+        """Test opponent pace handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_opponent_pace_last_10('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_ft_rate_allowed_normal(self, processor):
+        """Test FT rate allowed calculation with normal data."""
+        mock_row = Mock()
+        mock_row.avg_opp_fta = 22.5
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_ft_rate_allowed('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(22.5, abs=0.1)
+        assert processor.bq_client.query.called
+
+    def test_get_opponent_ft_rate_allowed_high_fouls(self, processor):
+        """Test FT rate allowed with foul-prone defense."""
+        mock_row = Mock()
+        mock_row.avg_opp_fta = 28.3
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_ft_rate_allowed('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(28.3, abs=0.1)
+
+    def test_get_opponent_ft_rate_allowed_low_fouls(self, processor):
+        """Test FT rate allowed with disciplined defense."""
+        mock_row = Mock()
+        mock_row.avg_opp_fta = 18.1
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_ft_rate_allowed('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(18.1, abs=0.1)
+
+    def test_get_opponent_ft_rate_allowed_no_data(self, processor):
+        """Test FT rate allowed when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_opponent_ft_rate_allowed('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_ft_rate_allowed_query_error(self, processor):
+        """Test FT rate allowed handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_opponent_ft_rate_allowed('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_def_rating_last_10_normal(self, processor):
+        """Test opponent defensive rating calculation with normal data."""
+        mock_row = Mock()
+        mock_row.avg_def_rating = 112.5
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_def_rating_last_10('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(112.5, abs=0.1)
+        assert processor.bq_client.query.called
+
+    def test_get_opponent_def_rating_last_10_elite_defense(self, processor):
+        """Test opponent defensive rating with elite defense."""
+        mock_row = Mock()
+        mock_row.avg_def_rating = 105.2
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_def_rating_last_10('BOS', date(2025, 1, 20))
+
+        assert result == pytest.approx(105.2, abs=0.1)
+
+    def test_get_opponent_def_rating_last_10_poor_defense(self, processor):
+        """Test opponent defensive rating with poor defense."""
+        mock_row = Mock()
+        mock_row.avg_def_rating = 120.8
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_def_rating_last_10('WAS', date(2025, 1, 20))
+
+        assert result == pytest.approx(120.8, abs=0.1)
+
+    def test_get_opponent_def_rating_last_10_no_data(self, processor):
+        """Test opponent defensive rating when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_opponent_def_rating_last_10('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_def_rating_last_10_query_error(self, processor):
+        """Test opponent defensive rating handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_opponent_def_rating_last_10('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_off_rating_last_10_normal(self, processor):
+        """Test opponent offensive rating calculation with normal data."""
+        mock_row = Mock()
+        mock_row.avg_off_rating = 115.3
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_off_rating_last_10('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(115.3, abs=0.1)
+        assert processor.bq_client.query.called
+
+    def test_get_opponent_off_rating_last_10_elite_offense(self, processor):
+        """Test opponent offensive rating with elite offense."""
+        mock_row = Mock()
+        mock_row.avg_off_rating = 122.5
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_off_rating_last_10('BOS', date(2025, 1, 20))
+
+        assert result == pytest.approx(122.5, abs=0.1)
+
+    def test_get_opponent_off_rating_last_10_poor_offense(self, processor):
+        """Test opponent offensive rating with poor offense."""
+        mock_row = Mock()
+        mock_row.avg_off_rating = 108.2
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_off_rating_last_10('DET', date(2025, 1, 20))
+
+        assert result == pytest.approx(108.2, abs=0.1)
+
+    def test_get_opponent_off_rating_last_10_no_data(self, processor):
+        """Test opponent offensive rating when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_opponent_off_rating_last_10('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_off_rating_last_10_query_error(self, processor):
+        """Test opponent offensive rating handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_opponent_off_rating_last_10('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_rebounding_rate_normal(self, processor):
+        """Test opponent rebounding rate calculation with normal data."""
+        mock_row = Mock()
+        mock_row.rebounding_rate = 0.42
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_rebounding_rate('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(0.42, abs=0.01)
+        assert processor.bq_client.query.called
+
+    def test_get_opponent_rebounding_rate_high_rebounding(self, processor):
+        """Test opponent rebounding rate with high rebounding team."""
+        mock_row = Mock()
+        mock_row.rebounding_rate = 0.52
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_rebounding_rate('DEN', date(2025, 1, 20))
+
+        assert result == pytest.approx(0.52, abs=0.01)
+
+    def test_get_opponent_rebounding_rate_low_rebounding(self, processor):
+        """Test opponent rebounding rate with low rebounding team."""
+        mock_row = Mock()
+        mock_row.rebounding_rate = 0.35
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_rebounding_rate('HOU', date(2025, 1, 20))
+
+        assert result == pytest.approx(0.35, abs=0.01)
+
+    def test_get_opponent_rebounding_rate_no_data(self, processor):
+        """Test opponent rebounding rate when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_opponent_rebounding_rate('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_rebounding_rate_query_error(self, processor):
+        """Test opponent rebounding rate handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_opponent_rebounding_rate('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_pace_variance_normal(self, processor):
+        """Test opponent pace variance calculation with normal data."""
+        mock_row = Mock()
+        mock_row.pace_stddev = 3.5
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_pace_variance('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(3.5, abs=0.1)
+        assert processor.bq_client.query.called
+
+    def test_get_opponent_pace_variance_high_variance(self, processor):
+        """Test opponent pace variance with inconsistent team."""
+        mock_row = Mock()
+        mock_row.pace_stddev = 8.2
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_pace_variance('LAL', date(2025, 1, 20))
+
+        assert result == pytest.approx(8.2, abs=0.1)
+
+    def test_get_opponent_pace_variance_no_data(self, processor):
+        """Test opponent pace variance when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_opponent_pace_variance('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_pace_variance_query_error(self, processor):
+        """Test opponent pace variance handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_opponent_pace_variance('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+
+class TestOpponentFTRateVariance:
+    """Test opponent FT rate variance calculation."""
+
+    @pytest.fixture
+    def processor(self):
+        """Create processor instance with mocked BigQuery."""
+        proc = UpcomingPlayerGameContextProcessor()
+        proc.bq_client = Mock()
+        proc.project_id = 'test-project'
+        proc.target_date = date(2025, 1, 20)
+        return proc
+
+    def test_get_opponent_ft_rate_variance_normal(self, processor):
+        """Test opponent FT rate variance calculation with normal data."""
+        mock_row = Mock()
+        mock_row.ft_rate_stddev = 2.3
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_ft_rate_variance('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(2.3, abs=0.1)
+        assert processor.bq_client.query.called
+
+    def test_get_opponent_ft_rate_variance_high_variance(self, processor):
+        """Test opponent FT rate variance with inconsistent team."""
+        mock_row = Mock()
+        mock_row.ft_rate_stddev = 5.8
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_ft_rate_variance('LAL', date(2025, 1, 20))
+
+        assert result == pytest.approx(5.8, abs=0.1)
+
+    def test_get_opponent_ft_rate_variance_no_data(self, processor):
+        """Test opponent FT rate variance when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_opponent_ft_rate_variance('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_ft_rate_variance_query_error(self, processor):
+        """Test opponent FT rate variance handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_opponent_ft_rate_variance('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+
+class TestOpponentDefRatingVariance:
+    """Test opponent defensive rating variance calculation."""
+
+    @pytest.fixture
+    def processor(self):
+        """Create processor instance with mocked BigQuery."""
+        proc = UpcomingPlayerGameContextProcessor()
+        proc.bq_client = Mock()
+        proc.project_id = 'test-project'
+        proc.target_date = date(2025, 1, 20)
+        return proc
+
+    def test_get_opponent_def_rating_variance_normal(self, processor):
+        """Test opponent def rating variance calculation with normal data."""
+        mock_row = Mock()
+        mock_row.def_rating_stddev = 4.2
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_def_rating_variance('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(4.2, abs=0.1)
+        assert processor.bq_client.query.called
+
+    def test_get_opponent_def_rating_variance_high_variance(self, processor):
+        """Test opponent def rating variance with inconsistent team."""
+        mock_row = Mock()
+        mock_row.def_rating_stddev = 7.1
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_def_rating_variance('LAL', date(2025, 1, 20))
+
+        assert result == pytest.approx(7.1, abs=0.1)
+
+    def test_get_opponent_def_rating_variance_no_data(self, processor):
+        """Test opponent def rating variance when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_opponent_def_rating_variance('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_def_rating_variance_query_error(self, processor):
+        """Test opponent def rating variance handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_opponent_def_rating_variance('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+
+class TestOpponentOffRatingVariance:
+    """Test opponent offensive rating variance calculation."""
+
+    @pytest.fixture
+    def processor(self):
+        """Create processor instance with mocked BigQuery."""
+        proc = UpcomingPlayerGameContextProcessor()
+        proc.bq_client = Mock()
+        proc.project_id = 'test-project'
+        proc.target_date = date(2025, 1, 20)
+        return proc
+
+    def test_get_opponent_off_rating_variance_normal(self, processor):
+        """Test opponent off rating variance calculation with normal data."""
+        mock_row = Mock()
+        mock_row.off_rating_stddev = 3.9
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_off_rating_variance('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(3.9, abs=0.1)
+        assert processor.bq_client.query.called
+
+    def test_get_opponent_off_rating_variance_high_variance(self, processor):
+        """Test opponent off rating variance with inconsistent team."""
+        mock_row = Mock()
+        mock_row.off_rating_stddev = 6.5
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_off_rating_variance('LAL', date(2025, 1, 20))
+
+        assert result == pytest.approx(6.5, abs=0.1)
+
+    def test_get_opponent_off_rating_variance_no_data(self, processor):
+        """Test opponent off rating variance when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_opponent_off_rating_variance('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_off_rating_variance_query_error(self, processor):
+        """Test opponent off rating variance handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_opponent_off_rating_variance('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+
+class TestOpponentReboundingRateVariance:
+    """Test opponent rebounding rate variance calculation."""
+
+    @pytest.fixture
+    def processor(self):
+        """Create processor instance with mocked BigQuery."""
+        proc = UpcomingPlayerGameContextProcessor()
+        proc.bq_client = Mock()
+        proc.project_id = 'test-project'
+        proc.target_date = date(2025, 1, 20)
+        return proc
+
+    def test_get_opponent_rebounding_rate_variance_normal(self, processor):
+        """Test opponent rebounding rate variance calculation with normal data."""
+        mock_row = Mock()
+        mock_row.rebounding_rate_stddev = 0.025
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_rebounding_rate_variance('GSW', date(2025, 1, 20))
+
+        assert result == pytest.approx(0.025, abs=0.001)
+        assert processor.bq_client.query.called
+
+    def test_get_opponent_rebounding_rate_variance_high_variance(self, processor):
+        """Test opponent rebounding rate variance with inconsistent team."""
+        mock_row = Mock()
+        mock_row.rebounding_rate_stddev = 0.058
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_rebounding_rate_variance('LAL', date(2025, 1, 20))
+
+        assert result == pytest.approx(0.058, abs=0.001)
+
+    def test_get_opponent_rebounding_rate_variance_no_data(self, processor):
+        """Test opponent rebounding rate variance when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_opponent_rebounding_rate_variance('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+    def test_get_opponent_rebounding_rate_variance_query_error(self, processor):
+        """Test opponent rebounding rate variance handles BigQuery errors."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_opponent_rebounding_rate_variance('GSW', date(2025, 1, 20))
+
+        assert result == 0.0
+
+
+class TestStarTeammatesOut:
+    """Test star teammates out calculation."""
+
+    @pytest.fixture
+    def processor(self):
+        """Create processor instance with mocked BigQuery."""
+        proc = UpcomingPlayerGameContextProcessor()
+        proc.bq_client = Mock()
+        proc.project_id = 'test-project'
+        proc.target_date = date(2025, 1, 20)
+        return proc
+
+    def test_get_star_teammates_out_normal(self, processor):
+        """Test with 2 star players out."""
+        mock_row = Mock()
+        mock_row.star_teammates_out = 2
+        processor.bq_client.query.return_value.result.return_value = [mock_row]
+
+        result = processor._get_star_teammates_out('LAL', date(2025, 1, 20))
+
+        assert result == 2
+        assert processor.bq_client.query.called
+
+    def test_get_star_teammates_out_no_stars_out(self, processor):
+        """Test with all stars healthy."""
+        mock_row = Mock()
+        mock_row.star_teammates_out = 0
+        processor.bq_client.query.return_value.result.return_value = [mock_row]
+
+        result = processor._get_star_teammates_out('LAL', date(2025, 1, 20))
+
+        assert result == 0
+
+    def test_get_star_teammates_out_no_data(self, processor):
+        """Test when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_star_teammates_out('LAL', date(2025, 1, 20))
+
+        assert result == 0
+
+    def test_get_star_teammates_out_query_error(self, processor):
+        """Test error handling."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_star_teammates_out('LAL', date(2025, 1, 20))
+
+        assert result == 0
+
+
+class TestQuestionableStarTeammates:
+    """Test questionable star teammates calculation."""
+
+    @pytest.fixture
+    def processor(self):
+        """Create processor instance with mocked BigQuery."""
+        proc = UpcomingPlayerGameContextProcessor()
+        proc.bq_client = Mock()
+        proc.project_id = 'test-project'
+        proc.target_date = date(2025, 1, 20)
+        return proc
+
+    def test_get_questionable_star_teammates_normal(self, processor):
+        """Test with 1 star player questionable."""
+        mock_row = Mock()
+        mock_row.questionable_star_teammates = 1
+        processor.bq_client.query.return_value.result.return_value = [mock_row]
+
+        result = processor._get_questionable_star_teammates('LAL', date(2025, 1, 20))
+
+        assert result == 1
+        assert processor.bq_client.query.called
+
+    def test_get_questionable_star_teammates_multiple(self, processor):
+        """Test with multiple stars questionable."""
+        mock_row = Mock()
+        mock_row.questionable_star_teammates = 3
+        processor.bq_client.query.return_value.result.return_value = [mock_row]
+
+        result = processor._get_questionable_star_teammates('LAL', date(2025, 1, 20))
+
+        assert result == 3
+
+    def test_get_questionable_star_teammates_no_data(self, processor):
+        """Test when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_questionable_star_teammates('LAL', date(2025, 1, 20))
+
+        assert result == 0
+
+    def test_get_questionable_star_teammates_query_error(self, processor):
+        """Test error handling."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_questionable_star_teammates('LAL', date(2025, 1, 20))
+
+        assert result == 0
+
+
+class TestStarTierOut:
+    """Test star tier out weighted scoring."""
+
+    @pytest.fixture
+    def processor(self):
+        """Create processor instance with mocked BigQuery."""
+        proc = UpcomingPlayerGameContextProcessor()
+        proc.bq_client = Mock()
+        proc.project_id = 'test-project'
+        proc.target_date = date(2025, 1, 20)
+        return proc
+
+    def test_get_star_tier_out_normal(self, processor):
+        """Test with mixed tier stars out."""
+        mock_row = Mock()
+        mock_row.star_tier_out = 5  # e.g., 1 tier-1 (3pts) + 1 tier-2 (2pts)
+        processor.bq_client.query.return_value.result.return_value = [mock_row]
+
+        result = processor._get_star_tier_out('LAL', date(2025, 1, 20))
+
+        assert result == 5
+        assert processor.bq_client.query.called
+
+    def test_get_star_tier_out_superstar(self, processor):
+        """Test with single superstar out."""
+        mock_row = Mock()
+        mock_row.star_tier_out = 3  # 1 tier-1 player
+        processor.bq_client.query.return_value.result.return_value = [mock_row]
+
+        result = processor._get_star_tier_out('LAL', date(2025, 1, 20))
+
+        assert result == 3
+
+    def test_get_star_tier_out_no_data(self, processor):
+        """Test when no data available."""
+        processor.bq_client.query.return_value.result.return_value = []
+
+        result = processor._get_star_tier_out('LAL', date(2025, 1, 20))
+
+        assert result == 0
+
+    def test_get_star_tier_out_query_error(self, processor):
+        """Test error handling."""
+        processor.bq_client.query.side_effect = Exception("BigQuery error")
+
+        result = processor._get_star_tier_out('LAL', date(2025, 1, 20))
+
+        assert result == 0
 
 
 # Run tests with: pytest test_unit.py -v

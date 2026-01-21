@@ -16,3 +16,4 @@ requests==2.31.0
 # Note: These are imported from the parent project, not installed via pip
 # - shared.utils.notification_system
 # - shared.utils.email_alerting
+google-cloud-secret-manager==2.16.0

@@ -111,8 +111,9 @@ def get_preferred_game_lines(
     job_config = bigquery.QueryJobConfig(query_parameters=query_params)
     
     # Execute query
-    df = client.query(query, job_config=job_config).to_dataframe()
-    
+    query_job = client.query(query, job_config=job_config)
+    df = query_job.result(timeout=60).to_dataframe()
+
     return df
 
 
@@ -211,8 +212,9 @@ def get_game_lines_summary(
     job_config = bigquery.QueryJobConfig(query_parameters=query_params)
     
     # Execute query
-    df = client.query(query, job_config=job_config).to_dataframe()
-    
+    query_job = client.query(query, job_config=job_config)
+    df = query_job.result(timeout=60).to_dataframe()
+
     return df
 
 
@@ -267,8 +269,9 @@ def get_bookmaker_coverage_stats(
     job_config = bigquery.QueryJobConfig(query_parameters=query_params)
     
     # Execute query
-    result = client.query(query, job_config=job_config).to_dataframe()
-    
+    query_job = client.query(query, job_config=job_config)
+    result = query_job.result(timeout=60).to_dataframe()
+
     # Convert to dictionary
     stats = result.iloc[0].to_dict()
     
@@ -320,8 +323,9 @@ def get_game_bookmakers(
     ]
     
     job_config = bigquery.QueryJobConfig(query_parameters=query_params)
-    df = client.query(query, job_config=job_config).to_dataframe()
-    
+    query_job = client.query(query, job_config=job_config)
+    df = query_job.result(timeout=60).to_dataframe()
+
     return df
 
 

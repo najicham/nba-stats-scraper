@@ -16,15 +16,17 @@ Purpose:
 - Track which processors complete each day (observability)
 - Provide completion status via HTTP endpoint
 - Enable debugging of pipeline issues
+- Prevent indefinite waits with completion deadline (Week 1)
 
 Critical Features:
 - Atomic Firestore transactions (prevent race conditions)
 - Idempotency (handles duplicate Pub/Sub messages)
 - Correlation ID preservation (traces back to original scraper run)
+- Completion deadline monitoring (Week 1 - prevents indefinite waits)
 
-Version: 2.0 - Monitoring-only mode (no longer triggers Phase 3)
+Version: 2.2 - Added Week 1 completion deadline feature
 Created: 2025-11-29
-Updated: 2025-12-23
+Updated: 2026-01-20
 """
 
 import base64
@@ -34,8 +36,10 @@ import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
 
-from google.cloud import firestore
+from google.cloud import firestore, bigquery
 import functions_framework
+import requests
+from shared.clients.bigquery_pool import get_bigquery_client
 
 # Configure logging - use structured logging for Cloud Run
 import google.cloud.logging
@@ -53,6 +57,11 @@ print("Phase2-to-Phase3 Orchestrator module loaded")
 
 # Constants
 PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
+SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
+
+# Week 1: Phase 2 Completion Deadline Feature
+ENABLE_PHASE2_COMPLETION_DEADLINE = os.environ.get('ENABLE_PHASE2_COMPLETION_DEADLINE', 'false').lower() == 'true'
+PHASE2_COMPLETION_TIMEOUT_MINUTES = int(os.environ.get('PHASE2_COMPLETION_TIMEOUT_MINUTES', '30'))
 
 # Import expected processors from centralized config
 # This ensures consistency across the codebase (Issue A fix)
@@ -125,6 +134,297 @@ def normalize_processor_name(raw_name: str, output_table: Optional[str] = None) 
     return name
 
 
+# ============================================================================
+# DATA FRESHNESS VALIDATION
+# ============================================================================
+
+# R-007: Data freshness validation for Phase 2 raw data tables
+# Required Phase 2 tables that must have data before Phase 3 can proceed
+REQUIRED_PHASE2_TABLES = [
+    ('nba_raw', 'bdl_player_boxscores', 'game_date'),
+    ('nba_raw', 'nbac_gamebook_player_stats', 'game_date'),
+    ('nba_raw', 'nbac_team_boxscore', 'game_date'),
+    ('nba_raw', 'odds_api_game_lines', 'game_date'),
+    ('nba_raw', 'nbac_schedule', 'game_date'),
+    ('nba_raw', 'bigdataball_play_by_play', 'game_date'),
+]
+
+
+def verify_phase2_data_ready(game_date: str) -> tuple:
+    """
+    R-007: Verify Phase 2 raw tables have fresh data for game_date.
+
+    This is a belt-and-suspenders check - even if all processors report success,
+    verify the data actually exists in BigQuery.
+
+    Args:
+        game_date: The date to verify (YYYY-MM-DD)
+
+    Returns:
+        tuple: (is_ready: bool, missing_tables: list, table_counts: dict)
+    """
+    try:
+        bq_client = get_bigquery_client(project_id=os.environ.get('GCP_PROJECT', 'nba-props-platform'))
+        missing = []
+        table_counts = {}
+
+        for dataset, table, date_col in REQUIRED_PHASE2_TABLES:
+            try:
+                query = f"""
+                SELECT COUNT(*) as cnt
+                FROM `{PROJECT_ID}.{dataset}.{table}`
+                WHERE {date_col} = '{game_date}'
+                """
+                result = list(bq_client.query(query).result())
+                count = result[0].cnt if result else 0
+                table_counts[f"{dataset}.{table}"] = count
+
+                if count == 0:
+                    missing.append(f"{dataset}.{table}")
+                    logger.warning(f"R-007: Missing data in {dataset}.{table} for {game_date}")
+
+            except Exception as query_error:
+                # If query fails (table doesn't exist, etc.), treat as missing
+                logger.error(f"R-007: Failed to verify {dataset}.{table}: {query_error}")
+                missing.append(f"{dataset}.{table}")
+                table_counts[f"{dataset}.{table}"] = -1  # Error marker
+
+        is_ready = len(missing) == 0
+        if is_ready:
+            logger.info(f"R-007: All Phase 2 tables verified for {game_date}: {table_counts}")
+        else:
+            logger.warning(f"R-007: Data freshness check FAILED for {game_date}. Missing: {missing}")
+
+        return (is_ready, missing, table_counts)
+
+    except Exception as e:
+        logger.error(f"R-007: Data freshness verification failed: {e}")
+        # On error, return False with empty details
+        return (False, ['verification_error'], {'error': str(e)})
+
+
+def check_completion_deadline(game_date: str, current_processor: str) -> tuple:
+    """
+    Week 1: Check if Phase 2 completion deadline has been exceeded.
+
+    Returns completion status and triggers Phase 3 if deadline exceeded.
+
+    Args:
+        game_date: The date being processed
+        current_processor: The processor that just completed
+
+    Returns:
+        tuple: (deadline_exceeded: bool, first_completion_time: datetime, completed_processors: list)
+    """
+    if not ENABLE_PHASE2_COMPLETION_DEADLINE:
+        return (False, None, [])
+
+    try:
+        doc_ref = db.collection('phase2_completion').document(game_date)
+        doc = doc_ref.get()
+
+        if not doc.exists:
+            logger.warning(f"No completion doc found for {game_date}, cannot check deadline")
+            return (False, None, [])
+
+        data = doc.to_dict()
+        completed_processors = [k for k in data.keys() if not k.startswith('_')]
+
+        # Get first completion time
+        first_completion_time = data.get('_first_completion_at')
+
+        if not first_completion_time:
+            logger.warning(f"No _first_completion_at found for {game_date}")
+            return (False, None, completed_processors)
+
+        # Calculate time since first completion
+        from datetime import timedelta
+        now = datetime.now(timezone.utc)
+
+        # Handle both Firestore timestamp and datetime objects
+        if hasattr(first_completion_time, 'seconds'):
+            # Firestore timestamp
+            first_completion_dt = datetime.fromtimestamp(first_completion_time.seconds, tz=timezone.utc)
+        else:
+            # Already a datetime
+            first_completion_dt = first_completion_time
+
+        time_elapsed = now - first_completion_dt
+        deadline_minutes = timedelta(minutes=PHASE2_COMPLETION_TIMEOUT_MINUTES)
+
+        deadline_exceeded = time_elapsed > deadline_minutes
+
+        if deadline_exceeded:
+            logger.warning(
+                f"⏰ DEADLINE EXCEEDED: Phase 2 for {game_date} has been running for "
+                f"{time_elapsed.total_seconds() / 60:.1f} minutes (deadline: {PHASE2_COMPLETION_TIMEOUT_MINUTES}m). "
+                f"Completed: {len(completed_processors)}/{EXPECTED_PROCESSOR_COUNT} processors"
+            )
+
+        return (deadline_exceeded, first_completion_dt, completed_processors)
+
+    except Exception as e:
+        logger.error(f"Failed to check completion deadline: {e}")
+        return (False, None, [])
+
+
+def send_completion_deadline_alert(game_date: str, completed_processors: list,
+                                   missing_processors: list, elapsed_minutes: float) -> bool:
+    """
+    Send Slack alert when Phase 2 completion deadline is exceeded.
+
+    Args:
+        game_date: The date being processed
+        completed_processors: List of processors that completed
+        missing_processors: List of processors still pending
+        elapsed_minutes: Time elapsed since first completion
+
+    Returns:
+        True if alert sent successfully, False otherwise
+    """
+    if not SLACK_WEBHOOK_URL:
+        logger.warning("SLACK_WEBHOOK_URL not configured, skipping deadline alert")
+        return False
+
+    try:
+        payload = {
+            "attachments": [{
+                "color": "#FF0000",  # Red for critical
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": "⏰ Phase 2 Completion Deadline Exceeded",
+                            "emoji": True
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Phase 2 processors for {game_date} exceeded {PHASE2_COMPLETION_TIMEOUT_MINUTES}-minute deadline!*\n"
+                                   f"Proceeding to Phase 3 with partial data to maintain SLA compliance."
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
+                            {"type": "mrkdwn", "text": f"*Elapsed Time:*\n{elapsed_minutes:.1f} minutes"},
+                            {"type": "mrkdwn", "text": f"*Completed:*\n{len(completed_processors)}/{EXPECTED_PROCESSOR_COUNT}"},
+                            {"type": "mrkdwn", "text": f"*Missing:*\n{len(missing_processors)} processors"},
+                        ]
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Completed Processors:*\n```{', '.join(completed_processors)}```"
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Missing Processors:*\n```{', '.join(missing_processors)}```"
+                        }
+                    },
+                    {
+                        "type": "context",
+                        "elements": [{
+                            "type": "mrkdwn",
+                            "text": "⚠️ Action: Phase 3 analytics triggered with available data. Review missing processor logs."
+                        }]
+                    }
+                ]
+            }]
+        }
+
+        response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
+        response.raise_for_status()
+        logger.info(f"Completion deadline alert sent successfully for {game_date}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send completion deadline alert: {e}")
+        return False
+
+
+def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_counts: Dict) -> bool:
+    """
+    Send Slack alert when Phase 2 data freshness check fails.
+
+    Args:
+        game_date: The date being processed
+        missing_tables: List of tables with no data
+        table_counts: Dict of table -> row count
+
+    Returns:
+        True if alert sent successfully, False otherwise
+    """
+    if not SLACK_WEBHOOK_URL:
+        logger.warning("SLACK_WEBHOOK_URL not configured, skipping data freshness alert")
+        return False
+
+    try:
+        # Format table counts for display
+        counts_text = "\n".join([f"• {t}: {c}" for t, c in table_counts.items()])
+
+        payload = {
+            "attachments": [{
+                "color": "#FFA500",  # Orange for warning
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": ":warning: R-007: Phase 2 Data Freshness Alert",
+                            "emoji": True
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Data freshness check failed!* Some Phase 2 raw tables are missing data for {game_date}."
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
+                            {"type": "mrkdwn", "text": f"*Missing Tables:*\n{', '.join(missing_tables)}"},
+                        ]
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Table Row Counts:*\n```{counts_text}```"
+                        }
+                    },
+                    {
+                        "type": "context",
+                        "elements": [{
+                            "type": "mrkdwn",
+                            "text": "Phase 3 analytics will proceed, but may use incomplete data. Review Phase 2 processor logs."
+                        }]
+                    }
+                ]
+            }]
+        }
+
+        response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
+        response.raise_for_status()
+        logger.info(f"Data freshness alert sent successfully for {game_date}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send data freshness alert: {e}")
+        return False
+
+
 @functions_framework.cloud_event
 def orchestrate_phase2_to_phase3(cloud_event):
     """
@@ -190,7 +490,7 @@ def orchestrate_phase2_to_phase3(cloud_event):
 
         # Create transaction and execute atomic update
         transaction = db.transaction()
-        should_trigger = update_completion_atomic(
+        should_trigger, deadline_exceeded = update_completion_atomic(
             transaction,
             doc_ref,
             processor_name,
@@ -203,6 +503,49 @@ def orchestrate_phase2_to_phase3(cloud_event):
             }
         )
 
+        # Week 1: Check if completion deadline has been exceeded
+        if ENABLE_PHASE2_COMPLETION_DEADLINE and not should_trigger:
+            deadline_exceeded, first_completion_time, completed_processors = check_completion_deadline(
+                game_date, processor_name
+            )
+
+            if deadline_exceeded:
+                # Calculate missing processors
+                missing_processors = list(EXPECTED_PROCESSOR_SET - set(completed_processors))
+
+                # Calculate elapsed time
+                from datetime import datetime, timezone
+                now = datetime.now(timezone.utc)
+                elapsed = now - first_completion_time
+                elapsed_minutes = elapsed.total_seconds() / 60
+
+                logger.error(
+                    f"⏰ DEADLINE EXCEEDED: Phase 2 for {game_date} exceeded {PHASE2_COMPLETION_TIMEOUT_MINUTES}m deadline. "
+                    f"Completed {len(completed_processors)}/{EXPECTED_PROCESSOR_COUNT} processors. "
+                    f"Missing: {missing_processors}"
+                )
+
+                # Send Slack alert
+                send_completion_deadline_alert(
+                    game_date,
+                    completed_processors,
+                    missing_processors,
+                    elapsed_minutes
+                )
+
+                # Mark as triggered with partial data (prevent further deadline checks)
+                doc_ref.update({
+                    '_triggered': True,
+                    '_triggered_at': firestore.SERVER_TIMESTAMP,
+                    '_triggered_reason': 'deadline_exceeded',
+                    '_partial_completion': True
+                })
+
+                logger.warning(
+                    f"⚠️ Phase 3 will proceed with partial data from {len(completed_processors)} processors. "
+                    f"Phase 3 is triggered via Pub/Sub subscription (monitoring mode)."
+                )
+
         if should_trigger:
             # All expected processors complete - log for monitoring
             # NOTE: Phase 3 is triggered directly via Pub/Sub subscription, not here
@@ -210,8 +553,22 @@ def orchestrate_phase2_to_phase3(cloud_event):
                 f"✅ MONITORING: All {EXPECTED_PROCESSOR_COUNT} expected Phase 2 processors "
                 f"complete for {game_date} (correlation_id={correlation_id})"
             )
+
+            # R-007: Verify Phase 2 data exists in BigQuery
+            # This is monitoring-only - we don't block Phase 3 (it's triggered via Pub/Sub)
+            is_ready, missing_tables, table_counts = verify_phase2_data_ready(game_date)
+
+            if not is_ready:
+                logger.warning(
+                    f"R-007: Data freshness check FAILED for {game_date}. "
+                    f"Missing tables: {missing_tables}. Monitoring alert sent."
+                )
+                # Send alert for visibility
+                send_data_freshness_alert(game_date, missing_tables, table_counts)
+            else:
+                logger.info(f"R-007: Data freshness check PASSED for {game_date}")
         else:
-            # Still waiting for more processors
+            # Still waiting for more processors (and deadline not exceeded)
             logger.info(f"MONITORING: Registered {processor_name} completion, waiting for others")
 
     except Exception as e:
@@ -220,13 +577,15 @@ def orchestrate_phase2_to_phase3(cloud_event):
 
 
 @firestore.transactional
-def update_completion_atomic(transaction: firestore.Transaction, doc_ref, processor_name: str, completion_data: Dict) -> bool:
+def update_completion_atomic(transaction: firestore.Transaction, doc_ref, processor_name: str, completion_data: Dict) -> tuple:
     """
     Atomically update processor completion and determine if all expected are complete.
 
     This function uses Firestore transactions to prevent race conditions when multiple
     processors complete simultaneously. The @firestore.transactional decorator ensures
     atomic read-modify-write operations.
+
+    Week 1 Update: Now tracks first completion time for deadline monitoring.
 
     NOTE: In monitoring mode, this is used for tracking only. Phase 3 is triggered
     directly via Pub/Sub subscription, not by this orchestrator.
@@ -235,9 +594,10 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
     1. Read current state (locked)
     2. Check if processor already registered (idempotency)
     3. Add processor completion data
-    4. Count total completions
-    5. If all complete AND not yet marked → mark as complete and return True
-    6. Write atomically (released lock)
+    4. Track first completion time (Week 1)
+    5. Count total completions
+    6. If all complete AND not yet marked → mark as complete and return True
+    7. Write atomically (released lock)
 
     Args:
         transaction: Firestore transaction object
@@ -246,7 +606,7 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
         completion_data: Completion metadata (timestamp, correlation_id, status, etc.)
 
     Returns:
-        bool: True if this update completes the expected processor count (for logging)
+        tuple: (should_trigger: bool, deadline_exceeded: bool)
     """
     # Read current state within transaction (locked)
     doc_snapshot = doc_ref.get(transaction=transaction)
@@ -255,13 +615,18 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
     # Idempotency check: skip if this processor already registered
     if processor_name in current:
         logger.debug(f"Processor {processor_name} already registered (duplicate Pub/Sub message)")
-        return False
+        return (False, False)
 
     # Add this processor's completion data
     current[processor_name] = completion_data
 
     # Count completed processors (exclude metadata fields starting with _)
     completed_count = len([k for k in current.keys() if not k.startswith('_')])
+
+    # Week 1: Track first completion time for deadline monitoring
+    if ENABLE_PHASE2_COMPLETION_DEADLINE and '_first_completion_at' not in current:
+        current['_first_completion_at'] = firestore.SERVER_TIMESTAMP
+        logger.info(f"First processor completed for this batch: {processor_name}")
 
     # Check if this completes the phase AND hasn't been triggered yet
     if completed_count >= EXPECTED_PROCESSOR_COUNT and not current.get('_triggered'):
@@ -273,7 +638,7 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
         # Write atomically
         transaction.set(doc_ref, current)
 
-        return True  # Trigger Phase 3
+        return (True, False)  # Trigger Phase 3, not deadline exceeded
     else:
         # Not yet complete, or already triggered
         current['_completed_count'] = completed_count
@@ -281,7 +646,7 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
         # Write atomically
         transaction.set(doc_ref, current)
 
-        return False  # Don't trigger
+        return (False, False)  # Don't trigger
 
 
 def parse_pubsub_message(cloud_event) -> Dict:
@@ -404,7 +769,12 @@ def health(request):
         'function': 'phase2_to_phase3',
         'mode': 'monitoring-only',
         'expected_processors': EXPECTED_PROCESSOR_COUNT,
-        'version': '2.0'
+        'data_freshness_validation': 'enabled',
+        'completion_deadline': {
+            'enabled': ENABLE_PHASE2_COMPLETION_DEADLINE,
+            'timeout_minutes': PHASE2_COMPLETION_TIMEOUT_MINUTES
+        },
+        'version': '2.2'
     }), 200, {'Content-Type': 'application/json'}
 
 

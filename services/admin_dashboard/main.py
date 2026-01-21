@@ -32,6 +32,7 @@ logger = logging.getLogger(__name__)
 # Import path setup needed before shared imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from shared.utils.env_validation import validate_required_env_vars
+from shared.endpoints.health import create_health_blueprint, HealthChecker
 validate_required_env_vars(
     ['GCP_PROJECT_ID', 'ADMIN_DASHBOARD_API_KEY'],
     service_name='AdminDashboard'
@@ -333,6 +334,19 @@ def rate_limit(f):
 
 app = Flask(__name__)
 
+# Health check endpoints (Phase 1 - Task 1.1: Add Health Endpoints)
+health_checker = HealthChecker(
+    project_id=os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+    service_name='admin-dashboard',
+    check_bigquery=True,  # Dashboard queries BigQuery for pipeline data
+    check_firestore=True,  # Dashboard queries Firestore for orchestration state
+    check_gcs=False,  # Dashboard doesn't directly access GCS
+    required_env_vars=['GCP_PROJECT_ID', 'ADMIN_DASHBOARD_API_KEY'],
+    optional_env_vars=['RECONCILIATION_FUNCTION_URL', 'ENVIRONMENT']
+)
+app.register_blueprint(create_health_blueprint(health_checker))
+logger.info("Health check endpoints registered: /health, /ready, /health/deep")
+
 # Import services
 from services.bigquery_service import BigQueryService
 from services.firestore_service import FirestoreService
@@ -532,16 +546,18 @@ PARAM_BOUNDS = {
 # =============================================================================
 
 @app.route('/')
-@app.route('/health')
 @rate_limit
-def health():
-    """Health check endpoint."""
+def index():
+    """Root endpoint - basic service info."""
     return jsonify({
         'status': 'healthy',
         'service': 'admin-dashboard',
         'supported_sports': SUPPORTED_SPORTS,
         'timestamp': datetime.utcnow().isoformat() + 'Z'
     })
+
+# /health endpoint now provided by shared health blueprint (see initialization above)
+# The blueprint provides: /health (liveness), /ready (readiness), /health/deep (deep checks)
 
 
 # =============================================================================
@@ -918,6 +934,162 @@ def partial_coverage_metrics():
         coverage=coverage,
         grading=grading
     )
+
+
+@app.route('/partials/calibration')
+@rate_limit
+def partial_calibration():
+    """HTMX partial: Calibration analysis display."""
+    if not check_auth():
+        return '<div class="text-red-500">Unauthorized</div>', 401
+
+    days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+    try:
+        calibration_summary = bq_service.get_calibration_summary(days=days)
+        calibration_data = bq_service.get_calibration_data(days=days)
+    except Exception as e:
+        return f'<div class="text-red-500">Error loading calibration data: {e}</div>', 500
+
+    return render_template(
+        'components/calibration.html',
+        calibration_summary=calibration_summary,
+        calibration_data=calibration_data,
+        days=days
+    )
+
+
+@app.route('/partials/roi')
+@rate_limit
+def partial_roi():
+    """HTMX partial: ROI analysis display."""
+    if not check_auth():
+        return '<div class="text-red-500">Unauthorized</div>', 401
+
+    days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+    try:
+        roi_summary = bq_service.get_roi_summary(days=days)
+    except Exception as e:
+        return f'<div class="text-red-500">Error loading ROI data: {e}</div>', 500
+
+    return render_template(
+        'components/roi_analysis.html',
+        roi_summary=roi_summary,
+        days=days
+    )
+
+
+@app.route('/partials/player-insights')
+@rate_limit
+def partial_player_insights():
+    """HTMX partial: Player insights display."""
+    if not check_auth():
+        return '<div class="text-red-500">Unauthorized</div>', 401
+
+    try:
+        insights = bq_service.get_player_insights(limit_top=10, limit_bottom=10)
+    except Exception as e:
+        return f'<div class="text-red-500">Error loading player insights: {e}</div>', 500
+
+    return render_template(
+        'components/player_insights.html',
+        most_predictable=insights['most_predictable'],
+        least_predictable=insights['least_predictable']
+    )
+
+
+@app.route('/api/grading-by-system')
+@rate_limit
+def api_grading_by_system():
+    """Get grading breakdown by prediction system."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+    try:
+        grading_by_system = bq_service.get_grading_by_system(days=days)
+        return jsonify({
+            'grading_by_system': grading_by_system,
+            'days': days
+        })
+    except Exception as e:
+        logger.error(f"Error in api_grading_by_system: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/calibration-data')
+@rate_limit
+def api_calibration_data():
+    """Get detailed calibration data by system and confidence bucket."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+    try:
+        calibration_data = bq_service.get_calibration_data(days=days)
+        return jsonify({
+            'calibration_data': calibration_data,
+            'days': days
+        })
+    except Exception as e:
+        logger.error(f"Error in api_calibration_data: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/calibration-summary')
+@rate_limit
+def api_calibration_summary():
+    """Get calibration health summary for all systems."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+    try:
+        calibration_summary = bq_service.get_calibration_summary(days=days)
+        return jsonify({
+            'calibration_summary': calibration_summary,
+            'days': days
+        })
+    except Exception as e:
+        logger.error(f"Error in api_calibration_summary: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/roi-summary')
+@rate_limit
+def api_roi_summary():
+    """Get ROI summary with flat betting and confidence-based strategies."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+    try:
+        roi_summary = bq_service.get_roi_summary(days=days)
+        return jsonify({
+            'roi_summary': roi_summary,
+            'days': days
+        })
+    except Exception as e:
+        logger.error(f"Error in api_roi_summary: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/roi-daily')
+@rate_limit
+def api_roi_daily():
+    """Get daily ROI breakdown by system."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+    try:
+        roi_daily = bq_service.get_roi_daily_breakdown(days=days)
+        return jsonify({
+            'roi_daily': roi_daily,
+            'days': days
+        })
+    except Exception as e:
+        logger.error(f"Error in api_roi_daily: {e}")
+        return jsonify({'error': str(e)}), 500
 
 
 # =============================================================================

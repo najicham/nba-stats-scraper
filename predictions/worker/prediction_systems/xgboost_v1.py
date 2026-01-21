@@ -194,7 +194,7 @@ class XGBoostV1:
             return feature_vector
             
         except Exception as e:
-            print(f"Error preparing feature vector: {e}")
+            logger.error(f"Error preparing feature vector: {e}", exc_info=True)
             return None
     
     # ========================================================================
@@ -242,8 +242,8 @@ class XGBoostV1:
             return model
             
         except Exception as e:
-            print(f"Warning: Could not load model from GCS: {e}")
-            print("Falling back to mock model for testing")
+            logger.warning(f"Could not load model from GCS: {e}")
+            logger.info("Falling back to mock model for testing")
             
             from predictions.shared.mock_xgboost_model import load_mock_model
             return load_mock_model(seed=42)

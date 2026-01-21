@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import requests
+from shared.clients.http_pool import get_http_session
 import sys
 import time
 import threading
@@ -158,7 +159,7 @@ class NbacTeamBoxscoreScraperBackfill:
         }
 
         try:
-            response = requests.post(
+            response = get_http_session().post(
                 f"{self.scraper_service_url}/scrape",
                 json={
                     "scraper": "nbac_team_boxscore",

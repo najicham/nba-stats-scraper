@@ -266,7 +266,7 @@ for i in range(MIN_TRAIN_PERIODS, len(periods)):
     acc = accuracy_score(y_test, y_pred)
     try:
         auc = roc_auc_score(y_test, y_proba)
-    except:
+    except ValueError:
         auc = 0.5
 
     # Store predictions with metadata

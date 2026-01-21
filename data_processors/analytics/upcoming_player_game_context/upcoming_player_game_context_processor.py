@@ -116,9 +116,8 @@ class UpcomingPlayerGameContextProcessor(
         # Initialize target_date (set later in extract_raw_data)
         self.target_date = None
 
-        # CRITICAL: Initialize BigQuery client and project ID
+        # BigQuery client already initialized by AnalyticsProcessorBase with pooling
         # Don't specify location to allow querying datasets in any location (US and us-west2)
-        self.bq_client = bigquery.Client()
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
 
         # Initialize completeness checker (Week 5 - Phase 3 Multi-Window)
@@ -584,11 +583,16 @@ class UpcomingPlayerGameContextProcessor(
         gamebook_check_query = f"""
         SELECT COUNT(*) as cnt
         FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
-        WHERE game_date = '{self.target_date}'
+        WHERE game_date = @game_date
         """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", self.target_date),
+            ]
+        )
 
         try:
-            result = self.bq_client.query(gamebook_check_query).result(timeout=60)
+            result = self.bq_client.query(gamebook_check_query, job_config=job_config).result(timeout=60)
             row = next(result, None)
             gamebook_count = row.cnt if row else 0
 
@@ -660,13 +664,20 @@ class UpcomingPlayerGameContextProcessor(
         daily_query = f"""
         WITH games_today AS (
             -- Get all games scheduled for target date
+            -- FIXED: Use standard game_id format (YYYYMMDD_AWAY_HOME) instead of NBA official ID
             SELECT
-                game_id,
+                CONCAT(
+                    FORMAT_DATE('%Y%m%d', game_date),
+                    '_',
+                    away_team_tricode,
+                    '_',
+                    home_team_tricode
+                ) as game_id,
                 game_date,
                 home_team_tricode as home_team_abbr,
                 away_team_tricode as away_team_abbr
             FROM `{self.project_id}.nba_raw.nbac_schedule`
-            WHERE game_date = '{self.target_date}'
+            WHERE game_date = @game_date
         ),
         teams_playing AS (
             -- Get all teams playing today (both home and away)
@@ -679,8 +690,8 @@ class UpcomingPlayerGameContextProcessor(
             -- FIX: Previous query found global MAX, but different teams may have different latest dates
             SELECT team_abbr, MAX(roster_date) as roster_date
             FROM `{self.project_id}.nba_raw.espn_team_rosters`
-            WHERE roster_date >= '{roster_start}'
-              AND roster_date <= '{roster_end}'
+            WHERE roster_date >= @roster_start
+              AND roster_date <= @roster_end
             GROUP BY team_abbr
         ),
         roster_players AS (
@@ -693,8 +704,8 @@ class UpcomingPlayerGameContextProcessor(
             INNER JOIN latest_roster_per_team lr
                 ON r.team_abbr = lr.team_abbr
                 AND r.roster_date = lr.roster_date
-            WHERE r.roster_date >= '{roster_start}'
-              AND r.roster_date <= '{roster_end}'
+            WHERE r.roster_date >= @roster_start
+              AND r.roster_date <= @roster_end
               AND r.team_abbr IN (SELECT team_abbr FROM teams_playing)
               AND r.player_lookup IS NOT NULL
         ),
@@ -717,7 +728,7 @@ class UpcomingPlayerGameContextProcessor(
                 player_lookup,
                 injury_status
             FROM `{self.project_id}.nba_raw.nbac_injury_report`
-            WHERE report_date = '{self.target_date}'
+            WHERE report_date = @game_date
               AND player_lookup IS NOT NULL
         ),
         props AS (
@@ -727,7 +738,7 @@ class UpcomingPlayerGameContextProcessor(
                 points_line,
                 'odds_api' as prop_source
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE game_date = '{self.target_date}'
+            WHERE game_date = @game_date
               AND player_lookup IS NOT NULL
             UNION DISTINCT
             SELECT DISTINCT
@@ -735,7 +746,7 @@ class UpcomingPlayerGameContextProcessor(
                 points_line,
                 'bettingpros' as prop_source
             FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
-            WHERE game_date = '{self.target_date}'
+            WHERE game_date = @game_date
               AND is_active = TRUE
               AND player_lookup IS NOT NULL
         )
@@ -756,9 +767,16 @@ class UpcomingPlayerGameContextProcessor(
         WHERE i.injury_status IS NULL
            OR i.injury_status NOT IN ('Out', 'OUT', 'Doubtful', 'DOUBTFUL')
         """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", self.target_date),
+                bigquery.ScalarQueryParameter("roster_start", "DATE", roster_start),
+                bigquery.ScalarQueryParameter("roster_end", "DATE", roster_end),
+            ]
+        )
 
         try:
-            df = self.bq_client.query(daily_query).to_dataframe()
+            df = self.bq_client.query(daily_query, job_config=job_config).to_dataframe()
 
             # Track source usage
             self.source_tracking['props']['rows_found'] = len(df)
@@ -820,15 +838,26 @@ class UpcomingPlayerGameContextProcessor(
         backfill_query = f"""
         WITH schedule_data AS (
             -- Get schedule data with partition filter
-            SELECT game_id, home_team_tricode, away_team_tricode
+            -- FIXED: Create standard game_id format (YYYYMMDD_AWAY_HOME)
+            SELECT
+                game_id as nba_game_id,
+                CONCAT(
+                    FORMAT_DATE('%Y%m%d', game_date),
+                    '_',
+                    away_team_tricode,
+                    '_',
+                    home_team_tricode
+                ) as game_id,
+                home_team_tricode,
+                away_team_tricode
             FROM `{self.project_id}.nba_raw.nbac_schedule`
-            WHERE game_date = '{self.target_date}'
+            WHERE game_date = @game_date
         ),
         players_with_games AS (
             -- Get ALL active players from gamebook who have games on target date
             SELECT DISTINCT
                 g.player_lookup,
-                g.game_id,
+                s.game_id,  -- Use standard game_id from schedule
                 g.team_abbr,
                 g.player_status,
                 -- Get home/away from schedule since gamebook may not have it
@@ -836,8 +865,8 @@ class UpcomingPlayerGameContextProcessor(
                 COALESCE(s.away_team_tricode, g.team_abbr) as away_team_abbr
             FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats` g
             LEFT JOIN schedule_data s
-                ON g.game_id = s.game_id
-            WHERE g.game_date = '{self.target_date}'
+                ON g.game_id = s.nba_game_id  -- Join on NBA official ID
+            WHERE g.game_date = @game_date
               AND g.player_lookup IS NOT NULL
               AND (g.player_status IS NULL OR g.player_status NOT IN ('DNP', 'DND', 'NWT'))
         ),
@@ -848,7 +877,7 @@ class UpcomingPlayerGameContextProcessor(
                 points_line,
                 'odds_api' as prop_source
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE game_date = '{self.target_date}'
+            WHERE game_date = @game_date
               AND player_lookup IS NOT NULL
             UNION DISTINCT
             SELECT DISTINCT
@@ -856,7 +885,7 @@ class UpcomingPlayerGameContextProcessor(
                 points_line,
                 'bettingpros' as prop_source
             FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
-            WHERE game_date = '{self.target_date}'
+            WHERE game_date = @game_date
               AND is_active = TRUE
               AND player_lookup IS NOT NULL
         )
@@ -873,9 +902,14 @@ class UpcomingPlayerGameContextProcessor(
         FROM players_with_games p
         LEFT JOIN props pr ON p.player_lookup = pr.player_lookup
         """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", self.target_date),
+            ]
+        )
 
         try:
-            df = self.bq_client.query(backfill_query).to_dataframe()
+            df = self.bq_client.query(backfill_query, job_config=job_config).to_dataframe()
 
             # Track source usage
             self.source_tracking['props']['rows_found'] = len(df)
@@ -926,18 +960,25 @@ class UpcomingPlayerGameContextProcessor(
                 -- Use validated_team if available, otherwise player_team
                 COALESCE(bp.validated_team, bp.player_team) as player_team
             FROM `{self.project_id}.nba_raw.bettingpros_player_points_props` bp
-            WHERE bp.game_date = '{self.target_date}'
+            WHERE bp.game_date = @game_date
               AND bp.player_lookup IS NOT NULL
               AND bp.is_active = TRUE
         ),
         schedule AS (
+            -- FIXED: Use standard game_id format (YYYYMMDD_AWAY_HOME)
             SELECT
-                game_id,
+                CONCAT(
+                    FORMAT_DATE('%Y%m%d', game_date),
+                    '_',
+                    away_team_tricode,
+                    '_',
+                    home_team_tricode
+                ) as game_id,
                 game_date,
                 home_team_tricode as home_team_abbr,
                 away_team_tricode as away_team_abbr
             FROM `{self.project_id}.nba_raw.nbac_schedule`
-            WHERE game_date = '{self.target_date}'
+            WHERE game_date = @game_date
         )
         SELECT DISTINCT
             bp.player_lookup,
@@ -951,9 +992,14 @@ class UpcomingPlayerGameContextProcessor(
             AND (bp.player_team = s.home_team_abbr OR bp.player_team = s.away_team_abbr)
         WHERE s.game_id IS NOT NULL
         """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", self.target_date),
+            ]
+        )
 
         try:
-            df = self.bq_client.query(bettingpros_query).to_dataframe()
+            df = self.bq_client.query(bettingpros_query, job_config=job_config).to_dataframe()
             logger.info(f"BettingPros fallback: Found {len(df)} players for {self.target_date}")
             return df
         except Exception as e:
@@ -969,16 +1015,23 @@ class UpcomingPlayerGameContextProcessor(
         - Game start times
         - Back-to-back detection (requires looking at surrounding dates)
         """
-        game_ids = list(set([p['game_id'] for p in self.players_to_process]))
+        game_ids = list(set([p['game_id'] for p in self.players_to_process if p.get('game_id')]))
         game_ids_str = "', '".join(game_ids)
         
         # Get schedule for target date plus surrounding dates for back-to-back detection
         start_date = self.target_date - timedelta(days=5)
         end_date = self.target_date + timedelta(days=5)
         
+        # FIXED: Use standard game_id format (YYYYMMDD_AWAY_HOME) instead of NBA official ID
         query = f"""
-        SELECT 
-            game_id,
+        SELECT
+            CONCAT(
+                FORMAT_DATE('%Y%m%d', game_date),
+                '_',
+                away_team_tricode,
+                '_',
+                home_team_tricode
+            ) as game_id,
             game_date,
             home_team_tricode as home_team_abbr,
             away_team_tricode as away_team_abbr,
@@ -986,13 +1039,19 @@ class UpcomingPlayerGameContextProcessor(
             is_primetime,
             season_year
         FROM `{self.project_id}.nba_raw.nbac_schedule`
-        WHERE game_date >= '{start_date}'
-          AND game_date <= '{end_date}'
+        WHERE game_date >= @start_date
+          AND game_date <= @end_date
         ORDER BY game_date, game_date_est
         """
-        
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+            ]
+        )
+
         try:
-            df = self.bq_client.query(query).to_dataframe()
+            df = self.bq_client.query(query, job_config=job_config).to_dataframe()
             
             # Track source usage (count only target date games)
             # FIX: use timezone-aware datetime
@@ -1052,13 +1111,12 @@ class UpcomingPlayerGameContextProcessor(
         3. nba_raw.nbac_gamebook_player_stats (last resort)
         """
         player_lookups = [p['player_lookup'] for p in self.players_to_process]
-        player_lookups_str = "', '".join(player_lookups)
-        
+
         start_date = self.target_date - timedelta(days=self.lookback_days)
-        
+
         # Try BDL first (PRIMARY)
         query = f"""
-        SELECT 
+        SELECT
             player_lookup,
             game_date,
             team_abbr,
@@ -1073,14 +1131,21 @@ class UpcomingPlayerGameContextProcessor(
             free_throws_made,
             free_throws_attempted
         FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
-        WHERE player_lookup IN ('{player_lookups_str}')
-          AND game_date >= '{start_date}'
-          AND game_date < '{self.target_date}'
+        WHERE player_lookup IN UNNEST(@player_lookups)
+          AND game_date >= @start_date
+          AND game_date < @target_date
         ORDER BY player_lookup, game_date DESC
         """
-        
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups),
+                bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                bigquery.ScalarQueryParameter("target_date", "DATE", self.target_date),
+            ]
+        )
+
         try:
-            df = self.bq_client.query(query).to_dataframe()
+            df = self.bq_client.query(query, job_config=job_config).to_dataframe()
             
             # Convert minutes string to decimal
             if 'minutes' in df.columns:
@@ -1140,7 +1205,6 @@ class UpcomingPlayerGameContextProcessor(
         """Extract prop lines from Odds API using batch query for efficiency."""
         # Build batch query - get opening and current lines for all players in one query
         player_lookups = list(set([p[0] for p in player_game_pairs]))
-        player_lookups_str = "', '".join(player_lookups)
 
         batch_query = f"""
         WITH opening_lines AS (
@@ -1154,8 +1218,8 @@ class UpcomingPlayerGameContextProcessor(
                     ORDER BY snapshot_timestamp ASC
                 ) as rn
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE player_lookup IN ('{player_lookups_str}')
-              AND game_date = '{self.target_date}'
+            WHERE player_lookup IN UNNEST(@player_lookups)
+              AND game_date = @game_date
         ),
         current_lines AS (
             SELECT
@@ -1168,8 +1232,8 @@ class UpcomingPlayerGameContextProcessor(
                     ORDER BY snapshot_timestamp DESC
                 ) as rn
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE player_lookup IN ('{player_lookups_str}')
-              AND game_date = '{self.target_date}'
+            WHERE player_lookup IN UNNEST(@player_lookups)
+              AND game_date = @game_date
         )
         SELECT
             COALESCE(o.player_lookup, c.player_lookup) as player_lookup,
@@ -1183,9 +1247,15 @@ class UpcomingPlayerGameContextProcessor(
             ON o.player_lookup = c.player_lookup AND o.game_id = c.game_id
         WHERE (o.rn = 1 OR o.rn IS NULL) AND (c.rn = 1 OR c.rn IS NULL)
         """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups),
+                bigquery.ScalarQueryParameter("game_date", "DATE", self.target_date),
+            ]
+        )
 
         try:
-            df = self.bq_client.query(batch_query).to_dataframe()
+            df = self.bq_client.query(batch_query, job_config=job_config).to_dataframe()
             logger.info(f"Odds API batch query returned {len(df)} prop line records")
 
             # Create lookup dict keyed by (player_lookup, game_id)
@@ -1240,7 +1310,6 @@ class UpcomingPlayerGameContextProcessor(
         """
         # Batch query for efficiency - get all players at once
         player_lookups = list(set([p[0] for p in player_game_pairs]))
-        player_lookups_str = "', '".join(player_lookups)
 
         batch_query = f"""
         WITH best_lines AS (
@@ -1255,8 +1324,8 @@ class UpcomingPlayerGameContextProcessor(
                     ORDER BY is_best_line DESC, bookmaker_last_update DESC
                 ) as rn
             FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
-            WHERE player_lookup IN ('{player_lookups_str}')
-              AND game_date = '{self.target_date}'
+            WHERE player_lookup IN UNNEST(@player_lookups)
+              AND game_date = @game_date
               AND is_active = TRUE
         )
         SELECT
@@ -1267,9 +1336,15 @@ class UpcomingPlayerGameContextProcessor(
         FROM best_lines
         WHERE rn = 1
         """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups),
+                bigquery.ScalarQueryParameter("game_date", "DATE", self.target_date),
+            ]
+        )
 
         try:
-            df = self.bq_client.query(batch_query).to_dataframe()
+            df = self.bq_client.query(batch_query, job_config=job_config).to_dataframe()
 
             # Create lookup dict
             bp_props = {}
@@ -1361,22 +1436,40 @@ class UpcomingPlayerGameContextProcessor(
     def _get_game_line_consensus(self, game_id: str, market_key: str) -> Dict:
         """
         Get consensus line (median across bookmakers) for a market.
-        
+
         Args:
-            game_id: Game identifier
+            game_id: Game identifier (standard format: YYYYMMDD_AWAY_HOME)
             market_key: 'spreads' or 'totals'
-            
+
         Returns:
             Dict with opening, current, movement, and source
         """
-        # Get opening line (earliest snapshot, median across bookmakers)
+        # Extract teams from standard game_id format (YYYYMMDD_AWAY_HOME)
+        # Or get from schedule_data if available
+        if game_id in self.schedule_data:
+            home_team = self.schedule_data[game_id].get('home_team_abbr')
+            away_team = self.schedule_data[game_id].get('away_team_abbr')
+        else:
+            # Parse from game_id: format is YYYYMMDD_AWAY_HOME
+            parts = game_id.split('_')
+            if len(parts) == 3:
+                away_team = parts[1]
+                home_team = parts[2]
+            else:
+                logger.warning(f"Invalid game_id format: {game_id}, cannot extract teams")
+                away_team = None
+                home_team = None
+
+        # FIXED: Join on game_date + home_team + away_team instead of hash game_id
+        # odds_api_game_lines uses hash IDs, not standard game_ids
         opening_query = f"""
         WITH earliest_snapshot AS (
             SELECT MIN(snapshot_timestamp) as earliest
             FROM `{self.project_id}.nba_raw.odds_api_game_lines`
-            WHERE game_id = '{game_id}'
-              AND game_date = '{self.target_date}'
-              AND market_key = '{market_key}'
+            WHERE game_date = @game_date
+              AND home_team_abbr = @home_team
+              AND away_team_abbr = @away_team
+              AND market_key = @market_key
         ),
         opening_lines AS (
             SELECT
@@ -1384,9 +1477,10 @@ class UpcomingPlayerGameContextProcessor(
                 bookmaker_key
             FROM `{self.project_id}.nba_raw.odds_api_game_lines` lines
             CROSS JOIN earliest_snapshot
-            WHERE lines.game_id = '{game_id}'
-              AND lines.game_date = '{self.target_date}'
-              AND lines.market_key = '{market_key}'
+            WHERE lines.game_date = @game_date
+              AND lines.home_team_abbr = @home_team
+              AND lines.away_team_abbr = @away_team
+              AND lines.market_key = @market_key
               AND lines.snapshot_timestamp = earliest_snapshot.earliest
         ),
         median_calc AS (
@@ -1407,15 +1501,17 @@ class UpcomingPlayerGameContextProcessor(
         FROM median_calc
         CROSS JOIN agg_calc
         """
-        
+
         # Get current line (latest snapshot, median across bookmakers)
+        # FIXED: Join on game_date + teams instead of hash game_id
         current_query = f"""
         WITH latest_snapshot AS (
             SELECT MAX(snapshot_timestamp) as latest
             FROM `{self.project_id}.nba_raw.odds_api_game_lines`
-            WHERE game_id = '{game_id}'
-              AND game_date = '{self.target_date}'
-              AND market_key = '{market_key}'
+            WHERE game_date = @game_date
+              AND home_team_abbr = @home_team
+              AND away_team_abbr = @away_team
+              AND market_key = @market_key
         ),
         current_lines AS (
             SELECT
@@ -1423,9 +1519,10 @@ class UpcomingPlayerGameContextProcessor(
                 bookmaker_key
             FROM `{self.project_id}.nba_raw.odds_api_game_lines` lines
             CROSS JOIN latest_snapshot
-            WHERE lines.game_id = '{game_id}'
-              AND lines.game_date = '{self.target_date}'
-              AND lines.market_key = '{market_key}'
+            WHERE lines.game_date = @game_date
+              AND lines.home_team_abbr = @home_team
+              AND lines.away_team_abbr = @away_team
+              AND lines.market_key = @market_key
               AND lines.snapshot_timestamp = latest_snapshot.latest
         ),
         median_calc AS (
@@ -1446,10 +1543,18 @@ class UpcomingPlayerGameContextProcessor(
         FROM median_calc
         CROSS JOIN agg_calc
         """
-        
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", self.target_date),
+                bigquery.ScalarQueryParameter("home_team", "STRING", home_team),
+                bigquery.ScalarQueryParameter("away_team", "STRING", away_team),
+                bigquery.ScalarQueryParameter("market_key", "STRING", market_key),
+            ]
+        )
+
         try:
-            opening_df = self.bq_client.query(opening_query).to_dataframe()
-            current_df = self.bq_client.query(current_query).to_dataframe()
+            opening_df = self.bq_client.query(opening_query, job_config=job_config).to_dataframe()
+            current_df = self.bq_client.query(current_query, job_config=job_config).to_dataframe()
             
             prefix = 'spread' if market_key == 'spreads' else 'total'
             
@@ -1659,13 +1764,20 @@ class UpcomingPlayerGameContextProcessor(
         query = f"""
         SELECT attempt_number, attempted_at, circuit_breaker_tripped, circuit_breaker_until
         FROM `{self.project_id}.nba_orchestration.reprocess_attempts`
-        WHERE processor_name = '{self.table_name}'
-          AND entity_id = '{entity_id}'
-          AND analysis_date = DATE('{analysis_date}')
+        WHERE processor_name = @processor_name
+          AND entity_id = @entity_id
+          AND analysis_date = @analysis_date
         ORDER BY attempt_number DESC LIMIT 1
         """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("processor_name", "STRING", self.table_name),
+                bigquery.ScalarQueryParameter("entity_id", "STRING", entity_id),
+                bigquery.ScalarQueryParameter("analysis_date", "DATE", analysis_date),
+            ]
+        )
         try:
-            result = list(self.bq_client.query(query).result(timeout=60))
+            result = list(self.bq_client.query(query, job_config=job_config).result(timeout=60))
             if not result:
                 return {'active': False, 'attempts': 0, 'until': None}
             row = result[0]
@@ -1695,13 +1807,26 @@ class UpcomingPlayerGameContextProcessor(
         (processor_name, entity_id, analysis_date, attempt_number, attempted_at,
          completeness_pct, skip_reason, circuit_breaker_tripped, circuit_breaker_until,
          manual_override_applied, notes)
-        VALUES ('{self.table_name}', '{entity_id}', DATE('{analysis_date}'), {next_attempt},
-                CURRENT_TIMESTAMP(), {completeness_pct}, '{skip_reason}', {circuit_breaker_tripped},
-                {'TIMESTAMP("' + circuit_breaker_until.isoformat() + '")' if circuit_breaker_until else 'NULL'},
-                FALSE, 'Attempt {next_attempt}: {completeness_pct:.1f}% complete')
+        VALUES (@processor_name, @entity_id, @analysis_date, @attempt_number,
+                CURRENT_TIMESTAMP(), @completeness_pct, @skip_reason, @circuit_breaker_tripped,
+                @circuit_breaker_until,
+                FALSE, @notes)
         """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("processor_name", "STRING", self.table_name),
+                bigquery.ScalarQueryParameter("entity_id", "STRING", entity_id),
+                bigquery.ScalarQueryParameter("analysis_date", "DATE", analysis_date),
+                bigquery.ScalarQueryParameter("attempt_number", "INT64", next_attempt),
+                bigquery.ScalarQueryParameter("completeness_pct", "FLOAT64", completeness_pct),
+                bigquery.ScalarQueryParameter("skip_reason", "STRING", skip_reason),
+                bigquery.ScalarQueryParameter("circuit_breaker_tripped", "BOOL", circuit_breaker_tripped),
+                bigquery.ScalarQueryParameter("circuit_breaker_until", "TIMESTAMP", circuit_breaker_until),
+                bigquery.ScalarQueryParameter("notes", "STRING", f'Attempt {next_attempt}: {completeness_pct:.1f}% complete'),
+            ]
+        )
         try:
-            self.bq_client.query(insert_query).result(timeout=60)
+            self.bq_client.query(insert_query, job_config=job_config).result(timeout=60)
         except Exception as e:
             logger.warning(f"Failed to record reprocess attempt for {entity_id}: {e}")
 
@@ -1797,22 +1922,13 @@ class UpcomingPlayerGameContextProcessor(
                 f"Bootstrap mode: {is_bootstrap}, Season boundary: {is_season_boundary}"
             )
         except Exception as e:
-            logger.warning(
-                f"Completeness checking failed ({type(e).__name__}: {e}). "
-                f"Using default 'all ready' values to allow processing to continue."
+            # Issue #3: Fail-closed - raise exception instead of returning fake data
+            logger.error(
+                f"Completeness checking FAILED ({type(e).__name__}: {e}). "
+                f"Cannot proceed with unreliable data.",
+                exc_info=True
             )
-            # Create default "all ready" completeness for all players
-            default_ready = {
-                'expected_count': 10, 'actual_count': 10, 'completeness_pct': 100.0,
-                'missing_count': 0, 'is_complete': True, 'is_production_ready': True
-            }
-            comp_l5 = {player: default_ready.copy() for player in all_players}
-            comp_l10 = {player: default_ready.copy() for player in all_players}
-            comp_l7d = {player: default_ready.copy() for player in all_players}
-            comp_l14d = {player: default_ready.copy() for player in all_players}
-            comp_l30d = {player: default_ready.copy() for player in all_players}
-            is_bootstrap = False
-            is_season_boundary = False
+            raise
         # ============================================================
 
         # Feature flag for player-level parallelization
@@ -2196,7 +2312,27 @@ class UpcomingPlayerGameContextProcessor(
         
         # Calculate data quality
         data_quality = self._calculate_data_quality(historical_data, game_lines_info)
-        
+
+        # Calculate pace metrics
+        pace_differential = self._calculate_pace_differential(team_abbr, opponent_team_abbr, self.target_date)
+        opponent_pace_last_10 = self._get_opponent_pace_last_10(opponent_team_abbr, self.target_date)
+        opponent_ft_rate_allowed = self._get_opponent_ft_rate_allowed(opponent_team_abbr, self.target_date)
+        opponent_def_rating = self._get_opponent_def_rating_last_10(opponent_team_abbr, self.target_date)
+        opponent_off_rating = self._get_opponent_off_rating_last_10(opponent_team_abbr, self.target_date)
+        opponent_rebounding_rate = self._get_opponent_rebounding_rate(opponent_team_abbr, self.target_date)
+        opponent_pace_variance = self._get_opponent_pace_variance(opponent_team_abbr, self.target_date)
+        opponent_ft_rate_variance = self._get_opponent_ft_rate_variance(opponent_team_abbr, self.target_date)
+        opponent_def_rating_variance = self._get_opponent_def_rating_variance(opponent_team_abbr, self.target_date)
+        opponent_off_rating_variance = self._get_opponent_off_rating_variance(opponent_team_abbr, self.target_date)
+        opponent_rebounding_rate_variance = self._get_opponent_rebounding_rate_variance(opponent_team_abbr, self.target_date)
+
+        # Calculate star teammates out (Session 106)
+        star_teammates_out = self._get_star_teammates_out(team_abbr, self.target_date)
+
+        # Enhanced star tracking (Session 107)
+        questionable_star_teammates = self._get_questionable_star_teammates(team_abbr, self.target_date)
+        star_tier_out = self._get_star_tier_out(team_abbr, self.target_date)
+
         # Get has_prop_line from player_info (passed from extract)
         has_prop_line = player_info.get('has_prop_line', False)
 
@@ -2250,10 +2386,10 @@ class UpcomingPlayerGameContextProcessor(
             'total_public_betting_pct': None,  # TODO: future
             
             # Pre-game context
-            'pace_differential': None,  # TODO: future (needs team analytics)
-            'opponent_pace_last_10': None,  # TODO: future
+            'pace_differential': pace_differential,
+            'opponent_pace_last_10': opponent_pace_last_10,
             'game_start_time_local': self._extract_game_time(game_info),
-            'opponent_ft_rate_allowed': None,  # TODO: future
+            'opponent_ft_rate_allowed': opponent_ft_rate_allowed,
             'home_game': (team_abbr == game_info['home_team_abbr']),
             'back_to_back': fatigue_metrics['back_to_back'],
             'season_phase': self._determine_season_phase(self.target_date),
@@ -2274,7 +2410,17 @@ class UpcomingPlayerGameContextProcessor(
             
             # Performance metrics
             **performance_metrics,
-            
+
+            # Override opponent metrics with calculated values
+            'opponent_def_rating_last_10': opponent_def_rating,
+            'opponent_off_rating_last_10': opponent_off_rating,
+            'opponent_rebounding_rate': opponent_rebounding_rate,
+            'opponent_pace_variance': opponent_pace_variance,
+            'opponent_ft_rate_variance': opponent_ft_rate_variance,  # Session 107
+            'opponent_def_rating_variance': opponent_def_rating_variance,  # Session 107
+            'opponent_off_rating_variance': opponent_off_rating_variance,  # Session 107
+            'opponent_rebounding_rate_variance': opponent_rebounding_rate_variance,  # Session 107
+
             # Forward-looking schedule (TODO: future)
             'next_game_days_rest': 0,
             'games_in_next_7_days': 0,
@@ -2289,7 +2435,9 @@ class UpcomingPlayerGameContextProcessor(
             # Real-time updates
             'player_status': self.injuries.get(player_lookup, {}).get('status'),
             'injury_report': self.injuries.get(player_lookup, {}).get('report'),
-            'questionable_teammates': None,  # TODO: future
+            'star_teammates_out': star_teammates_out,  # Session 106
+            'questionable_star_teammates': questionable_star_teammates,  # Session 107
+            'star_tier_out': star_tier_out,  # Session 107
             'probable_teammates': None,  # TODO: future
             
             # Source tracking
@@ -2513,7 +2661,6 @@ class UpcomingPlayerGameContextProcessor(
                 'l10_sample_quality': 'insufficient',
                 'prop_over_streak': 0,
                 'prop_under_streak': 0,
-                'star_teammates_out': None,
                 'opponent_def_rating_last_10': None,
                 'shooting_pct_decline_last_5': None,
                 'fourth_quarter_production_last_7': None
@@ -2544,7 +2691,6 @@ class UpcomingPlayerGameContextProcessor(
             'l10_sample_quality': self._determine_sample_quality(l10_games_used, 10),
             'prop_over_streak': prop_over_streak,
             'prop_under_streak': prop_under_streak,
-            'star_teammates_out': None,
             'opponent_def_rating_last_10': None,
             'shooting_pct_decline_last_5': None,
             'fourth_quarter_production_last_7': None
@@ -2613,6 +2759,732 @@ class UpcomingPlayerGameContextProcessor(
                 continue
 
         return over_streak, under_streak
+
+    def _calculate_pace_differential(self, team_abbr: str, opponent_abbr: str, game_date: date) -> float:
+        """
+        Calculate difference between team's pace and opponent's pace (last 10 games).
+
+        Args:
+            team_abbr: Player's team abbreviation
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Pace differential (team_pace - opponent_pace), rounded to 2 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_team AS (
+                SELECT pace
+                FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+                WHERE team_abbr = @team_abbr
+                  AND game_date < @game_date
+                  AND game_date >= '2024-10-01'
+                ORDER BY game_date DESC
+                LIMIT 10
+            ),
+            recent_opponent AS (
+                SELECT pace
+                FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+                WHERE team_abbr = @opponent_abbr
+                  AND game_date < @game_date
+                  AND game_date >= '2024-10-01'
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT
+                ROUND((SELECT AVG(pace) FROM recent_team) - (SELECT AVG(pace) FROM recent_opponent), 2) as pace_diff
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("team_abbr", "STRING", team_abbr),
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
+
+            result = self.bq_client.query(query, job_config=job_config).result()
+            for row in result:
+                return row.pace_diff if row.pace_diff is not None else 0.0
+
+            logger.warning(f"No pace data found for {team_abbr} vs {opponent_abbr}")
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error calculating pace differential for {team_abbr} vs {opponent_abbr}: {e}")
+            return 0.0
+
+    def _get_opponent_pace_last_10(self, opponent_abbr: str, game_date: date) -> float:
+        """
+        Get opponent's average pace over last 10 games.
+
+        Args:
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Average pace over last 10 games, rounded to 2 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_games AS (
+                SELECT pace
+                FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+                WHERE team_abbr = @opponent_abbr
+                  AND game_date < @game_date
+                  AND game_date >= '2024-10-01'
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT ROUND(AVG(pace), 2) as avg_pace
+            FROM recent_games
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
+
+            result = self.bq_client.query(query, job_config=job_config).result()
+            for row in result:
+                return row.avg_pace if row.avg_pace is not None else 0.0
+
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error getting opponent pace for {opponent_abbr}: {e}")
+            return 0.0
+
+    def _get_opponent_ft_rate_allowed(self, opponent_abbr: str, game_date: date) -> float:
+        """
+        Get opponent's defensive FT rate allowed (last 10 games).
+
+        Args:
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Average opponent FT attempts allowed per game (last 10), rounded to 2 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_games AS (
+                SELECT opp_ft_attempts
+                FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
+                WHERE defending_team_abbr = @opponent_abbr
+                  AND game_date < @game_date
+                  AND game_date >= '2024-10-01'
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT ROUND(AVG(opp_ft_attempts), 2) as avg_opp_fta
+            FROM recent_games
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
+
+            result = self.bq_client.query(query, job_config=job_config).result()
+            for row in result:
+                return row.avg_opp_fta if row.avg_opp_fta is not None else 0.0
+
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error getting FT rate allowed for {opponent_abbr}: {e}")
+            return 0.0
+
+    def _get_opponent_def_rating_last_10(self, opponent_abbr: str, game_date: date) -> float:
+        """
+        Get opponent's defensive rating over last 10 games.
+
+        Args:
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Average defensive rating over last 10 games, rounded to 2 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_games AS (
+                SELECT defensive_rating
+                FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
+                WHERE defending_team_abbr = @opponent_abbr
+                  AND game_date < @game_date
+                  AND game_date >= '2024-10-01'
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT ROUND(AVG(defensive_rating), 2) as avg_def_rating
+            FROM recent_games
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
+
+            result = self.bq_client.query(query, job_config=job_config).result()
+            for row in result:
+                return row.avg_def_rating if row.avg_def_rating is not None else 0.0
+
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error getting opponent def rating for {opponent_abbr}: {e}")
+            return 0.0
+
+    def _get_opponent_off_rating_last_10(self, opponent_abbr: str, game_date: date) -> float:
+        """
+        Get opponent's offensive rating over last 10 games.
+
+        Args:
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Average offensive rating over last 10 games, rounded to 2 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_games AS (
+                SELECT offensive_rating
+                FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+                WHERE team_abbr = @opponent_abbr
+                  AND game_date < @game_date
+                  AND game_date >= '2024-10-01'
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT ROUND(AVG(offensive_rating), 2) as avg_off_rating
+            FROM recent_games
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
+
+            result = self.bq_client.query(query, job_config=job_config).result()
+            for row in result:
+                return row.avg_off_rating if row.avg_off_rating is not None else 0.0
+
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error getting opponent off rating for {opponent_abbr}: {e}")
+            return 0.0
+
+    def _get_opponent_rebounding_rate(self, opponent_abbr: str, game_date: date) -> float:
+        """
+        Get opponent's rebounding rate (rebounds per possession) over last 10 games.
+
+        Args:
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Rebounding rate (rebounds/possession) over last 10 games, rounded to 2 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_games AS (
+                SELECT total_rebounds, possessions
+                FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+                WHERE team_abbr = @opponent_abbr
+                  AND game_date < @game_date
+                  AND game_date >= '2024-10-01'
+                  AND possessions > 0
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT ROUND(AVG(total_rebounds) / NULLIF(AVG(possessions), 0), 2) as rebounding_rate
+            FROM recent_games
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
+
+            result = self.bq_client.query(query, job_config=job_config).result()
+            for row in result:
+                return row.rebounding_rate if row.rebounding_rate is not None else 0.0
+
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error getting opponent rebounding rate for {opponent_abbr}: {e}")
+            return 0.0
+
+    def _get_opponent_pace_variance(self, opponent_abbr: str, game_date: date) -> float:
+        """
+        Get opponent's pace variance (consistency) over last 10 games.
+
+        Args:
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Standard deviation of pace over last 10 games, rounded to 2 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_games AS (
+                SELECT pace
+                FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+                WHERE team_abbr = @opponent_abbr
+                  AND game_date < @game_date
+                  AND game_date >= '2024-10-01'
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT ROUND(STDDEV(pace), 2) as pace_stddev
+            FROM recent_games
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
+
+            result = self.bq_client.query(query, job_config=job_config).result()
+            for row in result:
+                return row.pace_stddev if row.pace_stddev is not None else 0.0
+
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error getting opponent pace variance for {opponent_abbr}: {e}")
+            return 0.0
+
+    def _get_opponent_ft_rate_variance(self, opponent_abbr: str, game_date: date) -> float:
+        """
+        Get opponent's FT rate variance (consistency) over last 10 games.
+
+        Args:
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Standard deviation of FT attempts allowed over last 10 games, rounded to 2 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_games AS (
+                SELECT opp_ft_attempts
+                FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
+                WHERE defending_team_abbr = @opponent_abbr
+                  AND game_date < @game_date
+                  AND game_date >= '2024-10-01'
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT ROUND(STDDEV(opp_ft_attempts), 2) as ft_rate_stddev
+            FROM recent_games
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
+
+            result = self.bq_client.query(query, job_config=job_config).result()
+            for row in result:
+                return row.ft_rate_stddev if row.ft_rate_stddev is not None else 0.0
+
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error getting opponent FT rate variance for {opponent_abbr}: {e}")
+            return 0.0
+
+    def _get_opponent_def_rating_variance(self, opponent_abbr: str, game_date: date) -> float:
+        """
+        Get opponent's defensive rating variance (consistency) over last 10 games.
+
+        Args:
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Standard deviation of defensive rating over last 10 games, rounded to 2 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_games AS (
+                SELECT defensive_rating
+                FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
+                WHERE defending_team_abbr = @opponent_abbr
+                  AND game_date < @game_date
+                  AND game_date >= '2024-10-01'
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT ROUND(STDDEV(defensive_rating), 2) as def_rating_stddev
+            FROM recent_games
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
+
+            result = self.bq_client.query(query, job_config=job_config).result()
+            for row in result:
+                return row.def_rating_stddev if row.def_rating_stddev is not None else 0.0
+
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error getting opponent def rating variance for {opponent_abbr}: {e}")
+            return 0.0
+
+    def _get_opponent_off_rating_variance(self, opponent_abbr: str, game_date: date) -> float:
+        """
+        Get opponent's offensive rating variance (consistency) over last 10 games.
+
+        Args:
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Standard deviation of offensive rating over last 10 games, rounded to 2 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_games AS (
+                SELECT offensive_rating
+                FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+                WHERE team_abbr = @opponent_abbr
+                  AND game_date < @game_date
+                  AND game_date >= '2024-10-01'
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT ROUND(STDDEV(offensive_rating), 2) as off_rating_stddev
+            FROM recent_games
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
+
+            result = self.bq_client.query(query, job_config=job_config).result()
+            for row in result:
+                return row.off_rating_stddev if row.off_rating_stddev is not None else 0.0
+
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error getting opponent off rating variance for {opponent_abbr}: {e}")
+            return 0.0
+
+    def _get_opponent_rebounding_rate_variance(self, opponent_abbr: str, game_date: date) -> float:
+        """
+        Get opponent's rebounding rate variance (consistency) over last 10 games.
+
+        Args:
+            opponent_abbr: Opponent team abbreviation
+            game_date: Game date to filter historical data
+
+        Returns:
+            float: Standard deviation of rebounding rate over last 10 games, rounded to 3 decimals
+        """
+        try:
+            query = f"""
+            WITH recent_games AS (
+                SELECT
+                    total_rebounds / NULLIF(possessions, 0) as rebounding_rate
+                FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+                WHERE team_abbr = @opponent_abbr
+                  AND game_date < @game_date
+                  AND game_date >= '2024-10-01'
+                  AND possessions > 0
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT ROUND(STDDEV(rebounding_rate), 3) as rebounding_rate_stddev
+            FROM recent_games
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
+
+            result = self.bq_client.query(query, job_config=job_config).result()
+            for row in result:
+                return row.rebounding_rate_stddev if row.rebounding_rate_stddev is not None else 0.0
+
+            return 0.0
+
+        except Exception as e:
+            logger.error(f"Error getting opponent rebounding rate variance for {opponent_abbr}: {e}")
+            return 0.0
+
+    def _get_star_teammates_out(self, team_abbr: str, game_date: date) -> int:
+        """
+        Count star teammates who are OUT or DOUBTFUL for the game.
+
+        Star criteria (last 10 games):
+        - Average points >= 18 PPG OR
+        - Average minutes >= 28 MPG OR
+        - Usage rate >= 25%
+
+        Args:
+            team_abbr: Team abbreviation (e.g., 'LAL')
+            game_date: Game date to check
+
+        Returns:
+            int: Number of star teammates out (0-5 typical range)
+        """
+        try:
+            query = f"""
+            WITH team_roster AS (
+                SELECT player_lookup
+                FROM `{self.project_id}.nba_raw.espn_team_rosters`
+                WHERE team_abbr = @team_abbr
+                  AND roster_date = (
+                      SELECT MAX(roster_date)
+                      FROM `{self.project_id}.nba_raw.espn_team_rosters`
+                      WHERE roster_date <= @game_date
+                        AND team_abbr = @team_abbr
+                  )
+            ),
+            player_recent_stats AS (
+                SELECT
+                    player_lookup,
+                    AVG(points) as avg_points,
+                    AVG(minutes_played) as avg_minutes,
+                    AVG(usage_rate) as avg_usage
+                FROM `{self.project_id}.nba_analytics.player_game_summary`
+                WHERE game_date >= DATE_SUB(@game_date, INTERVAL 10 DAY)
+                  AND game_date < @game_date
+                  AND team_abbr = @team_abbr
+                GROUP BY player_lookup
+            ),
+            star_players AS (
+                SELECT s.player_lookup
+                FROM player_recent_stats s
+                INNER JOIN team_roster r ON s.player_lookup = r.player_lookup
+                WHERE s.avg_points >= 18
+                   OR s.avg_minutes >= 28
+                   OR s.avg_usage >= 25
+            ),
+            injured_players AS (
+                SELECT DISTINCT player_lookup
+                FROM `{self.project_id}.nba_raw.nbac_injury_report`
+                WHERE game_date = @game_date
+                  AND team = @team_abbr
+                  AND UPPER(injury_status) IN ('OUT', 'DOUBTFUL')
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup
+                    ORDER BY report_hour DESC
+                ) = 1
+            )
+            SELECT COUNT(*) as star_teammates_out
+            FROM star_players s
+            INNER JOIN injured_players i ON s.player_lookup = i.player_lookup
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("team_abbr", "STRING", team_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
+
+            result = self.bq_client.query(query, job_config=job_config).result()
+            for row in result:
+                return int(row.star_teammates_out) if row.star_teammates_out is not None else 0
+
+            return 0
+
+        except Exception as e:
+            logger.error(f"Error getting star teammates out for {team_abbr}: {e}")
+            return 0
+
+    def _get_questionable_star_teammates(self, team_abbr: str, game_date: date) -> int:
+        """
+        Count star teammates who are QUESTIONABLE for the game.
+
+        Star criteria (last 10 games):
+        - Average points >= 18 PPG OR
+        - Average minutes >= 28 MPG OR
+        - Usage rate >= 25%
+
+        Args:
+            team_abbr: Team abbreviation (e.g., 'LAL')
+            game_date: Game date to check
+
+        Returns:
+            int: Number of star teammates questionable (0-5 typical range)
+        """
+        try:
+            query = f"""
+            WITH team_roster AS (
+                SELECT player_lookup
+                FROM `{self.project_id}.nba_raw.espn_team_rosters`
+                WHERE team_abbr = @team_abbr
+                  AND roster_date = (
+                      SELECT MAX(roster_date)
+                      FROM `{self.project_id}.nba_raw.espn_team_rosters`
+                      WHERE roster_date <= @game_date
+                        AND team_abbr = @team_abbr
+                  )
+            ),
+            player_recent_stats AS (
+                SELECT
+                    player_lookup,
+                    AVG(points) as avg_points,
+                    AVG(minutes_played) as avg_minutes,
+                    AVG(usage_rate) as avg_usage
+                FROM `{self.project_id}.nba_analytics.player_game_summary`
+                WHERE game_date >= DATE_SUB(@game_date, INTERVAL 10 DAY)
+                  AND game_date < @game_date
+                  AND team_abbr = @team_abbr
+                GROUP BY player_lookup
+            ),
+            star_players AS (
+                SELECT s.player_lookup
+                FROM player_recent_stats s
+                INNER JOIN team_roster r ON s.player_lookup = r.player_lookup
+                WHERE s.avg_points >= 18
+                   OR s.avg_minutes >= 28
+                   OR s.avg_usage >= 25
+            ),
+            questionable_players AS (
+                SELECT DISTINCT player_lookup
+                FROM `{self.project_id}.nba_raw.nbac_injury_report`
+                WHERE game_date = @game_date
+                  AND team = @team_abbr
+                  AND UPPER(injury_status) = 'QUESTIONABLE'
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup
+                    ORDER BY report_hour DESC
+                ) = 1
+            )
+            SELECT COUNT(*) as questionable_star_teammates
+            FROM star_players s
+            INNER JOIN questionable_players q ON s.player_lookup = q.player_lookup
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("team_abbr", "STRING", team_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
+
+            result = self.bq_client.query(query, job_config=job_config).result()
+            for row in result:
+                return int(row.questionable_star_teammates) if row.questionable_star_teammates is not None else 0
+
+            return 0
+
+        except Exception as e:
+            logger.error(f"Error getting questionable star teammates for {team_abbr}: {e}")
+            return 0
+
+    def _get_star_tier_out(self, team_abbr: str, game_date: date) -> int:
+        """
+        Calculate weighted tier score for OUT/DOUBTFUL star teammates.
+
+        Star tiers (based on PPG last 10 games):
+        - Tier 1 (Superstar): 25+ PPG = 3 points
+        - Tier 2 (Star): 18-24.99 PPG = 2 points
+        - Tier 3 (Quality starter): <18 PPG but 28+ MPG or 25%+ usage = 1 point
+
+        Args:
+            team_abbr: Team abbreviation (e.g., 'LAL')
+            game_date: Game date to check
+
+        Returns:
+            int: Weighted tier score (0-15 typical range)
+        """
+        try:
+            query = f"""
+            WITH team_roster AS (
+                SELECT player_lookup
+                FROM `{self.project_id}.nba_raw.espn_team_rosters`
+                WHERE team_abbr = @team_abbr
+                  AND roster_date = (
+                      SELECT MAX(roster_date)
+                      FROM `{self.project_id}.nba_raw.espn_team_rosters`
+                      WHERE roster_date <= @game_date
+                        AND team_abbr = @team_abbr
+                  )
+            ),
+            player_recent_stats AS (
+                SELECT
+                    player_lookup,
+                    AVG(points) as avg_points,
+                    AVG(minutes_played) as avg_minutes,
+                    AVG(usage_rate) as avg_usage
+                FROM `{self.project_id}.nba_analytics.player_game_summary`
+                WHERE game_date >= DATE_SUB(@game_date, INTERVAL 10 DAY)
+                  AND game_date < @game_date
+                  AND team_abbr = @team_abbr
+                GROUP BY player_lookup
+            ),
+            star_players_with_tier AS (
+                SELECT
+                    s.player_lookup,
+                    CASE
+                        WHEN s.avg_points >= 25 THEN 3
+                        WHEN s.avg_points >= 18 THEN 2
+                        ELSE 1
+                    END as tier_weight
+                FROM player_recent_stats s
+                INNER JOIN team_roster r ON s.player_lookup = r.player_lookup
+                WHERE s.avg_points >= 18
+                   OR s.avg_minutes >= 28
+                   OR s.avg_usage >= 25
+            ),
+            injured_players AS (
+                SELECT DISTINCT player_lookup
+                FROM `{self.project_id}.nba_raw.nbac_injury_report`
+                WHERE game_date = @game_date
+                  AND team = @team_abbr
+                  AND UPPER(injury_status) IN ('OUT', 'DOUBTFUL')
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup
+                    ORDER BY report_hour DESC
+                ) = 1
+            )
+            SELECT SUM(s.tier_weight) as star_tier_out
+            FROM star_players_with_tier s
+            INNER JOIN injured_players i ON s.player_lookup = i.player_lookup
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("team_abbr", "STRING", team_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
+
+            result = self.bq_client.query(query, job_config=job_config).result()
+            for row in result:
+                return int(row.star_tier_out) if row.star_tier_out is not None else 0
+
+            return 0
+
+        except Exception as e:
+            logger.error(f"Error getting star tier out for {team_abbr}: {e}")
+            return 0
 
     def _calculate_data_quality(self, historical_data: pd.DataFrame,
                                 game_lines_info: Dict) -> Dict:

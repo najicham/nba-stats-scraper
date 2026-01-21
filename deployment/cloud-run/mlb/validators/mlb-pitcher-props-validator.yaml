@@ -34,7 +34,7 @@ spec:
             resources:
               limits:
                 cpu: "1000m"
-                memory: "512Mi"
+                memory: "256Mi"  # Optimized from 512Mi - validators are lightweight
             args:
             - "--start-date"
             - "today"

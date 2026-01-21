@@ -36,16 +36,14 @@ import time
 if TYPE_CHECKING:
     from google.cloud import bigquery, pubsub_v1
 
-from player_loader import PlayerLoader
-from progress_tracker import ProgressTracker
-from run_history import CoordinatorRunHistory
-from coverage_monitor import PredictionCoverageMonitor
-from batch_state_manager import get_batch_state_manager, BatchStateManager, BatchState
+from predictions.coordinator.player_loader import PlayerLoader
+from predictions.coordinator.progress_tracker import ProgressTracker
+from predictions.coordinator.run_history import CoordinatorRunHistory
+from predictions.coordinator.coverage_monitor import PredictionCoverageMonitor
+from predictions.coordinator.batch_state_manager import get_batch_state_manager, BatchStateManager, BatchState
 
 # Import batch consolidator for staging table merging
-import sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../worker'))
-from batch_staging_writer import BatchConsolidator
+from predictions.coordinator.batch_staging_writer import BatchConsolidator
 
 # Import unified publishing (lazy import to avoid cold start)
 import sys
@@ -54,6 +52,7 @@ from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
 from shared.config.orchestration_config import get_orchestration_config
 from shared.utils.env_validation import validate_required_env_vars
 from shared.utils.auth_utils import get_api_key
+from shared.endpoints.health import create_health_blueprint, HealthChecker
 
 # Configure logging
 logging.basicConfig(
@@ -147,6 +146,10 @@ PREDICTION_REQUEST_TOPIC = os.environ.get('PREDICTION_REQUEST_TOPIC', 'predictio
 PREDICTION_READY_TOPIC = os.environ.get('PREDICTION_READY_TOPIC', 'prediction-ready-prod')
 BATCH_SUMMARY_TOPIC = os.environ.get('BATCH_SUMMARY_TOPIC', 'prediction-batch-complete')
 
+# Week 1: Idempotency feature flags
+ENABLE_IDEMPOTENCY_KEYS = os.environ.get('ENABLE_IDEMPOTENCY_KEYS', 'false').lower() == 'true'
+DEDUP_TTL_DAYS = int(os.environ.get('DEDUP_TTL_DAYS', '7'))
+
 # API Key authentication (required for /start and /complete endpoints)
 # Try Secret Manager first, fallback to environment variable for local dev
 COORDINATOR_API_KEY = get_api_key(
@@ -155,6 +158,19 @@ COORDINATOR_API_KEY = get_api_key(
 )
 if not COORDINATOR_API_KEY:
     logger.warning("COORDINATOR_API_KEY not available from Secret Manager or environment - authenticated endpoints will reject all requests")
+
+# Health check endpoints (Phase 1 - Task 1.1: Add Health Endpoints)
+# See: docs/08-projects/current/pipeline-reliability-improvements/
+health_checker = HealthChecker(
+    service_name='prediction-coordinator',
+    version='1.0'
+)
+app.register_blueprint(create_health_blueprint(
+    service_name='prediction-coordinator',
+    version='1.0',
+    health_checker=health_checker
+))
+logger.info("Health check endpoints registered: /health, /ready, /health/deep")
 
 
 def require_api_key(f):
@@ -276,10 +292,8 @@ def index():
     }), 200
 
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Kubernetes/Cloud Run health check"""
-    return jsonify({'status': 'healthy'}), 200
+# Health check endpoint removed - now provided by shared health blueprint (see lines 161-173)
+# The blueprint provides: /health (liveness), /ready (readiness), /health/deep (deep checks)
 
 
 @app.route('/start', methods=['POST'])
@@ -393,35 +407,43 @@ def start_prediction_batch():
         # Instead of workers querying individually (225s total for sequential queries),
         # coordinator loads once (0.68s) and passes to workers via Pub/Sub
         # VERIFIED: Dec 31, 2025 - 118 players loaded in 0.68s, all workers used batch data
+        # FIXED: Session 102 - Increased timeout from 30s to 120s to support 300-400 players
 
-        # TEMPORARY BYPASS (Session 78): Batch loading times out for large player counts
-        # Skipping batch load - workers will query individually (slower but functional)
-        # TODO: Investigate performance degradation in load_historical_games_batch()
-        batch_historical_games = None
-        logger.info(f"⚠️ TEMPORARY: Batch historical loading bypassed - workers will query individually")
+        try:
+            player_lookups = [r.get('player_lookup') for r in requests if r.get('player_lookup')]
+            if player_lookups:
+                batch_start = time.time()
+                # Use heartbeat logger to track long-running data load (5-min intervals)
+                with HeartbeatLogger(f"Loading historical games for {len(player_lookups)} players", interval=300):
+                    # Import PredictionDataLoader to use batch loading method
+                    from data_loaders import PredictionDataLoader
 
-        # try:
-        #     player_lookups = [r.get('player_lookup') for r in requests if r.get('player_lookup')]
-        #     if player_lookups:
-        #         # Use heartbeat logger to track long-running data load (5-min intervals)
-        #         with HeartbeatLogger(f"Loading historical games for {len(player_lookups)} players", interval=300):
-        #             # Import PredictionDataLoader to use batch loading method
-        #             from data_loaders import PredictionDataLoader
-        #
-        #             data_loader = PredictionDataLoader(project_id=PROJECT_ID, dataset_prefix=dataset_prefix)
-        #             batch_historical_games = data_loader.load_historical_games_batch(
-        #                 player_lookups=player_lookups,
-        #                 game_date=game_date,
-        #                 lookback_days=90,
-        #                 max_games=30
-        #             )
-        #
-        #         print(f"✅ Batch loaded historical games for {len(batch_historical_games)} players", flush=True)
-        #         logger.info(f"✅ Batch loaded historical games for {len(batch_historical_games)} players")
-        # except Exception as e:
-        #     # Non-fatal: workers can fall back to individual queries
-        #     logger.warning(f"Batch historical load failed (workers will use individual queries): {e}")
-        #     batch_historical_games = None
+                    data_loader = PredictionDataLoader(project_id=PROJECT_ID, dataset_prefix=dataset_prefix)
+                    batch_historical_games = data_loader.load_historical_games_batch(
+                        player_lookups=player_lookups,
+                        game_date=game_date,
+                        lookback_days=90,
+                        max_games=30
+                    )
+
+                batch_elapsed = time.time() - batch_start
+                total_games = sum(len(games) for games in batch_historical_games.values())
+                print(f"✅ Batch loaded {total_games} historical games for {len(batch_historical_games)} players in {batch_elapsed:.2f}s", flush=True)
+                logger.info(
+                    f"✅ Batch loaded {total_games} historical games for {len(batch_historical_games)} players in {batch_elapsed:.2f}s",
+                    extra={
+                        'batch_load_time': batch_elapsed,
+                        'player_count': len(batch_historical_games),
+                        'games_loaded': total_games,
+                        'avg_time_per_player': batch_elapsed / len(batch_historical_games) if batch_historical_games else 0
+                    }
+                )
+            else:
+                batch_historical_games = None
+        except Exception as e:
+            # Non-fatal: workers can fall back to individual queries
+            logger.warning(f"Batch historical load failed (workers will use individual queries): {e}")
+            batch_historical_games = None
 
         # Initialize progress tracker (DEPRECATED - keeping for backward compatibility)
         current_tracker = ProgressTracker(expected_players=len(requests))
@@ -459,8 +481,59 @@ def start_prediction_batch():
             # Don't fail the batch if run history logging fails
             logger.warning(f"Failed to log batch start (non-fatal): {e}")
 
-        # Publish all requests to Pub/Sub (with batch historical data if available)
-        published_count = publish_prediction_requests(requests, batch_id, batch_historical_games, dataset_prefix)
+        # PRE-FLIGHT QUALITY FILTER: Check feature quality before publishing to Pub/Sub
+        # This prevents workers from processing low-quality predictions that will fail anyway
+        # Added: Jan 20, 2026 - Quick Win #3 from Agent Findings (15-25% faster batch processing)
+        viable_requests = []
+        filtered_count = 0
+
+        try:
+            from google.cloud import bigquery
+            bq_client = bigquery.Client(project=PROJECT_ID)
+
+            # Query feature quality scores for all players in this batch
+            player_lookups = [r.get('player_lookup') for r in requests if r.get('player_lookup')]
+            if player_lookups:
+                query = f"""
+                    SELECT player_lookup, feature_quality_score
+                    FROM `{PROJECT_ID}.{dataset_prefix}precompute.ml_feature_store_v2`
+                    WHERE player_lookup IN UNNEST(@player_lookups)
+                """
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups)
+                    ]
+                )
+                quality_scores = {row.player_lookup: row.feature_quality_score
+                                for row in bq_client.query(query, job_config=job_config).result()}
+
+                # Filter requests based on quality threshold
+                for pred_request in requests:
+                    player_lookup = pred_request.get('player_lookup')
+                    quality_score = quality_scores.get(player_lookup, 0)
+
+                    if quality_score < 70 and quality_score > 0:
+                        logger.warning(
+                            f"PRE-FLIGHT FILTER: Skipping {player_lookup} (quality={quality_score:.1f}% < 70%)",
+                            extra={'player_lookup': player_lookup, 'quality_score': quality_score, 'filter_reason': 'quality_too_low'}
+                        )
+                        filtered_count += 1
+                    else:
+                        viable_requests.append(pred_request)
+
+                logger.info(
+                    f"PRE-FLIGHT FILTER: {len(viable_requests)}/{len(requests)} viable "
+                    f"({filtered_count} filtered for low quality)"
+                )
+            else:
+                viable_requests = requests
+        except Exception as e:
+            # Non-fatal: If pre-flight filter fails, publish all requests (workers will handle filtering)
+            logger.warning(f"PRE-FLIGHT FILTER: Failed to check quality scores (publishing all): {e}")
+            viable_requests = requests
+
+        # Publish viable requests to Pub/Sub (with batch historical data if available)
+        published_count = publish_prediction_requests(viable_requests, batch_id, batch_historical_games, dataset_prefix)
         
         logger.info(f"Published {published_count}/{len(requests)} prediction requests")
         
@@ -483,15 +556,72 @@ def start_prediction_batch():
         }), 500
 
 
+def check_and_mark_message_processed(message_id: str) -> bool:
+    """
+    Week 1: Check if Pub/Sub message already processed (idempotency).
+
+    Uses Firestore deduplication collection with TTL to prevent
+    duplicate processing of Pub/Sub messages.
+
+    Args:
+        message_id: Pub/Sub message ID
+
+    Returns:
+        True if message already processed (duplicate), False if new
+    """
+    if not ENABLE_IDEMPOTENCY_KEYS:
+        return False  # Idempotency disabled, treat as new
+
+    try:
+        # Lazy load Firestore
+        from google.cloud import firestore
+
+        db = firestore.Client(project=PROJECT_ID)
+        dedup_ref = db.collection('pubsub_deduplication').document(message_id)
+
+        # Atomic transaction to check-and-set
+        transaction = db.transaction()
+
+        @firestore.transactional
+        def check_and_mark(transaction):
+            doc = dedup_ref.get(transaction=transaction)
+
+            if doc.exists:
+                # Already processed - duplicate message
+                logger.info(f"Duplicate message detected: {message_id}")
+                return True
+
+            # Mark as processed with TTL
+            from datetime import datetime, timedelta, timezone
+            expiry = datetime.now(timezone.utc) + timedelta(days=DEDUP_TTL_DAYS)
+
+            transaction.set(dedup_ref, {
+                'message_id': message_id,
+                'processed_at': firestore.SERVER_TIMESTAMP,
+                'expires_at': expiry  # For manual cleanup (Firestore TTL not available)
+            })
+
+            return False  # New message
+
+        return check_and_mark(transaction)
+
+    except Exception as e:
+        logger.error(f"Idempotency check failed for {message_id}: {e}")
+        # On error, treat as new to avoid blocking legitimate messages
+        return False
+
+
 @app.route('/complete', methods=['POST'])
 @require_api_key
 def handle_completion_event():
     """
     Handle prediction-ready events from workers
-    
+
+    Week 1 Update: Added idempotency checking to prevent duplicate processing.
+
     This endpoint is called by Pub/Sub push subscription when
     a worker completes predictions for a player.
-    
+
     Message format:
     {
         'player_lookup': 'lebron-james',
@@ -501,19 +631,27 @@ def handle_completion_event():
     }
     """
     global current_tracker
-    
+
     try:
         # Parse Pub/Sub message
         envelope = request.get_json()
         if not envelope:
             logger.error("No Pub/Sub message received")
             return ('Bad Request: no Pub/Sub message received', 400)
-        
+
         pubsub_message = envelope.get('message', {})
         if not pubsub_message:
             logger.error("No message field in envelope")
             return ('Bad Request: invalid Pub/Sub message format', 400)
-        
+
+        # Week 1: Extract message ID for idempotency
+        message_id = pubsub_message.get('messageId') or pubsub_message.get('message_id')
+
+        # Week 1: Check for duplicate message
+        if message_id and check_and_mark_message_processed(message_id):
+            logger.info(f"Duplicate message ignored: {message_id}")
+            return ('', 204)  # Success - already processed
+
         # Decode message data
         message_data = base64.b64decode(pubsub_message['data']).decode('utf-8')
         event = json.loads(message_data)
@@ -552,8 +690,10 @@ def handle_completion_event():
         except Exception as e:
             print(f"❌ ERROR in completion handler: {e}", flush=True)
             logger.error(f"Error recording completion to Firestore: {e}", exc_info=True)
-            # Don't fail the request - worker already succeeded
-            # Return 204 so Pub/Sub doesn't retry
+            # CRITICAL: Return 500 so Pub/Sub retries - completion event cannot be lost!
+            # Worker already succeeded, but we MUST track completion for batch consolidation
+            # Week 1: Idempotency prevents duplicate processing on retry
+            return ('Internal Server Error: Failed to record completion', 500)
 
         return ('', 204)  # Success
 

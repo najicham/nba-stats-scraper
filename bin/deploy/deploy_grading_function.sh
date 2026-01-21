@@ -145,6 +145,7 @@ cp "$SOURCE_DIR/requirements.txt" "$DEPLOY_DIR/"
 # Copy required source directories
 cp -r data_processors "$DEPLOY_DIR/"
 cp -r shared "$DEPLOY_DIR/"
+cp -r predictions "$DEPLOY_DIR/"
 
 # Create __init__.py files if missing
 touch "$DEPLOY_DIR/data_processors/__init__.py"
@@ -152,6 +153,8 @@ touch "$DEPLOY_DIR/data_processors/grading/__init__.py"
 touch "$DEPLOY_DIR/data_processors/grading/prediction_accuracy/__init__.py"
 touch "$DEPLOY_DIR/data_processors/grading/system_daily_performance/__init__.py"
 touch "$DEPLOY_DIR/shared/__init__.py"
+touch "$DEPLOY_DIR/predictions/__init__.py"
+touch "$DEPLOY_DIR/predictions/worker/__init__.py"
 
 # Add additional dependencies to requirements.txt
 cat >> "$DEPLOY_DIR/requirements.txt" << 'EOF'

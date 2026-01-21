@@ -1,47 +1,31 @@
-## PROMPT FOR SESSION 79
+SESSION 92 - QUICK START
+========================
 
-Copy/paste this to continue the placeholder line remediation project:
+Last Session (91): Fixed major data quality issues - 2,316 duplicates removed, 1,192 confidence values normalized, comprehensive documentation created.
 
----
+RECOMMENDED: Option A - Fix Worker Duplicate Bug (2-3 hours)
 
-I'm continuing the placeholder line remediation project from Session 78.
+Quick Start:
+"Read docs/09-handoff/SESSION-92-START-PROMPT.txt and let's fix the worker duplicate-write bug"
 
-**Quick Status**: Phase 1 validation gate is deployed (worker 00044-g7f) but coordinator times out when starting prediction batches, blocking Phase 4a validation.
+Or for full context:
+"Read docs/09-handoff/SESSION-92-START-PROMPT.txt and docs/08-projects/current/phase-4-grading-enhancements/README.md, then recommend what to work on"
 
-**Your immediate task**:
+Key Files:
+- docs/09-handoff/SESSION-92-START-PROMPT.txt (full handoff)
+- docs/08-projects/current/phase-4-grading-enhancements/README.md (project index)
+- docs/09-handoff/SESSION-91-COMPLETE.md (what we just did)
 
-1. Read the handoff: `docs/09-handoff/2026-01-17-SESSION-78-PHASE1-DEPLOYMENT-HANDOFF.md`
+Scripts to Know:
+- ./bin/validation/daily_data_quality_check.sh (check data quality)
+- ./bin/cleanup/cleanup_old_staging_tables.sh (cleanup resources)
 
-2. Fix coordinator timeout by bypassing batch historical loading:
-   - Edit `predictions/coordinator/coordinator.py` line ~396
-   - Set `batch_historical_games = None` (skip batch loading)
-   - Copy `shared/` module and redeploy coordinator
+Status:
+✅ Grading table de-duplicated (11,554 → 9,238 rows)
+✅ Confidence normalized (1,192 catboost_v8 records fixed)
+✅ similarity_balanced_v1 + zone_matchup_v1 bugs fixed & deployed
+⚠️ 5 duplicate business keys remain in source table (Jan 11)
+⚠️ 50 orphaned staging tables need cleanup
+❌ Worker duplicate-write bug not yet fixed
 
-3. Test Phase 4a validation - THE CRITICAL TEST:
-   ```bash
-   # Trigger Jan 9
-   curl -X POST https://prediction-coordinator-756957797294.us-west2.run.app/start \
-     -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
-     -H "X-API-Key: 0B5gc7vv9oNZYjST9lhe4rY2jEG2kYdz" \
-     -H "Content-Type: application/json" \
-     -d '{"game_date": "2026-01-09", "min_minutes": 15, "force": true}'
-
-   # Validate (MUST have 0 placeholders!)
-   bq query --nouse_legacy_sql "
-   SELECT game_date, system_id, COUNT(*) as count,
-          COUNTIF(current_points_line = 20.0) as placeholders
-   FROM \`nba-props-platform.nba_predictions.player_prop_predictions\`
-   WHERE game_date = '2026-01-09'
-     AND created_at >= TIMESTAMP('2026-01-17 04:30:00')
-   GROUP BY game_date, system_id"
-   ```
-
-4. If successful (0 placeholders), proceed to:
-   - Phase 4b: Regenerate XGBoost V1 (53 dates)
-   - Phase 5: Setup monitoring views
-   - Final validation
-
-**Full details**: `docs/09-handoff/2026-01-17-SESSION-79-QUICK-START.md`
-
-**Project**: `/home/naji/code/nba-stats-scraper`
-**Progress**: 65% (Phases 1-3 done, 4a blocked by coordinator timeout)
+All systems perform below 50% accuracy - needs investigation.

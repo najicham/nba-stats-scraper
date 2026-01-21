@@ -102,13 +102,19 @@ class BackfillProgressMonitor:
         else:
             start, end = BACKFILL_START, BACKFILL_END
 
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("start_date", "DATE", start),
+                bigquery.ScalarQueryParameter("end_date", "DATE", end),
+            ]
+        )
         query = f"""
         SELECT COUNT(DISTINCT game_date) as total
         FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
         WHERE game_status = 3
-          AND game_date BETWEEN '{start}' AND '{end}'
+          AND game_date BETWEEN @start_date AND @end_date
         """
-        result = self.client.query(query).result(timeout=60)
+        result = self.client.query(query, job_config=job_config).result(timeout=60)
         return next(result).total
 
     def get_phase_progress(self, phase: str, tables, date_field: str = 'game_date',
@@ -145,13 +151,19 @@ class BackfillProgressMonitor:
             table_items = [(t, date_field) for t in tables]
 
         for table, field in table_items:
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("start_date", "DATE", start),
+                    bigquery.ScalarQueryParameter("end_date", "DATE", end),
+                ]
+            )
             query = f"""
             SELECT COUNT(DISTINCT {field}) as dates
             FROM `{PROJECT_ID}.{dataset}.{table}`
-            WHERE {field} BETWEEN '{start}' AND '{end}'
+            WHERE {field} BETWEEN @start_date AND @end_date
             """
             try:
-                result = self.client.query(query).result(timeout=60)
+                result = self.client.query(query, job_config=job_config).result(timeout=60)
                 dates = next(result).dates
                 progress['tables'][table] = dates
                 # Use max for overall phase progress (tables should converge)
@@ -163,6 +175,12 @@ class BackfillProgressMonitor:
 
     def get_recent_failures(self, hours: int = 2, limit: int = 20) -> List[Dict]:
         """Get recent processor failures from run history."""
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("hours", "INT64", hours),
+                bigquery.ScalarQueryParameter("limit", "INT64", limit),
+            ]
+        )
         query = f"""
         SELECT
             data_date,
@@ -173,18 +191,25 @@ class BackfillProgressMonitor:
             SUBSTR(TO_JSON_STRING(errors), 1, 150) as error_msg
         FROM `{PROJECT_ID}.nba_reference.processor_run_history`
         WHERE status = 'failed'
-          AND started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {hours} HOUR)
+          AND started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @hours HOUR)
         ORDER BY started_at DESC
-        LIMIT {limit}
+        LIMIT @limit
         """
-        result = self.client.query(query).result(timeout=60)
+        result = self.client.query(query, job_config=job_config).result(timeout=60)
         return [dict(row) for row in result]
 
     def get_processing_rate(self, phase: str, hours: int = 1) -> Dict:
         """Calculate processing rate over last N hours."""
         dataset = 'nba_analytics' if phase == 'Phase 3' else 'nba_precompute'
         table = PHASE3_TABLES[0] if phase == 'Phase 3' else list(PHASE4_TABLES.keys())[0]
+        table_search = table.replace('_', '')
 
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("hours", "INT64", hours),
+                bigquery.ScalarQueryParameter("table_pattern", "STRING", f'%{table_search}%'),
+            ]
+        )
         query = f"""
         WITH recent_runs AS (
             SELECT
@@ -193,8 +218,8 @@ class BackfillProgressMonitor:
                 processor_name,
                 status
             FROM `{PROJECT_ID}.nba_reference.processor_run_history`
-            WHERE started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {hours} HOUR)
-              AND processor_name LIKE '%{table.replace('_', '')}%'
+            WHERE started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @hours HOUR)
+              AND processor_name LIKE @table_pattern
               AND status = 'success'
         )
         SELECT
@@ -205,7 +230,7 @@ class BackfillProgressMonitor:
         FROM recent_runs
         """
         try:
-            result = self.client.query(query).result(timeout=60)
+            result = self.client.query(query, job_config=job_config).result(timeout=60)
             row = next(result)
             return {
                 'dates_processed': row.dates_processed,

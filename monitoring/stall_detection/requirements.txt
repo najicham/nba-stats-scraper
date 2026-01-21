@@ -9,3 +9,4 @@ boto3>=1.35.0
 botocore>=1.35.0
 
 # Note: shared/ modules are included via --source flag during deployment
+google-cloud-secret-manager==2.16.0

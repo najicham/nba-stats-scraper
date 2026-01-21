@@ -17,6 +17,7 @@ import sys
 import argparse
 import logging
 import requests
+from shared.clients.http_pool import get_http_session
 from typing import List, Optional
 from datetime import datetime, timedelta
 
@@ -289,7 +290,7 @@ class NBACGamebookReparseJob:
                 "export_groups": "reparse_from_gcs"  # Use special export group for reparse
             }
             
-            response = requests.post(
+            response = get_http_session().post(
                 f"{self.scraper_service_url}/scrape",
                 json=payload,
                 timeout=60

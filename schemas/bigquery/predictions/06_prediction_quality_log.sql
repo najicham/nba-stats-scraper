@@ -32,5 +32,6 @@ PARTITION BY game_date
 CLUSTER BY system_id, player_lookup, game_date
 OPTIONS(
   description="Log of data quality issues encountered during predictions",
-  partition_expiration_days=90
+  partition_expiration_days=90,
+  require_partition_filter=TRUE
 );

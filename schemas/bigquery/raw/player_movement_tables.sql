@@ -39,7 +39,7 @@ PARTITION BY RANGE_BUCKET(season_year, GENERATE_ARRAY(2021, 2030, 1))
 CLUSTER BY player_lookup, team_abbr, transaction_type, transaction_date
 OPTIONS (
   description = "NBA.com Player Movement: Complete transaction history (trades, signings, waivers, G-League moves) from 2021+. Critical for validating historical player-team assignments in prop betting analysis. Uses smart idempotency to skip redundant writes when transactions unchanged.",
-  require_partition_filter = false
+  require_partition_filter = true
 );
 
 -- Helpful views for common queries

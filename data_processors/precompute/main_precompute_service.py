@@ -9,6 +9,11 @@ import logging
 import json
 import base64
 import os
+import sys
+
+# Add project root to path for shared imports
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+from shared.endpoints.health import create_health_blueprint, HealthChecker
 
 # Import precompute processors
 from data_processors.precompute.team_defense_zone_analysis.team_defense_zone_analysis_processor import TeamDefenseZoneAnalysisProcessor
@@ -20,6 +25,19 @@ from data_processors.precompute.ml_feature_store.ml_feature_store_processor impo
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Health check endpoints (Phase 1 - Task 1.1: Add Health Endpoints)
+health_checker = HealthChecker(
+    project_id=os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+    service_name='precompute-processor',
+    check_bigquery=True,  # Processor reads and writes BigQuery
+    check_firestore=False,  # Processor doesn't use Firestore
+    check_gcs=False,  # Processor doesn't directly access GCS
+    required_env_vars=['GCP_PROJECT_ID'],
+    optional_env_vars=['ENVIRONMENT']
+)
+app.register_blueprint(create_health_blueprint(health_checker))
+logger.info("Health check endpoints registered: /health, /ready, /health/deep")
 
 # Precompute processor registry - maps analytics tables to dependent precompute processors
 PRECOMPUTE_TRIGGERS = {
@@ -36,15 +54,8 @@ CASCADE_PROCESSORS = {
     'ml_feature_store': MLFeatureStoreProcessor,  # Depends on all Phase 4 processors
 }
 
-@app.route('/health', methods=['GET'])
-def health():
-    """Health check endpoint"""
-    return jsonify({
-        'status': 'healthy',
-        'service': 'precompute',
-        'version': '1.0.0',
-        'timestamp': datetime.now(timezone.utc).isoformat()
-    })
+# Health check endpoint removed - now provided by shared health blueprint (see initialization above)
+# The blueprint provides: /health (liveness), /ready (readiness), /health/deep (deep checks)
 
 @app.route('/process', methods=['POST'])
 def process():

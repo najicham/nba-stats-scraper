@@ -1,2 +1,2 @@
 # Include all shared dependencies
--r ../../shared/requirements.txt
+-r ../../shared/requirements.txtgoogle-cloud-secret-manager==2.16.0

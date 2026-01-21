@@ -21,6 +21,8 @@ Created: 2026-01-12 (Session 21)
 import functions_framework
 from flask import jsonify
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
+from shared.utils.slack_retry import send_slack_webhook_with_retry
 from datetime import datetime, timezone
 import logging
 import os
@@ -39,22 +41,15 @@ def send_slack_notification(message: str):
         logger.info("Slack webhook not configured, skipping notification")
         return False
 
-    try:
-        import requests
-        response = requests.post(
-            webhook_url,
-            json={"text": message},
-            timeout=10
-        )
-        if response.status_code == 200:
-            logger.info("Slack notification sent successfully")
-            return True
-        else:
-            logger.warning(f"Slack notification failed: {response.status_code}")
-            return False
-    except Exception as e:
-        logger.error(f"Failed to send Slack notification: {e}")
-        return False
+    payload = {"text": message}
+    success = send_slack_webhook_with_retry(webhook_url, payload, timeout=10)
+
+    if success:
+        logger.info("Slack notification sent successfully")
+    else:
+        logger.error("Failed to send Slack notification after retries")
+
+    return success
 
 
 def get_stale_running_details(client: bigquery.Client) -> list:
@@ -130,7 +125,7 @@ def cleanup_stale_running(request):
     }
 
     try:
-        client = bigquery.Client()
+        client = get_bigquery_client(project_id=PROJECT_ID)
 
         # Get details before cleanup (for logging and Slack)
         stale_details = get_stale_running_details(client)

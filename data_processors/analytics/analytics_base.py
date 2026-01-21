@@ -26,6 +26,9 @@ from google.cloud import bigquery
 from google.cloud import pubsub_v1
 import sentry_sdk
 
+# Import BigQuery connection pooling
+from shared.clients.bigquery_pool import get_bigquery_client
+
 # Import notification system
 from shared.utils.notification_system import (
     notify_error,
@@ -204,8 +207,8 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         self.stats["run_id"] = self.run_id
 
         # GCP clients
-        self.bq_client = bigquery.Client()
         self.project_id = os.environ.get('GCP_PROJECT_ID', get_project_id())
+        self.bq_client = get_bigquery_client(project_id=self.project_id)
 
         # Set dataset from sport_config if not overridden by child class
         if self.dataset_id is None:
@@ -1508,7 +1511,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
         """Initialize GCP clients with error notification."""
         try:
             self.project_id = self.opts.get("project_id", "nba-props-platform")
-            self.bq_client = bigquery.Client(project=self.project_id)
+            self.bq_client = get_bigquery_client(project_id=self.project_id)
         except Exception as e:
             logger.error(f"Failed to initialize BigQuery client: {e}")
             try:
@@ -1681,7 +1684,7 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
                 write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
                 autodetect=(table_schema is None),  # Auto-detect schema on first run when table doesn't exist
-                schema_update_options=None
+                schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION]  # Allow adding new fields (Session 107 metrics)
             )
             
             # Load to target table
@@ -1813,8 +1816,12 @@ class AnalyticsProcessorBase(RunHistoryMixin):
 
         # Get all field names from schema or fallback to row keys
         if table_schema and len(table_schema) > 0:
-            all_fields = [field.name for field in table_schema]
-            logger.debug(f"Using schema with {len(all_fields)} fields")
+            schema_fields = [field.name for field in table_schema]
+            # Also include fields from data that might not be in schema yet (Session 107 metrics)
+            data_fields = list(sanitized_rows[0].keys()) if sanitized_rows else []
+            # Merge: schema fields first, then any new fields from data
+            all_fields = schema_fields + [f for f in data_fields if f not in schema_fields]
+            logger.debug(f"Using {len(schema_fields)} schema fields + {len(all_fields) - len(schema_fields)} new data fields = {len(all_fields)} total")
         else:
             # Fallback: use keys from first row
             all_fields = list(sanitized_rows[0].keys()) if sanitized_rows else []
@@ -1913,7 +1920,8 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 schema=table_schema,
                 source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
                 write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
-                autodetect=(table_schema is None)
+                autodetect=(table_schema is None),
+                schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION] if table_schema else None  # Allow adding new fields
             )
 
             load_job = self.bq_client.load_table_from_file(
@@ -2037,18 +2045,25 @@ class AnalyticsProcessorBase(RunHistoryMixin):
 
         if game_dates:
             # Step 1: DELETE existing records for these dates
+            # Use parameterized query to prevent SQL injection
             if len(game_dates) == 1:
-                date_filter = f"game_date = DATE('{game_dates[0]}')"
+                delete_query = f"DELETE FROM `{table_id}` WHERE game_date = @game_date"
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter("game_date", "DATE", game_dates[0]),
+                    ]
+                )
             else:
-                # Build proper IN clause: DATE('2026-01-13'), DATE('2026-01-14')
-                dates_list = [f"DATE('{d}')" for d in game_dates]
-                date_filter = f"game_date IN ({', '.join(dates_list)})"
-
-            delete_query = f"DELETE FROM `{table_id}` WHERE {date_filter}"
+                delete_query = f"DELETE FROM `{table_id}` WHERE game_date IN UNNEST(@game_dates)"
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ArrayQueryParameter("game_dates", "DATE", game_dates),
+                    ]
+                )
 
             try:
                 logger.info(f"Deleting existing records for {len(game_dates)} date(s)")
-                delete_job = self.bq_client.query(delete_query)
+                delete_job = self.bq_client.query(delete_query, job_config=job_config)
                 delete_job.result(timeout=300)
                 deleted = delete_job.num_dml_affected_rows or 0
                 logger.info(f"✅ Deleted {deleted} existing rows")
@@ -2070,7 +2085,8 @@ class AnalyticsProcessorBase(RunHistoryMixin):
             schema=table_schema,
             source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
             write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-            autodetect=(table_schema is None)
+            autodetect=(table_schema is None),
+            schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION]  # Allow adding new fields (Session 107 metrics)
         )
 
         try:

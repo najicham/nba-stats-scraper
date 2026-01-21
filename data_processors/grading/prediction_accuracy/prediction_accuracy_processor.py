@@ -27,6 +27,13 @@ from datetime import datetime, date, timezone
 from typing import Dict, List, Optional
 
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
+
+# SESSION 94 FIX: Import distributed lock to prevent race conditions
+import sys
+import os
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
+from predictions.worker.distributed_lock import DistributedLock, LockAcquisitionError
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +59,22 @@ class PredictionAccuracyProcessor:
         self._math = math
         self.project_id = project_id
         self.dataset_prefix = dataset_prefix
-        self.bq_client = bigquery.Client(project=project_id)
+        self.bq_client = get_bigquery_client(project_id=project_id)
+
+        # Construct table names with optional prefix
+        predictions_dataset = f"{dataset_prefix}_nba_predictions" if dataset_prefix else "nba_predictions"
+        analytics_dataset = f"{dataset_prefix}_nba_analytics" if dataset_prefix else "nba_analytics"
+        raw_dataset = f"{dataset_prefix}_nba_raw" if dataset_prefix else "nba_raw"
+
+        self.predictions_table = f'{project_id}.{predictions_dataset}.player_prop_predictions'
+        self.actuals_table = f'{project_id}.{analytics_dataset}.player_game_summary'
+        self.accuracy_table = f'{project_id}.{predictions_dataset}.prediction_accuracy'
+        self.injury_table = f'{project_id}.{raw_dataset}.nbac_injury_report'
+
+        # Cache for injury status lookups (populated per-date)
+        self._injury_cache: Dict[str, Dict] = {}
+
+        logger.info(f"Initialized PredictionAccuracyProcessor (dataset_prefix: {dataset_prefix or 'production'})")
 
         # Construct table names with optional prefix
         predictions_dataset = f"{dataset_prefix}_nba_predictions" if dataset_prefix else "nba_predictions"
@@ -584,16 +606,191 @@ class PredictionAccuracyProcessor:
                     sanitized[key] = None
         return sanitized
 
-    def write_graded_results(
+    def _check_for_duplicates(self, game_date: date) -> int:
+        """
+        Check for duplicate business keys after grading (SESSION 94 FIX).
+
+        Business key: (player_lookup, game_id, system_id, line_value)
+
+        Args:
+            game_date: Date to check for duplicates
+
+        Returns:
+            Number of duplicate business keys found
+        """
+        game_date_str = game_date.isoformat()
+
+        validation_query = f"""
+        SELECT COUNT(*) as duplicate_count
+        FROM (
+            SELECT
+                player_lookup,
+                game_id,
+                system_id,
+                line_value,
+                COUNT(*) as occurrence_count
+            FROM `{self.accuracy_table}`
+            WHERE game_date = '{game_date}'
+            GROUP BY player_lookup, game_id, system_id, line_value
+            HAVING COUNT(*) > 1
+        )
+        """
+
+        try:
+            query_job = self.bq_client.query(validation_query)
+            result = query_job.result(timeout=30)
+            row = next(iter(result), None)
+            duplicate_count = row.duplicate_count if row else 0
+
+            if duplicate_count > 0:
+                # Get details for investigation
+                logger.error(f"  ❌ DUPLICATE DETECTION: Found {duplicate_count} duplicate business keys for {game_date}")
+
+                details_query = f"""
+                SELECT
+                    player_lookup,
+                    game_id,
+                    system_id,
+                    line_value,
+                    COUNT(*) as count,
+                    ARRAY_AGG(graded_at ORDER BY graded_at) as graded_timestamps
+                FROM `{self.accuracy_table}`
+                WHERE game_date = '{game_date}'
+                GROUP BY player_lookup, game_id, system_id, line_value
+                HAVING COUNT(*) > 1
+                LIMIT 20
+                """
+
+                details_result = self.bq_client.query(details_query).result(timeout=30)
+                logger.error(f"  Duplicate details for {game_date}:")
+                for row in details_result:
+                    logger.error(
+                        f"    - {row.player_lookup} / {row.system_id} / "
+                        f"line={row.line_value}: {row.count}x "
+                        f"(timestamps: {row.graded_timestamps})"
+                    )
+            else:
+                logger.info(f"  ✅ Validation passed: No duplicates for {game_date}")
+
+            return duplicate_count
+
+        except Exception as e:
+            logger.error(f"Error checking for duplicates: {e}")
+            # Don't fail grading if validation fails
+            return -1  # -1 = validation error
+
+    def _write_with_validation(
         self,
         graded_results: List[Dict],
         game_date: date
     ) -> int:
         """
-        Write graded results to BigQuery with idempotency.
+        Internal method: DELETE + INSERT + VALIDATE (SESSION 94 FIX).
 
-        Deletes existing records for the date before inserting,
-        allowing safe re-runs without duplicates.
+        This method is called INSIDE the lock context.
+
+        Args:
+            graded_results: Sanitized grading records
+            game_date: Date being graded
+
+        Returns:
+            Number of rows written
+        """
+        game_date_str = game_date.isoformat()
+
+        # Sanitize all records to ensure JSON compatibility
+        import json
+        sanitized_results = []
+        for i, record in enumerate(graded_results):
+            try:
+                sanitized = self._sanitize_record(record)
+                # Validate JSON serialization
+                json.dumps(sanitized)
+                sanitized_results.append(sanitized)
+            except (TypeError, ValueError) as e:
+                logger.warning(f"Skipping record {i} due to JSON error: {e}, player={record.get('player_lookup')}")
+                continue
+
+        if not sanitized_results:
+            logger.error("No valid records after sanitization")
+            return 0
+
+        graded_results = sanitized_results
+
+        try:
+            # STEP 1: DELETE existing records for this date
+            delete_query = f"""
+            DELETE FROM `{self.accuracy_table}`
+            WHERE game_date = '{game_date}'
+            """
+            delete_job = self.bq_client.query(delete_query)
+            delete_job.result(timeout=60)
+            deleted_count = delete_job.num_dml_affected_rows or 0
+
+            if deleted_count > 0:
+                logger.info(f"  Deleted {deleted_count} existing graded records for {game_date}")
+
+            # STEP 2: INSERT new records using batch loading
+            table_ref = self.bq_client.get_table(self.accuracy_table)
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
+
+            load_job = self.bq_client.load_table_from_json(
+                graded_results,
+                self.accuracy_table,
+                job_config=job_config
+            )
+            load_job.result(timeout=60)
+
+            if load_job.errors:
+                logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
+
+            rows_written = load_job.output_rows or len(graded_results)
+
+            # STEP 3: VALIDATE no duplicates created (Layer 2 defense)
+            logger.info(f"  Running post-grading validation for {game_date}...")
+            duplicate_count = self._check_for_duplicates(game_date)
+
+            if duplicate_count > 0:
+                logger.error(
+                    f"  ❌ VALIDATION FAILED: {duplicate_count} duplicate business keys detected "
+                    f"for {game_date} despite distributed lock!"
+                )
+                # Don't raise exception - log and alert, but don't fail grading
+                # Alerting system will notify operators
+            elif duplicate_count == 0:
+                logger.info(f"  ✅ Validation passed: No duplicates for {game_date}")
+
+            return rows_written
+
+        except Exception as e:
+            logger.error(f"Error writing graded results for {game_date}: {e}")
+            return 0
+
+    def write_graded_results(
+        self,
+        graded_results: List[Dict],
+        game_date: date,
+        use_lock: bool = True  # SESSION 94 FIX: Enable distributed locking by default
+    ) -> int:
+        """
+        Write graded results to BigQuery with distributed locking (SESSION 94 FIX).
+
+        Prevents race conditions that cause duplicates when multiple grading
+        operations run concurrently for the same date.
+
+        Args:
+            graded_results: List of graded prediction dictionaries
+            game_date: Date being graded
+            use_lock: If True, acquire distributed lock (default: True)
+
+        Returns:
+            Number of rows written
         """
         if not graded_results:
             return 0
@@ -616,47 +813,31 @@ class PredictionAccuracyProcessor:
             return 0
 
         graded_results = sanitized_results
+        game_date_str = game_date.isoformat()
 
-        try:
-            # IDEMPOTENCY: Delete existing records for this date first
-            delete_query = f"""
-            DELETE FROM `{self.accuracy_table}`
-            WHERE game_date = '{game_date}'
-            """
-            delete_job = self.bq_client.query(delete_query)
-            delete_job.result(timeout=60)
-            deleted_count = delete_job.num_dml_affected_rows or 0
-            if deleted_count > 0:
-                logger.info(f"  Deleted {deleted_count} existing graded records for {game_date}")
+        # SESSION 94 FIX: Use distributed lock to prevent concurrent grading
+        if use_lock:
+            try:
+                lock = DistributedLock(project_id=self.project_id, lock_type="grading")
+                logger.info(f"Acquiring grading lock for game_date={game_date_str}")
 
-            # Insert new records using BATCH LOADING (not streaming inserts)
-            # This avoids the 90-minute streaming buffer that blocks DML operations
-            # See: docs/05-development/guides/bigquery-best-practices.md
-            table_ref = self.bq_client.get_table(self.accuracy_table)
-            job_config = bigquery.LoadJobConfig(
-                schema=table_ref.schema,
-                autodetect=False,
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                ignore_unknown_values=True
-            )
+                with lock.acquire(game_date=game_date_str, operation_id=f"grading_{game_date_str}"):
+                    # Lock acquired - run grading inside locked context
+                    logger.info(f"✅ Grading lock acquired for {game_date_str}")
+                    return self._write_with_validation(graded_results, game_date)
 
-            load_job = self.bq_client.load_table_from_json(
-                graded_results,
-                self.accuracy_table,
-                job_config=job_config
-            )
-            load_job.result(timeout=60)  # Wait for completion
+            except LockAcquisitionError as e:
+                # Failed to acquire lock after max retries
+                error_msg = f"Cannot acquire grading lock for {game_date_str}: {e}"
+                logger.error(error_msg)
+                # Don't fail grading - try without lock (log warning)
+                logger.warning(f"⚠️  Proceeding with grading WITHOUT lock for {game_date_str}")
+                return self._write_with_validation(graded_results, game_date)
 
-            if load_job.errors:
-                logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
-                return load_job.output_rows or 0
-
-            return load_job.output_rows or len(graded_results)
-
-        except Exception as e:
-            logger.error(f"Error writing graded results: {e}")
-            return 0
+        else:
+            # Testing mode or lock disabled - no lock
+            logger.warning(f"Grading WITHOUT lock for {game_date_str} (use_lock=False)")
+            return self._write_with_validation(graded_results, game_date)
 
     def process_date(self, game_date: date) -> Dict:
         """
@@ -705,8 +886,11 @@ class PredictionAccuracyProcessor:
             graded = self.grade_prediction(pred, actual_data, game_date)
             graded_results.append(graded)
 
-        # Write to BigQuery
+        # Write to BigQuery (with distributed lock - SESSION 94 FIX)
         written = self.write_graded_results(graded_results, game_date)
+
+        # Check for duplicates after grading (SESSION 94 FIX)
+        duplicate_count = self._check_for_duplicates(game_date) if written > 0 else 0
 
         # Compute summary statistics
         if graded_results:
@@ -760,7 +944,9 @@ class PredictionAccuracyProcessor:
             'voided_injury': voided_injury,
             'voided_scratch': voided_scratch,
             'voided_unknown': voided_unknown,
-            'net_accuracy': round(net_accuracy * 100, 1) if net_accuracy is not None else None
+            'net_accuracy': round(net_accuracy * 100, 1) if net_accuracy is not None else None,
+            # SESSION 94 FIX: Return duplicate count for alerting
+            'duplicate_count': duplicate_count
         }
 
     def check_predictions_exist(self, game_date: date) -> Dict:

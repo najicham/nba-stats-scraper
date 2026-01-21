@@ -267,7 +267,7 @@ def update_registry(
         # Clean up temp table
         try:
             client.delete_table(temp_table_id, not_found_ok=True)
-        except:
+        except Exception:
             pass
 
 

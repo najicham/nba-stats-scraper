@@ -28,6 +28,7 @@ import os
 from datetime import datetime, date, timezone, timedelta
 from typing import Dict, List, Optional
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 
 from data_processors.analytics.analytics_base import AnalyticsProcessorBase
 from shared.utils.notification_system import notify_error, notify_warning, notify_info
@@ -59,7 +60,7 @@ class MlbBatterGameSummaryProcessor(AnalyticsProcessorBase):
         self.table_name = 'batter_game_summary'
         self.processing_strategy = 'MERGE_UPDATE'
         self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
-        self.bq_client = bigquery.Client(project=self.project_id)
+        self.bq_client = get_bigquery_client(project_id=self.project_id)
 
     def process_date(self, target_date: date) -> Dict:
         """Process batter game summary for a specific date."""

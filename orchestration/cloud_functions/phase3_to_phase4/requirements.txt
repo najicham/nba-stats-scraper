@@ -6,4 +6,10 @@ functions-framework==3.*
 
 # Google Cloud libraries
 google-cloud-firestore==2.*
+google-cloud-bigquery==3.*
 google-cloud-pubsub==2.*
+google-cloud-secret-manager==2.16.0
+
+# NEW: Mode-aware orchestration and health checks
+pytz>=2024.1  # Timezone support for mode detection
+requests>=2.31.0  # HTTP client for health endpoint checks

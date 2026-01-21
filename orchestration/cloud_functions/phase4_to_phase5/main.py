@@ -36,9 +36,10 @@ import logging
 import os
 import requests
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 from google.cloud import firestore, pubsub_v1, bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 import functions_framework
 
 # Configure logging
@@ -50,6 +51,33 @@ PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
 PHASE5_TRIGGER_TOPIC = 'nba-predictions-trigger'  # Downstream topic for predictions
 MAX_WAIT_HOURS = 4  # Maximum hours to wait for all processors before timeout
 MAX_WAIT_SECONDS = MAX_WAIT_HOURS * 3600
+
+# TIERED TIMEOUT CONFIGURATION (Implements progressive triggering based on completion)
+# Instead of waiting 4 hours for all processors, trigger faster with partial completion
+#
+# Tier 1: Wait up to 30 min for ALL 5 processors (ideal case)
+TIER1_TIMEOUT_SECONDS = int(os.environ.get('TIER1_TIMEOUT_SECONDS', '1800'))  # 30 min
+TIER1_REQUIRED_PROCESSORS = 5  # All processors
+
+# Tier 2: After 1 hour, trigger with 4/5 processors (acceptable case)
+TIER2_TIMEOUT_SECONDS = int(os.environ.get('TIER2_TIMEOUT_SECONDS', '3600'))  # 1 hour
+TIER2_REQUIRED_PROCESSORS = 4  # 80% of processors
+
+# Tier 3: After 2 hours, trigger with 3/5 processors (degraded case)
+TIER3_TIMEOUT_SECONDS = int(os.environ.get('TIER3_TIMEOUT_SECONDS', '7200'))  # 2 hours
+TIER3_REQUIRED_PROCESSORS = 3  # 60% of processors
+
+# Final fallback: After 4 hours, trigger regardless of count
+MAX_WAIT_HOURS = 4
+MAX_WAIT_SECONDS = MAX_WAIT_HOURS * 3600
+
+logger.info(
+    f"Tiered timeout config: "
+    f"Tier1({TIER1_TIMEOUT_SECONDS}s, {TIER1_REQUIRED_PROCESSORS} procs), "
+    f"Tier2({TIER2_TIMEOUT_SECONDS}s, {TIER2_REQUIRED_PROCESSORS} procs), "
+    f"Tier3({TIER3_TIMEOUT_SECONDS}s, {TIER3_REQUIRED_PROCESSORS} procs), "
+    f"Max({MAX_WAIT_SECONDS}s)"
+)
 
 # Processor name normalization - maps various formats to config names
 # Phase 4 processors publish class names or table names, but config uses simple names
@@ -73,6 +101,10 @@ PREDICTION_COORDINATOR_URL = os.environ.get(
     'https://prediction-coordinator-756957797294.us-west2.run.app'
 )
 SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
+
+# Health check configuration
+HEALTH_CHECK_ENABLED = os.environ.get('HEALTH_CHECK_ENABLED', 'true').lower() == 'true'
+HEALTH_CHECK_TIMEOUT = int(os.environ.get('HEALTH_CHECK_TIMEOUT', '5'))
 
 # Import expected processors from centralized config
 try:
@@ -194,15 +226,118 @@ def send_timeout_alert(game_date: str, completed_count: int, expected_count: int
             }]
         }
 
-        response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
-        response.raise_for_status()
-        logger.info(f"Timeout alert sent successfully for {game_date}")
-        return True
+        from shared.utils.slack_retry import send_slack_webhook_with_retry
+        success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
+        if success:
+            logger.info(f"Timeout alert sent successfully for {game_date}")
+        return success
 
     except Exception as e:
         logger.error(f"Failed to send timeout alert: {e}")
         return False
 
+
+# ============================================================================
+# HEALTH CHECK FUNCTIONS
+# ============================================================================
+
+def check_service_health(service_url: str, timeout: int = 5) -> Dict[str, any]:
+    """
+    Check if a downstream service is healthy and ready to process requests.
+
+    Calls the /ready endpoint which performs dependency checks (BigQuery, Firestore, etc).
+
+    Args:
+        service_url: Base URL of the service (e.g., https://prediction-coordinator...)
+        timeout: Request timeout in seconds
+
+    Returns:
+        Dict with:
+            - healthy: bool (True if status is 'ready' or 'degraded')
+            - status: str ('ready', 'degraded', 'unhealthy', or 'unreachable')
+            - details: dict (full health check response)
+            - error: str (if unreachable)
+    """
+    try:
+        response = requests.get(
+            f"{service_url}/ready",
+            timeout=timeout
+        )
+        # Don't raise for 503 - degraded state is acceptable
+        if response.status_code in [200, 503]:
+            health_data = response.json()
+            status = health_data.get('status', 'unknown')
+            # Consider 'degraded' and 'healthy' as acceptable
+            is_healthy = status in ['ready', 'degraded', 'healthy']
+        else:
+            response.raise_for_status()
+            health_data = response.json()
+            status = health_data.get('status', 'unknown')
+            is_healthy = status in ['ready', 'degraded', 'healthy']
+
+        return {
+            "healthy": is_healthy,
+            "status": status,
+            "details": health_data
+        }
+    except requests.exceptions.Timeout:
+        logger.error(f"Health check timeout for {service_url}")
+        return {
+            "healthy": False,
+            "status": "timeout",
+            "error": f"Request timed out after {timeout}s"
+        }
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Health check failed for {service_url}: {e}")
+        return {
+            "healthy": False,
+            "status": "unreachable",
+            "error": str(e)
+        }
+    except Exception as e:
+        logger.error(f"Unexpected error checking health for {service_url}: {e}")
+        return {
+            "healthy": False,
+            "status": "error",
+            "error": str(e)
+        }
+
+
+def check_coordinator_health() -> Tuple[bool, Dict[str, Dict]]:
+    """
+    Check health of the Prediction Coordinator service.
+
+    This is critical - if the coordinator is down, predictions cannot run.
+    However, we still trigger even if unhealthy to let Pub/Sub retry handle it.
+
+    Returns:
+        Tuple of (all_healthy: bool, health_status: dict)
+    """
+    if not HEALTH_CHECK_ENABLED:
+        logger.info("Health checks disabled via HEALTH_CHECK_ENABLED=false")
+        return (True, {"health_checks": "disabled"})
+
+    health_status = {}
+
+    if PREDICTION_COORDINATOR_URL:
+        coordinator_health = check_service_health(PREDICTION_COORDINATOR_URL, HEALTH_CHECK_TIMEOUT)
+        health_status['prediction_coordinator'] = coordinator_health
+
+        if not coordinator_health['healthy']:
+            logger.warning(
+                f"⚠️ Prediction Coordinator not ready: {coordinator_health['status']}. "
+                f"Will trigger anyway - Pub/Sub will retry if it fails."
+            )
+            return (False, health_status)
+    else:
+        logger.warning("PREDICTION_COORDINATOR_URL not set, skipping health check")
+
+    return (True, health_status)
+
+
+# ============================================================================
+# DATA FRESHNESS VALIDATION
+# ============================================================================
 
 # R-006: Data freshness validation before triggering Phase 5
 # Required Phase 4 tables that must have data before triggering predictions
@@ -230,7 +365,7 @@ def verify_phase4_data_ready(game_date: str) -> tuple:
         tuple: (is_ready: bool, missing_tables: list, table_counts: dict)
     """
     try:
-        bq_client = bigquery.Client()
+        bq_client = get_bigquery_client(project_id=os.environ.get('GCP_PROJECT', 'nba-props-platform'))
         missing = []
         table_counts = {}
 
@@ -271,7 +406,10 @@ def verify_phase4_data_ready(game_date: str) -> tuple:
 
 def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_counts: Dict) -> bool:
     """
-    Send Slack alert when Phase 4 data freshness check fails.
+    Send Slack alert when Phase 4 data freshness check fails or circuit breaker trips.
+
+    UPDATED: Now sends CRITICAL alert when circuit breaker trips (blocks predictions).
+    Sends WARNING alert when degraded mode allowed (quality threshold met).
 
     Args:
         game_date: The date being processed
@@ -289,54 +427,114 @@ def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_c
         # Format table counts for display
         counts_text = "\n".join([f"• {t}: {c}" for t, c in table_counts.items()])
 
-        payload = {
-            "attachments": [{
-                "color": "#FFA500",  # Orange for warning
-                "blocks": [
-                    {
-                        "type": "header",
-                        "text": {
-                            "type": "plain_text",
-                            "text": ":warning: R-006: Phase 4 Data Freshness Alert",
-                            "emoji": True
-                        }
-                    },
-                    {
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": f"*Data freshness check failed!* Some Phase 4 tables are missing data for {game_date}."
-                        }
-                    },
-                    {
-                        "type": "section",
-                        "fields": [
-                            {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
-                            {"type": "mrkdwn", "text": f"*Missing Tables:*\n{', '.join(missing_tables)}"},
-                        ]
-                    },
-                    {
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": f"*Table Row Counts:*\n```{counts_text}```"
-                        }
-                    },
-                    {
-                        "type": "context",
-                        "elements": [{
-                            "type": "mrkdwn",
-                            "text": "Phase 5 predictions will proceed, but may use incomplete data. Review Phase 4 processor logs."
-                        }]
-                    }
-                ]
-            }]
+        # Determine severity based on circuit breaker logic
+        critical_processors = {
+            'nba_precompute.player_daily_cache',
+            'nba_predictions.ml_feature_store_v2'
         }
+        tables_with_data = {t for t, count in table_counts.items() if count > 0}
+        critical_complete = critical_processors.issubset(tables_with_data)
+        total_complete = len(tables_with_data)
+        circuit_breaker_tripped = (total_complete < 3) or (not critical_complete)
 
-        response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
-        response.raise_for_status()
-        logger.info(f"Data freshness alert sent successfully for {game_date}")
-        return True
+        if circuit_breaker_tripped:
+            # CRITICAL: Circuit breaker has tripped - predictions BLOCKED
+            payload = {
+                "attachments": [{
+                    "color": "#FF0000",  # Red for critical
+                    "blocks": [
+                        {
+                            "type": "header",
+                            "text": {
+                                "type": "plain_text",
+                                "text": ":octagonal_sign: R-006: Circuit Breaker TRIPPED - Predictions BLOCKED",
+                                "emoji": True
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"*CRITICAL: Phase 5 predictions BLOCKED!* Insufficient Phase 4 data quality for {game_date}."
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "fields": [
+                                {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
+                                {"type": "mrkdwn", "text": f"*Processors:*\n{total_complete}/5 complete"},
+                                {"type": "mrkdwn", "text": f"*Critical:*\n{'✅ Complete' if critical_complete else '❌ MISSING'}"},
+                                {"type": "mrkdwn", "text": f"*Missing:*\n{', '.join(missing_tables) if missing_tables else 'None'}"},
+                            ]
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"*Table Row Counts:*\n```{counts_text}```"
+                            }
+                        },
+                        {
+                            "type": "context",
+                            "elements": [{
+                                "type": "mrkdwn",
+                                "text": ":no_entry: Predictions will NOT run until Phase 4 meets quality threshold (≥3/5 processors + both critical). Review Phase 4 logs and backfill if needed."
+                            }]
+                        }
+                    ]
+                }]
+            }
+        else:
+            # WARNING: Degraded mode - some data missing but quality threshold met
+            payload = {
+                "attachments": [{
+                    "color": "#FFA500",  # Orange for warning
+                    "blocks": [
+                        {
+                            "type": "header",
+                            "text": {
+                                "type": "plain_text",
+                                "text": ":warning: R-006: Phase 4 Degraded Mode",
+                                "emoji": True
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"*Some Phase 4 tables missing data for {game_date}, but quality threshold MET. Proceeding with degraded predictions.*"
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "fields": [
+                                {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
+                                {"type": "mrkdwn", "text": f"*Missing Tables:*\n{', '.join(missing_tables)}"},
+                            ]
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"*Table Row Counts:*\n```{counts_text}```"
+                            }
+                        },
+                        {
+                            "type": "context",
+                            "elements": [{
+                                "type": "mrkdwn",
+                                "text": "Predictions proceeding with {total_complete}/5 processors (threshold: ≥3 + critical complete). Review Phase 4 logs."
+                            }]
+                        }
+                    ]
+                }]
+            }
+
+        from shared.utils.slack_retry import send_slack_webhook_with_retry
+        success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
+        if success:
+            logger.info(f"Data freshness alert sent successfully for {game_date}")
+        return success
 
     except Exception as e:
         logger.error(f"Failed to send data freshness alert: {e}")
@@ -415,6 +613,7 @@ def orchestrate_phase4_to_phase5(cloud_event):
         )
 
         if should_trigger:
+            # All tier-based triggers should activate Phase 5
             if trigger_reason == 'all_complete':
                 # All processors complete - trigger Phase 5 (predictions)
                 trigger_phase5(game_date, correlation_id, message_data)
@@ -422,14 +621,62 @@ def orchestrate_phase4_to_phase5(cloud_event):
                     f"✅ All {EXPECTED_PROCESSOR_COUNT} Phase 4 processors complete for {game_date}, "
                     f"triggered Phase 5 predictions (correlation_id={correlation_id})"
                 )
+
+            elif trigger_reason in ['tier1_timeout', 'tier2_timeout', 'tier3_timeout', 'max_timeout']:
+                # Tiered timeout reached - trigger with available processors
+                trigger_phase5(game_date, correlation_id, message_data)
+
+                completed_count = EXPECTED_PROCESSOR_COUNT - len(missing)
+
+                # Log appropriate message based on tier
+                if trigger_reason == 'tier1_timeout':
+                    logger.info(
+                        f"⏰ Tier 1: All processors complete after 30min. "
+                        f"Triggering Phase 5 for {game_date} (correlation_id={correlation_id})"
+                    )
+                elif trigger_reason == 'tier2_timeout':
+                    logger.warning(
+                        f"⚠️ Tier 2: Triggering Phase 5 for {game_date} with {completed_count}/{EXPECTED_PROCESSOR_COUNT} processors after 1 hour. "
+                        f"Missing: {missing} (correlation_id={correlation_id})"
+                    )
+                    send_timeout_alert(
+                        game_date=game_date,
+                        completed_count=completed_count,
+                        expected_count=EXPECTED_PROCESSOR_COUNT,
+                        missing_processors=missing,
+                        wait_hours=1.0
+                    )
+                elif trigger_reason == 'tier3_timeout':
+                    logger.error(
+                        f"🔴 Tier 3 DEGRADED: Triggering Phase 5 for {game_date} with only {completed_count}/{EXPECTED_PROCESSOR_COUNT} processors after 2 hours. "
+                        f"Missing: {missing}. Quality may be impacted! (correlation_id={correlation_id})"
+                    )
+                    send_timeout_alert(
+                        game_date=game_date,
+                        completed_count=completed_count,
+                        expected_count=EXPECTED_PROCESSOR_COUNT,
+                        missing_processors=missing,
+                        wait_hours=2.0
+                    )
+                elif trigger_reason == 'max_timeout':
+                    logger.critical(
+                        f"🚨 MAX TIMEOUT: Triggering Phase 5 for {game_date} with {completed_count}/{EXPECTED_PROCESSOR_COUNT} processors after 4 hours. "
+                        f"Missing: {missing}. CRITICAL quality issues expected! (correlation_id={correlation_id})"
+                    )
+                    send_timeout_alert(
+                        game_date=game_date,
+                        completed_count=completed_count,
+                        expected_count=EXPECTED_PROCESSOR_COUNT,
+                        missing_processors=missing,
+                        wait_hours=MAX_WAIT_HOURS
+                    )
             elif trigger_reason == 'timeout':
-                # Timeout reached - trigger with partial data
+                # Legacy timeout handling (fallback for compatibility)
                 trigger_phase5(game_date, correlation_id, message_data)
                 logger.warning(
-                    f"⚠️ TIMEOUT: Triggering Phase 5 for {game_date} with partial data. "
+                    f"⚠️ LEGACY TIMEOUT: Triggering Phase 5 for {game_date} with partial data. "
                     f"Missing processors: {missing}"
                 )
-                # Send Slack alert for timeout
                 completed_count = EXPECTED_PROCESSOR_COUNT - len(missing)
                 send_timeout_alert(
                     game_date=game_date,
@@ -438,12 +685,17 @@ def orchestrate_phase4_to_phase5(cloud_event):
                     missing_processors=missing,
                     wait_hours=MAX_WAIT_HOURS
                 )
+
         elif trigger_reason == 'waiting':
             # Still waiting for more processors
             logger.info(f"Registered completion for {processor_name}, waiting for {len(missing)} more: {missing}")
 
     except Exception as e:
         logger.error(f"Error in Phase 4→5 orchestrator: {e}", exc_info=True)
+        # CRITICAL: Re-raise to NACK message so Pub/Sub will retry
+        # This prevents "silent failures" where work appears complete but didn't actually run
+        # See: PDC-INVESTIGATION-FINDINGS-JAN-20.md for root cause analysis
+        raise
 
 
 @firestore.transactional
@@ -502,31 +754,69 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
 
         return (True, 'all_complete', [])
 
-    # Check for timeout - trigger with partial completion
+    # TIERED TIMEOUT LOGIC: Progressive triggering based on completion count and time
+    # Enables faster predictions with partial completion instead of all-or-nothing at 4 hours
     first_completion_str = current.get('_first_completion_at')
     if first_completion_str:
         first_completion = datetime.fromisoformat(first_completion_str.replace('Z', '+00:00'))
         wait_seconds = (now - first_completion).total_seconds()
 
-        if wait_seconds > MAX_WAIT_SECONDS:
-            logger.warning(
-                f"TIMEOUT: Waited {wait_seconds/3600:.1f} hours for Phase 4 completion. "
-                f"Got {completed_count}/{EXPECTED_PROCESSOR_COUNT} processors. "
-                f"Missing: {missing_processors}. Triggering Phase 5 anyway."
+        # Determine which tier threshold we've crossed
+        trigger_reason = None
+        tier_name = None
+
+        # Check each tier in order (strictest to most lenient)
+        if completed_count >= TIER1_REQUIRED_PROCESSORS and wait_seconds > TIER1_TIMEOUT_SECONDS:
+            # Tier 1: All processors but took too long (ideal → acceptable transition)
+            trigger_reason = 'tier1_timeout'
+            tier_name = 'Tier1'
+            logger.info(
+                f"Tier 1 timeout: Have all {completed_count}/{EXPECTED_PROCESSOR_COUNT} processors, "
+                f"but waited {wait_seconds:.0f}s > {TIER1_TIMEOUT_SECONDS}s. Triggering now."
             )
 
-            # Mark as triggered with timeout reason
+        elif completed_count >= TIER2_REQUIRED_PROCESSORS and wait_seconds > TIER2_TIMEOUT_SECONDS:
+            # Tier 2: 4/5 processors after 1 hour (acceptable case)
+            trigger_reason = 'tier2_timeout'
+            tier_name = 'Tier2'
+            logger.warning(
+                f"Tier 2 timeout: Have {completed_count}/{EXPECTED_PROCESSOR_COUNT} processors "
+                f"after {wait_seconds/60:.1f} min. Missing: {missing_processors}. Triggering with partial data."
+            )
+
+        elif completed_count >= TIER3_REQUIRED_PROCESSORS and wait_seconds > TIER3_TIMEOUT_SECONDS:
+            # Tier 3: 3/5 processors after 2 hours (degraded case)
+            trigger_reason = 'tier3_timeout'
+            tier_name = 'Tier3'
+            logger.warning(
+                f"Tier 3 timeout: Have {completed_count}/{EXPECTED_PROCESSOR_COUNT} processors "
+                f"after {wait_seconds/3600:.1f} hours. Missing: {missing_processors}. Triggering degraded."
+            )
+
+        elif wait_seconds > MAX_WAIT_SECONDS:
+            # Final fallback: Max timeout regardless of count (original behavior)
+            trigger_reason = 'max_timeout'
+            tier_name = 'MaxTimeout'
+            logger.error(
+                f"MAX TIMEOUT: Waited {wait_seconds/3600:.1f} hours for Phase 4 completion. "
+                f"Only got {completed_count}/{EXPECTED_PROCESSOR_COUNT} processors. "
+                f"Missing: {missing_processors}. Triggering Phase 5 anyway (may have quality issues)."
+            )
+
+        # If any tier triggered, mark and return
+        if trigger_reason:
             current['_triggered'] = True
             current['_triggered_at'] = firestore.SERVER_TIMESTAMP
             current['_completed_count'] = completed_count
-            current['_trigger_reason'] = 'timeout'
+            current['_trigger_reason'] = trigger_reason
+            current['_tier_name'] = tier_name
             current['_missing_processors'] = missing_processors
             current['_wait_seconds'] = wait_seconds
 
             # Write atomically
             transaction.set(doc_ref, current)
 
-            return (True, 'timeout', missing_processors)
+            return (True, trigger_reason, missing_processors)
 
     # Not yet complete, update state
     current['_completed_count'] = completed_count
@@ -542,9 +832,11 @@ def trigger_phase5(game_date: str, correlation_id: str, upstream_message: Dict) 
     Trigger Phase 5 predictions when Phase 4 is complete.
 
     Does three things:
-    1. R-006: Verifies Phase 4 data actually exists in BigQuery
-    2. Publishes message to nba-phase4-precompute-complete topic
-    3. Calls prediction coordinator /start endpoint directly
+    1. R-006: Verifies Phase 4 data actually exists in BigQuery (BLOCKING circuit breaker)
+    2. Verifies minimum coverage: ≥3/5 processors + both critical (PDC, MLFS)
+    3. If checks pass: Publishes message + calls prediction coordinator
+
+    UPDATED: Now implements circuit breaker pattern - BLOCKS predictions if quality threshold not met.
 
     Args:
         game_date: Date that was processed
@@ -553,18 +845,57 @@ def trigger_phase5(game_date: str, correlation_id: str, upstream_message: Dict) 
 
     Returns:
         Message ID if published successfully, None if failed
+
+    Raises:
+        ValueError: If circuit breaker trips (insufficient Phase 4 data quality)
     """
     try:
         # R-006: Verify Phase 4 data exists before triggering predictions
         # This is a belt-and-suspenders check even when all processors report success
         is_ready, missing_tables, table_counts = verify_phase4_data_ready(game_date)
 
+        # Circuit breaker logic: Check minimum quality thresholds
+        critical_processors = {
+            'nba_precompute.player_daily_cache',  # PDC - Critical for predictions
+            'nba_predictions.ml_feature_store_v2'  # MLFS - Critical for predictions
+        }
+
+        tables_with_data = {t for t, count in table_counts.items() if count > 0}
+        critical_complete = critical_processors.issubset(tables_with_data)
+        total_complete = len(tables_with_data)
+        min_required = 3  # Require at least 3/5 processors
+
+        # Circuit breaker trips if:
+        # 1. Less than 3 processors completed, OR
+        # 2. Missing either critical processor (PDC or MLFS)
+        circuit_breaker_tripped = (total_complete < min_required) or (not critical_complete)
+
+        if circuit_breaker_tripped:
+            logger.error(
+                f"R-006: Circuit breaker TRIPPED for {game_date}. "
+                f"Processors: {total_complete}/5, Critical: {critical_complete}, "
+                f"Missing: {missing_tables}. BLOCKING Phase 5 predictions."
+            )
+            # Send critical alert
+            send_data_freshness_alert(game_date, missing_tables, table_counts)
+
+            # CRITICAL: Raise exception to BLOCK predictions with insufficient data
+            # This prevents poor-quality predictions (10-15% of weekly quality issues)
+            raise ValueError(
+                f"Phase 4 circuit breaker tripped for {game_date}. "
+                f"Insufficient data quality: {total_complete}/5 processors complete, "
+                f"critical processors {'complete' if critical_complete else 'MISSING'}. "
+                f"Missing tables: {missing_tables}. "
+                f"Cannot generate predictions without minimum Phase 4 coverage."
+            )
+
         if not is_ready:
             logger.warning(
-                f"R-006: Data freshness check FAILED for {game_date}. "
-                f"Missing tables: {missing_tables}. Proceeding with trigger anyway."
+                f"R-006: Data freshness check shows missing tables for {game_date}. "
+                f"Missing: {missing_tables}. However, circuit breaker threshold MET "
+                f"({total_complete}/5 processors, critical complete). Proceeding with degraded mode."
             )
-            # Send alert but continue triggering (same behavior as timeout)
+            # Send warning alert but continue (quality threshold met even if not all tables present)
             send_data_freshness_alert(game_date, missing_tables, table_counts)
 
         topic_path = publisher.topic_path(PROJECT_ID, PHASE5_TRIGGER_TOPIC)
@@ -599,6 +930,17 @@ def trigger_phase5(game_date: str, correlation_id: str, upstream_message: Dict) 
         logger.info(
             f"Published Phase 5 trigger: message_id={message_id}, game_date={game_date}"
         )
+
+        # Check health of prediction coordinator before calling it directly
+        coordinator_healthy, health_status = check_coordinator_health()
+
+        if coordinator_healthy:
+            logger.info(f"✅ Prediction Coordinator is healthy, triggering via HTTP")
+        else:
+            logger.warning(
+                f"⚠️ Prediction Coordinator health check failed: {health_status}. "
+                f"Will attempt trigger anyway - Pub/Sub message already sent."
+            )
 
         # Also call prediction coordinator directly (HTTP trigger)
         try:

@@ -467,9 +467,8 @@ class PlayerCompositeFactorsProcessor(
         super().__init__()
 
         # Initialize completeness checker (Week 4 - Cascade Dependencies)
-        from google.cloud import bigquery
         import os
-        self.bq_client = bigquery.Client()
+        # BigQuery client already initialized by PrecomputeProcessorBase with pooling
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
         self.completeness_checker = CompletenessChecker(self.bq_client, self.project_id)
 

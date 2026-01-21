@@ -63,4 +63,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.prediction_accura
   graded_at TIMESTAMP
 )
 PARTITION BY game_date
-CLUSTER BY system_id, player_lookup;
+CLUSTER BY system_id, player_lookup
+OPTIONS (
+  require_partition_filter=TRUE
+);

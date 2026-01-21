@@ -516,9 +516,8 @@ class PlayerDailyCacheProcessor(
         # Data requirements
         self.min_games_required = 10  # Preferred minimum
         self.absolute_min_games = 5   # Absolute minimum to write record
-        
-        # BigQuery client (CRITICAL)
-        self.bq_client = bigquery.Client()
+
+        # BigQuery client already initialized by PrecomputeProcessorBase with pooling
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
 
         # Initialize completeness checker (Week 3 - Multi-Window Completeness Checking)

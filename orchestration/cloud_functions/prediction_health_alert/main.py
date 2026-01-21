@@ -42,6 +42,7 @@ from datetime import date
 from typing import Dict, Optional
 
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 import functions_framework
 
 # Configure logging
@@ -296,7 +297,7 @@ def check_prediction_health(request):
         logger.info(f"Checking prediction health for {game_date} (dry_run={dry_run})")
 
         # Get health metrics
-        bq_client = bigquery.Client(project=PROJECT_ID)
+        bq_client = get_bigquery_client(project_id=PROJECT_ID)
         health = get_prediction_health(bq_client, game_date)
 
         logger.info(f"Health metrics: {health}")

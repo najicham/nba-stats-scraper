@@ -135,7 +135,7 @@ import requests
 from google.cloud import bigquery
 from datetime import datetime
 
-BDL_API_KEY = os.environ.get('BDL_API_KEY', 'cd483b51-304f-4a83-9aa4-8f25fc66eb8c')
+BDL_API_KEY = os.environ.get('BDL_API_KEY', 'REDACTED')
 PROJECT_ID = 'nba-props-platform'
 TABLE_ID = 'nba_raw.bdl_player_boxscores'
 

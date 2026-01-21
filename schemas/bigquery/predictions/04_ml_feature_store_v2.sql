@@ -116,7 +116,8 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.ml_feature_store_
 PARTITION BY game_date
 CLUSTER BY player_lookup, feature_version, game_date
 OPTIONS(
-  description="ML feature store with flexible array-based features (v2.0). Supports evolving feature sets from 25 to 47+ features. Includes v4.0 dependency tracking for Phase 4 sources with smart patterns (Smart Idempotency + Smart Reprocessing)."
+  description="ML feature store with flexible array-based features (v2.0). Supports evolving feature sets from 25 to 47+ features. Includes v4.0 dependency tracking for Phase 4 sources with smart patterns (Smart Idempotency + Smart Reprocessing).",
+  require_partition_filter=TRUE
 );
 
 -- ============================================================================

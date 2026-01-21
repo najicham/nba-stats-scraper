@@ -11,6 +11,7 @@ import logging
 from datetime import date, datetime, timezone
 from typing import Dict, List, Any, Optional
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +20,8 @@ class MlbShadowModeGradingProcessor:
     """Grade MLB shadow mode predictions comparing V1.4 vs V1.6."""
 
     def __init__(self):
-        self.bq_client = bigquery.Client()
         self.project_id = "nba-props-platform"
+        self.bq_client = get_bigquery_client(project_id=self.project_id)
         self.stats = {
             "predictions_graded": 0,
             "v1_4_correct": 0,

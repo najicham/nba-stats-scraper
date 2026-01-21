@@ -37,6 +37,7 @@ from typing import Dict, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 import functions_framework
 
 # Configure logging
@@ -260,7 +261,7 @@ def check_grading_status(request):
         logger.info(f"Checking grading status for {target_date} (dry_run={dry_run})")
 
         # Initialize BigQuery client
-        bq_client = bigquery.Client(project=PROJECT_ID)
+        bq_client = get_bigquery_client(project_id=PROJECT_ID)
 
         # Gather data
         games = check_games_scheduled(bq_client, target_date)

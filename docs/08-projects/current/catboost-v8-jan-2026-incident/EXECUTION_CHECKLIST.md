@@ -168,7 +168,7 @@
 
 - [ ] **Set Slack webhook URL** (if available):
   ```bash
-  export SLACK_ALERT_WEBHOOK_URL="https://hooks.slack.com/services/YOUR/WEBHOOK/URL"
+  export SLACK_ALERT_WEBHOOK_URL="https://hooks.slack.com/services/YOUR_WORKSPACE/YOUR_CHANNEL/YOUR_WEBHOOK_TOKEN"
   ```
   - Optional - alerts will log even if not set
 

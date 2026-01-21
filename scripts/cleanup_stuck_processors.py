@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
     from google.cloud import bigquery
+    from shared.utils.slack_retry import send_slack_webhook_with_retry
 except ImportError:
     print("Error: google-cloud-bigquery not installed. Run: pip install google-cloud-bigquery")
     sys.exit(1)
@@ -169,8 +170,8 @@ def send_slack_notification(
             ]
         }
 
-        response = requests.post(webhook_url, json=message, timeout=10)
-        return response.status_code == 200
+        success = send_slack_webhook_with_retry(webhook_url, message, timeout=10)
+        return success
     except ImportError:
         print("Warning: requests library not installed. Skipping Slack notification.")
         return False

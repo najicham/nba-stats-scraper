@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import List, Dict, Optional
 
 import requests
+from shared.clients.http_pool import get_http_session
 from google.cloud import storage
 
 # Setup logging
@@ -128,7 +129,7 @@ class NbacPlayByPlayBackfill:
             return True
 
         try:
-            response = requests.get(
+            response = get_http_session().get(
                 f"{self.service_url}/nbac_play_by_play",
                 params={
                     "game_id": game_id,

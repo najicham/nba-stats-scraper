@@ -44,6 +44,9 @@ logger = logging.getLogger(__name__)
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
+# Import shared health endpoints
+from shared.endpoints.health import create_health_blueprint, HealthChecker
+
 # Environment configuration
 PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
 MODEL_PATH = os.environ.get(
@@ -57,6 +60,20 @@ PREDICTIONS_TABLE = os.environ.get(
 
 # Flask app
 app = Flask(__name__)
+
+# Health check endpoints (Phase 1 - Task 1.1: Add Health Endpoints)
+health_checker = HealthChecker(
+    project_id=PROJECT_ID,
+    service_name='mlb-prediction-worker',
+    check_bigquery=True,  # Worker writes predictions to BigQuery
+    check_firestore=False,  # Worker doesn't use Firestore
+    check_gcs=True,  # Worker loads models from GCS
+    gcs_buckets=['nba-scraped-data'],  # Model storage bucket
+    required_env_vars=['GCP_PROJECT_ID', 'MLB_MODEL_PATH', 'MLB_PREDICTIONS_TABLE'],
+    optional_env_vars=['BACKFILL_MODE', 'ENVIRONMENT']
+)
+app.register_blueprint(create_health_blueprint(health_checker))
+logger.info("Health check endpoints registered: /health, /ready, /health/deep")
 
 # Initialize AlertManager (with backfill mode detection)
 def get_mlb_alert_manager():
@@ -84,24 +101,87 @@ def send_mlb_alert(severity: str, title: str, message: str, context: dict = None
 
 
 # Lazy-loaded components
-_predictor = None
+_prediction_systems = None
 _bq_client = None
 _pubsub_publisher = None
 
 
+def get_prediction_systems() -> Dict:
+    """
+    Load all active MLB prediction systems
+
+    Returns:
+        Dict[str, BaseMLBPredictor]: Map of system_id -> predictor instance
+    """
+    global _prediction_systems
+    if _prediction_systems is None:
+        from predictions.mlb.config import get_config
+        from predictions.mlb.prediction_systems.v1_baseline_predictor import V1BaselinePredictor
+        from predictions.mlb.prediction_systems.v1_6_rolling_predictor import V1_6RollingPredictor
+        from predictions.mlb.prediction_systems.ensemble_v1 import MLBEnsembleV1
+
+        config = get_config()
+        active_systems = config.systems.get_active_systems()
+
+        logger.info(f"Initializing prediction systems: {active_systems}")
+
+        systems = {}
+        v1_baseline = None
+        v1_6_rolling = None
+
+        # V1 Baseline
+        if 'v1_baseline' in active_systems or 'ensemble_v1' in active_systems:
+            v1_baseline = V1BaselinePredictor(
+                model_path=config.systems.v1_model_path,
+                project_id=PROJECT_ID
+            )
+            v1_baseline.load_model()
+            if 'v1_baseline' in active_systems:
+                systems['v1_baseline'] = v1_baseline
+            logger.info("V1 Baseline predictor initialized")
+
+        # V1.6 Rolling
+        if 'v1_6_rolling' in active_systems or 'ensemble_v1' in active_systems:
+            v1_6_rolling = V1_6RollingPredictor(
+                model_path=config.systems.v1_6_model_path,
+                project_id=PROJECT_ID
+            )
+            v1_6_rolling.load_model()
+            if 'v1_6_rolling' in active_systems:
+                systems['v1_6_rolling'] = v1_6_rolling
+            logger.info("V1.6 Rolling predictor initialized")
+
+        # Ensemble V1 (requires V1 and V1.6 to be initialized)
+        if 'ensemble_v1' in active_systems:
+            if v1_baseline is None or v1_6_rolling is None:
+                logger.error("Ensemble requires both V1 and V1.6 predictors")
+            else:
+                ensemble = MLBEnsembleV1(
+                    v1_predictor=v1_baseline,
+                    v1_6_predictor=v1_6_rolling,
+                    v1_weight=config.systems.ensemble_v1_weight,
+                    v1_6_weight=config.systems.ensemble_v1_6_weight,
+                    project_id=PROJECT_ID
+                )
+                systems['ensemble_v1'] = ensemble
+                logger.info(f"Ensemble V1 initialized (V1:{config.systems.ensemble_v1_weight:.0%}, V1.6:{config.systems.ensemble_v1_6_weight:.0%})")
+
+        logger.info(f"Initialized {len(systems)} prediction systems")
+        _prediction_systems = systems
+
+    return _prediction_systems
+
+
 def get_predictor():
-    """Lazy-load predictor"""
-    global _predictor
-    if _predictor is None:
-        from predictions.mlb.pitcher_strikeouts_predictor import PitcherStrikeoutsPredictor
-        logger.info("Initializing PitcherStrikeoutsPredictor...")
-        _predictor = PitcherStrikeoutsPredictor(
-            model_path=MODEL_PATH,
-            project_id=PROJECT_ID
-        )
-        _predictor.load_model()
-        logger.info("Predictor initialized successfully")
-    return _predictor
+    """
+    Legacy function for backward compatibility.
+    Returns the first available predictor system.
+    """
+    systems = get_prediction_systems()
+    if not systems:
+        raise RuntimeError("No prediction systems available")
+    # Return first system (maintains backward compatibility)
+    return next(iter(systems.values()))
 
 
 def get_bq_client():
@@ -129,29 +209,34 @@ def get_pubsub_publisher():
 @app.route('/', methods=['GET'])
 def index():
     """Service info endpoint"""
-    predictor = get_predictor()
-    model_info = predictor.model_metadata if predictor.model_metadata else {}
+    systems = get_prediction_systems()
 
-    return jsonify({
-        'service': 'MLB Prediction Worker',
-        'version': '1.0.0',
-        'sport': 'MLB',
-        'prediction_type': 'pitcher_strikeouts',
-        'model': {
-            'id': model_info.get('model_id', 'unknown'),
+    # Build system info
+    systems_info = {}
+    for system_id, predictor in systems.items():
+        model_info = predictor.model_metadata if hasattr(predictor, 'model_metadata') and predictor.model_metadata else {}
+        systems_info[system_id] = {
+            'model_id': model_info.get('model_id', 'unknown'),
             'mae': model_info.get('test_mae'),
             'baseline_mae': model_info.get('baseline_mae'),
             'improvement': f"{model_info.get('improvement_pct', 0):.1f}%",
             'features': len(model_info.get('features', []))
-        },
+        }
+
+    return jsonify({
+        'service': 'MLB Prediction Worker',
+        'version': '2.0.0',  # Bumped for multi-system support
+        'sport': 'MLB',
+        'prediction_type': 'pitcher_strikeouts',
+        'architecture': 'multi-model',
+        'active_systems': list(systems.keys()),
+        'systems': systems_info,
         'status': 'healthy'
     }), 200
 
 
-@app.route('/health', methods=['GET'])
-def health_check():
-    """Health check endpoint for Cloud Run"""
-    return jsonify({'status': 'healthy'}), 200
+# Health check endpoint removed - now provided by shared health blueprint
+# The blueprint provides: /health (liveness), /ready (readiness), /health/deep (deep checks)
 
 
 @app.route('/predict', methods=['POST'])
@@ -235,6 +320,81 @@ def predict_single():
         }), 500
 
 
+def run_multi_system_batch_predictions(game_date: date, pitcher_lookups: Optional[List[str]] = None) -> List[Dict]:
+    """
+    Run batch predictions across all active systems
+
+    OPTIMIZATION: Uses shared feature loader to avoid redundant BigQuery queries.
+    Previously each system would call batch_predict() separately, executing the
+    same query 3 times. Now we load features ONCE and pass to all systems.
+
+    Expected improvement: 66% reduction in BigQuery queries, 30-40% faster batch times.
+
+    Args:
+        game_date: Game date
+        pitcher_lookups: Optional list of pitcher lookups to filter
+
+    Returns:
+        List[Dict]: All predictions from all systems (multiple rows per pitcher)
+    """
+    all_predictions = []
+    systems = get_prediction_systems()
+
+    if not systems:
+        logger.error("No prediction systems available")
+        return []
+
+    # OPTIMIZATION: Load features ONCE using shared feature loader
+    # This avoids redundant BigQuery queries (previously 3x queries, now 1x)
+    from predictions.mlb.pitcher_loader import load_batch_features
+
+    logger.info(f"Loading features for {game_date} (pitcher_lookups={pitcher_lookups})")
+    features_by_pitcher = load_batch_features(
+        game_date=game_date,
+        pitcher_lookups=pitcher_lookups,
+        project_id=PROJECT_ID
+    )
+
+    if not features_by_pitcher:
+        logger.warning(f"No pitchers found for {game_date}")
+        return []
+
+    logger.info(f"Loaded features for {len(features_by_pitcher)} pitchers")
+
+    # For each pitcher, run predictions through ALL active systems
+    for pitcher_lookup, features in features_by_pitcher.items():
+        # Extract game context from features
+        team_abbr = features.get('team_abbr')
+        opponent_team_abbr = features.get('opponent_team_abbr')
+        strikeouts_line = features.get('strikeouts_line')
+
+        # Run prediction through each active system
+        for system_id, predictor in systems.items():
+            try:
+                # Call system's predict() with preloaded features
+                prediction = predictor.predict(
+                    pitcher_lookup=pitcher_lookup,
+                    features=features,
+                    strikeouts_line=strikeouts_line
+                )
+
+                # Add metadata
+                prediction['system_id'] = system_id
+                prediction['game_date'] = game_date.isoformat()
+                prediction['team_abbr'] = team_abbr
+                prediction['opponent_team_abbr'] = opponent_team_abbr
+
+                all_predictions.append(prediction)
+
+            except Exception as e:
+                logger.error(f"Prediction failed for {pitcher_lookup} using {system_id}: {e}")
+                # Circuit breaker: Continue with other systems even if one fails
+                continue
+
+    logger.info(f"Generated {len(all_predictions)} predictions from {len(systems)} systems")
+    return all_predictions
+
+
 @app.route('/predict-batch', methods=['POST'])
 def predict_batch():
     """
@@ -248,7 +408,7 @@ def predict_batch():
     }
 
     Returns:
-        List of predictions
+        List of predictions (multiple per pitcher if multiple systems active)
     """
     start_time = time.time()
 
@@ -267,22 +427,21 @@ def predict_batch():
         # Parse date
         game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
 
-        predictor = get_predictor()
-
-        # Generate batch predictions
-        predictions = predictor.batch_predict(
-            game_date=game_date,
-            pitcher_lookups=pitcher_lookups
-        )
+        # Generate batch predictions across all active systems
+        predictions = run_multi_system_batch_predictions(game_date, pitcher_lookups)
 
         # Write to BigQuery if requested
         if write_to_bigquery and predictions:
             rows_written = write_predictions_to_bigquery(predictions, game_date)
             logger.info(f"Wrote {rows_written} predictions to BigQuery")
 
+        # Group predictions by system for response summary
+        systems_used = list(set(p.get('system_id', 'unknown') for p in predictions))
+
         return jsonify({
             'game_date': game_date_str,
             'predictions_count': len(predictions),
+            'systems_used': systems_used,
             'predictions': predictions,
             'written_to_bigquery': write_to_bigquery,
             'duration_seconds': round(time.time() - start_time, 3)
@@ -456,7 +615,7 @@ def write_predictions_to_bigquery(predictions: List[Dict], game_date: date) -> i
     Write predictions to BigQuery
 
     Args:
-        predictions: List of prediction dicts
+        predictions: List of prediction dicts (may include multiple systems per pitcher)
         game_date: Game date
 
     Returns:
@@ -483,7 +642,8 @@ def write_predictions_to_bigquery(predictions: List[Dict], game_date: date) -> i
             # Prediction
             'predicted_strikeouts': pred['predicted_strikeouts'],
             'confidence': pred['confidence'],
-            'model_version': pred.get('model_version'),
+            'model_version': pred.get('model_version'),  # Keep for backward compatibility
+            'system_id': pred.get('system_id'),  # NEW: Multi-model support
 
             # Line info
             'strikeouts_line': pred.get('strikeouts_line'),

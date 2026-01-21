@@ -13,6 +13,7 @@
 | Task | Document |
 |------|----------|
 | **Daily Operations** | [daily-operations-runbook.md](./daily-operations-runbook.md) |
+| **ML Monitoring Reminders** | [ML-MONITORING-REMINDERS.md](./ML-MONITORING-REMINDERS.md) - Automated Slack reminders for XGBoost V1 monitoring |
 | **Incident Response** | [incident-response.md](./incident-response.md) |
 | **Orchestrator Issues** | [orchestrator-monitoring.md](./orchestrator-monitoring.md) |
 | **Pub/Sub Issues** | [pubsub-operations.md](./pubsub-operations.md) |
@@ -23,6 +24,7 @@
 
 **This directory contains:**
 - ✅ **Daily Operations Runbook** (NEW - daily health checks, common operations)
+- ✅ **ML Monitoring Reminders** (Automated Slack reminders for XGBoost V1 performance tracking)
 - ✅ **Incident Response Guide** (NEW - severity levels, troubleshooting)
 - ✅ **v1.0 Orchestration monitoring** (orchestrators and Pub/Sub)
 - ✅ Backfill procedures (historical data, gap filling, re-processing)
@@ -37,6 +39,46 @@
 ---
 
 ## 📖 Documents in This Directory
+
+### **ML Monitoring Reminders** 🔔 AUTOMATED REMINDERS (5 min setup)
+**Created:** 2026-01-17
+**Purpose:** Automated Slack notifications for XGBoost V1 production performance milestones
+
+**What's Inside:**
+- ✅ Automated daily checks at 9:00 AM via cron
+- ✅ Slack notifications to `#reminders` channel with rich formatting
+- ✅ Desktop notifications (if available)
+- ✅ Full task checklists and success criteria for each milestone
+- ✅ Reminder dates: 2026-01-24 (7d), 2026-01-31 (14d), 2026-02-16 (30d), 2026-03-17 (60d), 2026-04-17 (Q1)
+
+**Reminder Schedule:**
+1. **Day 7** (2026-01-24): Initial XGBoost V1 performance check (verify MAE ≤ 4.5, no placeholders)
+2. **Day 14** (2026-01-31): Head-to-head comparison vs CatBoost V8 (100+ overlapping picks)
+3. **Day 30** (2026-02-16): Champion decision point (promote, keep, or retrain)
+4. **Day 60** (2026-03-17): Ensemble optimization with 60 days of data
+5. **Q1 End** (2026-04-17): Quarterly retrain with fresh 2026 data
+
+**Key Files:**
+- `ML-MONITORING-REMINDERS.md` - Full milestone documentation with queries
+- `../09-handoff/SLACK-REMINDERS-SETUP.md` - Technical setup details
+- `~/bin/nba-reminder.sh` - Daily cron script
+- `~/bin/nba-slack-reminder.py` - Slack notification sender
+- `~/bin/test-slack-reminder.py` - Test script
+
+**Test the System:**
+```bash
+cd ~/code/nba-stats-scraper
+export $(grep -v '^#' .env | xargs)
+~/bin/test-slack-reminder.py
+```
+
+**Read This:**
+- For XGBoost V1 monitoring milestone dates
+- To understand what to check at each stage
+- When setting up reminder system on new machine
+- To verify Slack integration is working
+
+---
 
 ### **orchestrator-monitoring.md** 🆕 v1.0 ORCHESTRATION (15 min read)
 **Created:** 2025-11-29 16:54 PST

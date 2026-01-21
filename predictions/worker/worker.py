@@ -35,7 +35,7 @@ logger.info("✓ Flask imported")
 import json
 import os
 import sys
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 from datetime import datetime, date
 import uuid
 import base64
@@ -92,11 +92,22 @@ def validate_ml_model_availability():
         model_files = list(models_dir.glob("catboost_v8_33features_*.cbm"))
 
         if not model_files:
-            logger.warning(
-                "⚠ No CATBOOST_V8_MODEL_PATH set and no local v8 models found. "
-                f"Searched: {models_dir}/catboost_v8_33features_*.cbm. "
-                "CatBoost v8 will use fallback predictions (confidence=50)."
-            )
+            # CRITICAL: No model available - log prominent warning about fallback mode
+            logger.error("=" * 80)
+            logger.error("❌ CRITICAL: Missing CATBOOST_V8_MODEL_PATH environment variable!")
+            logger.error("=" * 80)
+            logger.error(f"   Searched for local models: {models_dir}/catboost_v8_33features_*.cbm")
+            logger.error("   No local models found.")
+            logger.error("=" * 80)
+            logger.error("⚠️  Service will start but predictions will use FALLBACK mode")
+            logger.error("⚠️  This means:")
+            logger.error("     - Confidence scores will be 50% (not actual model predictions)")
+            logger.error("     - Recommendations will be 'PASS' (conservative)")
+            logger.error("     - Prediction quality will be degraded")
+            logger.error("=" * 80)
+            logger.error("🔧 TO FIX: Set CATBOOST_V8_MODEL_PATH to:")
+            logger.error("     gs://nba-props-platform-models/catboost/v8/catboost_v8_33features_YYYYMMDD_HHMMSS.cbm")
+            logger.error("=" * 80)
         else:
             logger.info(f"✓ Found {len(model_files)} local CatBoost v8 model(s): {[f.name for f in model_files]}")
 
@@ -116,6 +127,7 @@ if TYPE_CHECKING:
     from prediction_systems.similarity_balanced_v1 import SimilarityBalancedV1
     from prediction_systems.catboost_v8 import CatBoostV8  # v8 ML model (3.40 MAE)
     from prediction_systems.ensemble_v1 import EnsembleV1
+    from prediction_systems.ensemble_v1_1 import EnsembleV1_1
     from data_loaders import PredictionDataLoader, normalize_confidence, validate_features
     from system_circuit_breaker import SystemCircuitBreaker
     from execution_logger import ExecutionLogger
@@ -123,7 +135,7 @@ if TYPE_CHECKING:
     from batch_staging_writer import BatchStagingWriter, get_worker_id
     from predictions.shared.injury_filter import InjuryFilter, InjuryStatus
 
-from write_metrics import PredictionWriteMetrics
+from predictions.worker.write_metrics import PredictionWriteMetrics
 
 logger.info("✓ Heavy imports deferred (will lazy-load on first request)")
 
@@ -167,7 +179,9 @@ _moving_average: Optional['MovingAverageBaseline'] = None
 _zone_matchup: Optional['ZoneMatchupV1'] = None
 _similarity: Optional['SimilarityBalancedV1'] = None
 _xgboost: Optional['XGBoostV1'] = None
+_catboost: Optional['CatBoostV8'] = None
 _ensemble: Optional['EnsembleV1'] = None
+_ensemble_v1_1: Optional['EnsembleV1_1'] = None
 _staging_writer: Optional['BatchStagingWriter'] = None
 _injury_filter: Optional['InjuryFilter'] = None
 
@@ -241,24 +255,34 @@ def get_prediction_systems() -> tuple:
     from prediction_systems.moving_average_baseline import MovingAverageBaseline
     from prediction_systems.zone_matchup_v1 import ZoneMatchupV1
     from prediction_systems.similarity_balanced_v1 import SimilarityBalancedV1
-    from prediction_systems.catboost_v8 import CatBoostV8  # v8 replaces mock XGBoostV1
+    from prediction_systems.xgboost_v1 import XGBoostV1
+    from prediction_systems.catboost_v8 import CatBoostV8
     from prediction_systems.ensemble_v1 import EnsembleV1
+    from prediction_systems.ensemble_v1_1 import EnsembleV1_1
 
-    global _moving_average, _zone_matchup, _similarity, _xgboost, _ensemble
+    global _moving_average, _zone_matchup, _similarity, _xgboost, _catboost, _ensemble, _ensemble_v1_1
     if _ensemble is None:
         logger.info("Initializing prediction systems...")
         _moving_average = MovingAverageBaseline()
         _zone_matchup = ZoneMatchupV1()
         _similarity = SimilarityBalancedV1()
-        _xgboost = CatBoostV8()  # CatBoost v8: 3.40 MAE (vs mock's 4.80)
+        _xgboost = XGBoostV1()  # Mock XGBoost V1 (baseline)
+        _catboost = CatBoostV8()  # CatBoost v8: 3.40 MAE (champion)
         _ensemble = EnsembleV1(
             moving_average_system=_moving_average,
             zone_matchup_system=_zone_matchup,
             similarity_system=_similarity,
-            xgboost_system=_xgboost
+            xgboost_system=_catboost  # Ensemble uses champion (CatBoost)
         )
-        logger.info("All prediction systems initialized (using CatBoost v8)")
-    return _moving_average, _zone_matchup, _similarity, _xgboost, _ensemble
+        _ensemble_v1_1 = EnsembleV1_1(
+            moving_average_system=_moving_average,
+            zone_matchup_system=_zone_matchup,
+            similarity_system=_similarity,
+            xgboost_system=_xgboost,
+            catboost_system=_catboost
+        )
+        logger.info("All prediction systems initialized (7 systems: XGBoost V1, CatBoost V8, Ensemble V1, Ensemble V1.1, + 3 others)")
+    return _moving_average, _zone_matchup, _similarity, _xgboost, _catboost, _ensemble, _ensemble_v1_1
 
 _circuit_breaker: Optional['SystemCircuitBreaker'] = None
 _execution_logger: Optional['ExecutionLogger'] = None
@@ -298,8 +322,10 @@ def index():
             'moving_average': str(_moving_average),
             'zone_matchup': str(_zone_matchup),
             'similarity': str(_similarity),
-            'xgboost': str(_xgboost),
-            'ensemble': str(_ensemble)
+            'xgboost_v1': str(_xgboost),
+            'catboost_v8': str(_catboost),
+            'ensemble': str(_ensemble),
+            'ensemble_v1_1': str(_ensemble_v1_1)
         }
     else:
         systems_info = {'status': 'not yet loaded (will lazy-load on first prediction)'}
@@ -315,6 +341,57 @@ def index():
 def health_check():
     """Kubernetes/Cloud Run health check"""
     return jsonify({'status': 'healthy'}), 200
+
+
+def validate_line_quality(predictions: List[Dict], player_lookup: str, game_date_str: str) -> Tuple[bool, Optional[str]]:
+    """
+    PHASE 1 FIX: Validate line quality before BigQuery write.
+
+    Blocks placeholder lines (20.0) from entering the database.
+    This is the last line of defense against data corruption.
+
+    Args:
+        predictions: List of prediction dicts to validate
+        player_lookup: Player identifier for error messages
+        game_date_str: Game date for error messages
+
+    Returns:
+        (is_valid, error_message) - False if validation fails
+    """
+    placeholder_count = 0
+    issues = []
+
+    for pred in predictions:
+        line_value = pred.get('current_points_line')
+        line_source = pred.get('line_source')
+        system_id = pred.get('system_id', 'unknown')
+
+        # Check 1: Explicit placeholder 20.0
+        if line_value == 20.0:
+            placeholder_count += 1
+            issues.append(f"{system_id}: line_value=20.0 (PLACEHOLDER)")
+
+        # Check 2: Missing or invalid line source
+        if line_source in [None, 'NEEDS_BOOTSTRAP']:
+            issues.append(f"{system_id}: invalid line_source={line_source}")
+            placeholder_count += 1
+
+        # Check 3: NULL line with actual prop claim (data inconsistency)
+        if line_value is None and pred.get('has_prop_line') == True:
+            issues.append(f"{system_id}: NULL line but has_prop_line=TRUE")
+            placeholder_count += 1
+
+    if placeholder_count > 0:
+        error_msg = (
+            f"❌ LINE QUALITY VALIDATION FAILED\n"
+            f"Player: {player_lookup}\n"
+            f"Date: {game_date_str}\n"
+            f"Failed: {placeholder_count}/{len(predictions)} predictions\n"
+            f"Issues: {', '.join(issues[:5])}"  # First 5 issues
+        )
+        return False, error_msg
+
+    return True, None
 
 
 @app.route('/predict', methods=['POST'])
@@ -339,7 +416,7 @@ def handle_prediction_request():
     bq_client = get_bq_client()
     pubsub_publisher = get_pubsub_publisher()
     player_registry = get_player_registry()
-    moving_average, zone_matchup, similarity, xgboost, ensemble = get_prediction_systems()
+    moving_average, zone_matchup, similarity, xgboost, catboost, ensemble, ensemble_v1_1 = get_prediction_systems()
     circuit_breaker = get_circuit_breaker()
     execution_logger = get_execution_logger()
 
@@ -435,6 +512,14 @@ def handle_prediction_request():
 
         predictions = result['predictions']
         metadata = result['metadata']
+
+        # VALIDATION GATE: Block placeholder lines from entering database
+        if predictions:
+            validation_passed, validation_error = validate_line_quality(predictions, player_lookup, game_date_str)
+            if not validation_passed:
+                logger.error(f"LINE QUALITY VALIDATION FAILED: {validation_error}")
+                # Return 500 to trigger Pub/Sub retry - this prevents data corruption
+                return ('Line quality validation failed - triggering retry', 500)
 
         if not predictions:
             # Log failure (no predictions generated)
@@ -609,7 +694,7 @@ def process_player_predictions(
             'estimation_method': None
         }
     # Lazy-load prediction systems
-    moving_average, zone_matchup, similarity, xgboost, ensemble = get_prediction_systems()
+    moving_average, zone_matchup, similarity, xgboost, catboost, ensemble, ensemble_v1_1 = get_prediction_systems()
 
     all_predictions = []
 
@@ -932,8 +1017,8 @@ def process_player_predictions(
             metadata['system_errors'][system_id] = error_msg
             system_predictions['similarity_balanced_v1'] = None
         
-        # System 4: CatBoost V8 (replaced XGBoost V1 mock)
-        system_id = 'catboost_v8'
+        # System 4: XGBoost V1 (baseline ML model)
+        system_id = 'xgboost_v1'
         metadata['systems_attempted'].append(system_id)
         try:
             # Check circuit breaker
@@ -947,6 +1032,53 @@ def process_player_predictions(
                 system_predictions[system_id] = None
             else:
                 result = xgboost.predict(
+                    player_lookup=player_lookup,
+                    features=features,
+                    betting_line=line_value
+                )
+
+                if result['predicted_points'] is not None:
+                    # Record success
+                    circuit_breaker.record_success(system_id)
+                    metadata['systems_succeeded'].append(system_id)
+
+                    system_predictions['catboost_v8'] = {
+                        'predicted_points': result['predicted_points'],
+                        'confidence': result['confidence_score'],
+                        'recommendation': result['recommendation'],
+                        'system_type': 'dict',
+                        'metadata': result
+                    }
+                else:
+                    logger.warning(f"XGBoost V1 returned None for {player_lookup}")
+                    metadata['systems_failed'].append(system_id)
+                    metadata['system_errors'][system_id] = 'Prediction returned None'
+                    system_predictions['catboost_v8'] = None
+        except Exception as e:
+            # Record failure
+            error_msg = str(e)
+            circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
+
+            logger.error(f"XGBoost V1 failed for {player_lookup}: {e}")
+            metadata['systems_failed'].append(system_id)
+            metadata['system_errors'][system_id] = error_msg
+            system_predictions['xgboost_v1'] = None
+
+        # System 5: CatBoost V8 (champion ML model)
+        system_id = 'catboost_v8'
+        metadata['systems_attempted'].append(system_id)
+        try:
+            # Check circuit breaker
+            state, skip_reason = circuit_breaker.check_circuit(system_id)
+            if state == 'OPEN':
+                logger.warning(f"Circuit breaker OPEN for {system_id}: {skip_reason}")
+                metadata['circuit_breaker_triggered'] = True
+                metadata['circuits_opened'].append(system_id)
+                metadata['systems_failed'].append(system_id)
+                metadata['system_errors'][system_id] = f'Circuit breaker open: {skip_reason}'
+                system_predictions[system_id] = None
+            else:
+                result = catboost.predict(
                     player_lookup=player_lookup,
                     features=features,
                     betting_line=line_value
@@ -979,7 +1111,7 @@ def process_player_predictions(
             metadata['system_errors'][system_id] = error_msg
             system_predictions['catboost_v8'] = None
         
-        # System 5: Ensemble V1 (combines all 4 systems)
+        # System 6: Ensemble V1 (combines 4 base systems using CatBoost as champion)
         system_id = 'ensemble_v1'
         metadata['systems_attempted'].append(system_id)
         try:
@@ -1020,7 +1152,49 @@ def process_player_predictions(
             metadata['systems_failed'].append(system_id)
             metadata['system_errors'][system_id] = error_msg
             system_predictions['ensemble_v1'] = None
-        
+
+        # System 7: Ensemble V1.1 (performance-based weighted ensemble with CatBoost V8)
+        system_id = 'ensemble_v1_1'
+        metadata['systems_attempted'].append(system_id)
+        try:
+            # Check circuit breaker
+            state, skip_reason = circuit_breaker.check_circuit(system_id)
+            if state == 'OPEN':
+                logger.warning(f"Circuit breaker OPEN for {system_id}: {skip_reason}")
+                metadata['circuit_breaker_triggered'] = True
+                metadata['circuits_opened'].append(system_id)
+                metadata['systems_failed'].append(system_id)
+                metadata['system_errors'][system_id] = f'Circuit breaker open: {skip_reason}'
+                system_predictions[system_id] = None
+            else:
+                pred, conf, rec, ensemble_meta = ensemble_v1_1.predict(
+                    features=features,
+                    player_lookup=player_lookup,
+                    game_date=game_date,
+                    prop_line=line_value,
+                    historical_games=historical_games if historical_games else None
+                )
+                # Record success
+                circuit_breaker.record_success(system_id)
+                metadata['systems_succeeded'].append(system_id)
+
+                system_predictions['ensemble_v1_1'] = {
+                    'predicted_points': pred,
+                    'confidence': conf,
+                    'recommendation': rec,
+                    'system_type': 'tuple',
+                    'metadata': ensemble_meta
+                }
+        except Exception as e:
+            # Record failure
+            error_msg = str(e)
+            circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
+
+            logger.error(f"Ensemble V1.1 failed for {player_lookup}: {e}")
+            metadata['systems_failed'].append(system_id)
+            metadata['system_errors'][system_id] = error_msg
+            system_predictions['ensemble_v1_1'] = None
+
         # Convert system predictions to BigQuery format
         for system_id, prediction in system_predictions.items():
             if prediction is None:
@@ -1212,7 +1386,7 @@ def format_prediction_for_bigquery(
     if system_id == 'similarity_balanced_v1' and 'metadata' in prediction:
         metadata = prediction['metadata']
         adjustments = metadata.get('adjustments', {})
-        
+
         record.update({
             'similarity_baseline': metadata.get('baseline_from_similar'),
             'similar_games_count': metadata.get('similar_games_count'),
@@ -1222,9 +1396,10 @@ def format_prediction_for_bigquery(
             'shot_zone_adjustment': adjustments.get('zone_matchup'),
             'pace_adjustment': adjustments.get('pace'),
             'usage_spike_adjustment': adjustments.get('usage'),
-            'home_away_adjustment': adjustments.get('venue')
+            'home_away_adjustment': adjustments.get('venue'),
+            'model_version': 'v1'  # Set model version for tracking
         })
-    
+
     elif system_id == 'catboost_v8' and 'metadata' in prediction:
         metadata = prediction['metadata']
         record.update({
@@ -1249,6 +1424,42 @@ def format_prediction_for_bigquery(
                 'agreement_type': agreement.get('type')
             }),
             'model_version': 'ensemble_v1'
+        })
+
+    elif system_id == 'ensemble_v1_1' and 'metadata' in prediction:
+        metadata = prediction['metadata']
+        agreement = metadata.get('agreement', {})
+
+        # Store ensemble V1.1 metadata in feature_importance as JSON (schema-compatible)
+        record.update({
+            'feature_importance': json.dumps({
+                'variance': agreement.get('variance'),
+                'agreement_percentage': agreement.get('agreement_percentage'),
+                'systems_used': metadata.get('systems_used'),
+                'weights_used': metadata.get('weights_used'),  # NEW: track performance-based weights
+                'predictions': metadata.get('predictions'),
+                'agreement_type': agreement.get('type')
+            }),
+            'model_version': 'ensemble_v1_1'
+        })
+
+    elif system_id == 'moving_average':
+        # Set model version for tracking
+        record.update({
+            'model_version': 'v1'
+        })
+
+    elif system_id == 'zone_matchup_v1':
+        # Set model version for tracking
+        record.update({
+            'model_version': 'v1'
+        })
+
+    elif system_id == 'xgboost_v1' and 'metadata' in prediction:
+        # xgboost has metadata field
+        metadata = prediction['metadata']
+        record.update({
+            'model_version': metadata.get('model_version', 'v1')
         })
 
     # Add completeness metadata (Phase 5)
@@ -1419,7 +1630,102 @@ def publish_completion_event(player_lookup: str, game_date: str, prediction_coun
         # Don't raise - log and continue
 
 
+logger.info("=" * 80)
+logger.info("🔧 WEEK 2 ALERTING ENDPOINTS LOADING...")
+logger.info("  - /health/deep")
+logger.info("  - /ready")
+logger.info("  - /internal/check-env")
+logger.info("  - /internal/deployment-started")
+logger.info("=" * 80)
+
+
+@app.route('/ready', methods=['GET'])
+@app.route('/health/deep', methods=['GET'])
+def deep_health_check():
+    """
+    Deep health check endpoint.
+    Validates all dependencies: GCS, BigQuery, model loading, configuration.
+
+    Returns:
+        200: All checks passed (healthy)
+        503: One or more checks failed (unhealthy)
+    """
+    try:
+        from health_checks import HealthChecker
+
+        checker = HealthChecker(project_id=PROJECT_ID)
+        result = checker.run_all_checks(parallel=True)
+
+        status_code = 200 if result['status'] == 'healthy' else 503
+
+        return jsonify(result), status_code
+
+    except Exception as e:
+        logger.error(f"Deep health check failed: {e}")
+        return jsonify({
+            'status': 'unhealthy',
+            'error': str(e),
+            'checks': [],
+            'total_duration_ms': 0
+        }), 503
+
+
+@app.route('/internal/check-env', methods=['POST'])
+def check_env_vars():
+    """
+    Internal endpoint for environment variable change detection.
+    Called by Cloud Scheduler every 5 minutes.
+
+    Returns:
+        200: Check completed (may include alert in logs)
+        500: Check failed
+    """
+    try:
+        from env_monitor import EnvVarMonitor
+
+        monitor = EnvVarMonitor(project_id=PROJECT_ID)
+        result = monitor.check_for_changes()
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        logger.error(f"Environment check failed: {e}")
+        return jsonify({
+            'status': 'ERROR',
+            'message': str(e)
+        }), 500
+
+
+@app.route('/internal/deployment-started', methods=['POST'])
+def mark_deployment_started():
+    """
+    Internal endpoint to mark that a deployment has started.
+    This activates the deployment grace period to prevent false alerts.
+
+    Should be called at the START of deployment (before env vars change).
+
+    Returns:
+        200: Deployment grace period activated
+        500: Failed to mark deployment
+    """
+    try:
+        from env_monitor import EnvVarMonitor
+
+        monitor = EnvVarMonitor(project_id=PROJECT_ID)
+        result = monitor.mark_deployment_started()
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        logger.error(f"Failed to mark deployment started: {e}")
+        return jsonify({
+            'status': 'ERROR',
+            'message': str(e)
+        }), 500
+
+
 if __name__ == '__main__':
     # For local testing
+    # Week 2 alerting endpoints added: /health/deep, /internal/check-env, /internal/deployment-started
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False)

@@ -105,7 +105,7 @@ def get_props_count(bucket, blob_path: str) -> int:
         content = blob.download_as_string()
         data = json.loads(content)
         return data.get('meta', {}).get('total_props', 0)
-    except:
+    except Exception:
         return -1
 
 

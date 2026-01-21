@@ -21,6 +21,7 @@ import requests
 from datetime import datetime, timezone, timedelta
 
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 import functions_framework
 
 logging.basicConfig(level=logging.INFO)
@@ -53,7 +54,7 @@ def get_auth_token(audience: str) -> str:
 
 def check_predictions_exist(game_date: str) -> int:
     """Check if predictions exist for the given date."""
-    bq_client = bigquery.Client()
+    bq_client = get_bigquery_client(project_id=PROJECT_ID)
 
     query = f"""
     SELECT COUNT(*) as cnt

@@ -28,7 +28,7 @@ This session completed all P1 action items from Session 167:
 - **Email Config Now Active:**
   - BREVO_SMTP_HOST: smtp-relay.brevo.com
   - BREVO_SMTP_PORT: 587
-  - BREVO_SMTP_USERNAME: 98104d001@smtp-brevo.com
+  - BREVO_SMTP_USERNAME: YOUR_EMAIL@smtp-brevo.com
   - BREVO_SMTP_PASSWORD: (set)
   - BREVO_FROM_EMAIL: alert@989.ninja
   - EMAIL_ALERTS_TO: nchammas@gmail.com

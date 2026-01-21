@@ -139,7 +139,7 @@
       },
       "sample_odds_test": {
         "success": false,
-        "error": "404 Client Error: Not Found for url: https://api.the-odds-api.com/v4/historical/sports/baseball_mlb/events/7a56c4609829cd508efcb70e13606142/odds?apiKey=5b645db7e6d8a3df08bfcc4abfc8ede1&date=2024-04-15T22%3A00%3A00Z&markets=pitcher_strikeouts&regions=us&bookmakers=draftkings%2Cfanduel&oddsFormat=american",
+        "error": "404 Client Error: Not Found for url: https://api.the-odds-api.com/v4/historical/sports/baseball_mlb/events/7a56c4609829cd508efcb70e13606142/odds?apiKey=REDACTED&date=2024-04-15T22%3A00%3A00Z&markets=pitcher_strikeouts&regions=us&bookmakers=draftkings%2Cfanduel&oddsFormat=american",
         "response_text": null
       }
     },
@@ -229,7 +229,7 @@
       },
       "sample_odds_test": {
         "success": false,
-        "error": "404 Client Error: Not Found for url: https://api.the-odds-api.com/v4/historical/sports/baseball_mlb/events/58dd2286202eaa1836bd4544e9c28704/odds?apiKey=5b645db7e6d8a3df08bfcc4abfc8ede1&date=2024-06-20T22%3A00%3A00Z&markets=pitcher_strikeouts&regions=us&bookmakers=draftkings%2Cfanduel&oddsFormat=american",
+        "error": "404 Client Error: Not Found for url: https://api.the-odds-api.com/v4/historical/sports/baseball_mlb/events/58dd2286202eaa1836bd4544e9c28704/odds?apiKey=REDACTED&date=2024-06-20T22%3A00%3A00Z&markets=pitcher_strikeouts&regions=us&bookmakers=draftkings%2Cfanduel&oddsFormat=american",
         "response_text": null
       }
     },
@@ -423,7 +423,7 @@
       },
       "sample_odds_test": {
         "success": false,
-        "error": "404 Client Error: Not Found for url: https://api.the-odds-api.com/v4/historical/sports/baseball_mlb/events/741c22d110c5d964a0e8b769f7982c15/odds?apiKey=5b645db7e6d8a3df08bfcc4abfc8ede1&date=2025-07-20T22%3A00%3A00Z&markets=pitcher_strikeouts&regions=us&bookmakers=draftkings%2Cfanduel&oddsFormat=american",
+        "error": "404 Client Error: Not Found for url: https://api.the-odds-api.com/v4/historical/sports/baseball_mlb/events/741c22d110c5d964a0e8b769f7982c15/odds?apiKey=REDACTED&date=2025-07-20T22%3A00%3A00Z&markets=pitcher_strikeouts&regions=us&bookmakers=draftkings%2Cfanduel&oddsFormat=american",
         "response_text": null
       }
     }

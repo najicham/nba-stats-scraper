@@ -19,6 +19,7 @@ import logging
 import uuid
 import os
 import time
+import random
 import requests
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
@@ -28,6 +29,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from orchestration.parameter_resolver import ParameterResolver
 from shared.utils.bigquery_utils import execute_bigquery, insert_bigquery_rows
+from orchestration.shared.utils.circuit_breaker import (
+    CircuitBreakerManager,
+    CircuitBreakerConfig,
+    CircuitBreakerOpenError
+)
+from shared.clients.http_pool import get_http_session
 
 logger = logging.getLogger(__name__)
 
@@ -107,11 +114,57 @@ class WorkflowExecutor:
     
     # Timeout for scraper HTTP calls (3 minutes)
     SCRAPER_TIMEOUT = 180
+
+    # Future timeout for parallel execution (slightly higher than HTTP timeout for overhead)
+    FUTURE_TIMEOUT = SCRAPER_TIMEOUT + 10  # 190 seconds
     
     def __init__(self):
         """Initialize executor with parameter resolver."""
         self.parameter_resolver = ParameterResolver()
-    
+
+        # Circuit breaker manager for handling flaky scrapers
+        self.circuit_breaker_enabled = os.getenv("ENABLE_CIRCUIT_BREAKER", "true").lower() == "true"
+
+        if self.circuit_breaker_enabled:
+            self.circuit_breaker_manager = CircuitBreakerManager(
+                config=CircuitBreakerConfig(
+                    max_failures=5,        # Open circuit after 5 failures
+                    timeout_seconds=300,   # Test recovery after 5 minutes
+                    half_open_attempts=3,  # Need 3 successes to close
+                    failure_threshold_window=60  # Count failures in 60s window
+                )
+            )
+            logger.info("✅ Circuit breaker enabled for scrapers")
+        else:
+            self.circuit_breaker_manager = None
+            logger.warning("⚠️  Circuit breaker DISABLED")
+
+    @staticmethod
+    def _calculate_jittered_backoff(attempt: int, base_delay: float = 1.0, max_delay: float = 30.0) -> float:
+        """
+        Calculate exponential backoff with jitter to prevent thundering herd.
+
+        Uses decorrelated jitter algorithm (AWS recommended):
+        delay = base * (2 ** attempt) * random.uniform(0.5, 1.5)
+
+        Args:
+            attempt: Current retry attempt number (1-based)
+            base_delay: Base delay in seconds
+            max_delay: Maximum delay cap
+
+        Returns:
+            Delay in seconds with jitter applied
+        """
+        # Exponential component: 2^attempt
+        exponential = base_delay * (2 ** (attempt - 1))
+
+        # Add jitter: random factor between 0.5 and 1.5
+        # This spreads retries across time instead of synchronized bursts
+        jittered = exponential * random.uniform(0.5, 1.5)
+
+        # Cap at max_delay
+        return min(jittered, max_delay)
+
     def execute_pending_workflows(self) -> Dict[str, Any]:
         """
         Main entry point: Execute all pending RUN decisions.
@@ -133,8 +186,9 @@ class WorkflowExecutor:
         
         # Query for unexecuted RUN decisions from the last hour
         # CRITICAL: LEFT JOIN prevents duplicate executions
+        # Week 1: Added DATE() filter for partition pruning (cost optimization)
         query = """
-            SELECT 
+            SELECT
                 d.decision_id,
                 d.workflow_name,
                 d.scrapers_triggered,
@@ -144,6 +198,7 @@ class WorkflowExecutor:
             LEFT JOIN `nba-props-platform.nba_orchestration.workflow_executions` e
                 ON d.decision_id = e.decision_id
             WHERE d.action = 'RUN'
+              AND DATE(d.decision_time) = CURRENT_DATE()
               AND d.decision_time > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)
               AND e.execution_id IS NULL
             ORDER BY d.decision_time DESC
@@ -343,9 +398,11 @@ class WorkflowExecutor:
         execution_id = str(uuid.uuid4())
         start_time = datetime.now(timezone.utc)
 
-        # Detect if this workflow should run in parallel
-        parallel_workflows = ['morning_operations']
-        use_parallel = workflow_name in parallel_workflows
+        # Week 1: Use config to detect if this workflow should run in parallel
+        from shared.config.orchestration_config import get_orchestration_config
+        orch_config = get_orchestration_config()
+        use_parallel = orch_config.workflow_execution.is_parallel(workflow_name)
+        max_workers = orch_config.workflow_execution.max_workers
 
         logger.info(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         logger.info(f"▶️  Executing Workflow: {workflow_name}")
@@ -353,6 +410,8 @@ class WorkflowExecutor:
         logger.info(f"   Decision ID: {decision_id or 'manual'}")
         logger.info(f"   Scrapers: {len(scrapers)}")
         logger.info(f"   Execution Mode: {'🚀 PARALLEL' if use_parallel else 'Sequential'}")
+        if use_parallel:
+            logger.info(f"   Max Workers: {max_workers}")
         if target_games:
             logger.info(f"   Target Games: {len(target_games)}")
         if target_date:
@@ -372,10 +431,11 @@ class WorkflowExecutor:
 
         # Execute scrapers (parallel or sequential)
         if use_parallel:
-            # PARALLEL EXECUTION for morning_operations
-            logger.info(f"🚀 Running {len(scrapers)} scrapers in PARALLEL")
+            # Week 1: PARALLEL EXECUTION (now config-driven!)
+            actual_workers = min(max_workers, len(scrapers))
+            logger.info(f"🚀 Running {len(scrapers)} scrapers in PARALLEL (max_workers={actual_workers})")
 
-            with ThreadPoolExecutor(max_workers=len(scrapers)) as executor:
+            with ThreadPoolExecutor(max_workers=actual_workers) as executor:
                 # Submit all scrapers for parallel execution
                 futures = {
                     executor.submit(self._execute_single_scraper, scraper_name, context, workflow_name): scraper_name
@@ -386,14 +446,14 @@ class WorkflowExecutor:
                 for future in as_completed(futures):
                     scraper_name = futures[future]
                     try:
-                        results = future.result(timeout=300)  # 5 min timeout per scraper
+                        results = future.result(timeout=self.FUTURE_TIMEOUT)  # Aligned with HTTP timeout
                         scraper_executions.extend(results)
                     except TimeoutError:
-                        logger.error(f"⏱️ Scraper {scraper_name} timed out after 5 minutes")
+                        logger.error(f"⏱️ Scraper {scraper_name} timed out after {self.FUTURE_TIMEOUT}s")
                         scraper_executions.append(ScraperExecution(
                             scraper_name=scraper_name,
                             status='failed',
-                            error_message='Timeout after 5 minutes'
+                            error_message=f'Timeout after {self.FUTURE_TIMEOUT}s'
                         ))
                     except Exception as e:
                         logger.error(f"❌ Failed to get result from {scraper_name}: {e}")
@@ -540,6 +600,8 @@ class WorkflowExecutor:
         """
         Call a scraper endpoint via HTTP with automatic retry on transient errors.
 
+        Includes circuit breaker protection to fail fast on consistently failing scrapers.
+
         Retries on:
         - HTTP 429 (rate limit)
         - HTTP 5xx (server errors)
@@ -549,12 +611,65 @@ class WorkflowExecutor:
         Does NOT retry on:
         - HTTP 4xx (except 429) - client errors
         - HTTP 200 with no_data - expected response
+        - Circuit breaker open (fails immediately)
 
         Args:
             scraper_name: Name of scraper to call
             parameters: Parameters to pass to scraper
             workflow_name: Workflow name for logging
             max_retries: Maximum retry attempts (default: 3)
+
+        Returns:
+            ScraperExecution with result
+        """
+        # Check circuit breaker before attempting
+        if self.circuit_breaker_enabled and self.circuit_breaker_manager:
+            breaker = self.circuit_breaker_manager.get_breaker(scraper_name)
+
+            try:
+                # Use circuit breaker to protect scraper call
+                return breaker.call(
+                    self._call_scraper_internal,
+                    scraper_name,
+                    parameters,
+                    workflow_name,
+                    max_retries
+                )
+            except CircuitBreakerOpenError as e:
+                logger.warning(f"⚡ {e}")
+                # Return failed execution without attempting scraper
+                return ScraperExecution(
+                    scraper_name=scraper_name,
+                    status='circuit_open',
+                    duration_seconds=0,
+                    error_message=f"Circuit breaker open: {str(e)}"
+                )
+        else:
+            # No circuit breaker - call directly
+            return self._call_scraper_internal(
+                scraper_name,
+                parameters,
+                workflow_name,
+                max_retries
+            )
+
+    def _call_scraper_internal(
+        self,
+        scraper_name: str,
+        parameters: Dict[str, Any],
+        workflow_name: str,
+        max_retries: int = 3
+    ) -> ScraperExecution:
+        """
+        Internal method that performs actual scraper HTTP call.
+
+        Separated from _call_scraper() to allow circuit breaker wrapping.
+
+        Args:
+            scraper_name: Name of scraper to call
+            parameters: Parameters to pass to scraper
+            workflow_name: Workflow name for logging
+            max_retries: Maximum retry attempts
 
         Returns:
             ScraperExecution with result
@@ -579,11 +694,9 @@ class WorkflowExecutor:
                 logger.debug(f"Calling scraper service: POST {url}")
                 logger.debug(f"Payload: {json.dumps(parameters, indent=2)}")
 
-                response = requests.post(
-                    url,
-                    json=parameters,
-                    timeout=self.SCRAPER_TIMEOUT
-                )
+                # Use pooled HTTP session for connection reuse
+                session = get_http_session(timeout=self.SCRAPER_TIMEOUT)
+                response = session.post(url, json=parameters)
 
                 duration = (datetime.now(timezone.utc) - start_time).total_seconds()
 
@@ -635,9 +748,9 @@ class WorkflowExecutor:
                     logger.warning(f"Retryable error: {error_msg}")
 
                     if attempt < max_retries:
-                        # Exponential backoff: 2^attempt seconds
-                        wait_time = 2 ** attempt
-                        logger.info(f"   ⏳ Waiting {wait_time}s before retry...")
+                        # Exponential backoff with jitter (prevents thundering herd)
+                        wait_time = self._calculate_jittered_backoff(attempt)
+                        logger.info(f"   ⏳ Waiting {wait_time:.2f}s before retry...")
                         time.sleep(wait_time)
                         continue
                     else:
@@ -658,8 +771,8 @@ class WorkflowExecutor:
                 logger.warning(f"Timeout: {error_msg}")
 
                 if attempt < max_retries:
-                    wait_time = 2 ** attempt
-                    logger.info(f"   ⏳ Waiting {wait_time}s before retry...")
+                    wait_time = self._calculate_jittered_backoff(attempt)
+                    logger.info(f"   ⏳ Waiting {wait_time:.2f}s before retry...")
                     time.sleep(wait_time)
                     continue
                 else:
@@ -679,8 +792,8 @@ class WorkflowExecutor:
                 logger.warning(f"Exception: {error_msg}")
 
                 if attempt < max_retries:
-                    wait_time = 2 ** attempt
-                    logger.info(f"   ⏳ Waiting {wait_time}s before retry...")
+                    wait_time = self._calculate_jittered_backoff(attempt)
+                    logger.info(f"   ⏳ Waiting {wait_time:.2f}s before retry...")
                     time.sleep(wait_time)
                     continue
                 else:
@@ -734,4 +847,6 @@ class WorkflowExecutor:
             logger.debug(f"✅ Logged workflow execution to BigQuery: {execution.execution_id}")
         except Exception as e:
             logger.error(f"Failed to log workflow execution: {e}")
-            # Don't fail the workflow if logging fails
+            # Don't fail the workflow if logging fails - execution already completed
+            # TODO: Add monitoring/alerting for logging failures to detect BigQuery issues
+            # Metric: workflow_execution_logging_errors_total

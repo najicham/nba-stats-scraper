@@ -12,6 +12,7 @@ MLB-Specific: Checks pitcher strikeout predictions
 import functions_framework
 from flask import jsonify
 from google.cloud import bigquery, firestore
+from shared.clients.bigquery_pool import get_bigquery_client
 from datetime import datetime, timedelta, timezone
 import requests
 import logging
@@ -301,7 +302,7 @@ def mlb_self_heal_check(request):
     }
 
     try:
-        bq_client = bigquery.Client()
+        bq_client = get_bigquery_client(project_id=PROJECT_ID)
 
         # Check TODAY
         today_games = check_games_scheduled(bq_client, today)

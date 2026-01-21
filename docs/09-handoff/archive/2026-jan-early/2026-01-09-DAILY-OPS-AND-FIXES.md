@@ -112,7 +112,7 @@ curl -X POST "https://nba-phase1-scrapers-f7p3g7f6ya-wl.a.run.app/scrape" \
 **Fix Applied**:
 ```bash
 gcloud run services update nba-phase1-scrapers --region=us-west2 \
-  --update-env-vars="EMAIL_ALERTS_TO=nchammas@gmail.com,EMAIL_CRITICAL_TO=nchammas@gmail.com,BREVO_SMTP_HOST=smtp-relay.brevo.com,BREVO_SMTP_PORT=587,BREVO_SMTP_USERNAME=98104d001@smtp-brevo.com,BREVO_FROM_EMAIL=alert@989.ninja,BREVO_FROM_NAME=PK,BREVO_SMTP_PASSWORD=..."
+  --update-env-vars="EMAIL_ALERTS_TO=nchammas@gmail.com,EMAIL_CRITICAL_TO=nchammas@gmail.com,BREVO_SMTP_HOST=smtp-relay.brevo.com,BREVO_SMTP_PORT=587,BREVO_SMTP_USERNAME=YOUR_EMAIL@smtp-brevo.com,BREVO_FROM_EMAIL=alert@989.ninja,BREVO_FROM_NAME=PK,BREVO_SMTP_PASSWORD=..."
 ```
 
 **Verified**: Email alerting status shows ENABLED in deployment output.

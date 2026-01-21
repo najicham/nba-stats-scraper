@@ -8,9 +8,13 @@ gunicorn==21.2.0
 # Google Cloud
 google-cloud-bigquery==3.13.0
 google-cloud-pubsub==2.18.4
-google-cloud-firestore==2.13.1  # For future multi-instance state management
+google-cloud-firestore==2.14.0  # Match worker version for Python 3.13 compatibility
 google-cloud-storage==2.14.0
 google-cloud-secret-manager==2.16.4  # For API key authentication
+
+# gRPC pinning (matches worker to prevent build timeout and version conflicts)
+grpcio==1.76.0
+grpcio-status==1.62.3
 
 # Utilities
 python-dateutil==2.8.2

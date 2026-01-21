@@ -10,7 +10,10 @@ import logging
 import sys
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
 from typing import Dict, Any, Optional
 
 # Fix imports for direct execution
@@ -39,12 +42,16 @@ class ScraperFlaskMixin:
     def create_app(self):
         """Create Flask app for this scraper (based on existing pattern)."""
         from flask import Flask, request, jsonify
-        from dotenv import load_dotenv
+        try:
+            from dotenv import load_dotenv
+        except ImportError:
+            load_dotenv = None
         import logging
         import sys
-        
+
         app = Flask(__name__)
-        load_dotenv()
+        if load_dotenv:
+            load_dotenv()
         
         # Configure logging for Cloud Run
         if not app.debug:
@@ -156,12 +163,16 @@ class ScraperFlaskMixin:
         FIXED: Properly handle --port argument.
         """
         import argparse
-        from dotenv import load_dotenv
+        try:
+            from dotenv import load_dotenv
+        except ImportError:
+            load_dotenv = None
         import logging
         import sys
-        
+
         def main():
-            load_dotenv()
+            if load_dotenv:
+                load_dotenv()
 
             # Check if we're running as a web service or CLI
             if len(sys.argv) > 1 and sys.argv[1] == "--serve":

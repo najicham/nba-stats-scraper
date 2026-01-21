@@ -291,7 +291,7 @@ python -m pytest tests/ -v --tb=short -x
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/T0900NBTAET/B09HLQFABL2/...
 SENTRY_DSN=https://2a3602b381a4aa8312f067f89073a21c@o102085.ingest.us.sentry.io/...
 BREVO_SMTP_HOST=smtp-relay.brevo.com
-BREVO_SMTP_USERNAME=98104d001@smtp-brevo.com
+BREVO_SMTP_USERNAME=YOUR_EMAIL@smtp-brevo.com
 AWS_SES_ACCESS_KEY_ID=AKIAU4MLE2MY45WPKAZD
 ```
 

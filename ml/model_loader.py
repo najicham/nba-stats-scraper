@@ -20,7 +20,9 @@ Usage:
 from dataclasses import dataclass
 from typing import Optional, Any, Dict, List
 from pathlib import Path
+import hashlib
 import logging
+import os
 import tempfile
 import numpy as np
 
@@ -222,12 +224,45 @@ class LightGBMWrapper:
 
 
 def _load_sklearn(path: str) -> Optional[Any]:
-    """Load sklearn model from pickle"""
-    try:
-        import pickle
+    """
+    Load sklearn model with integrity validation.
 
+    Requires: {path}.sha256 file with expected hash
+    Raises: ValueError if hash validation fails
+    """
+    try:
+        import joblib
+
+        # Step 1: Load expected hash
+        hash_file = f"{path}.sha256"
+        if not os.path.exists(hash_file):
+            raise ValueError(f"Model hash file missing: {hash_file}")
+
+        with open(hash_file, 'r') as f:
+            expected_hash = f.read().strip()
+
+        # Step 2: Compute actual hash
         with open(path, 'rb') as f:
-            return pickle.load(f)
+            content = f.read()
+            actual_hash = hashlib.sha256(content).hexdigest()
+
+        # Step 3: Verify integrity
+        if actual_hash != expected_hash:
+            raise ValueError(
+                f"Model integrity check FAILED!\n"
+                f"Expected: {expected_hash}\n"
+                f"Got:      {actual_hash}\n"
+                f"Possible tampering detected - refusing to load"
+            )
+
+        # Step 4: Log validation success
+        logger.info(f"Loading model from {path}")
+        logger.info(f"Expected hash: {expected_hash[:16]}...")
+        logger.info(f"Actual hash:   {actual_hash[:16]}...")
+        logger.info("✅ Hash validation passed")
+
+        # Step 5: Load with joblib (safer than pickle)
+        return joblib.load(path)
 
     except Exception as e:
         logger.error(f"Error loading sklearn model: {e}")

@@ -36,10 +36,27 @@ ENV_VARS="$ENV_VARS,COMMIT_SHA_FULL=$GIT_COMMIT_FULL"
 ENV_VARS="$ENV_VARS,GIT_BRANCH=$GIT_BRANCH"
 ENV_VARS="$ENV_VARS,DEPLOY_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-# Add email configuration if available
-if [[ -n "$BREVO_SMTP_PASSWORD" && -n "$EMAIL_ALERTS_TO" ]]; then
-    echo "✅ Adding email alerting configuration..."
-    
+# Add email configuration if available (AWS SES preferred, Brevo fallback)
+if [[ -n "$AWS_SES_ACCESS_KEY_ID" && -n "$AWS_SES_SECRET_ACCESS_KEY" && -n "$EMAIL_ALERTS_TO" ]]; then
+    echo "✅ Adding AWS SES email alerting configuration..."
+
+    ENV_VARS="$ENV_VARS,AWS_SES_ACCESS_KEY_ID=${AWS_SES_ACCESS_KEY_ID}"
+    ENV_VARS="$ENV_VARS,AWS_SES_SECRET_ACCESS_KEY=${AWS_SES_SECRET_ACCESS_KEY}"
+    ENV_VARS="$ENV_VARS,AWS_SES_REGION=${AWS_SES_REGION:-us-west-2}"
+    ENV_VARS="$ENV_VARS,AWS_SES_FROM_EMAIL=${AWS_SES_FROM_EMAIL:-alert@989.ninja}"
+    ENV_VARS="$ENV_VARS,AWS_SES_FROM_NAME=${AWS_SES_FROM_NAME:-NBA Analytics System}"
+    ENV_VARS="$ENV_VARS,EMAIL_ALERTS_TO=${EMAIL_ALERTS_TO}"
+    ENV_VARS="$ENV_VARS,EMAIL_CRITICAL_TO=${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
+
+    # Alert thresholds
+    ENV_VARS="$ENV_VARS,EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD=${EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD:-50}"
+    ENV_VARS="$ENV_VARS,EMAIL_ALERT_SUCCESS_RATE_THRESHOLD=${EMAIL_ALERT_SUCCESS_RATE_THRESHOLD:-90.0}"
+    ENV_VARS="$ENV_VARS,EMAIL_ALERT_MAX_PROCESSING_TIME=${EMAIL_ALERT_MAX_PROCESSING_TIME:-30}"
+
+    EMAIL_STATUS="ENABLED (AWS SES)"
+elif [[ -n "$BREVO_SMTP_PASSWORD" && -n "$EMAIL_ALERTS_TO" ]]; then
+    echo "⚠️  AWS SES not configured, falling back to Brevo..."
+
     ENV_VARS="$ENV_VARS,BREVO_SMTP_HOST=${BREVO_SMTP_HOST:-smtp-relay.brevo.com}"
     ENV_VARS="$ENV_VARS,BREVO_SMTP_PORT=${BREVO_SMTP_PORT:-587}"
     ENV_VARS="$ENV_VARS,BREVO_SMTP_USERNAME=${BREVO_SMTP_USERNAME}"
@@ -48,13 +65,13 @@ if [[ -n "$BREVO_SMTP_PASSWORD" && -n "$EMAIL_ALERTS_TO" ]]; then
     ENV_VARS="$ENV_VARS,BREVO_FROM_NAME=${BREVO_FROM_NAME:-NBA Analytics System}"
     ENV_VARS="$ENV_VARS,EMAIL_ALERTS_TO=${EMAIL_ALERTS_TO}"
     ENV_VARS="$ENV_VARS,EMAIL_CRITICAL_TO=${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
-    
+
     # Alert thresholds
     ENV_VARS="$ENV_VARS,EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD=${EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD:-50}"
     ENV_VARS="$ENV_VARS,EMAIL_ALERT_SUCCESS_RATE_THRESHOLD=${EMAIL_ALERT_SUCCESS_RATE_THRESHOLD:-90.0}"
     ENV_VARS="$ENV_VARS,EMAIL_ALERT_MAX_PROCESSING_TIME=${EMAIL_ALERT_MAX_PROCESSING_TIME:-30}"
-    
-    EMAIL_STATUS="ENABLED"
+
+    EMAIL_STATUS="ENABLED (Brevo - fallback)"
 else
     echo "⚠️  Email configuration missing - email alerting will be disabled"
     EMAIL_STATUS="DISABLED"
@@ -146,10 +163,16 @@ echo "  Total:      ${TOTAL_DURATION}s"
 
 echo ""
 echo "📧 Email Alerting Status: $EMAIL_STATUS"
-if [[ "$EMAIL_STATUS" = "ENABLED" ]]; then
+if [[ "$EMAIL_STATUS" = "ENABLED (AWS SES)" ]]; then
+    echo "   Alert Recipients: ${EMAIL_ALERTS_TO}"
+    echo "   Critical Recipients: ${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
+    echo "   From Email: ${AWS_SES_FROM_EMAIL:-alert@989.ninja}"
+    echo "   AWS Region: ${AWS_SES_REGION:-us-west-2}"
+elif [[ "$EMAIL_STATUS" = "ENABLED (Brevo - fallback)" ]]; then
     echo "   Alert Recipients: ${EMAIL_ALERTS_TO}"
     echo "   Critical Recipients: ${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
     echo "   From Email: ${BREVO_FROM_EMAIL}"
+    echo "   SMTP Host: ${BREVO_SMTP_HOST:-smtp-relay.brevo.com}"
 fi
 
 # Check deployment result

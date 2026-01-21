@@ -40,6 +40,8 @@ from datetime import date, timedelta
 from typing import Dict, List, Optional
 
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
+from shared.utils.slack_retry import send_slack_webhook_with_retry
 import functions_framework
 
 # Configure logging
@@ -334,11 +336,10 @@ def send_slack_message(message: Dict) -> bool:
         return False
 
     try:
-        import requests
-        response = requests.post(SLACK_WEBHOOK_URL, json=message, timeout=10)
-        response.raise_for_status()
-        logger.info("Slack message sent successfully")
-        return True
+        success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, message, timeout=10)
+        if success:
+            logger.info("Slack message sent successfully")
+        return success
     except Exception as e:
         logger.error(f"Failed to send Slack message: {e}")
         return False
@@ -366,7 +367,7 @@ def send_shadow_report(request):
         logger.info(f"Generating shadow performance report (weeks_back={weeks_back}, dry_run={dry_run})")
 
         # Get data
-        bq_client = bigquery.Client(project=PROJECT_ID)
+        bq_client = get_bigquery_client(project_id=PROJECT_ID)
 
         shadow_data = get_shadow_performance(bq_client, weeks_back)
         active_performance = get_active_tier_performance(bq_client, weeks_back)

@@ -75,7 +75,8 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.prediction_perfor
 PARTITION BY DATE(computed_at)
 CLUSTER BY system_id, period_type, archetype, player_lookup
 OPTIONS (
-  description = 'Pre-aggregated prediction performance by player, archetype, situation, confidence tier, and time period. Enables fast API queries for track record display.'
+  description = 'Pre-aggregated prediction performance by player, archetype, situation, confidence tier, and time period. Enables fast API queries for track record display.',
+  require_partition_filter=TRUE
 );
 
 -- ============================================================================
