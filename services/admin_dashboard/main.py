@@ -335,15 +335,8 @@ def rate_limit(f):
 app = Flask(__name__)
 
 # Health check endpoints (Phase 1 - Task 1.1: Add Health Endpoints)
-health_checker = HealthChecker(
-    project_id=os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
-    service_name='admin-dashboard',
-    check_bigquery=True,  # Dashboard queries BigQuery for pipeline data
-    check_firestore=True,  # Dashboard queries Firestore for orchestration state
-    check_gcs=False,  # Dashboard doesn't directly access GCS
-    required_env_vars=['GCP_PROJECT_ID', 'ADMIN_DASHBOARD_API_KEY'],
-    optional_env_vars=['RECONCILIATION_FUNCTION_URL', 'ENVIRONMENT']
-)
+# Note: HealthChecker simplified in Week 1 to only require service_name
+health_checker = HealthChecker(service_name='admin-dashboard')
 app.register_blueprint(create_health_blueprint(health_checker))
 logger.info("Health check endpoints registered: /health, /ready, /health/deep")
 
