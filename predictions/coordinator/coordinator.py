@@ -165,7 +165,11 @@ health_checker = HealthChecker(
     service_name='prediction-coordinator',
     version='1.0'
 )
-app.register_blueprint(create_health_blueprint(health_checker))
+app.register_blueprint(create_health_blueprint(
+    service_name='prediction-coordinator',
+    version='1.0',
+    health_checker=health_checker
+))
 logger.info("Health check endpoints registered: /health, /ready, /health/deep")
 
 
