@@ -43,4 +43,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.prediction_grades
   -- Clustered by player_lookup, prediction_correct, confidence_score for accuracy analysis
 )
 PARTITION BY game_date
-CLUSTER BY player_lookup, prediction_correct, confidence_score;
+CLUSTER BY player_lookup, prediction_correct, confidence_score
+OPTIONS (
+  require_partition_filter=TRUE
+);

@@ -49,5 +49,6 @@ PARTITION BY game_date
 CLUSTER BY system_id, prediction_date, prediction_correct
 OPTIONS(
   description="Prediction outcomes vs actual results. Used for accuracy tracking, model improvement, and performance analysis.",
-  partition_expiration_days=1095
+  partition_expiration_days=1095,
+  require_partition_filter=TRUE
 );

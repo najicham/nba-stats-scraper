@@ -44,7 +44,10 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.scoring_tier_adju
   model_version STRING                          -- Version identifier
 )
 PARTITION BY as_of_date
-CLUSTER BY system_id, scoring_tier;
+CLUSTER BY system_id, scoring_tier
+OPTIONS (
+  require_partition_filter=TRUE
+);
 
 -- Tier Definitions:
 -- STAR_30PLUS:     actual_points >= 30 (bias: -12.6)

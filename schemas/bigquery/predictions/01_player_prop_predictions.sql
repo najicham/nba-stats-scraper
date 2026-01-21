@@ -94,7 +94,8 @@ PARTITION BY game_date
 CLUSTER BY system_id, player_lookup, confidence_score DESC, game_date
 OPTIONS(
   description="All predictions from all systems. Multiple systems predict for same player, enabling comparison. Versioned for real-time updates.",
-  partition_expiration_days=365
+  partition_expiration_days=365,
+  require_partition_filter=TRUE
 );
 
 -- ============================================================================

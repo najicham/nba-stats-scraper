@@ -63,7 +63,8 @@ PARTITION BY game_date
 CLUSTER BY model_id, player_lookup
 OPTIONS(
   description="ML model experiment predictions. Separate from production predictions for clean A/B comparison.",
-  partition_expiration_days=365
+  partition_expiration_days=365,
+  require_partition_filter=TRUE
 );
 
 -- ============================================================================

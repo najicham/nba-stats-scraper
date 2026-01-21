@@ -46,7 +46,10 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.published_picks` 
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
 )
 PARTITION BY game_date
-CLUSTER BY publication_type, system_id;
+CLUSTER BY publication_type, system_id
+OPTIONS(
+  require_partition_filter=TRUE
+);
 
 -- ============================================================================
 -- Useful Views

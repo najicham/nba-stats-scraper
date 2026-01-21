@@ -42,6 +42,9 @@ LIMIT 20;
 CREATE OR REPLACE TABLE `nba-props-platform.nba_predictions.prediction_grades_deduped`
 PARTITION BY game_date
 CLUSTER BY player_lookup, prediction_correct, confidence_score
+OPTIONS (
+  require_partition_filter=TRUE
+)
 AS
 SELECT * EXCEPT(row_num)
 FROM (

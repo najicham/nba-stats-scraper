@@ -35,5 +35,6 @@ PARTITION BY adjustment_date
 CLUSTER BY system_id, adjustment_date DESC
 OPTIONS(
   description="History of system configuration changes",
-  partition_expiration_days=1095
+  partition_expiration_days=1095,
+  require_partition_filter=TRUE
 );

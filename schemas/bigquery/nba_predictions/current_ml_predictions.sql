@@ -25,4 +25,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.current_ml_predic
   processed_at TIMESTAMP
 )
 PARTITION BY DAY(prediction_date)
-CLUSTER BY player_lookup, ml_prediction_confidence, game_date;
+CLUSTER BY player_lookup, ml_prediction_confidence, game_date
+OPTIONS (
+  require_partition_filter=TRUE
+);

@@ -48,5 +48,6 @@ PARTITION BY performance_date
 CLUSTER BY system_id, performance_date DESC
 OPTIONS(
   description="Daily performance metrics for each prediction system",
-  partition_expiration_days=1095
+  partition_expiration_days=1095,
+  require_partition_filter=TRUE
 );

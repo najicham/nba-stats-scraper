@@ -36,5 +36,6 @@ PARTITION BY game_date
 CLUSTER BY model_id, player_lookup, game_date
 OPTIONS(
   description="ML-specific prediction metadata for explainability and debugging",
-  partition_expiration_days=365
+  partition_expiration_days=365,
+  require_partition_filter=TRUE
 );

@@ -78,7 +78,8 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.prediction_worker
 PARTITION BY DATE(run_date)
 CLUSTER BY player_lookup, success, game_date
 OPTIONS (
-  description = "Phase 5 prediction worker execution logs for monitoring, debugging, and pattern support"
+  description = "Phase 5 prediction worker execution logs for monitoring, debugging, and pattern support",
+  require_partition_filter = TRUE
 );
 
 -- ============================================================================

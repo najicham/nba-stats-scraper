@@ -38,7 +38,7 @@ PARTITION BY game_date
 CLUSTER BY resolution_status, player_status, team_abbr, season_year
 OPTIONS (
   description = "Detailed log of every name resolution attempt for inactive NBA players",
-  require_partition_filter = false
+  require_partition_filter = true
 );
 
 -- Processing performance summary
