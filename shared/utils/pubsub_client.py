@@ -60,7 +60,7 @@ class PubSubClient:
             return True
             
         except Exception as e:
-            logger.error(f"Failed to publish to {topic_name}: {e}")
+            logger.error(f"Failed to publish to {topic_name}: {e}", exc_info=True)
             return False
     
     def publish_scraper_completed(self, scraper_name: str, run_id: str, 
