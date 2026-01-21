@@ -37,24 +37,31 @@ Tier 1 builds on Tier 0's critical security fixes with reliability improvements 
 
 ## TIER 1 ITEMS
 
-### 1.1 Add Missing Timeouts (4 hours) - IN PROGRESS ⚙️
+### 1.1 Add Missing Timeouts (4 hours) - PARTIALLY COMPLETE ⚙️
 
-**Status:** Analyzing codebase
+**Status:** 1 of 4 hours complete
 **Priority:** HIGH - Prevents worker hangs
 **Impact:** Reliability
+**Commit:** `6dc42491`
 
-**Files to Update:**
-- [ ] `predictions/worker/batch_staging_writer.py` - ALREADY HAS TIMEOUTS ✅
-- [ ] `predictions/worker/shared/utils/bigquery_retry.py`
-- [ ] `predictions/worker/shared/utils/completeness_checker.py`
-- [ ] `predictions/worker/shared/utils/odds_preference.py`
-- [ ] `predictions/worker/shared/utils/odds_player_props_preference.py`
-- [ ] `data_processors/` - Various processors
+**Files Updated:**
+- [x] `predictions/worker/batch_staging_writer.py` - ALREADY HAS TIMEOUTS ✅
+- [x] `predictions/worker/shared/utils/bigquery_retry.py` - ALREADY HAS TIMEOUTS ✅
+- [x] `predictions/worker/shared/utils/completeness_checker.py` - ✅ FIXED (3 methods)
+- [x] `predictions/worker/shared/utils/odds_preference.py` - ✅ FIXED (4 methods)
+- [x] `predictions/worker/shared/utils/odds_player_props_preference.py` - ✅ FIXED (5 methods)
+- [x] `data_processors/` - Verified clean ✅
+
+**Remaining Work (3 hours):**
+- [ ] Search scrapers/ for missing timeouts
+- [ ] Search bin/ scripts for missing timeouts
+- [ ] Integration testing
+- [ ] Documentation completion
 
 **Timeout Standards:**
-- Read queries: 60 seconds
-- Write queries (INSERT/UPDATE): 120 seconds
-- MERGE operations: 300 seconds
+- Read queries: 60 seconds ✅
+- Write queries (INSERT/UPDATE): 120 seconds ✅
+- MERGE operations: 300 seconds ✅
 - Long-running analytics: 600 seconds
 
 ---
