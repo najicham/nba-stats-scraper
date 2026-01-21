@@ -51,6 +51,11 @@ class MissingPredictionDetector:
         """
         try:
             # Query to find eligible players vs predicted players
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date.isoformat()),
+                ]
+            )
             query = f"""
             WITH eligible_players AS (
                 SELECT
@@ -62,7 +67,7 @@ class MissingPredictionDetector:
                     player_status,
                     is_production_ready
                 FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
-                WHERE game_date = '{game_date.isoformat()}'
+                WHERE game_date = @game_date
                     AND (
                         avg_minutes_per_game_last_7 >= 15
                         OR current_points_line IS NOT NULL
@@ -74,7 +79,7 @@ class MissingPredictionDetector:
                 SELECT DISTINCT
                     player_lookup
                 FROM `{self.project_id}.nba_predictions.player_prop_predictions`
-                WHERE DATE(game_date) = '{game_date.isoformat()}'
+                WHERE DATE(game_date) = @game_date
             ),
             missing AS (
                 SELECT
@@ -94,7 +99,7 @@ class MissingPredictionDetector:
             SELECT * FROM missing
             """
 
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query, job_config=job_config).result()
             missing_players = []
 
             for row in result:
@@ -120,11 +125,16 @@ class MissingPredictionDetector:
         """Calculate summary statistics."""
         try:
             # Get total eligible and predicted counts
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date.isoformat()),
+                ]
+            )
             query = f"""
             WITH eligible AS (
                 SELECT COUNT(*) as count
                 FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
-                WHERE game_date = '{game_date.isoformat()}'
+                WHERE game_date = @game_date
                     AND (
                         avg_minutes_per_game_last_7 >= 15
                         OR current_points_line IS NOT NULL
@@ -135,7 +145,7 @@ class MissingPredictionDetector:
             predicted AS (
                 SELECT COUNT(DISTINCT player_lookup) as count
                 FROM `{self.project_id}.nba_predictions.player_prop_predictions`
-                WHERE DATE(game_date) = '{game_date.isoformat()}'
+                WHERE DATE(game_date) = @game_date
             )
             SELECT
                 e.count as eligible_count,
@@ -143,7 +153,7 @@ class MissingPredictionDetector:
             FROM eligible e, predicted p
             """
 
-            result = self.bq_client.query(query).result()
+            result = self.bq_client.query(query, job_config=job_config).result()
             row = next(result, None)
 
             if row:
