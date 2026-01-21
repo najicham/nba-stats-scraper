@@ -63,8 +63,7 @@ def require_auth(f):
 
 # Health check endpoints (Phase 1 - Task 1.1: Add Health Endpoints)
 # Note: HealthChecker simplified in Week 1 to only require service_name
-health_checker = HealthChecker(service_name='analytics-processor')
-app.register_blueprint(create_health_blueprint(health_checker))
+app.register_blueprint(create_health_blueprint('analytics-processor'))
 logger.info("Health check endpoints registered: /health, /ready, /health/deep")
 
 # ============================================================================
