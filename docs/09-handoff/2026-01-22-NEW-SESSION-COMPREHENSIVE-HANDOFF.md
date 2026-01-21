@@ -1,748 +1,617 @@
-# New Session Comprehensive Handoff - Complete System Assessment
-
-**Date**: 2026-01-22
-**Purpose**: Onboarding for fresh session with comprehensive work assessment
-**Status**: 🔄 **Week 1 Deployed - Multiple Work Streams Available**
-**Priority**: 🟢 **Monitor first, then choose work stream**
+# New Session Comprehensive Handoff - January 22, 2026
+**Created**: 2026-01-20
+**For Use On**: Any new session starting Jan 22+
+**Purpose**: Complete guide for continuing Week 1 monitoring and future work
+**Status**: 🟢 All systems operational and ready
 
 ---
 
-## 🎯 Start Here: What You Must Do First
+## 📋 CRITICAL: Read This First
 
-### **CRITICAL: Always Start With Monitoring**
+**Context**: We just completed a major 6-hour session on Jan 20, 2026 that deployed:
+1. Robustness improvements system-wide (coordinator + worker + analytics)
+2. Production fix for analytics timing issues
+3. Week 1 monitoring infrastructure
 
-Before doing ANY other work, you MUST verify the Week 1 deployment is healthy:
+**Current State**: Day 0 baseline established - all checks passing ✅
+
+**Your Mission**: Follow the instructions below based on what day it is and what you want to work on.
+
+---
+
+## 🎯 Step 1: Always Start With Monitoring (10-15 min)
+
+**Run this FIRST, every session, no matter what else you plan to do:**
 
 ```bash
-# Quick health check (expect 200 OK)
-curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
-  https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/health
+# Run daily monitoring checks
+./bin/monitoring/week_1_daily_checks.sh
 
-# Check for consistency issues (expect 0)
-gcloud logging read "severity=WARNING 'CONSISTENCY MISMATCH'" \
-  --limit 50 --freshness=24h
-
-# Check for errors (expect 0)
-gcloud logging read "severity>=ERROR 'subcollection'" \
-  --limit 50 --freshness=24h
+# Expected output: All checks should pass (0 errors, 0 mismatches)
 ```
 
-**If ANY issues found**: Stop and investigate. Don't proceed with other work.
+### What the Script Checks
 
-**If all checks pass**: Document success and proceed to work selection below.
+1. **Service Health** (200 OK expected)
+2. **Consistency Mismatches** (0 expected)
+3. **Subcollection Errors** (0 expected)
+4. **Recent Errors** (0 expected)
+
+### If All Checks Pass ✅
+
+1. Check Slack: #week-1-consistency-monitoring (should have no alerts)
+2. Document results in `docs/09-handoff/week-1-monitoring-log.md`
+3. Proceed to Step 2
+
+### If Any Check Fails ❌
+
+**STOP IMMEDIATELY** and investigate:
+
+1. Read the runbook: `docs/02-operations/robustness-improvements-runbook.md`
+2. Check Cloud Logging for detailed errors
+3. Review Slack alerts for context
+4. Do NOT proceed with other work until issue is resolved
+5. Document the issue and resolution
 
 ---
 
-## 📊 Current System State (As of Jan 21, 2026)
+## 🗓️ Step 2: What Day Is It? (Week 1 Timeline)
 
-### **What's Deployed and Working** ✅
+Week 1 runs from **Jan 21 - Feb 5, 2026** (Days 1-15)
 
-**Service**: `prediction-coordinator`
-**Revision**: `prediction-coordinator-00074-vsg`
-**Branch**: `week-1-improvements`
-**Health**: ✅ Operational (200 OK)
+### Today's Date Determines Your Action
 
-**All 8 Week 1 Features ACTIVE**:
-1. ✅ ArrayUnion → Subcollection (dual-write) - **CRITICAL FIX**
-2. ✅ BigQuery Query Caching - Saving $60-90/month
-3. ✅ Idempotency Keys - 100% duplicate prevention
-4. ✅ Phase 2 Completion Deadline - No more infinite waits
-5. ✅ Centralized Timeout Configuration - Better maintainability
-6. ✅ Config-Driven Parallel Execution - More flexible
-7. ✅ Structured Logging - JSON logs
-8. ✅ Enhanced Health Checks - Better monitoring
+```
+┌──────┬──────────────┬────────────────────────────────────┐
+│ Day  │ Date         │ Primary Action                     │
+├──────┼──────────────┼────────────────────────────────────┤
+│ 0    │ Jan 20       │ ✅ DONE - Baseline established     │
+├──────┼──────────────┼────────────────────────────────────┤
+│ 1-6  │ Jan 21-26    │ Daily monitoring + document        │
+├──────┼──────────────┼────────────────────────────────────┤
+│ 7    │ Jan 27       │ Prepare for Day 8 switchover       │
+├──────┼──────────────┼────────────────────────────────────┤
+│ 8    │ Jan 28       │ 🚨 CRITICAL: Switch to reads      │
+├──────┼──────────────┼────────────────────────────────────┤
+│ 9-14 │ Jan 29-Feb 3 │ Monitor reads + validate           │
+├──────┼──────────────┼────────────────────────────────────┤
+│ 15   │ Feb 4        │ 🎉 Stop dual-write - DONE!        │
+├──────┼──────────────┼────────────────────────────────────┤
+│ 16+  │ Feb 5+       │ Archive channel, celebrate         │
+└──────┴──────────────┴────────────────────────────────────┘
+```
 
-**Current Environment Variables**:
+**Current Status**: We are on Day 0 (completed). Next session should be Day 1.
+
+---
+
+## 📝 Step 3: Choose What to Work On
+
+After monitoring checks pass, you have options:
+
+### Option A: Monitoring Only (15 min) - Days 1-6
+
+**When**: You're short on time or just checking in
+
+**Tasks**:
+1. ✅ Run monitoring script (already done in Step 1)
+2. ✅ Check Slack for alerts
+3. ✅ Document in monitoring log
+4. ✅ Done!
+
+**Effort**: 15 minutes
+**Value**: Keep Week 1 migration on track
+
+---
+
+### Option B: Quick Wins from Future Work (1-2 hours)
+
+**When**: You have 1-2 hours and want immediate value
+
+Pick ONE quick win:
+
+#### B1. Cloud Run Right-Sizing (1 hour) - 50% cost savings
+
+**Impact**: $200-300/month savings
+**Risk**: Low
+**Steps**:
+1. Audit current CPU/memory settings
+2. Profile actual usage
+3. Right-size validators (currently over-provisioned)
+4. Deploy and verify
+
 ```bash
-ENABLE_SUBCOLLECTION_COMPLETIONS=true  # Dual-write active
-DUAL_WRITE_MODE=true                    # Both array + subcollection
-USE_SUBCOLLECTION_READS=false           # Still reading from array (safe)
-ENABLE_QUERY_CACHING=true               # Cost savings active
-ENABLE_IDEMPOTENCY_KEYS=true            # No duplicates
-ENABLE_PHASE2_COMPLETION_DEADLINE=true  # 30-min deadline
-ENABLE_STRUCTURED_LOGGING=true          # JSON logs
+# Check current settings
+gcloud run services list --format="table(name,spec.template.spec.containers[0].resources.limits)"
+
+# Profile usage over last 7 days
+gcloud monitoring time-series list \
+  --filter='metric.type="run.googleapis.com/container/memory/utilizations"' \
+  --format=json
 ```
 
-**Recent Validation**:
-- ✅ January 2026 backfill validated (95% coverage, Grade A-)
-- ✅ 14,439 predictions verified
-- ✅ Data quality approved
+#### B2. SELECT * Optimization (1-2 hours) - 10-20% query savings
+
+**Impact**: Faster queries + cost savings
+**Risk**: Low
+**Steps**:
+1. Find all SELECT * queries in codebase
+2. Replace with explicit column lists
+3. Test queries return same data
+4. Deploy coordinator/worker
 
-### **Where We Are in Timeline**
-
-| Phase | Dates | Status |
-|-------|-------|--------|
-| Deployment | Jan 21 | ✅ Complete |
-| Dual-write monitoring (Days 1-7) | Jan 22-28 | ⏳ **IN PROGRESS** |
-| Switch to subcollection reads (Day 8) | Jan 29 | ⏳ Pending validation |
-| Monitor subcollection reads (Days 9-14) | Jan 30-Feb 4 | ⏳ Pending |
-| Stop dual-write (Day 15+) | Feb 5+ | ⏳ Pending |
-
-**Calculate Current Day**: `(current_date - jan_21) + 1`
-
----
-
-## 🔍 REQUIRED: Use Agents to Study the System
-
-**Before choosing what to work on**, you should understand the complete landscape. Launch multiple **Explore agents in parallel** to study different areas:
-
-### **Recommended Agent Study Plan**
-
-Launch these agents **in parallel** (single message with multiple Task tool calls):
-
-#### **Agent 1: Monitor Current Deployment Status**
-```
-Task: Explore agent - "Study current Week 1 deployment status"
-Thoroughness: quick
-Focus:
-- Check docs/09-handoff/2026-01-21-*.md for deployment details
-- Understand what was deployed and current state
-- Identify monitoring requirements
-- Check for any outstanding issues
-```
-
-#### **Agent 2: Analyze Week 2-3 Improvement Opportunities**
-```
-Task: Explore agent - "Study Week 2-3 improvement opportunities"
-Thoroughness: medium
-Focus:
-- Read docs/08-projects/current/week-2-improvements/
-- Identify remaining features not yet deployed
-- Understand implementation complexity and priority
-- Find quick wins vs. long-term projects
-```
-
-#### **Agent 3: Find Technical Debt and TODOs**
-```
-Task: Explore agent - "Find technical debt and TODOs across codebase"
-Thoroughness: medium
-Focus:
-- Search for TODO, FIXME, HACK comments
-- Check predictions/coordinator/ and predictions/worker/
-- Identify critical vs. nice-to-have fixes
-- Look for code quality issues
-```
-
-#### **Agent 4: Assess Cost Optimization Opportunities**
-```
-Task: Explore agent - "Study cost optimization opportunities"
-Thoroughness: quick
-Focus:
-- Review BigQuery usage patterns in code
-- Check Firestore operations for optimization
-- Look at Cloud Run configurations
-- Identify expensive operations
-```
-
-#### **Agent 5: Evaluate Testing and Quality**
-```
-Task: Explore agent - "Assess testing coverage and quality"
-Thoroughness: medium
-Focus:
-- Find existing tests in the codebase
-- Identify critical paths without tests
-- Check for integration test infrastructure
-- Look for validation/quality scripts
-```
-
-#### **Agent 6: Review Documentation Gaps**
-```
-Task: Explore agent - "Find documentation gaps and opportunities"
-Thoroughness: quick
-Focus:
-- Check docs/ structure completeness
-- Identify undocumented features
-- Find outdated documentation
-- Look for runbook needs
-```
-
-### **How to Launch Agents**
-
-**In your first response**, use the Task tool to launch all 6 agents **in parallel**:
-
-```python
-# Send ONE message with 6 Task tool calls
-# Each with subagent_type="Explore"
-# Use thoroughness: "quick" or "medium" as noted above
-```
-
-**After agents complete**:
-1. Synthesize findings from all 6 agents
-2. Create prioritized todo list
-3. Recommend work stream based on current day and findings
-4. Present options to user
-
----
-
-## 📋 Known Work Streams (Reference)
-
-Based on previous analysis, here are the main work streams available:
-
-### **Stream 1: Monitoring & Validation** (ALWAYS PRIORITY)
-
-**Time**: 15-30 min daily
-**Priority**: 🔴 CRITICAL during Days 1-7
-
-**Activities**:
-- Run daily monitoring checks
-- Document results
-- Investigate any anomalies
-- Prepare for Day 8 switchover
-
-**Key Docs**:
-- `docs/09-handoff/2026-01-22-NEXT-SESSION-HANDOFF.md`
-- `docs/09-handoff/2026-01-21-DEPLOYMENT-SUCCESS.md`
-
-### **Stream 2: Week 2-3 Feature Deployment**
-
-**Time**: 2-4 hours per feature
-**Priority**: 🟡 MEDIUM (after Week 1 is stable)
-
-**Potential Features** (from original analysis):
-- Prometheus metrics export
-- Universal retry mechanism
-- Async Phase 1 processing
-- Integration test suite
-- Alerting improvements
-- Performance monitoring
-
-**Approach**:
-1. Study each feature in detail
-2. Assess implementation complexity
-3. Plan deployment strategy
-4. Implement with feature flags
-5. Deploy and monitor
-
-**Key Docs**:
-- `docs/08-projects/current/week-2-improvements/`
-- Original improvement analysis docs
-
-### **Stream 3: Technical Debt Cleanup**
-
-**Time**: 30 min - 2 hours per item
-**Priority**: 🟡 MEDIUM
-
-**Known Areas**:
-- TODO comments in code
-- FIXME annotations
-- Code quality improvements
-- Refactoring opportunities
-- Error handling improvements
-
-**Approach**:
-1. Catalog all TODOs/FIXMEs
-2. Prioritize by impact
-3. Fix incrementally
-4. Test thoroughly
-5. Document changes
-
-### **Stream 4: Cost Optimization**
-
-**Time**: 1-3 hours
-**Priority**: 🟢 LOW (but high ROI)
-
-**Potential Areas**:
-- BigQuery query optimization
-- Cache hit rate improvement
-- Firestore operation reduction
-- Cloud Run right-sizing
-- Storage lifecycle policies
-
-**Approach**:
-1. Analyze current costs
-2. Identify top cost drivers
-3. Implement optimizations
-4. Measure savings
-5. Document ROI
-
-### **Stream 5: Testing & Quality**
-
-**Time**: 2-6 hours
-**Priority**: 🟢 LOW (unless issues found)
-
-**Potential Work**:
-- Add unit tests for critical paths
-- Create integration test suite
-- Add validation scripts
-- Improve error messages
-- Add monitoring dashboards
-
-**Approach**:
-1. Identify test gaps
-2. Prioritize critical paths
-3. Write tests incrementally
-4. Set up CI/CD integration
-5. Document test strategy
-
-### **Stream 6: Documentation**
-
-**Time**: 1-2 hours
-**Priority**: 🟢 LOW (already comprehensive)
-
-**Potential Work**:
-- Update outdated docs
-- Create runbooks
-- Document undocumented features
-- Improve onboarding guides
-- Add architecture diagrams
-
----
-
-## 🎯 Recommended Session Flow
-
-### **Phase 1: Assessment** (15-20 min)
-
-1. **Run monitoring checks** (REQUIRED)
-2. **Calculate current day** in monitoring period
-3. **Launch 6 Explore agents in parallel** (as described above)
-4. **Wait for agents to complete** (~5-10 min)
-5. **Synthesize findings** from all agents
-
-### **Phase 2: Planning** (10-15 min)
-
-1. **Review agent findings**
-2. **Identify highest priority work**
-3. **Create todo list** using TodoWrite tool
-4. **Present options to user**:
-   - Quick session: Monitoring only
-   - Medium session: Monitoring + small improvement
-   - Long session: Monitoring + feature deployment
-
-### **Phase 3: Execution** (varies by choice)
-
-**If Monitoring Only** (15 min):
-- Run all checks
-- Document results
-- Update handoff doc
-- Done!
-
-**If Monitoring + Small Improvement** (1-2 hours):
-- Complete monitoring first
-- Choose 1-2 TODO fixes or optimizations
-- Implement, test, commit
-- Update docs
-- Done!
-
-**If Monitoring + Feature Deployment** (3-4 hours):
-- Complete monitoring first
-- Choose 1 Week 2 feature
-- Plan implementation
-- Deploy with feature flag
-- Test thoroughly
-- Monitor initial results
-- Document
-
-### **Phase 4: Handoff** (10-15 min)
-
-1. **Document what was accomplished**
-2. **Update monitoring log** (if Day 1-7)
-3. **Create handoff doc for next session**
-4. **Commit all changes**
-5. **Summary for user**
-
----
-
-## 📚 Essential Documentation (Read First)
-
-### **Must Read** (Start Here)
-
-1. **2026-01-21-COMPLETE-SESSION-HANDOFF.md** ⭐⭐⭐
-   - Complete overview of Week 1 deployment
-   - Everything accomplished in previous session
-   - Current state and next steps
-
-2. **2026-01-22-NEXT-SESSION-HANDOFF.md** ⭐⭐
-   - Daily monitoring procedures
-   - Timeline and milestones
-   - Emergency procedures
-
-3. **2026-01-21-DEPLOYMENT-SUCCESS.md** ⭐
-   - Detailed deployment journey
-   - All monitoring procedures
-   - Rollback instructions
-
-### **Reference Documentation**
-
-4. **2026-01-21-JANUARY-VALIDATION-FINDINGS.md**
-   - January 2026 validation results
-   - Data quality assessment
-
-5. **docs/08-projects/current/week-2-improvements/**
-   - Original improvement analysis
-   - Week 2-3 feature details
-   - Implementation guides
-
-6. **docs/08-projects/current/pipeline-reliability-improvements/**
-   - Week 1 feature details
-   - Architecture decisions
-   - Implementation notes
-
----
-
-## 🚨 Emergency Procedures
-
-### **If Monitoring Finds Issues**
-
-**Consistency Mismatches Found**:
 ```bash
-# 1. Check severity (1-2 = investigate, 10+ = critical)
-gcloud logging read "severity=WARNING 'CONSISTENCY MISMATCH'" \
-  --limit 500 --format=json
+# Find SELECT * queries
+grep -r "SELECT \*" data_processors/ predictions/ --include="*.py" | wc -l
+```
 
-# 2. If systematic (10+), ROLLBACK:
+#### B3. Document Cloud Functions (1-2 hours) - Better operations
+
+**Impact**: Easier troubleshooting
+**Risk**: None (documentation only)
+**Steps**:
+1. List all 32 Cloud Functions
+2. Document purpose, triggers, configuration
+3. Add troubleshooting tips
+4. Create reference guide
+
+```bash
+# List all functions
+gcloud functions list --format="table(name,entryPoint,runtime,trigger)"
+```
+
+---
+
+### Option C: Strategic Features (2-4 hours)
+
+**When**: You have time for bigger improvements
+
+#### C1. Integration Tests for Dual-Write (2-3 hours)
+
+**Impact**: Safety net for future changes
+**Risk**: Low
+**Priority**: High (recommended next big task)
+
+**What to Test**:
+1. Dual-write consistency validation
+2. Slack alert delivery (mocked)
+3. BigQuery insert for unresolved players
+4. AlertManager integration
+
+**Files to Create**:
+- `tests/integration/test_dual_write_consistency.py`
+- `tests/integration/test_slack_alerts.py`
+- `tests/integration/test_bigquery_tracking.py`
+
+**Steps**:
+1. Create test fixtures for batch data
+2. Mock external services (Slack, BigQuery)
+3. Test consistency check logic
+4. Test alert triggering
+5. Run tests in CI/CD
+
+#### C2. Prometheus Metrics Endpoint (1-2 hours)
+
+**Impact**: Better observability
+**Risk**: Low
+**Priority**: Medium
+
+**What to Add**:
+- `/metrics` endpoint to coordinator
+- Basic metrics: requests, errors, latency, batch counts
+- Integrate with existing Grafana
+
+**Steps**:
+1. Add prometheus_client library
+2. Create metrics collectors
+3. Add /metrics endpoint to Flask app
+4. Configure Grafana to scrape
+5. Create initial dashboards
+
+#### C3. Universal Retry Mechanism (2-3 hours)
+
+**Impact**: Better reliability
+**Risk**: Medium (needs careful testing)
+**Priority**: Medium
+
+**What to Add**:
+- Centralized retry logic with exponential backoff
+- Configurable per-operation
+- Better error recovery
+
+**Files to Create**:
+- `shared/retry/retry_manager.py`
+- `shared/retry/retry_policies.py`
+
+---
+
+## 🚨 Step 4: Day 8 Switchover (CRITICAL - Jan 28)
+
+**THIS IS THE MOST CRITICAL DAY OF WEEK 1**
+
+On Day 8 (Jan 28), we switch from reading the array to reading the subcollection.
+
+### Pre-Switchover Checklist (Day 7 - Jan 27)
+
+Run these checks to ensure readiness:
+
+```bash
+# 1. Verify Days 1-7 had zero consistency mismatches
+cat docs/09-handoff/week-1-monitoring-log.md | grep "Day [1-7]" -A 5
+
+# 2. Check subcollection data completeness
+bq query --use_legacy_sql=false '
+SELECT 
+  COUNT(*) as total_rows,
+  COUNT(DISTINCT game_date) as days_covered,
+  MIN(game_date) as earliest_date,
+  MAX(game_date) as latest_date
+FROM `nba-props-platform.prediction_completions.completions_subcollection`
+WHERE game_date >= "2026-01-21"
+'
+
+# 3. Verify subcollection matches array
+# (This should be 0 if dual-write is working)
+# Check the monitoring log for any mismatches
+```
+
+### Switchover Steps (Day 8 - Jan 28)
+
+**Timing**: Run during low-traffic period (early morning recommended)
+
+```bash
+# 1. Set environment variable
 gcloud run services update prediction-coordinator \
   --region us-west2 \
-  --update-env-vars ENABLE_SUBCOLLECTION_COMPLETIONS=false
+  --update-env-vars USE_SUBCOLLECTION_READS=true
 
-# 3. Document issue thoroughly
-# 4. Investigate root cause
-```
-
-**Service Unhealthy**:
-```bash
-# 1. Check recent errors
-gcloud logging read "severity>=ERROR" --limit 50 --freshness=10m
-
-# 2. Verify current revision
-gcloud run services describe prediction-coordinator --region=us-west2 \
+# 2. Verify deployment
+gcloud run services describe prediction-coordinator \
+  --region us-west2 \
   --format="value(status.latestReadyRevisionName)"
 
-# 3. If needed, rollback to previous revision:
-gcloud run services update-traffic prediction-coordinator \
+# 3. Run immediate validation
+./bin/monitoring/week_1_daily_checks.sh
+
+# 4. Monitor closely for next 4 hours
+# Check logs every 30 minutes:
+gcloud logging read \
+  "resource.labels.service_name=prediction-coordinator" \
+  --limit 50 \
+  --freshness=30m \
+  --format="table(timestamp,severity,textPayload)"
+```
+
+### Post-Switchover Monitoring (Days 9-14)
+
+- Continue daily checks
+- Watch for any read errors
+- Monitor query performance
+- Verify data correctness
+
+### Day 15 - Stop Dual-Write (Feb 4)
+
+```bash
+# 1. Stop writing to array
+gcloud run services update prediction-coordinator \
   --region us-west2 \
-  --to-revisions prediction-coordinator-00069-4ck=100
+  --update-env-vars DUAL_WRITE_MODE=false
+
+# 2. Archive Slack channel
+# Go to #week-1-consistency-monitoring and archive it
+
+# 3. Celebrate! 🎉
+# Migration complete!
 ```
 
-### **If Deployment Needed**
+---
 
-**Never deploy without**:
-1. ✅ Monitoring checks passed
-2. ✅ Understanding current state
-3. ✅ Feature flag strategy
-4. ✅ Rollback plan ready
-5. ✅ User approval for changes
+## 📚 Reference: Key Documents
 
-**Deployment checklist**:
+### Operational Docs
+- **Monitoring Script**: `bin/monitoring/week_1_daily_checks.sh`
+- **Monitoring Log**: `docs/09-handoff/week-1-monitoring-log.md`
+- **Runbook**: `docs/02-operations/robustness-improvements-runbook.md`
+
+### Session Summaries
+- **Day 0 Summary**: `docs/09-handoff/2026-01-20-FINAL-SESSION-SUMMARY.md`
+- **Complete Details**: `docs/09-handoff/2026-01-20-COMPLETE-SESSION-SUMMARY.md`
+- **Next Steps TODO**: `docs/09-handoff/2026-01-20-NEXT-STEPS-TODO.md`
+
+### Technical Docs
+- **Analytics Timing Fix**: `docs/08-projects/current/ANALYTICS-ORCHESTRATION-TIMING-FIX.md`
+- **BigQuery Schema**: `schemas/bigquery/mlb_reference/unresolved_players_table.sql`
+
+---
+
+## 🔍 Quick Reference: Current System State
+
+### Deployed Services
+
+| Service | Revision | Status | Key Features |
+|---------|----------|--------|--------------|
+| Coordinator | 00076-dsv | ✅ Healthy | Robustness improvements |
+| Analytics | 00091-twp | ✅ Healthy | Timing fix (6h→12h) |
+| Worker | 00008-lnw | ✅ Healthy | Robustness improvements |
+
+### Environment Variables
+
 ```bash
-# 1. Verify you're on correct branch
-git branch --show-current  # Should be: week-1-improvements
+# Coordinator
+SLACK_WEBHOOK_URL_CONSISTENCY="https://hooks.slack.com/..." ✅ Set
+ENABLE_SUBCOLLECTION_COMPLETIONS=true ✅ Set
+DUAL_WRITE_MODE=true ✅ Set
+USE_SUBCOLLECTION_READS=false ✅ Set (will change on Day 8)
 
-# 2. Check for uncommitted changes
-git status
+# Worker
+# (Same as coordinator - all set)
+```
 
-# 3. Deploy
-gcloud run deploy prediction-coordinator \
-  --source . \
+### Active Infrastructure
+
+- ✅ Slack Channel: #week-1-consistency-monitoring
+- ✅ BigQuery Table: mlb_reference.unresolved_players
+- ✅ Monitoring Script: Tested and working
+- ✅ AlertManager: Rate-limited alerts configured
+
+---
+
+## 💡 Recommended Session Plans
+
+### Plan 1: Quick Check-In (15 min)
+1. Run monitoring script
+2. Check Slack
+3. Document results
+4. Done!
+
+### Plan 2: Monitoring + Quick Win (1.5-2 hours)
+1. Run monitoring script (15 min)
+2. Choose one quick win from Option B (1-2 hours)
+3. Document what you did
+
+### Plan 3: Monitoring + Strategic Feature (3-4 hours)
+1. Run monitoring script (15 min)
+2. Choose one strategic feature from Option C (2-3 hours)
+3. Test thoroughly
+4. Deploy and verify
+
+### Plan 4: Day 8 Switchover (Jan 28 only, 2-3 hours)
+1. Run pre-switchover checks (30 min)
+2. Execute switchover (30 min)
+3. Monitor closely (1-2 hours)
+4. Document results
+
+---
+
+## 🎯 Agent Instructions for New Sessions
+
+**If you're an AI agent starting a new session, follow these steps:**
+
+### 1. Determine Current Day
+```bash
+# Check what day it is
+date "+%Y-%m-%d"
+
+# Calculate day number (Jan 21 = Day 1)
+# Day 0 was Jan 20, 2026
+```
+
+### 2. Run Monitoring First (ALWAYS)
+```bash
+./bin/monitoring/week_1_daily_checks.sh
+```
+
+### 3. Read the Output
+- If all checks pass → Proceed to user's chosen work
+- If any check fails → Stop and investigate (use runbook)
+
+### 4. Ask User What They Want to Do
+
+Present options based on current day:
+
+**For Days 1-6 (Jan 21-26):**
+```
+I've completed the monitoring checks - all systems healthy! ✅
+
+What would you like to work on today?
+
+1. Just monitoring (done!) - 0 min remaining
+2. Quick win: Cloud Run right-sizing (1 hour) - 50% cost savings
+3. Quick win: SELECT * optimization (1-2 hours) - 10-20% query savings
+4. Quick win: Document Cloud Functions (1-2 hours) - Better operations
+5. Strategic: Integration tests (2-3 hours) - Safety net
+6. Strategic: Prometheus metrics (1-2 hours) - Better observability
+7. Strategic: Universal retry mechanism (2-3 hours) - Better reliability
+
+Or something else?
+```
+
+**For Day 7 (Jan 27):**
+```
+I've completed the monitoring checks - all systems healthy! ✅
+
+🚨 IMPORTANT: Tomorrow is Day 8 - the critical switchover day!
+
+Would you like to:
+1. Run pre-switchover checks to ensure readiness
+2. Review the switchover plan
+3. Work on other improvements (but be ready for tomorrow!)
+```
+
+**For Day 8 (Jan 28):**
+```
+I've completed the monitoring checks - all systems healthy! ✅
+
+🚨 TODAY IS SWITCHOVER DAY! 🚨
+
+We need to switch from array reads to subcollection reads.
+
+Ready to proceed with the switchover? This is the most critical step of Week 1.
+
+[If yes] Let me run the pre-switchover checks first...
+[If no] When would you like to do this? It's time-sensitive.
+```
+
+**For Days 9-14 (Jan 29-Feb 3):**
+```
+I've completed the monitoring checks - all systems healthy! ✅
+
+We're now reading from subcollections (Day 8 switchover complete).
+
+What would you like to work on today?
+[Same options as Days 1-6]
+```
+
+**For Day 15+ (Feb 4+):**
+```
+I've completed the monitoring checks - all systems healthy! ✅
+
+🎉 We're past Day 15! Time to stop dual-write and archive the channel.
+
+Would you like to:
+1. Complete the final switchover (stop dual-write)
+2. Archive #week-1-consistency-monitoring
+3. Work on future improvements
+```
+
+### 5. Use Parallel Agents When Appropriate
+
+For large exploratory tasks, launch Explore agents in parallel:
+
+```
+I'm going to launch 6 Explore agents in parallel to study:
+1. Week 1 deployment status
+2. Week 2-3 improvement opportunities
+3. Technical debt and TODOs
+4. Cost optimization opportunities
+5. Testing coverage and quality
+6. Documentation gaps and opportunities
+
+This will take 3-5 minutes and give us a comprehensive view.
+```
+
+---
+
+## 📊 Success Metrics
+
+### Week 1 Success Criteria
+
+✅ **Primary Goals** (must achieve):
+- Zero consistency mismatches during dual-write period
+- Successful Day 8 switchover with zero data loss
+- Successful Day 15 completion (dual-write stopped)
+
+✅ **Secondary Goals** (nice to have):
+- No production incidents during migration
+- All daily checks documented
+- Team confidence in subcollection approach
+
+### How to Measure
+
+```bash
+# Check consistency mismatch count
+grep "Consistency Mismatches:" docs/09-handoff/week-1-monitoring-log.md | grep -v "0"
+
+# Should return nothing if all good
+
+# Check for any Slack alerts
+# Visit #week-1-consistency-monitoring
+# Should have only test messages + deployment notifications
+```
+
+---
+
+## ⚠️ Troubleshooting Quick Reference
+
+### Issue: Monitoring script fails to run
+
+```bash
+# Check if script is executable
+ls -la bin/monitoring/week_1_daily_checks.sh
+
+# Make executable if needed
+chmod +x bin/monitoring/week_1_daily_checks.sh
+
+# Run directly
+bash bin/monitoring/week_1_daily_checks.sh
+```
+
+### Issue: Consistency mismatch detected
+
+1. **STOP immediately** - Do not proceed with other work
+2. Check logs for the specific batch:
+```bash
+gcloud logging read \
+  "severity=WARNING 'CONSISTENCY MISMATCH'" \
+  --limit 50 \
+  --freshness=24h
+```
+3. Check Slack for alert (should have been sent)
+4. Follow runbook: `docs/02-operations/robustness-improvements-runbook.md`
+
+### Issue: Service unhealthy
+
+```bash
+# Check service status
+gcloud run services describe prediction-coordinator \
   --region us-west2 \
-  --platform managed \
-  --project nba-props-platform
+  --format=json
 
-# 4. Verify health
-curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
-  https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/health
+# Check recent logs
+gcloud logging read \
+  "resource.labels.service_name=prediction-coordinator" \
+  --limit 50 \
+  --freshness=10m
 ```
 
 ---
 
-## 💡 Decision Tree for This Session
+## 🎓 Additional Context
 
-```
-START
-│
-├─► Run Monitoring Checks
-│   │
-│   ├─► ❌ ISSUES FOUND
-│   │   └─► Investigate & Fix (Priority #1)
-│   │       └─► Document & Create Handoff
-│   │           └─► END
-│   │
-│   └─► ✅ ALL CHECKS PASS
-│       │
-│       ├─► Calculate Current Day
-│       │   │
-│       │   ├─► Day 1-6: Continue monitoring
-│       │   │   └─► Extra time? Do optional work below
-│       │   │
-│       │   ├─► Day 7: Prepare for Day 8 switchover
-│       │   │   └─► Review procedures, plan timing
-│       │   │
-│       │   ├─► Day 8: Switch to subcollection reads
-│       │   │   └─► Update config, monitor closely
-│       │   │
-│       │   ├─► Day 9-14: Monitor subcollection reads
-│       │   │   └─► Extra time? Do optional work
-│       │   │
-│       │   └─► Day 15+: Stop dual-write
-│       │       └─► Complete migration!
-│       │
-│       └─► OPTIONAL WORK (if time available)
-│           │
-│           ├─► Launch 6 Explore Agents (recommended)
-│           │   └─► Synthesize findings
-│           │       └─► Create prioritized todo list
-│           │           └─► Choose work based on:
-│           │               ├─► Time available
-│           │               ├─► User preference
-│           │               └─► Priority/impact
-│           │
-│           └─► OR directly work on known areas:
-│               ├─► Week 2 features
-│               ├─► Technical debt
-│               ├─► Cost optimization
-│               ├─► Testing
-│               └─► Documentation
-│
-└─► Document & Handoff
-    └─► END
-```
+### Why This Matters
+
+Week 1 is a critical migration from ArrayUnion to Subcollections for completion tracking. This addresses:
+- Scalability issues (ArrayUnion has 20,000 element limit)
+- Race conditions in high-concurrency scenarios
+- Better query performance
+
+### What Happens After Week 1
+
+Once Week 1 completes successfully:
+- ArrayUnion code can be deprecated
+- Subcollection becomes primary data source
+- Monitoring shifts to normal operations
+- Focus on next improvements
 
 ---
 
-## 🎓 Tips for Success
+## ✅ Session End Checklist
 
-### **For Efficient Sessions**
+Before ending any session, ensure:
 
-1. **Always monitor first** - Non-negotiable during Days 1-15
-2. **Use agents to explore** - They're fast and thorough
-3. **Document as you go** - Don't wait until the end
-4. **Commit frequently** - Small, logical commits
-5. **Test before deploying** - Especially for new features
-6. **Feature flag everything** - Easy rollback is critical
-
-### **For Quality Work**
-
-1. **Read related docs** before implementing
-2. **Check git history** for context
-3. **Look for similar patterns** in codebase
-4. **Test manually** before committing
-5. **Update docs** with changes
-6. **Create clear commit messages**
-
-### **For Effective Handoffs**
-
-1. **Document what you did** - Even if just monitoring
-2. **Note any issues** - Even if resolved
-3. **Update the timeline** - Where are we in Days 1-15?
-4. **List next steps** - What should next session do?
-5. **Create handoff doc** - If anything significant happened
-
----
-
-## 🔧 Useful Commands Reference
-
-### **Quick Status**
-```bash
-# Current service status
-gcloud run services describe prediction-coordinator --region=us-west2 \
-  --format="value(status.latestReadyRevisionName,status.url)"
-
-# Health check
-curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
-  https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/health | jq
-
-# Current configuration
-gcloud run services describe prediction-coordinator --region=us-west2 \
-  --format="yaml(spec.template.spec.containers[0].env)" | grep "ENABLE_"
-```
-
-### **Log Analysis**
-```bash
-# Last 50 logs
-gcloud logging read "resource.labels.service_name=prediction-coordinator" \
-  --limit 50 --format="table(timestamp,severity,textPayload)"
-
-# Errors in last 24h
-gcloud logging read "
-  resource.labels.service_name=prediction-coordinator
-  severity>=ERROR
-  timestamp>=\"$(date -u -d '24 hours ago' '+%Y-%m-%dT%H:%M:%SZ')\"
-" --limit 100
-
-# Consistency checks
-gcloud logging read "severity=WARNING 'CONSISTENCY MISMATCH'" \
-  --limit 50 --freshness=7d
-```
-
-### **Git Operations**
-```bash
-# Current branch and status
-git branch --show-current && git status -sb
-
-# Recent commits
-git log --oneline --graph --decorate -10
-
-# Uncommitted changes
-git diff
-
-# Stage and commit
-git add <files>
-git commit -m "type: description"
-```
-
-### **Validation**
-```bash
-# Validate specific date
-python3 bin/validate_pipeline.py YYYY-MM-DD
-
-# Check BigQuery data
-bq query --nouse_legacy_sql '
-  SELECT game_date, COUNT(*) as predictions
-  FROM `nba-props-platform.nba_predictions.player_prop_predictions`
-  WHERE game_date BETWEEN "2026-01-01" AND "2026-01-31"
-  GROUP BY game_date
-  ORDER BY game_date
-'
-```
-
----
-
-## ✅ Session Completion Checklist
-
-Before ending your session, verify:
-
-**Monitoring** (if Day 1-15):
-- [ ] All monitoring checks run
-- [ ] Results documented (even if just "all good")
-- [ ] Any issues investigated/resolved
+- [ ] Monitoring checks run and documented
+- [ ] Any changes committed to git
+- [ ] Any deployments verified healthy
+- [ ] Slack checked for alerts
 - [ ] Monitoring log updated
-
-**Development Work** (if any):
-- [ ] Code changes tested
-- [ ] All changes committed to git
-- [ ] Commit messages clear and descriptive
-- [ ] Documentation updated
-
-**Handoff**:
-- [ ] Session summary documented
-- [ ] Next steps identified
-- [ ] Current day/status noted
-- [ ] Handoff doc created (if needed)
-
-**User Communication**:
-- [ ] Clear summary of what was accomplished
-- [ ] Any issues or concerns noted
-- [ ] Recommendations for next session
-- [ ] Questions answered
+- [ ] Next session knows what to do (this doc!)
 
 ---
 
-## 🎯 TL;DR - Your Action Plan
+## 🚀 Ready to Start?
 
-1. **Read this document** ✅ (you're doing it!)
+1. **Check the date** - What day of Week 1 is it?
+2. **Run monitoring** - Always start here
+3. **Choose your work** - Based on time and priority
+4. **Execute and document** - Follow the plans above
+5. **End with checklist** - Don't forget anything
 
-2. **Run monitoring checks** (15 min)
-   ```bash
-   # Health
-   curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
-     https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/health
-
-   # Consistency (expect 0)
-   gcloud logging read "severity=WARNING 'CONSISTENCY MISMATCH'" \
-     --limit 50 --freshness=24h
-
-   # Errors (expect 0)
-   gcloud logging read "severity>=ERROR 'subcollection'" \
-     --limit 50 --freshness=24h
-   ```
-
-3. **Calculate current day** in monitoring period
-
-4. **Launch 6 Explore agents in parallel** to understand system:
-   - Current deployment status
-   - Week 2-3 opportunities
-   - Technical debt
-   - Cost optimization
-   - Testing gaps
-   - Documentation needs
-
-5. **Synthesize findings** and create prioritized todo list
-
-6. **Present options** to user based on:
-   - Current day (1-7, 8-14, 15+)
-   - Agent findings
-   - Time available
-   - User preference
-
-7. **Execute chosen work** (monitoring always happens)
-
-8. **Document and handoff** for next session
+Good luck! 🎉
 
 ---
 
-## 📞 Questions to Ask User
+**Questions?** Check the reference docs or ask the user for clarification.
 
-After completing assessment, ask:
+**Issues?** Use the runbook: `docs/02-operations/robustness-improvements-runbook.md`
 
-1. **"Which day are we on?"** (Calculate: current_date - jan_21 + 1)
-
-2. **"How much time do you have?"**
-   - Quick (15 min): Monitoring only
-   - Medium (1-2 hours): Monitoring + small improvement
-   - Long (3+ hours): Monitoring + feature work
-
-3. **"What's your priority?"**
-   - Stability: Focus on monitoring, validation
-   - Features: Week 2-3 deployment
-   - Quality: Testing, tech debt
-   - Cost: Optimization work
-   - Let me recommend: Based on agent findings
-
-4. **"Any specific concerns?"**
-   - Performance issues?
-   - Cost concerns?
-   - Reliability problems?
-   - Feature requests?
-
----
-
-**Created**: 2026-01-22
-**Purpose**: Comprehensive onboarding for any new session
-**Status**: Active - use for all sessions after Jan 21 deployment
-**Priority**: Monitor first, then choose work stream
-
-🚀 **The system is deployed and healthy. Your job is to verify, improve, and advance!** 🚀
-
----
-
-## 📋 Appendix: Week 1 Deployment Summary (Reference)
-
-### What Was Deployed (Jan 21, 2026)
-
-**Commits**:
-- `27893e85` - Fixed validation script table name
-- `88f2547a` - Fixed HealthChecker initialization
-- `ddc00018` - Fixed health blueprint call
-- `741bd14f` - Added worker_id + injury scraper params
-- `125314a9` - Added comprehensive documentation
-- `5f9aaa25` - Created next session handoff
-
-**Features**:
-1. ArrayUnion → Subcollection migration (dual-write)
-2. BigQuery query caching
-3. Idempotency keys
-4. Phase 2 completion deadline
-5. Centralized timeouts
-6. Config-driven parallel execution
-7. Structured logging (JSON)
-8. Enhanced health checks
-
-**Validation**:
-- January 2026: 95% prediction coverage (APPROVED)
-- 14,439 predictions verified
-- Data quality: Gold/Silver tier
-- Grade: A- (Excellent)
-
-**Impact**:
-- Scalability: 800/1000 → Unlimited capacity
-- Cost: -$60-90/month (immediate)
-- Reliability: 80-85% → 99.5%+ (expected)
-- Idempotency: 100% duplicate prevention
-
-**Service**:
-- Name: prediction-coordinator
-- Revision: 00074-vsg
-- Region: us-west2
-- Health: ✅ 200 OK
-- Branch: week-1-improvements
-
-**Status**: ✅ Operational, monitoring period active
+**Stuck?** Launch Explore agents to investigate the codebase.
