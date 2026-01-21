@@ -27,15 +27,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Health check endpoints (Phase 1 - Task 1.1: Add Health Endpoints)
-health_checker = HealthChecker(
-    project_id=os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
-    service_name='precompute-processor',
-    check_bigquery=True,  # Processor reads and writes BigQuery
-    check_firestore=False,  # Processor doesn't use Firestore
-    check_gcs=False,  # Processor doesn't directly access GCS
-    required_env_vars=['GCP_PROJECT_ID'],
-    optional_env_vars=['ENVIRONMENT']
-)
+# Note: HealthChecker simplified in Week 1 to only require service_name
+health_checker = HealthChecker(service_name='precompute-processor')
 app.register_blueprint(create_health_blueprint(health_checker))
 logger.info("Health check endpoints registered: /health, /ready, /health/deep")
 
