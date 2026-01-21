@@ -134,7 +134,7 @@ class ExecutionLogger:
             log_entry = {
                 # Execution identifiers
                 'request_id': request_id,
-                'worker_id': None,  # TODO: Get from environment
+                'worker_id': os.environ.get('CLOUD_RUN_REVISION', 'unknown'),
                 'run_date': datetime.now(timezone.utc).isoformat(),
 
                 # Request details

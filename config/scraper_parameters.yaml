@@ -83,9 +83,11 @@ simple_scrapers:
   # ────────────────────────────────────────────────────────────
   
   nbac_injury_report:
-    # FIXME: Scraper needs gamedate + hour + period, but no clear default
-    # For now, skip in workflows until we add time-based resolver
+    # Injury reports published multiple times daily; 4 PM ET is typical for pre-game updates
     gamedate: context.execution_date
+    hour: 4
+    period: PM
+    minute: "00"  # Optional: defaults to :00 if not specified
 
   nbac_referee_assignments:
     date: context.execution_date  # Required parameter
