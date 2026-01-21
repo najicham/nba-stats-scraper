@@ -37,14 +37,11 @@ fi
 
 # Check required email variables
 EMAIL_VARS_MISSING=false
-if [ -z "$BREVO_SMTP_PASSWORD" ]; then
-    echo "⚠️  BREVO_SMTP_PASSWORD not found - email alerts will be disabled"
-    EMAIL_VARS_MISSING=true
-fi
 if [ -z "$EMAIL_ALERTS_TO" ]; then
     echo "⚠️  EMAIL_ALERTS_TO not found - email alerts will be disabled"
     EMAIL_VARS_MISSING=true
 fi
+# Note: AWS SES and Brevo credentials are in Secret Manager, not .env
 
 # Backup existing root Dockerfile if it exists
 if [ -f "Dockerfile" ]; then
@@ -71,32 +68,40 @@ ENV_VARS="$ENV_VARS,COMMIT_SHA_FULL=$GIT_COMMIT_FULL"
 ENV_VARS="$ENV_VARS,GIT_BRANCH=$GIT_BRANCH"
 ENV_VARS="$ENV_VARS,DEPLOY_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-# Add email configuration if available
+# Add email configuration if available (credentials in Secret Manager)
 if [ "$EMAIL_VARS_MISSING" = false ]; then
+    echo "✅ Adding email alerting configuration..."
+
+    # AWS SES configuration (credentials mounted via --set-secrets below)
+    ENV_VARS="$ENV_VARS,AWS_SES_REGION=${AWS_SES_REGION:-us-west-2}"
+    ENV_VARS="$ENV_VARS,AWS_SES_FROM_EMAIL=${AWS_SES_FROM_EMAIL:-alert@989.ninja}"
+    ENV_VARS="$ENV_VARS,AWS_SES_FROM_NAME=${AWS_SES_FROM_NAME:-NBA Raw Processors}"
+
+    # Brevo configuration (fallback, password mounted via --set-secrets below)
     ENV_VARS="$ENV_VARS,BREVO_SMTP_HOST=${BREVO_SMTP_HOST:-smtp-relay.brevo.com}"
     ENV_VARS="$ENV_VARS,BREVO_SMTP_PORT=${BREVO_SMTP_PORT:-587}"
     ENV_VARS="$ENV_VARS,BREVO_SMTP_USERNAME=${BREVO_SMTP_USERNAME}"
-    ENV_VARS="$ENV_VARS,BREVO_SMTP_PASSWORD=${BREVO_SMTP_PASSWORD}"
     ENV_VARS="$ENV_VARS,BREVO_FROM_EMAIL=${BREVO_FROM_EMAIL}"
-    ENV_VARS="$ENV_VARS,BREVO_FROM_NAME=${BREVO_FROM_NAME:-NBA Registry System}"
+    ENV_VARS="$ENV_VARS,BREVO_FROM_NAME=${BREVO_FROM_NAME:-NBA Raw Processors}"
+
+    # Email recipients
     ENV_VARS="$ENV_VARS,EMAIL_ALERTS_TO=${EMAIL_ALERTS_TO}"
     ENV_VARS="$ENV_VARS,EMAIL_CRITICAL_TO=${EMAIL_CRITICAL_TO:-$EMAIL_ALERTS_TO}"
-    
+
     # Optional alert thresholds
     ENV_VARS="$ENV_VARS,EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD=${EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD:-50}"
     ENV_VARS="$ENV_VARS,EMAIL_ALERT_SUCCESS_RATE_THRESHOLD=${EMAIL_ALERT_SUCCESS_RATE_THRESHOLD:-90.0}"
-    
-    echo "✅ Email alerting configuration included"
+    ENV_VARS="$ENV_VARS,EMAIL_ALERT_MAX_PROCESSING_TIME=${EMAIL_ALERT_MAX_PROCESSING_TIME:-30}"
+
+    echo "   Email alerting: AWS SES (primary), Brevo (fallback)"
 else
-    echo "⚠️  Email alerting configuration skipped - missing required variables"
+    echo "⚠️  Email alerting configuration skipped - missing EMAIL_ALERTS_TO"
 fi
 
-# Build secrets string for AWS SES (from Secret Manager)
+# Build secrets string - credentials from Secret Manager
 SECRETS="AWS_SES_ACCESS_KEY_ID=aws-ses-access-key-id:latest"
 SECRETS="$SECRETS,AWS_SES_SECRET_ACCESS_KEY=aws-ses-secret-access-key:latest"
-
-# Add AWS SES region to environment variables
-ENV_VARS="$ENV_VARS,AWS_SES_REGION=us-west-2"
+SECRETS="$SECRETS,BREVO_SMTP_PASSWORD=brevo-smtp-password:latest"
 
 gcloud run deploy $SERVICE_NAME \
     --source=. \

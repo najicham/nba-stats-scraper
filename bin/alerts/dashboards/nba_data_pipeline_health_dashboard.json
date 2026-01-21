@@ -32,10 +32,7 @@
             },
             "thresholds": [
               {
-                "value": 0,
-                "color": "YELLOW",
-                "direction": "ABOVE",
-                "label": "Features > 4 hours old"
+                "value": 0
               }
             ],
             "chartOptions": {
@@ -73,10 +70,7 @@
             },
             "thresholds": [
               {
-                "value": 0,
-                "color": "YELLOW",
-                "direction": "ABOVE",
-                "label": "> 30% outside normal range"
+                "value": 0
               }
             ],
             "chartOptions": {
@@ -114,14 +108,10 @@
             },
             "thresholds": [
               {
-                "value": 5000,
-                "color": "YELLOW",
-                "direction": "ABOVE"
+                "value": 5000
               },
               {
-                "value": 10000,
-                "color": "RED",
-                "direction": "ABOVE"
+                "value": 10000
               }
             ],
             "chartOptions": {
@@ -226,16 +216,10 @@
             },
             "thresholds": [
               {
-                "value": 50,
-                "color": "YELLOW",
-                "direction": "ABOVE",
-                "label": "Warning: > 50 messages"
+                "value": 50
               },
               {
-                "value": 100,
-                "color": "RED",
-                "direction": "ABOVE",
-                "label": "Critical: > 100 messages"
+                "value": 100
               }
             ],
             "chartOptions": {
@@ -274,16 +258,10 @@
             },
             "thresholds": [
               {
-                "value": 3600,
-                "color": "YELLOW",
-                "direction": "ABOVE",
-                "label": "> 1 hour old"
+                "value": 3600
               },
               {
-                "value": 86400,
-                "color": "RED",
-                "direction": "ABOVE",
-                "label": "> 24 hours old"
+                "value": 86400
               }
             ],
             "chartOptions": {
@@ -404,7 +382,7 @@
               {
                 "timeSeriesQuery": {
                   "timeSeriesFilter": {
-                    "filter": "resource.type=\"cloud_function\" AND resource.labels.function_name=\"phase3-to-phase4\" AND severity>=ERROR AND textPayload=~\"Phase 4 BLOCKED\"",
+                    "filter": "resource.type=\"cloud_function\" AND resource.labels.function_name=\"phase3-to-phase4\" AND severity>=ERROR AND textPayload:\"Phase 4 BLOCKED\"",
                     "aggregation": {
                       "alignmentPeriod": "3600s",
                       "perSeriesAligner": "ALIGN_RATE",
@@ -422,16 +400,10 @@
             },
             "thresholds": [
               {
-                "value": 0,
-                "color": "GREEN",
-                "direction": "ABOVE",
-                "label": "Target: Zero blocks"
+                "value": 0
               },
               {
-                "value": 1,
-                "color": "RED",
-                "direction": "ABOVE",
-                "label": "Alert: Gate blocking"
+                "value": 1
               }
             ],
             "chartOptions": {
@@ -452,7 +424,7 @@
               {
                 "timeSeriesQuery": {
                   "timeSeriesFilter": {
-                    "filter": "resource.type=\"cloud_function\" AND resource.labels.function_name=\"phase4-to-phase5\" AND severity>=ERROR AND textPayload=~\"Circuit Breaker TRIPPED\"",
+                    "filter": "resource.type=\"cloud_function\" AND resource.labels.function_name=\"phase4-to-phase5\" AND severity>=ERROR AND textPayload:\"Circuit Breaker TRIPPED\"",
                     "aggregation": {
                       "alignmentPeriod": "3600s",
                       "perSeriesAligner": "ALIGN_RATE",
@@ -470,16 +442,10 @@
             },
             "thresholds": [
               {
-                "value": 0,
-                "color": "GREEN",
-                "direction": "ABOVE",
-                "label": "Target: Zero trips"
+                "value": 0
               },
               {
-                "value": 1,
-                "color": "RED",
-                "direction": "ABOVE",
-                "label": "Alert: Circuit breaker active"
+                "value": 1
               }
             ],
             "chartOptions": {
@@ -645,19 +611,7 @@
             },
             "sparkChartView": {
               "sparkChartType": "SPARK_LINE"
-            },
-            "thresholds": [
-              {
-                "value": 0.95,
-                "color": "GREEN",
-                "direction": "ABOVE"
-              },
-              {
-                "value": 0.80,
-                "color": "YELLOW",
-                "direction": "ABOVE"
-              }
-            ]
+            }
           }
         }
       }
