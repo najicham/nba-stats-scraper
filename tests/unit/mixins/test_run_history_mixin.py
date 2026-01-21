@@ -204,9 +204,44 @@ class TestSetSkipped:
 
 
 class MockSchemaField:
-    """Mock BigQuery SchemaField"""
-    def __init__(self, name):
+    """Mock BigQuery SchemaField - matches google.cloud.bigquery.SchemaField interface"""
+    def __init__(self, name, field_type='STRING', mode='NULLABLE'):
         self.name = name
+        self.field_type = field_type
+        self.mode = mode
+        self.fields = ()  # For nested fields, empty for simple fields
+        self.description = None
+        self.policy_tags = None
+        self.precision = None
+        self.scale = None
+        self.max_length = None
+        self.default_value_expression = None
+        self._properties = {}
+
+    def __contains__(self, item):
+        """Support 'in' operator for compatibility with BigQuery"""
+        return item in self._properties
+
+    def __iter__(self):
+        """Support iteration for compatibility with BigQuery"""
+        return iter(self.fields)
+
+    def __getitem__(self, key):
+        """Support item access for compatibility with BigQuery"""
+        return self._properties.get(key)
+
+    def __setitem__(self, key, value):
+        """Support item assignment for compatibility with BigQuery"""
+        self._properties[key] = value
+
+    def to_api_repr(self):
+        """Return API representation of the field"""
+        return {
+            'name': self.name,
+            'type': self.field_type,
+            'mode': self.mode,
+            'fields': [f.to_api_repr() for f in self.fields] if self.fields else []
+        }
 
 
 class TestRecordRunComplete:
@@ -236,7 +271,12 @@ class TestRecordRunComplete:
             MockSchemaField('cloud_run_revision'),
         ]
         processor.bq_client.get_table = Mock(return_value=mock_table)
-        processor.bq_client.insert_rows_json = Mock(return_value=[])
+
+        # Mock the load job for load_table_from_json (used instead of insert_rows_json)
+        mock_load_job = Mock()
+        mock_load_job.result = Mock(return_value=None)
+        mock_load_job.errors = None  # No errors
+        processor.bq_client.load_table_from_json = Mock(return_value=mock_load_job)
 
         # Start tracking
         processor.start_run_tracking(
@@ -255,11 +295,11 @@ class TestRecordRunComplete:
             summary={'test': 'data'}
         )
 
-        # Verify insert was called
-        assert processor.bq_client.insert_rows_json.called
-        call_args = processor.bq_client.insert_rows_json.call_args
-        table_id = call_args[0][0]
-        records = call_args[0][1]
+        # Verify load_table_from_json was called (implementation uses batch loading)
+        assert processor.bq_client.load_table_from_json.called
+        call_args = processor.bq_client.load_table_from_json.call_args
+        records = call_args[0][0]  # First positional arg is the records list
+        table_id = call_args[0][1]  # Second positional arg is the table_id
 
         assert 'processor_run_history' in table_id
         assert len(records) == 1
@@ -343,13 +383,19 @@ class TestInsertRunHistory:
             MockSchemaField('status'),
         ]
         processor.bq_client.get_table = Mock(return_value=mock_table)
-        processor.bq_client.insert_rows_json = Mock(return_value=[])
+
+        # Mock the load job for load_table_from_json (used instead of insert_rows_json)
+        mock_load_job = Mock()
+        mock_load_job.result = Mock(return_value=None)
+        mock_load_job.errors = None
+        processor.bq_client.load_table_from_json = Mock(return_value=mock_load_job)
 
         processor.record_run_complete(status='success')
 
-        # Verify only schema fields are included
-        call_args = processor.bq_client.insert_rows_json.call_args
-        record = call_args[0][1][0]
+        # Verify load_table_from_json was called and only schema fields are included
+        call_args = processor.bq_client.load_table_from_json.call_args
+        records = call_args[0][0]  # First positional arg is the records list
+        record = records[0]
 
         assert 'processor_name' in record
         assert 'run_id' in record
