@@ -123,7 +123,7 @@ class DataQualityValidator:
 
         # Check each phase for each date
         phases = {
-            'Phase 2 (Raw)': 'nba_raw.nbac_player_boxscore',
+            'Phase 2 (Raw)': 'nba_raw.nbac_player_boxscores',
             'Phase 3 (Analytics)': 'nba_analytics.player_game_summary',
             'Phase 4 (Precompute)': 'nba_precompute.ml_feature_store',
             'Phase 5 (Predictions)': 'nba_predictions.daily_predictions_catboost_v8',
@@ -165,7 +165,7 @@ class DataQualityValidator:
             game_date,
             COUNT(*) as player_count,
             COUNT(DISTINCT game_id) as game_count
-        FROM `{PROJECT_ID}.nba_raw.nbac_player_boxscore`
+        FROM `{PROJECT_ID}.nba_raw.nbac_player_boxscores`
         WHERE game_date BETWEEN '{self.start_date}' AND '{self.end_date}'
         GROUP BY game_date
         ORDER BY game_date
@@ -222,7 +222,7 @@ class DataQualityValidator:
             SELECT
                 game_date,
                 COUNT(*) as actual_players
-            FROM `{PROJECT_ID}.nba_raw.nbac_player_boxscore`
+            FROM `{PROJECT_ID}.nba_raw.nbac_player_boxscores`
             WHERE game_date BETWEEN '{self.start_date}' AND '{self.end_date}'
             GROUP BY game_date
         )
@@ -263,7 +263,7 @@ class DataQualityValidator:
         query = f"""
         WITH phase2 AS (
             SELECT game_date, COUNT(DISTINCT player_lookup) as p2_players
-            FROM `{PROJECT_ID}.nba_raw.nbac_player_boxscore`
+            FROM `{PROJECT_ID}.nba_raw.nbac_player_boxscores`
             WHERE game_date BETWEEN '{self.start_date}' AND '{self.end_date}'
             GROUP BY game_date
         ),
@@ -324,7 +324,7 @@ class DataQualityValidator:
             COUNTIF(minutes > 60) as extreme_minutes,
             COUNTIF(fgm > fga) as fgm_gt_fga,
             COUNTIF(ftm > fta) as ftm_gt_fta
-        FROM `{PROJECT_ID}.nba_raw.nbac_player_boxscore`
+        FROM `{PROJECT_ID}.nba_raw.nbac_player_boxscores`
         WHERE game_date BETWEEN '{self.start_date}' AND '{self.end_date}'
         GROUP BY game_date
         HAVING
@@ -371,7 +371,7 @@ class DataQualityValidator:
             COUNTIF(team IS NULL) as missing_team,
             COUNTIF(minutes IS NULL) as missing_minutes,
             COUNTIF(points IS NULL) as missing_points
-        FROM `{PROJECT_ID}.nba_raw.nbac_player_boxscore`
+        FROM `{PROJECT_ID}.nba_raw.nbac_player_boxscores`
         WHERE game_date BETWEEN '{self.start_date}' AND '{self.end_date}'
         GROUP BY game_date
         HAVING
