@@ -24,6 +24,9 @@ from shared.utils.notification_system import (
     notify_info
 )
 
+# Import rate limit handler
+from shared.utils.rate_limit_handler import get_rate_limit_handler
+
 # Import Secret Manager utilities
 import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
@@ -97,22 +100,59 @@ def get_json(
 ) -> Dict[str, Any]:
     """
     Wrapper around HTTP GET that handles retries and 429 back‑off.
+
+    Uses RateLimitHandler for intelligent rate limit handling with:
+    - Exponential backoff with jitter
+    - Circuit breaker for persistent rate limiting
+    - Retry-After header support (future-proof, though BDL doesn't send it yet)
     """
     global _rate_limit_counter
-    
+
+    # Get rate limit handler
+    rate_limiter = get_rate_limit_handler()
+    domain = "api.balldontlie.io"
+
     attempt = 0
     consecutive_429s = 0
-    
+
     while True:
         try:
             resp = _request("GET", url, params=params)
-            
+
             if resp.status_code == 429:
-                # Track rate limiting
+                # Track rate limiting for notifications
                 consecutive_429s += 1
                 _rate_limit_counter += 1
-                
-                # Notify on persistent rate limiting
+
+                # Use RateLimitHandler to determine if we should retry
+                should_retry, wait_time = rate_limiter.should_retry(
+                    resp, attempt, domain
+                )
+
+                if not should_retry:
+                    # Circuit breaker open or max retries exceeded
+                    error_msg = f"Rate limit exceeded for {url} (circuit breaker or max retries)"
+
+                    try:
+                        notify_error(
+                            title="Ball Don't Lie API: Rate Limit Circuit Breaker",
+                            message=error_msg,
+                            details={
+                                'component': 'bdl_utils',
+                                'url': url,
+                                'consecutive_429s': consecutive_429s,
+                                'attempts': attempt + 1,
+                                'circuit_breaker_open': rate_limiter.is_circuit_open(domain),
+                                'action': 'Reduce API call frequency or wait for circuit breaker to reset'
+                            },
+                            processor_name="Ball Don't Lie Utils"
+                        )
+                    except Exception as notify_ex:
+                        pass
+
+                    raise RuntimeError(error_msg)
+
+                # Notify on persistent rate limiting (every N hits)
                 if _rate_limit_counter >= _rate_limit_notification_threshold:
                     try:
                         notify_warning(
@@ -123,6 +163,8 @@ def get_json(
                                 'url': url,
                                 'rate_limit_count': _rate_limit_counter,
                                 'consecutive_in_request': consecutive_429s,
+                                'wait_time_seconds': wait_time,
+                                'circuit_breaker_failures': rate_limiter.circuit_breakers[domain].consecutive_failures if domain in rate_limiter.circuit_breakers else 0,
                                 'action': 'Check API quota usage or reduce scraper frequency'
                             }
                         )
@@ -130,16 +172,19 @@ def get_json(
                         _rate_limit_counter = 0
                     except Exception as notify_ex:
                         pass  # Don't fail on notification issues
-                
-                # Back‑off: BALLDONTLIE doesn't send Retry‑After, so sleep 1.2 s
-                time.sleep(1.2)
-                
+
+                # Back off with intelligent wait time
+                time.sleep(wait_time)
+
             elif resp.is_success:
+                # Record success for circuit breaker
+                rate_limiter.record_success(domain)
+
                 # Reset rate limit counter on success
                 if _rate_limit_counter > 0:
                     _rate_limit_counter = max(0, _rate_limit_counter - 1)
                 return resp.json()
-                
+
             else:
                 # Non-429 HTTP error
                 resp.raise_for_status()

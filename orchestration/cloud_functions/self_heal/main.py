@@ -216,6 +216,113 @@ def check_odds_data_freshness(bq_client, target_date):
     }
 
 
+def check_phase2_completeness(bq_client, target_date):
+    """
+    Check if Phase 2 processors have run for target date.
+
+    Checks tables:
+    - nba_raw.bdl_player_boxscores
+    - nba_raw.nbac_gamebook_player_stats
+    - nba_raw.odds_api_game_lines
+    - nba_raw.nbac_schedule
+
+    Returns:
+        dict with:
+        - is_complete: bool
+        - missing_processors: list of processor names
+        - record_counts: dict mapping processor to record count
+    """
+    EXPECTED_TABLES = {
+        'bdl_player_boxscores': 'nba_raw.bdl_player_boxscores',
+        'nbac_gamebook_player_stats': 'nba_raw.nbac_gamebook_player_stats',
+        'odds_api_game_lines': 'nba_raw.odds_api_game_lines',
+        'nbac_schedule': 'nba_raw.nbac_schedule'
+    }
+
+    missing_processors = []
+    record_counts = {}
+
+    for processor_name, table_name in EXPECTED_TABLES.items():
+        # Use game_date for most tables, but schedule uses game_date_est
+        date_column = 'game_date_est' if processor_name == 'nbac_schedule' else 'game_date'
+
+        query = f"""
+        SELECT COUNT(*) as count
+        FROM `{PROJECT_ID}.{table_name}`
+        WHERE DATE({date_column}) = '{target_date}'
+        """
+
+        try:
+            results = list(bq_client.query(query).result(timeout=60))
+            count = results[0].count if results else 0
+            record_counts[processor_name] = count
+
+            if count == 0:
+                missing_processors.append(processor_name)
+                logger.warning(f"Phase 2: {processor_name} has 0 records for {target_date}")
+        except Exception as e:
+            logger.error(f"Error checking {processor_name}: {e}")
+            missing_processors.append(processor_name)
+            record_counts[processor_name] = 0
+
+    return {
+        'is_complete': len(missing_processors) == 0,
+        'missing_processors': missing_processors,
+        'record_counts': record_counts
+    }
+
+
+def check_phase4_completeness(bq_client, target_date):
+    """
+    Check if Phase 4 precompute processors ran for target date.
+
+    Checks tables:
+    - nba_predictions.ml_feature_store_v2
+    - nba_predictions.player_daily_cache
+    - nba_precompute.player_composite_factors
+
+    Returns:
+        dict with:
+        - is_complete: bool
+        - missing_processors: list of table names
+        - record_counts: dict mapping table to record count
+    """
+    EXPECTED_TABLES = {
+        'ml_feature_store_v2': ('nba_predictions', 'ml_feature_store_v2', 'game_date'),
+        'player_daily_cache': ('nba_predictions', 'player_daily_cache', 'game_date'),
+        'player_composite_factors': ('nba_precompute', 'player_composite_factors', 'analysis_date')
+    }
+
+    missing_processors = []
+    record_counts = {}
+
+    for processor_name, (dataset, table, date_col) in EXPECTED_TABLES.items():
+        query = f"""
+        SELECT COUNT(*) as count
+        FROM `{PROJECT_ID}.{dataset}.{table}`
+        WHERE DATE({date_col}) = '{target_date}'
+        """
+
+        try:
+            results = list(bq_client.query(query).result(timeout=60))
+            count = results[0].count if results else 0
+            record_counts[processor_name] = count
+
+            if count == 0:
+                missing_processors.append(processor_name)
+                logger.warning(f"Phase 4: {processor_name} has 0 records for {target_date}")
+        except Exception as e:
+            logger.error(f"Error checking Phase 4 {processor_name}: {e}")
+            missing_processors.append(processor_name)
+            record_counts[processor_name] = 0
+
+    return {
+        'is_complete': len(missing_processors) == 0,
+        'missing_processors': missing_processors,
+        'record_counts': record_counts
+    }
+
+
 def trigger_phase3_only(target_date):
     """
     Trigger Phase 3 for a specific date without triggering the full pipeline.
@@ -380,6 +487,73 @@ def trigger_phase4(target_date):
         return False
 
 
+def trigger_phase2_healing(target_date, missing_processors, correlation_id):
+    """
+    Trigger Phase 2 processor re-runs for missing data.
+
+    NOTE: Phase 1 scrapers don't have individual endpoints yet,
+    so this is a placeholder that logs the need for healing.
+    In production, this would call individual scraper endpoints.
+
+    Args:
+        target_date: Date to heal (YYYY-MM-DD)
+        missing_processors: List of missing processor names
+        correlation_id: Correlation ID for tracking
+
+    Returns:
+        dict with:
+        - triggered: list of processors triggered
+        - failed: list of processors that failed
+        - skipped: list of processors skipped (no endpoint)
+    """
+    logger.warning(
+        f"Phase 2 healing needed for {target_date} [correlation_id={correlation_id}]: "
+        f"missing processors: {missing_processors}"
+    )
+
+    # Placeholder - in full implementation, would call Phase 1 scraper endpoints
+    # For now, just log the need
+    return {
+        'triggered': [],
+        'failed': [],
+        'skipped': missing_processors,
+        'reason': 'Phase 1 scrapers do not have individual healing endpoints yet'
+    }
+
+
+def trigger_phase4_healing(target_date, missing_processors, correlation_id):
+    """
+    Trigger Phase 4 precompute re-runs for missing data.
+
+    Uses the existing trigger_phase4() which runs ALL processors.
+    This ensures dependencies are satisfied.
+
+    Args:
+        target_date: Date to heal (YYYY-MM-DD)
+        missing_processors: List of missing processor/table names
+        correlation_id: Correlation ID for tracking
+
+    Returns:
+        dict with:
+        - success: bool
+        - processors: list of processors that were run
+    """
+    logger.info(
+        f"Phase 4 healing triggered for {target_date} [correlation_id={correlation_id}]: "
+        f"missing: {missing_processors}"
+    )
+
+    # Call existing trigger_phase4 which runs ALL Phase 4 processors
+    # This is intentional - running all ensures dependencies are met
+    success = trigger_phase4(target_date)
+
+    return {
+        'success': success,
+        'processors': missing_processors if success else [],
+        'note': 'Ran all Phase 4 processors to ensure dependencies'
+    }
+
+
 def trigger_predictions(target_date):
     """Trigger prediction coordinator."""
     token = get_auth_token(COORDINATOR_URL)
@@ -412,6 +586,101 @@ def trigger_predictions(target_date):
         return True
     except Exception as e:
         logger.error(f"Coordinator failed after retries: {e}")
+        return False
+
+
+def send_healing_alert(phase, target_date, missing_components, healing_triggered, correlation_id):
+    """
+    Send Slack alert when self-healing triggers.
+
+    Args:
+        phase: Phase name (e.g., "Phase 2", "Phase 4")
+        target_date: Date being healed
+        missing_components: List of missing processor/table names
+        healing_triggered: bool or dict with healing result
+        correlation_id: Correlation ID for tracking
+    """
+    # Check if Slack webhook is configured
+    slack_webhook = os.getenv('SLACK_WEBHOOK_URL')
+    if not slack_webhook:
+        logger.warning("SLACK_WEBHOOK_URL not configured, skipping alert")
+        return False
+
+    try:
+        triggered_text = "✅ Yes" if healing_triggered else "❌ No"
+        components_text = "\n".join([f"• {c}" for c in missing_components])
+
+        payload = {
+            "attachments": [{
+                "color": "#FFA500",  # Orange
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": f"🔧 Self-Heal Triggered: {phase}"
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*Date:*\n{target_date}"},
+                            {"type": "mrkdwn", "text": f"*Phase:*\n{phase}"},
+                            {"type": "mrkdwn", "text": f"*Healing Triggered:*\n{triggered_text}"},
+                            {"type": "mrkdwn", "text": f"*Correlation ID:*\n`{correlation_id}`"}
+                        ]
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Missing Components:*\n{components_text}"
+                        }
+                    }
+                ]
+            }]
+        }
+
+        response = requests.post(slack_webhook, json=payload, timeout=10)
+        response.raise_for_status()
+        logger.info(f"Healing alert sent for {phase} on {target_date}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to send healing alert: {e}")
+        return False
+
+
+def log_healing_to_firestore(phase, target_date, missing_components, healing_result, correlation_id):
+    """
+    Log healing operation to Firestore for tracking and analysis.
+
+    Args:
+        phase: Phase name (e.g., "phase2", "phase4")
+        target_date: Date being healed
+        missing_components: List of missing components
+        healing_result: Result dict from healing trigger
+        correlation_id: Correlation ID for tracking
+    """
+    try:
+        db = firestore.Client()
+
+        doc_id = f"{target_date}_{phase.lower().replace(' ', '_')}_{correlation_id[:8]}"
+        doc_ref = db.collection('self_heal_history').document(doc_id)
+
+        doc_ref.set({
+            'phase': phase,
+            'target_date': target_date,
+            'missing_components': missing_components,
+            'healing_result': healing_result,
+            'correlation_id': correlation_id,
+            'timestamp': firestore.SERVER_TIMESTAMP,
+            'success': healing_result.get('success', False) if isinstance(healing_result, dict) else bool(healing_result)
+        })
+
+        logger.info(f"Logged healing to Firestore: {doc_id}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to log healing to Firestore: {e}")
         return False
 
 
@@ -489,8 +758,77 @@ def self_heal_check(request):
     try:
         bq_client = get_bigquery_client(project_id=PROJECT_ID)
 
+        # Generate correlation ID for this self-heal run
+        import uuid
+        correlation_id = str(uuid.uuid4())
+        result["correlation_id"] = correlation_id
+
         # =================================================================
-        # PHASE 3 DATA CHECK (NEW)
+        # PHASE 2 DATA CHECK (NEW - Week 5-6 Self-Heal Expansion)
+        # Check if Phase 2 processors ran for yesterday's games
+        # This catches Phase 1 scraper failures at the source
+        # =================================================================
+        yesterday_games = check_games_scheduled(bq_client, yesterday)
+        if yesterday_games > 0:
+            phase2_data = check_phase2_completeness(bq_client, yesterday)
+
+            phase2_check = {
+                "date": yesterday,
+                "type": "phase2_scrapers",
+                "games_played": yesterday_games,
+                "record_counts": phase2_data['record_counts'],
+                "missing_processors": phase2_data['missing_processors']
+            }
+            result["checks"].append(phase2_check)
+
+            if not phase2_data['is_complete']:
+                logger.warning(
+                    f"PHASE 2 DATA INCOMPLETE: {yesterday_games} games played yesterday "
+                    f"but missing processors: {phase2_data['missing_processors']}"
+                )
+                phase2_check["status"] = "incomplete"
+
+                # Trigger Phase 2 healing
+                try:
+                    healing_result = trigger_phase2_healing(
+                        yesterday,
+                        phase2_data['missing_processors'],
+                        correlation_id
+                    )
+
+                    result["actions_taken"].append(
+                        f"Phase 2 healing logged for {yesterday}: {phase2_data['missing_processors']}"
+                    )
+
+                    # Send alert
+                    send_healing_alert(
+                        phase='Phase 2',
+                        target_date=yesterday,
+                        missing_components=phase2_data['missing_processors'],
+                        healing_triggered=healing_result,
+                        correlation_id=correlation_id
+                    )
+
+                    # Log to Firestore
+                    log_healing_to_firestore(
+                        phase='phase2',
+                        target_date=yesterday,
+                        missing_components=phase2_data['missing_processors'],
+                        healing_result=healing_result,
+                        correlation_id=correlation_id
+                    )
+
+                except Exception as e:
+                    logger.error(f"Phase 2 healing error: {e}")
+                    result["actions_taken"].append(f"Phase 2 healing error: {str(e)[:50]}")
+            else:
+                phase2_check["status"] = "healthy"
+                logger.info(
+                    f"Phase 2 OK for {yesterday}: all processors complete"
+                )
+
+        # =================================================================
+        # PHASE 3 DATA CHECK (EXISTING)
         # Check if player_game_summary exists for yesterday's games
         # This catches Phase 3 failures that would otherwise go undetected
         # =================================================================
@@ -583,6 +921,75 @@ def self_heal_check(request):
                 logger.info(
                     f"OddsAPI OK for {today}: {odds_data['game_lines_count']} lines, "
                     f"{odds_data['props_count']} props for {odds_data['games_with_props']} games"
+                )
+
+        # =================================================================
+        # PHASE 4 DATA CHECK (NEW - Week 5-6 Self-Heal Expansion)
+        # Check if Phase 4 precompute processors ran for today/tomorrow
+        # This catches Phase 4 failures before predictions run
+        # =================================================================
+        # Check Phase 4 for today (needed for today's predictions)
+        if today_games > 0:
+            phase4_data = check_phase4_completeness(bq_client, today)
+
+            phase4_check = {
+                "date": today,
+                "type": "phase4_precompute",
+                "games_scheduled": today_games,
+                "record_counts": phase4_data['record_counts'],
+                "missing_processors": phase4_data['missing_processors']
+            }
+            result["checks"].append(phase4_check)
+
+            if not phase4_data['is_complete']:
+                logger.warning(
+                    f"PHASE 4 DATA INCOMPLETE: {today_games} games scheduled today "
+                    f"but missing processors: {phase4_data['missing_processors']}"
+                )
+                phase4_check["status"] = "incomplete"
+
+                # Trigger Phase 4 healing
+                try:
+                    healing_result = trigger_phase4_healing(
+                        today,
+                        phase4_data['missing_processors'],
+                        correlation_id
+                    )
+
+                    if healing_result['success']:
+                        result["actions_taken"].append(
+                            f"Phase 4 healing triggered for {today}: {phase4_data['missing_processors']}"
+                        )
+                    else:
+                        result["actions_taken"].append(
+                            f"Phase 4 healing failed for {today}"
+                        )
+
+                    # Send alert
+                    send_healing_alert(
+                        phase='Phase 4',
+                        target_date=today,
+                        missing_components=phase4_data['missing_processors'],
+                        healing_triggered=healing_result['success'],
+                        correlation_id=correlation_id
+                    )
+
+                    # Log to Firestore
+                    log_healing_to_firestore(
+                        phase='phase4',
+                        target_date=today,
+                        missing_components=phase4_data['missing_processors'],
+                        healing_result=healing_result,
+                        correlation_id=correlation_id
+                    )
+
+                except Exception as e:
+                    logger.error(f"Phase 4 healing error: {e}")
+                    result["actions_taken"].append(f"Phase 4 healing error: {str(e)[:50]}")
+            else:
+                phase4_check["status"] = "healthy"
+                logger.info(
+                    f"Phase 4 OK for {today}: all processors complete"
                 )
 
         # Check TODAY predictions (most important for same-day predictions)

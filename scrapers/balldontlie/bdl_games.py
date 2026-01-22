@@ -64,6 +64,13 @@ except ImportError:
     def notify_warning(*args, **kwargs): pass
     def notify_info(*args, **kwargs): pass
 
+# Rate limit handler import
+try:
+    from shared.utils.rate_limit_handler import get_rate_limit_handler
+except ImportError:
+    # Fallback if rate limit handler not available
+    get_rate_limit_handler = None
+
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
@@ -214,8 +221,34 @@ class BdlGamesScraper(ScraperBase, ScraperFlaskMixin):
                 "per_page": 100,
             }
 
-            # Paginate through all results
+            # Get rate limit handler (if available)
+            rate_limiter = get_rate_limit_handler() if get_rate_limit_handler is not None else None
+            domain = "api.balldontlie.io"
+
+            # Paginate through all results (with rate limit awareness)
             while cursor:
+                # Check circuit breaker before fetching page
+                if rate_limiter and rate_limiter.is_circuit_open(domain):
+                    error_msg = f"Circuit breaker open for {domain}, aborting pagination"
+                    logger.error(error_msg)
+                    try:
+                        notify_error(
+                            title="BDL Games - Circuit Breaker Open",
+                            message=error_msg,
+                            details={
+                                'scraper': 'bdl_games',
+                                'start_date': self.opts.get('startDate'),
+                                'end_date': self.opts.get('endDate'),
+                                'pages_fetched': pages_fetched,
+                                'games_so_far': len(games),
+                                'action': 'Wait for circuit breaker cooldown or reduce API call frequency'
+                            },
+                            processor_name="Ball Don't Lie Games"
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send circuit breaker notification: {notify_ex}")
+                    raise RuntimeError(error_msg)
+
                 try:
                     base_params["cursor"] = cursor
                     r = self.http_downloader.get(
@@ -224,13 +257,59 @@ class BdlGamesScraper(ScraperBase, ScraperFlaskMixin):
                         params=base_params,
                         timeout=self.timeout_http,
                     )
+
+                    # Handle rate limiting specifically
+                    if r.status_code == 429:
+                        if rate_limiter:
+                            should_retry, wait_time = rate_limiter.should_retry(
+                                r, pages_fetched, domain
+                            )
+
+                            if not should_retry:
+                                error_msg = f"Rate limit exceeded during pagination (page {pages_fetched + 1})"
+                                logger.error(error_msg)
+                                try:
+                                    notify_error(
+                                        title="BDL Games - Rate Limit Exceeded",
+                                        message=error_msg,
+                                        details={
+                                            'scraper': 'bdl_games',
+                                            'start_date': self.opts.get('startDate'),
+                                            'end_date': self.opts.get('endDate'),
+                                            'pages_fetched': pages_fetched,
+                                            'games_so_far': len(games),
+                                            'cursor': cursor
+                                        },
+                                        processor_name="Ball Don't Lie Games"
+                                    )
+                                except Exception as notify_ex:
+                                    logger.warning(f"Failed to send rate limit notification: {notify_ex}")
+                                raise RuntimeError(error_msg)
+
+                            # Wait before retrying
+                            logger.info(f"Rate limited on page {pages_fetched + 1}, waiting {wait_time:.2f}s")
+                            import time
+                            time.sleep(wait_time)
+                            continue  # Retry same page
+                        else:
+                            # No rate limiter, use simple backoff
+                            import time
+                            time.sleep(2.0)
+                            continue
+
                     r.raise_for_status()
+
+                    # Success - record it for circuit breaker
+                    if rate_limiter:
+                        rate_limiter.record_success(domain)
+
                     j = r.json()
                     games.extend(j.get("data", []))
                     cursor = j.get("meta", {}).get("next_cursor")
                     pages_fetched += 1
+
                 except Exception as e:
-                    # Pagination failure
+                    # Pagination failure (non-429)
                     try:
                         notify_error(
                             title="BDL Games - Pagination Failed",

@@ -43,6 +43,7 @@ import functions_framework
 import pytz
 import requests
 from shared.clients.bigquery_pool import get_bigquery_client
+from shared.validation.phase_boundary_validator import PhaseBoundaryValidator, ValidationMode
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -471,6 +472,105 @@ def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_c
         return False
 
 
+def send_validation_blocking_alert(game_date: str, validation_result) -> bool:
+    """
+    Send Slack alert when phase boundary validation fails (BLOCKING mode).
+
+    Args:
+        game_date: The date being processed
+        validation_result: ValidationResult from PhaseBoundaryValidator
+
+    Returns:
+        True if alert sent successfully, False otherwise
+    """
+    if not SLACK_WEBHOOK_URL:
+        logger.warning("SLACK_WEBHOOK_URL not configured, skipping validation alert")
+        return False
+
+    try:
+        # Format issues for display
+        issues_text = "\n".join([
+            f"• [{issue.severity.value.upper()}] {issue.message}"
+            for issue in validation_result.issues
+        ])
+
+        # Blocking failures are always critical (red)
+        payload = {
+            "attachments": [{
+                "color": "#FF0000",  # Red for blocking errors
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": ":octagonal_sign: Phase 3→4 Validation FAILED (BLOCKING)",
+                            "emoji": True
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
+                            {"type": "mrkdwn", "text": f"*Phase:*\nPhase 3 → 4"},
+                            {"type": "mrkdwn", "text": f"*Mode:*\nBLOCKING"},
+                            {"type": "mrkdwn", "text": f"*Issues:*\n{len(validation_result.issues)}"}
+                        ]
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Validation Issues:*\n{issues_text}"
+                        }
+                    },
+                    {
+                        "type": "context",
+                        "elements": [{
+                            "type": "mrkdwn",
+                            "text": ":no_entry: Phase 4 will NOT run until validation passes. This prevents predictions from running with incomplete analytics data."
+                        }]
+                    }
+                ]
+            }]
+        }
+
+        # Add metrics if available
+        if validation_result.metrics:
+            metrics_fields = []
+            if 'actual_game_count' in validation_result.metrics:
+                metrics_fields.append({
+                    "type": "mrkdwn",
+                    "text": f"*Actual Games:*\n{validation_result.metrics['actual_game_count']}"
+                })
+            if 'expected_game_count' in validation_result.metrics:
+                metrics_fields.append({
+                    "type": "mrkdwn",
+                    "text": f"*Expected Games:*\n{validation_result.metrics['expected_game_count']}"
+                })
+            if 'completed_processors' in validation_result.metrics:
+                completed = validation_result.metrics['completed_processors']
+                metrics_fields.append({
+                    "type": "mrkdwn",
+                    "text": f"*Completed Processors:*\n{len(completed)}"
+                })
+
+            if metrics_fields:
+                payload["attachments"][0]["blocks"].insert(-1, {  # Insert before context block
+                    "type": "section",
+                    "fields": metrics_fields
+                })
+
+        from shared.utils.slack_retry import send_slack_webhook_with_retry
+        success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
+        if success:
+            logger.info(f"Validation blocking alert sent successfully for {game_date}")
+        return success
+
+    except Exception as e:
+        logger.error(f"Failed to send validation alert: {e}")
+        return False
+
+
 def normalize_processor_name(raw_name: str, output_table: Optional[str] = None) -> str:
     """
     Normalize processor name to match config format.
@@ -804,6 +904,101 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
                 f"Phase 3 data incomplete for {game_date}. "
                 f"Missing tables: {missing_tables}. "
                 f"Cannot trigger Phase 4 with incomplete upstream data."
+            )
+
+        # Enhanced Phase Boundary Validation (BLOCKING mode)
+        # Validates game count, processor completions, and data quality
+        try:
+            validator = PhaseBoundaryValidator(
+                bq_client=get_bigquery_client(),
+                project_id=PROJECT_ID,
+                phase_name='phase3',
+                mode=ValidationMode.BLOCKING  # BLOCKING - will prevent Phase 4 if validation fails
+            )
+
+            # Get expected game count from schedule
+            from datetime import datetime as dt
+            expected_game_count = 0
+            try:
+                schedule_query = f"""
+                SELECT COUNT(*) as game_count
+                FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+                WHERE DATE(game_date_est) = '{game_date}'
+                """
+                schedule_result = list(get_bigquery_client().query(schedule_query).result())
+                expected_game_count = schedule_result[0].game_count if schedule_result else 0
+            except Exception as e:
+                logger.warning(f"Could not fetch expected game count from schedule: {e}")
+
+            # Get expected processors based on mode
+            from shared.config.orchestration_config import get_orchestration_config
+            _config = get_orchestration_config()
+            mode_config = _config.phase_transitions.phase3_modes.get(mode, {})
+            expected_processors = mode_config.get('expected_processors', [])
+
+            validation_result = validator.run_validation(
+                game_date=dt.strptime(game_date, '%Y-%m-%d').date(),
+                validation_config={
+                    'check_game_count': True,
+                    'expected_game_count': expected_game_count,
+                    'game_count_dataset': 'nba_analytics',
+                    'game_count_table': 'player_game_summary',
+                    'check_processors': True,
+                    'expected_processors': expected_processors,
+                    'check_data_quality': True,
+                    'quality_tables': [
+                        ('nba_analytics', 'player_game_summary'),
+                        ('nba_analytics', 'team_offense_game_summary')
+                    ]
+                }
+            )
+
+            # Check validation result
+            if validation_result.has_errors:
+                logger.error(
+                    f"Phase 3→4 validation FAILED for {game_date} with {len(validation_result.issues)} errors. "
+                    f"BLOCKING Phase 4 trigger."
+                )
+
+                # Send blocking alert
+                send_validation_blocking_alert(game_date, validation_result)
+
+                # Log to BigQuery for monitoring
+                try:
+                    validator.log_validation_to_bigquery(validation_result)
+                except Exception as log_error:
+                    logger.error(f"Failed to log validation to BigQuery: {log_error}")
+
+                # CRITICAL: Raise exception to BLOCK Phase 4
+                error_messages = [issue.message for issue in validation_result.issues]
+                raise ValueError(
+                    f"Phase 3→4 validation failed for {game_date}. "
+                    f"Issues: {error_messages}. "
+                    f"Cannot trigger Phase 4 with incomplete/low-quality analytics data."
+                )
+
+            elif validation_result.has_warnings:
+                # Has warnings but no errors - log and continue
+                logger.warning(
+                    f"Phase 3→4 validation passed with {len(validation_result.issues)} warnings for {game_date}"
+                )
+                # Log to BigQuery
+                try:
+                    validator.log_validation_to_bigquery(validation_result)
+                except Exception as log_error:
+                    logger.error(f"Failed to log validation to BigQuery: {log_error}")
+            else:
+                logger.info(f"Phase 3→4 validation PASSED for {game_date} (no issues)")
+
+        except ValueError:
+            # Re-raise validation errors to block Phase 4
+            raise
+        except Exception as validation_error:
+            # Log validation framework errors but don't block Phase 4
+            # (don't want validation bugs to break the pipeline)
+            logger.error(
+                f"Phase boundary validation framework error (non-blocking): {validation_error}",
+                exc_info=True
             )
         # Read Firestore to get all processor data (including entities_changed)
         doc_snapshot = doc_ref.get()

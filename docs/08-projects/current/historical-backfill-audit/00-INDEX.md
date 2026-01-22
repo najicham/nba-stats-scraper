@@ -1,7 +1,7 @@
 # Historical Backfill Audit - Complete Documentation Index
 **Project:** Backfill System Improvements (P0 + P1)
 **Status:** ✅ Production Ready
-**Last Updated:** 2026-01-14
+**Last Updated:** 2026-01-21
 
 ---
 
@@ -156,6 +156,31 @@ Test Suite: /tests/test_p0_improvements.py
 
 ### Utilities & Queries
 ```
+🔧 data-completeness-validation-guide.md (NEW - 2026-01-21)
+   - Comprehensive data validation guide
+   - Historical backfill detection
+   - Phase 1-4 completeness checks
+   - Bulk backfill scripts
+   - For AI assistants to check data gaps
+
+📊 2026-01-21-DATA-VALIDATION-REPORT.md (NEW - 2026-01-21)
+   - 30-day data completeness validation results
+   - 33 BDL missing games identified (West Coast pattern)
+   - ✅ Phase 3/4 backfills COMPLETED (Jan 1, 16-20)
+   - Correct table names documented
+
+📧 BDL-SUPPORT-EMAIL-DRAFT.md (NEW - 2026-01-21)
+   - Ready-to-send email for BallDontLie support
+   - List of 33 missing games
+   - West Coast pattern analysis
+   - ACTION REQUIRED: Send this email
+
+⚠️ BDL-AVAILABILITY-INVESTIGATION-JAN-21-2026.md (CORRECTED)
+   - Previous investigation had incorrect conclusions
+   - CORRECTED: Games ARE still missing from BDL
+   - Fixed view bugs (processed_at was NULL)
+   - Monitoring views now working correctly
+
 🔧 VALIDATION-QUERIES.md
    - Useful SQL queries
    - Coverage validation
@@ -186,6 +211,12 @@ Test Suite: /tests/test_p0_improvements.py
 1. Automated: Run `pytest tests/test_p0_improvements.py -v`
 2. Integration: Follow `INTEGRATION-TEST-GUIDE.md`
 3. Validation: Use queries from `VALIDATION-QUERIES.md`
+
+### "I Want to Check Data Completeness & Backfill Needs" (NEW)
+1. Guide: `data-completeness-validation-guide.md`
+2. Run completeness checks across all phases
+3. Generate backfill priority lists
+4. Execute bulk backfills
 
 ### "I Want the Complete Story"
 1. Incident: `ROOT-CAUSE-ANALYSIS-2026-01-12.md`
@@ -315,7 +346,14 @@ This index is maintained manually. Update when:
 - Major milestones are reached
 - Project status changes significantly
 
-**Last Updated:** 2026-01-14 (Overnight Session 30 Complete)
+**Last Updated:** 2026-01-21 (Evening - Fixed BDL monitoring views, corrected investigation)
+
+### Related: Robustness Improvements
+See `docs/08-projects/current/robustness-improvements/ERROR-TRACKING-PROPOSAL.md` for:
+- Scrape event tracking system design
+- Real-time BDL vs NBAC discrepancy detection
+- Automatic retry queue with exponential backoff
+- Recovery tracking and alerting
 
 ---
 

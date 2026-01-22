@@ -308,6 +308,9 @@ class ScraperBase:
                 # ✅ LAYER 1: Validate scraper output (detects gaps at source)
                 self._validate_scraper_output()
 
+                # ✅ Phase 1→2 Boundary Validation (lightweight sanity checks)
+                self._validate_phase1_boundary()
+
                 self.post_export()
 
                 total_seconds = self.get_elapsed_seconds("total")
@@ -951,6 +954,95 @@ class ScraperBase:
         except Exception as e:
             logger.warning(f"Failed to send scraper alert: {e}")
 
+    def _validate_phase1_boundary(self) -> None:
+        """
+        LIGHTWEIGHT Phase 1→2 boundary validation.
+
+        Performs basic sanity checks before data flows to Phase 2:
+        - Data is non-empty
+        - Expected schema fields present (if applicable)
+        - Game count reasonable (> 0, < 30 for NBA)
+
+        Mode: WARNING (logs issues but doesn't block export)
+
+        This catches obvious data quality issues before Phase 2 processors
+        start work, preventing wasted processing time.
+        """
+        try:
+            # Skip if no data
+            if not hasattr(self, 'data') or self.data is None:
+                logger.warning("PHASE1_BOUNDARY: No data to validate")
+                return
+
+            validation_issues = []
+
+            # Check 1: Non-empty data
+            row_count = self._count_scraper_rows()
+            if row_count == 0:
+                validation_issues.append("Data is empty (0 rows)")
+
+            # Check 2: Reasonable game count (if applicable)
+            if isinstance(self.data, dict):
+                # Check for game-related data structures
+                if 'games' in self.data:
+                    games = self.data['games']
+                    if isinstance(games, list):
+                        game_count = len(games)
+                        if game_count > 30:  # NBA has max ~15 games per day
+                            validation_issues.append(
+                                f"Unusual game count: {game_count} (expected < 30)"
+                            )
+
+                # Check 3: Expected schema fields present (lightweight)
+                # Only check for very basic fields to avoid false positives
+                scraper_name = self.__class__.__name__.lower()
+
+                if 'game' in scraper_name:
+                    # Game-related scrapers should have either 'games' or 'records'
+                    if 'games' not in self.data and 'records' not in self.data and 'rows' not in self.data:
+                        validation_issues.append(
+                            "Game scraper missing expected fields (games/records/rows)"
+                        )
+
+                elif 'player' in scraper_name:
+                    # Player-related scrapers should have player data
+                    if 'players' not in self.data and 'records' not in self.data and 'rows' not in self.data:
+                        validation_issues.append(
+                            "Player scraper missing expected fields (players/records/rows)"
+                        )
+
+            # Log validation results
+            if validation_issues:
+                logger.warning(
+                    f"PHASE1_BOUNDARY: Validation found {len(validation_issues)} issues "
+                    f"for {self.__class__.__name__}: {validation_issues}"
+                )
+
+                # Send notification for critical issues (but don't block)
+                try:
+                    from shared.utils.notification_system import notify_warning
+                    notify_warning(
+                        title=f"Phase 1→2 Boundary Validation Warning",
+                        message=f"{self.__class__.__name__} has data quality concerns",
+                        details={
+                            'scraper': self.__class__.__name__,
+                            'issues': validation_issues,
+                            'row_count': row_count,
+                            'run_id': self.run_id,
+                            'detection_layer': 'Phase 1→2 Boundary Validation',
+                            'severity': 'warning',
+                            'action': 'Data exported to Phase 2, but may cause processing issues'
+                        }
+                    )
+                except Exception as notify_error:
+                    logger.warning(f"Failed to send Phase 1 boundary validation notification: {notify_error}")
+            else:
+                logger.debug(f"PHASE1_BOUNDARY: Validation passed for {self.__class__.__name__}")
+
+        except Exception as e:
+            # Don't fail scraper if validation framework has issues
+            logger.error(f"PHASE1_BOUNDARY: Validation framework error (non-blocking): {e}", exc_info=True)
+
     ##########################################################################
     # Phase 1 → Phase 2 Pub/Sub Handoff (NEW)
     ##########################################################################
@@ -1373,13 +1465,20 @@ class ScraperBase:
           - 502: Bad Gateway
           - 503: Service Unavailable
           - 504: Gateway Timeout
+
+        Configuration:
+          - SCRAPER_BACKOFF_FACTOR: Override default backoff factor (default: 3.0)
         """
+        # Get backoff_factor from environment variable with default
+        backoff_factor = float(os.getenv('SCRAPER_BACKOFF_FACTOR', '3.0'))
+
         return Retry(
             total=self.max_retries_http,
             status_forcelist=[429, 500, 502, 503, 504],
             allowed_methods=["GET"],
-            backoff_factor=3,
-            backoff_max=60  # Cap exponential backoff at 60 seconds
+            backoff_factor=backoff_factor,
+            backoff_max=60,  # Cap exponential backoff at 60 seconds
+            respect_retry_after_header=True  # Honor Retry-After headers from APIs
         )
 
     def get_http_adapter(self, retry_strategy):
