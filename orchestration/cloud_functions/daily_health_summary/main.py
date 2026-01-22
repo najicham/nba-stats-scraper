@@ -234,6 +234,33 @@ class HealthChecker:
         results = self.run_query(query)
         return results[0] if results else {'pending_players': 0, 'pending_records': 0}
 
+    def check_proxy_health(self) -> Dict:
+        """Check proxy health from last 24 hours.
+
+        Returns success rates per target host and proxy provider.
+        Alerts if success rate drops below threshold.
+        """
+        query = f"""
+        SELECT
+            target_host,
+            proxy_provider,
+            COUNT(*) as total_requests,
+            COUNTIF(success) as successful,
+            ROUND(COUNTIF(success) * 100.0 / NULLIF(COUNT(*), 0), 1) as success_rate,
+            COUNTIF(http_status_code = 403) as forbidden_403,
+            COUNTIF(error_type = 'timeout') as timeouts
+        FROM `{PROJECT_ID}.nba_orchestration.proxy_health_metrics`
+        WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+        GROUP BY target_host, proxy_provider
+        HAVING total_requests >= 5
+        ORDER BY total_requests DESC
+        """
+        results = self.run_query(query)
+        return {
+            'targets': results if results else [],
+            'has_data': len(results) > 0 if results else False
+        }
+
     def run_health_check(self) -> Dict:
         """Run comprehensive health check and return results."""
         today, yesterday, tomorrow = get_dates()
@@ -309,6 +336,19 @@ class HealthChecker:
         elif registry['pending_players'] > 5:
             self.warnings.append(f"Registry: {registry['pending_players']} pending player failures")
 
+        # 9. Proxy Health (last 24 hours)
+        proxy_health = self.check_proxy_health()
+        results['checks']['proxy_health'] = proxy_health
+
+        if proxy_health['has_data']:
+            for target in proxy_health['targets']:
+                success_rate = target.get('success_rate', 100)
+                target_host = target.get('target_host', 'unknown')
+                if success_rate < 50:
+                    self.issues.append(f"Proxy: {target_host} success rate {success_rate}%")
+                elif success_rate < 80:
+                    self.warnings.append(f"Proxy: {target_host} success rate {success_rate}%")
+
         # Determine overall status
         if self.issues:
             results['status'] = 'CRITICAL'
@@ -375,6 +415,18 @@ def send_slack_summary(results: Dict) -> bool:
             f"*Registry Status*\n"
             f"Pending Failures: {registry.get('pending_players', 0)} players"
         )
+
+        # Add proxy health if available
+        proxy_health = checks.get('proxy_health', {})
+        if proxy_health.get('has_data'):
+            proxy_lines = []
+            for target in proxy_health.get('targets', [])[:3]:  # Top 3 targets
+                proxy_lines.append(
+                    f"{target.get('target_host', 'unknown')}: {target.get('success_rate', 0)}% "
+                    f"({target.get('successful', 0)}/{target.get('total_requests', 0)})"
+                )
+            if proxy_lines:
+                metrics_text += f"\n\n*Proxy Health (24h)*\n" + "\n".join(proxy_lines)
 
         blocks = [
             {
