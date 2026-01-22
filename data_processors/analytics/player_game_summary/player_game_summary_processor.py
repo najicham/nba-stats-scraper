@@ -198,7 +198,7 @@ class PlayerGameSummaryProcessor(
                 'critical': True
             },
             
-            # SOURCE 2: BDL Boxscores (FALLBACK - Critical)
+            # SOURCE 2: BDL Boxscores (FALLBACK - Non-Critical)
             'nba_raw.bdl_player_boxscores': {
                 'field_prefix': 'source_bdl',
                 'description': 'BDL boxscores - fallback for basic stats',
@@ -206,8 +206,8 @@ class PlayerGameSummaryProcessor(
                 'check_type': 'date_range',
                 'expected_count_min': 200,
                 'max_age_hours_warn': 12,  # Increased from 6h - allow for late game completion + scraper delay
-                'max_age_hours_fail': 36,  # Increased from 12h (R-009 fix: allow overnight delays)
-                'critical': True  # Need either NBA.com OR BDL
+                'max_age_hours_fail': 72,  # Increased from 36h - BDL has documented reliability issues (30-40% gaps)
+                'critical': False  # NBA.com gamebook is primary (100% reliable), BDL is fallback only
             },
             
             # SOURCE 3: Big Ball Data (OPTIONAL - shot zones primary)

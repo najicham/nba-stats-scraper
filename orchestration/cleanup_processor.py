@@ -219,8 +219,8 @@ class CleanupProcessor:
                 WHERE processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {self.lookback_hours + 1} HOUR)
                 
                 UNION ALL
-                
-                SELECT source_file_path FROM `nba-props-platform.nba_raw.bdl_box_scores`
+
+                SELECT source_file_path FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
                 WHERE processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {self.lookback_hours + 1} HOUR)
                 
                 -- Add more Phase 2 tables as needed

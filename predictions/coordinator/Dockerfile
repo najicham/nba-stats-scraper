@@ -10,6 +10,9 @@ WORKDIR /app
 # Copy shared modules from repository root
 COPY shared/ ./shared/
 
+# Copy predictions package structure
+COPY predictions/__init__.py ./predictions/__init__.py
+
 # Copy coordinator code
 COPY predictions/coordinator/ ./predictions/coordinator/
 

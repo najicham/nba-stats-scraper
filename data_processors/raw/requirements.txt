@@ -11,6 +11,9 @@ psycopg2-binary==2.9.9
 # Data formats
 pyarrow==14.0.1
 
+# PDF processing (for injury report and gamebook processors)
+pdfplumber==0.11.7
+
 # JSON handling
 orjson==3.9.10
 
