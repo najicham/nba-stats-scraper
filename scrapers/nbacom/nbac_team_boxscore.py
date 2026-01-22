@@ -1,11 +1,14 @@
 """
 Path: scrapers/nbacom/nbac_team_boxscore.py
 
-NBA.com Team Box Score scraper                          v1.0 – 2025‑11‑01
+NBA.com Team Box Score scraper                          v2.0 – 2026‑01‑22
 ---------------------------------------------------------------------------
-* URL: https://stats.nba.com/stats/boxscoretraditionalv2
+* URL: https://stats.nba.com/stats/boxscoretraditionalv3
 * Provides complete team-level statistics for each game
 * Fields: FGM/FGA, 3PM/3PA, FTM/FTA, AST, REB, TOV, STL, BLK, PF, PTS
+* Includes injury data via player comment field
+*
+* Note: V2 endpoint deprecated for 2025-26 season, migrated to V3
 
 Usage examples
 --------------
@@ -119,13 +122,15 @@ class GetNbaComTeamBoxscore(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     # URL Construction
     # ------------------------------------------------------------------ #
-    BASE_URL = "https://stats.nba.com/stats/boxscoretraditionalv2"
+    # V3 endpoint - V2 was deprecated for 2025-26 season
+    BASE_URL = "https://stats.nba.com/stats/boxscoretraditionalv3"
 
     def set_url(self) -> None:
         """Set URL with game_id parameter"""
         game_id = self.opts["game_id"]
-        
+
         # Build URL with all required parameters
+        # V3 uses same parameters as V2
         self.url = (
             f"{self.BASE_URL}?"
             f"GameID={game_id}&"
@@ -135,8 +140,8 @@ class GetNbaComTeamBoxscore(ScraperBase, ScraperFlaskMixin):
             f"EndRange=28800&"
             f"RangeType=0"
         )
-        
-        logger.info("NBA.com Team Boxscore URL: %s", self.url)
+
+        logger.info("NBA.com Team Boxscore URL (V3): %s", self.url)
 
     def set_additional_opts(self) -> None:
         """Validate and normalize options"""
@@ -166,7 +171,18 @@ class GetNbaComTeamBoxscore(ScraperBase, ScraperFlaskMixin):
     # Validation
     # ------------------------------------------------------------------ #
     def validate_download_data(self) -> None:
-        """Validate the box score response"""
+        """Validate the V3 box score response.
+
+        V3 response structure:
+        {
+            "meta": {...},
+            "boxScoreTraditional": {
+                "gameId": "...",
+                "homeTeam": {"teamId": ..., "statistics": {...}, "players": [...]},
+                "awayTeam": {"teamId": ..., "statistics": {...}, "players": [...]}
+            }
+        }
+        """
         try:
             if not isinstance(self.decoded_data, dict):
                 error_msg = "Response is not a JSON object"
@@ -182,13 +198,14 @@ class GetNbaComTeamBoxscore(ScraperBase, ScraperFlaskMixin):
                     processor_name="NBA.com Team Boxscore Scraper"
                 )
                 raise DownloadDataException(error_msg)
-                
-            if "resultSets" not in self.decoded_data:
-                error_msg = "Missing 'resultSets' in response"
+
+            # V3 uses boxScoreTraditional instead of resultSets
+            if "boxScoreTraditional" not in self.decoded_data:
+                error_msg = "Missing 'boxScoreTraditional' in response"
                 logger.error("%s for game %s", error_msg, self.opts["game_id"])
                 notify_error(
-                    title="NBA.com Team Boxscore Missing ResultSets",
-                    message=f"Response missing 'resultSets' for game {self.opts['game_id']}",
+                    title="NBA.com Team Boxscore Missing Data",
+                    message=f"Response missing 'boxScoreTraditional' for game {self.opts['game_id']}",
                     details={
                         'game_id': self.opts['game_id'],
                         'response_keys': list(self.decoded_data.keys()),
@@ -197,85 +214,70 @@ class GetNbaComTeamBoxscore(ScraperBase, ScraperFlaskMixin):
                     processor_name="NBA.com Team Boxscore Scraper"
                 )
                 raise DownloadDataException(error_msg)
-                
-            result_sets = self.decoded_data["resultSets"]
-            if not isinstance(result_sets, list):
-                error_msg = "resultSets is not a list"
+
+            box_score = self.decoded_data["boxScoreTraditional"]
+            if not isinstance(box_score, dict):
+                error_msg = "boxScoreTraditional is not a dict"
                 logger.error("%s for game %s", error_msg, self.opts["game_id"])
                 notify_error(
-                    title="NBA.com Team Boxscore Invalid ResultSets",
-                    message=f"resultSets is not a list for game {self.opts['game_id']}",
+                    title="NBA.com Team Boxscore Invalid Structure",
+                    message=f"boxScoreTraditional is not a dict for game {self.opts['game_id']}",
                     details={
                         'game_id': self.opts['game_id'],
-                        'resultSets_type': type(result_sets).__name__,
+                        'box_score_type': type(box_score).__name__,
                         'url': self.url
                     },
                     processor_name="NBA.com Team Boxscore Scraper"
                 )
                 raise DownloadDataException(error_msg)
-            
-            # Find TeamStats result set
-            team_stats = None
-            for rs in result_sets:
-                if rs.get("name") == "TeamStats":
-                    team_stats = rs
-                    break
-            
-            if not team_stats:
-                error_msg = "TeamStats result set not found"
-                logger.error("%s for game %s", error_msg, self.opts["game_id"])
-                available_sets = [rs.get("name") for rs in result_sets]
-                notify_error(
-                    title="NBA.com Team Boxscore Missing TeamStats",
-                    message=f"TeamStats not found in response for game {self.opts['game_id']}",
-                    details={
-                        'game_id': self.opts['game_id'],
-                        'available_result_sets': available_sets,
-                        'url': self.url
-                    },
-                    processor_name="NBA.com Team Boxscore Scraper"
-                )
-                raise DownloadDataException(error_msg)
-            
-            # Validate TeamStats structure
-            if "headers" not in team_stats or "rowSet" not in team_stats:
-                error_msg = "TeamStats missing headers or rowSet"
+
+            # V3 has homeTeam and awayTeam nested objects
+            missing_teams = []
+            for team_key in ["homeTeam", "awayTeam"]:
+                if team_key not in box_score:
+                    missing_teams.append(team_key)
+
+            if missing_teams:
+                error_msg = f"Missing team data: {missing_teams}"
                 logger.error("%s for game %s", error_msg, self.opts["game_id"])
                 notify_error(
-                    title="NBA.com Team Boxscore Invalid TeamStats",
-                    message=f"TeamStats structure invalid for game {self.opts['game_id']}",
+                    title="NBA.com Team Boxscore Missing Teams",
+                    message=f"Missing team data for game {self.opts['game_id']}: {missing_teams}",
                     details={
                         'game_id': self.opts['game_id'],
-                        'team_stats_keys': list(team_stats.keys()),
+                        'available_keys': list(box_score.keys()),
                         'url': self.url
                     },
                     processor_name="NBA.com Team Boxscore Scraper"
                 )
                 raise DownloadDataException(error_msg)
-            
-            # Validate we have data for both teams
-            row_set = team_stats["rowSet"]
-            if len(row_set) != 2:
-                error_msg = f"Expected 2 teams for game {self.opts['game_id']}, got {len(row_set)}"
-                logger.error(error_msg)
-                notify_error(
-                    title="NBA.com Team Boxscore Invalid Team Count",
-                    message=error_msg,
-                    details={
-                        'game_id': self.opts['game_id'],
-                        'team_count': len(row_set),
-                        'url': self.url
-                    },
-                    processor_name="NBA.com Team Boxscore Scraper"
-                )
-                raise DownloadDataException(error_msg)
-            
+
+            # Validate both teams have statistics
+            for team_key in ["homeTeam", "awayTeam"]:
+                team = box_score[team_key]
+                if "statistics" not in team:
+                    error_msg = f"{team_key} missing 'statistics'"
+                    logger.error("%s for game %s", error_msg, self.opts["game_id"])
+                    notify_error(
+                        title="NBA.com Team Boxscore Invalid Team Data",
+                        message=f"{team_key} missing statistics for game {self.opts['game_id']}",
+                        details={
+                            'game_id': self.opts['game_id'],
+                            'team_key': team_key,
+                            'team_keys': list(team.keys()),
+                            'url': self.url
+                        },
+                        processor_name="NBA.com Team Boxscore Scraper"
+                    )
+                    raise DownloadDataException(error_msg)
+
             logger.info(
-                "Validation passed: %d teams found for game %s",
-                len(row_set),
+                "Validation passed: home=%s, away=%s for game %s",
+                box_score["homeTeam"].get("teamTricode", "?"),
+                box_score["awayTeam"].get("teamTricode", "?"),
                 self.opts["game_id"]
             )
-                
+
         except DownloadDataException:
             raise
         except Exception as e:
@@ -297,87 +299,102 @@ class GetNbaComTeamBoxscore(ScraperBase, ScraperFlaskMixin):
     # Transform
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
-        """Transform box score data into clean team statistics"""
+        """Transform V3 box score data into clean team statistics.
+
+        V3 structure: boxScoreTraditional.homeTeam/awayTeam.statistics
+        Also extracts injury information from player comments.
+        """
         try:
-            # Extract TeamStats result set
-            team_stats = None
-            for rs in self.decoded_data["resultSets"]:
-                if rs.get("name") == "TeamStats":
-                    team_stats = rs
-                    break
-            
-            if not team_stats:
-                raise DownloadDataException("TeamStats not found in transform")
-            
-            headers = team_stats["headers"]
-            headers_map = {h: i for i, h in enumerate(headers)}
-            
+            box_score = self.decoded_data["boxScoreTraditional"]
+
             # Process both teams
             teams = []
-            for row in team_stats["rowSet"]:
+            injured_players = []
+
+            for team_key in ["homeTeam", "awayTeam"]:
+                team = box_score[team_key]
+                stats = team["statistics"]
+
                 team_data = {
                     # Identity
-                    "gameId": row[headers_map["GAME_ID"]],
-                    "teamId": row[headers_map["TEAM_ID"]],
-                    "teamName": row[headers_map["TEAM_NAME"]],
-                    "teamAbbreviation": row[headers_map["TEAM_ABBREVIATION"]],
-                    "teamCity": row[headers_map["TEAM_CITY"]],
-                    
+                    "gameId": box_score.get("gameId", self.opts["game_id"]),
+                    "teamId": team.get("teamId"),
+                    "teamName": team.get("teamName"),
+                    "teamAbbreviation": team.get("teamTricode"),
+                    "teamCity": team.get("teamCity"),
+
                     # Game time
-                    "minutes": row[headers_map["MIN"]],
-                    
+                    "minutes": stats.get("minutes"),
+
                     # Shooting
                     "fieldGoals": {
-                        "made": row[headers_map["FGM"]],
-                        "attempted": row[headers_map["FGA"]],
-                        "percentage": row[headers_map["FG_PCT"]],
+                        "made": stats.get("fieldGoalsMade"),
+                        "attempted": stats.get("fieldGoalsAttempted"),
+                        "percentage": stats.get("fieldGoalsPercentage"),
                     },
                     "threePointers": {
-                        "made": row[headers_map["FG3M"]],
-                        "attempted": row[headers_map["FG3A"]],
-                        "percentage": row[headers_map["FG3_PCT"]],
+                        "made": stats.get("threePointersMade"),
+                        "attempted": stats.get("threePointersAttempted"),
+                        "percentage": stats.get("threePointersPercentage"),
                     },
                     "freeThrows": {
-                        "made": row[headers_map["FTM"]],
-                        "attempted": row[headers_map["FTA"]],
-                        "percentage": row[headers_map["FT_PCT"]],
+                        "made": stats.get("freeThrowsMade"),
+                        "attempted": stats.get("freeThrowsAttempted"),
+                        "percentage": stats.get("freeThrowsPercentage"),
                     },
-                    
+
                     # Rebounds
                     "rebounds": {
-                        "offensive": row[headers_map["OREB"]],
-                        "defensive": row[headers_map["DREB"]],
-                        "total": row[headers_map["REB"]],
+                        "offensive": stats.get("reboundsOffensive"),
+                        "defensive": stats.get("reboundsDefensive"),
+                        "total": stats.get("reboundsTotal"),
                     },
-                    
+
                     # Other stats
-                    "assists": row[headers_map["AST"]],
-                    "steals": row[headers_map["STL"]],
-                    "blocks": row[headers_map["BLK"]],
-                    "turnovers": row[headers_map["TO"]],
-                    "personalFouls": row[headers_map["PF"]],
-                    "points": row[headers_map["PTS"]],
-                    "plusMinus": row[headers_map["PLUS_MINUS"]],
+                    "assists": stats.get("assists"),
+                    "steals": stats.get("steals"),
+                    "blocks": stats.get("blocks"),
+                    "turnovers": stats.get("turnovers"),
+                    "personalFouls": stats.get("foulsPersonal"),
+                    "points": stats.get("points"),
+                    "plusMinus": stats.get("plusMinusPoints"),
+
+                    # V3 metadata
+                    "isHome": team_key == "homeTeam",
                 }
-                
+
                 teams.append(team_data)
-            
+
+                # Extract injured players from player comments (V3 feature)
+                for player in team.get("players", []):
+                    comment = player.get("comment", "")
+                    if comment:  # Non-empty comment indicates injury/DNP
+                        injured_players.append({
+                            "playerId": player.get("personId"),
+                            "playerName": f"{player.get('firstName', '')} {player.get('familyName', '')}".strip(),
+                            "teamId": team.get("teamId"),
+                            "teamAbbreviation": team.get("teamTricode"),
+                            "comment": comment,
+                        })
+
             self.data = {
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "gameId": self.opts["game_id"],
                 "gameDate": self.display_date,
                 "teamCount": len(teams),
                 "teams": teams,
-                "source": "nba_team_boxscore"
+                "injuredPlayers": injured_players,  # V3 bonus: injury info!
+                "source": "nba_team_boxscore_v3"
             }
-            
+
             logger.info(
-                "Processed %d teams for game %s (%s)",
+                "Processed %d teams, %d injured players for game %s (%s)",
                 len(teams),
+                len(injured_players),
                 self.opts["game_id"],
                 self.display_date
             )
-            
+
         except KeyError as e:
             logger.error("Transformation failed - missing key %s for game %s", e, self.opts["game_id"])
             notify_error(
