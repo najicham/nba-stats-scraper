@@ -1,8 +1,21 @@
 # Historical Completeness Backfill Plan
 
 **Date:** January 22, 2026
-**Status:** Ready to Execute
-**Purpose:** Populate `historical_completeness` for all historical feature records
+**Status:** Optional - Only if needed
+**Purpose:** Populate `historical_completeness` for historical feature records
+
+---
+
+## Do You Need to Backfill?
+
+**NO** - if you only care about data quality going forward. The daily pipeline will automatically populate `historical_completeness` for all new records.
+
+**YES** - if you want to:
+- Analyze historical data quality (were past features calculated with incomplete data?)
+- Use cascade detection on historical dates
+- Investigate past prediction accuracy issues
+
+**My Recommendation:** Start with no backfill. The monitoring tools work on new data. Only backfill if you have a specific need.
 
 ---
 
