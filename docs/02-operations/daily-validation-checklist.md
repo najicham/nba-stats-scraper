@@ -397,6 +397,54 @@ LIMIT 15"
 
 ---
 
+### Step 8b: Check Scraper Data Availability (NEW - Jan 22, 2026)
+
+Track which scrapers have late or missing data. Catches BDL API delays.
+
+```bash
+# Quick check: Find gaps for all enabled scrapers
+python bin/scraper_completeness_check.py --all
+
+# BDL-specific check (common issue - 76% of gaps are West Coast games)
+python bin/scraper_completeness_check.py bdl_box_scores --days 3
+
+# Check scraper health metrics for yesterday
+bq query --use_legacy_sql=false --format=pretty "
+SELECT
+  scraper_name,
+  coverage_pct,
+  latency_p50_hours AS p50h,
+  latency_p90_hours AS p90h,
+  never_available_count AS missing,
+  health_score,
+  CASE
+    WHEN scraper_name = 'nbac_gamebook' AND coverage_pct < 100 THEN 'CRITICAL'
+    WHEN scraper_name = 'bdl_box_scores' AND coverage_pct < 90 THEN 'WARNING'
+    WHEN health_score < 50 THEN 'WARNING'
+    ELSE 'OK'
+  END AS status
+FROM nba_orchestration.v_scraper_latency_daily
+WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+ORDER BY coverage_pct ASC"
+
+# If BDL gaps found, run catch-up manually
+python bin/scraper_catchup_controller.py bdl_box_scores --dry-run
+```
+
+**Thresholds:**
+| Scraper | Min Coverage | Max P90 Latency | Notes |
+|---------|--------------|-----------------|-------|
+| nbac_gamebook | 100% | 4 hours | Critical source |
+| bdl_box_scores | 90% | 12 hours | BDL API can be 45+ hours late |
+| oddsa_player_props | 80% | 6 hours | Pre-game data |
+
+**If gaps found:**
+1. Check if catch-up scheduler jobs are running (bdl-catchup-midday, etc.)
+2. Run manual catch-up: `python bin/scraper_catchup_controller.py bdl_box_scores`
+3. For persistent gaps (>48h), document for BDL support contact
+
+---
+
 ## Common Issues & Quick Fixes
 
 ### Issue: No predictions for today
@@ -762,4 +810,4 @@ gcloud scheduler jobs run execute-workflows --location=us-west2
 ---
 
 *Created: December 27, 2025*
-*Last Updated: January 11, 2026 (added Step 0 Orchestration Health Check and Known Issues)*
+*Last Updated: January 22, 2026 (added Step 8b Scraper Data Availability checks)*
