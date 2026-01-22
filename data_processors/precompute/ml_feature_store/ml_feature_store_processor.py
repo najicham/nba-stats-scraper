@@ -55,6 +55,15 @@ from .batch_writer import BatchWriter
 from shared.config.nba_season_dates import is_early_season, get_season_year_from_date
 from shared.validation.config import BOOTSTRAP_DAYS
 
+# Historical Completeness Tracking (Data Cascade Architecture - Jan 2026)
+from shared.validation.historical_completeness import (
+    assess_historical_completeness,
+    should_skip_feature_generation,
+    HistoricalCompletenessResult,
+    WINDOW_SIZE,
+    MINIMUM_GAMES_THRESHOLD
+)
+
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -536,6 +545,16 @@ class MLFeatureStoreProcessor(
                 'backfill_bootstrap_mode': True,
                 'processing_decision_reason': 'early_season_placeholder',
 
+                # Historical Completeness (Data Cascade Architecture - Jan 2026)
+                # Early season = bootstrap mode, no historical data available
+                'historical_completeness': {
+                    'games_found': 0,
+                    'games_expected': 0,
+                    'is_complete': True,  # 0/0 = complete (nothing expected)
+                    'is_bootstrap': True,  # Early season = bootstrap
+                    'contributing_game_dates': []
+                },
+
                 # Timestamps
                 'created_at': datetime.now(timezone.utc).isoformat(),
                 'updated_at': None
@@ -941,11 +960,30 @@ class MLFeatureStoreProcessor(
         game_date = self.opts['analysis_date']
         opponent_team_abbr = player_row.get('opponent_team_abbr')
 
+        # ============================================================
+        # HISTORICAL COMPLETENESS TRACKING (Data Cascade Architecture)
+        # Build completeness metadata BEFORE feature extraction
+        # ============================================================
+        hist_completeness_data = self.feature_extractor.get_historical_completeness_data(player_lookup)
+        historical_completeness = assess_historical_completeness(
+            games_found=hist_completeness_data['games_found'],
+            games_available=hist_completeness_data['games_available'],
+            contributing_dates=hist_completeness_data['contributing_game_dates'],
+            window_size=WINDOW_SIZE
+        )
+
+        # Log if incomplete (and not bootstrap)
+        if historical_completeness.is_data_gap:
+            logger.warning(
+                f"{player_lookup}: Historical data gap - {historical_completeness.games_found}/{historical_completeness.games_expected} games"
+            )
+        # ============================================================
+
         # Extract Phase 4 data (preferred) - pass opponent from player_row
         phase4_data = self.feature_extractor.extract_phase4_data(
             player_lookup, game_date, opponent_team_abbr=opponent_team_abbr
         )
-        
+
         # Extract Phase 3 data (fallback + calculated features)
         phase3_data = self.feature_extractor.extract_phase3_data(player_lookup, game_date)
 
@@ -1022,6 +1060,13 @@ class MLFeatureStoreProcessor(
             'backfill_bootstrap_mode': is_bootstrap,
             'processing_decision_reason': 'processed_successfully',
             # ============================================================
+
+            # ============================================================
+            # HISTORICAL COMPLETENESS (Data Cascade Architecture - Jan 2026)
+            # Tracks whether rolling window calculations had all required data.
+            # Different from schedule completeness above (which tracks today's games).
+            # ============================================================
+            'historical_completeness': historical_completeness.to_bq_struct(),
 
             # Timestamps
             'created_at': datetime.now(timezone.utc).isoformat(),

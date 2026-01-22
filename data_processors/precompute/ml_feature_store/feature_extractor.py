@@ -51,6 +51,10 @@ class FeatureExtractor:
         self._vegas_lines_lookup: Dict[str, Dict] = {}
         self._opponent_history_lookup: Dict[str, Dict] = {}
         self._minutes_ppm_lookup: Dict[str, Dict] = {}
+
+        # Historical Completeness Tracking (Data Cascade Architecture - Jan 2026)
+        # Tracks total games available per player for bootstrap detection
+        self._total_games_available_lookup: Dict[str, int] = {}
     
     # ========================================================================
     # PLAYER LIST
@@ -296,6 +300,8 @@ class FeatureExtractor:
         self._vegas_lines_lookup = {}
         self._opponent_history_lookup = {}
         self._minutes_ppm_lookup = {}
+        # Historical Completeness Tracking
+        self._total_games_available_lookup = {}
 
     def _batch_extract_daily_cache(self, game_date: date) -> None:
         """Batch extract player_daily_cache for all players."""
@@ -413,6 +419,9 @@ class FeatureExtractor:
         Uses 60-day lookback window which covers ~20+ games per player.
         Uses QUALIFY clause for efficient window function filtering.
 
+        v1.5 (Jan 2026): Added total_games_available tracking for historical completeness.
+        This enables bootstrap detection (player has fewer games than window size).
+
         Performance: 300-450s → 30-60s (5-10x faster)
         """
         if not player_lookups:
@@ -423,7 +432,8 @@ class FeatureExtractor:
         lookback_days = 60
         lookback_date = game_date - timedelta(days=lookback_days)
 
-        # Use QUALIFY for efficient window function filtering (no CTE overhead)
+        # Query includes total_games_available for bootstrap detection
+        # Uses QUALIFY for efficient window function filtering (no CTE overhead)
         query = f"""
         SELECT
             player_lookup,
@@ -434,7 +444,9 @@ class FeatureExtractor:
             fg_attempts,
             paint_attempts,
             mid_range_attempts,
-            three_pt_attempts
+            three_pt_attempts,
+            -- Total games available for this player (for bootstrap detection)
+            COUNT(*) OVER (PARTITION BY player_lookup) as total_games_available
         FROM `{self.project_id}.nba_analytics.player_game_summary`
         WHERE game_date < '{game_date}'
           AND game_date >= '{lookback_date}'
@@ -446,7 +458,11 @@ class FeatureExtractor:
         # Group by player using efficient groupby
         if not result.empty:
             for player_lookup, group_df in result.groupby('player_lookup'):
-                self._last_10_games_lookup[player_lookup] = group_df.to_dict('records')
+                games = group_df.to_dict('records')
+                self._last_10_games_lookup[player_lookup] = games
+                # Store total games available (same value for all rows of same player)
+                if games:
+                    self._total_games_available_lookup[player_lookup] = int(games[0].get('total_games_available', len(games)))
 
         logger.debug(f"Batch last_10_games: {len(self._last_10_games_lookup)} players (60-day window)")
 
@@ -671,6 +687,53 @@ class FeatureExtractor:
     def get_minutes_ppm(self, player_lookup: str) -> Dict:
         """Get cached minutes/PPM data for a player."""
         return self._minutes_ppm_lookup.get(player_lookup, {})
+
+    # ========================================================================
+    # HISTORICAL COMPLETENESS TRACKING (Data Cascade Architecture - Jan 2026)
+    # ========================================================================
+
+    def get_historical_completeness_data(self, player_lookup: str) -> Dict[str, Any]:
+        """
+        Get historical completeness data for a player.
+
+        Used to build the historical_completeness STRUCT for the feature record.
+        Tracks whether rolling window calculations had all required data.
+
+        Args:
+            player_lookup: Player identifier
+
+        Returns:
+            Dict with:
+                - games_found: Number of games actually retrieved
+                - games_available: Total games available in lookback window
+                - contributing_game_dates: List of date objects for cascade detection
+        """
+        last_10_games = self._last_10_games_lookup.get(player_lookup, [])
+        games_found = len(last_10_games)
+
+        # Get total games available (for bootstrap detection)
+        # If not in lookup, use games_found as fallback
+        games_available = self._total_games_available_lookup.get(player_lookup, games_found)
+
+        # Extract contributing game dates for cascade detection
+        contributing_game_dates = []
+        for game in last_10_games:
+            game_date = game.get('game_date')
+            if game_date is not None:
+                # Handle both date objects and strings
+                if isinstance(game_date, str):
+                    from datetime import datetime
+                    try:
+                        game_date = datetime.strptime(game_date, '%Y-%m-%d').date()
+                    except ValueError:
+                        continue
+                contributing_game_dates.append(game_date)
+
+        return {
+            'games_found': games_found,
+            'games_available': games_available,
+            'contributing_game_dates': contributing_game_dates
+        }
 
     # ========================================================================
     # PHASE 4 EXTRACTION (PREFERRED)

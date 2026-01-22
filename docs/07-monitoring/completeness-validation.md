@@ -2,10 +2,30 @@
 
 **File:** `docs/monitoring/05-data-completeness-validation.md`
 **Created:** 2025-11-18
-**Last Updated:** 2025-12-02
+**Last Updated:** 2026-01-22
 **Purpose:** Validate data completeness for daily operations and backfills
 **Status:** Current (Superseded by validation script for most use cases)
 **Audience:** Engineers running backfills, on-call engineers validating daily pipeline
+
+---
+
+## Two Types of Completeness
+
+**IMPORTANT:** This system tracks TWO different types of completeness:
+
+### 1. Schedule Completeness (Existing)
+- **Question:** "Did we get today's games from upstream tables?"
+- **Fields:** `expected_games_count`, `actual_games_count`, `completeness_percentage`
+- **Scope:** Single day (today)
+- **Use:** Daily pipeline validation
+
+### 2. Historical Completeness (NEW - Jan 2026)
+- **Question:** "Did rolling window calculations have all required historical data?"
+- **Field:** `historical_completeness` STRUCT in `ml_feature_store_v2`
+- **Scope:** 60-day lookback window (last 10 games)
+- **Use:** Cascade detection after backfills, bias detection in ML features
+
+See **[Historical Completeness](#historical-completeness-tracking-new)** section below for details.
 
 ---
 
@@ -769,6 +789,132 @@ ORDER BY game_date, phase;
 
 ---
 
+## Historical Completeness Tracking (NEW)
+
+**Added:** January 2026
+**Architecture:** Data Cascade Architecture Project
+**Documentation:** `docs/08-projects/current/data-cascade-architecture/`
+
+### Overview
+
+Historical completeness tracks whether **rolling window calculations** (like `points_avg_last_10`) had all required historical data. This is DIFFERENT from schedule completeness:
+
+| Aspect | Schedule Completeness | Historical Completeness |
+|--------|----------------------|------------------------|
+| **Question** | Did we get today's games? | Did rolling averages have all 10 games? |
+| **Scope** | Single day | 60-day lookback window |
+| **Fields** | `expected_games_count`, `actual_games_count` | `historical_completeness` STRUCT |
+| **Use Case** | Daily validation | Cascade detection, bias detection |
+
+### Data Structure
+
+```sql
+historical_completeness STRUCT<
+    games_found INT64,           -- Actual games found (e.g., 8)
+    games_expected INT64,        -- Expected games (e.g., 10)
+    is_complete BOOL,            -- games_found >= games_expected
+    is_bootstrap BOOL,           -- games_expected < 10 (new player/early season)
+    contributing_game_dates ARRAY<DATE>  -- Dates used (for cascade detection)
+>
+```
+
+### Status Matrix
+
+| games_expected | games_found | is_complete | is_bootstrap | Meaning |
+|----------------|-------------|-------------|--------------|---------|
+| 10 | 10 | True | False | **COMPLETE** - Full window, all data |
+| 10 | 8 | **False** | False | **DATA GAP** - Missing 2 games |
+| 5 | 5 | True | **True** | **BOOTSTRAP** - Only 5 games exist, all present |
+| 0 | 0 | True | **True** | **NEW PLAYER** - No history yet |
+
+### CLI Tool: check_cascade.py
+
+```bash
+# Find features affected by backfilling a specific date
+python bin/check_cascade.py --backfill-date 2026-01-01
+
+# Find incomplete features (data gaps) in a date range
+python bin/check_cascade.py --incomplete --start 2026-01-01 --end 2026-01-21
+
+# Show daily completeness summary
+python bin/check_cascade.py --summary
+
+# Output as JSON (for scripting)
+python bin/check_cascade.py --backfill-date 2026-01-01 --json
+```
+
+### Monitoring Views
+
+Two views are automatically created:
+
+1. **`v_historical_completeness_daily`** - Daily summary
+   ```sql
+   SELECT * FROM nba_predictions.v_historical_completeness_daily
+   ORDER BY game_date DESC LIMIT 7;
+   ```
+
+2. **`v_incomplete_features`** - Features with data gaps (not bootstrap)
+   ```sql
+   SELECT * FROM nba_predictions.v_incomplete_features
+   WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY);
+   ```
+
+### Cascade Detection Queries
+
+**Find features affected by backfilling Jan 1:**
+```sql
+SELECT game_date, player_lookup
+FROM nba_predictions.ml_feature_store_v2
+WHERE DATE('2026-01-01') IN UNNEST(historical_completeness.contributing_game_dates)
+  AND game_date > '2026-01-01'
+ORDER BY game_date;
+```
+
+**Find incomplete features that might need Jan 1:**
+```sql
+SELECT game_date, player_lookup,
+    historical_completeness.games_found,
+    historical_completeness.games_expected
+FROM nba_predictions.ml_feature_store_v2
+WHERE NOT historical_completeness.is_complete
+  AND NOT historical_completeness.is_bootstrap
+  AND game_date BETWEEN '2026-01-02' AND '2026-01-22'
+ORDER BY game_date DESC;
+```
+
+### Helper Module
+
+Python helper: `shared/validation/historical_completeness.py`
+
+```python
+from shared.validation.historical_completeness import (
+    assess_historical_completeness,
+    should_skip_feature_generation,
+    WINDOW_SIZE,
+    MINIMUM_GAMES_THRESHOLD
+)
+
+# Assess completeness for a player
+result = assess_historical_completeness(
+    games_found=8,
+    games_available=50,
+    contributing_dates=[date(2026, 1, 20), date(2026, 1, 18), ...]
+)
+
+print(result.is_complete)  # False (8 < 10)
+print(result.is_bootstrap)  # False (expected >= 10)
+print(result.is_data_gap)  # True (incomplete AND not bootstrap)
+```
+
+### Related Documentation
+
+- **Architecture:** `docs/08-projects/current/data-cascade-architecture/09-FINAL-DESIGN.md`
+- **Implementation Plan:** `docs/08-projects/current/data-cascade-architecture/07-IMPLEMENTATION-PLAN.md`
+- **Schema:** `schemas/bigquery/predictions/04_ml_feature_store_v2.sql`
+
+---
+
 **Created:** 2025-11-18
-**Next Review:** After first historical backfill
+**Last Updated:** 2026-01-22
+**Next Review:** After first cascade reprocessing
 **Status:** ✅ Ready to use

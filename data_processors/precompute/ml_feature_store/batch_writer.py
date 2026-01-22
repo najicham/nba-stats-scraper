@@ -396,6 +396,7 @@ class BatchWriter:
                 season_boundary_detected = source.season_boundary_detected,
                 backfill_bootstrap_mode = source.backfill_bootstrap_mode,
                 processing_decision_reason = source.processing_decision_reason,
+                historical_completeness = source.historical_completeness,
                 data_hash = source.data_hash,
                 updated_at = CURRENT_TIMESTAMP()
         WHEN NOT MATCHED THEN

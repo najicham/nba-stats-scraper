@@ -108,6 +108,22 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.ml_feature_store_
   data_hash STRING,                                 -- SHA256 hash of feature array values for smart idempotency
 
   -- ========================================================================
+  -- HISTORICAL COMPLETENESS TRACKING (Data Cascade Architecture)
+  -- Tracks whether rolling window calculations had all required historical data.
+  -- Different from schedule completeness (expected_games_count/actual_games_count above)
+  -- which tracks if TODAY's games were processed.
+  --
+  -- This tracks: "Did the last-10-games rolling average have all 10 games?"
+  -- ========================================================================
+  historical_completeness STRUCT<
+    games_found INT64,                              -- Actual games found in rolling window
+    games_expected INT64,                           -- Expected games (min of available, window_size=10)
+    is_complete BOOL,                               -- games_found >= games_expected
+    is_bootstrap BOOL,                              -- games_expected < 10 (player has limited history)
+    contributing_game_dates ARRAY<DATE>             -- Dates of games used (for cascade detection)
+  >,
+
+  -- ========================================================================
   -- PROCESSING METADATA (2 fields)
   -- ========================================================================
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP() NOT NULL,
@@ -191,7 +207,7 @@ WHERE feature_quality_score >= 85.0
 -- ============================================================================
 -- FIELD SUMMARY
 -- ============================================================================
--- Total fields: 55 (updated Week 4)
+-- Total fields: 56 (updated Jan 2026 - Data Cascade Architecture)
 --   Identifiers: 4
 --   Features (array-based): 4
 --   Feature metadata: 2
@@ -199,11 +215,56 @@ WHERE feature_quality_score >= 85.0
 --   Data source: 1
 --   Source tracking (Phase 4): 16 (4 fields × 4 sources)
 --   Early season: 2
---   Completeness checking: 14 (4 metrics + 2 readiness + 4 circuit breaker + 4 bootstrap)
+--   Schedule completeness: 14 (4 metrics + 2 readiness + 4 circuit breaker + 4 bootstrap)
+--   Historical completeness: 1 (STRUCT with 5 nested fields for cascade detection)
 --   Smart idempotency: 1 (data_hash)
 --   Processing metadata: 2
 --   Smart patterns enabled: Pattern #1 (Smart Idempotency), Pattern #3 (Smart Reprocessing), Completeness Checking
+--
+-- COMPLETENESS TRACKING NOTE:
+--   - Schedule completeness (expected_games_count, actual_games_count, etc.):
+--       Tracks "Did we get today's games from upstream?"
+--   - Historical completeness (historical_completeness STRUCT):
+--       Tracks "Did rolling window calculations have all required historical data?"
+--       Enables cascade detection: "Which features need reprocessing after a backfill?"
 -- ============================================================================
+
+-- ============================================================================
+-- MONITORING VIEW: Historical Completeness Summary
+-- ============================================================================
+CREATE OR REPLACE VIEW `nba-props-platform.nba_predictions.v_historical_completeness_daily` AS
+SELECT
+    game_date,
+    COUNT(*) as total_features,
+    COUNTIF(historical_completeness.is_complete) as complete_count,
+    COUNTIF(NOT historical_completeness.is_complete AND NOT historical_completeness.is_bootstrap) as incomplete_count,
+    COUNTIF(historical_completeness.is_bootstrap) as bootstrap_count,
+    ROUND(COUNTIF(historical_completeness.is_complete) / COUNT(*) * 100, 1) as complete_pct,
+    ROUND(COUNTIF(NOT historical_completeness.is_complete AND NOT historical_completeness.is_bootstrap) / COUNT(*) * 100, 1) as incomplete_pct,
+    AVG(historical_completeness.games_found) as avg_games_found,
+    AVG(historical_completeness.games_expected) as avg_games_expected
+FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+  AND historical_completeness IS NOT NULL
+GROUP BY game_date
+ORDER BY game_date DESC;
+
+-- ============================================================================
+-- MONITORING VIEW: Incomplete Features (Not Bootstrap) - For Investigation
+-- ============================================================================
+CREATE OR REPLACE VIEW `nba-props-platform.nba_predictions.v_incomplete_features` AS
+SELECT
+    game_date,
+    player_lookup,
+    historical_completeness.games_found,
+    historical_completeness.games_expected,
+    historical_completeness.games_expected - historical_completeness.games_found as games_missing,
+    historical_completeness.contributing_game_dates
+FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+WHERE NOT historical_completeness.is_complete
+  AND NOT historical_completeness.is_bootstrap
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+ORDER BY game_date DESC, games_missing DESC;
 
 -- ============================================================================
 -- DEPLOYMENT: Add columns to existing table
@@ -255,5 +316,16 @@ ADD COLUMN IF NOT EXISTS backfill_bootstrap_mode BOOLEAN
   OPTIONS (description='TRUE if first 30 days of season/backfill'),
 ADD COLUMN IF NOT EXISTS processing_decision_reason STRING
   OPTIONS (description='Why record was processed or skipped');
+
+-- Step 3: Add historical completeness column (Data Cascade Architecture - Jan 2026)
+ALTER TABLE `nba-props-platform.nba_predictions.ml_feature_store_v2`
+ADD COLUMN IF NOT EXISTS historical_completeness STRUCT<
+    games_found INT64 OPTIONS (description='Actual games found in rolling window'),
+    games_expected INT64 OPTIONS (description='Expected games (min of available, window_size=10)'),
+    is_complete BOOL OPTIONS (description='games_found >= games_expected'),
+    is_bootstrap BOOL OPTIONS (description='games_expected < 10 (player has limited history)'),
+    contributing_game_dates ARRAY<DATE> OPTIONS (description='Dates of games used for cascade detection')
+>
+OPTIONS (description='Historical completeness tracking for rolling window calculations. Enables cascade detection after backfills.');
 
 -- ============================================================================

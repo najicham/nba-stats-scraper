@@ -15,6 +15,15 @@ The validation framework provides comprehensive data quality validation across a
 - **Phase 4**: BigQuery precompute tables (`nba_precompute`)
 - **Phase 5**: BigQuery prediction tables (`nba_predictions`)
 
+### Two Types of Completeness
+
+**IMPORTANT:** This system tracks TWO types of completeness (see `docs/06-reference/completeness-concepts.md`):
+
+1. **Schedule Completeness** - "Did we get today's games?" (existing)
+2. **Historical Completeness** - "Did rolling averages have all 10 games?" (added Jan 2026)
+
+The `historical_completeness.py` module handles the second type, enabling cascade detection after backfills.
+
 ---
 
 ## 🏗️ Architecture
@@ -29,6 +38,7 @@ shared/validation/
 ├── firestore_state.py             # Real-time orchestration state
 ├── run_history.py                 # Processor execution tracking
 ├── time_awareness.py              # Time-based validation logic
+├── historical_completeness.py     # Rolling window completeness (Jan 2026)
 │
 ├── context/
 │   ├── schedule_context.py        # Game schedule awareness (bootstrap detection)

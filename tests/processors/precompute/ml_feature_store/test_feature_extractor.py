@@ -505,5 +505,137 @@ class TestFeatureExtractor:
         assert result == []
 
 
+    # ========================================================================
+    # HISTORICAL COMPLETENESS TRACKING (Data Cascade Architecture - Jan 2026)
+    # ========================================================================
+
+    def test_get_historical_completeness_data_with_games(self, extractor):
+        """Test get_historical_completeness_data returns correct structure."""
+        # Pre-populate the lookup caches (simulating batch extraction)
+        extractor._last_10_games_lookup = {
+            'lebron-james': [
+                {'game_date': date(2026, 1, 15), 'points': 28},
+                {'game_date': date(2026, 1, 13), 'points': 24},
+                {'game_date': date(2026, 1, 11), 'points': 26},
+            ]
+        }
+        extractor._total_games_available_lookup = {
+            'lebron-james': 50  # Veteran with many games
+        }
+
+        result = extractor.get_historical_completeness_data('lebron-james')
+
+        assert result['games_found'] == 3
+        assert result['games_available'] == 50
+        assert len(result['contributing_game_dates']) == 3
+        assert result['contributing_game_dates'][0] == date(2026, 1, 15)
+
+    def test_get_historical_completeness_data_empty(self, extractor):
+        """Test get_historical_completeness_data for player with no games."""
+        # Empty caches
+        extractor._last_10_games_lookup = {}
+        extractor._total_games_available_lookup = {}
+
+        result = extractor.get_historical_completeness_data('new-player')
+
+        assert result['games_found'] == 0
+        assert result['games_available'] == 0
+        assert result['contributing_game_dates'] == []
+
+    def test_get_historical_completeness_data_partial(self, extractor):
+        """Test get_historical_completeness_data for player with some games."""
+        extractor._last_10_games_lookup = {
+            'rookie-player': [
+                {'game_date': date(2026, 1, 15), 'points': 12},
+                {'game_date': date(2026, 1, 13), 'points': 8},
+            ]
+        }
+        extractor._total_games_available_lookup = {
+            'rookie-player': 2  # Only 2 games in career
+        }
+
+        result = extractor.get_historical_completeness_data('rookie-player')
+
+        assert result['games_found'] == 2
+        assert result['games_available'] == 2  # Bootstrap scenario
+        assert len(result['contributing_game_dates']) == 2
+
+    def test_get_historical_completeness_data_string_dates(self, extractor):
+        """Test get_historical_completeness_data handles string dates."""
+        extractor._last_10_games_lookup = {
+            'test-player': [
+                {'game_date': '2026-01-15', 'points': 20},  # String date
+                {'game_date': date(2026, 1, 13), 'points': 22},  # Date object
+            ]
+        }
+        extractor._total_games_available_lookup = {'test-player': 10}
+
+        result = extractor.get_historical_completeness_data('test-player')
+
+        # Both should be converted to date objects
+        assert len(result['contributing_game_dates']) == 2
+        assert isinstance(result['contributing_game_dates'][0], date)
+        assert isinstance(result['contributing_game_dates'][1], date)
+
+    def test_batch_extract_populates_total_games_available(self, extractor, mock_bq_client):
+        """Test _batch_extract_last_10_games populates total_games_available."""
+        # Mock query result with total_games_available column
+        mock_df = pd.DataFrame([
+            {
+                'player_lookup': 'lebron-james',
+                'game_date': date(2026, 1, 15),
+                'points': 28,
+                'minutes_played': 36,
+                'ft_makes': 8,
+                'fg_attempts': 20,
+                'paint_attempts': 8,
+                'mid_range_attempts': 4,
+                'three_pt_attempts': 8,
+                'total_games_available': 50
+            },
+            {
+                'player_lookup': 'lebron-james',
+                'game_date': date(2026, 1, 13),
+                'points': 24,
+                'minutes_played': 35,
+                'ft_makes': 6,
+                'fg_attempts': 18,
+                'paint_attempts': 7,
+                'mid_range_attempts': 3,
+                'three_pt_attempts': 8,
+                'total_games_available': 50
+            },
+            {
+                'player_lookup': 'rookie-player',
+                'game_date': date(2026, 1, 15),
+                'points': 8,
+                'minutes_played': 12,
+                'ft_makes': 2,
+                'fg_attempts': 4,
+                'paint_attempts': 2,
+                'mid_range_attempts': 1,
+                'three_pt_attempts': 1,
+                'total_games_available': 3
+            }
+        ])
+        mock_bq_client.query.return_value.to_dataframe.return_value = mock_df
+
+        # Call the batch extraction method
+        extractor._batch_extract_last_10_games(date(2026, 1, 16), ['lebron-james', 'rookie-player'])
+
+        # Verify total_games_available lookup was populated
+        assert extractor._total_games_available_lookup.get('lebron-james') == 50
+        assert extractor._total_games_available_lookup.get('rookie-player') == 3
+
+    def test_clear_batch_cache_clears_completeness_lookup(self, extractor):
+        """Test _clear_batch_cache clears total_games_available_lookup."""
+        # Pre-populate the lookup
+        extractor._total_games_available_lookup = {'test-player': 10}
+
+        extractor._clear_batch_cache()
+
+        assert extractor._total_games_available_lookup == {}
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v', '--tb=short'])
