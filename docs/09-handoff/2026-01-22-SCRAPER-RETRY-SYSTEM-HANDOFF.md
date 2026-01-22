@@ -1,8 +1,15 @@
 # SCRAPER RETRY & DATA ARRIVAL TRACKING - HANDOFF
 
 **Session Date:** 2026-01-22
-**Status:** ✅ IMPLEMENTATION COMPLETE - Needs Deployment
-**Next Steps:** Deploy BigQuery tables, scheduler jobs, validate tracking works
+**Status:** ✅ FULLY DEPLOYED (Evening Jan 21)
+**Deployed By:** Claude session evening Jan 21, 2026
+
+### Deployment Completed Tonight:
+- ✅ BigQuery tables deployed (`scraper_data_arrival`, `bdl_game_scrape_attempts`)
+- ✅ `/catchup` endpoint added to phase1-scrapers service
+- ✅ BDL scheduler jobs created (10 AM, 2 PM, 6 PM ET)
+- ✅ Manual catch-up ran - found 4 games BDL API doesn't have yet
+- ⏳ Gamebook/Odds scheduler jobs not deployed (BDL was priority)
 
 ---
 
@@ -53,30 +60,36 @@ docs/08-projects/current/jan-21-critical-fixes/00-INDEX.md                # Upda
 
 ---
 
-## DEPLOYMENT REQUIRED
+## DEPLOYMENT STATUS
 
-### Step 1: Deploy BigQuery Tables
+### ✅ Step 1: BigQuery Tables - DEPLOYED
 ```bash
-# Unified tracking table (new)
+# Both tables and all views created
 bq query --use_legacy_sql=false < schemas/bigquery/nba_orchestration/scraper_data_arrival.sql
-
-# BDL-specific table (may already exist, but run to ensure)
 bq query --use_legacy_sql=false < schemas/bigquery/nba_orchestration/bdl_game_scrape_attempts.sql
 ```
 
-### Step 2: Deploy Updated Code
-Deploy these services that have code changes:
-- Phase 1 scrapers (bdl_box_scores.py modified)
+### ✅ Step 2: Phase1-Scrapers Service - DEPLOYED
+- Added `/catchup` endpoint to `scrapers/main_scraper_service.py`
+- Deployed revision: `nba-phase1-scrapers-00114-g69`
+- Commit: `7aaf0ac3`
 
-### Step 3: Deploy Cloud Scheduler Jobs
+### ✅ Step 3: BDL Scheduler Jobs - DEPLOYED
 ```bash
+# These 3 jobs are live:
+bdl-catchup-midday      10:00 AM ET
+bdl-catchup-afternoon    2:00 PM ET
+bdl-catchup-evening      6:00 PM ET
+```
+
+### ⏳ Step 4: Gamebook/Odds Scheduler Jobs - NOT YET DEPLOYED
+These can be deployed later if needed:
+```bash
+# Run to deploy remaining jobs:
 ./bin/deploy/deploy_catchup_schedulers.sh
 ```
 
-Creates 8 scheduler jobs:
-- bdl-catchup-midday (10 AM ET)
-- bdl-catchup-afternoon (2 PM ET)
-- bdl-catchup-evening (6 PM ET)
+Would create:
 - gamebook-catchup-morning (8 AM ET)
 - gamebook-catchup-late-morning (11 AM ET)
 - odds-catchup-noon (12 PM ET)
