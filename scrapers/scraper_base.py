@@ -86,6 +86,7 @@ from .utils.exceptions import (
 )
 from .exporters import EXPORTER_REGISTRY
 from .utils.proxy_utils import get_proxy_urls
+from shared.utils.proxy_health_logger import log_proxy_result, extract_host_from_url, classify_error
 from .utils.nba_header_utils import (
     stats_nba_headers,
     data_nba_headers,
@@ -1770,17 +1771,43 @@ class ScraperBase:
 
                 if self.raw_response.status_code == 200 and not self.test_proxies:
                     logger.info("Proxy success: %s, took=%ss", proxy, elapsed)
+                    # Log successful proxy request
+                    log_proxy_result(
+                        scraper_name=self.__class__.__name__,
+                        target_host=extract_host_from_url(self.url),
+                        http_status_code=200,
+                        response_time_ms=int(elapsed * 1000) if elapsed else None,
+                        success=True
+                    )
                     break
                 else:
                     logger.warning("Proxy failed: %s, status=%s, took=%ss",
                                    proxy, self.raw_response.status_code, elapsed)
                     proxy_errors.append({'proxy': proxy, 'status': self.raw_response.status_code})
+                    # Log failed proxy request
+                    log_proxy_result(
+                        scraper_name=self.__class__.__name__,
+                        target_host=extract_host_from_url(self.url),
+                        http_status_code=self.raw_response.status_code,
+                        response_time_ms=int(elapsed * 1000) if elapsed else None,
+                        success=False,
+                        error_type=classify_error(status_code=self.raw_response.status_code)
+                    )
 
             except (ProxyError, ConnectTimeout, ConnectionError) as ex:
                 elapsed = self.mark_time("proxy")
                 logger.warning("Proxy error with %s, %s, took=%ss",
                                proxy, type(ex).__name__, elapsed)
                 proxy_errors.append({'proxy': proxy, 'error': type(ex).__name__})
+                # Log connection error
+                log_proxy_result(
+                    scraper_name=self.__class__.__name__,
+                    target_host=extract_host_from_url(self.url),
+                    response_time_ms=int(elapsed * 1000) if elapsed else None,
+                    success=False,
+                    error_type=classify_error(exception=ex),
+                    error_message=str(ex)
+                )
         
         # If all proxies failed, send notification
         if proxy_errors and len(proxy_errors) == len(proxy_pool):
