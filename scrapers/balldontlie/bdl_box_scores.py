@@ -31,6 +31,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 import requests
 
+logger = logging.getLogger(__name__)
+
 # Support both module execution (python -m) and direct execution
 try:
     # Module execution: python -m scrapers.balldontlie.bdl_box_scores
@@ -70,7 +72,13 @@ except ImportError:
     def notify_warning(*args, **kwargs): pass
     def notify_info(*args, **kwargs): pass
 
-logger = logging.getLogger(__name__)
+# BDL availability logger for per-game tracking
+try:
+    from shared.utils.bdl_availability_logger import log_bdl_game_availability
+except ImportError:
+    # Graceful fallback if logger not available
+    logger.warning("Could not import bdl_availability_logger - game availability tracking disabled")
+    def log_bdl_game_availability(*args, **kwargs): pass
 
 # --------------------------------------------------------------------------- #
 # Scraper (USING MIXIN)
@@ -229,8 +237,20 @@ class BdlBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
                 "rowCount": len(rows),
                 "boxScores": rows,
             }
-            
-            logger.info("Fetched %d box-score rows for %s across %d pages", 
+
+            # Log which games were available from BDL API (per-game availability tracking)
+            try:
+                log_bdl_game_availability(
+                    game_date=self.opts["date"],
+                    execution_id=self.run_id,
+                    box_scores=self.data["boxScores"],
+                    workflow=self.opts.get("workflow", "unknown")
+                )
+                logger.info(f"Logged BDL game availability for {self.opts['date']}")
+            except Exception as e:
+                logger.warning(f"Failed to log BDL game availability: {e}", exc_info=True)
+
+            logger.info("Fetched %d box-score rows for %s across %d pages",
                        len(rows), self.opts["date"], pages_fetched)
 
             # Check for data quality issues

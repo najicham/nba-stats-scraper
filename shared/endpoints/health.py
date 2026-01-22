@@ -153,8 +153,9 @@ class HealthChecker:
             if unhealthy_deps:
                 response['status'] = 'degraded'
                 response['unhealthy_dependencies'] = unhealthy_deps
-        
-        return response, 200
+
+        http_status = 200 if response['status'] == 'healthy' else 503
+        return response, http_status
 
 
 def create_health_blueprint(
