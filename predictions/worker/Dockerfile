@@ -14,6 +14,9 @@ WORKDIR /app
 # Copy shared module from repository root (relative to build context)
 COPY shared/ ./shared/
 
+# Copy predictions package structure (required for predictions.worker imports)
+COPY predictions/__init__.py ./predictions/__init__.py
+
 # Copy predictions/shared module (contains mock models, etc.)
 COPY predictions/shared/ ./predictions/shared/
 
