@@ -128,6 +128,10 @@ class BdlAvailabilityLogger:
         """
         Get expected games for this date from the schedule.
 
+        Note: We include ALL games (not just Final), because when scraping at
+        1 AM or 2 AM ET, games may still be showing as In Progress in the
+        schedule even though they've finished and BDL has the data.
+
         Returns:
             List of (home_team, away_team, start_time) tuples
         """
@@ -138,15 +142,24 @@ class BdlAvailabilityLogger:
             from google.cloud import bigquery
             client = bigquery.Client()
 
+            # FIXED: Removed game_status = 3 filter
+            # When scraping at 10 PM, 1 AM, 2 AM ET, games may not yet be
+            # marked as Final in the schedule. We want to track ALL scheduled
+            # games and compare against what BDL returns.
+            # Dynamic season year: Oct-Dec = current year, Jan-Sep = previous year
             query = """
             SELECT
                 home_team_tricode,
                 away_team_tricode,
-                game_date_est
+                game_date_est,
+                game_status
             FROM `nba-props-platform.nba_raw.nbac_schedule`
             WHERE game_date = @game_date
-              AND season_year = 2025
-              AND game_status = 3  -- Final games only
+              AND season_year = CASE
+                  WHEN EXTRACT(MONTH FROM @game_date) >= 10
+                  THEN EXTRACT(YEAR FROM @game_date)
+                  ELSE EXTRACT(YEAR FROM @game_date) - 1
+                END
             """
 
             job_config = bigquery.QueryJobConfig(
@@ -284,13 +297,25 @@ class BdlAvailabilityLogger:
             errors = client.insert_rows_json(table_id, rows)
 
             if errors:
-                logger.error(f"BigQuery insert errors: {errors}")
+                # Log detailed error info for debugging
+                logger.error(
+                    f"BigQuery insert errors for bdl_game_scrape_attempts: {errors}. "
+                    f"Table: {table_id}, Rows attempted: {len(rows)}, "
+                    f"Game date: {self.game_date}, Workflow: {self.workflow}"
+                )
             else:
                 logger.info(f"Logged {len(rows)} game availability records to BigQuery")
 
         except Exception as e:
-            # Don't fail the scraper if logging fails
-            logger.warning(f"Failed to log availability to BigQuery: {e}")
+            # Log detailed error for debugging - this helps identify why 0 rows
+            import traceback
+            logger.error(
+                f"Failed to log BDL availability to BigQuery: {e}. "
+                f"Table: nba-props-platform.nba_orchestration.bdl_game_scrape_attempts, "
+                f"Game date: {self.game_date}, Workflow: {self.workflow}, "
+                f"Records to write: {len(records)}. "
+                f"Traceback: {traceback.format_exc()}"
+            )
 
 
 def log_bdl_game_availability(

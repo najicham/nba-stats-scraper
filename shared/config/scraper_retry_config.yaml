@@ -1,0 +1,377 @@
+# Scraper Retry Configuration
+# ============================================================================
+# Defines which scrapers need extended retry windows beyond the standard
+# overnight collection. This addresses "late data" issues where external
+# APIs don't have data available immediately after games end.
+#
+# Created: January 22, 2026
+# Purpose: Centralized configuration for scraper catch-up retries
+#
+# Usage:
+#   from shared.config.scraper_retry_config import get_retry_config
+#   config = get_retry_config('bdl_box_scores')
+# ============================================================================
+
+version: "1.0"
+
+# ============================================================================
+# GLOBAL SETTINGS
+# ============================================================================
+global:
+  # Default timezone for all schedules
+  timezone: "America/New_York"
+
+  # Default lookback days if not specified per-scraper
+  default_lookback_days: 3
+
+  # How often the catch-up controller evaluates (minutes)
+  evaluation_interval_minutes: 60
+
+  # Log level for retry operations
+  log_level: "INFO"
+
+# ============================================================================
+# SCRAPER RETRY DEFINITIONS
+# ============================================================================
+# Each scraper that needs extended retries is defined here with:
+#   - enabled: Whether catch-up retries are active
+#   - priority: CRITICAL, HIGH, MEDIUM, LOW
+#   - comparison_source: Table to check for "complete" data (what we compare against)
+#   - retry_windows: Times to attempt catch-up (ET)
+#   - lookback_days: How many days back to check for missing data
+#   - alert_thresholds: When to alert about missing data
+#   - notes: Context for why this scraper needs retries
+# ============================================================================
+
+scrapers:
+  # --------------------------------------------------------------------------
+  # BALL DON'T LIE (BDL) - External API with documented 45+ hour delays
+  # --------------------------------------------------------------------------
+  bdl_box_scores:
+    enabled: true
+    priority: HIGH
+
+    # What to compare against to detect missing data
+    comparison:
+      source_table: "nba_raw.nbac_gamebook_player_stats"
+      target_table: "nba_raw.bdl_player_boxscores"
+      join_keys:
+        - game_date
+        - home_team_abbr
+        - away_team_abbr
+      # Minimum players expected per game (detect partial data)
+      min_rows_per_game: 20
+
+    # Retry schedule (Eastern Time)
+    retry_windows:
+      - time: "10:00"
+        name: "bdl_catchup_midday"
+        description: "Catch data that arrived overnight"
+      - time: "14:00"
+        name: "bdl_catchup_afternoon"
+        description: "Midday retry for slow data"
+      - time: "18:00"
+        name: "bdl_catchup_evening"
+        description: "Final daily retry"
+
+    # How many days back to check for missing games
+    lookback_days: 3
+
+    # Alert thresholds
+    alerts:
+      # Alert if more than N games missing after all retries
+      max_missing_games: 2
+      # Alert severity by time since game end
+      severity_by_hours:
+        - hours: 6
+          severity: INFO
+        - hours: 12
+          severity: WARNING
+        - hours: 24
+          severity: ERROR
+        - hours: 48
+          severity: CRITICAL
+
+    notes: |
+      BDL API has documented reliability issues:
+      - 33 games missing data (Jan 1-21, 2026)
+      - 76% at West Coast venues
+      - Data can be 45+ hours late
+      NBAC gamebook is the reliable fallback (100% coverage)
+
+  # --------------------------------------------------------------------------
+  # ODDS API PLAYER PROPS - 40% coverage suggests timing/availability issues
+  # --------------------------------------------------------------------------
+  oddsa_player_props:
+    enabled: true
+    priority: HIGH
+
+    comparison:
+      source_table: "nba_raw.nbac_schedule"
+      target_table: "nba_raw.odds_api_player_props"
+      join_keys:
+        - game_date
+      # At least 50 prop lines expected per game with props
+      min_rows_per_game: 50
+      # Not all games have props (e.g., preseason, some regular season)
+      # Only compare games that SHOULD have props
+      filter: "game_date >= '2025-10-22'"  # Regular season start
+
+    retry_windows:
+      - time: "12:00"
+        name: "odds_catchup_noon"
+        description: "Midday props check"
+      - time: "15:00"
+        name: "odds_catchup_afternoon"
+        description: "Afternoon props retry"
+      - time: "19:00"
+        name: "odds_catchup_evening"
+        description: "Evening props final (before games)"
+
+    lookback_days: 1  # Props are time-sensitive, 1 day lookback
+
+    alerts:
+      max_missing_games: 1
+      severity_by_hours:
+        - hours: 4
+          severity: WARNING
+        - hours: 8
+          severity: ERROR
+
+    notes: |
+      Odds API player props have 40% coverage (vs expected 100%).
+      Props are pre-game data, so catch-up is for FUTURE games.
+      BettingPros is the fallback (99.7% coverage).
+
+  # --------------------------------------------------------------------------
+  # NBAC GAMEBOOK PDF - Official but PDF availability depends on timing
+  # --------------------------------------------------------------------------
+  nbac_gamebook_pdf:
+    enabled: true
+    priority: MEDIUM
+
+    comparison:
+      source_table: "nba_raw.nbac_schedule"
+      target_table: "nba_raw.nbac_gamebook_player_stats"
+      join_keys:
+        - game_date
+        - home_team_tricode  # Uses tricode not abbr
+        - away_team_tricode
+      min_rows_per_game: 20
+      filter: "game_status = 3"  # Final games only
+
+    retry_windows:
+      - time: "08:00"
+        name: "gamebook_catchup_morning"
+        description: "Morning PDF check (most available by now)"
+      - time: "11:00"
+        name: "gamebook_catchup_late_morning"
+        description: "Late morning retry for slow PDFs"
+
+    lookback_days: 1  # PDFs should be available within 24 hours
+
+    alerts:
+      max_missing_games: 0  # Critical source, no tolerance
+      severity_by_hours:
+        - hours: 8
+          severity: WARNING
+        - hours: 12
+          severity: ERROR
+        - hours: 24
+          severity: CRITICAL
+
+    notes: |
+      Official NBA gamebook PDFs. 100% coverage expected.
+      Contains DNP (Did Not Play) intelligence.
+      PDF publication depends on NBA.com timing.
+
+  # --------------------------------------------------------------------------
+  # BIGDATABALL PLAY-BY-PLAY - 94% coverage, Google Drive dependent
+  # --------------------------------------------------------------------------
+  bigdataball_pbp:
+    enabled: false  # Enable when monitoring shows consistent gaps
+    priority: LOW
+
+    comparison:
+      source_table: "nba_raw.nbac_schedule"
+      target_table: "nba_raw.bigdataball_play_by_play"
+      join_keys:
+        - game_date
+      min_rows_per_game: 100  # PBP has many rows per game
+      filter: "game_status = 3"
+
+    retry_windows:
+      - time: "11:00"
+        name: "bigdataball_catchup"
+        description: "Single morning retry"
+
+    lookback_days: 3
+
+    alerts:
+      max_missing_games: 3
+      severity_by_hours:
+        - hours: 24
+          severity: INFO
+        - hours: 48
+          severity: WARNING
+
+    notes: |
+      BigDataBall hosted on Google Drive. 94% coverage.
+      NBAC play-by-play is fallback (100% coverage).
+      Enable catch-up if gap analysis shows persistent delays.
+
+  # --------------------------------------------------------------------------
+  # PBPSTATS - Library-dependent, provider fallback sequence
+  # --------------------------------------------------------------------------
+  pbpstats_boxscore:
+    enabled: false  # Enable when monitoring shows consistent gaps
+    priority: LOW
+
+    comparison:
+      source_table: "nba_raw.nbac_schedule"
+      target_table: "nba_raw.pbpstats_boxscore"
+      join_keys:
+        - game_date
+      min_rows_per_game: 24
+      filter: "game_status = 3"
+
+    retry_windows:
+      - time: "10:30"
+        name: "pbpstats_catchup"
+        description: "Single morning retry"
+
+    lookback_days: 1
+
+    alerts:
+      max_missing_games: 2
+      severity_by_hours:
+        - hours: 12
+          severity: WARNING
+        - hours: 24
+          severity: ERROR
+
+    notes: |
+      Depends on pbpstats Python library.
+      Uses provider fallback: ["live", "stats_nba", "data_nba"]
+      Enable catch-up if monitoring shows provider failures.
+
+# ============================================================================
+# COMPLETENESS CHECK QUERIES
+# ============================================================================
+# Pre-built queries for each scraper to find missing data
+# These are used by the generalized completeness checker
+# ============================================================================
+
+completeness_queries:
+  bdl_box_scores: |
+    WITH schedule AS (
+      SELECT game_date, home_team_tricode, away_team_tricode
+      FROM nba_raw.nbac_schedule
+      WHERE game_date BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
+                          AND DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+        AND season_year = CASE
+            WHEN EXTRACT(MONTH FROM CURRENT_DATE()) >= 10
+            THEN EXTRACT(YEAR FROM CURRENT_DATE())
+            ELSE EXTRACT(YEAR FROM CURRENT_DATE()) - 1
+          END
+        AND game_status = 3
+    ),
+    reference AS (
+      SELECT game_date, home_team_abbr, away_team_abbr, COUNT(*) AS player_count
+      FROM nba_raw.nbac_gamebook_player_stats
+      WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
+      GROUP BY 1, 2, 3
+    ),
+    target AS (
+      SELECT game_date, home_team_abbr, away_team_abbr, COUNT(*) AS player_count
+      FROM nba_raw.bdl_player_boxscores
+      WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
+      GROUP BY 1, 2, 3
+    )
+    SELECT s.game_date, s.home_team_tricode AS home_team, s.away_team_tricode AS away_team,
+           COALESCE(r.player_count, 0) AS reference_count,
+           COALESCE(t.player_count, 0) AS target_count,
+           CASE WHEN t.player_count IS NULL OR t.player_count = 0 THEN TRUE ELSE FALSE END AS is_missing
+    FROM schedule s
+    LEFT JOIN reference r ON s.game_date = r.game_date
+                          AND s.home_team_tricode = r.home_team_abbr
+    LEFT JOIN target t ON s.game_date = t.game_date
+                       AND s.home_team_tricode = t.home_team_abbr
+    WHERE r.player_count > 0 AND (t.player_count IS NULL OR t.player_count = 0)
+    ORDER BY s.game_date DESC
+
+  oddsa_player_props: |
+    WITH schedule AS (
+      SELECT game_date, COUNT(*) AS expected_games
+      FROM nba_raw.nbac_schedule
+      WHERE game_date BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
+                          AND CURRENT_DATE()
+        AND season_year = CASE
+            WHEN EXTRACT(MONTH FROM CURRENT_DATE()) >= 10
+            THEN EXTRACT(YEAR FROM CURRENT_DATE())
+            ELSE EXTRACT(YEAR FROM CURRENT_DATE()) - 1
+          END
+      GROUP BY game_date
+    ),
+    props AS (
+      SELECT game_date, COUNT(DISTINCT game_id) AS games_with_props
+      FROM nba_raw.odds_api_player_props
+      WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
+      GROUP BY game_date
+    )
+    SELECT s.game_date, s.expected_games, COALESCE(p.games_with_props, 0) AS games_with_props,
+           s.expected_games - COALESCE(p.games_with_props, 0) AS missing_games
+    FROM schedule s
+    LEFT JOIN props p ON s.game_date = p.game_date
+    WHERE COALESCE(p.games_with_props, 0) < s.expected_games
+    ORDER BY s.game_date DESC
+
+  nbac_gamebook_pdf: |
+    WITH schedule AS (
+      SELECT game_date, home_team_tricode, away_team_tricode
+      FROM nba_raw.nbac_schedule
+      WHERE game_date BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
+                          AND DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+        AND season_year = CASE
+            WHEN EXTRACT(MONTH FROM CURRENT_DATE()) >= 10
+            THEN EXTRACT(YEAR FROM CURRENT_DATE())
+            ELSE EXTRACT(YEAR FROM CURRENT_DATE()) - 1
+          END
+        AND game_status = 3
+    ),
+    gamebooks AS (
+      SELECT game_date, home_team_abbr, away_team_abbr, COUNT(*) AS player_count
+      FROM nba_raw.nbac_gamebook_player_stats
+      WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
+      GROUP BY 1, 2, 3
+    )
+    SELECT s.game_date, s.home_team_tricode AS home_team, s.away_team_tricode AS away_team,
+           'NO_GAMEBOOK' AS status
+    FROM schedule s
+    LEFT JOIN gamebooks g ON s.game_date = g.game_date
+                          AND s.home_team_tricode = g.home_team_abbr
+    WHERE g.player_count IS NULL OR g.player_count = 0
+    ORDER BY s.game_date DESC
+
+# ============================================================================
+# DEPLOYMENT NOTES
+# ============================================================================
+#
+# 1. Cloud Scheduler Jobs Required:
+#    - bdl-catchup-midday (10:00 AM ET)
+#    - bdl-catchup-afternoon (2:00 PM ET)
+#    - bdl-catchup-evening (6:00 PM ET)
+#    - odds-catchup-noon (12:00 PM ET)
+#    - odds-catchup-afternoon (3:00 PM ET)
+#    - gamebook-catchup-morning (8:00 AM ET)
+#
+# 2. Each scheduler job should:
+#    - Read this config to get lookback_days
+#    - Run completeness check for that scraper
+#    - For each missing date, trigger the scraper
+#
+# 3. Monitoring:
+#    - Track number of catch-up retries per scraper
+#    - Alert if catch-up is consistently needed (indicates API degradation)
+#    - Log first-availability timestamps for latency analysis
+# ============================================================================

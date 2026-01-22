@@ -1,14 +1,27 @@
-# January 21, 2026 - Critical Fixes Directory
+# January 21-22, 2026 - Critical Fixes Directory
 
 ## Overview
-This directory contains documentation for critical issues identified during the January 21, 2026 orchestration validation.
+This directory contains documentation for critical issues identified during the January 21, 2026 orchestration validation, plus ongoing improvements.
 
 ## Status
 **Created:** 2026-01-21 20:50 ET (Initial)
-**Updated:** 2026-01-21 21:30 ET (Deep Analysis Complete)
+**Updated:** 2026-01-22 (BDL Late Data Solution Added)
 **Priority:** 🔴 CRITICAL - Multiple pipeline blockers + systemic issues
 
 ## Documents in This Directory
+
+### **BDL-LATE-DATA-SOLUTION.md** (NEW - Jan 22, 2026)
+Comprehensive solution for BDL API late/missing data:
+- Root cause: Logger broken + retry windows too narrow
+- 3 new catch-up workflows (10 AM, 2 PM, 6 PM ET)
+- BDL completeness checker script
+- BDL latency report generator (for contacting BDL support)
+- Generalized configuration for multi-scraper retry system
+
+**Key Files Created:**
+- `bin/bdl_completeness_check.py` - Find missing BDL games
+- `bin/bdl_latency_report.py` - Generate evidence for support
+- `shared/config/scraper_retry_config.yaml` - Generalized retry config
 
 ### **CRITICAL-FIXES-REQUIRED.md** (Primary Document)
 Comprehensive analysis of 4 critical issues blocking tonight's pipeline:

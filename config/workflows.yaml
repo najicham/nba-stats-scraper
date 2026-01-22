@@ -259,6 +259,88 @@ workflows:
       required_for: ["morning_operations"]
 
   # ────────────────────────────────────────────────────────────
+  # BDL Catch-Up - Extended Retry for Late Data (NEW Jan 22, 2026)
+  # ────────────────────────────────────────────────────────────
+  # BDL API sometimes doesn't have data until 12+ hours after game end.
+  # This workflow retries throughout the day to catch late-arriving data.
+  #
+  # Problem observed: 33 games missing BDL data (Jan 1-21, 2026)
+  # - 76% at West Coast venues
+  # - BDL data can be 45+ hours late
+  # - Current retry windows end at 6 AM, missing late data
+  #
+  # Solution: Add midday, afternoon, and evening catch-up windows
+  # ────────────────────────────────────────────────────────────
+
+  bdl_catchup_midday:
+    enabled: true
+    priority: "MEDIUM"
+    decision_type: "bdl_catchup"
+    description: "BDL catch-up - 10 AM ET - Retry games missing BDL data from last 3 days"
+
+    schedule:
+      fixed_time: "10:00"  # 10 AM ET
+      tolerance_minutes: 30
+      # Target last 3 days to catch 45+ hour delays
+      lookback_days: 3
+
+    execution_plan:
+      type: "single"
+      scraper: bdl_box_scores
+      # Only scrape dates with missing BDL data
+      # The scraper will be invoked for each date in lookback window
+      smart_retry: true
+
+    alerts:
+      failure: "WARNING"
+      missing_games: "INFO"  # Expected to find some gaps
+
+    notes: |
+      This workflow runs at 10 AM ET to catch BDL data that arrived overnight.
+      It checks the last 3 days for games that have NBAC data but missing BDL.
+      The controller should invoke the scraper for each date with gaps.
+
+  bdl_catchup_afternoon:
+    enabled: true
+    priority: "MEDIUM"
+    decision_type: "bdl_catchup"
+    description: "BDL catch-up - 2 PM ET - Retry games missing BDL data from last 3 days"
+
+    schedule:
+      fixed_time: "14:00"  # 2 PM ET
+      tolerance_minutes: 30
+      lookback_days: 3
+
+    execution_plan:
+      type: "single"
+      scraper: bdl_box_scores
+      smart_retry: true
+
+    alerts:
+      failure: "WARNING"
+      missing_games: "INFO"
+
+  bdl_catchup_evening:
+    enabled: true
+    priority: "MEDIUM"
+    decision_type: "bdl_catchup"
+    description: "BDL catch-up - 6 PM ET - Final daily retry for missing BDL data"
+
+    schedule:
+      fixed_time: "18:00"  # 6 PM ET
+      tolerance_minutes: 30
+      lookback_days: 3
+
+    execution_plan:
+      type: "single"
+      scraper: bdl_box_scores
+      smart_retry: true
+
+    alerts:
+      failure: "WARNING"
+      missing_games: "WARNING"  # Higher alert for end of day
+
+  # ────────────────────────────────────────────────────────────
   # Betting Lines - Revenue Critical
   # ────────────────────────────────────────────────────────────
   betting_lines:

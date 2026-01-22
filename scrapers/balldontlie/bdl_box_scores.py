@@ -72,13 +72,24 @@ except ImportError:
     def notify_warning(*args, **kwargs): pass
     def notify_info(*args, **kwargs): pass
 
-# BDL availability logger for per-game tracking
+# BDL availability logger for per-game tracking (legacy - BDL specific)
 try:
     from shared.utils.bdl_availability_logger import log_bdl_game_availability
 except ImportError:
     # Graceful fallback if logger not available
     logger.warning("Could not import bdl_availability_logger - game availability tracking disabled")
     def log_bdl_game_availability(*args, **kwargs): pass
+
+# Generalized scraper availability logger (new - unified tracking)
+try:
+    from shared.utils.scraper_availability_logger import (
+        log_scraper_availability,
+        extract_games_from_boxscores
+    )
+except ImportError:
+    logger.warning("Could not import scraper_availability_logger - unified tracking disabled")
+    def log_scraper_availability(*args, **kwargs): pass
+    def extract_games_from_boxscores(*args, **kwargs): return []
 
 # --------------------------------------------------------------------------- #
 # Scraper (USING MIXIN)
@@ -249,6 +260,24 @@ class BdlBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
                 logger.info(f"Logged BDL game availability for {self.opts['date']}")
             except Exception as e:
                 logger.warning(f"Failed to log BDL game availability: {e}", exc_info=True)
+
+            # Log to unified scraper tracking table (for cross-scraper latency analysis)
+            try:
+                games_data = extract_games_from_boxscores(
+                    self.data["boxScores"],
+                    home_team_path="game.home_team.abbreviation",
+                    away_team_path="game.visitor_team.abbreviation"
+                )
+                log_scraper_availability(
+                    scraper_name="bdl_box_scores",
+                    game_date=self.opts["date"],
+                    execution_id=self.run_id,
+                    games_data=games_data,
+                    workflow=self.opts.get("workflow", "unknown"),
+                    source_url=self.url
+                )
+            except Exception as e:
+                logger.warning(f"Failed to log unified scraper availability: {e}", exc_info=True)
 
             logger.info("Fetched %d box-score rows for %s across %d pages",
                        len(rows), self.opts["date"], pages_fetched)
