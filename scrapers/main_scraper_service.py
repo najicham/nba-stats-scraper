@@ -477,6 +477,150 @@ def create_app():
                 "error_type": type(e).__name__
             }), 500
     
+    # ==========================================================================
+    # CATCH-UP ENDPOINT (for late/missing data retries)
+    # ==========================================================================
+
+    @app.route('/catchup', methods=['POST'])
+    def catchup_scraper():
+        """
+        Catch-up endpoint for retrying scrapers with missing data.
+        Called by Cloud Scheduler at various times throughout the day.
+
+        Expected JSON body:
+        {
+            "scraper_name": "bdl_box_scores",
+            "lookback_days": 3,
+            "workflow": "bdl_catchup_midday"
+        }
+
+        Flow:
+        1. Runs completeness check to find dates with missing data
+        2. For each missing date, invokes the scraper via /scrape
+        3. Returns summary of retries
+        """
+        try:
+            data = request.get_json() or {}
+
+            scraper_name = data.get('scraper_name')
+            if not scraper_name:
+                return jsonify({
+                    "error": "Missing required parameter: scraper_name",
+                    "available_scrapers": ["bdl_box_scores", "nbac_gamebook_pdf", "oddsa_player_props"]
+                }), 400
+
+            lookback_days = data.get('lookback_days', 3)
+            workflow = data.get('workflow', 'catchup')
+
+            app.logger.info(f"🔄 Catch-up: {scraper_name} (lookback: {lookback_days} days, workflow: {workflow})")
+
+            # Import catch-up logic
+            try:
+                from bin.scraper_catchup_controller import find_missing_dates, SCRAPER_ENDPOINTS
+            except ImportError:
+                # Fallback: add bin to path
+                import sys
+                from pathlib import Path
+                bin_path = Path(__file__).parent.parent / "bin"
+                if str(bin_path) not in sys.path:
+                    sys.path.insert(0, str(bin_path))
+                from scraper_catchup_controller import find_missing_dates, SCRAPER_ENDPOINTS
+
+            # Step 1: Find missing dates
+            try:
+                missing_dates = find_missing_dates(scraper_name, lookback_days)
+            except Exception as e:
+                app.logger.error(f"Completeness check failed: {e}")
+                return jsonify({
+                    "status": "error",
+                    "message": f"Completeness check failed: {e}",
+                    "scraper_name": scraper_name
+                }), 500
+
+            if not missing_dates:
+                app.logger.info(f"✅ No missing data found for {scraper_name}")
+                return jsonify({
+                    "status": "complete",
+                    "message": "No missing data to retry",
+                    "scraper_name": scraper_name,
+                    "lookback_days": lookback_days,
+                    "dates_checked": 0
+                }), 200
+
+            app.logger.info(f"Found {len(missing_dates)} dates with missing data: {missing_dates}")
+
+            # Step 2: Invoke scraper for each missing date
+            results = []
+            successes = 0
+            failures = 0
+
+            for date in missing_dates:
+                try:
+                    # Get scraper instance and run it
+                    if not scraper_exists(scraper_name):
+                        results.append({"date": date, "status": "error", "message": f"Unknown scraper: {scraper_name}"})
+                        failures += 1
+                        continue
+
+                    app.logger.info(f"  Retrying {scraper_name} for {date}...")
+                    scraper = get_scraper_instance(scraper_name)
+
+                    # Run scraper with date and workflow
+                    scraper_params = {
+                        "date": date,
+                        "workflow": workflow,
+                        "group": "prod"
+                    }
+
+                    result = scraper.run(scraper_params)
+
+                    if result:
+                        results.append({
+                            "date": date,
+                            "status": "success",
+                            "run_id": scraper.run_id,
+                            "stats": scraper.get_scraper_stats()
+                        })
+                        successes += 1
+                    else:
+                        results.append({
+                            "date": date,
+                            "status": "failed",
+                            "run_id": scraper.run_id
+                        })
+                        failures += 1
+
+                except Exception as e:
+                    app.logger.error(f"  Failed to retry {date}: {e}")
+                    results.append({
+                        "date": date,
+                        "status": "error",
+                        "message": str(e)
+                    })
+                    failures += 1
+
+            status = "complete" if failures == 0 else "partial"
+            app.logger.info(f"🔄 Catch-up complete: {successes} succeeded, {failures} failed")
+
+            return jsonify({
+                "status": status,
+                "scraper_name": scraper_name,
+                "lookback_days": lookback_days,
+                "workflow": workflow,
+                "dates_retried": len(missing_dates),
+                "successes": successes,
+                "failures": failures,
+                "results": results
+            }), 200
+
+        except Exception as e:
+            app.logger.error(f"Catch-up failed: {e}", exc_info=True)
+            return jsonify({
+                "status": "error",
+                "message": str(e),
+                "error_type": type(e).__name__
+            }), 500
+
     @app.route('/trigger-workflow', methods=['POST'])
     def trigger_workflow():
         """
