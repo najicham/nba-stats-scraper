@@ -358,23 +358,23 @@ class BasketballRefDataValidator:
             
             # 6. Normalization samples
             if file_paths:
-                sample_file = shlex.quote(file_paths[0])
+                sample_file = file_paths[0]
                 sample_team = list(files.keys())[0]
                 print(f"\n🔤 NORMALIZATION SAMPLES ({sample_team}):")
                 print("   (First 3 players - should be lowercase, no suffixes)")
-                subprocess.run(f"jq '.players[0:3] | .[] | \"  \" + .full_name + \" → \" + .normalized' {sample_file}", shell=True, check=False)
+                subprocess.run(["jq", ".players[0:3] | .[] | \"  \" + .full_name + \" → \" + .normalized", sample_file], shell=False, check=False)
             
             # 7. Position distribution across all teams
             print(f"\n🏀 POSITION DISTRIBUTION:")
             print("   (Should see standard NBA positions: PG, SG, SF, PF, C)")
-            subprocess.run(f"jq -r '.players[].position' {file_pattern_safe} | sort | uniq -c | sort -nr", shell=True, check=False)
+            # Use sh -c with positional args to avoid shell injection while supporting pipes
+            subprocess.run(["sh", "-c", "jq -r '.players[].position' \"$@\" | sort | uniq -c | sort -nr", "_"] + file_paths, shell=False, check=False)
             
             # 8. Sample players from each team
             print(f"\n👥 SAMPLE PLAYERS BY TEAM:")
             for team, file_path in files.items():
                 print(f"\n   📋 {team} (first 2 players):")
-                file_path_safe = shlex.quote(file_path)
-                subprocess.run(f"jq -r '.players[0:2] | .[] | \"    #\" + (.jersey_number | tostring) + \" \" + .full_name + \" (\" + .last_name + \") - \" + .position' {file_path_safe}", shell=True, check=False)
+                subprocess.run(["jq", "-r", ".players[0:2] | .[] | \"    #\" + (.jersey_number | tostring) + \" \" + .full_name + \" (\" + .last_name + \") - \" + .position", file_path], shell=False, check=False)
             
             # 9. Data completeness check
             print(f"\n📋 DATA COMPLETENESS:")

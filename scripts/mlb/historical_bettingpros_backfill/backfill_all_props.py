@@ -211,11 +211,8 @@ class MLBBettingProsBackfill:
                     'http': proxy_url,
                     'https': proxy_url
                 }
-                # Disable SSL verification for proxy (common for corporate proxies)
-                self.session.verify = False
-                # Suppress SSL warnings
-                import urllib3
-                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+                # SSL verification enabled for security
+                # If proxy has SSL issues, configure proxy to use valid certificates
                 logger.info(f"Proxy enabled: {proxy_url.split('@')[-1] if '@' in proxy_url else proxy_url}")
 
     def get_date_range(self) -> List[str]:
