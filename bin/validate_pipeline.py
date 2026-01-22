@@ -61,6 +61,10 @@ from shared.validation.output.terminal import (
 from shared.validation.output.json_output import print_validation_json, format_combined_json
 from shared.validation.validators.chain_validator import validate_all_chains
 from shared.validation.validators.maintenance_validator import validate_maintenance
+from shared.validation.validators.infrastructure_validator import (
+    validate_infrastructure,
+    format_proxy_health,
+)
 from shared.validation.run_history import get_run_history, RunHistorySummary
 from shared.validation.context.player_universe import get_missing_players
 from shared.validation.firestore_state import get_orchestration_state, OrchestrationState
@@ -837,6 +841,24 @@ Examples:
                     )
                     if maintenance:
                         print(format_maintenance_section(maintenance, use_color=use_color))
+                        print()
+
+                    # Run infrastructure validation (for today/yesterday)
+                    infrastructure = validate_infrastructure(
+                        game_date=start_date,
+                        time_context=report.time_context,
+                    )
+                    if infrastructure and infrastructure.proxy_health and infrastructure.proxy_health.has_data:
+                        print("=== Infrastructure Health ===")
+                        print()
+                        print("Proxy Health (24h):")
+                        print(format_proxy_health(infrastructure.proxy_health))
+                        if infrastructure.warnings:
+                            for w in infrastructure.warnings:
+                                print(f"  ⚠ {w}")
+                        if infrastructure.errors:
+                            for e in infrastructure.errors:
+                                print(f"  ✗ {e}")
                         print()
 
                     # Print Phase 3-5 using standard output (P1/P2 already excluded)
