@@ -514,21 +514,52 @@ def create_app():
 
             app.logger.info(f"🔄 Catch-up: {scraper_name} (lookback: {lookback_days} days, workflow: {workflow})")
 
-            # Import catch-up logic
+            # Step 1: Find missing dates using completeness query
             try:
-                from bin.scraper_catchup_controller import find_missing_dates, SCRAPER_ENDPOINTS
-            except ImportError:
-                # Fallback: add bin to path
-                import sys
+                from google.cloud import bigquery
+                import yaml
                 from pathlib import Path
-                bin_path = Path(__file__).parent.parent / "bin"
-                if str(bin_path) not in sys.path:
-                    sys.path.insert(0, str(bin_path))
-                from scraper_catchup_controller import find_missing_dates, SCRAPER_ENDPOINTS
 
-            # Step 1: Find missing dates
-            try:
-                missing_dates = find_missing_dates(scraper_name, lookback_days)
+                bq_client = bigquery.Client()
+
+                # Load config to get the completeness query
+                config_path = Path(__file__).parent.parent / "shared" / "config" / "scraper_retry_config.yaml"
+
+                if not config_path.exists():
+                    return jsonify({
+                        "status": "error",
+                        "message": f"Config not found: {config_path}",
+                        "scraper_name": scraper_name
+                    }), 500
+
+                with open(config_path) as f:
+                    config = yaml.safe_load(f)
+
+                # Get completeness query for this scraper
+                queries = config.get("completeness_queries", {})
+                query_template = queries.get(scraper_name)
+
+                if not query_template:
+                    return jsonify({
+                        "status": "error",
+                        "message": f"No completeness query configured for {scraper_name}",
+                        "scraper_name": scraper_name
+                    }), 400
+
+                # Format query with lookback days
+                query = query_template.format(lookback_days=lookback_days)
+                app.logger.info(f"Running completeness check for {scraper_name}...")
+
+                results = bq_client.query(query).result()
+
+                missing_dates = set()
+                for row in results:
+                    if hasattr(row, 'game_date'):
+                        missing_dates.add(str(row.game_date))
+
+                missing_dates = sorted(missing_dates)
+                app.logger.info(f"Found {len(missing_dates)} dates with missing {scraper_name} data")
+
             except Exception as e:
                 app.logger.error(f"Completeness check failed: {e}")
                 return jsonify({

@@ -92,7 +92,7 @@ create_catchup_job() {
         --http-method=POST \
         --headers="Content-Type=application/json" \
         --message-body="{\"scraper_name\": \"$SCRAPER_NAME\", \"lookback_days\": $LOOKBACK_DAYS, \"workflow\": \"$JOB_NAME\"}" \
-        --oidc-service-account-email="scheduler-invoker@${PROJECT_ID}.iam.gserviceaccount.com" \
+        --oidc-service-account-email="scheduler-orchestration@${PROJECT_ID}.iam.gserviceaccount.com" \
         --description="$DESCRIPTION" \
         --attempt-deadline="1800s"
 
