@@ -1,0 +1,76 @@
+[
+  {
+    "name": "validation_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Unique identifier for this validation run"
+  },
+  {
+    "name": "game_date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Date of games being validated"
+  },
+  {
+    "name": "phase_name",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Phase transition name (e.g., phase2_to_phase3)"
+  },
+  {
+    "name": "is_valid",
+    "type": "BOOL",
+    "mode": "REQUIRED",
+    "description": "Whether validation passed overall"
+  },
+  {
+    "name": "mode",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Validation mode: disabled, warning, or blocking"
+  },
+  {
+    "name": "issues",
+    "type": "RECORD",
+    "mode": "REPEATED",
+    "description": "List of validation issues found",
+    "fields": [
+      {
+        "name": "validation_type",
+        "type": "STRING",
+        "mode": "REQUIRED",
+        "description": "Type of validation (game_count, processor_completion, data_quality)"
+      },
+      {
+        "name": "severity",
+        "type": "STRING",
+        "mode": "REQUIRED",
+        "description": "Issue severity: info, warning, or error"
+      },
+      {
+        "name": "message",
+        "type": "STRING",
+        "mode": "REQUIRED",
+        "description": "Human-readable message describing the issue"
+      },
+      {
+        "name": "details",
+        "type": "JSON",
+        "mode": "NULLABLE",
+        "description": "Additional structured details about the issue"
+      }
+    ]
+  },
+  {
+    "name": "metrics",
+    "type": "JSON",
+    "mode": "NULLABLE",
+    "description": "Validation metrics (counts, scores, thresholds, etc.)"
+  },
+  {
+    "name": "timestamp",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When this validation was performed"
+  }
+]

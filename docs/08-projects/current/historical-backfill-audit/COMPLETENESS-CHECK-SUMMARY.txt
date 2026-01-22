@@ -1,0 +1,87 @@
+================================================================================
+DATA COMPLETENESS CHECK - PAST 30 DAYS (Dec 22, 2025 - Jan 21, 2026)
+================================================================================
+Generated: January 21, 2026, 8:00 AM ET
+
+OVERALL STATUS: ⚠️ NEEDS ATTENTION
+
+KEY METRICS
+-----------
+✓ Dates Checked:           31 days
+✓ Dates with Games:        29 days
+✓ Total Final Games:       226 games
+
+COVERAGE BY DATA TYPE
+---------------------
+⚠️ Boxscores:              192/226 games (85.0%) - BELOW TARGET
+✓ Gamebooks:               219/226 games (96.9%) - ACCEPTABLE
+✓ Analytics:               ~188/226 games (83.2%) - FOLLOWS BOXSCORES
+✓ Predictions:             24,963 predictions - HEALTHY
+✓ Feature Store:           Complete for all game dates
+
+DATA GAPS
+---------
+⚠️ Missing Boxscores:      34 games across 15 dates
+⚠️ Missing Gamebooks:      7 games (Jan 20 only - likely pending)
+⚠️ Missing Analytics:      4 dates affected
+
+TEAM-SPECIFIC ISSUES
+--------------------
+🔴 Golden State (GSW):     7 missing games - INVESTIGATE
+🔴 Sacramento (SAC):       7 missing games - INVESTIGATE
+⚠️ LA Clippers (LAC):      5 missing games
+⚠️ LA Lakers (LAL):        4 missing games
+⚠️ Portland (POR):         4 missing games
+
+CRITICAL DATES
+--------------
+🔴 Jan 15, 2026:           8 missing games (89% missing!) - URGENT
+⚠️ Jan 20, 2026:           3 missing boxscores, 7 missing gamebooks
+⚠️ Jan 18, 2026:           2 missing games
+⚠️ Jan 17, 2026:           2 missing games
+
+IMMEDIATE ACTIONS REQUIRED
+--------------------------
+Priority 1 (TODAY):
+  1. Backfill Jan 15 (8 games) - CRITICAL
+  2. Backfill Jan 16-20 (5 games)
+  3. Investigate GSW/SAC pattern
+
+Priority 2 (THIS WEEK):
+  4. Backfill Jan 12-14 (5 games)
+  5. Backfill Jan 1-7 (11 games)
+  6. Re-run analytics for all backfilled dates
+
+COMMANDS
+--------
+# Quick check
+PYTHONPATH=. python scripts/check_30day_completeness.py
+
+# Backfill single date
+PYTHONPATH=. python scripts/backfill_boxscores.py --date 2026-01-15
+
+# Check specific date
+PYTHONPATH=. python scripts/check_data_completeness.py --date 2026-01-15
+
+DETAILED REPORTS
+----------------
+- Full Report:        DATA-COMPLETENESS-REPORT-JAN-21-2026.md
+- Backfill Plan:      BACKFILL-PRIORITY-PLAN.md
+- Missing Games CSV:  MISSING-GAMES-BACKFILL-LIST.csv
+
+HEALTH TREND (LAST 10 DAYS)
+----------------------------
+Jan 20: PARTIAL (4/7 boxscores)    Jan 15: CRITICAL (1/9 boxscores)
+Jan 19: PARTIAL (8/9 boxscores)    Jan 14: PARTIAL (5/7 boxscores)
+Jan 18: PARTIAL (4/6 boxscores)    Jan 13: PARTIAL (5/7 boxscores)
+Jan 17: PARTIAL (7/9 boxscores)    Jan 12: PARTIAL (4/6 boxscores)
+Jan 16: PARTIAL (5/6 boxscores)    Jan 11: COMPLETE (10/10) ✓
+
+DECEMBER HEALTH (Dec 22-31)
+----------------------------
+ALL DATES: COMPLETE (62/62 games) ✓
+
+================================================================================
+Next Check: Run this script daily at 6 AM ET
+Alert Threshold: Coverage < 95% or any date with >2 missing games
+================================================================================

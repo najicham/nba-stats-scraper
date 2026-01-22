@@ -1,0 +1,268 @@
+NEW SESSION PROMPT - NBA Stats Scraper Latency Monitoring & Testing
+Date: January 22, 2026
+Time: Evening Session
+Goal: Complete critical fixes, testing, and monitoring implementation
+
+================================================================================
+COPY EVERYTHING BELOW THIS LINE INTO NEW CHAT
+================================================================================
+
+I need help continuing work on our NBA stats scraper pipeline. We've made significant progress on latency monitoring but have critical gaps to address tonight.
+
+## CONTEXT: WHAT'S BEEN DONE
+
+### Previous Session Accomplishments (Jan 22, 01:00-03:30 AM):
+1. ✅ Deployed scraper availability monitor Cloud Function (runs daily 8 AM ET)
+2. ✅ Created BDL game scrape attempts BigQuery table (schema deployed)
+3. ✅ Integrated BDL availability logger into scrapers/balldontlie/bdl_box_scores.py
+4. ✅ Fixed 4 critical issues:
+   - Prediction coordinator Dockerfile
+   - Phase 3 analytics stale dependencies
+   - BDL table name mismatch (cleanup processor)
+   - Injury discovery pdfplumber dependency
+5. ✅ Created 9 comprehensive planning documents (~50,000 words)
+
+### Analysis Session Findings (Jan 22, Evening):
+Three exploration agents analyzed the current state and found:
+
+**CRITICAL ISSUES:**
+1. 🔴 BDL scrape attempts table has 0 rows (logger integrated but not populating)
+2. 🔴 Phase 2-3 processing has NO latency tracking (blind spot)
+3. 🔴 Only 13% test coverage (50 of 374 files tested)
+4. 🔴 Cannot track games end-to-end through pipeline
+5. 🟡 Phase 2 completion deadline code ready but NOT deployed
+
+## CURRENT STATE
+
+**Working Components:**
+- Scraper availability monitor: DEPLOYED (Jan 22, 01:48 UTC)
+- Cloud Scheduler: ACTIVE (8 AM ET daily alerts)
+- BigQuery monitoring views: OPERATIONAL
+- Phase 3→4 event-driven trigger: ACTIVE
+
+**Problem Areas:**
+```
+Phase 1 (Scraping):     85% visibility ✅
+Phase 2-3 (Processing):  0% visibility ❌ BLIND SPOT
+Phase 4 (Analytics):    30% visibility ⚠️
+End-to-End:              0% visibility ❌
+
+Test Coverage:          13% overall 🔴
+- Scrapers: 2% (2/123 files)
+- Processors: 3% (4/147 files)
+- Cloud Functions: 7% (2/30+ files)
+```
+
+## KEY FILES TO REFERENCE
+
+**Essential Documents:**
+1. `/docs/09-handoff/2026-01-22-CURRENT-STATE-AND-ACTION-PLAN.md` - START HERE
+   - Complete agent findings
+   - Detailed action items with code examples
+   - Root cause analysis for BDL logger issue
+
+2. `/docs/09-handoff/2026-01-22-COMPREHENSIVE-SESSION-SUMMARY.md`
+   - Previous session accomplishments
+   - All deployments documented
+
+3. `/docs/08-projects/current/MASTER-PROJECT-TRACKER.md`
+   - Project dashboard and tracking
+
+4. `/docs/08-projects/current/UNIT-TESTING-IMPLEMENTATION-PLAN.md`
+   - Complete test strategy (856 lines)
+   - Test templates and examples
+
+**Code Files:**
+- Logger: `/shared/utils/bdl_availability_logger.py`
+- Integration: `/scrapers/balldontlie/bdl_box_scores.py` (lines 74-79, 242-248)
+- Schema: `/schemas/bigquery/nba_orchestration/bdl_game_scrape_attempts.sql`
+- Dashboard: `/monitoring/daily_scraper_health.sql`
+
+## TONIGHT'S OBJECTIVES
+
+### Priority 1: Verify & Fix BDL Logger (1 hour)
+**Problem:** Logger integrated but table has 0 rows
+
+**Actions:**
+1. Check if scraper ran since integration (Jan 22, 01:45 AM)
+2. Check logs for success/error messages
+3. Test logger locally
+4. Diagnose and fix the issue
+
+**Commands:**
+```bash
+# Check last scraper run
+bq query --nouse_legacy_sql "
+SELECT MAX(execution_timestamp) as last_run,
+       MAX(CASE WHEN status = 'success' THEN execution_timestamp END) as last_success
+FROM nba_orchestration.scraper_execution_log
+WHERE scraper_name = 'bdl_box_scores'
+"
+
+# Check logs
+gcloud logging read "
+resource.type=cloud_run_revision
+AND resource.labels.service_name=nba-phase1-scrapers
+AND textPayload=~'Logged BDL game availability'
+" --limit=10 --format=json
+
+# Test locally
+python -m scrapers.balldontlie.bdl_box_scores --date 2026-01-21 --debug
+```
+
+### Priority 2: Deploy Phase 2 Completion Deadline (5 minutes)
+**Problem:** Code ready but environment variables not set
+
+**Command:**
+```bash
+gcloud functions deploy phase2-to-phase3-orchestrator \
+  --region=us-west2 \
+  --update-env-vars ENABLE_PHASE2_COMPLETION_DEADLINE=true,PHASE2_COMPLETION_TIMEOUT_MINUTES=30 \
+  --project=nba-props-platform \
+  --gen2
+```
+
+### Priority 3: Create Critical Unit Tests (3-4 hours)
+**Problem:** Only 13% test coverage, monitoring components untested
+
+**Tests to Create:**
+
+**Test 1:** `tests/unit/monitoring/test_bdl_availability_logger.py`
+- Test extract_games_from_response()
+- Test log_bdl_game_availability()
+- Test BigQuery write logic
+- Test West Coast game flagging
+- Mock BigQuery client
+- Verify table writes
+
+**Test 2:** `tests/unit/orchestration/test_cleanup_processor.py`
+- Test correct table name usage (bdl_player_boxscores)
+- Test query execution
+- Verify Issue #3 fix
+
+**Test 3:** `tests/unit/shared/config/test_rate_limit_config.py`
+- Test config loading
+- Test default values
+- Test overrides
+
+**Reference:** See section in `/docs/09-handoff/2026-01-22-CURRENT-STATE-AND-ACTION-PLAN.md` lines 330-450 for complete test templates with code examples.
+
+**Setup:**
+```bash
+# Install missing test dependencies
+pip install pytest-mock freezegun responses
+
+# Run tests
+pytest tests/unit/ -v --cov=shared --cov=orchestration --cov-report=html
+```
+
+### Priority 4: Add Phase 2-3 Latency Tracking (3-4 hours)
+**Problem:** No visibility into processing delays after scraping
+
+**Actions:**
+1. Add execution logging to phase2_to_phase3 orchestrator
+2. Create phase_execution_log BigQuery table
+3. Build end-to-end latency view joining all phases
+4. Test with historical data
+
+**Files to Modify:**
+- `/orchestration/cloud_functions/phase2_to_phase3/main.py`
+- Create: `/schemas/bigquery/nba_orchestration/phase_execution_log.sql`
+- Create: View for end-to-end game latency
+
+**Details:** See section in action plan document lines 450-550 for code examples.
+
+## SUCCESS CRITERIA FOR TONIGHT
+
+By end of session, we should have:
+- ✅ BDL logger verified working and table populating
+- ✅ Phase 2 completion deadline deployed
+- ✅ 3 critical test suites created and passing
+- ✅ Test coverage increased from 13% to 20%+
+- ✅ Phase 2-3 execution logging implemented
+- ✅ End-to-end latency view created
+- ✅ All changes committed and documented
+
+## VERIFICATION COMMANDS
+
+**Check BDL logger working:**
+```bash
+bq query --nouse_legacy_sql "
+SELECT COUNT(*) as attempts,
+       COUNT(DISTINCT game_date) as dates
+FROM nba_orchestration.bdl_game_scrape_attempts
+"
+```
+
+**Check Phase 2 deadline deployed:**
+```bash
+gcloud functions describe phase2-to-phase3-orchestrator \
+  --region=us-west2 \
+  --gen2 \
+  --format="value(serviceConfig.environmentVariables)"
+```
+
+**Run tests:**
+```bash
+pytest tests/unit/monitoring/ -v
+pytest tests/unit/orchestration/ -v
+pytest tests/unit/shared/config/ -v
+```
+
+**Check coverage:**
+```bash
+pytest tests/unit/ --cov=shared --cov=orchestration --cov-report=term-missing
+```
+
+## GIT STATUS
+
+Current branch: main
+Modified files (from previous session):
+```
+M data_processors/analytics/player_game_summary/player_game_summary_processor.py
+M data_processors/raw/requirements.txt
+M orchestration/cleanup_processor.py
+M orchestration/cloud_functions/phase2_to_phase3/main.py
+M predictions/coordinator/Dockerfile
+M scrapers/balldontlie/bdl_box_scores.py
+M shared/clients/http_pool.py
+```
+
+Untracked docs (can commit later):
+- All docs/09-handoff/*.md files
+- All docs/08-projects/current/*.md files
+
+## IMPORTANT NOTES
+
+1. **Working Directory:** /home/naji/code/nba-stats-scraper
+2. **Project:** nba-props-platform (GCP project ID)
+3. **Region:** us-west2 for Cloud Functions, us-west2 for BigQuery
+4. **Python Version:** 3.12
+5. **Tonight is critical:** Next scraper run is ~02:00 AM ET, want logger working by then
+
+## RECOMMENDED APPROACH
+
+1. Start by reading the action plan document to understand full context
+2. Verify BDL logger status first (most critical)
+3. Deploy Phase 2 deadline while investigating logger
+4. Create tests in parallel (can work on multiple files)
+5. Add Phase 2-3 logging once tests are passing
+6. Commit everything with clear messages
+7. Create handoff document for next session
+
+## QUESTIONS TO ASK ME IF NEEDED
+
+- Do you want me to deploy directly to production or test in staging first?
+- Should I commit changes incrementally or all at once at the end?
+- Do you want verbose output for all commands or just summaries?
+- Should I create additional test files beyond the 3 critical ones?
+
+## READY TO START
+
+Please begin by:
+1. Reading /docs/09-handoff/2026-01-22-CURRENT-STATE-AND-ACTION-PLAN.md
+2. Checking the BDL logger status
+3. Creating a todo list for tonight's work
+4. Starting with Priority 1 (BDL logger verification)
+
+Let me know when you're ready and I'll start executing the plan!

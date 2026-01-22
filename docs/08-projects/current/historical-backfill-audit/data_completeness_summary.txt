@@ -1,0 +1,132 @@
+================================================================================
+NBA DATA COMPLETENESS CHECK - QUICK SUMMARY
+Date Range: January 15-21, 2026
+Generated: Jan 21, 2026 8:04 AM PST
+================================================================================
+
+OVERALL STATUS: ⚠️  PARTIALLY COMPLETE (42.9% fully complete days)
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│                        DATA PIPELINE STATUS                              │
+├──────────────┬──────────┬────────────┬─────────────┬──────────────┬──────┤
+│     Date     │   Raw    │ Analytics  │ Precompute  │ Predictions  │Status│
+├──────────────┼──────────┼────────────┼─────────────┼──────────────┼──────┤
+│ 2026-01-15   │    ✓     │     ✓      │      ✓      │      ✓       │  ✓   │
+│ 2026-01-16   │    ✓     │     ✓      │      ✗      │      ✓       │  ⚠   │
+│ 2026-01-17   │    ✓     │     ✓      │      ✓      │      ✓       │  ✓   │
+│ 2026-01-18   │    ✓     │     ✓      │      ✓      │      ✓       │  ✓   │
+│ 2026-01-19   │    ✓     │     ✓      │      ✗      │      ✓       │  ⚠   │
+│ 2026-01-20   │    ✓     │     ✗      │      ✗      │      ✓       │  ⚠   │
+│ 2026-01-21   │    ✗     │     ✗      │      ✗      │      ✗       │  ✗   │
+└──────────────┴──────────┴────────────┴─────────────┴──────────────┴──────┘
+
+                        ✓ = Complete  ⚠ = Partial  ✗ = Missing
+
+================================================================================
+KEY METRICS
+================================================================================
+
+RAW BOXSCORES (nba_raw.bdl_player_boxscores)
+  • Games:           29 games across 6 days
+  • Player Records:  1,019 records
+  • Latest Update:   Jan 21, 7:59 AM (8 hours ago)
+  • Status:          ✓ GOOD - Current and complete
+
+ANALYTICS (nba_analytics.player_game_summary)
+  • Player Records:  1,061 records across 5 days
+  • Latest Date:     Jan 19 (Jan 20 MISSING despite raw data available)
+  • Status:          ✗ CRITICAL - Processing stopped on Jan 20
+
+PRECOMPUTE (nba_precompute.player_composite_factors)
+  • Records:         534 records across 3 days only
+  • Missing Days:    Jan 16, 19, 20, 21
+  • Completeness:    56-76% (LOW - should be 90%+)
+  • Status:          ✗ CRITICAL - Major gaps in generation
+
+PREDICTIONS (nba_predictions.player_prop_predictions)
+  • Total:           7,014 predictions across 6 days
+  • Actionable:      6,824 (97.3%)
+  • Avg Confidence:  63.3%
+  • Latest Update:   Jan 19, 10:31 PM (41 hours ago)
+  • Status:          ⚠ MODERATE - Generated but stale
+
+================================================================================
+CRITICAL ISSUES
+================================================================================
+
+🔴 ISSUE #1: Analytics Processing Failure (Jan 20)
+   Raw data exists (4 games, 140 records) but analytics NOT generated
+   → Pipeline stopped after Phase 2
+
+🔴 ISSUE #2: Precompute Pipeline Broken (4 of 7 days missing)
+   Missing composite factors for Jan 16, 19, 20, 21
+   → Phase 3→4 transition failures
+
+🔴 ISSUE #3: Data Quality Warnings (93.8% of predictions)
+   6,576 of 7,014 predictions have upstream data quality issues
+   → Only 6.2% marked as production-ready
+
+🟡 ISSUE #4: Inconsistent Betting Lines
+   Line coverage varies: 0% to 91% across different days
+   → Some predictions unusable without lines
+
+================================================================================
+DATA GAPS BREAKDOWN
+================================================================================
+
+Jan 15:  ✓ Complete (all 4 stages)
+Jan 16:  ⚠ Missing Precompute only
+Jan 17:  ✓ Complete (all 4 stages)
+Jan 18:  ✓ Complete (all 4 stages)
+Jan 19:  ⚠ Missing Precompute only
+Jan 20:  ⚠ Missing Analytics & Precompute
+Jan 21:  ✗ Missing All (expected - games not played yet)
+
+COMPLETE PIPELINE DAYS: 3 of 7 (42.9%)
+
+================================================================================
+IMMEDIATE ACTIONS REQUIRED
+================================================================================
+
+Priority 1 - TODAY:
+  1. Investigate Jan 20 analytics failure (check Phase 2→3 orchestration)
+  2. Fix precompute generation for Jan 16, 19, 20
+  3. Regenerate predictions for Jan 20
+  4. Verify pipeline working for today (Jan 21)
+
+Priority 2 - THIS WEEK:
+  5. Add automated alerts for pipeline failures
+  6. Investigate low composite factor completeness (56-76%)
+  7. Improve betting line coverage consistency
+
+Priority 3 - THIS MONTH:
+  8. Add data quality validation at each stage
+  9. Improve production readiness rate (currently only 6.2%)
+  10. Create data lineage tracking
+
+================================================================================
+RECOMMENDATIONS BY CATEGORY
+================================================================================
+
+Prediction Breakdown (7,014 total):
+  • OVER:    3,640 predictions (51.9%) - Avg confidence 65.2%
+  • UNDER:   2,620 predictions (37.4%) - Avg confidence 66.0%
+  • PASS:      466 predictions (6.6%)  - Avg confidence 55.4%
+  • NO_LINE:   288 predictions (4.1%)  - Avg confidence 63.5%
+
+Data Quality Issues Distribution:
+  • Cache + Composite incomplete:               4,568 (65.1%)
+  • All 4 sources incomplete:                   1,680 (23.9%)
+  • Composite only incomplete:                    301 (4.3%)
+  • Cache + Composite + Shot Zone incomplete:      27 (0.4%)
+
+Betting Line Timing (when available):
+  • Jan 15: 88/103 players (85.4%) - Avg 9.6 hrs before game
+  • Jan 17: 52/57 players (91.2%)  - Avg 7.6 hrs before game
+  • Jan 19: 41/51 players (80.4%)  - Timing data incomplete
+
+================================================================================
+END OF SUMMARY
+
+Full detailed report: DATA_COMPLETENESS_REPORT_JAN_15_21_2026.md
+================================================================================
