@@ -33,6 +33,7 @@ import base64
 import json
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set
 
@@ -40,6 +41,8 @@ from google.cloud import firestore, bigquery
 import functions_framework
 import requests
 from shared.clients.bigquery_pool import get_bigquery_client
+from shared.validation.phase_boundary_validator import PhaseBoundaryValidator, ValidationMode
+from shared.utils.phase_execution_logger import log_phase_execution
 
 # Configure logging - use structured logging for Cloud Run
 import google.cloud.logging
@@ -425,6 +428,100 @@ def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_c
         return False
 
 
+def send_validation_warning_alert(game_date: str, validation_result) -> bool:
+    """
+    Send Slack alert when phase boundary validation finds warnings.
+
+    Args:
+        game_date: The date being processed
+        validation_result: ValidationResult from PhaseBoundaryValidator
+
+    Returns:
+        True if alert sent successfully, False otherwise
+    """
+    if not SLACK_WEBHOOK_URL:
+        logger.warning("SLACK_WEBHOOK_URL not configured, skipping validation alert")
+        return False
+
+    try:
+        # Format issues for display
+        issues_text = "\n".join([
+            f"• [{issue.severity.value.upper()}] {issue.message}"
+            for issue in validation_result.issues
+        ])
+
+        # Determine color based on severity
+        has_errors = validation_result.has_errors
+        color = "#FF0000" if has_errors else "#FFA500"  # Red for errors, orange for warnings
+
+        payload = {
+            "attachments": [{
+                "color": color,
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": f":warning: Phase 2→3 Validation {'Failed' if has_errors else 'Warnings'}",
+                            "emoji": True
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
+                            {"type": "mrkdwn", "text": f"*Phase:*\nPhase 2 → 3"},
+                            {"type": "mrkdwn", "text": f"*Mode:*\n{validation_result.mode.value}"},
+                            {"type": "mrkdwn", "text": f"*Issues:*\n{len(validation_result.issues)}"}
+                        ]
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Validation Issues:*\n{issues_text}"
+                        }
+                    }
+                ]
+            }]
+        }
+
+        # Add metrics if available
+        if validation_result.metrics:
+            metrics_fields = []
+            if 'actual_game_count' in validation_result.metrics:
+                metrics_fields.append({
+                    "type": "mrkdwn",
+                    "text": f"*Actual Games:*\n{validation_result.metrics['actual_game_count']}"
+                })
+            if 'expected_game_count' in validation_result.metrics:
+                metrics_fields.append({
+                    "type": "mrkdwn",
+                    "text": f"*Expected Games:*\n{validation_result.metrics['expected_game_count']}"
+                })
+            if 'completed_processors' in validation_result.metrics:
+                completed = validation_result.metrics['completed_processors']
+                metrics_fields.append({
+                    "type": "mrkdwn",
+                    "text": f"*Completed Processors:*\n{len(completed)}"
+                })
+
+            if metrics_fields:
+                payload["attachments"][0]["blocks"].append({
+                    "type": "section",
+                    "fields": metrics_fields
+                })
+
+        response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
+        response.raise_for_status()
+        logger.info(f"Validation alert sent successfully for {game_date}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send validation alert: {e}")
+        return False
+
+
 @functions_framework.cloud_event
 def orchestrate_phase2_to_phase3(cloud_event):
     """
@@ -450,6 +547,9 @@ def orchestrate_phase2_to_phase3(cloud_event):
     Args:
         cloud_event: CloudEvent from Pub/Sub containing Phase 2 completion data
     """
+    # Capture start time for execution logging
+    execution_start_time = datetime.now(timezone.utc)
+
     # Debug: print immediately to verify function is invoked
     print(f"DEBUG: orchestrate_phase2_to_phase3 invoked with cloud_event type: {type(cloud_event)}")
     import sys
@@ -546,12 +646,48 @@ def orchestrate_phase2_to_phase3(cloud_event):
                     f"Phase 3 is triggered via Pub/Sub subscription (monitoring mode)."
                 )
 
+                # Log execution metrics for deadline exceeded case
+                execution_duration = (datetime.now(timezone.utc) - execution_start_time).total_seconds()
+                log_phase_execution(
+                    phase_name="phase2_to_phase3",
+                    game_date=game_date,
+                    start_time=execution_start_time,
+                    duration_seconds=execution_duration,
+                    games_processed=len(completed_processors),
+                    status="deadline_exceeded",
+                    correlation_id=correlation_id,
+                    metadata={
+                        "completed_processors": completed_processors,
+                        "missing_processors": missing_processors,
+                        "elapsed_minutes": elapsed_minutes,
+                        "deadline_minutes": PHASE2_COMPLETION_TIMEOUT_MINUTES,
+                        "trigger_reason": "deadline_exceeded"
+                    }
+                )
+
         if should_trigger:
             # All expected processors complete - log for monitoring
             # NOTE: Phase 3 is triggered directly via Pub/Sub subscription, not here
             logger.info(
                 f"✅ MONITORING: All {EXPECTED_PROCESSOR_COUNT} expected Phase 2 processors "
                 f"complete for {game_date} (correlation_id={correlation_id})"
+            )
+
+            # Log execution metrics for latency tracking
+            execution_duration = (datetime.now(timezone.utc) - execution_start_time).total_seconds()
+            log_phase_execution(
+                phase_name="phase2_to_phase3",
+                game_date=game_date,
+                start_time=execution_start_time,
+                duration_seconds=execution_duration,
+                games_processed=EXPECTED_PROCESSOR_COUNT,
+                status="complete",
+                correlation_id=correlation_id,
+                metadata={
+                    "completed_processors": list(EXPECTED_PROCESSOR_SET),
+                    "trigger_reason": "all_complete",
+                    "orchestrator_mode": "monitoring_only"
+                }
             )
 
             # R-007: Verify Phase 2 data exists in BigQuery
@@ -567,6 +703,62 @@ def orchestrate_phase2_to_phase3(cloud_event):
                 send_data_freshness_alert(game_date, missing_tables, table_counts)
             else:
                 logger.info(f"R-007: Data freshness check PASSED for {game_date}")
+
+            # Phase Boundary Validation (WARNING mode - non-blocking)
+            try:
+                validator = PhaseBoundaryValidator(
+                    bq_client=get_bigquery_client(),
+                    project_id=PROJECT_ID,
+                    phase_name='phase2',
+                    mode=ValidationMode.WARNING  # Non-blocking, logs warnings only
+                )
+
+                # Get schedule context for expected game count (if available)
+                from datetime import datetime as dt
+                schedule_context = None
+                try:
+                    # Try to get schedule from BigQuery
+                    schedule_query = f"""
+                    SELECT COUNT(*) as game_count
+                    FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+                    WHERE DATE(game_date_est) = '{game_date}'
+                    """
+                    schedule_result = list(get_bigquery_client().query(schedule_query).result())
+                    expected_game_count = schedule_result[0].game_count if schedule_result else 0
+                except Exception as e:
+                    logger.warning(f"Could not fetch expected game count from schedule: {e}")
+                    expected_game_count = 0
+
+                validation_result = validator.run_validation(
+                    game_date=dt.strptime(game_date, '%Y-%m-%d').date(),
+                    validation_config={
+                        'check_game_count': True,
+                        'expected_game_count': expected_game_count,
+                        'game_count_dataset': 'nba_raw',
+                        'game_count_table': 'bdl_games',
+                        'check_processors': True,
+                        'expected_processors': EXPECTED_PROCESSORS,
+                        'check_data_quality': False  # Skip quality check for now (no quality_score column yet)
+                    }
+                )
+
+                # Log validation result
+                if validation_result.has_warnings or validation_result.has_errors:
+                    logger.warning(
+                        f"Phase 2→3 validation found {len(validation_result.issues)} issues for {game_date}: "
+                        f"{[issue.message for issue in validation_result.issues]}"
+                    )
+                    # Send alert for visibility
+                    send_validation_warning_alert(game_date, validation_result)
+
+                    # Log to BigQuery for monitoring
+                    validator.log_validation_to_bigquery(validation_result)
+                else:
+                    logger.info(f"Phase 2→3 validation PASSED for {game_date}")
+
+            except Exception as validation_error:
+                # Don't fail the orchestrator if validation fails
+                logger.error(f"Phase boundary validation error: {validation_error}", exc_info=True)
         else:
             # Still waiting for more processors (and deadline not exceeded)
             logger.info(f"MONITORING: Registered {processor_name} completion, waiting for others")
