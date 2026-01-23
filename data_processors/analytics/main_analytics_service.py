@@ -309,6 +309,9 @@ ANALYTICS_TRIGGERS = {
     'nbac_gamebook_player_stats': [PlayerGameSummaryProcessor],
     'bdl_player_boxscores': [PlayerGameSummaryProcessor, TeamOffenseGameSummaryProcessor, UpcomingPlayerGameContextProcessor],
     'nbac_scoreboard_v2': [TeamOffenseGameSummaryProcessor, TeamDefenseGameSummaryProcessor, UpcomingTeamGameContextProcessor],
+    # nbac_schedule triggers team context generation (uses schedule data, not scoreboard)
+    # This is the primary trigger since nbac_scoreboard_v2 is not currently being scraped
+    'nbac_schedule': [UpcomingTeamGameContextProcessor],
     'bdl_standings': [],  # No analytics dependencies yet
     'nbac_injury_report': [PlayerGameSummaryProcessor],  # Updates player context
     'odds_api_player_points_props': [PlayerGameSummaryProcessor],  # Updates prop context

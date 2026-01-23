@@ -235,26 +235,28 @@ class PlayerGameSummaryProcessor(
             },
             
             # SOURCE 5: Odds API (OPTIONAL - prop lines primary)
+            # Note: Props for past games are not updated, so use longer staleness threshold
             'nba_raw.odds_api_player_points_props': {
                 'field_prefix': 'source_odds',
                 'description': 'Odds API - prop lines primary source',
                 'date_field': 'game_date',
                 'check_type': 'date_range',
                 'expected_count_min': 100,  # ~100+ players with props
-                'max_age_hours_warn': 12,
-                'max_age_hours_fail': 48,
+                'max_age_hours_warn': 24,
+                'max_age_hours_fail': 168,  # 7 days - props aren't updated after games
                 'critical': False  # Optional, has backup
             },
             
             # SOURCE 6: BettingPros (BACKUP - prop lines)
+            # Note: Props for past games are not updated, so use longer staleness threshold
             'nba_raw.bettingpros_player_points_props': {
                 'field_prefix': 'source_bp',
                 'description': 'BettingPros - prop lines backup',
                 'date_field': 'game_date',
                 'check_type': 'date_range',
                 'expected_count_min': 100,
-                'max_age_hours_warn': 12,
-                'max_age_hours_fail': 48,
+                'max_age_hours_warn': 24,
+                'max_age_hours_fail': 168,  # 7 days - props aren't updated after games
                 'critical': False  # Backup only
             },
 
@@ -1526,6 +1528,7 @@ class PlayerGameSummaryProcessor(
                 'bdl_boxscores' as primary_source
             FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
             WHERE game_id = @game_id
+                AND game_date = @game_date
         ),
 
         combined_data AS (
@@ -1598,6 +1601,7 @@ class PlayerGameSummaryProcessor(
                 possessions as team_possessions
             FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
             WHERE game_id = @game_id
+                AND game_date = @game_date
         )
 
         SELECT
@@ -1629,7 +1633,8 @@ class PlayerGameSummaryProcessor(
 
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
-                bigquery.ScalarQueryParameter("game_id", "STRING", game_id)
+                bigquery.ScalarQueryParameter("game_id", "STRING", game_id),
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date)
             ]
         )
 
