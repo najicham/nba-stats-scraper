@@ -1746,6 +1746,15 @@ class ScraperBase:
             **self._common_requests_kwargs(),
         )
 
+    def _get_proxy_provider(self, proxy_url: str) -> str:
+        """Extract proxy provider name from proxy URL for logging."""
+        proxy_lower = proxy_url.lower()
+        if "decodo" in proxy_lower or "smartproxy" in proxy_lower:
+            return "decodo"
+        if "proxyfuel" in proxy_lower:
+            return "proxyfuel"
+        return "unknown"
+
     def download_data_with_proxy(self):
         """
         Shuffle or iterate proxies from get_proxy_urls(),
@@ -1757,8 +1766,9 @@ class ScraperBase:
 
         self.mark_time("proxy")
         proxy_errors = []
-        
+
         for proxy in proxy_pool:
+            provider = self._get_proxy_provider(proxy)
             try:
                 self.step_info("download_proxy", f"Attempting proxy {proxy}")
                 self.raw_response = self.http_downloader.get(
@@ -1777,7 +1787,8 @@ class ScraperBase:
                         target_host=extract_host_from_url(self.url),
                         http_status_code=200,
                         response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
-                        success=True
+                        success=True,
+                        proxy_provider=provider
                     )
                     break
                 else:
@@ -1791,7 +1802,8 @@ class ScraperBase:
                         http_status_code=self.raw_response.status_code,
                         response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
                         success=False,
-                        error_type=classify_error(status_code=self.raw_response.status_code)
+                        error_type=classify_error(status_code=self.raw_response.status_code),
+                        proxy_provider=provider
                     )
 
             except (ProxyError, ConnectTimeout, ConnectionError) as ex:
@@ -1806,7 +1818,8 @@ class ScraperBase:
                     response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
                     success=False,
                     error_type=classify_error(exception=ex),
-                    error_message=str(ex)
+                    error_message=str(ex),
+                    proxy_provider=provider
                 )
         
         # If all proxies failed, send notification
