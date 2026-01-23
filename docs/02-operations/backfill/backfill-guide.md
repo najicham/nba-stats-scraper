@@ -2,7 +2,7 @@
 
 **File:** `docs/02-operations/backfill/backfill-guide.md`
 **Created:** 2025-11-18 14:45 PST
-**Last Updated:** 2026-01-05 12:45 PM PST (Added parallel backfilling section)
+**Last Updated:** 2026-01-23 (Added historical betting lines backfill scenario)
 **Purpose:** Step-by-step guide for running backfills safely and effectively
 **Status:** Current
 **Audience:** Engineers running backfills, on-call engineers, operators
@@ -126,7 +126,58 @@
 
 ---
 
-### Scenario 5: Early Season Backfill
+### Scenario 5: Historical Betting Lines Backfill
+
+**Use Case:** Predictions show placeholder lines (20.0) because live Odds API didn't capture data
+
+**Details:**
+- **Date Range:** Specific dates with missing betting context
+- **Phases:** Phase 1 (historical scrapers) + prediction re-run
+- **Timeline:** Minutes per date
+- **Validation:** Check predictions no longer have placeholders
+
+**When to Run:**
+- Predictions have `current_points_line = 20.0` (placeholder value)
+- Odds API scraper failed or was unavailable on a game date
+- Backfilling betting context for past predictions
+
+**Workflow:**
+
+```bash
+# Step 1: Use HISTORICAL Odds API scrapers (NOT the live ones!)
+# Get event IDs first
+python -m scrapers.oddsapi.oddsa_events_his \
+    --game_date 2026-01-21 \
+    --snapshot_timestamp 2026-01-21T18:00:00Z \
+    --debug
+
+# Step 2: For each event_id, get player props
+python -m scrapers.oddsapi.oddsa_player_props_his \
+    --event_id <EVENT_ID> \
+    --game_date 2026-01-21 \
+    --snapshot_timestamp 2026-01-21T18:00:00Z \
+    --markets player_points \
+    --debug
+
+# Step 3: Run processor to load into BigQuery
+python -m data_processors.raw.odds_api_props_processor --date 2026-01-21
+
+# Step 4: Re-run predictions
+curl -X POST "https://prediction-coordinator-.../start" \
+    -H "X-API-Key: $COORD_KEY" \
+    -d '{"game_date": "2026-01-21"}'
+```
+
+**Risks:**
+- Using live scrapers instead of historical (won't work for past dates)
+- Wrong snapshot_timestamp (events disappear after game starts)
+- API rate limit (500 requests/month)
+
+> **See Also:** [Scrapers Reference - Historical Odds API Backfill](../../06-reference/scrapers.md#historical-odds-api-backfill-workflow) for detailed instructions.
+
+---
+
+### Scenario 6: Early Season Backfill
 
 **Use Case:** Season just started, filling first 10 games with limited historical data
 

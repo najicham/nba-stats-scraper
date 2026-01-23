@@ -1,7 +1,7 @@
 # NBA Scrapers Reference
 
 **Created:** 2025-11-21 17:12:03 PST
-**Last Updated:** 2026-01-08
+**Last Updated:** 2026-01-23
 
 Quick reference for NBA data scrapers - deployment, debugging, and monitoring.
 
@@ -102,6 +102,10 @@ nba-scraped-data/
 - `GetNbaComScheduleApi` - Historical schedules
 - `GetNbaComGamebooks` - Game books with DNP
 - `BasketballRefSeasonRoster` - Name mapping
+
+> ⚠️ **CRITICAL: Historical Betting Lines** - When predictions have placeholder lines (20.0),
+> you MUST use the historical Odds API scrapers to backfill. The current/live scrapers
+> only work for upcoming games. See [Historical Odds API Backfill](#historical-odds-api-backfill-workflow) below.
 
 ## Quick Reference
 
@@ -292,6 +296,159 @@ python bin/scrapers/fetch_news.py --save --dedupe
 - `GetOddsApiEventsHistory` → `GetOddsApiHistoricalEventOdds`
 - `GetOddsApiEventsHistory` → `GetOddsApiHistoricalGameLines`
 - `BasketballRefSeasonRoster` → `GetNbaComGamebooks` (name mapping)
+
+## Historical Odds API Backfill Workflow
+
+> **CRITICAL**: This section explains how to backfill betting lines for past dates.
+> The live Odds API scrapers (`oddsa_events`, `oddsa_player_props`, `oddsa_game_lines`)
+> only work for upcoming/current games. For any historical date, you MUST use the
+> historical scrapers.
+
+### When to Use Historical Scrapers
+
+Use historical Odds API scrapers when:
+- Predictions show placeholder lines (current_points_line = 20.0)
+- Odds API scraper failed on a past date
+- Backfilling betting context for ML training data
+- Re-running predictions for a past game date
+
+### The Three Historical Scrapers
+
+| Scraper | File | Purpose |
+|---------|------|---------|
+| `GetOddsApiHistoricalEvents` | `scrapers/oddsapi/oddsa_events_his.py` | Get event IDs for a past date |
+| `GetOddsApiHistoricalEventOdds` | `scrapers/oddsapi/oddsa_player_props_his.py` | Get player prop odds (points, rebounds, assists) |
+| `GetOddsApiHistoricalGameLines` | `scrapers/oddsapi/oddsa_game_lines_his.py` | Get spreads and totals |
+
+### Step-by-Step Backfill Process
+
+#### Step 1: Get Event IDs for the Date
+
+```bash
+# Get all NBA events for Jan 21, 2026
+python -m scrapers.oddsapi.oddsa_events_his \
+    --game_date 2026-01-21 \
+    --snapshot_timestamp 2026-01-21T00:00:00Z \
+    --debug
+
+# Output includes event IDs like:
+# "id": "a1b2c3d4e5f6g7h8i9j0..."
+```
+
+**Snapshot timestamp tips:**
+- Use `00:00:00Z` to get the full day's schedule
+- Events disappear from API when games start
+- For most NBA games: safe window is 04:00-18:00 UTC
+
+#### Step 2: Fetch Historical Player Props
+
+```bash
+# For each event_id from Step 1:
+python -m scrapers.oddsapi.oddsa_player_props_his \
+    --event_id <EVENT_ID> \
+    --game_date 2026-01-21 \
+    --snapshot_timestamp 2026-01-21T18:00:00Z \
+    --markets player_points \
+    --debug
+
+# Can also fetch multiple markets:
+# --markets player_points,player_rebounds,player_assists
+```
+
+#### Step 3: Fetch Historical Game Lines (Optional)
+
+```bash
+python -m scrapers.oddsapi.oddsa_game_lines_his \
+    --event_id <EVENT_ID> \
+    --game_date 2026-01-21 \
+    --snapshot_timestamp 2026-01-21T18:00:00Z \
+    --debug
+```
+
+### Timing Constraints
+
+**Critical: Use snapshot_timestamp BEFORE game time**
+
+| Game Time (Local) | Game Time (UTC) | Safe Snapshot Window |
+|-------------------|-----------------|---------------------|
+| 7:00 PM ET        | 00:00 UTC       | 00:00-23:00 UTC previous day |
+| 7:30 PM ET        | 00:30 UTC       | 00:00-23:30 UTC previous day |
+| 10:00 PM ET       | 03:00 UTC       | 00:00-02:00 UTC |
+| 10:30 PM PT       | 06:30 UTC       | 00:00-05:30 UTC |
+
+**Rule of thumb:** Use `18:00:00Z` (1 PM ET / 10 AM PT) for most backfills - this is before any NBA games start.
+
+### Full Date Backfill Script Example
+
+```bash
+#!/bin/bash
+# backfill_odds_for_date.sh
+
+GAME_DATE=$1
+SNAPSHOT="$GAME_DATE"T18:00:00Z
+
+echo "=== Backfilling betting lines for $GAME_DATE ==="
+
+# Step 1: Get events
+python -m scrapers.oddsapi.oddsa_events_his \
+    --game_date $GAME_DATE \
+    --snapshot_timestamp $SNAPSHOT \
+    --debug 2>&1 | tee /tmp/events_$GAME_DATE.log
+
+# Extract event IDs (adjust jq path based on actual output)
+EVENT_IDS=$(cat /tmp/oddsapi_hist_events_$GAME_DATE.json | jq -r '.events[].id')
+
+# Step 2: Fetch props for each event
+for event_id in $EVENT_IDS; do
+    echo "Fetching props for event: $event_id"
+    python -m scrapers.oddsapi.oddsa_player_props_his \
+        --event_id $event_id \
+        --game_date $GAME_DATE \
+        --snapshot_timestamp $SNAPSHOT \
+        --markets player_points \
+        --debug
+done
+
+echo "=== Complete! ==="
+```
+
+### API Rate Limits
+
+- Historical API requests count against the same 500/month limit
+- Each event lookup costs 1 request
+- Each props/lines lookup costs 1 request
+- Typical date with 10 games = ~11 requests (1 events + 10 props)
+
+### After Backfilling
+
+After scraping historical data:
+
+1. **Run processors** to load data into BigQuery:
+   ```bash
+   # Run the odds API processor for the date
+   python -m data_processors.raw.odds_api_props_processor \
+       --date 2026-01-21
+   ```
+
+2. **Re-run predictions** with the new betting context:
+   ```bash
+   COORD_KEY=$(gcloud secrets versions access latest --secret=coordinator-api-key)
+   curl -X POST "https://prediction-coordinator-756957797294.us-west2.run.app/start" \
+       -H "Content-Type: application/json" \
+       -H "X-API-Key: $COORD_KEY" \
+       -d '{"game_date": "2026-01-21"}'
+   ```
+
+3. **Verify predictions** no longer have placeholders:
+   ```sql
+   SELECT game_date, COUNT(*) as total,
+          COUNTIF(current_points_line = 20.0) as placeholders
+   FROM `nba_predictions.player_prop_predictions`
+   WHERE game_date = '2026-01-21'
+   GROUP BY 1
+   ```
+
+---
 
 ## Troubleshooting
 

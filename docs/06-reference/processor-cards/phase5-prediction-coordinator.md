@@ -1,6 +1,6 @@
 # Phase 5 Prediction Coordinator - Quick Reference
 
-**Last Updated**: 2025-11-25
+**Last Updated**: 2026-01-23
 **Verified**: ✅ Code verified against source
 
 ---
@@ -201,7 +201,24 @@ GROUP BY confidence_tier;
 2. Verify model loading in coordinator logs
 3. If mock model: Expected until real model trained (~4 hours work)
 
-### Issue 4: Slow Prediction Updates (<1s expected, seeing >5s)
+### Issue 4: Placeholder Lines (current_points_line = 20.0)
+**Symptom**: Predictions have placeholder betting lines instead of real lines
+**Diagnosis**:
+```sql
+-- Check for placeholder lines
+SELECT game_date, COUNT(*) as total,
+       COUNTIF(current_points_line = 20.0) as placeholders
+FROM `nba_predictions.player_prop_predictions`
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+GROUP BY 1 ORDER BY 1;
+```
+**Fix**:
+1. **For past dates**: Use Historical Odds API scrapers (NOT live scrapers!)
+   - See [Historical Odds API Backfill](../../06-reference/scrapers.md#historical-odds-api-backfill-workflow)
+2. **For future dates**: Check if `oddsa_events` and `oddsa_player_props` ran
+3. After backfilling, re-run predictions: `curl -X POST ".../start" -d '{"game_date": "<date>"}'`
+
+### Issue 5: Slow Prediction Updates (<1s expected, seeing >5s)
 **Symptom**: Real-time odds updates taking too long
 **Diagnosis**:
 ```bash
@@ -305,7 +322,7 @@ Prop Lines ─────────────┼─→ COORDINATOR ─┬�
 
 ---
 
-**Card Version**: 1.1
+**Card Version**: 1.2
 **Created**: 2025-11-15
-**Last Updated**: 2025-11-25
+**Last Updated**: 2026-01-23
 **Verified Against**: Code in `predictions/` directory

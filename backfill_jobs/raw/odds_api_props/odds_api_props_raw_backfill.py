@@ -109,22 +109,19 @@ class OddsApiPropsBackfill:
             json_content = blob.download_as_text()
             data = json.loads(json_content)
             
-            # Validate data
-            errors = self.processor.validate_data(data)
-            if errors:
-                logger.error(f"Validation errors for {file_path}: {errors}")
-                return {
-                    'file': file_path,
-                    'status': 'validation_failed',
-                    'errors': errors
-                }
+            # Set up processor state (it expects raw_data and opts to be set)
+            gcs_path = f"gs://{self.bucket_name}/{file_path}"
+            self.processor.raw_data = data
+            self.processor.opts = {'file_path': gcs_path}
+
+            # Transform data (uses self.raw_data and self.opts internally)
+            self.processor.transform_data()
+            rows = self.processor.transformed_data
             
-            # Transform data
-            rows = self.processor.transform_data(data, f"gs://{self.bucket_name}/{file_path}")
-            
-            # Load to BigQuery
+            # Save to BigQuery
             if rows:
-                result = self.processor.load_data(rows)
+                self.processor.save_data()  # Uses self.transformed_data
+                result = {'rows_processed': len(rows), 'errors': []}
                 
                 # Update statistics
                 if result.get('rows_processed', 0) > 0:
