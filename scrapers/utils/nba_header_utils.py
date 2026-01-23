@@ -155,9 +155,10 @@ def bettingpros_headers() -> dict:
         "Origin": "https://www.bettingpros.com",
         "Pragma": "no-cache",
         "Referer": "https://www.bettingpros.com/nba/odds/player-props/points/",
-        "Sec-Ch-Ua": '"Chromium";v="97", " Not;A Brand";v="99"',
+        # Updated Jan 2026: Use modern Chrome version to avoid bot detection
+        "Sec-Ch-Ua": SEC_CH_UA,  # Uses Chrome 140 from global constant
         "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": "Linux",
+        "Sec-Ch-Ua-Platform": '"Windows"',  # Windows less suspicious than Linux
         "Sec-Fetch-Dest": "empty",
         "Sec-Fetch-Mode": "cors",
         "Sec-Fetch-Site": "same-site",

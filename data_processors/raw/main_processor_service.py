@@ -755,7 +755,7 @@ def process_pubsub():
                         'started_at': datetime.now(timezone.utc),
                         'trigger_file': file_path,
                         'execution_id': normalized_message.get('_execution_id', 'unknown'),
-                        'expireAt': datetime.now(timezone.utc) + timedelta(days=7)  # TTL for auto-cleanup
+                        'expireAt': datetime.now(timezone.utc) + timedelta(minutes=30)  # TTL reduced from 7 days to 30 min (Jan 2026)
                     }
 
                     # Use create() which fails if document exists
@@ -892,7 +892,7 @@ def process_pubsub():
                         'started_at': datetime.now(timezone.utc),
                         'trigger_file': file_path,
                         'execution_id': normalized_message.get('_execution_id', 'unknown'),
-                        'expireAt': datetime.now(timezone.utc) + timedelta(days=7)  # TTL for auto-cleanup
+                        'expireAt': datetime.now(timezone.utc) + timedelta(minutes=30)  # TTL reduced from 7 days to 30 min (Jan 2026)
                     }
 
                     # Use create() which fails if document exists

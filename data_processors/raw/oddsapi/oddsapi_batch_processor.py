@@ -68,7 +68,9 @@ class OddsApiGameLinesBatchProcessor(ProcessorBase):
         prefix = f'odds-api/game-lines/{game_date}/'
 
         bucket = self.gcs_client.bucket(bucket_name)
-        blobs = list(bucket.list_blobs(prefix=prefix))
+        # NOTE: Iterate directly over list_blobs() to ensure all pages are consumed.
+        # Converting to list() immediately may only capture the first page of results.
+        blobs = bucket.list_blobs(prefix=prefix)
 
         file_count = 0
         for blob in blobs:
@@ -276,7 +278,9 @@ class OddsApiPropsBatchProcessor(ProcessorBase):
         prefix = f'odds-api/player-props/{game_date}/'
 
         bucket = self.gcs_client.bucket(bucket_name)
-        blobs = list(bucket.list_blobs(prefix=prefix))
+        # NOTE: Iterate directly over list_blobs() to ensure all pages are consumed.
+        # Converting to list() immediately may only capture the first page of results.
+        blobs = bucket.list_blobs(prefix=prefix)
 
         file_count = 0
         for blob in blobs:

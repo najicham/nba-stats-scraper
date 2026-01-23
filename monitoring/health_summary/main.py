@@ -193,12 +193,14 @@ def query_phase_status(
     Returns:
         Dictionary with phase status
     """
+    # FIX: Use COUNT(DISTINCT processor_name) for each status to count unique
+    # processors, not total rows. A processor may run multiple times per day.
     query = f"""
     SELECT
         COUNT(DISTINCT processor_name) as processor_count,
-        COUNT(CASE WHEN status = 'success' THEN 1 END) as success_count,
-        COUNT(CASE WHEN status = 'partial' THEN 1 END) as partial_count,
-        COUNT(CASE WHEN status IN ('failed', 'error') THEN 1 END) as failed_count,
+        COUNT(DISTINCT CASE WHEN status = 'success' THEN processor_name END) as success_count,
+        COUNT(DISTINCT CASE WHEN status = 'partial' THEN processor_name END) as partial_count,
+        COUNT(DISTINCT CASE WHEN status IN ('failed', 'error') THEN processor_name END) as failed_count,
         SUM(COALESCE(records_processed, 0)) as records_processed,
         MIN(started_at) as earliest_start,
         MAX(processed_at) as latest_end
