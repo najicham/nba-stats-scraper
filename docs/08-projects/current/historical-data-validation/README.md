@@ -12,17 +12,18 @@ This project tracks validation of historical NBA data across all seasons (2021-2
 
 - [Validation Findings](./VALIDATION-FINDINGS.md) - Comprehensive audit results
 - [Resilience Improvements](./RESILIENCE-IMPROVEMENTS.md) - System hardening plans
+- [Line Source Improvement](./LINE-SOURCE-IMPROVEMENT.md) - Sportsbook-priority fallback proposal
 - [Backfill Tracker](./BACKFILL-TRACKER.md) - Status of backfill operations
 
 ## Season Coverage Summary
 
-| Season | Analytics | Predictions | Grading | Odds | Coverage % | Notes |
-|--------|-----------|-------------|---------|------|------------|-------|
-| 2021-22 | 213 dates | 199 dates | 199 dates | 0 dates | 93.4% | No odds data |
-| 2022-23 | 212 dates | 198 dates | 198 dates | 27 dates | 93.4% | Minimal odds |
-| 2023-24 | 207 dates | 193 dates | 193 dates | 207 dates | 93.2% | Full odds |
-| 2024-25 | 213 dates | 199 dates | 199 dates | 213 dates | 93.4% | Full odds |
-| 2025-26 | 89 dates | 87 dates | 56 dates | 89 dates | 97.8% | Current season |
+| Season | Analytics | Predictions | Grading | Odds API | BettingPros | Coverage % |
+|--------|-----------|-------------|---------|----------|-------------|------------|
+| 2021-22 | 213 dates | 199 dates | 199 dates | 0 dates | **213 dates** | 93.4% |
+| 2022-23 | 212 dates | 198 dates | 198 dates | 27 dates | **212 dates** | 93.4% |
+| 2023-24 | 207 dates | 193 dates | 193 dates | 207 dates | 197 dates | 93.2% |
+| 2024-25 | 213 dates | 199 dates | 199 dates | 213 dates | 213 dates | 93.4% |
+| 2025-26 | 89 dates | 87 dates | 56 dates | 89 dates | 29 dates | 97.8% |
 
 ## Key Findings
 
@@ -36,13 +37,17 @@ Every season has ~14 days missing at the start:
 
 **Root Cause:** Prediction system requires historical game data to compute rolling averages.
 
-### 2. Odds API Availability
+### 2. Betting Line Data Availability
 
-| Season | Status | Impact |
-|--------|--------|--------|
-| 2021-22 | No data | Predictions use estimated lines only |
-| 2022-23 | Playoffs only (27 dates) | Most season using estimates |
-| 2023-24+ | Full coverage | Real betting lines available |
+| Season | Odds API | BettingPros | Current Status |
+|--------|----------|-------------|----------------|
+| 2021-22 | No data | **Full (213 dates, DK/FD)** | Using estimates - should use BP! |
+| 2022-23 | Playoffs only | **Full (212 dates, DK/FD)** | Using estimates - should use BP! |
+| 2023-24+ | Full | Full | Using Odds API correctly |
+
+**Key Discovery:** BettingPros has DraftKings and FanDuel lines for ALL historical seasons.
+Current system doesn't use them because it only falls back to BettingPros when Odds API
+has no data at all. See [Line Source Improvement](./LINE-SOURCE-IMPROVEMENT.md).
 
 ### 3. Grading Accuracy Trend
 
