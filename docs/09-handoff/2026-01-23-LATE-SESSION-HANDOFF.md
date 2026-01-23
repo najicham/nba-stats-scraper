@@ -1,198 +1,312 @@
-# Session Handoff: Late Night Session (2026-01-23)
+# Session Handoff - January 23, 2026 (Late Session)
 
-**Session Time:** 8:30 PM - 9:30 PM PST (Jan 22)
-**Handoff Time:** 9:30 PM PST
-**Next Critical Milestone:** 10:00 PM PST (01:00 AM ET) - post_game_window_2
-
----
-
-## Executive Summary
-
-Major infrastructure cleanup completed. Fixed 9 misconfigured scheduler jobs, redeployed two services, deleted orphaned service, and resolved player registry issues. System is now ready for the 10 PM verification of the MERGE fix.
-
----
-
-## Completed Tonight
-
-### 1. Scheduler Job Migration (9 jobs)
-All scheduler jobs that were pointing to misconfigured `nba-phase1-scrapers` now point to `nba-scrapers`:
-
-| Job | Endpoint | Status |
-|-----|----------|--------|
-| bdl-boxscores-yesterday-catchup | /scrape | ✓ ENABLED |
-| bdl-live-boxscores-evening | /scrape | ✓ ENABLED |
-| bdl-live-boxscores-late | /scrape | ✓ ENABLED |
-| cleanup-processor | /cleanup | ✓ ENABLED |
-| daily-schedule-locker | /generate-daily-schedule | ✓ ENABLED |
-| nba-bdl-boxscores-late | /scrape | ✓ ENABLED |
-| bdl-catchup-afternoon | /catchup | ✓ ENABLED |
-| bdl-catchup-evening | /catchup | ✓ ENABLED |
-| bdl-catchup-midday | /catchup | ✓ ENABLED |
-
-### 2. Service Deployments
-
-**nba-scrapers** - Redeployed to enable `/catchup` endpoint
-- Revision: `nba-scrapers-00091-942`
-- Commit: `2de48c04`
-- New endpoint: `/catchup` now returns HTTP 200
-
-**prediction-coordinator** - Redeployed to fix health check
-- Revision: `prediction-coordinator-00079-v5s`
-- Commit: `2de48c04`
-- Health now returns `{"service": "prediction-coordinator"}` (was incorrectly returning `analytics-processor`)
-
-### 3. Service Cleanup
-
-**Deleted: nba-phase1-scrapers**
-- Was returning `{"service":"analytics-processor"}` - clearly misconfigured
-- No scheduler jobs were using it after migration
-- Pub/Sub topics retained (may be used by other systems)
-
-### 4. Player Registry Cleanup
-
-**Resolved all pending unresolved players (was 2, now 0):**
-- `alexantetokounmpo` - Already in registry (created 2026-01-12), marked as `already_in_registry`
-- `kylemangas` - No actual boxscore data exists, marked as `data_error` (phantom entry)
-
----
-
-## Current System State
-
-### All Services Healthy
-```
-nba-scrapers:                  HTTP 200 (rev: nba-scrapers-00091-942)
-nba-phase2-raw-processors:     HTTP 200 (rev: nba-phase2-raw-processors-00105-4g2)
-nba-phase3-analytics-processors: HTTP 200 (rev: nba-phase3-analytics-processors-00102-x8p)
-nba-phase4-precompute-processors: HTTP 200 (rev: nba-phase4-precompute-processors-00050-2hv)
-prediction-coordinator:        HTTP 200 (rev: prediction-coordinator-00079-v5s)
-prediction-worker:            HTTP 200 (rev: prediction-worker-00010-54v)
-```
-
-### MERGE Fix Status
-- **Fix commit:** `5f45fea3` (removes incompatible `schema_update_options`)
-- **Deployed in:** `0718f2bd` (confirmed as ancestor)
-- **Deployed to:** `nba-phase3-analytics-processors` at 03:12 UTC on Jan 23
-- **Status:** Awaiting verification at 10 PM PST
-
----
-
-## Critical Data Gap Found
-
-### Jan 21 Analytics Processing Incomplete
-
-| Data Layer | Jan 21 Status |
-|------------|---------------|
-| Raw (bdl_player_boxscores) | ✓ 7 games, 247 records |
-| Analytics (player_game_summary) | ✗ 1 game, 20 records |
-| **Gap** | **6 games missing** |
-
-**Root Cause Theory:** The MERGE failures in analytics processor may have caused partial data writes. Only ATL@MEM made it through.
-
-### Jan 22 Status
-- 8 games scheduled (5 Final, 3 In Progress as of 9:30 PM PST)
-- 0 records in player_game_summary (awaiting 10 PM processing)
-
----
-
-## 10 PM PST Verification (CRITICAL)
-
-### What Should Happen
-1. `post_game_window_2` workflow triggers at 01:00 AM ET (10:00 PM PST)
-2. Scrapes boxscores for Jan 22 Final games
-3. Processes through Phase 2 (raw) → Phase 3 (analytics)
-4. **MERGE should succeed** (not fall back to DELETE+INSERT)
-
-### Monitoring Commands
-
-```bash
-# 1. Check for MERGE success (MOST IMPORTANT)
-gcloud logging read 'resource.labels.service_name="nba-phase3-analytics-processors" AND textPayload=~"MERGE"' --limit=20 --freshness=2h --format="table(timestamp,textPayload)"
-
-# Expected: "MERGE completed" instead of "MERGE failed...falling back to DELETE + INSERT"
-
-# 2. Check workflow decisions
-bq query --use_legacy_sql=false 'SELECT workflow_name, action, reason, decision_time FROM `nba_orchestration.workflow_decisions` WHERE decision_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 HOUR) ORDER BY decision_time DESC LIMIT 20'
-
-# Expected: post_game_window_2 with action=RUN
-
-# 3. Check boxscore scraping
-gcloud logging read 'resource.labels.service_name="nba-scrapers" AND textPayload=~"boxscore"' --limit=20 --freshness=2h --format="table(timestamp,textPayload)"
-
-# 4. Check player_game_summary updated
-bq query --use_legacy_sql=false 'SELECT game_date, COUNT(*) as records FROM `nba_analytics.player_game_summary` WHERE game_date >= "2026-01-21" GROUP BY 1 ORDER BY 1 DESC'
-
-# Expected: Jan 22 should have records after processing
-
-# 5. Full pipeline validation
-PYTHONPATH=. python bin/validate_pipeline.py 2026-01-22
-```
-
-### Success Criteria
-- [ ] MERGE logs show "completed" not "failed"
-- [ ] post_game_window_2 shows action=RUN in workflow_decisions
-- [ ] player_game_summary has records for Jan 22
-- [ ] No new errors in analytics processor logs
-
----
-
-## Future Investigation Items
-
-### High Priority
-1. **Jan 21 Data Gap** - 6 games missing from player_game_summary
-   - May need manual reprocessing after MERGE fix is confirmed
-   - Command: Check if morning_recovery can be triggered manually
-
-2. **Historical Completeness Backfill** - 124k records with NULL
-   - Decision deferred (see `TODO-historical-completeness-backfill.md`)
-   - Current code populates for new records correctly
-
-### Medium Priority
-3. **Pub/Sub Topics Cleanup**
-   - `nba-phase1-scrapers-complete` and `nba-phase1-scrapers-complete-dlq` still exist
-   - May be used by DLQ monitor - investigate before deleting
-
-4. **Service Consolidation**
-   - `nba-phase1-scrapers` was deleted but architecture docs may still reference it
-   - Update docs to reflect current `nba-scrapers` as single scraper service
-
-### Low Priority
-5. **Scheduler Job Audit**
-   - Review all scheduler jobs for correctness
-   - Some MLB jobs still point to `mlb-phase1-scrapers` (separate service, not investigated)
-
----
-
-## Files Modified/Created This Session
-
-```
-docs/09-handoff/2026-01-23-SCHEDULER-FIX-SESSION.md  (created)
-docs/09-handoff/2026-01-23-LATE-SESSION-HANDOFF.md   (this file)
-docs/09-handoff/TODO-historical-completeness-backfill.md (created)
-```
-
----
-
-## Quick Reference
-
-### Service URLs
-- nba-scrapers: `https://nba-scrapers-f7p3g7f6ya-wl.a.run.app`
-- analytics-processors: `https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app`
-- prediction-coordinator: `https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app`
-
-### Key Time Windows (ET)
-- post_game_window_1: 10:00 PM ET (7:00 PM PST)
-- post_game_window_2: 01:00 AM ET (10:00 PM PST) ← NEXT
-- post_game_window_3: 04:00 AM ET (1:00 AM PST)
-- morning_recovery: 06:00 AM ET (3:00 AM PST)
-
-### Tonight's Commits
-- `2de48c04` - Current HEAD, deployed to nba-scrapers and prediction-coordinator
-- `5f45fea3` - MERGE fix (in analytics processor via `0718f2bd`)
+**Date:** 2026-01-23
+**Time:** ~9:00 PM PT
+**Context Level:** LOW - Full context needed for next session
 
 ---
 
 ## Session Summary
 
-Fixed critical scheduler misconfigurations, cleaned up orphaned service, resolved player registry issues. All services healthy. MERGE fix is deployed and awaiting 10 PM verification. Data gap found for Jan 21 (6 games missing from analytics) - may need reprocessing after MERGE fix is confirmed working.
+This session completed the grading improvements project and investigated proxy/bootstrap issues.
 
-**Next Action:** Run monitoring commands at 10:00 PM PST to verify MERGE fix works.
+### Completed Work
+
+| Task | Status | Notes |
+|------|--------|-------|
+| MAE analytics views | ✅ Done | `mae_by_line_source`, `daily_mae_summary` |
+| Grading alert v2.0 | ✅ Deployed | MAE + ESTIMATED_AVG + NO_PROP_LINE monitoring |
+| Line source documentation | ✅ Done | LINE-SOURCE-REFERENCE.md |
+| BettingPros investigation | ✅ Documented | Both proxies blocked, P1 but not critical |
+| Bootstrap gap analysis | ✅ Documented | 14-day gap, improvement options identified |
+| Commits pushed | ✅ 17 commits | All on main branch |
+
+---
+
+## Current System State
+
+### Prediction Pipeline
+- **Status:** Working
+- **Line sources:** Odds API (primary), BettingPros (blocked)
+- **ESTIMATED_AVG:** Eliminated (count = 0)
+- **Win rate:** 77.1% on clean ACTUAL_PROP data
+
+### BettingPros Scraper
+- **Status:** Blocked (403 Forbidden)
+- **Last success:** Jan 22, 19:38 UTC
+- **Impact:** Low - Odds API is sufficient for most players
+- **Action needed:** Backfill tracking (see design below)
+
+### Grading System
+- **Status:** Enhanced with MAE tracking
+- **Alert:** grading-delay-alert v2.0 deployed
+- **Monitors:** ESTIMATED_AVG reappearance, NO_PROP_LINE percentage
+
+---
+
+## Outstanding Issue: BettingPros Backfill Tracking
+
+### Problem Statement
+When BettingPros fails for multiple days and then recovers, we need to:
+1. Know which dates are missing
+2. Trigger backfill for those dates
+3. Avoid manual intervention
+
+### Proposed Design: Scraper Gap Detector
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    SCRAPER GAP DETECTOR                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  1. TRACK FAILURES (on each scrape attempt)                 │
+│     ┌──────────────────────────────────────┐                │
+│     │ nba_orchestration.scraper_failures   │                │
+│     │ - game_date                          │                │
+│     │ - scraper_name                       │                │
+│     │ - error_type (403, timeout, etc)     │                │
+│     │ - failed_at                          │                │
+│     │ - retry_count                        │                │
+│     │ - backfilled (boolean)               │                │
+│     └──────────────────────────────────────┘                │
+│                                                              │
+│  2. DETECT RECOVERY (periodic check)                        │
+│     - Try scraping today's date                             │
+│     - If success → scraper is healthy                       │
+│     - Query failures table for unbackfilled dates           │
+│                                                              │
+│  3. TRIGGER BACKFILL (when healthy)                         │
+│     - For each unbackfilled date:                           │
+│       - Run scraper for that date                           │
+│       - Mark as backfilled on success                       │
+│     - Rate limit: 1 date per minute                         │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Implementation Options
+
+**Option A: BigQuery Table + Cloud Function (Recommended)**
+```
+1. Create table: nba_orchestration.scraper_failures
+2. Modify scraper_base.py to log failures
+3. Create cloud function: scraper-gap-backfiller
+   - Runs every 6 hours
+   - Checks if BettingPros is healthy (test today's date)
+   - If healthy, backfill oldest unbackfilled date
+   - Mark as backfilled on success
+```
+
+**Option B: Extend line-quality-self-heal**
+```
+- Already runs every 2 hours
+- Add BettingPros gap detection
+- Reuse existing infrastructure
+- Simpler but mixes concerns
+```
+
+**Option C: GCS-based gap detection**
+```
+- Compare schedule dates to GCS files
+- No new table needed
+- Run as part of daily health check
+- Less real-time tracking
+```
+
+### Recommended Approach
+
+**Start with Option A (explicit tracking):**
+
+1. **Create failures table:**
+```sql
+CREATE TABLE nba_orchestration.scraper_failures (
+  game_date DATE,
+  scraper_name STRING,
+  error_type STRING,
+  error_message STRING,
+  failed_at TIMESTAMP,
+  retry_count INT64,
+  backfilled BOOL DEFAULT FALSE,
+  backfilled_at TIMESTAMP
+)
+```
+
+2. **Modify scraper error handling:**
+```python
+# In scraper_base.py, on failure:
+log_scraper_failure(
+    game_date=target_date,
+    scraper_name=self.__class__.__name__,
+    error_type='proxy_exhaustion',
+    error_message=str(e)
+)
+```
+
+3. **Create backfill checker function:**
+```python
+# Cloud function: scraper-gap-backfiller
+# Schedule: Every 6 hours
+
+def check_and_backfill():
+    # 1. Test if BettingPros is healthy
+    if not test_bettingpros_health():
+        return "BettingPros still blocked"
+
+    # 2. Get unbackfilled failures
+    failures = query_unbackfilled_failures('BettingPros%')
+
+    # 3. Backfill oldest date
+    if failures:
+        oldest = failures[0]
+        success = run_bettingpros_scraper(oldest.game_date)
+        if success:
+            mark_as_backfilled(oldest)
+        return f"Backfilled {oldest.game_date}"
+
+    return "No gaps to backfill"
+```
+
+---
+
+## Key Files Reference
+
+### Code Changed This Session
+| File | Change |
+|------|--------|
+| `orchestration/cloud_functions/grading_alert/main.py` | Added MAE + monitoring |
+| `predictions/coordinator/player_loader.py` | v3.10 - no estimated lines |
+| `shared/config/orchestration_config.py` | Added disable_estimated_lines |
+| `data_processors/grading/prediction_accuracy/prediction_accuracy_processor.py` | is_active filter |
+
+### Documentation Created
+| File | Purpose |
+|------|---------|
+| `docs/08-projects/current/grading-improvements/README.md` | Project overview |
+| `docs/08-projects/current/grading-improvements/LINE-SOURCE-REFERENCE.md` | Line source semantics |
+| `docs/08-projects/current/grading-improvements/BOOTSTRAP-GAP-ANALYSIS.md` | Season start gap |
+| `docs/08-projects/current/proxy-infrastructure/2026-01-23-BETTINGPROS-BLOCKING-INVESTIGATION.md` | Proxy blocking |
+
+### BigQuery Views Created
+| View | Purpose |
+|------|---------|
+| `nba_predictions.mae_by_line_source` | MAE calculation for all predictions |
+| `nba_predictions.daily_mae_summary` | Pre-aggregated daily metrics |
+
+---
+
+## Quick Verification Commands
+
+```bash
+# Check ESTIMATED_AVG is still 0
+bq query --use_legacy_sql=false "
+SELECT COUNT(*) FROM nba_predictions.player_prop_predictions
+WHERE is_active = TRUE AND line_source = 'ESTIMATED_AVG'"
+
+# Check grading alert health
+curl -s "https://us-west2-nba-props-platform.cloudfunctions.net/grading-delay-alert?dry_run=true" | jq '.status, .grading.mae'
+
+# Check BettingPros GCS data
+gsutil ls "gs://nba-scraped-data/bettingpros/player-props/points/" | tail -5
+
+# Check proxy health
+bq query --use_legacy_sql=false "
+SELECT DATE(timestamp), proxy_provider, target_host,
+       COUNTIF(success) as ok, COUNTIF(NOT success) as fail
+FROM nba_orchestration.proxy_health_metrics
+WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 3 DAY)
+GROUP BY 1, 2, 3 ORDER BY 1 DESC"
+```
+
+---
+
+## Next Session Priorities
+
+### P0: Create Scraper Failure Tracking
+1. Create `nba_orchestration.scraper_failures` table
+2. Add failure logging to scraper_base.py
+3. Create backfill checker cloud function
+
+### P1: Monitor BettingPros Recovery
+- Check if blocking persists
+- Try alternative Decodo endpoints if still blocked
+- Consider browser automation if blocking continues
+
+### P2: Bootstrap Gap Improvement
+- Reduce BOOTSTRAP_DAYS from 14 to 7 (quick win)
+- Implement previous season fallback for returning players
+- Test accuracy impact
+
+### P3: Clean Up Old Handoff Docs
+- Many old handoff docs in docs/09-handoff/
+- Consider archiving or consolidating
+
+---
+
+## System Architecture Context
+
+```
+PREDICTION PIPELINE
+━━━━━━━━━━━━━━━━━━━
+
+Phase 1: Scrapers
+├── Odds API (primary) ────────► Works ✓
+├── BettingPros (backup) ──────► Blocked ✗
+└── NBAC (schedule, boxscores) ► Works ✓
+
+Phase 2: Raw Processors
+└── Transform scraped data ────► Works ✓
+
+Phase 3: Analytics
+└── Player game summary ───────► Works ✓
+
+Phase 4: Precompute
+└── Rolling windows, features ─► Works ✓
+
+Phase 5: Predictions
+├── CatBoost V8 model ─────────► Works ✓
+├── Line source fallback ──────► v3.10 deployed
+└── NO_PROP_LINE tracking ─────► Enabled
+
+Phase 6: Grading
+├── Prediction accuracy ───────► Works ✓
+├── MAE tracking ──────────────► NEW: Views created
+└── Monitoring alerts ─────────► NEW: v2.0 deployed
+```
+
+---
+
+## Key Metrics (as of Jan 23)
+
+| Metric | Value |
+|--------|-------|
+| ESTIMATED_AVG predictions | 0 |
+| Active predictions (2024-25) | ~159K |
+| Gradable % (with real lines) | 67.1% |
+| Win rate (CatBoost V8) | 77.1% |
+| MAE (ACTUAL_PROP) | 4.25 |
+| MAE (NO_PROP_LINE) | 3.29 |
+
+---
+
+## Start Command for Next Session
+
+```
+Read docs/09-handoff/2026-01-23-LATE-SESSION-HANDOFF.md for context.
+
+Priority tasks:
+1. Implement scraper failure tracking (see design in handoff)
+2. Check if BettingPros is still blocked
+3. If time: reduce BOOTSTRAP_DAYS to 7
+```
+
+---
+
+## Git Status
+
+```
+Branch: main
+Ahead of origin: 0 (all pushed)
+Last commit: ad3f5da5 - docs: Add BettingPros blocking investigation...
+```
+
+All changes committed and pushed.
