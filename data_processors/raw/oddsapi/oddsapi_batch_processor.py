@@ -43,6 +43,11 @@ class OddsApiGameLinesBatchProcessor(ProcessorBase):
     in a single BigQuery MERGE operation for maximum efficiency.
     """
 
+    # Skip ProcessorBase deduplication - batch processors use Firestore locks instead
+    # This prevents conflicts between Firestore lock (batch coordination) and
+    # run_history deduplication (single-file processors)
+    SKIP_DEDUPLICATION = True
+
     def __init__(self):
         super().__init__()
         self.processor_name = "oddsapi_game_lines_batch_processor"
@@ -253,6 +258,11 @@ class OddsApiPropsBatchProcessor(ProcessorBase):
     in a single BigQuery APPEND operation for maximum efficiency.
     """
 
+    # Skip ProcessorBase deduplication - batch processors use Firestore locks instead
+    # This prevents conflicts between Firestore lock (batch coordination) and
+    # run_history deduplication (single-file processors)
+    SKIP_DEDUPLICATION = True
+
     def __init__(self):
         super().__init__()
         self.processor_name = "oddsapi_props_batch_processor"
@@ -368,7 +378,94 @@ class OddsApiPropsBatchProcessor(ProcessorBase):
             self.stats['rows_inserted'] = len(self.all_rows)
             self.stats['files_processed'] = self.files_processed
 
+            # Update predictions that were waiting for lines
+            if len(self.all_rows) > 0:
+                self._update_predictions_with_new_lines()
+
         except Exception as e:
             logger.error(f"Failed to save props batch: {e}")
             self.stats['rows_inserted'] = 0
             raise
+
+    def _update_predictions_with_new_lines(self) -> None:
+        """
+        Update NO_PROP_LINE predictions with newly loaded betting lines.
+
+        When predictions run before lines are available, they're marked as NO_PROP_LINE.
+        This method updates those predictions once lines are loaded, filling in:
+        - current_points_line
+        - line_margin
+        - has_prop_line
+        - line_source
+        - recommendation
+        """
+        game_date = self.opts.get('game_date')
+        if not game_date:
+            return
+
+        try:
+            # Only update predictions for today or future (not historical)
+            from datetime import date
+            if isinstance(game_date, str):
+                from datetime import datetime
+                game_date_obj = datetime.strptime(game_date, '%Y-%m-%d').date()
+            else:
+                game_date_obj = game_date
+
+            if game_date_obj < date.today():
+                logger.debug(f"Skipping prediction update for historical date {game_date}")
+                return
+
+            # Update predictions that have NO_PROP_LINE with newly available lines
+            update_query = """
+            UPDATE `{project}.nba_predictions.player_prop_predictions` pred
+            SET
+                current_points_line = lines.points_line,
+                line_margin = ROUND(pred.predicted_points - lines.points_line, 2),
+                has_prop_line = TRUE,
+                line_source = 'ACTUAL_PROP',
+                line_source_api = 'ODDS_API',
+                sportsbook = UPPER(lines.bookmaker),
+                line_minutes_before_game = lines.minutes_before_tipoff,
+                recommendation = CASE
+                    WHEN pred.predicted_points - lines.points_line > 2.0 THEN 'OVER'
+                    WHEN lines.points_line - pred.predicted_points > 2.0 THEN 'UNDER'
+                    ELSE 'HOLD'
+                END,
+                updated_at = CURRENT_TIMESTAMP()
+            FROM (
+                SELECT player_lookup, game_date, points_line, bookmaker, minutes_before_tipoff,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY player_lookup
+                           ORDER BY
+                               CASE bookmaker WHEN 'draftkings' THEN 1 WHEN 'fanduel' THEN 2 ELSE 99 END,
+                               snapshot_timestamp DESC
+                       ) as rn
+                FROM `{project}.nba_raw.odds_api_player_points_props`
+                WHERE game_date = @game_date
+            ) lines
+            WHERE pred.game_date = @game_date
+              AND pred.is_active = TRUE
+              AND pred.line_source = 'NO_PROP_LINE'
+              AND pred.player_lookup = lines.player_lookup
+              AND lines.rn = 1
+            """.format(project=self.project_id)
+
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("game_date", "DATE", str(game_date))
+                ]
+            )
+
+            result = self.bq_client.query(update_query, job_config=job_config).result(timeout=60)
+            rows_updated = result.num_dml_affected_rows or 0
+
+            if rows_updated > 0:
+                logger.info(f"📊 Updated {rows_updated} predictions with new betting lines for {game_date}")
+                self.stats['predictions_updated'] = rows_updated
+            else:
+                logger.debug(f"No NO_PROP_LINE predictions to update for {game_date}")
+
+        except Exception as e:
+            # Don't fail the batch if prediction update fails
+            logger.warning(f"Failed to update predictions with new lines: {e}")
