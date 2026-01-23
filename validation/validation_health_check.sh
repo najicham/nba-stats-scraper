@@ -159,7 +159,29 @@ WHERE validation_timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY
 
 echo ""
 
-# Check 6: Remediation Available
+# Check 6: Proxy Health (per provider)
+echo -e "${CYAN}🌐 Proxy Health (Last 24 Hours):${NC}"
+echo ""
+
+bq query --use_legacy_sql=false --format=pretty "
+SELECT
+  proxy_provider,
+  target_host,
+  COUNTIF(success) as success,
+  COUNTIF(NOT success) as failed,
+  CONCAT(ROUND(100 * COUNTIF(success) / COUNT(*), 1), '%') as success_rate
+FROM \`nba-props-platform.nba_orchestration.proxy_health_metrics\`
+WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+GROUP BY proxy_provider, target_host
+ORDER BY target_host, proxy_provider
+" 2>&1
+
+echo ""
+echo -e "${YELLOW}Note: proxy_provider should show 'proxyfuel' and 'decodo' separately.${NC}"
+echo -e "${YELLOW}If only 'proxyfuel' appears, check _get_proxy_provider() in scraper_base.py${NC}"
+echo ""
+
+# Check 7: Remediation Available
 echo -e "${CYAN}🔧 Remediation Commands Available:${NC}"
 echo ""
 

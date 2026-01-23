@@ -51,6 +51,28 @@ This project tracks proxy infrastructure health, monitoring, and provider manage
 - **Summary View:** `nba_orchestration.proxy_health_summary`
 - **Proxy Config:** `scrapers/utils/proxy_utils.py`
 - **Health Logger:** `shared/utils/proxy_health_logger.py`
+- **Provider Detection:** `scrapers/scraper_base.py` → `_get_proxy_provider()`
+
+## Validation Query
+
+Check proxy health per provider (should show **both** `proxyfuel` and `decodo`):
+
+```sql
+SELECT
+  DATE(timestamp) as date,
+  proxy_provider,
+  target_host,
+  COUNTIF(success) as success,
+  COUNTIF(NOT success) as failed,
+  ROUND(100 * COUNTIF(success) / COUNT(*), 1) as success_pct
+FROM nba_orchestration.proxy_health_metrics
+WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 3 DAY)
+GROUP BY 1, 2, 3
+ORDER BY 1 DESC, 3, 2
+```
+
+**If only `proxyfuel` appears:** The `proxy_provider` field isn't being set correctly.
+Check `_get_proxy_provider()` in `scrapers/scraper_base.py` (added 2026-01-23).
 
 ## Action Items
 

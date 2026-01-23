@@ -136,6 +136,18 @@ def fetch_with_retry(url, proxies, max_retries=3):
                 raise
 ```
 
+**Step 4: Check proxy health metrics by provider**
+```sql
+-- Should show BOTH 'proxyfuel' AND 'decodo' rows
+SELECT proxy_provider, target_host,
+       COUNTIF(success) as ok, COUNTIF(NOT success) as fail
+FROM nba_orchestration.proxy_health_metrics
+WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+GROUP BY 1, 2
+```
+If only `proxyfuel` appears, the `proxy_provider` field isn't being logged correctly.
+Check `_get_proxy_provider()` in `scrapers/scraper_base.py`.
+
 #### Permanent Fix
 1. **Rotate proxy providers** - Add multiple proxy services
 2. **Implement proxy pool** - Rotate through multiple proxies
