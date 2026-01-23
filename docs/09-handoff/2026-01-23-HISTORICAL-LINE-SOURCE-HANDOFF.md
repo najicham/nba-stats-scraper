@@ -142,6 +142,12 @@ docs/08-projects/current/historical-data-validation/
 - [ ] Set `recommendation = 'NO_LINE'` for predictions without lines
 - [ ] Deploy and test
 
+### P0: Reliable Grading with Real Lines Only
+- [ ] **Only grade predictions that have real betting lines** (`has_prop_line = TRUE`)
+- [ ] Exclude ESTIMATED lines from grading (they contaminate accuracy metrics)
+- [ ] Verify grading queries filter on `has_prop_line = TRUE AND line_source != 'ESTIMATED_AVG'`
+- [ ] Update grading processor if needed to enforce this
+
 ### P1: Fix Existing ESTIMATED Predictions
 - [ ] Query predictions with `line_source = 'ESTIMATED_AVG'`
 - [ ] Re-run with new fallback OR mark as `NO_LINE`
@@ -151,6 +157,13 @@ docs/08-projects/current/historical-data-validation/
 - [ ] Push to Cloud Run
 - [ ] Test with a few dates
 - [ ] Monitor line source distribution
+
+### P1: Verify Performance After Corrections
+- [ ] Review performance analysis guide: `docs/08-projects/current/ml-model-v8-deployment/PERFORMANCE-ANALYSIS-GUIDE.md`
+- [ ] Re-run performance queries after backfilling with real lines
+- [ ] Verify CatBoost V8 performance metrics are accurate
+- [ ] Check that win rates and MAE are based on real lines only
+- [ ] Compare before/after metrics to validate corrections
 
 ### P2: Season-Start Bootstrap Gap
 - [ ] Oct 22 - Nov 4, 2024 have no predictions (14 dates)
@@ -245,7 +258,155 @@ This is the authoritative location for:
 4. **Need to fix existing ESTIMATED** - Re-run or mark as NO_LINE
 5. **Documentation is updated** - See docs/08-projects/current/historical-data-validation/
 
+---
+
+## Performance Verification (CRITICAL)
+
+After backfilling and correcting line sources, the next session MUST verify that performance metrics are accurate.
+
+### Performance Analysis Guide Location
+
+```
+docs/08-projects/current/ml-model-v8-deployment/PERFORMANCE-ANALYSIS-GUIDE.md
+```
+
+### Key Metrics to Verify (CatBoost V8)
+
+| Metric | Expected Range | Query Filter |
+|--------|----------------|--------------|
+| MAE | 4.5-5.0 | `has_prop_line = TRUE` |
+| Win Rate | 50-55% | `recommendation IN ('OVER', 'UNDER')` |
+| Picks/Day | 30-60 | `has_prop_line = TRUE` |
+
+### Verification Queries
+
+**Check grading is using real lines only:**
+```sql
+SELECT
+  line_source,
+  COUNT(*) as graded_count,
+  ROUND(AVG(CASE WHEN prediction_correct THEN 1.0 ELSE 0.0 END) * 100, 1) as win_rate
+FROM `nba_predictions.prediction_accuracy`
+WHERE game_date >= '2025-10-01' AND system_id = 'catboost_v8'
+GROUP BY 1
+ORDER BY 2 DESC;
+```
+
+**Expected:** ESTIMATED_AVG should have 0 graded predictions (or be excluded).
+
+**Verify accurate performance after corrections:**
+```sql
+SELECT
+  COUNT(*) as total_picks,
+  COUNTIF(prediction_correct = TRUE) as wins,
+  ROUND(AVG(CASE WHEN prediction_correct THEN 1.0 ELSE 0.0 END) * 100, 1) as win_rate,
+  ROUND(AVG(absolute_error), 2) as mae
+FROM `nba_predictions.prediction_accuracy`
+WHERE game_date >= '2025-10-01'
+  AND system_id = 'catboost_v8'
+  AND recommendation IN ('OVER', 'UNDER')
+  AND has_prop_line = TRUE
+  AND line_source NOT IN ('ESTIMATED_AVG', 'NO_VEGAS_DATA')  -- REAL LINES ONLY
+```
+
+### Why This Matters
+
+The current performance metrics may be contaminated by:
+1. **ESTIMATED lines** (8-13% of predictions) - fake lines skew accuracy
+2. **NO_VEGAS_DATA** lines - predictions without real lines shouldn't be graded
+3. **Default line=20** contamination (historical issue, mostly patched)
+
+After corrections, we need to re-verify that:
+- CatBoost V8 is still performing at ~50% win rate
+- MAE is in the 4.5-5.0 range
+- High confidence tiers have higher win rates (calibration)
+
+---
+
+## Context for Next Session
+
+### Documents to Review (Priority Order)
+
+**P0 - Must Read:**
+1. `docs/08-projects/current/historical-data-validation/README.md` - Project overview and status
+2. `docs/08-projects/current/historical-data-validation/BACKFILL-STRATEGY.md` - Backfill plan
+3. `docs/08-projects/current/ml-model-v8-deployment/PERFORMANCE-ANALYSIS-GUIDE.md` - How to verify performance
+
+**P1 - Should Read:**
+4. `docs/08-projects/current/historical-data-validation/LINE-SOURCE-IMPROVEMENT.md` - Implementation details
+5. `docs/08-projects/current/historical-data-validation/RESILIENCE-IMPROVEMENTS.md` - Future improvements
+
+**P2 - Reference as Needed:**
+6. `docs/08-projects/current/historical-data-validation/VALIDATION-FINDINGS.md` - Full audit results
+7. `docs/06-reference/scrapers.md` - Historical Odds API backfill section
+
+### Parts of System to Study (Use Agents)
+
+**Recommended Agent Tasks:**
+
+1. **Understand the grading system:**
+   ```
+   Explore the grading system in data_processors/grading/. How does prediction_accuracy_processor.py
+   grade predictions? What filters does it apply? Does it exclude estimated lines?
+   ```
+
+2. **Understand how line_source is set:**
+   ```
+   Explore predictions/coordinator/player_loader.py. How does _get_betting_line_info() determine
+   line_source? Where does ESTIMATED_AVG come from? How can we prevent estimated lines?
+   ```
+
+3. **Understand the prediction output schema:**
+   ```
+   What fields are in player_prop_predictions table? Check schemas/bigquery/nba_predictions/
+   and understand what line_source, has_prop_line, and line_source_api mean.
+   ```
+
+4. **Understand BettingPros data structure:**
+   ```
+   Explore the BettingPros scraper and processor. Where does the data come from? How is it
+   stored? What sportsbooks are available? Check scrapers/bettingpros/ and data_processors/raw/
+   ```
+
+### Key Code Files
+
+| File | Purpose | Review When |
+|------|---------|-------------|
+| `predictions/coordinator/player_loader.py` | Line source fallback (MODIFIED) | Deploying changes |
+| `predictions/coordinator/coordinator.py` | Prediction orchestration | Understanding flow |
+| `data_processors/grading/prediction_accuracy/` | Grading logic | Fixing grading |
+| `bin/patches/patch_fake_lines.sql` | Historical patch | Understanding VEGAS_BACKFILL |
+
+### Quick Start Commands
+
+```bash
+# Check current line source distribution
+bq query --use_legacy_sql=false "
+SELECT line_source, COUNT(*) as count
+FROM nba_predictions.player_prop_predictions
+WHERE is_active = TRUE AND game_date >= '2025-10-22'
+GROUP BY 1 ORDER BY 2 DESC"
+
+# Check grading health
+bq query --use_legacy_sql=false "
+SELECT
+  line_source,
+  COUNT(*) as graded,
+  ROUND(AVG(CASE WHEN prediction_correct THEN 1.0 ELSE 0.0 END) * 100, 1) as win_rate
+FROM nba_predictions.prediction_accuracy
+WHERE game_date >= '2025-10-01' AND system_id = 'catboost_v8'
+GROUP BY 1 ORDER BY 2 DESC"
+
+# Deploy code to Cloud Run
+gcloud run deploy prediction-coordinator \
+  --source=. \
+  --region=us-west2 \
+  --project=nba-props-platform
+```
+
+---
+
 **Start command for next session:**
 ```
-Read docs/08-projects/current/historical-data-validation/README.md to get context on the historical data validation project.
+Read docs/09-handoff/2026-01-23-HISTORICAL-LINE-SOURCE-HANDOFF.md for full context. Then read docs/08-projects/current/historical-data-validation/README.md and docs/08-projects/current/ml-model-v8-deployment/PERFORMANCE-ANALYSIS-GUIDE.md.
 ```
