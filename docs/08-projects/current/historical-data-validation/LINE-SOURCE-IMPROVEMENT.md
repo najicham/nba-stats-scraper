@@ -1,8 +1,9 @@
 # Line Source Fallback Improvement
 
 **Created:** 2026-01-23
-**Status:** Proposed
+**Status:** IMPLEMENTED
 **Priority:** P2
+**Implemented:** 2026-01-23
 
 ---
 
@@ -48,7 +49,16 @@ Proposed: DraftKings (OddsAPI→BettingPros) → FanDuel (OddsAPI→BettingPros)
 
 ### File: `predictions/coordinator/player_loader.py`
 
-**Current Method:** `_query_actual_betting_line()` (lines 499-539)
+**Status:** IMPLEMENTED on 2026-01-23
+
+**Changes Made:**
+1. Rewrote `_query_actual_betting_line()` with sportsbook-priority fallback
+2. Added `_query_odds_api_betting_line_for_book()` for specific sportsbook queries
+3. Added `_query_bettingpros_betting_line_for_book()` for specific sportsbook queries
+4. Enhanced `_track_line_source()` with detailed tracking by source and sportsbook
+5. Enhanced `get_line_source_stats()` with summary stats and health alerts
+
+**Previous Method:** `_query_actual_betting_line()` (lines 499-539)
 
 ```python
 # CURRENT
