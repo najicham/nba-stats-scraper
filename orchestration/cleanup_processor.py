@@ -200,16 +200,11 @@ class CleanupProcessor:
             SELECT DISTINCT source_file_path
             FROM (
                 -- Check all Phase 2 tables that track source files
-                SELECT source_file_path FROM `nba-props-platform.nba_raw.nbac_schedule` 
+                SELECT source_file_path FROM `nba-props-platform.nba_raw.nbac_schedule`
                 WHERE processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {self.lookback_hours + 1} HOUR)
-                
+
                 UNION ALL
-                
-                SELECT source_file_path FROM `nba-props-platform.nba_raw.nbac_player_list`
-                WHERE processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {self.lookback_hours + 1} HOUR)
-                
-                UNION ALL
-                
+
                 SELECT source_file_path FROM `nba-props-platform.nba_raw.odds_events`
                 WHERE processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {self.lookback_hours + 1} HOUR)
                 
