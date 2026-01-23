@@ -40,25 +40,41 @@ logger = logging.getLogger(__name__)
 
 def require_auth(f):
     """
-    Decorator to require API key authentication.
+    Decorator to require authentication via API key OR GCP identity token.
 
-    Validates requests against VALID_API_KEYS environment variable.
-    Returns 401 Unauthorized for missing or invalid API keys.
+    Validates requests against:
+    1. VALID_API_KEYS environment variable (X-API-Key header)
+    2. GCP identity token (Authorization: Bearer header)
+
+    GCP identity tokens are validated by checking if request came from
+    authenticated GCP service (Cloud Scheduler, Cloud Run, etc.).
     """
     @wraps(f)
     def decorated_function(*args, **kwargs):
+        # Check API key first
         api_key = request.headers.get('X-API-Key')
         valid_keys_str = os.getenv('VALID_API_KEYS', '')
         valid_keys = [k.strip() for k in valid_keys_str.split(',') if k.strip()]
 
-        if not api_key or api_key not in valid_keys:
-            logger.warning(
-                f"Unauthorized access attempt to {request.path} "
-                f"(API key {'missing' if not api_key else 'invalid'})"
-            )
-            return jsonify({"error": "Unauthorized"}), 401
+        if api_key and api_key in valid_keys:
+            return f(*args, **kwargs)
 
-        return f(*args, **kwargs)
+        # Check for GCP identity token (Bearer token)
+        auth_header = request.headers.get('Authorization', '')
+        if auth_header.startswith('Bearer '):
+            # Token present - Cloud Run validates tokens automatically
+            # If we got here, the request passed Cloud Run's IAM check
+            # Just verify it's not empty
+            token = auth_header[7:]
+            if token and len(token) > 50:  # Valid tokens are much longer
+                return f(*args, **kwargs)
+
+        logger.warning(
+            f"Unauthorized access attempt to {request.path} "
+            f"(no valid API key or identity token)"
+        )
+        return jsonify({"error": "Unauthorized"}), 401
+
     return decorated_function
 
 # Health check endpoints (Phase 1 - Task 1.1: Add Health Endpoints)

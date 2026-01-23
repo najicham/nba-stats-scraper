@@ -2996,7 +2996,7 @@ class UpcomingPlayerGameContextProcessor(
         try:
             query = f"""
             WITH recent_games AS (
-                SELECT total_rebounds, possessions
+                SELECT rebounds, possessions
                 FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
                 WHERE team_abbr = @opponent_abbr
                   AND game_date < @game_date
@@ -3005,7 +3005,7 @@ class UpcomingPlayerGameContextProcessor(
                 ORDER BY game_date DESC
                 LIMIT 10
             )
-            SELECT ROUND(AVG(total_rebounds) / NULLIF(AVG(possessions), 0), 2) as rebounding_rate
+            SELECT ROUND(AVG(rebounds) / NULLIF(AVG(possessions), 0), 2) as rebounding_rate
             FROM recent_games
             """
             job_config = bigquery.QueryJobConfig(
@@ -3208,7 +3208,7 @@ class UpcomingPlayerGameContextProcessor(
             query = f"""
             WITH recent_games AS (
                 SELECT
-                    total_rebounds / NULLIF(possessions, 0) as rebounding_rate
+                    rebounds / NULLIF(possessions, 0) as rebounding_rate
                 FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
                 WHERE team_abbr = @opponent_abbr
                   AND game_date < @game_date
@@ -3259,10 +3259,13 @@ class UpcomingPlayerGameContextProcessor(
                 SELECT player_lookup
                 FROM `{self.project_id}.nba_raw.espn_team_rosters`
                 WHERE team_abbr = @team_abbr
+                  AND roster_date >= DATE_SUB(@game_date, INTERVAL 90 DAY)
+                  AND roster_date <= @game_date
                   AND roster_date = (
                       SELECT MAX(roster_date)
                       FROM `{self.project_id}.nba_raw.espn_team_rosters`
                       WHERE roster_date <= @game_date
+                        AND roster_date >= DATE_SUB(@game_date, INTERVAL 90 DAY)
                         AND team_abbr = @team_abbr
                   )
             ),
@@ -3340,10 +3343,13 @@ class UpcomingPlayerGameContextProcessor(
                 SELECT player_lookup
                 FROM `{self.project_id}.nba_raw.espn_team_rosters`
                 WHERE team_abbr = @team_abbr
+                  AND roster_date >= DATE_SUB(@game_date, INTERVAL 90 DAY)
+                  AND roster_date <= @game_date
                   AND roster_date = (
                       SELECT MAX(roster_date)
                       FROM `{self.project_id}.nba_raw.espn_team_rosters`
                       WHERE roster_date <= @game_date
+                        AND roster_date >= DATE_SUB(@game_date, INTERVAL 90 DAY)
                         AND team_abbr = @team_abbr
                   )
             ),
@@ -3421,10 +3427,13 @@ class UpcomingPlayerGameContextProcessor(
                 SELECT player_lookup
                 FROM `{self.project_id}.nba_raw.espn_team_rosters`
                 WHERE team_abbr = @team_abbr
+                  AND roster_date >= DATE_SUB(@game_date, INTERVAL 90 DAY)
+                  AND roster_date <= @game_date
                   AND roster_date = (
                       SELECT MAX(roster_date)
                       FROM `{self.project_id}.nba_raw.espn_team_rosters`
                       WHERE roster_date <= @game_date
+                        AND roster_date >= DATE_SUB(@game_date, INTERVAL 90 DAY)
                         AND team_abbr = @team_abbr
                   )
             ),

@@ -92,7 +92,81 @@ else
   echo "   No errors in last 2 hours"
 fi
 
-# 7. Service health
+# 7. Data completeness check (raw vs analytics)
+echo ""
+echo "DATA COMPLETENESS (Raw → Analytics):"
+bq query --use_legacy_sql=false --format=pretty "
+WITH raw_counts AS (
+  SELECT game_date, COUNT(*) as raw_records, COUNT(DISTINCT game_id) as raw_games
+  FROM nba_raw.bdl_player_boxscores
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  GROUP BY 1
+),
+analytics_counts AS (
+  SELECT game_date, COUNT(*) as analytics_records
+  FROM nba_analytics.player_game_summary
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  GROUP BY 1
+)
+SELECT
+  r.game_date,
+  r.raw_games as games,
+  r.raw_records as raw,
+  COALESCE(a.analytics_records, 0) as analytics,
+  CASE
+    WHEN r.raw_records > 0 THEN ROUND(100.0 * COALESCE(a.analytics_records, 0) / r.raw_records, 1)
+    ELSE 0
+  END as pct,
+  CASE
+    WHEN COALESCE(a.analytics_records, 0) = 0 THEN '❌ MISSING'
+    WHEN COALESCE(a.analytics_records, 0) < r.raw_records * 0.5 THEN '⚠️ LOW'
+    ELSE '✅'
+  END as status
+FROM raw_counts r
+LEFT JOIN analytics_counts a ON r.game_date = a.game_date
+ORDER BY r.game_date DESC" 2>/dev/null
+
+# 8. Workflow execution check
+echo ""
+echo "WORKFLOW EXECUTION (Last 24h):"
+bq query --use_legacy_sql=false --format=pretty "
+SELECT
+  workflow_name,
+  COUNTIF(action = 'RUN') as runs,
+  COUNTIF(action = 'SKIP') as skips,
+  MAX(decision_time) as last_decision
+FROM nba_orchestration.workflow_decisions
+WHERE decision_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+  AND workflow_name LIKE 'post_game%'
+GROUP BY 1
+ORDER BY 1" 2>/dev/null
+
+# 9. Schedule staleness check and auto-fix
+echo ""
+echo "SCHEDULE STALENESS:"
+# First, auto-fix any stale games
+STALE_FIX=$(python3 bin/monitoring/fix_stale_schedule.py 2>&1)
+if echo "$STALE_FIX" | grep -q "Updated"; then
+  echo "   $STALE_FIX"
+fi
+# Then show current status
+bq query --use_legacy_sql=false --format=pretty "
+SELECT
+  game_date,
+  COUNTIF(game_status = 1) as scheduled,
+  COUNTIF(game_status = 2) as in_progress,
+  COUNTIF(game_status = 3) as final,
+  CASE
+    WHEN COUNTIF(game_status = 2) > 0 AND game_date < CURRENT_DATE() THEN '⚠️ STALE'
+    WHEN COUNTIF(game_status = 1) > 0 AND game_date < CURRENT_DATE() THEN '⚠️ STALE'
+    ELSE '✅'
+  END as status
+FROM nba_raw.nbac_schedule
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
+GROUP BY 1
+ORDER BY 1 DESC" 2>/dev/null
+
+# 10. Service health
 echo ""
 echo "SERVICE HEALTH:"
 for svc in nba-phase3-analytics-processors nba-phase4-precompute-processors prediction-coordinator; do
@@ -103,7 +177,7 @@ for svc in nba-phase3-analytics-processors nba-phase4-precompute-processors pred
   printf "   %-40s %s\n" "$svc:" "$STATUS"
 done
 
-# 8. Quick summary
+# 11. Quick summary
 echo ""
 echo "================================================"
 echo "SUMMARY:"
