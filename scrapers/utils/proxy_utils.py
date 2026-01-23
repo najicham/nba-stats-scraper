@@ -36,12 +36,15 @@ def get_proxy_urls():
         proxies.append(f"http://{proxyfuel_creds}@gate2.proxyfuel.com:2000")
 
     # Fallback: Decodo US (residential)
-    decodo_creds = os.getenv("DECODO_PROXY_CREDENTIALS")
-    if decodo_creds:
-        # Use US gateway for US sports sites
-        proxies.append(f"http://{decodo_creds}@us.decodo.com:10001")
-    else:
-        logger.debug("DECODO_PROXY_CREDENTIALS not set - Decodo fallback unavailable")
+    # TEMPORARILY DISABLED: Decodo returning 407 errors - credentials may need renewal
+    # TODO: Re-enable once Decodo account is fixed
+    # decodo_creds = os.getenv("DECODO_PROXY_CREDENTIALS")
+    # if decodo_creds:
+    #     # Use US gateway for US sports sites
+    #     proxies.append(f"http://{decodo_creds}@us.decodo.com:10001")
+    # else:
+    #     logger.debug("DECODO_PROXY_CREDENTIALS not set - Decodo fallback unavailable")
+    logger.debug("Decodo proxy temporarily disabled - using ProxyFuel only")
 
     if not proxies:
         logger.warning("No proxy credentials configured!")
@@ -67,3 +70,4 @@ def get_proxyfuel_proxy_url():
     if proxyfuel_creds:
         return f"http://{proxyfuel_creds}@gate2.proxyfuel.com:2000"
     return None
+# Cache bust: 1769119791

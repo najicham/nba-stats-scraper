@@ -1776,7 +1776,7 @@ class ScraperBase:
                         scraper_name=self.__class__.__name__,
                         target_host=extract_host_from_url(self.url),
                         http_status_code=200,
-                        response_time_ms=int(elapsed * 1000) if elapsed else None,
+                        response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
                         success=True
                     )
                     break
@@ -1789,7 +1789,7 @@ class ScraperBase:
                         scraper_name=self.__class__.__name__,
                         target_host=extract_host_from_url(self.url),
                         http_status_code=self.raw_response.status_code,
-                        response_time_ms=int(elapsed * 1000) if elapsed else None,
+                        response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
                         success=False,
                         error_type=classify_error(status_code=self.raw_response.status_code)
                     )
@@ -1803,7 +1803,7 @@ class ScraperBase:
                 log_proxy_result(
                     scraper_name=self.__class__.__name__,
                     target_host=extract_host_from_url(self.url),
-                    response_time_ms=int(elapsed * 1000) if elapsed else None,
+                    response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
                     success=False,
                     error_type=classify_error(exception=ex),
                     error_message=str(ex)
