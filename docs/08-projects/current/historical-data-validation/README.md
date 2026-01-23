@@ -12,7 +12,8 @@ This project tracks validation of historical NBA data across all seasons (2021-2
 
 - [Validation Findings](./VALIDATION-FINDINGS.md) - Comprehensive audit results
 - [Resilience Improvements](./RESILIENCE-IMPROVEMENTS.md) - System hardening plans
-- [Line Source Improvement](./LINE-SOURCE-IMPROVEMENT.md) - Sportsbook-priority fallback proposal
+- [Line Source Improvement](./LINE-SOURCE-IMPROVEMENT.md) - Sportsbook-priority fallback (IMPLEMENTED)
+- [Backfill Strategy](./BACKFILL-STRATEGY.md) - Comprehensive backfill plan
 - [Backfill Tracker](./BACKFILL-TRACKER.md) - Status of backfill operations
 
 ## Season Coverage Summary
@@ -63,10 +64,21 @@ has no data at all. See [Line Source Improvement](./LINE-SOURCE-IMPROVEMENT.md).
 
 ## Action Items
 
-- [ ] **P1**: Backfill bootstrap gap predictions for 2024-25 season
+### Completed
+- [x] **P1**: Implement sportsbook-priority fallback (DK/FD from any source)
+- [x] **P1**: Create comprehensive backfill strategy documentation
+
+### In Progress
+- [ ] **P1**: Deploy code changes to Cloud Run
+- [ ] **P1**: Run backfill for 2024-25 season (213 dates)
+- [ ] **P1**: Backfill bootstrap gap predictions (Oct-Nov 2024)
+
+### Pending
+- [ ] **P2**: Backfill 2023-24 season (207 dates)
 - [ ] **P2**: Add automated season-start bootstrap detection
 - [ ] **P2**: Create daily validation job with alerting
-- [ ] **P3**: Consider re-running historical predictions with current model
+- [ ] **P3**: Backfill 2022-23 season (212 dates)
+- [ ] **P3**: Backfill 2021-22 season (213 dates)
 - [ ] **P3**: Implement self-healing for prediction gaps
 
 ## Related Documentation

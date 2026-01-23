@@ -278,8 +278,104 @@ class HistoricalOddsBackfiller:
 
 ---
 
+---
+
+## Additional Resilience Ideas
+
+### Idea 1: Line Source Health Dashboard
+
+**Goal:** Real-time visibility into line source quality
+
+**Components:**
+- Grafana dashboard showing line source distribution
+- Alerts for degraded OddsAPI (<50% coverage)
+- Alerts for high ESTIMATED usage (>30%)
+- Historical trends by date/season
+
+### Idea 2: Automatic Line Quality Scoring
+
+**Goal:** Score predictions by line data quality
+
+```python
+def compute_line_quality_score(prediction):
+    """Score 0-100 based on line source quality."""
+    scores = {
+        'ODDS_API_DRAFTKINGS': 100,
+        'ODDS_API_FANDUEL': 95,
+        'BETTINGPROS_DRAFTKINGS': 90,
+        'BETTINGPROS_FANDUEL': 85,
+        'ODDS_API_BETMGM': 80,
+        'BETTINGPROS_BETMGM': 75,
+        'BETTINGPROS_CONSENSUS': 60,
+        'ESTIMATED': 40,
+        'NO_LINE': 0
+    }
+    return scores.get(prediction.line_source, 50)
+```
+
+### Idea 3: Multi-Source Line Consensus
+
+**Goal:** Use multiple sources to validate line accuracy
+
+**Approach:**
+1. Fetch lines from OddsAPI and BettingPros
+2. Compare DraftKings lines from both sources
+3. Flag significant discrepancies (>1.5 points)
+4. Use average when sources agree
+
+### Idea 4: Stale Line Detection
+
+**Goal:** Detect when lines haven't been updated
+
+```python
+def is_line_stale(line_data):
+    """Check if line is potentially stale."""
+    if line_data['line_source_api'] == 'ODDS_API':
+        # OddsAPI has minutes_before_tipoff
+        if line_data.get('line_minutes_before_game', 0) > 1440:  # >24 hours
+            return True
+    elif line_data['line_source_api'] == 'BETTINGPROS':
+        # BettingPros doesn't track freshness - assume stale if created_at is old
+        pass
+    return False
+```
+
+### Idea 5: Prediction Confidence Adjustment
+
+**Goal:** Adjust confidence based on line source quality
+
+**Logic:**
+- DraftKings from OddsAPI: No adjustment
+- DraftKings from BettingPros: -5% confidence penalty
+- Secondary sportsbook: -10% confidence penalty
+- Estimated line: -20% confidence penalty
+
+### Idea 6: Historical Backfill Automation
+
+**Goal:** Automatically detect and backfill gaps
+
+**Trigger:** Daily job at 6 AM ET
+**Logic:**
+1. Query for dates with >10% ESTIMATED lines
+2. Check if BettingPros has data for those dates
+3. If yes, trigger coordinator re-run
+4. Re-grade after predictions complete
+
+### Idea 7: Line Source A/B Testing
+
+**Goal:** Validate that BettingPros lines are accurate
+
+**Approach:**
+1. For subset of predictions, fetch both OddsAPI and BettingPros
+2. Compare grading accuracy between sources
+3. If BettingPros matches OddsAPI accuracy, trust it fully
+4. Build confidence score for each source
+
+---
+
 ## Related Files
 
+- `/predictions/coordinator/player_loader.py` - Line source fallback (UPDATED)
 - `/orchestration/cloud_functions/daily_validation/` - Validation jobs
 - `/data_processors/predictions/ml_feature_store/` - Feature generation
 - `/predictions/coordinator/` - Prediction orchestration
