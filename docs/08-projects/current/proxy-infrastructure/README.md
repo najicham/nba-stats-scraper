@@ -19,17 +19,17 @@ This project tracks proxy infrastructure health, monitoring, and provider manage
 ### Provider: Decodo/Smartproxy (Fallback)
 - **Plan:** Residential 25 GB
 - **Endpoint:** `us.decodo.com:10001` (US residential IPs)
-- **Status:** ✅ ACTIVE - Added 2026-01-22
+- **Status:** ❌ BLOCKED by BettingPros (as of 2026-01-23)
 - **Secret:** `DECODO_PROXY_CREDENTIALS` in Secret Manager
 
-### Scraper Status (After Decodo Fallback)
+### Scraper Status (2026-01-23 Update)
 | Scraper | Target Site | Status | Notes |
 |---------|-------------|--------|-------|
-| `bp_events` | api.bettingpros.com | ✅ Working | With API key + Decodo |
-| `bp_player_props` | api.bettingpros.com | ✅ Working | With API key + Decodo |
+| `bp_events` | api.bettingpros.com | ❌ 403 | BOTH proxies blocked |
+| `bp_player_props` | api.bettingpros.com | ❌ 403 | BOTH proxies blocked |
 | `nbac_team_boxscore` | stats.nba.com | ✅ Working | With Decodo fallback |
-| `oddsa_events` | api.the-odds-api.com | ⚠️ Untested | May need testing |
-| `oddsa_player_props` | api.the-odds-api.com | ⚠️ Untested | May need testing |
+| `oddsa_events` | api.the-odds-api.com | ✅ Working | Uses API key, no proxy |
+| `oddsa_player_props` | api.the-odds-api.com | ✅ Working | Uses API key, no proxy |
 
 ### Working Scrapers (No Proxy)
 | Scraper | Target Site | Status |

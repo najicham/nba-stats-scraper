@@ -59,6 +59,60 @@ curl -x "http://...@gate2.proxyfuel.com:2000" "https://api.bettingpros.com/v3/ev
 
 ---
 
+## 2026-01-23: Decodo Fallback Also Blocked
+
+### Summary
+BettingPros is now blocking both ProxyFuel AND Decodo residential IPs, leaving us with no working proxy for BettingPros scraping.
+
+### Timeline
+- **~08:00 UTC:** Daily `betting_lines` workflow runs
+- **~08:05 UTC:** BettingPros scrapers return 403 despite Decodo fallback
+- **~14:00 UTC:** Issue confirmed during manual investigation
+- **~14:30 UTC:** Verified both proxy providers blocked
+
+### Affected Systems
+| System | Impact |
+|--------|--------|
+| `bp_events` | 403 Forbidden (both proxies) |
+| `bp_player_props` | 403 Forbidden (both proxies) |
+| `oddsa_*` | Working with API key (no proxy needed) |
+
+### Root Cause
+BettingPros has upgraded their bot detection beyond simple IP blocking:
+- Likely fingerprinting browser characteristics
+- May be blocking all known residential proxy IP ranges
+- API key header alone not sufficient
+
+**Evidence from logs:**
+```
+bettingpros_player_props - HTTP 403 errors, 11 occurrences
+bettingpros_events - HTTP 403 errors, 1 occurrence
+```
+
+### Impact
+- Jan 23 has ZERO bettingpros data
+- Predictions rely 100% on odds_api (fewer players covered)
+- Some players have no line data at all
+
+### Actions Taken
+1. ✅ Verified Decodo credentials work (secret accessible)
+2. ✅ Confirmed 403 from both providers
+3. ✅ Manually scraped odds_api for Jan 23 games
+4. ⏳ Need to investigate API-only access option
+
+### Lessons Learned
+1. **Residential proxies not immune:** BettingPros blocking even residential IPs
+2. **Need direct API access:** Proxy rotation may not be enough for some targets
+3. **Diversify data sources:** Can't rely on single betting lines source
+
+### Prevention Measures
+1. Investigate BettingPros API terms of service
+2. Consider official data partnership if available
+3. Add fallback to publicly available line data (ESPN, etc.)
+4. Alert when ANY proxy provider has >50% failure rate
+
+---
+
 ## Template for Future Incidents
 
 ```markdown

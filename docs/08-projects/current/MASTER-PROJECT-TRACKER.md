@@ -1,6 +1,6 @@
-# Master Project Tracker - January 22, 2026
-**Last Updated:** 2026-01-22 02:30 PM PST
-**Status:** 🟢 All Critical Issues Resolved
+# Master Project Tracker - January 23, 2026
+**Last Updated:** 2026-01-23 8:30 PM UTC
+**Status:** 🟢 Major Issues Resolved
 **Owner:** Data Engineering Team
 
 ---
@@ -14,28 +14,47 @@
 | **#1** | Prediction Coordinator Dockerfile | ✅ **FIXED** | P0 | Jan 22 | Deployed |
 | **#2** | Prediction Worker Dockerfile | ✅ **FIXED** | P0 | Jan 22 | Missing __init__.py |
 | **#3** | pdfplumber Missing | ✅ **FIXED** | P2 | Jan 22 | Added to root requirements |
-| **#4** | Proxy Infrastructure Blocked | ✅ **MITIGATED** | P1 | Jan 22 | Decodo fallback added |
+| **#4** | Proxy Infrastructure Blocked | ❌ **BROKEN** | P1 | - | Both proxies now blocked by BettingPros |
+| **#5** | Phase 2 Batch Processor Bug | ✅ **FIXED** | P1 | Jan 23 | Deduplication conflict resolved |
+| **#6** | Health Email Metrics Bug | 🟡 **NEW** | P3 | - | Wrong counts displayed |
 
-### ✅ Completed Work (January 22)
+### 🚨 Issues Status (January 23)
+
+| ID | Issue | Status | Impact | Details |
+|----|-------|--------|--------|---------|
+| **#5** | Phase 2 Batch Processor | ✅ **FIXED** | Was skipping batches | Root cause: deduplication conflict. Fix: SKIP_DEDUPLICATION=True |
+| **#6** | BettingPros Blocked | 🔴 Active | 0 bettingpros data | Both ProxyFuel AND Decodo returning 403 |
+| **#7** | Firestore Lock Accumulation | ✅ **FIXED** | - | Batch processors now use Firestore locks only |
+| **#8** | Health Email Bug | 🟡 Low | Misleading stats | Uses run count not processor count |
+| **#9** | Predictions run before lines load | ✅ **FIXED** | Was causing NO_PROP_LINE | Auto-update predictions when lines arrive |
+
+### ✅ Completed Work (January 22-23)
 
 | Component | Status | Deployed | Tested |
 |-----------|--------|----------|--------|
 | Prediction Worker Dockerfile Fix | ✅ | Jan 22 | ✅ |
 | pdfplumber in root requirements | ✅ | Jan 22 | ✅ |
-| Decodo Proxy Fallback | ✅ | Jan 22 | ✅ |
+| Decodo Proxy Fallback | ⚠️ | Jan 22 | Now blocked |
 | Proxy Health Monitoring (BigQuery) | ✅ | Jan 22 | ✅ |
 | BettingPros API Key Mounted | ✅ | Jan 22 | ✅ |
-| Infrastructure Validator | ✅ | Jan 22 | Pending |
-| Daily Health Alert (Proxy) | ✅ | Jan 22 | Pending |
+| Line Quality Self-Heal Function | ✅ | Jan 23 | ✅ Working |
+| Firestore Lock Cleanup | ✅ | Jan 23 | Manual |
+| Pub/Sub Backlog Clear | ✅ | Jan 23 | Manual |
+| **Batch Processor Dedup Fix** | ✅ | Jan 23 | ✅ Deployed |
+| **Auto-Update Predictions** | ✅ | Jan 23 | ✅ Deployed |
+| **Historical Odds Backfill** | ✅ | Jan 23 | Jan 19-22 complete |
+| **Multi-Snapshot Lines** | ✅ | Jan 23 | Opening + Closing lines |
 
 ### 🔄 Active Monitoring
 
 | Component | Status | Notes |
 |-----------|--------|-------|
-| Proxy Health | 🟢 Healthy | ProxyFuel primary, Decodo fallback |
-| BettingPros Scraper | 🟢 Working | 126 props fetched |
-| NBA Team Boxscore | 🟢 Working | Via Decodo fallback |
-| Injury Discovery | 🟢 Working | 87 records parsed |
+| Proxy Health | 🔴 BLOCKED | Both proxies blocked by BettingPros |
+| BettingPros Scraper | ❌ Failing | 403 errors, 0 data for Jan 23 |
+| Odds API Scraper | ✅ Working | Uses API key, no proxy |
+| NBA Team Boxscore | ✅ Working | Via Decodo fallback |
+| Self-Heal Function | ✅ Working | Running every 2h |
+| Jan 23 Predictions | ⚠️ Stuck | 95% complete, 4 workers failing |
 
 ### 📊 Proxy Infrastructure
 
@@ -665,9 +684,12 @@ WHERE game_date >= CURRENT_DATE() - 3
 | 2026-01-22 01:55 AM | Added latency monitoring phases 0-5 | ✅ |
 | 2026-01-22 01:55 AM | Created unit testing plan | ✅ |
 | 2026-01-22 01:55 AM | Defined success metrics and timelines | ✅ |
+| 2026-01-23 03:30 PM | Updated with Jan 23 session findings | ✅ |
+| 2026-01-23 03:30 PM | Added Issues #5-#8 (batch processor, proxy blocking, locks, email) | ✅ |
+| 2026-01-23 03:30 PM | Documented manual interventions (lock cleanup, backlog clear) | ✅ |
 
 ---
 
-**Last Updated:** January 22, 2026, 01:55 AM PST
-**Next Update:** After critical fixes deployed
-**Status:** 🔴 4 Critical Issues Open, Latency Monitoring Progressing
+**Last Updated:** January 23, 2026, 3:30 PM UTC
+**Next Update:** After Phase 2 batch processor bug fixed
+**Status:** 🟡 Multiple Active Issues - See pipeline-resilience-improvements/

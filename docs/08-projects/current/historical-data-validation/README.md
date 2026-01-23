@@ -67,9 +67,11 @@ has no data at all. See [Line Source Improvement](./LINE-SOURCE-IMPROVEMENT.md).
 ### Completed
 - [x] **P1**: Implement sportsbook-priority fallback (DK/FD from any source)
 - [x] **P1**: Create comprehensive backfill strategy documentation
+- [x] **P0**: Eliminate ESTIMATED_AVG lines (see [No Estimated Lines Implementation](../../../09-handoff/2026-01-23-NO-ESTIMATED-LINES-IMPLEMENTATION.md))
+- [x] **P0**: Delete ESTIMATED_AVG from grading table (49,522 rows removed)
+- [x] **P1**: Deploy code changes to Cloud Run (revision 00086-pzl)
 
 ### In Progress
-- [ ] **P1**: Deploy code changes to Cloud Run
 - [ ] **P1**: Run backfill for 2024-25 season (213 dates)
 - [ ] **P1**: Backfill bootstrap gap predictions (Oct-Nov 2024)
 
@@ -77,6 +79,7 @@ has no data at all. See [Line Source Improvement](./LINE-SOURCE-IMPROVEMENT.md).
 - [ ] **P2**: Backfill 2023-24 season (207 dates)
 - [ ] **P2**: Add automated season-start bootstrap detection
 - [ ] **P2**: Create daily validation job with alerting
+- [ ] **P2**: Optional: Add MAE-only grading for NO_PROP_LINE predictions
 - [ ] **P3**: Backfill 2022-23 season (212 dates)
 - [ ] **P3**: Backfill 2021-22 season (213 dates)
 - [ ] **P3**: Implement self-healing for prediction gaps
