@@ -198,3 +198,5 @@ catboost_info/
 
 # Model files (binary, stored in GCS)
 models/
+Dockerfile.backup.*
+failed_games_*.json
