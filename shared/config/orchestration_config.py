@@ -124,6 +124,12 @@ class PredictionModeConfig:
     # Line increment for multiple lines
     line_increment: float = 1.0
 
+    # v3.10: Disable estimated lines - only use real betting lines from sportsbooks
+    # When True: Skip players without actual prop lines (no ESTIMATED_AVG)
+    # When False: Fall back to estimating line from season average (legacy behavior)
+    # Via env: DISABLE_ESTIMATED_LINES
+    disable_estimated_lines: bool = True  # Default True - no fake lines
+
 
 @dataclass
 class ProcessingModeConfig:
@@ -252,11 +258,13 @@ class NewPlayerConfig:
     # Bootstrap period (days) - matches BOOTSTRAP_DAYS
     bootstrap_days: int = 14
 
-    # Use default line for new players (False = skip prediction)
-    use_default_line: bool = False
+    # DEPRECATED: Never use default lines - always skip predictions for new players
+    # This was a source of 20.0 placeholder lines that corrupted grading
+    # Keeping field for backwards compatibility but MUST remain False
+    use_default_line: bool = False  # DO NOT CHANGE - causes placeholder lines
 
-    # Default line value if use_default_line is True
-    default_line_value: float = 15.5
+    # DEPRECATED: This value is never used (use_default_line=False)
+    default_line_value: float = 15.5  # Unused
 
     # Mark new players for later processing
     mark_needs_bootstrap: bool = True
@@ -329,6 +337,11 @@ class OrchestrationConfig:
         use_multiple = os.environ.get('USE_MULTIPLE_LINES_DEFAULT')
         if use_multiple is not None:
             config.prediction_mode.use_multiple_lines_default = use_multiple.lower() == 'true'
+
+        # v3.10: Disable estimated lines
+        disable_estimated = os.environ.get('DISABLE_ESTIMATED_LINES')
+        if disable_estimated is not None:
+            config.prediction_mode.disable_estimated_lines = disable_estimated.lower() == 'true'
 
         # Circuit breaker config
         entity_lockout = os.environ.get('CIRCUIT_BREAKER_ENTITY_LOCKOUT_HOURS')

@@ -403,6 +403,22 @@ def start_prediction_batch():
                 'summary': summary_stats
             }), 404
 
+        # Log line source statistics for monitoring/alerting (v3.9)
+        try:
+            line_stats = get_player_loader().get_line_source_stats()
+            odds_api = line_stats.get('odds_api', 0)
+            bettingpros = line_stats.get('bettingpros_fallback', 0)
+            no_line = line_stats.get('no_line_data', 0)
+            total = odds_api + bettingpros + no_line
+            if total > 0:
+                logger.info(f"📊 LINE_SOURCE_STATS: odds_api={odds_api} ({100*odds_api//total}%), bettingpros_fallback={bettingpros} ({100*bettingpros//total}%), no_line={no_line}")
+                if bettingpros > odds_api:
+                    logger.warning(f"⚠️ ODDS_API_DEGRADED: More lines from bettingpros ({bettingpros}) than odds_api ({odds_api}). Check odds_api scraper health.")
+                if no_line > 0:
+                    logger.warning(f"⚠️ MISSING_LINES: {no_line} players had no line from either source")
+        except Exception as e:
+            logger.debug(f"Could not log line source stats: {e}")
+
         # BATCH OPTIMIZATION: Pre-load historical games for all players (331x speedup!)
         # Instead of workers querying individually (225s total for sequential queries),
         # coordinator loads once (0.68s) and passes to workers via Pub/Sub

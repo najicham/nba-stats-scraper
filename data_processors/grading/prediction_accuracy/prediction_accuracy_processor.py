@@ -337,10 +337,13 @@ class PredictionAccuracyProcessor:
             injury_checked_at
         FROM `{self.predictions_table}`
         WHERE game_date = '{game_date}'
+            -- v3.10: Only grade active predictions (exclude deactivated duplicates)
+            AND is_active = TRUE
             -- PHASE 1 FIX: Exclude placeholder lines from grading
+            -- v3.8: Added BETTINGPROS as valid line source (fallback when odds_api unavailable)
             AND current_points_line IS NOT NULL
             AND current_points_line != 20.0
-            AND line_source IN ('ACTUAL_PROP', 'ODDS_API')
+            AND line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
             AND has_prop_line = TRUE
         """
 

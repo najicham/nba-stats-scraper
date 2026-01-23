@@ -19,7 +19,7 @@ Performance:
 - Efficient filtering in SQL
 - Minimal data transfer
 
-Version: 1.1 (Merged - adds validation and debugging utilities)
+Version: 3.10 (No estimated lines - only real betting lines from sportsbooks)
 """
 
 from typing import Dict, List, Optional, Tuple, Any
@@ -113,24 +113,33 @@ class PlayerLoader:
         
         logger.info(f"Found {len(players)} players for {game_date}")
 
-        # Create prediction requests, filtering out bootstrap players (Issue 3)
+        # Create prediction requests, filtering out only bootstrap players (v3.10)
+        # Players without prop lines still get predictions (for accuracy tracking)
         requests = []
         bootstrap_skipped = 0
+        no_prop_line_count = 0
         for player in players:
             request = self._create_request_for_player(
                 player,
                 game_date,
                 use_multiple_lines
             )
-            # Skip players who need bootstrap (no line values)
+            # Only skip players who need bootstrap (new players without history)
             if request.get('needs_bootstrap', False):
                 bootstrap_skipped += 1
                 logger.debug(f"Skipping {player['player_lookup']} - needs bootstrap")
                 continue
+
+            # Track no-prop-line players (still included for accuracy tracking)
+            if request.get('line_source') == 'NO_PROP_LINE':
+                no_prop_line_count += 1
+
             requests.append(request)
 
         if bootstrap_skipped > 0:
             logger.info(f"Skipped {bootstrap_skipped} players needing bootstrap")
+        if no_prop_line_count > 0:
+            logger.info(f"Including {no_prop_line_count} players without betting lines (for accuracy tracking)")
 
         return requests
     
@@ -375,12 +384,15 @@ class PlayerLoader:
             'is_home': player['is_home'],
             'projected_minutes': player['projected_minutes'],
 
-            # v3.2: All-player predictions support with line source tracking
-            'has_prop_line': player.get('has_prop_line', True),  # Default True for backwards compat
+            # v3.2/v3.10: All-player predictions support with line source tracking
+            # v3.10 FIX: has_prop_line should be based on line_source, not player's default
+            'has_prop_line': line_info['line_source'] == 'ACTUAL_PROP',  # True only when we have a real line
             'actual_prop_line': player.get('current_points_line'),  # The actual betting line (NULL if none)
-            'line_source': line_info['line_source'],  # 'ACTUAL_PROP', 'ESTIMATED_AVG', or 'NEEDS_BOOTSTRAP'
-            'estimated_line_value': line_info['base_line'] if line_info['line_source'] == 'ESTIMATED_AVG' else None,
-            'estimation_method': line_info['estimation_method'],  # 'points_avg_last_5', 'points_avg_last_10', 'needs_bootstrap'
+            'line_source': line_info['line_source'],  # 'ACTUAL_PROP', 'NO_PROP_LINE', or 'NEEDS_BOOTSTRAP'
+            # v3.10: Always populate estimated_line_value as player's baseline (L5 avg) for reference
+            # This allows tracking "did we beat the player's average?" even when we have real lines
+            'estimated_line_value': self._get_player_baseline(player['player_lookup']),
+            'estimation_method': line_info['estimation_method'],  # 'points_avg_last_5', 'points_avg_last_10', None
 
             # v3.3: Line source API and sportsbook tracking
             'line_source_api': line_info.get('line_source_api'),  # 'ODDS_API', 'BETTINGPROS', 'ESTIMATED'
@@ -445,7 +457,27 @@ class PlayerLoader:
             line_minutes_before_game = line_result.get('line_minutes_before_game')
             logger.debug(f"Using actual betting line {base_line} ({sportsbook}, {line_minutes_before_game}min before) for {player_lookup}")
         else:
-            # Fallback: Estimate from season average
+            # v3.10: Check if estimated lines are disabled
+            config = get_orchestration_config()
+            if config.prediction_mode.disable_estimated_lines:
+                # No actual betting line found, and estimation is disabled
+                # Still create prediction (for learning/accuracy tracking) but without a line
+                # Use a placeholder line value for the prediction request, but mark as NO_PROP_LINE
+                # The worker will still predict points, but recommendation will be NO_LINE
+                logger.info(f"NO_PROP_LINE: {player_lookup} has no betting line, will predict without line")
+                return {
+                    'line_values': [None],  # Placeholder - worker handles None line
+                    'line_source': 'NO_PROP_LINE',
+                    'base_line': None,
+                    'estimation_method': None,
+                    'needs_bootstrap': False,  # Still generate prediction
+                    'line_source_api': None,
+                    'sportsbook': None,
+                    'was_line_fallback': False,
+                    'line_minutes_before_game': None
+                }
+
+            # Legacy behavior: Estimate from season average (when disable_estimated_lines=False)
             base_line, estimation_method = self._estimate_betting_line_with_method(player_lookup)
 
             # Issue 3: Handle new players who need bootstrap
@@ -1039,7 +1071,48 @@ class PlayerLoader:
             if config.new_player.use_default_line:
                 return config.new_player.default_line_value, 'config_default'
             return None, 'needs_bootstrap'
-    
+
+    def _get_player_baseline(self, player_lookup: str) -> Optional[float]:
+        """
+        Get player's L5 points average as baseline reference (v3.10).
+
+        This is always populated for reference, even when we have real betting lines.
+        Allows tracking "did we beat the player's average?" and comparing
+        how far Vegas was from the baseline.
+
+        Args:
+            player_lookup: Player identifier
+
+        Returns:
+            float: Player's L5 average rounded to nearest 0.5 (like betting lines)
+            None: If no data available
+        """
+        query = """
+        SELECT points_avg_last_5
+        FROM `{project}.nba_analytics.upcoming_player_game_context`
+        WHERE player_lookup = @player_lookup
+        ORDER BY game_date DESC
+        LIMIT 1
+        """.format(project=self.project_id)
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("player_lookup", "STRING", player_lookup)
+            ]
+        )
+
+        try:
+            results = self.client.query(query, job_config=job_config).result(timeout=30)
+            row = next(results, None)
+            if row and row.points_avg_last_5:
+                avg = float(row.points_avg_last_5)
+                # Round to nearest 0.5 (matches betting line increments)
+                return round(avg * 2) / 2.0
+            return None
+        except Exception as e:
+            logger.debug(f"Could not get baseline for {player_lookup}: {e}")
+            return None
+
     # ========================================================================
     # VALIDATION & DEBUGGING UTILITIES
     # ========================================================================

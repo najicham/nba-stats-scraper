@@ -247,7 +247,7 @@ class MissingPredictionDetector:
 *Coverage: {predicted}/{eligible} players ({coverage}%)*
 
 {missing_count} players with betting lines did NOT receive predictions:
-{'' if high_value == 0 else f'🌟 *{high_value} high-value players* (≥20 PPG) missing\n'}
+{'' if high_value == 0 else f'🌟 *{high_value} high-value players* (≥20 PPG) missing' + chr(10)}
 *Missing Players:*
 {players_text}
 
