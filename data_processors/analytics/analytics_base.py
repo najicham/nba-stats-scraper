@@ -1921,7 +1921,8 @@ class AnalyticsProcessorBase(RunHistoryMixin):
                 source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
                 write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
                 autodetect=(table_schema is None),
-                schema_update_options=[bigquery.SchemaUpdateOption.ALLOW_FIELD_ADDITION] if table_schema else None  # Allow adding new fields
+                # Note: schema_update_options not compatible with WRITE_TRUNCATE on non-partitioned tables
+                # Temp table doesn't need schema updates - it's recreated each time
             )
 
             load_job = self.bq_client.load_table_from_file(
