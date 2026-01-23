@@ -18,9 +18,17 @@ This project tracks proxy infrastructure health, monitoring, and provider manage
 
 ### Provider: Decodo/Smartproxy (Fallback)
 - **Plan:** Residential 25 GB
-- **Endpoint:** `us.decodo.com:10001` (US residential IPs)
+- **Endpoint:** `us.decodo.com:10001` (US residential IPs) - currently configured
 - **Status:** ❌ BLOCKED by BettingPros (as of 2026-01-23)
 - **Secret:** `DECODO_PROXY_CREDENTIALS` in Secret Manager
+
+**Alternative Decodo Endpoints:**
+| Gateway | Ports | Notes |
+|---------|-------|-------|
+| `gate.decodo.com` | 10001-10010 | Global gateway, 10 ports available |
+| `us.decodo.com` | 10001 | US-specific (currently used) |
+
+Different ports may route through different IP pools - worth trying if one is blocked.
 
 ### Scraper Status (2026-01-23 Update)
 | Scraper | Target Site | Status | Notes |
