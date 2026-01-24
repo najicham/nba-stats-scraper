@@ -218,11 +218,38 @@ class TeamOffenseGameSummaryProcessor(
                 'critical': False  # Can proceed without shot zones
             }
         }
-    
+
+    def get_upstream_data_check_query(self, start_date: str, end_date: str) -> Optional[str]:
+        """
+        Check if upstream data is available for circuit breaker auto-reset.
+
+        Prevents retry storms by verifying:
+        1. Games are finished (not scheduled/in-progress)
+        2. Team boxscore data exists for those games
+
+        Args:
+            start_date: Start of date range (YYYY-MM-DD)
+            end_date: End of date range (YYYY-MM-DD)
+
+        Returns:
+            SQL query that returns {data_available: boolean}
+        """
+        return f"""
+        SELECT
+            COUNTIF(
+                schedule.game_status >= 3  -- Final only
+                AND team_box.game_id IS NOT NULL
+            ) > 0 AS data_available
+        FROM `nba_raw.nbac_schedule` AS schedule
+        LEFT JOIN `nba_raw.nbac_team_boxscore` AS team_box
+            ON schedule.game_id = team_box.game_id
+        WHERE schedule.game_date BETWEEN '{start_date}' AND '{end_date}'
+        """
+
     # =========================================================================
     # Data Extraction (Phase 2 Raw Tables)
     # =========================================================================
-    
+
     def extract_raw_data(self) -> None:
         """
         Extract team offensive data from Phase 2 raw tables.

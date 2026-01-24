@@ -415,10 +415,12 @@ class ProcessorAlerting:
         }
         
         try:
-            response = requests.post(self.slack_webhook_url, json=payload, timeout=10)
+            # Use pooled HTTP session with automatic retry on transient errors
+            session = get_http_session()
+            response = session.post(self.slack_webhook_url, json=payload, timeout=10)
             return response.status_code == 200
         except RequestException as e:
-            logger.error(f"Failed to send Slack message: {e}")
+            logger.error(f"Failed to send Slack message: {e}", exc_info=True)
             return False
     
     def get_alert_stats(self) -> Dict[str, Any]:

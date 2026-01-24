@@ -28,6 +28,8 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from shared.clients.http_pool import get_http_session
+
 logger = logging.getLogger(__name__)
 
 # Import circuit breaker for external service protection
@@ -570,7 +572,9 @@ class SlackNotifier:
                 return False
 
         try:
-            response = requests.post(webhook_url, json=payload, timeout=10)
+            # Use pooled HTTP session with automatic retry on transient errors
+            session = get_http_session()
+            response = session.post(webhook_url, json=payload, timeout=10)
             response.raise_for_status()
 
             # Record success with circuit breaker
@@ -584,7 +588,7 @@ class SlackNotifier:
             if CIRCUIT_BREAKER_AVAILABLE:
                 cb._record_failure(e)
 
-            logger.error(f"Failed to send Slack notification: {e}")
+            logger.error(f"Failed to send Slack notification: {e}", exc_info=True)
             return False
 
 
@@ -668,12 +672,14 @@ class DiscordNotifier:
         }
         
         try:
-            response = requests.post(webhook_url, json=payload, timeout=10)
+            # Use pooled HTTP session with automatic retry on transient errors
+            session = get_http_session()
+            response = session.post(webhook_url, json=payload, timeout=10)
             response.raise_for_status()
             logger.info(f"Discord notification sent successfully: {title}")
             return True
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to send Discord notification: {e}")
+            logger.error(f"Failed to send Discord notification: {e}", exc_info=True)
             return False
 
 
