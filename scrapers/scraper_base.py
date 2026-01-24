@@ -1949,13 +1949,18 @@ class ScraperBase:
                         proxy_errors.append({'proxy': proxy, 'error': type(ex).__name__})
                         log_proxy_result(
                             scraper_name=self.__class__.__name__,
-                            target_host=extract_host_from_url(self.url),
+                            target_host=target_host,
                             response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
                             success=False,
                             error_type=classify_error(exception=ex),
                             error_message=str(ex),
                             proxy_provider=provider
                         )
+                        # Record failure to circuit breaker
+                        try:
+                            circuit_breaker.record_failure(provider, target_host)
+                        except Exception as cb_ex:
+                            logger.debug(f"Circuit breaker record_failure failed: {cb_ex}")
                         break  # Move to next proxy
 
             if proxy_success:
