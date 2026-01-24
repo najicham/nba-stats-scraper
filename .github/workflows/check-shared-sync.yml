@@ -1,0 +1,33 @@
+name: Check Shared Files Sync
+
+on:
+  pull_request:
+    paths:
+      - 'shared/**'
+      - 'orchestration/cloud_functions/**/shared/**'
+      - 'predictions/**/shared/**'
+
+jobs:
+  check-sync:
+    name: Check Shared Files Sync
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run sync check
+        run: |
+          python bin/maintenance/sync_shared_utils.py --all --diff
+          DIFF_COUNT=$(python bin/maintenance/sync_shared_utils.py --all --diff 2>&1 | grep "Different:" | awk '{print $2}')
+          if [ "$DIFF_COUNT" -gt 0 ]; then
+            echo "::error::Shared files are out of sync! Found $DIFF_COUNT differences."
+            echo "Run: python bin/maintenance/sync_shared_utils.py --all"
+            exit 1
+          fi
+          echo "All shared files are in sync!"
