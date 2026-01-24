@@ -161,3 +161,80 @@ for doc in db.collection('processor_heartbeats').limit(5).stream():
 - **Proxy reliability**: 40% fewer false proxy failures; better rate limit handling
 - **Phase monitoring**: Silent Phase N+1 startup failures now detected
 - **Validation coverage**: 3 more critical data sources now have automated validation
+
+---
+
+## [2026-01-24] - Daily Orchestration Bug Fixes (Session 11)
+
+### Issue 1: Missing bdl_active_players Table Reference - FIXED
+
+**Root Cause**: Table was renamed from `bdl_active_players` to `bdl_active_players_current` but validation configs were not updated.
+
+**Files Updated**:
+| File | Change |
+|------|--------|
+| `validation/configs/raw/bdl_active_players.yaml` | All 6 table references updated |
+| `shared/config/scraper_retry_config.yaml` | target_table reference updated |
+| `validation/configs/raw/bdl_injuries.yaml` | JOIN reference updated |
+| `validation/configs/raw/espn_team_roster.yaml` | Cross-validation query updated |
+| `validation/configs/raw/br_rosters.yaml` | Cross-validation query updated |
+| `validation/validators/raw/odds_api_props_validator.py` | SQL query reference updated |
+| `backfill_jobs/raw/bdl_active_players/deploy.sh` | bq query reference updated |
+
+### Issue 2: Phase 3 Analytics Validation Bug - FIXED
+
+**Root Cause**: In `team_offense_game_summary_processor.py`, `validate_extracted_data()` called `super().validate_extracted_data()` BEFORE checking for graceful empty-data handling. The base class raises `ValueError("No data extracted")` at line 1675, preventing the child's graceful handling code from executing.
+
+**File Updated**: `data_processors/analytics/team_offense_game_summary/team_offense_game_summary_processor.py`
+
+**Change**: Reordered validation logic to check `_fallback_handled` BEFORE calling `super().validate_extracted_data()`:
+```python
+def validate_extracted_data(self) -> None:
+    # Check for graceful empty handling FIRST (before calling super)
+    if self.raw_data is None or (hasattr(self.raw_data, 'empty') and self.raw_data.empty):
+        if hasattr(self, '_fallback_handled') and self._fallback_handled:
+            logger.info("Validation passed: fallback already handled empty data gracefully")
+            return
+        # ...
+    # Have data - call parent for standard validation
+    super().validate_extracted_data()
+```
+
+### Issue 3: Phase 4 Precompute Dependency Thresholds - FIXED
+
+**Root Cause**: `player_composite_factors_processor.py` had rigid `expected_count_min` thresholds (100 players, 10 teams) that fail on low-game days even when tables have valid data.
+
+**File Updated**: `data_processors/precompute/player_composite_factors/player_composite_factors_processor.py`
+
+**Change**: Reduced thresholds for flexibility:
+- `player_threshold`: 100 → 30 (20 for backfill)
+- `team_threshold`: 10 → 2 (minimum 2 teams playing)
+
+### Issue 4: Tonight's Export Timing - FIXED
+
+**Root Cause**: The tonight's export ran at 2:49 AM UTC but `upcoming_player_game_context` was only processed at 7:08 AM UTC. The export found 0 players because Phase 3 hadn't run yet.
+
+**File Updated**: `orchestration/cloud_functions/phase6_export/main.py`
+
+**Changes**:
+1. Added `validate_analytics_ready()` function that checks `upcoming_player_game_context` has 30+ players
+2. Analytics check runs BEFORE predictions check in pre-export validation
+3. Returns `analytics_not_ready` status if Phase 3 hasn't completed
+4. Fixed import indentation bug on lines 78-79
+
+### Impact
+- Pipeline failures due to `bdl_active_players` table reference should be eliminated
+- Phase 3 analytics can now gracefully handle empty data on no-game days
+- Phase 4 precompute won't fail on low-game days with valid data
+- Tonight's export will wait for Phase 3 analytics before running
+
+### Verification Commands
+```bash
+# Verify no old table references remain
+grep -r "bdl_active_players[^_]" validation/configs/raw/ | grep -v "_current" | grep -v ".yaml:" | grep -v "name:"
+
+# Verify Python syntax
+python3 -m py_compile data_processors/analytics/team_offense_game_summary/team_offense_game_summary_processor.py
+python3 -m py_compile data_processors/precompute/player_composite_factors/player_composite_factors_processor.py
+python3 -m py_compile orchestration/cloud_functions/phase6_export/main.py
+```
