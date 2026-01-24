@@ -49,6 +49,15 @@ import functions_framework
 from google.cloud import bigquery, pubsub_v1
 from shared.clients.bigquery_pool import get_bigquery_client
 
+# Pydantic validation for Pub/Sub messages
+try:
+    from shared.validation.pubsub_models import Phase2CompletionMessage
+    from pydantic import ValidationError as PydanticValidationError
+    PYDANTIC_VALIDATION_ENABLED = True
+except ImportError:
+    PYDANTIC_VALIDATION_ENABLED = False
+    PydanticValidationError = Exception
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
