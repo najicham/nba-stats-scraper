@@ -38,8 +38,8 @@ logger = logging.getLogger(__name__)
 # Default project ID
 DEFAULT_PROJECT_ID = "nba-props-platform"
 
-# Query caching feature flags
-ENABLE_QUERY_CACHING = os.getenv('ENABLE_QUERY_CACHING', 'false').lower() == 'true'
+# Query caching feature flags (enabled by default for cost savings)
+ENABLE_QUERY_CACHING = os.getenv('ENABLE_QUERY_CACHING', 'true').lower() == 'true'
 QUERY_CACHE_TTL_SECONDS = int(os.getenv('QUERY_CACHE_TTL_SECONDS', '3600'))
 
 
