@@ -99,6 +99,13 @@
                 <span class="ml-2 px-2 py-0.5 bg-orange-100 text-orange-600 text-xs rounded-full">{{ reliability_gaps }}</span>
                 {% endif %}
             </button>
+            <button
+                @click="activeTab = 'trends'"
+                :class="activeTab === 'trends' ? 'border-cyan-500 text-cyan-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+            >
+                Trends
+            </button>
         </nav>
     </div>
 
@@ -368,6 +375,33 @@
                      hx-get="/partials/reliability-tab?sport={{ sport or 'nba' }}"
                      hx-trigger="load">
                     <div class="text-gray-500 text-center py-8">Loading reliability data...</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Trends Tab -->
+        <div x-show="activeTab === 'trends'" x-cloak>
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-medium text-gray-900">Pipeline Trend Charts</h3>
+                    <div class="flex items-center space-x-4">
+                        <select id="trends-days-select" class="text-sm border-gray-300 rounded-md">
+                            <option value="7">Last 7 days</option>
+                            <option value="14">Last 14 days</option>
+                            <option value="30" selected>Last 30 days</option>
+                            <option value="60">Last 60 days</option>
+                            <option value="90">Last 90 days</option>
+                        </select>
+                        <button
+                            id="refresh-trends-btn"
+                            class="text-sm text-blue-600 hover:text-blue-800"
+                        >
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+                <div id="trends-content">
+                    <div class="text-gray-500 text-center py-8">Loading trend charts...</div>
                 </div>
             </div>
         </div>

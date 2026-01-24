@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 echo "🚀 Deploying NBA Scrapers from parent directory (preserves module structure)..."
 

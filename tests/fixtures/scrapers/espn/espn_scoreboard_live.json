@@ -1,0 +1,57 @@
+{
+  "leagues": [
+    {
+      "id": "46",
+      "name": "National Basketball Association",
+      "abbreviation": "NBA"
+    }
+  ],
+  "events": [
+    {
+      "id": "401766124",
+      "name": "Miami Heat at Denver Nuggets",
+      "competitions": [
+        {
+          "id": "401766124",
+          "date": "2025-01-20T02:00Z",
+          "competitors": [
+            {
+              "id": "7",
+              "homeAway": "home",
+              "winner": false,
+              "team": {
+                "id": "7",
+                "displayName": "Denver Nuggets",
+                "abbreviation": "DEN"
+              },
+              "score": "58"
+            },
+            {
+              "id": "14",
+              "homeAway": "away",
+              "winner": false,
+              "team": {
+                "id": "14",
+                "displayName": "Miami Heat",
+                "abbreviation": "MIA"
+              },
+              "score": "55"
+            }
+          ],
+          "status": {
+            "clock": 324.0,
+            "displayClock": "5:24",
+            "period": 2,
+            "type": {
+              "id": "2",
+              "name": "STATUS_IN_PROGRESS",
+              "state": "in",
+              "completed": false,
+              "description": "2nd Quarter"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

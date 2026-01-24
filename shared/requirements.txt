@@ -55,3 +55,6 @@ python-Levenshtein==0.21.1
 google-cloud-logging>=3.12.0
 google-cloud-workflows>=1.18.0
 google-cloud-secret-manager==2.16.0
+
+# System metrics for Prometheus
+psutil>=5.9.0

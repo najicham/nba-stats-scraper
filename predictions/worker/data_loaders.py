@@ -28,6 +28,8 @@ from datetime import date, datetime
 import logging
 import os
 
+from shared.utils.query_cache import QueryCache, get_query_cache
+
 logger = logging.getLogger(__name__)
 
 # Query timeout in seconds - prevents worker hangs on slow/stuck queries

@@ -2,7 +2,7 @@
 # bin/deploy_all_services.sh
 # Master deployment script for all NBA platform services
 
-set -e
+set -euo pipefail
 
 # Configuration
 PROJECT_ID=${1:-$(gcloud config get-value project)}

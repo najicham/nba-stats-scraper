@@ -3,7 +3,7 @@
 # Purpose: Find specific error game codes in schedule JSON and analyze what fields indicate they should be skipped
 # Usage: ./analyze_schedule.sh [command] [year]
 
-set -e
+set -euo pipefail
 
 PROJECT="nba-props-platform"
 GCS_SCHEDULE_PATH="gs://nba-scraped-data"

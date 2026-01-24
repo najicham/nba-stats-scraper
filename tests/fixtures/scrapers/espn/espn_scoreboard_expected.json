@@ -1,0 +1,33 @@
+{
+  "timestamp": "2025-01-20T15:30:00.000000+00:00",
+  "gamedate": "20250120",
+  "season_type": "Regular Season",
+  "gameCount": 1,
+  "games": [
+    {
+      "gameId": "401766123",
+      "statusId": "3",
+      "state": "post",
+      "status": "Final",
+      "startTime": "2025-01-21T00:30Z",
+      "teams": [
+        {
+          "teamId": "17",
+          "displayName": "Los Angeles Lakers",
+          "abbreviation": "LAL",
+          "score": "110",
+          "winner": true,
+          "homeAway": "home"
+        },
+        {
+          "teamId": "2",
+          "displayName": "Boston Celtics",
+          "abbreviation": "BOS",
+          "score": "105",
+          "winner": false,
+          "homeAway": "away"
+        }
+      ]
+    }
+  ]
+}

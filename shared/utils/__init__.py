@@ -50,6 +50,22 @@ from .prometheus_metrics import (
     Histogram
 )
 
+# Roster management utilities
+from .roster_manager import (
+    RosterManager,
+    RosterChangeTracker,
+    ActiveRosterCalculator,
+    RosterChange,
+    PlayerAvailability,
+    TeamRoster,
+    TransactionType,
+    AvailabilityStatus,
+    get_roster_manager,
+    get_active_roster,
+    check_player_availability,
+    get_roster_changes,
+)
+
 
 __all__ = [
     "BigQueryClient",
@@ -88,4 +104,17 @@ __all__ = [
     "Counter",
     "Gauge",
     "Histogram",
+    # Roster management
+    "RosterManager",
+    "RosterChangeTracker",
+    "ActiveRosterCalculator",
+    "RosterChange",
+    "PlayerAvailability",
+    "TeamRoster",
+    "TransactionType",
+    "AvailabilityStatus",
+    "get_roster_manager",
+    "get_active_roster",
+    "check_player_availability",
+    "get_roster_changes",
 ]

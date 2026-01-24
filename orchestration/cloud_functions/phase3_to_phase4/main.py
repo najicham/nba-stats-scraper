@@ -690,6 +690,28 @@ def orchestrate_phase3_to_phase4(cloud_event):
             f"entities_changed={len(entities_changed)}, correlation_id={correlation_id})"
         )
 
+        # Write to BigQuery backup (non-blocking, fire-and-forget)
+        # This provides backup tracking if Firestore becomes unavailable
+        if COMPLETION_TRACKER_ENABLED:
+            try:
+                tracker = get_completion_tracker()
+                tracker.record_completion(
+                    phase="phase3",
+                    game_date=game_date,
+                    processor_name=processor_name,
+                    completion_data={
+                        "status": status,
+                        "record_count": message_data.get('record_count', 0),
+                        "correlation_id": correlation_id,
+                        "execution_id": message_data.get('execution_id'),
+                        "is_incremental": is_incremental,
+                        "entities_changed": entities_changed,
+                    }
+                )
+            except Exception as tracker_error:
+                # Non-blocking - log but don't fail the orchestration
+                logger.warning(f"BigQuery backup write failed (non-blocking): {tracker_error}")
+
         # Update completion state with atomic transaction
         doc_ref = db.collection('phase3_completion').document(game_date)
 
@@ -716,6 +738,27 @@ def orchestrate_phase3_to_phase4(cloud_event):
                 f"Phase 3 ready to trigger Phase 4: mode={mode}, reason={trigger_reason}, "
                 f"game_date={game_date}"
             )
+
+            # Update BigQuery aggregate status (non-blocking)
+            if COMPLETION_TRACKER_ENABLED:
+                try:
+                    tracker = get_completion_tracker()
+                    # Get completed processors from Firestore doc
+                    doc_snapshot = doc_ref.get()
+                    doc_data = doc_snapshot.to_dict() if doc_snapshot.exists else {}
+                    completed_processors = [k for k in doc_data.keys() if not k.startswith('_')]
+
+                    tracker.update_aggregate_status(
+                        phase="phase3",
+                        game_date=game_date,
+                        completed_processors=completed_processors,
+                        expected_processors=EXPECTED_PROCESSORS,
+                        is_triggered=True,
+                        trigger_reason=trigger_reason,
+                        mode=mode
+                    )
+                except Exception as tracker_error:
+                    logger.warning(f"BigQuery aggregate update failed (non-blocking): {tracker_error}")
 
             # Check health of downstream services before triggering
             services_healthy, health_status = check_phase4_services_health()

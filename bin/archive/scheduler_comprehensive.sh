@@ -2,7 +2,7 @@
 # bin/monitoring/scheduler_comprehensive.sh
 # Simple but comprehensive version that definitely works
 
-set -e
+set -euo pipefail
 
 PROJECT_ID=$(gcloud config get-value project 2>/dev/null || echo "unknown")
 REGION=${REGION:-us-west2}

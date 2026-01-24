@@ -1,0 +1,129 @@
+{
+  "leagues": [
+    {
+      "id": "46",
+      "uid": "s:40~l:46",
+      "name": "National Basketball Association",
+      "abbreviation": "NBA",
+      "slug": "nba"
+    }
+  ],
+  "season": {
+    "type": 2,
+    "year": 2025
+  },
+  "day": {
+    "date": "2025-01-20T08:00Z"
+  },
+  "events": [
+    {
+      "id": "401766123",
+      "uid": "s:40~l:46~e:401766123",
+      "date": "2025-01-21T00:30Z",
+      "name": "Boston Celtics at Los Angeles Lakers",
+      "shortName": "BOS @ LAL",
+      "season": {
+        "year": 2025,
+        "type": 2
+      },
+      "competitions": [
+        {
+          "id": "401766123",
+          "uid": "s:40~l:46~e:401766123~c:401766123",
+          "date": "2025-01-21T00:30Z",
+          "attendance": 18997,
+          "type": {
+            "id": "1"
+          },
+          "timeValid": true,
+          "neutralSite": false,
+          "confCompetition": false,
+          "playByPlayAvailable": true,
+          "recent": false,
+          "venue": {
+            "id": "90",
+            "fullName": "Crypto.com Arena",
+            "address": {
+              "city": "Los Angeles",
+              "state": "CA"
+            }
+          },
+          "competitors": [
+            {
+              "id": "17",
+              "uid": "s:40~l:46~t:17",
+              "type": "team",
+              "order": 0,
+              "homeAway": "home",
+              "winner": true,
+              "team": {
+                "id": "17",
+                "uid": "s:40~l:46~t:17",
+                "location": "Los Angeles",
+                "name": "Lakers",
+                "abbreviation": "LAL",
+                "displayName": "Los Angeles Lakers",
+                "shortDisplayName": "Lakers",
+                "color": "552583",
+                "alternateColor": "fdb927"
+              },
+              "score": "110",
+              "linescores": [
+                { "value": 28 },
+                { "value": 30 },
+                { "value": 26 },
+                { "value": 26 }
+              ],
+              "statistics": [],
+              "records": [
+                { "name": "overall", "abbreviation": "Total", "type": "total", "summary": "28-17" }
+              ]
+            },
+            {
+              "id": "2",
+              "uid": "s:40~l:46~t:2",
+              "type": "team",
+              "order": 1,
+              "homeAway": "away",
+              "winner": false,
+              "team": {
+                "id": "2",
+                "uid": "s:40~l:46~t:2",
+                "location": "Boston",
+                "name": "Celtics",
+                "abbreviation": "BOS",
+                "displayName": "Boston Celtics",
+                "shortDisplayName": "Celtics",
+                "color": "007a33",
+                "alternateColor": "ba9653"
+              },
+              "score": "105",
+              "linescores": [
+                { "value": 25 },
+                { "value": 28 },
+                { "value": 27 },
+                { "value": 25 }
+              ],
+              "statistics": [],
+              "records": [
+                { "name": "overall", "abbreviation": "Total", "type": "total", "summary": "35-10" }
+              ]
+            }
+          ],
+          "status": {
+            "clock": 0,
+            "displayClock": "0:00",
+            "period": 4,
+            "type": {
+              "id": "3",
+              "name": "STATUS_FINAL",
+              "state": "post",
+              "completed": true,
+              "description": "Final"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

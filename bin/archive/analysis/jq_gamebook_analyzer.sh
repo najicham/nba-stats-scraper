@@ -2,7 +2,7 @@
 # File: bin/analysis/jq_gamebook_analyzer.sh
 # Purpose: Comprehensive jq-based analysis toolkit for NBA gamebook data
 
-set -e
+set -euo pipefail
 
 PROJECT="nba-props-platform"
 BUCKET="gs://nba-scraped-data"

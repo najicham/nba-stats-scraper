@@ -1,0 +1,17 @@
+{
+  "leagues": [
+    {
+      "id": "46",
+      "name": "National Basketball Association",
+      "abbreviation": "NBA"
+    }
+  ],
+  "season": {
+    "type": 2,
+    "year": 2025
+  },
+  "day": {
+    "date": "2025-07-15T08:00Z"
+  },
+  "events": []
+}

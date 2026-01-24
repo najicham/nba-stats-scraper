@@ -152,6 +152,7 @@ class UpcomingPlayerGameContextProcessor(
         self.rosters = {}  # player_lookup -> roster info
         self.injuries = {}  # player_lookup -> injury info
         self.registry = {}  # player_lookup -> universal_player_id
+        self.standings_data = {}  # team_abbr -> win_percentage (for opponent win pct)
 
         # Travel utilities for distance/timezone calculations (P1-20)
         self._travel_utils = None  # Lazy-loaded
@@ -564,6 +565,9 @@ class UpcomingPlayerGameContextProcessor(
         self._extract_rosters()
         self._extract_injuries()
         self._extract_registry()
+
+        # Step 7: Get standings data (for opponent win percentage)
+        self._extract_standings_data()
 
         logger.info("Data extraction complete")
 
@@ -1921,6 +1925,63 @@ class UpcomingPlayerGameContextProcessor(
         except (KeyError, AttributeError, TypeError) as e:
             logger.warning(f"Data error in registry lookup: {e}. Continuing without universal IDs.")
             self.registry = {}
+
+    def _extract_standings_data(self) -> None:
+        """
+        Extract current team standings for opponent win percentage calculation.
+
+        Loads the most recent standings data from bdl_standings.
+        Stores in self.standings_data as {team_abbr: win_percentage}.
+        """
+        logger.info("Extracting standings data for opponent win percentage")
+
+        # Get most recent standings (within last 7 days to ensure fresh data)
+        query = f"""
+        WITH latest_standings AS (
+            SELECT
+                team_abbr,
+                win_percentage,
+                wins,
+                losses,
+                date_recorded,
+                ROW_NUMBER() OVER (
+                    PARTITION BY team_abbr
+                    ORDER BY date_recorded DESC
+                ) as rn
+            FROM `{self.project_id}.nba_raw.bdl_standings`
+            WHERE date_recorded >= DATE_SUB(@target_date, INTERVAL 7 DAY)
+              AND date_recorded <= @target_date
+        )
+        SELECT team_abbr, win_percentage, wins, losses, date_recorded
+        FROM latest_standings
+        WHERE rn = 1
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("target_date", "DATE", self.target_date),
+            ]
+        )
+
+        try:
+            df = self.bq_client.query(query, job_config=job_config).to_dataframe()
+
+            if df.empty:
+                logger.warning("No standings data found within last 7 days")
+                self.standings_data = {}
+                return
+
+            # Store win percentage by team abbreviation
+            for _, row in df.iterrows():
+                self.standings_data[row['team_abbr']] = row['win_percentage']
+
+            logger.info(f"Extracted standings for {len(self.standings_data)} teams")
+
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.warning(f"BigQuery error extracting standings: {e}. Continuing without standings data.")
+            self.standings_data = {}
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.warning(f"Data error extracting standings: {e}. Continuing without standings data.")
+            self.standings_data = {}
 
     # ========================================================================
     # CIRCUIT BREAKER METHODS (Week 5 - Completeness Checking)

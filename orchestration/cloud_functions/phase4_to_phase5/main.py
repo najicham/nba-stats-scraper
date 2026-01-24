@@ -44,6 +44,14 @@ from google.cloud import firestore, pubsub_v1, bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
 import functions_framework
 
+# Completion tracker for dual-write to Firestore and BigQuery
+try:
+    from shared.utils.completion_tracker import get_completion_tracker
+    COMPLETION_TRACKER_ENABLED = True
+except ImportError:
+    COMPLETION_TRACKER_ENABLED = False
+    get_completion_tracker = None
+
 # Pydantic validation for Pub/Sub messages
 try:
     from shared.validation.pubsub_models import Phase2CompletionMessage

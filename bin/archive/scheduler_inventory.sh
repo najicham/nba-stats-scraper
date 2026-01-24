@@ -2,7 +2,7 @@
 # bin/monitoring/scheduler_inventory.sh
 # Comprehensive monitoring script for all 23 NBA scrapers from operational document
 
-set -e
+set -euo pipefail
 
 # Shell compatibility check
 if [[ -z "$BASH_VERSION" ]]; then

@@ -1571,6 +1571,218 @@ def partial_reliability_tab():
         return f'<div class="text-red-500">Error loading reliability data: {e}</div>', 500
 
 
+# =============================================================================
+# TREND CHARTS API ENDPOINTS
+# =============================================================================
+
+@app.route('/api/trends/accuracy')
+@rate_limit
+def api_trends_accuracy():
+    """
+    Get prediction accuracy trend data for charting.
+
+    Query params:
+        days: Number of days to look back (default: 30, max: 90)
+
+    Returns:
+        JSON with daily accuracy metrics suitable for time-series charts
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+        trend_data = bq_service.get_prediction_accuracy_trend(days=days)
+
+        return jsonify({
+            'trend': trend_data,
+            'period_days': days,
+            'data_points': len(trend_data)
+        })
+    except Exception as e:
+        logger.error(f"Error in api_trends_accuracy: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/trends/latency')
+@rate_limit
+def api_trends_latency():
+    """
+    Get pipeline latency trend data for charting.
+
+    Query params:
+        days: Number of days to look back (default: 30, max: 90)
+
+    Returns:
+        JSON with daily processing latency metrics by phase
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+        trend_data = bq_service.get_pipeline_latency_trend(days=days)
+
+        return jsonify({
+            'trend': trend_data,
+            'period_days': days,
+            'data_points': len(trend_data)
+        })
+    except Exception as e:
+        logger.error(f"Error in api_trends_latency: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/trends/errors')
+@rate_limit
+def api_trends_errors():
+    """
+    Get error rate trend data for charting.
+
+    Query params:
+        days: Number of days to look back (default: 30, max: 90)
+
+    Returns:
+        JSON with daily error counts and rates
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+        trend_data = bq_service.get_error_rate_trend(days=days)
+
+        return jsonify({
+            'trend': trend_data,
+            'period_days': days,
+            'data_points': len(trend_data)
+        })
+    except Exception as e:
+        logger.error(f"Error in api_trends_errors: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/trends/volume')
+@rate_limit
+def api_trends_volume():
+    """
+    Get data volume trend data for charting.
+
+    Query params:
+        days: Number of days to look back (default: 30, max: 90)
+
+    Returns:
+        JSON with daily data volume metrics (games, predictions, graded)
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+        trend_data = bq_service.get_data_volume_trend(days=days)
+
+        return jsonify({
+            'trend': trend_data,
+            'period_days': days,
+            'data_points': len(trend_data)
+        })
+    except Exception as e:
+        logger.error(f"Error in api_trends_volume: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/trends/accuracy-by-system')
+@rate_limit
+def api_trends_accuracy_by_system():
+    """
+    Get accuracy trend data broken down by prediction system.
+
+    Query params:
+        days: Number of days to look back (default: 30, max: 90)
+
+    Returns:
+        JSON with daily accuracy metrics for each system
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+        trend_data = bq_service.get_accuracy_by_system_trend(days=days)
+
+        # Reorganize data by system for easier charting
+        systems = {}
+        for row in trend_data:
+            system_id = row['system_id']
+            if system_id not in systems:
+                systems[system_id] = []
+            systems[system_id].append({
+                'date': row['date'],
+                'accuracy_pct': row['accuracy_pct'],
+                'total_predictions': row['total_predictions']
+            })
+
+        return jsonify({
+            'systems': systems,
+            'period_days': days,
+            'data_points': len(trend_data)
+        })
+    except Exception as e:
+        logger.error(f"Error in api_trends_accuracy_by_system: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/trends/all')
+@rate_limit
+def api_trends_all():
+    """
+    Get all trend data in a single request for the Trends tab.
+
+    Query params:
+        days: Number of days to look back (default: 30, max: 90)
+
+    Returns:
+        JSON with all trend datasets
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+
+        accuracy_data = bq_service.get_prediction_accuracy_trend(days=days)
+        latency_data = bq_service.get_pipeline_latency_trend(days=days)
+        error_data = bq_service.get_error_rate_trend(days=days)
+        volume_data = bq_service.get_data_volume_trend(days=days)
+
+        return jsonify({
+            'accuracy': accuracy_data,
+            'latency': latency_data,
+            'errors': error_data,
+            'volume': volume_data,
+            'period_days': days,
+            'generated_at': datetime.utcnow().isoformat() + 'Z'
+        })
+    except Exception as e:
+        logger.error(f"Error in api_trends_all: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/partials/trends')
+@rate_limit
+def partial_trends():
+    """HTMX partial: Trend charts display."""
+    if not check_auth():
+        return '<div class="text-red-500">Unauthorized</div>', 401
+
+    days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+
+    return render_template(
+        'components/trends.html',
+        days=days
+    )
+
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     debug = os.environ.get('FLASK_ENV') == 'development'

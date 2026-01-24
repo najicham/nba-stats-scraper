@@ -952,3 +952,519 @@ class BigQueryService:
         except Exception as e:
             logger.error(f"Error querying MLB grading status: {e}")
             return []
+
+    # =========================================================================
+    # Extended History Methods (7d, 14d, 30d, 90d support)
+    # =========================================================================
+
+    def get_pipeline_history_extended(self, days: int = 7) -> List[Dict]:
+        """
+        Get pipeline status for the last N days (supports 7, 14, 30, 90 days).
+
+        Returns list of daily status records with pipeline health indicators.
+        """
+        # Clamp days to reasonable bounds
+        days = max(1, min(90, days))
+
+        query = f"""
+        SELECT
+            game_date,
+            games_scheduled,
+            phase3_context,
+            phase4_features,
+            predictions,
+            players_with_predictions,
+            pipeline_status,
+            CASE
+                WHEN games_scheduled = 0 THEN NULL
+                ELSE ROUND(100.0 * LEAST(1.0,
+                    COALESCE(predictions, 0) / NULLIF(games_scheduled * 15, 0)
+                ), 1)
+            END as prediction_coverage_pct
+        FROM `{PROJECT_ID}.nba_orchestration.daily_phase_status`
+        WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+          AND game_date <= DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY)
+        ORDER BY game_date DESC
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'game_date': str(row.game_date),
+                    'games_scheduled': row.games_scheduled,
+                    'phase3_context': row.phase3_context,
+                    'phase4_features': row.phase4_features,
+                    'predictions': row.predictions,
+                    'players_with_predictions': row.players_with_predictions,
+                    'pipeline_status': row.pipeline_status,
+                    'prediction_coverage_pct': row.prediction_coverage_pct
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying extended pipeline history: {e}")
+            raise
+
+    def get_weekly_aggregates(self, weeks: int = 4) -> List[Dict]:
+        """
+        Get weekly aggregated pipeline metrics.
+
+        Args:
+            weeks: Number of weeks to look back (default 4, max 13)
+
+        Returns:
+            List of weekly aggregate records with totals and averages.
+        """
+        weeks = max(1, min(13, weeks))
+
+        query = f"""
+        WITH daily_data AS (
+            SELECT
+                game_date,
+                DATE_TRUNC(game_date, WEEK(MONDAY)) as week_start,
+                games_scheduled,
+                phase3_context,
+                phase4_features,
+                predictions,
+                players_with_predictions,
+                pipeline_status
+            FROM `{PROJECT_ID}.nba_orchestration.daily_phase_status`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {weeks} WEEK)
+              AND game_date < CURRENT_DATE()
+        )
+        SELECT
+            week_start,
+            MAX(DATE_ADD(week_start, INTERVAL 6 DAY)) as week_end,
+            COUNT(DISTINCT game_date) as days_with_data,
+            SUM(games_scheduled) as total_games,
+            SUM(predictions) as total_predictions,
+            SUM(players_with_predictions) as total_players_with_predictions,
+            ROUND(AVG(games_scheduled), 1) as avg_games_per_day,
+            ROUND(AVG(predictions), 1) as avg_predictions_per_day,
+            COUNTIF(pipeline_status = 'COMPLETE') as days_complete,
+            COUNTIF(pipeline_status != 'COMPLETE' AND games_scheduled > 0) as days_incomplete,
+            ROUND(100.0 * COUNTIF(pipeline_status = 'COMPLETE') /
+                NULLIF(COUNTIF(games_scheduled > 0), 0), 1) as completion_rate_pct
+        FROM daily_data
+        GROUP BY week_start
+        ORDER BY week_start DESC
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'week_start': str(row.week_start),
+                    'week_end': str(row.week_end),
+                    'days_with_data': row.days_with_data,
+                    'total_games': row.total_games,
+                    'total_predictions': row.total_predictions,
+                    'total_players_with_predictions': row.total_players_with_predictions,
+                    'avg_games_per_day': row.avg_games_per_day,
+                    'avg_predictions_per_day': row.avg_predictions_per_day,
+                    'days_complete': row.days_complete,
+                    'days_incomplete': row.days_incomplete,
+                    'completion_rate_pct': row.completion_rate_pct
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying weekly aggregates: {e}")
+            return []
+
+    def get_monthly_aggregates(self, months: int = 3) -> List[Dict]:
+        """
+        Get monthly aggregated pipeline metrics.
+
+        Args:
+            months: Number of months to look back (default 3, max 6)
+
+        Returns:
+            List of monthly aggregate records.
+        """
+        months = max(1, min(6, months))
+
+        query = f"""
+        WITH daily_data AS (
+            SELECT
+                game_date,
+                DATE_TRUNC(game_date, MONTH) as month_start,
+                games_scheduled,
+                phase3_context,
+                phase4_features,
+                predictions,
+                players_with_predictions,
+                pipeline_status
+            FROM `{PROJECT_ID}.nba_orchestration.daily_phase_status`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {months} MONTH)
+              AND game_date < CURRENT_DATE()
+        )
+        SELECT
+            month_start,
+            LAST_DAY(month_start) as month_end,
+            COUNT(DISTINCT game_date) as days_with_data,
+            SUM(games_scheduled) as total_games,
+            SUM(predictions) as total_predictions,
+            SUM(players_with_predictions) as total_players_with_predictions,
+            ROUND(AVG(games_scheduled), 1) as avg_games_per_day,
+            ROUND(AVG(predictions), 1) as avg_predictions_per_day,
+            COUNTIF(pipeline_status = 'COMPLETE') as days_complete,
+            COUNTIF(pipeline_status != 'COMPLETE' AND games_scheduled > 0) as days_incomplete,
+            ROUND(100.0 * COUNTIF(pipeline_status = 'COMPLETE') /
+                NULLIF(COUNTIF(games_scheduled > 0), 0), 1) as completion_rate_pct
+        FROM daily_data
+        GROUP BY month_start
+        ORDER BY month_start DESC
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'month_start': str(row.month_start),
+                    'month_end': str(row.month_end),
+                    'days_with_data': row.days_with_data,
+                    'total_games': row.total_games,
+                    'total_predictions': row.total_predictions,
+                    'total_players_with_predictions': row.total_players_with_predictions,
+                    'avg_games_per_day': row.avg_games_per_day,
+                    'avg_predictions_per_day': row.avg_predictions_per_day,
+                    'days_complete': row.days_complete,
+                    'days_incomplete': row.days_incomplete,
+                    'completion_rate_pct': row.completion_rate_pct
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying monthly aggregates: {e}")
+            return []
+
+    def get_historical_comparison(self, days: int = 7) -> Dict:
+        """
+        Get historical comparison: current period vs previous period.
+
+        Args:
+            days: Number of days for each period
+
+        Returns:
+            Dict with current_period, previous_period, and comparison metrics.
+        """
+        days = max(1, min(45, days))
+
+        query = f"""
+        WITH current_period AS (
+            SELECT
+                'current' as period,
+                MIN(game_date) as period_start,
+                MAX(game_date) as period_end,
+                COUNT(DISTINCT game_date) as days_with_data,
+                SUM(games_scheduled) as total_games,
+                SUM(predictions) as total_predictions,
+                SUM(players_with_predictions) as total_players,
+                ROUND(AVG(predictions), 1) as avg_predictions_per_day,
+                COUNTIF(pipeline_status = 'COMPLETE') as days_complete,
+                ROUND(100.0 * COUNTIF(pipeline_status = 'COMPLETE') /
+                    NULLIF(COUNTIF(games_scheduled > 0), 0), 1) as completion_rate_pct
+            FROM `{PROJECT_ID}.nba_orchestration.daily_phase_status`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+              AND game_date < CURRENT_DATE()
+        ),
+        previous_period AS (
+            SELECT
+                'previous' as period,
+                MIN(game_date) as period_start,
+                MAX(game_date) as period_end,
+                COUNT(DISTINCT game_date) as days_with_data,
+                SUM(games_scheduled) as total_games,
+                SUM(predictions) as total_predictions,
+                SUM(players_with_predictions) as total_players,
+                ROUND(AVG(predictions), 1) as avg_predictions_per_day,
+                COUNTIF(pipeline_status = 'COMPLETE') as days_complete,
+                ROUND(100.0 * COUNTIF(pipeline_status = 'COMPLETE') /
+                    NULLIF(COUNTIF(games_scheduled > 0), 0), 1) as completion_rate_pct
+            FROM `{PROJECT_ID}.nba_orchestration.daily_phase_status`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days * 2} DAY)
+              AND game_date < DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+        )
+        SELECT * FROM current_period
+        UNION ALL
+        SELECT * FROM previous_period
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+
+            current = None
+            previous = None
+
+            for row in result:
+                data = {
+                    'period_start': str(row.period_start) if row.period_start else None,
+                    'period_end': str(row.period_end) if row.period_end else None,
+                    'days_with_data': row.days_with_data,
+                    'total_games': row.total_games,
+                    'total_predictions': row.total_predictions,
+                    'total_players': row.total_players,
+                    'avg_predictions_per_day': row.avg_predictions_per_day,
+                    'days_complete': row.days_complete,
+                    'completion_rate_pct': row.completion_rate_pct
+                }
+                if row.period == 'current':
+                    current = data
+                else:
+                    previous = data
+
+            # Compute change percentages
+            comparison = {}
+            if current and previous:
+                def pct_change(curr, prev):
+                    if prev is None or prev == 0:
+                        return None
+                    return round(100.0 * (curr - prev) / prev, 1) if curr else None
+
+                comparison = {
+                    'total_games_change_pct': pct_change(
+                        current.get('total_games'), previous.get('total_games')),
+                    'total_predictions_change_pct': pct_change(
+                        current.get('total_predictions'), previous.get('total_predictions')),
+                    'avg_predictions_change_pct': pct_change(
+                        current.get('avg_predictions_per_day'),
+                        previous.get('avg_predictions_per_day')),
+                    'completion_rate_change': round(
+                        (current.get('completion_rate_pct') or 0) -
+                        (previous.get('completion_rate_pct') or 0), 1)
+                }
+
+            return {
+                'current_period': current,
+                'previous_period': previous,
+                'comparison': comparison,
+                'period_days': days
+            }
+        except Exception as e:
+            logger.error(f"Error querying historical comparison: {e}")
+            return {
+                'current_period': None,
+                'previous_period': None,
+                'comparison': {},
+                'period_days': days
+            }
+
+    def get_grading_history_extended(self, days: int = 7) -> List[Dict]:
+        """
+        Get extended grading history for the last N days.
+
+        Returns grading metrics with accuracy trends.
+        """
+        days = max(1, min(90, days))
+
+        query = f"""
+        WITH predictions AS (
+            SELECT
+                game_date,
+                COUNT(*) as prediction_count
+            FROM `{PROJECT_ID}.{self.datasets['predictions']}.player_prop_predictions`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+              AND game_date < CURRENT_DATE()
+              AND is_active = TRUE
+            GROUP BY game_date
+        ),
+        graded AS (
+            SELECT
+                game_date,
+                COUNT(*) as graded_count,
+                ROUND(AVG(margin_of_error), 2) as mae,
+                COUNTIF(prediction_correct) as correct,
+                COUNTIF(NOT prediction_correct) as incorrect,
+                ROUND(100.0 * COUNTIF(prediction_correct) /
+                    NULLIF(COUNT(*), 0), 1) as accuracy_pct
+            FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_grades`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+              AND game_date < CURRENT_DATE()
+            GROUP BY game_date
+        )
+        SELECT
+            p.game_date,
+            p.prediction_count,
+            COALESCE(g.graded_count, 0) as graded_count,
+            COALESCE(g.correct, 0) as correct,
+            COALESCE(g.incorrect, 0) as incorrect,
+            g.mae,
+            g.accuracy_pct,
+            CASE
+                WHEN COALESCE(g.graded_count, 0) = 0 THEN 'NOT_GRADED'
+                WHEN g.graded_count < p.prediction_count * 0.8 THEN 'PARTIAL'
+                ELSE 'COMPLETE'
+            END as grading_status
+        FROM predictions p
+        LEFT JOIN graded g ON p.game_date = g.game_date
+        ORDER BY p.game_date DESC
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'game_date': str(row.game_date),
+                    'prediction_count': row.prediction_count,
+                    'graded_count': row.graded_count,
+                    'correct': row.correct,
+                    'incorrect': row.incorrect,
+                    'mae': row.mae,
+                    'accuracy_pct': row.accuracy_pct,
+                    'grading_status': row.grading_status
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying extended grading history: {e}")
+            return []
+
+    def get_weekly_grading_summary(self, weeks: int = 4) -> List[Dict]:
+        """
+        Get weekly grading summary with accuracy trends.
+
+        Args:
+            weeks: Number of weeks to look back
+
+        Returns:
+            List of weekly grading summaries.
+        """
+        weeks = max(1, min(13, weeks))
+
+        query = f"""
+        WITH daily_grading AS (
+            SELECT
+                game_date,
+                DATE_TRUNC(game_date, WEEK(MONDAY)) as week_start,
+                margin_of_error,
+                prediction_correct
+            FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_grades`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {weeks} WEEK)
+              AND game_date < CURRENT_DATE()
+        )
+        SELECT
+            week_start,
+            MAX(DATE_ADD(week_start, INTERVAL 6 DAY)) as week_end,
+            COUNT(*) as total_graded,
+            COUNTIF(prediction_correct) as correct,
+            COUNTIF(NOT prediction_correct) as incorrect,
+            ROUND(100.0 * COUNTIF(prediction_correct) /
+                NULLIF(COUNT(*), 0), 1) as accuracy_pct,
+            ROUND(AVG(margin_of_error), 2) as avg_mae,
+            COUNT(DISTINCT game_date) as days_with_grading
+        FROM daily_grading
+        GROUP BY week_start
+        ORDER BY week_start DESC
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'week_start': str(row.week_start),
+                    'week_end': str(row.week_end),
+                    'total_graded': row.total_graded,
+                    'correct': row.correct,
+                    'incorrect': row.incorrect,
+                    'accuracy_pct': row.accuracy_pct,
+                    'avg_mae': row.avg_mae,
+                    'days_with_grading': row.days_with_grading
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying weekly grading summary: {e}")
+            return []
+
+    def get_accuracy_comparison(self, days: int = 7) -> Dict:
+        """
+        Get accuracy comparison between current and previous periods.
+
+        Args:
+            days: Number of days for each comparison period
+
+        Returns:
+            Dict with current and previous period accuracy and changes.
+        """
+        days = max(1, min(45, days))
+
+        query = f"""
+        WITH current_period AS (
+            SELECT
+                'current' as period,
+                COUNT(*) as total_graded,
+                COUNTIF(prediction_correct) as correct,
+                ROUND(100.0 * COUNTIF(prediction_correct) /
+                    NULLIF(COUNT(*), 0), 1) as accuracy_pct,
+                ROUND(AVG(margin_of_error), 2) as avg_mae
+            FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_grades`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+              AND game_date < CURRENT_DATE()
+        ),
+        previous_period AS (
+            SELECT
+                'previous' as period,
+                COUNT(*) as total_graded,
+                COUNTIF(prediction_correct) as correct,
+                ROUND(100.0 * COUNTIF(prediction_correct) /
+                    NULLIF(COUNT(*), 0), 1) as accuracy_pct,
+                ROUND(AVG(margin_of_error), 2) as avg_mae
+            FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_grades`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days * 2} DAY)
+              AND game_date < DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+        )
+        SELECT * FROM current_period
+        UNION ALL
+        SELECT * FROM previous_period
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+
+            current = None
+            previous = None
+
+            for row in result:
+                data = {
+                    'total_graded': row.total_graded,
+                    'correct': row.correct,
+                    'accuracy_pct': row.accuracy_pct,
+                    'avg_mae': row.avg_mae
+                }
+                if row.period == 'current':
+                    current = data
+                else:
+                    previous = data
+
+            # Compute changes
+            comparison = {}
+            if current and previous:
+                prev_graded = previous.get('total_graded') or 1
+                comparison = {
+                    'accuracy_change': round(
+                        (current.get('accuracy_pct') or 0) -
+                        (previous.get('accuracy_pct') or 0), 1),
+                    'mae_change': round(
+                        (current.get('avg_mae') or 0) -
+                        (previous.get('avg_mae') or 0), 2),
+                    'volume_change_pct': round(
+                        100.0 * ((current.get('total_graded') or 0) -
+                        (previous.get('total_graded') or 0)) / prev_graded, 1)
+                }
+
+            return {
+                'current_period': current,
+                'previous_period': previous,
+                'comparison': comparison,
+                'period_days': days
+            }
+        except Exception as e:
+            logger.error(f"Error querying accuracy comparison: {e}")
+            return {
+                'current_period': None,
+                'previous_period': None,
+                'comparison': {},
+                'period_days': days
+            }
