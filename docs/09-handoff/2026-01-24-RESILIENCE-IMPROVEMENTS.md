@@ -131,9 +131,42 @@ All modified files compile successfully. Validated:
 
 ## Remaining Opportunities
 
-1. **Exception handling:** 4 files updated, ~1058 files still have bare exceptions
-2. **Pydantic validation:** 4 cloud functions updated, could extend to more
-3. **BigQuery retry:** Utilities updated, 287 direct `client.query()` calls could be refactored
+### High Priority
+1. **Exception handling:** 5 files updated, ~1057 files still have bare `except Exception`. Priority files:
+   - `orchestration/parameter_resolver.py` (4 handlers)
+   - `orchestration/schedule_locker.py` (2 handlers)
+   - `data_processors/precompute/ml_feature_store/feature_extractor.py`
+
+2. **BigQuery direct calls:** 287 direct `client.query()` calls bypass retry utilities. Could wrap in `@retry_with_jitter` or refactor to use `execute_bigquery()`.
+
+### Medium Priority
+3. **Pydantic validation:** Extended to 4 cloud functions. Remaining:
+   - `self_heal/main.py`
+   - `daily_health_summary/main.py`
+   - `scraper_availability_monitor/main.py`
+
+4. **Unit test coverage:** Tests exist but have import path issues. Fix `PYTHONPATH` in pytest or add `conftest.py` path setup.
+
+### Where to Study
+- **Handoff docs:** `docs/09-handoff/` - Previous session summaries
+- **Architecture:** `docs/01-architecture/` - System design
+- **Resilience plan:** `docs/08-projects/current/pipeline-reliability-improvements/`
+- **Config:** `orchestration/config/` and `shared/config/`
+
+### Commands for Next Session
+```bash
+# Find bare exceptions
+grep -r "except Exception" --include="*.py" orchestration/ data_processors/ | wc -l
+
+# Find direct BQ calls
+grep -r "client\.query(" --include="*.py" data_processors/ | wc -l
+
+# Run sync to propagate shared utils
+python bin/maintenance/sync_shared_utils.py --dry-run
+
+# Test compilation
+python -m py_compile <file>
+```
 
 ## Deployment Notes
 
