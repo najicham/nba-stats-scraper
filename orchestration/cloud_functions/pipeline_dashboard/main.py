@@ -59,7 +59,8 @@ def pipeline_dashboard(request):
             'heartbeats': get_active_heartbeats(fs_client),
             'coverage': get_prediction_coverage(bq_client, date_str),
             'alerts': get_recent_alerts(bq_client),
-            'phase_summary': get_phase_summary(bq_client, date_str)
+            'phase_summary': get_phase_summary(bq_client, date_str),
+            'degraded_runs': get_degraded_dependency_runs(bq_client, date_str)
         }
 
         if output_format == 'json':
@@ -272,6 +273,74 @@ def get_phase_summary(bq_client: bigquery.Client, date_str: str) -> Dict:
         return {}
 
 
+def get_degraded_dependency_runs(bq_client: bigquery.Client, date_str: str) -> Dict:
+    """
+    Get runs that proceeded with degraded dependencies.
+
+    Identifies processors that ran successfully but with less than 100%
+    upstream coverage (soft dependency threshold was met but not ideal).
+    """
+    # Query for runs with partial coverage indicators
+    query = f"""
+    WITH runs AS (
+        SELECT
+            processor_name,
+            data_date,
+            status,
+            started_at,
+            records_processed,
+            skip_reason,
+            -- Try to extract coverage info from skip_reason or summary
+            REGEXP_EXTRACT(COALESCE(skip_reason, ''), r'(\d+\.?\d*)%') as coverage_pct
+        FROM `{PROJECT_ID}.nba_reference.processor_run_history`
+        WHERE data_date = @date
+          AND status = 'success'
+          AND (
+              LOWER(COALESCE(skip_reason, '')) LIKE '%degraded%'
+              OR LOWER(COALESCE(skip_reason, '')) LIKE '%soft%'
+              OR LOWER(COALESCE(skip_reason, '')) LIKE '%partial%'
+              OR LOWER(COALESCE(skip_reason, '')) LIKE '%coverage%'
+          )
+    )
+    SELECT
+        processor_name,
+        data_date,
+        started_at,
+        records_processed,
+        skip_reason,
+        coverage_pct
+    FROM runs
+    ORDER BY started_at DESC
+    LIMIT 20
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("date", "DATE", date_str),
+        ]
+    )
+
+    try:
+        result = list(bq_client.query(query, job_config=job_config).result())
+        runs = [dict(row) for row in result]
+
+        # Summary
+        degraded_count = len(runs)
+        processors_affected = len(set(r['processor_name'] for r in runs))
+
+        return {
+            'runs': runs,
+            'summary': {
+                'degraded_count': degraded_count,
+                'processors_affected': processors_affected
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting degraded runs: {e}")
+        return {'runs': [], 'summary': {'degraded_count': 0, 'processors_affected': 0}}
+
+
 def render_dashboard_html(data: Dict) -> str:
     """Render dashboard as HTML."""
 
@@ -345,6 +414,25 @@ def render_dashboard_html(data: Dict) -> str:
 
     if not alert_rows:
         alert_rows = '<tr><td colspan="4" class="empty">No recent alerts</td></tr>'
+
+    # Generate degraded dependency rows
+    degraded_rows = ""
+    degraded = data.get('degraded_runs', {})
+    for run in degraded.get('runs', [])[:10]:
+        coverage_pct = run.get('coverage_pct', 'N/A')
+        degraded_rows += f"""
+        <tr class="warning">
+            <td>{run['processor_name']}</td>
+            <td>{run['data_date']}</td>
+            <td>{coverage_pct}%</td>
+            <td class="skip-reason">{(run.get('skip_reason') or '')[:60]}</td>
+        </tr>
+        """
+
+    if not degraded_rows:
+        degraded_rows = '<tr><td colspan="4" class="empty">No degraded dependency runs</td></tr>'
+
+    degraded_summary = degraded.get('summary', {})
 
     html = f"""
 <!DOCTYPE html>
@@ -510,6 +598,30 @@ def render_dashboard_html(data: Dict) -> str:
             </thead>
             <tbody>
                 {alert_rows}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Degraded Dependency Runs</h2>
+        <div class="coverage-summary">
+            <span class="coverage-stat warning">{degraded_summary.get('degraded_count', 0)} Degraded Runs</span>
+            <span class="coverage-stat warning">{degraded_summary.get('processors_affected', 0)} Processors</span>
+        </div>
+        <p style="color: #888; font-size: 12px; margin-bottom: 10px;">
+            Processors that ran successfully but with less than 100% upstream coverage (soft dependency threshold met)
+        </p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Processor</th>
+                    <th>Date</th>
+                    <th>Coverage</th>
+                    <th>Details</th>
+                </tr>
+            </thead>
+            <tbody>
+                {degraded_rows}
             </tbody>
         </table>
     </div>

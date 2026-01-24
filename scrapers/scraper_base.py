@@ -1815,7 +1815,13 @@ class ScraperBase:
         """
         Shuffle or iterate proxies from get_proxy_urls(),
         attempt each until success or exhausted.
+
+        Implements per-proxy retry with exponential backoff for retryable errors
+        (429 rate limit, 503/504 gateway errors). Falls back to next proxy for
+        permanent errors (403 forbidden, connection errors).
         """
+        import time as time_module
+
         proxy_pool = get_proxy_urls()
         if not self.test_proxies:
             random.shuffle(proxy_pool)
@@ -1823,72 +1829,131 @@ class ScraperBase:
         self.mark_time("proxy")
         proxy_errors = []
 
+        # Retry configuration
+        MAX_RETRIES_PER_PROXY = 3
+        BASE_DELAY = 2.0  # seconds
+        MAX_DELAY = 15.0  # seconds
+        RETRYABLE_STATUS_CODES = {429, 503, 504}  # Rate limit, service unavailable, gateway timeout
+        PERMANENT_FAILURE_CODES = {401, 403}  # Unauthorized, forbidden - don't retry
+
         for proxy in proxy_pool:
             provider = self._get_proxy_provider(proxy)
-            try:
-                self.step_info("download_proxy", f"Attempting proxy {proxy}")
-                self.raw_response = self.http_downloader.get(
-                    self.url,
-                    proxies={"https": proxy},
-                    timeout=self.timeout_http,
-                    **self._common_requests_kwargs(),
-                )
-                elapsed = self.mark_time("proxy")
+            proxy_success = False
 
-                if self.raw_response.status_code == 200 and not self.test_proxies:
-                    logger.info("Proxy success: %s, took=%ss", proxy, elapsed)
-                    # Log successful proxy request
-                    log_proxy_result(
-                        scraper_name=self.__class__.__name__,
-                        target_host=extract_host_from_url(self.url),
-                        http_status_code=200,
-                        response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
-                        success=True,
-                        proxy_provider=provider
+            for attempt in range(MAX_RETRIES_PER_PROXY):
+                try:
+                    self.step_info("download_proxy", f"Attempting proxy {proxy} (attempt {attempt + 1})")
+                    self.raw_response = self.http_downloader.get(
+                        self.url,
+                        proxies={"https": proxy},
+                        timeout=self.timeout_http,
+                        **self._common_requests_kwargs(),
                     )
-                    break
-                else:
-                    logger.warning("Proxy failed: %s, status=%s, took=%ss",
-                                   proxy, self.raw_response.status_code, elapsed)
-                    proxy_errors.append({'proxy': proxy, 'status': self.raw_response.status_code})
-                    # Log failed proxy request
-                    log_proxy_result(
-                        scraper_name=self.__class__.__name__,
-                        target_host=extract_host_from_url(self.url),
-                        http_status_code=self.raw_response.status_code,
-                        response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
-                        success=False,
-                        error_type=classify_error(status_code=self.raw_response.status_code),
-                        proxy_provider=provider
-                    )
+                    elapsed = self.mark_time("proxy")
 
-            except (ProxyError, ConnectTimeout, ConnectionError) as ex:
-                elapsed = self.mark_time("proxy")
-                logger.warning("Proxy error with %s, %s, took=%ss",
-                               proxy, type(ex).__name__, elapsed)
-                proxy_errors.append({'proxy': proxy, 'error': type(ex).__name__})
-                # Log connection error
-                log_proxy_result(
-                    scraper_name=self.__class__.__name__,
-                    target_host=extract_host_from_url(self.url),
-                    response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
-                    success=False,
-                    error_type=classify_error(exception=ex),
-                    error_message=str(ex),
-                    proxy_provider=provider
-                )
-        
+                    if self.raw_response.status_code == 200 and not self.test_proxies:
+                        logger.info("Proxy success: %s, took=%ss, attempt=%d", proxy, elapsed, attempt + 1)
+                        # Log successful proxy request
+                        log_proxy_result(
+                            scraper_name=self.__class__.__name__,
+                            target_host=extract_host_from_url(self.url),
+                            http_status_code=200,
+                            response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
+                            success=True,
+                            proxy_provider=provider
+                        )
+                        proxy_success = True
+                        break  # Success, exit retry loop
+
+                    # Check if we should retry this proxy or move to next
+                    status_code = self.raw_response.status_code
+
+                    if status_code in PERMANENT_FAILURE_CODES:
+                        # Permanent failure - don't retry this proxy
+                        logger.warning("Proxy permanent failure: %s, status=%s (not retrying)",
+                                       proxy, status_code)
+                        proxy_errors.append({'proxy': proxy, 'status': status_code, 'permanent': True})
+                        log_proxy_result(
+                            scraper_name=self.__class__.__name__,
+                            target_host=extract_host_from_url(self.url),
+                            http_status_code=status_code,
+                            response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
+                            success=False,
+                            error_type=classify_error(status_code=status_code),
+                            proxy_provider=provider
+                        )
+                        break  # Move to next proxy
+
+                    elif status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES_PER_PROXY - 1:
+                        # Retryable error - backoff and retry same proxy
+                        delay = min(BASE_DELAY * (2 ** attempt) + random.uniform(0, 1), MAX_DELAY)
+                        logger.warning("Proxy retryable error: %s, status=%s, retrying in %.1fs (attempt %d/%d)",
+                                       proxy, status_code, delay, attempt + 1, MAX_RETRIES_PER_PROXY)
+                        time_module.sleep(delay)
+                        continue  # Retry same proxy
+
+                    else:
+                        # Non-retryable or final attempt - move to next proxy
+                        logger.warning("Proxy failed: %s, status=%s, took=%ss",
+                                       proxy, status_code, elapsed)
+                        proxy_errors.append({'proxy': proxy, 'status': status_code})
+                        log_proxy_result(
+                            scraper_name=self.__class__.__name__,
+                            target_host=extract_host_from_url(self.url),
+                            http_status_code=status_code,
+                            response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
+                            success=False,
+                            error_type=classify_error(status_code=status_code),
+                            proxy_provider=provider
+                        )
+                        break  # Move to next proxy
+
+                except (ProxyError, ConnectTimeout, ConnectionError) as ex:
+                    elapsed = self.mark_time("proxy")
+
+                    # Connection errors may be transient - retry with backoff
+                    if attempt < MAX_RETRIES_PER_PROXY - 1:
+                        delay = min(BASE_DELAY * (2 ** attempt) + random.uniform(0, 1), MAX_DELAY)
+                        logger.warning("Proxy connection error: %s, %s, retrying in %.1fs (attempt %d/%d)",
+                                       proxy, type(ex).__name__, delay, attempt + 1, MAX_RETRIES_PER_PROXY)
+                        time_module.sleep(delay)
+                        continue  # Retry same proxy
+                    else:
+                        logger.warning("Proxy error with %s, %s, took=%ss (exhausted retries)",
+                                       proxy, type(ex).__name__, elapsed)
+                        proxy_errors.append({'proxy': proxy, 'error': type(ex).__name__})
+                        log_proxy_result(
+                            scraper_name=self.__class__.__name__,
+                            target_host=extract_host_from_url(self.url),
+                            response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
+                            success=False,
+                            error_type=classify_error(exception=ex),
+                            error_message=str(ex),
+                            proxy_provider=provider
+                        )
+                        break  # Move to next proxy
+
+            if proxy_success:
+                break  # Got a successful response, exit proxy loop
+
+            # Add delay before trying next proxy to avoid hammering
+            if proxy != proxy_pool[-1]:  # Not the last proxy
+                inter_proxy_delay = 2.0 + random.uniform(0, 1)
+                logger.debug("Waiting %.1fs before trying next proxy", inter_proxy_delay)
+                time_module.sleep(inter_proxy_delay)
+
         # If all proxies failed, send notification
-        if proxy_errors and len(proxy_errors) == len(proxy_pool):
+        if proxy_errors and len(proxy_errors) >= len(proxy_pool):
             try:
                 notify_warning(
                     title=f"Scraper Proxy Exhaustion: {self.__class__.__name__}",
-                    message=f"All {len(proxy_pool)} proxies failed",
+                    message=f"All {len(proxy_pool)} proxies failed after retries",
                     details={
                         'scraper': self.__class__.__name__,
                         'run_id': self.run_id,
                         'url': getattr(self, 'url', 'unknown'),
                         'proxy_count': len(proxy_pool),
+                        'max_retries_per_proxy': MAX_RETRIES_PER_PROXY,
                         'failures': proxy_errors
                     }
                 )

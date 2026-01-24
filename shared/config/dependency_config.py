@@ -76,6 +76,24 @@ class DependencyConfig:
 
     # Phase 4 Precompute Dependencies
     PHASE4_DEPENDENCIES = {
+        'PlayerShotZoneAnalysisProcessor': {
+            'PlayerGameSummaryProcessor': DependencyRule(
+                upstream_processor='PlayerGameSummaryProcessor',
+                dependency_type=DependencyType.SOFT,
+                min_coverage=0.7,  # Need 10 games per player, some may be missing
+                fallback_action='warn',
+                description='Shot zones need game history - 70% coverage OK'
+            ),
+        },
+        'TeamDefenseZoneAnalysisProcessor': {
+            'TeamDefenseGameSummaryProcessor': DependencyRule(
+                upstream_processor='TeamDefenseGameSummaryProcessor',
+                dependency_type=DependencyType.SOFT,
+                min_coverage=0.8,  # Need 15+ games per team
+                fallback_action='warn',
+                description='Team defense needs game history - 80% coverage OK'
+            ),
+        },
         'PlayerDailyCacheProcessor': {
             'PlayerGameSummaryProcessor': DependencyRule(
                 upstream_processor='PlayerGameSummaryProcessor',
@@ -100,6 +118,20 @@ class DependencyConfig:
                 fallback_action='warn',
                 description='Can proceed with 80% coverage for players with upcoming games'
             ),
+            'PlayerShotZoneAnalysisProcessor': DependencyRule(
+                upstream_processor='PlayerShotZoneAnalysisProcessor',
+                dependency_type=DependencyType.SOFT,
+                min_coverage=0.7,
+                fallback_action='warn',
+                description='Shot zones optional for composite factors'
+            ),
+            'TeamDefenseZoneAnalysisProcessor': DependencyRule(
+                upstream_processor='TeamDefenseZoneAnalysisProcessor',
+                dependency_type=DependencyType.SOFT,
+                min_coverage=0.8,
+                fallback_action='warn',
+                description='Team defense zones for matchup analysis'
+            ),
         },
         'MLFeatureStoreProcessor': {
             'PlayerCompositeFactorsProcessor': DependencyRule(
@@ -115,6 +147,49 @@ class DependencyConfig:
                 min_coverage=0.7,
                 fallback_action='warn',
                 description='Can proceed with 70% coverage'
+            ),
+            'PlayerShotZoneAnalysisProcessor': DependencyRule(
+                upstream_processor='PlayerShotZoneAnalysisProcessor',
+                dependency_type=DependencyType.SOFT,
+                min_coverage=0.7,
+                fallback_action='warn',
+                description='Shot zone data for features'
+            ),
+            'TeamDefenseZoneAnalysisProcessor': DependencyRule(
+                upstream_processor='TeamDefenseZoneAnalysisProcessor',
+                dependency_type=DependencyType.SOFT,
+                min_coverage=0.8,
+                fallback_action='warn',
+                description='Team defense for matchup features'
+            ),
+        },
+    }
+
+    # MLB Phase 4 Dependencies
+    MLB_PHASE4_DEPENDENCIES = {
+        'MlbPitcherFeaturesProcessor': {
+            'MlbPitcherGameSummaryProcessor': DependencyRule(
+                upstream_processor='MlbPitcherGameSummaryProcessor',
+                dependency_type=DependencyType.SOFT,
+                min_coverage=0.7,
+                fallback_action='warn',
+                description='Pitcher game history - 70% coverage OK'
+            ),
+        },
+        'MlbLineupKAnalysisProcessor': {
+            'MlbBatterGameSummaryProcessor': DependencyRule(
+                upstream_processor='MlbBatterGameSummaryProcessor',
+                dependency_type=DependencyType.SOFT,
+                min_coverage=0.7,
+                fallback_action='warn',
+                description='Batter game history - 70% coverage OK'
+            ),
+            'MlbPitcherFeaturesProcessor': DependencyRule(
+                upstream_processor='MlbPitcherFeaturesProcessor',
+                dependency_type=DependencyType.SOFT,
+                min_coverage=0.7,
+                fallback_action='warn',
+                description='Pitcher features for K analysis'
             ),
         },
     }
@@ -132,8 +207,44 @@ class DependencyConfig:
         },
     }
 
-    # Phase 3 Analytics Dependencies (these should be softer too)
+    # Phase 3 Analytics Dependencies
     PHASE3_DEPENDENCIES = {
+        'PlayerGameSummaryProcessor': {
+            # Depends on Phase 2 raw data sources
+            'BdlPlayerBoxscoresProcessor': DependencyRule(
+                upstream_processor='BdlPlayerBoxscoresProcessor',
+                dependency_type=DependencyType.SOFT,
+                min_coverage=0.8,
+                fallback_action='warn',
+                description='Primary boxscore source - 80% coverage OK'
+            ),
+            'NbacPlayerBoxscoreProcessor': DependencyRule(
+                upstream_processor='NbacPlayerBoxscoreProcessor',
+                dependency_type=DependencyType.SOFT,
+                min_coverage=0.7,
+                fallback_action='warn',
+                fallback_data_source='BdlPlayerBoxscoresProcessor',
+                description='Secondary source - can fall back to BDL'
+            ),
+        },
+        'TeamDefenseGameSummaryProcessor': {
+            'NbacTeamBoxscoreProcessor': DependencyRule(
+                upstream_processor='NbacTeamBoxscoreProcessor',
+                dependency_type=DependencyType.SOFT,
+                min_coverage=0.8,
+                fallback_action='warn',
+                description='Team boxscores - 80% coverage OK'
+            ),
+        },
+        'TeamOffenseGameSummaryProcessor': {
+            'NbacTeamBoxscoreProcessor': DependencyRule(
+                upstream_processor='NbacTeamBoxscoreProcessor',
+                dependency_type=DependencyType.SOFT,
+                min_coverage=0.8,
+                fallback_action='warn',
+                description='Team boxscores - 80% coverage OK'
+            ),
+        },
         'UpcomingPlayerGameContextProcessor': {
             'PlayerGameSummaryProcessor': DependencyRule(
                 upstream_processor='PlayerGameSummaryProcessor',
@@ -143,6 +254,22 @@ class DependencyConfig:
                 description='Can proceed with 80% coverage'
             ),
         },
+        'UpcomingTeamGameContextProcessor': {
+            'TeamDefenseGameSummaryProcessor': DependencyRule(
+                upstream_processor='TeamDefenseGameSummaryProcessor',
+                dependency_type=DependencyType.SOFT,
+                min_coverage=0.8,
+                fallback_action='warn',
+                description='Team defense data - 80% coverage OK'
+            ),
+            'OddsApiPlayerPropsProcessor': DependencyRule(
+                upstream_processor='OddsApiPlayerPropsProcessor',
+                dependency_type=DependencyType.SOFT,
+                min_coverage=0.6,  # Prop data often incomplete early
+                fallback_action='warn',
+                description='Prop lines - can be incomplete before game time'
+            ),
+        },
     }
 
     # Merge all dependencies
@@ -150,6 +277,7 @@ class DependencyConfig:
         **PHASE3_DEPENDENCIES,
         **PHASE4_DEPENDENCIES,
         **PHASE5_DEPENDENCIES,
+        **MLB_PHASE4_DEPENDENCIES,
     }
 
     def __init__(self):

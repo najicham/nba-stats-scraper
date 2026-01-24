@@ -41,16 +41,18 @@ class CleanupProcessor:
     
     VERSION = "1.0"
     
-    def __init__(self, lookback_hours: int = 1, min_file_age_minutes: int = 30, project_id: str = None):
+    def __init__(self, lookback_hours: int = None, min_file_age_minutes: int = 30, project_id: str = None):
         """
         Initialize cleanup processor.
 
         Args:
-            lookback_hours: How far back to check for files
+            lookback_hours: How far back to check for files (default: 4, or CLEANUP_LOOKBACK_HOURS env var)
             min_file_age_minutes: Only process files older than this (avoid race conditions)
             project_id: GCP project ID for Pub/Sub publishing
         """
-        self.lookback_hours = lookback_hours
+        # Default to 4 hours lookback, with env var override
+        default_lookback = int(os.environ.get('CLEANUP_LOOKBACK_HOURS', '4'))
+        self.lookback_hours = lookback_hours if lookback_hours is not None else default_lookback
         self.min_file_age_minutes = min_file_age_minutes
         self.ET = pytz.timezone('America/New_York')
 
@@ -279,50 +281,105 @@ class CleanupProcessor:
         Publishes to the Phase 1 scrapers-complete topic, which will trigger
         the Phase 2 raw processors to re-process the GCS files.
 
+        Implements exponential backoff retry (3 attempts per message) to handle
+        transient Pub/Sub failures.
+
         Args:
             missing_files: List of file info dicts with scraper_name, gcs_path, etc.
 
         Returns:
             Number of successfully republished messages
         """
+        import random
+        import time
+
+        MAX_RETRIES = 3
+        BASE_DELAY = 1.0  # seconds
+        MAX_DELAY = 10.0  # seconds
+
         republished_count = 0
+        failed_files = []
 
         for file_info in missing_files:
-            try:
-                # Create recovery message matching the scraper output format
-                message = {
+            success = False
+            last_error = None
+
+            for attempt in range(MAX_RETRIES):
+                try:
+                    # Create recovery message matching the scraper output format
+                    message = {
+                        'scraper_name': file_info['scraper_name'],
+                        'gcs_path': file_info['gcs_path'],
+                        'execution_id': f"recovery-{uuid.uuid4().hex[:8]}",
+                        'original_execution_id': file_info['execution_id'],
+                        'original_triggered_at': file_info['triggered_at'].isoformat() if hasattr(file_info.get('triggered_at'), 'isoformat') else str(file_info.get('triggered_at')),
+                        'recovery': True,
+                        'recovery_reason': 'cleanup_processor',
+                        'recovery_timestamp': datetime.utcnow().isoformat(),
+                        'recovery_attempt': attempt + 1,
+                        'status': 'success',  # Mimics scraper success message
+                    }
+
+                    # Publish to Phase 1 complete topic
+                    message_data = json.dumps(message).encode('utf-8')
+                    future = self.publisher.publish(self.topic_path, data=message_data)
+
+                    # Wait for publish to complete (with timeout)
+                    message_id = future.result(timeout=10.0)
+
+                    logger.info(
+                        f"🔄 Republished {file_info['scraper_name']} to Pub/Sub "
+                        f"(message_id={message_id}, gcs_path={file_info['gcs_path']}, attempt={attempt + 1})"
+                    )
+                    republished_count += 1
+                    success = True
+                    break  # Success, exit retry loop
+
+                except Exception as e:
+                    last_error = e
+                    if attempt < MAX_RETRIES - 1:
+                        # Calculate delay with exponential backoff and jitter
+                        delay = min(BASE_DELAY * (2 ** attempt) + random.uniform(0, 1), MAX_DELAY)
+                        logger.warning(
+                            f"⚠️ Pub/Sub publish failed for {file_info['scraper_name']} "
+                            f"(attempt {attempt + 1}/{MAX_RETRIES}): {e}. Retrying in {delay:.1f}s..."
+                        )
+                        time.sleep(delay)
+                    else:
+                        logger.error(
+                            f"❌ Failed to republish {file_info['scraper_name']} after {MAX_RETRIES} attempts: {e}",
+                            exc_info=True
+                        )
+
+            if not success:
+                failed_files.append({
                     'scraper_name': file_info['scraper_name'],
                     'gcs_path': file_info['gcs_path'],
-                    'execution_id': f"recovery-{uuid.uuid4().hex[:8]}",
-                    'original_execution_id': file_info['execution_id'],
-                    'original_triggered_at': file_info['triggered_at'].isoformat() if hasattr(file_info.get('triggered_at'), 'isoformat') else str(file_info.get('triggered_at')),
-                    'recovery': True,
-                    'recovery_reason': 'cleanup_processor',
-                    'recovery_timestamp': datetime.utcnow().isoformat(),
-                    'status': 'success',  # Mimics scraper success message
-                }
-
-                # Publish to Phase 1 complete topic
-                message_data = json.dumps(message).encode('utf-8')
-                future = self.publisher.publish(self.topic_path, data=message_data)
-
-                # Wait for publish to complete (with timeout)
-                message_id = future.result(timeout=10.0)
-
-                logger.info(
-                    f"🔄 Republished {file_info['scraper_name']} to Pub/Sub "
-                    f"(message_id={message_id}, gcs_path={file_info['gcs_path']})"
-                )
-                republished_count += 1
-
-            except Exception as e:
-                logger.error(
-                    f"Failed to republish {file_info['scraper_name']}: {e}",
-                    exc_info=True
-                )
+                    'error': str(last_error)
+                })
 
         if republished_count > 0:
             logger.info(f"✅ Successfully republished {republished_count}/{len(missing_files)} messages")
+
+        if failed_files:
+            logger.error(
+                f"❌ {len(failed_files)} files failed all retry attempts: "
+                f"{[f['scraper_name'] for f in failed_files]}"
+            )
+            # Send notification for failed files
+            try:
+                notify_error(
+                    title="Cleanup Processor: Pub/Sub Publish Failures",
+                    message=f"{len(failed_files)} files failed to republish after {MAX_RETRIES} retries",
+                    details={
+                        'failed_files': failed_files,
+                        'total_attempted': len(missing_files),
+                        'successful': republished_count
+                    },
+                    processor_name="cleanup_processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send failure notification: {notify_ex}")
 
         return republished_count
     
