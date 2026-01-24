@@ -1378,6 +1378,29 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
             self.stats['roster_records'] = self.stats.get('roster_records', 0) + roster_count
 
             logger.info(f"Processed {len(rows)} players from {file_path} (File #{self.files_processed}) - {active_count} active, {roster_count} roster")
+
+            # CRITICAL: Alert if gamebook has only DNP/inactive players (no actual stats)
+            # This indicates the PDF was scraped before game data was available
+            if active_count == 0 and roster_count > 0:
+                game_id = game_info.get('game_id', 'unknown')
+                warning_msg = f"Gamebook {game_id} has 0 active players but {roster_count} roster entries - data may be incomplete"
+                logger.warning(warning_msg)
+                try:
+                    notify_warning(
+                        title="Incomplete Gamebook Data Detected",
+                        message=warning_msg,
+                        details={
+                            'game_id': game_id,
+                            'file_path': file_path,
+                            'active_count': active_count,
+                            'roster_count': roster_count,
+                            'processing_run_id': self.processing_run_id,
+                            'recommendation': 'Re-scrape this game after stats are available'
+                        },
+                        processor_name="NBA.com Gamebook Processor"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send incomplete data notification: {notify_ex}")
             self.transformed_data = rows
 
             # Smart Idempotency: Add data_hash to all records

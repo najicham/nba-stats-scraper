@@ -1883,6 +1883,11 @@ if __name__ == "__main__":
         action='store_true',
         help='Disable Pub/Sub trigger to Phase 4 (for backfills)'
     )
+    parser.add_argument(
+        '--backfill-mode',
+        action='store_true',
+        help='Enable backfill mode: bypass stale data checks and suppress alerts'
+    )
 
     args = parser.parse_args()
 
@@ -1896,7 +1901,8 @@ if __name__ == "__main__":
         success = processor.run({
             'start_date': args.start_date,
             'end_date': args.end_date,
-            'skip_downstream_trigger': args.skip_downstream_trigger
+            'skip_downstream_trigger': args.skip_downstream_trigger,
+            'backfill_mode': args.backfill_mode
         })
         sys.exit(0 if success else 1)
     except Exception as e:

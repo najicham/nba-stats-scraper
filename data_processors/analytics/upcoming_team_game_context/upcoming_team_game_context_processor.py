@@ -2207,6 +2207,11 @@ def main():
         action='store_true',
         help='Disable Pub/Sub trigger to Phase 4 (for backfills)'
     )
+    parser.add_argument(
+        '--backfill-mode',
+        action='store_true',
+        help='Enable backfill mode: bypass stale data checks and suppress alerts'
+    )
 
     args = parser.parse_args()
 
@@ -2227,7 +2232,8 @@ def main():
     processor.opts = {
         'start_date': start_date,
         'end_date': end_date,
-        'skip_downstream_trigger': args.skip_downstream_trigger
+        'skip_downstream_trigger': args.skip_downstream_trigger,
+        'backfill_mode': args.backfill_mode
     }
     
     try:
