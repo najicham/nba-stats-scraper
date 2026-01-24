@@ -25,10 +25,7 @@ from google.cloud import bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
 
 # SESSION 97 FIX: Import distributed lock to prevent race conditions
-import sys
-import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../..'))
-from predictions.worker.distributed_lock import DistributedLock, LockAcquisitionError
+from predictions.shared.distributed_lock import DistributedLock, LockAcquisitionError
 
 logger = logging.getLogger(__name__)
 
