@@ -897,7 +897,6 @@ def orchestrate_phase2_to_phase3(cloud_event):
                 )
 
                 # Get schedule context for expected game count (if available)
-                from datetime import datetime as dt
                 schedule_context = None
                 try:
                     # Try to get schedule from BigQuery
@@ -913,7 +912,7 @@ def orchestrate_phase2_to_phase3(cloud_event):
                     expected_game_count = 0
 
                 validation_result = validator.run_validation(
-                    game_date=dt.strptime(game_date, '%Y-%m-%d').date(),
+                    game_date=datetime.strptime(game_date, '%Y-%m-%d').date(),
                     validation_config={
                         'check_game_count': True,
                         'expected_game_count': expected_game_count,
