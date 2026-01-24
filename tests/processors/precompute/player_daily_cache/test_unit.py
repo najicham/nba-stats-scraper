@@ -52,13 +52,32 @@ class TestDependencyConfiguration:
         for source in expected_sources:
             assert source in deps, f"Missing dependency: {source}"
     
-    def test_all_dependencies_marked_critical(self, processor):
-        """Test that all dependencies are marked as critical."""
+    def test_critical_dependencies_marked_correctly(self, processor):
+        """Test that critical dependencies are marked correctly."""
         deps = processor.get_dependencies()
-        
-        for source, config in deps.items():
-            assert config['critical'] is True, \
+
+        # These should be critical
+        critical_sources = [
+            'nba_analytics.player_game_summary',
+            'nba_analytics.team_offense_game_summary',
+            'nba_analytics.upcoming_player_game_context'
+        ]
+
+        # This should be optional (critical: False)
+        optional_sources = [
+            'nba_precompute.player_shot_zone_analysis'
+        ]
+
+        for source in critical_sources:
+            assert deps[source]['critical'] is True, \
                 f"{source} should be marked as critical"
+
+        for source in optional_sources:
+            assert deps[source]['critical'] is False, \
+                f"{source} should be marked as optional (critical: False)"
+
+        # All should have proper field_prefix
+        for source, config in deps.items():
             assert 'field_prefix' in config, \
                 f"{source} missing field_prefix"
             assert config['field_prefix'].startswith('source_'), \
