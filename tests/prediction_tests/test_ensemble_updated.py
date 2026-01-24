@@ -190,18 +190,19 @@ class TestAgreementCalculation:
         assert agreement['agreement_percentage'] >= 90
     
     def test_good_agreement(self, ensemble_system):
-        """Test good agreement (variance < 4.0)"""
+        """Test good agreement (variance 2.0-3.0)"""
+        # Predictions with std dev ~2.5 (between high threshold 2.0 and good threshold 3.0)
         predictions = [
-            {'system': 'ma', 'prediction': 25.0, 'confidence': 80.0, 'recommendation': 'OVER'},
+            {'system': 'ma', 'prediction': 23.0, 'confidence': 80.0, 'recommendation': 'OVER'},
             {'system': 'zm', 'prediction': 27.0, 'confidence': 82.0, 'recommendation': 'OVER'},
             {'system': 'sim', 'prediction': 26.0, 'confidence': 85.0, 'recommendation': 'OVER'},
-            {'system': 'xgb', 'prediction': 28.0, 'confidence': 84.0, 'recommendation': 'OVER'}
+            {'system': 'xgb', 'prediction': 30.0, 'confidence': 84.0, 'recommendation': 'OVER'}
         ]
-        
+
         agreement = ensemble_system._calculate_agreement_metrics(predictions)
-        
+
         assert agreement['type'] == 'good'
-        assert 2.0 <= agreement['variance'] < 4.0
+        assert 2.0 <= agreement['variance'] < 3.0
         assert agreement['agreement_percentage'] >= 80
     
     def test_low_agreement(self, ensemble_system):

@@ -218,11 +218,11 @@ class MockDataGenerator:
         """Generate features 0-4: Recent performance"""
         # Add variance for recent games
         variance = random.uniform(2, 5)
-        
+
         last_5 = np.clip(base_ppg + random.uniform(-3, 3), 0, 60)
         last_10 = np.clip(base_ppg + random.uniform(-2, 2), 0, 60)
         season = base_ppg
-        
+
         # Minutes by tier
         if tier in ['superstar', 'star']:
             minutes = round(random.uniform(30, 38), 1)
@@ -230,14 +230,23 @@ class MockDataGenerator:
             minutes = round(random.uniform(25, 33), 1)
         else:
             minutes = round(random.uniform(15, 28), 1)
-        
+
+        games_in_7_days = random.randint(2, 3)
+
+        # Calculate derived features
+        recent_trend = round(last_5 - last_10, 1)  # Recent vs season trend
+        minutes_change = round(random.uniform(-2, 2), 1)  # Minutes change
+
         return {
             'points_avg_last_5': round(last_5, 1),
             'points_avg_last_10': round(last_10, 1),
             'points_avg_season': round(season, 1),
             'points_std_last_10': round(variance, 1),
             'minutes_avg_last_10': minutes,
-            'games_played_last_7_days': random.randint(2, 3)  # Missing field!
+            'games_in_last_7_days': games_in_7_days,  # Required by validate_features
+            'games_played_last_7_days': games_in_7_days,  # Alias for compatibility
+            'recent_trend': recent_trend,  # Required by validate_features
+            'minutes_change': minutes_change  # Required by validate_features
         }
     
     def _generate_composite_factors(self) -> Dict:
@@ -250,17 +259,30 @@ class MockDataGenerator:
             'referee_favorability_score': 0.0,  # Deferred
             'look_ahead_pressure_score': 0.0,  # Deferred
             'matchup_history_score': 0.0,  # Deferred
-            'momentum_score': 0.0  # Deferred
+            'momentum_score': 0.0,  # Deferred
+            'rest_advantage': round(random.uniform(-2, 2), 1),  # Required by validate_features
+            'injury_risk': round(random.uniform(0, 30), 1)  # Required by validate_features
         }
     
     def _generate_matchup_context(self, position: str) -> Dict:
         """Generate features 13-17: Matchup context"""
+        opp_def_rating = round(random.uniform(105, 120), 1)
+        opp_pace = round(random.uniform(95, 105), 1)
+        is_home = float(random.choice([0, 1]))
+        days_rest = float(random.choice([0, 1, 2, 3, 4, 5]))
+
         return {
-            'opponent_def_rating_last_15': round(random.uniform(105, 120), 1),
-            'opponent_pace_last_15': round(random.uniform(95, 105), 1),
-            'is_home': float(random.choice([0, 1])),
-            'days_rest': float(random.choice([0, 1, 2, 3, 4, 5])),
-            'back_to_back': float(random.choice([0, 1]))
+            # Short names required by validate_features
+            'opponent_def_rating': opp_def_rating,
+            'opponent_pace': opp_pace,
+            'home_away': is_home,  # Required by validate_features (0=away, 1=home)
+            'back_to_back': float(1 if days_rest == 0 else 0),
+            'playoff_game': 0.0,  # Required by validate_features (regular season)
+            # Long names for compatibility with other systems
+            'opponent_def_rating_last_15': opp_def_rating,
+            'opponent_pace_last_15': opp_pace,
+            'is_home': is_home,
+            'days_rest': days_rest
         }
     
     def _generate_shot_zones(self, position: str) -> Dict:
@@ -324,10 +346,19 @@ class MockDataGenerator:
             usage = random.uniform(12, 20)
         else:  # bench
             usage = random.uniform(8, 15)
-        
+
+        team_pace = round(random.uniform(95, 105), 1)
+        team_off_rating = round(random.uniform(105, 120), 1)
+        team_win_pct = round(random.uniform(0.3, 0.7), 3)
+
         return {
-            'team_pace_last_10': round(random.uniform(95, 105), 1),
-            'team_off_rating_last_10': round(random.uniform(105, 120), 1),
+            # Short names required by validate_features
+            'team_pace': team_pace,
+            'team_off_rating': team_off_rating,
+            'team_win_pct': team_win_pct,
+            # Long names for compatibility with other systems
+            'team_pace_last_10': team_pace,
+            'team_off_rating_last_10': team_off_rating,
             'usage_rate_last_10': round(usage, 1)
         }
     

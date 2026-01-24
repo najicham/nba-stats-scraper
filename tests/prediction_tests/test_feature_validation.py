@@ -65,17 +65,17 @@ class TestFeatureValidation:
         features = complete_features.copy()
         del features['points_avg_season']
         del features['fatigue_score']
-        del features['is_home']
-        
+        del features['home_away']
+
         is_valid, errors = validate_features(features)
-        
+
         assert not is_valid
         assert len(errors) > 0
         # Check that all missing fields are reported
         error_msg = errors[0]
         assert 'points_avg_season' in error_msg
         assert 'fatigue_score' in error_msg
-        assert 'is_home' in error_msg
+        assert 'home_away' in error_msg
     
     def test_validate_features_low_quality_score(self, complete_features):
         """Test validation fails with low quality score"""
@@ -179,13 +179,13 @@ class TestFeatureValidation:
     def test_validate_features_invalid_is_home(self, complete_features):
         """Test validation fails with invalid boolean flag"""
         features = complete_features.copy()
-        features['is_home'] = 2.0  # Should be 0 or 1
-        
+        features['home_away'] = 2.0  # Should be 0 or 1
+
         is_valid, errors = validate_features(features)
-        
+
         assert not is_valid
         assert len(errors) > 0
-        assert 'is_home' in errors[0]
+        assert 'home_away' in errors[0]
     
     def test_validate_features_invalid_back_to_back(self, complete_features):
         """Test validation fails with invalid back-to-back flag"""
@@ -199,15 +199,15 @@ class TestFeatureValidation:
         assert 'back_to_back' in errors[0]
     
     def test_validate_features_extreme_usage_rate(self, complete_features):
-        """Test validation fails with unrealistic usage rate"""
+        """Test validation fails with unrealistic opponent def rating"""
         features = complete_features.copy()
-        features['usage_rate_last_10'] = 60.0  # Extremely high
-        
+        features['opponent_def_rating'] = 150.0  # Extremely high (max is 125)
+
         is_valid, errors = validate_features(features)
-        
+
         assert not is_valid
         assert len(errors) > 0
-        assert 'usage_rate_last_10' in errors[0]
+        assert 'opponent_def_rating' in errors[0]
     
     def test_validate_features_boundary_values(self, complete_features):
         """Test validation with boundary values (should pass)"""

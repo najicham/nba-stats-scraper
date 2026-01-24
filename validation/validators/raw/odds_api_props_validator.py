@@ -305,7 +305,7 @@ class OddsApiPropsValidator(BaseValidator):
         ),
         known_players AS (
           SELECT DISTINCT player_lookup
-          FROM `{self.project_id}.nba_raw.bdl_active_players`
+          FROM `{self.project_id}.nba_raw.bdl_active_players_current`
           WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
         )
         SELECT

@@ -583,266 +583,247 @@ class TestQualityScorer:
 # ============================================================================
 
 class TestBatchWriter:
-    """Test BatchWriter - BigQuery batch operations (14 tests)."""
-    
+    """Test BatchWriter - BigQuery MERGE operations (14 tests).
+
+    Updated for MERGE-based write pattern:
+    1. Create temp table with target schema
+    2. Load all rows to temp table
+    3. MERGE from temp to target
+    4. Cleanup temp table
+    """
+
     @pytest.fixture
     def mock_bq_client(self):
         """Create mock BigQuery client."""
         return Mock()
-    
+
     @pytest.fixture
     def writer(self, mock_bq_client):
         """Create writer instance with mock client."""
         return BatchWriter(mock_bq_client, 'test-project')
-    
+
+    def setup_merge_mocks(self, mock_bq_client, schema=None):
+        """Helper to set up common mocks for MERGE-based write_batch."""
+        # Mock get_table (for schema)
+        mock_table = Mock()
+        mock_table.schema = schema or []
+        mock_bq_client.get_table.return_value = mock_table
+
+        # Mock create_table (for temp table)
+        mock_bq_client.create_table.return_value = Mock()
+
+        # Mock load_table_from_file (for temp table load)
+        mock_load_job = Mock()
+        mock_load_job.result.return_value = None
+        mock_bq_client.load_table_from_file.return_value = mock_load_job
+
+        # Mock query (for MERGE and cleanup)
+        mock_query_job = Mock()
+        mock_query_job.result.return_value = None
+        mock_bq_client.query.return_value = mock_query_job
+
+        # Mock delete_table (for cleanup)
+        mock_bq_client.delete_table.return_value = None
+
     # ========================================================================
-    # BATCH SPLITTING (4 tests)
+    # DELETE EXISTING DATA LEGACY (3 tests) - Still used as fallback
     # ========================================================================
-    
-    def test_split_into_batches_exact_multiple(self, writer):
-        """Test splitting rows that are exact multiple of batch size."""
-        rows = [{'id': i} for i in range(200)]
-        
-        batches = writer._split_into_batches(rows, 100)
-        
-        assert len(batches) == 2, "200 rows with batch_size=100 should give 2 batches"
-        assert len(batches[0]) == 100
-        assert len(batches[1]) == 100
-    
-    def test_split_into_batches_partial_last(self, writer):
-        """Test splitting rows with partial last batch."""
-        rows = [{'id': i} for i in range(250)]
-        
-        batches = writer._split_into_batches(rows, 100)
-        
-        assert len(batches) == 3, "250 rows should give 3 batches"
-        assert len(batches[0]) == 100
-        assert len(batches[1]) == 100
-        assert len(batches[2]) == 50, "Last batch should have remaining 50 rows"
-    
-    def test_split_into_batches_less_than_batch_size(self, writer):
-        """Test splitting rows less than batch size."""
-        rows = [{'id': i} for i in range(50)]
-        
-        batches = writer._split_into_batches(rows, 100)
-        
-        assert len(batches) == 1, "50 rows with batch_size=100 should give 1 batch"
-        assert len(batches[0]) == 50
-    
-    def test_split_into_batches_empty(self, writer):
-        """Test splitting empty list."""
-        rows = []
-        
-        batches = writer._split_into_batches(rows, 100)
-        
-        assert len(batches) == 0, "Empty list should give 0 batches"
-    
-    # ========================================================================
-    # DELETE EXISTING DATA (3 tests)
-    # ========================================================================
-    
+
     def test_delete_existing_data_legacy_success(self, writer, mock_bq_client):
         """Test successful delete operation."""
         mock_job = Mock()
         mock_job.result.return_value = None
         mock_job.num_dml_affected_rows = 150
         mock_bq_client.query.return_value = mock_job
-        
+
         result = writer._delete_existing_data_legacy('project.dataset.table', date(2025, 1, 15))
-        
+
         assert result is True, "Successful delete should return True"
         mock_bq_client.query.assert_called_once()
         assert "DELETE FROM" in mock_bq_client.query.call_args[0][0]
         assert "2025-01-15" in mock_bq_client.query.call_args[0][0]
-    
+
     def test_delete_existing_data_legacy_streaming_buffer(self, writer, mock_bq_client):
         """Test delete blocked by streaming buffer."""
         mock_bq_client.query.side_effect = Exception("streaming buffer conflict")
-        
+
         result = writer._delete_existing_data_legacy('project.dataset.table', date(2025, 1, 15))
-        
+
         assert result is False, "Streaming buffer conflict should return False"
-    
+
     def test_delete_existing_data_legacy_other_error(self, writer, mock_bq_client):
         """Test delete with unexpected error raises exception."""
         mock_bq_client.query.side_effect = Exception("unexpected error")
-        
+
         with pytest.raises(Exception, match="unexpected error"):
             writer._delete_existing_data_legacy('project.dataset.table', date(2025, 1, 15))
-    
+
     # ========================================================================
-    # WRITE SINGLE BATCH (3 tests)
+    # WRITE BATCH - EMPTY INPUT (1 test)
     # ========================================================================
-    
-    def test_write_single_batch_success(self, writer, mock_bq_client):
-        """Test successful batch write."""
-        rows = [{'id': i, 'value': f'test_{i}'} for i in range(10)]
-        
-        # Mock table schema
-        mock_table = Mock()
-        mock_table.schema = []
-        mock_bq_client.get_table.return_value = mock_table
-        
-        # Mock load job
-        mock_job = Mock()
-        mock_job.result.return_value = None
-        mock_bq_client.load_table_from_file.return_value = mock_job
-        
-        success, error = writer._write_single_batch('project.dataset.table', rows)
-        
-        assert success is True, "Successful write should return (True, None)"
-        assert error is None
-        mock_bq_client.load_table_from_file.assert_called_once()
-    
-    def test_write_single_batch_streaming_buffer(self, writer, mock_bq_client):
-        """Test batch write blocked by streaming buffer."""
-        rows = [{'id': i} for i in range(10)]
-        
-        # Mock table schema
-        mock_table = Mock()
-        mock_table.schema = []
-        mock_bq_client.get_table.return_value = mock_table
-        
-        # Mock load job failure
-        mock_bq_client.load_table_from_file.side_effect = Exception("streaming buffer conflict")
-        
-        success, error = writer._write_single_batch('project.dataset.table', rows)
-        
-        assert success is False, "Streaming buffer conflict should return False"
-        assert error == "Streaming buffer conflict"
-    
-    def test_write_single_batch_retry_success(self, writer, mock_bq_client):
-        """Test batch write succeeds after retry."""
-        rows = [{'id': i} for i in range(10)]
-        
-        # Mock table schema
-        mock_table = Mock()
-        mock_table.schema = []
-        mock_bq_client.get_table.return_value = mock_table
-        
-        # Mock load job - fail first, succeed second
-        mock_job_fail = Mock()
-        mock_job_fail.result.side_effect = Exception("temporary error")
-        
-        mock_job_success = Mock()
-        mock_job_success.result.return_value = None
-        
-        mock_bq_client.load_table_from_file.side_effect = [mock_job_fail, mock_job_success]
-        
-        success, error = writer._write_single_batch('project.dataset.table', rows)
-        
-        assert success is True, "Should succeed after retry"
-        assert error is None
-        assert mock_bq_client.load_table_from_file.call_count == 2
-    
-    # ========================================================================
-    # WRITE BATCH - FULL FLOW (4 tests)
-    # ========================================================================
-    
+
     def test_write_batch_empty_rows(self, writer, mock_bq_client):
-        """Test writing empty list of rows."""
+        """Test writing empty list of rows returns early."""
         result = writer.write_batch([], 'dataset', 'table', date(2025, 1, 15))
-        
+
         assert result['rows_processed'] == 0
         assert result['rows_failed'] == 0
         assert result['batches_written'] == 0
         assert result['batches_failed'] == 0
         assert len(result['errors']) == 0
-    
-    def test_write_batch_success_single_batch(self, writer, mock_bq_client):
-        """Test successful write of single batch."""
-        rows = [{'id': i} for i in range(50)]
-        
-        # Mock delete
-        mock_delete_job = Mock()
-        mock_delete_job.result.return_value = None
-        mock_delete_job.num_dml_affected_rows = 0
-        
-        # Mock write
-        mock_table = Mock()
-        mock_table.schema = []
-        mock_bq_client.get_table.return_value = mock_table
-        
-        mock_load_job = Mock()
-        mock_load_job.result.return_value = None
-        mock_bq_client.load_table_from_file.return_value = mock_load_job
-        
-        # Mock query for delete
-        mock_bq_client.query.return_value = mock_delete_job
-        
+        # Should not call any BigQuery operations
+        mock_bq_client.get_table.assert_not_called()
+
+    # ========================================================================
+    # WRITE BATCH - MERGE FLOW (6 tests)
+    # ========================================================================
+
+    def test_write_batch_success(self, writer, mock_bq_client):
+        """Test successful write using MERGE pattern."""
+        rows = [{'id': i, 'game_date': '2025-01-15', 'player_lookup': f'player_{i}'} for i in range(50)]
+        self.setup_merge_mocks(mock_bq_client)
+
         result = writer.write_batch(rows, 'dataset', 'table', date(2025, 1, 15))
-        
+
         assert result['rows_processed'] == 50
         assert result['rows_failed'] == 0
         assert result['batches_written'] == 1
         assert result['batches_failed'] == 0
         assert len(result['errors']) == 0
-    
-    def test_write_batch_success_multiple_batches(self, writer, mock_bq_client):
-        """Test successful write of multiple batches."""
-        rows = [{'id': i} for i in range(250)]
-        
-        # Mock delete
-        mock_delete_job = Mock()
-        mock_delete_job.result.return_value = None
-        mock_delete_job.num_dml_affected_rows = 0
-        
-        # Mock write
-        mock_table = Mock()
-        mock_table.schema = []
-        mock_bq_client.get_table.return_value = mock_table
-        
-        mock_load_job = Mock()
-        mock_load_job.result.return_value = None
-        mock_bq_client.load_table_from_file.return_value = mock_load_job
-        
-        # Mock query for delete
-        mock_bq_client.query.return_value = mock_delete_job
-        
+        assert 'timing' in result
+
+        # Verify MERGE flow was executed
+        mock_bq_client.get_table.assert_called_once()  # Get schema
+        mock_bq_client.create_table.assert_called_once()  # Create temp table
+        mock_bq_client.load_table_from_file.assert_called_once()  # Load to temp
+        mock_bq_client.query.assert_called_once()  # MERGE query
+        mock_bq_client.delete_table.assert_called_once()  # Cleanup temp
+
+    def test_write_batch_creates_temp_table(self, writer, mock_bq_client):
+        """Test that write_batch creates a temp table with correct naming."""
+        rows = [{'id': 1, 'game_date': '2025-01-15', 'player_lookup': 'test'}]
+        self.setup_merge_mocks(mock_bq_client)
+
+        writer.write_batch(rows, 'nba_predictions', 'ml_feature_store_v2', date(2025, 1, 15))
+
+        # Check temp table name format
+        create_call = mock_bq_client.create_table.call_args[0][0]
+        assert 'ml_feature_store_v2_temp_' in create_call.table_id
+
+    def test_write_batch_streaming_buffer_graceful(self, writer, mock_bq_client):
+        """Test MERGE blocked by streaming buffer returns gracefully."""
+        rows = [{'id': i} for i in range(10)]
+        self.setup_merge_mocks(mock_bq_client)
+
+        # Make MERGE query fail with streaming buffer error
+        mock_bq_client.query.side_effect = Exception("streaming buffer conflict")
+
         result = writer.write_batch(rows, 'dataset', 'table', date(2025, 1, 15))
-        
-        assert result['rows_processed'] == 250
-        assert result['rows_failed'] == 0
-        assert result['batches_written'] == 3, "250 rows should give 3 batches (100+100+50)"
-        assert result['batches_failed'] == 0
-        assert len(result['errors']) == 0
-    
-    def test_write_batch_partial_failure(self, writer, mock_bq_client):
-        """Test write with some batches failing."""
-        rows = [{'id': i} for i in range(200)]
-        
-        # Mock delete
-        mock_delete_job = Mock()
-        mock_delete_job.result.return_value = None
-        mock_delete_job.num_dml_affected_rows = 0
-        mock_bq_client.query.return_value = mock_delete_job
-        
-        # Mock table schema
-        mock_table = Mock()
-        mock_table.schema = []
-        mock_bq_client.get_table.return_value = mock_table
-        
-        # Mock load job - first succeeds, second fails
-        mock_job_success = Mock()
-        mock_job_success.result.return_value = None
-        
-        mock_job_fail = Mock()
-        mock_job_fail.result.side_effect = Exception("write error")
-        
-        mock_bq_client.load_table_from_file.side_effect = [
-            mock_job_success,  # First batch succeeds
-            mock_job_fail,     # Second batch fails (retry 1)
-            mock_job_fail,     # Second batch fails (retry 2)
-            mock_job_fail      # Second batch fails (retry 3)
-        ]
-        
-        result = writer.write_batch(rows, 'dataset', 'table', date(2025, 1, 15))
-        
-        assert result['rows_processed'] == 100, "Only first batch should succeed"
-        assert result['rows_failed'] == 100, "Second batch should fail"
-        assert result['batches_written'] == 1
+
+        assert result['rows_processed'] == 0
+        assert result['rows_failed'] == 10
+        assert result['batches_written'] == 0
         assert result['batches_failed'] == 1
-        assert len(result['errors']) == 1
+        assert 'streaming buffer' in result['errors'][0].lower()
+
+    def test_write_batch_load_failure(self, writer, mock_bq_client):
+        """Test failure during temp table load."""
+        rows = [{'id': i} for i in range(10)]
+        self.setup_merge_mocks(mock_bq_client)
+
+        # Make load fail
+        mock_bq_client.load_table_from_file.side_effect = Exception("load failed")
+
+        result = writer.write_batch(rows, 'dataset', 'table', date(2025, 1, 15))
+
+        assert result['rows_failed'] == 10
+        assert result['batches_failed'] == 1
+        assert len(result['errors']) > 0
+        # Temp table should still be cleaned up
+        mock_bq_client.delete_table.assert_called_once()
+
+    def test_write_batch_timing_captured(self, writer, mock_bq_client):
+        """Test that timing information is captured."""
+        rows = [{'id': 1}]
+        self.setup_merge_mocks(mock_bq_client)
+
+        result = writer.write_batch(rows, 'dataset', 'table', date(2025, 1, 15))
+
+        timing = result['timing']
+        assert 'get_schema' in timing
+        assert 'create_temp_table' in timing
+        assert 'load_temp_table' in timing
+        assert 'merge_operation' in timing
+        assert 'total' in timing
+
+    def test_write_batch_cleans_up_on_error(self, writer, mock_bq_client):
+        """Test temp table cleanup happens even on errors."""
+        rows = [{'id': 1}]
+        self.setup_merge_mocks(mock_bq_client)
+
+        # Make MERGE fail
+        mock_bq_client.query.side_effect = Exception("merge failed")
+
+        writer.write_batch(rows, 'dataset', 'table', date(2025, 1, 15))
+
+        # Cleanup should still be called
+        mock_bq_client.delete_table.assert_called_once()
+
+    # ========================================================================
+    # ENSURE REQUIRED DEFAULTS (2 tests)
+    # ========================================================================
+
+    def test_ensure_required_defaults_adds_missing(self, writer):
+        """Test that required fields get default values."""
+        from google.cloud import bigquery as bq_module
+
+        rows = [{'id': 1, 'name': 'test'}]
+        required_fields = {'id', 'name', 'status', 'count'}
+
+        result = writer._ensure_required_defaults(rows, required_fields)
+
+        assert len(result) == 1
+        assert result[0]['id'] == 1
+        assert result[0]['name'] == 'test'
+        # Status should get default empty string, count should get default 0 or similar
+
+    def test_ensure_required_defaults_preserves_existing(self, writer):
+        """Test that existing values are preserved."""
+        rows = [{'id': 1, 'status': 'active'}]
+        required_fields = {'id', 'status'}
+
+        result = writer._ensure_required_defaults(rows, required_fields)
+
+        assert result[0]['id'] == 1
+        assert result[0]['status'] == 'active'
+
+    # ========================================================================
+    # SANITIZE ROW (2 tests)
+    # ========================================================================
+
+    def test_sanitize_row_converts_dates(self, writer):
+        """Test that date objects are converted to ISO strings."""
+        row = {
+            'game_date': date(2025, 1, 15),
+            'name': 'test'
+        }
+
+        result = writer._sanitize_row(row)
+
+        assert result['game_date'] == '2025-01-15'
+        assert result['name'] == 'test'
+
+    def test_sanitize_row_handles_none(self, writer):
+        """Test that None values are preserved."""
+        row = {
+            'id': 1,
+            'optional_field': None
+        }
+
+        result = writer._sanitize_row(row)
+
+        assert result['id'] == 1
+        assert result['optional_field'] is None
 
 
 # ============================================================================

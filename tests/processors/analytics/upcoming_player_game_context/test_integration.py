@@ -22,12 +22,36 @@ from data_processors.analytics.upcoming_player_game_context.upcoming_player_game
 
 class TestFullProcessorFlow:
     """Test complete processor execution flow."""
-    
+
     @pytest.fixture
     def processor(self):
-        """Create processor with mocked BigQuery client."""
+        """Create processor with mocked BigQuery client.
+
+        The mock handles both query patterns:
+        - .query().result() - returns empty iterable (for hash lookups)
+        - .query().to_dataframe() - returns empty DataFrame by default
+        """
         proc = UpcomingPlayerGameContextProcessor()
-        proc.bq_client = Mock()
+
+        # Create a properly configured mock client
+        mock_client = Mock()
+
+        def create_query_job(*args, **kwargs):
+            """Create a mock query job that handles both patterns."""
+            job = Mock()
+            # For .result() - return empty iterable
+            empty_result = Mock()
+            empty_result.__iter__ = Mock(return_value=iter([]))
+            job.result = Mock(return_value=empty_result)
+            # For .to_dataframe() - return empty DataFrame
+            import pandas as pd
+            job.to_dataframe = Mock(return_value=pd.DataFrame())
+            return job
+
+        mock_client.query = Mock(side_effect=create_query_job)
+        mock_client.insert_rows_json = Mock(return_value=[])
+
+        proc.bq_client = mock_client
         proc.project_id = 'test-project'
         return proc
     
@@ -120,9 +144,17 @@ class TestFullProcessorFlow:
     def test_successful_full_run(self, processor, mock_bigquery_responses):
         """Test complete successful processor run."""
         # Setup mock responses
-        def mock_query_response(query):
+        def mock_query_response(query, **kwargs):
             mock_result = Mock()
-            
+
+            # Handle .result() - must return proper iterator for next() calls
+            class EmptyIterator:
+                def __iter__(self):
+                    return self
+                def __next__(self):
+                    raise StopIteration
+            mock_result.result = Mock(return_value=EmptyIterator())
+
             if 'odds_api_player_points_props' in query and 'latest_props' in query:
                 mock_result.to_dataframe.return_value = mock_bigquery_responses['props']
             elif 'nbac_schedule' in query:
@@ -145,9 +177,9 @@ class TestFullProcessorFlow:
                     mock_result.to_dataframe.return_value = mock_bigquery_responses['game_lines_totals_current']
             else:
                 mock_result.to_dataframe.return_value = pd.DataFrame()
-            
+
             return mock_result
-        
+
         processor.bq_client.query.side_effect = mock_query_response
         processor.bq_client.insert_rows_json.return_value = []  # Success
         

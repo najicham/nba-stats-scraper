@@ -61,7 +61,7 @@ echo ""
 
 print_section_header "Validate results"
 echo "  # Check recent data in BigQuery"
-echo "  bq query --use_legacy_sql=false \"SELECT COUNT(*) as total_records, MIN(scrape_date) as earliest_date, MAX(scrape_date) as latest_date, COUNT(DISTINCT player_id) as unique_players FROM \\\`nba-props-platform.nba_raw.bdl_active_players\\\`\""
+echo "  bq query --use_legacy_sql=false \"SELECT COUNT(*) as total_records, MIN(scrape_date) as earliest_date, MAX(scrape_date) as latest_date, COUNT(DISTINCT player_id) as unique_players FROM \\\`nba-props-platform.nba_raw.bdl_active_players_current\\\`\""
 
 # Print final timing summary
 print_deployment_summary
