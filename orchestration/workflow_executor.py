@@ -38,6 +38,10 @@ from orchestration.shared.utils.circuit_breaker import (
 )
 from shared.clients.http_pool import get_http_session
 
+# Specific exceptions for better error handling
+from google.api_core.exceptions import GoogleAPIError
+from requests.exceptions import RequestException
+
 logger = logging.getLogger(__name__)
 
 # Global config instance for timeout settings
@@ -293,7 +297,7 @@ class WorkflowExecutor:
                     )
                     executions.append(execution)
                     
-                except Exception as e:
+                except (RequestException, GoogleAPIError, CircuitBreakerOpenError, ValueError) as e:
                     logger.error(f"❌ Workflow {workflow_name} failed: {e}", exc_info=True)
                     # Log failed execution
                     failed_execution = WorkflowExecution(
