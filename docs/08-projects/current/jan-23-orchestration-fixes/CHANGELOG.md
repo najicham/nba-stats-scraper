@@ -37,3 +37,59 @@
 ### Requires Follow-up
 - Feature store backfill for dates 2026-01-01 to 2026-01-22 to fix existing incorrect records
 - Consider scheduling `fix_stale_schedule.py` as automated job
+
+---
+
+## [2026-01-24] - Pipeline Resilience Improvements
+
+### Added
+
+#### Cloud Functions
+- **stale_processor_monitor**: Detects stuck processors via heartbeat, auto-recovers after 15 min
+- **game_coverage_alert**: Alerts 2 hours before games if any have < 8 players with predictions
+- **pipeline_dashboard**: Visual HTML dashboard for processor health, coverage, alerts
+- **auto_backfill_orchestrator**: Automatically triggers backfill for failed processors
+
+#### Heartbeat System
+- **shared/monitoring/processor_heartbeat.py**: Created heartbeat system for stale detection
+- **PrecomputeProcessorBase**: Integrated heartbeat with 15-min detection threshold
+- **AnalyticsProcessorBase**: Integrated heartbeat with 15-min detection threshold
+
+#### Soft Dependencies
+- **shared/processors/mixins/soft_dependency_mixin.py**: Created mixin for graceful degradation
+- **PrecomputeProcessorBase**: Integrated SoftDependencyMixin
+- **AnalyticsProcessorBase**: Integrated SoftDependencyMixin
+- **MLFeatureStoreProcessor**: Enabled soft deps (threshold: 80%)
+- **PlayerCompositeFactorsProcessor**: Enabled soft deps (threshold: 80%)
+- **UpcomingPlayerGameContextProcessor**: Enabled soft deps (threshold: 80%)
+
+#### ESPN Scraper Integration
+- **scrapers/espn/espn_roster.py**: Added Pub/Sub completion publishing to trigger Phase 2
+
+### Fixed
+- **TOR@POR Missing Predictions**: Root cause was stuck processor + binary dependency blocking
+  - Now detected in 15 min instead of 4 hours
+  - Soft dependencies allow proceeding with degraded data (>80% coverage)
+  - Pre-game alerts catch issues 2 hours before games
+
+### Impact
+- 4-hour stuck processor detection → 15-minute detection
+- Binary pass/fail dependencies → Soft 80% threshold
+- No pre-game coverage alerts → 2-hour early warning
+- Manual ESPN processing → Automatic Pub/Sub triggering
+
+### Verification Commands
+```bash
+# Test game coverage alert
+curl -s "https://us-west2-nba-props-platform.cloudfunctions.net/game-coverage-alert?date=$(date +%Y-%m-%d)&dry_run=true"
+
+# Test stale processor monitor
+curl -s "https://us-west2-nba-props-platform.cloudfunctions.net/stale-processor-monitor?dry_run=true"
+
+# Check heartbeats in Firestore
+source .venv/bin/activate && python3 -c "
+from google.cloud import firestore
+db = firestore.Client(project='nba-props-platform')
+for doc in db.collection('processor_heartbeats').limit(5).stream():
+    print(f'{doc.id}: {doc.to_dict()}')"
+```
