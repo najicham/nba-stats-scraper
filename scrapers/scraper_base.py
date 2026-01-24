@@ -1194,8 +1194,8 @@ class ScraperBase:
                 logger.info(f"✅ Phase 2 notified of failure (message_id: {message_id})")
                 
         except ImportError:
-            # google-cloud-pubsub not installed - skip silently
-            pass
+            # google-cloud-pubsub not installed - this is expected in some environments
+            logger.debug("google-cloud-pubsub not installed, skipping failure event publication")
         except Exception as e:
             logger.error(f"Failed to publish failure event to Pub/Sub: {e}")
 

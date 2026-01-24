@@ -24,7 +24,8 @@ from typing import Optional
 
 
 # Default project number (used in Cloud Run URLs)
-DEFAULT_PROJECT_NUMBER = '756957797294'
+# Read from environment variable with fallback to default
+DEFAULT_PROJECT_NUMBER = os.environ.get('GCP_PROJECT_NUMBER', '756957797294')
 
 
 class Services:

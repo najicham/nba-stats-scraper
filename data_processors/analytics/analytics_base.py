@@ -2031,10 +2031,31 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
             # Auto-fallback: If syntax error, use DELETE+INSERT
             if "syntax error" in error_msg.lower() or "400" in error_msg:
                 logger.warning("MERGE syntax error detected - falling back to DELETE + INSERT")
+
+                # Notify operators about MERGE fallback (added 2026-01-24)
+                # This was previously a silent fallback that could mask data issues
+                try:
+                    notify_warning(
+                        title=f"MERGE Fallback: {self.__class__.__name__}",
+                        message=f"MERGE failed with syntax error, falling back to DELETE + INSERT",
+                        details={
+                            'processor': self.__class__.__name__,
+                            'run_id': getattr(self, 'run_id', 'unknown'),
+                            'table': table_id,
+                            'error': error_msg[:500],  # Truncate long errors
+                            'rows_affected': len(rows),
+                            'strategy': 'DELETE + INSERT (fallback)',
+                            'remediation': 'Check MERGE query syntax. This is not critical but may indicate schema issues.',
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send MERGE fallback notification: {notify_ex}")
+
                 try:
                     self.bq_client.delete_table(temp_table_id, not_found_ok=True)
-                except Exception:
-                    pass
+                except Exception as cleanup_e:
+                    logger.debug(f"Could not delete temp table during fallback: {cleanup_e}")
                 self._save_with_delete_insert(rows, table_id, table_schema)
                 return
 

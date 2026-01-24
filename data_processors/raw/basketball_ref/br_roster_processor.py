@@ -410,8 +410,8 @@ class BasketballRefRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
             # Clean up temp table even on failure
             try:
                 self.bq_client.delete_table(temp_table_id, not_found_ok=True)
-            except Exception:
-                pass
+            except Exception as cleanup_e:
+                logger.debug(f"Could not clean up temp table on error: {cleanup_e}")
 
             # Notify unexpected error
             try:

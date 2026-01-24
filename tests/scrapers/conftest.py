@@ -235,3 +235,111 @@ def patch_http_session(mock_http_session):
 
     with patch('scrapers.scraper_base.get_http_session', return_value=mock_http_session):
         yield mock_http_session
+
+
+# ============================================================================
+# ADDITIONAL CLIENT FIXTURES
+# ============================================================================
+
+@pytest.fixture
+def mock_storage_client():
+    """Mock GCS Storage client for testing."""
+    client = Mock()
+
+    # Mock bucket operations
+    bucket = Mock()
+    blob = Mock()
+    blob.upload_from_string = Mock()
+    blob.download_as_string = Mock(return_value=b'{"data": []}')
+    blob.exists = Mock(return_value=True)
+    bucket.blob.return_value = blob
+    bucket.list_blobs = Mock(return_value=[])
+    client.bucket.return_value = bucket
+    client.get_bucket.return_value = bucket
+
+    return client
+
+
+@pytest.fixture
+def mock_pubsub_publisher():
+    """Mock Pub/Sub publisher client for testing."""
+    from concurrent.futures import Future
+
+    publisher = Mock()
+
+    # Mock publish operation
+    future = Future()
+    future.set_result('test-message-id')
+    publisher.publish.return_value = future
+    publisher.topic_path.return_value = 'projects/test-project/topics/test-topic'
+
+    return publisher
+
+
+@pytest.fixture
+def mock_firestore_client():
+    """Mock Firestore client for testing."""
+    client = Mock()
+
+    # Mock collection/document operations
+    doc_ref = Mock()
+    doc_snapshot = Mock()
+    doc_snapshot.exists = True
+    doc_snapshot.to_dict.return_value = {'status': 'active'}
+    doc_ref.get.return_value = doc_snapshot
+    doc_ref.set = Mock()
+    doc_ref.update = Mock()
+    doc_ref.delete = Mock()
+
+    collection_ref = Mock()
+    collection_ref.document.return_value = doc_ref
+    collection_ref.where.return_value = collection_ref
+    collection_ref.stream.return_value = []
+
+    client.collection.return_value = collection_ref
+
+    return client
+
+
+@pytest.fixture
+def patch_storage_client(mock_storage_client):
+    """Patch GCS Storage client globally for test."""
+    from unittest.mock import patch
+
+    with patch('google.cloud.storage.Client', return_value=mock_storage_client):
+        yield mock_storage_client
+
+
+@pytest.fixture
+def patch_pubsub_publisher(mock_pubsub_publisher):
+    """Patch Pub/Sub publisher globally for test."""
+    from unittest.mock import patch
+
+    with patch('google.cloud.pubsub_v1.PublisherClient', return_value=mock_pubsub_publisher):
+        yield mock_pubsub_publisher
+
+
+@pytest.fixture
+def patch_firestore_client(mock_firestore_client):
+    """Patch Firestore client globally for test."""
+    from unittest.mock import patch
+
+    with patch('google.cloud.firestore.Client', return_value=mock_firestore_client):
+        yield mock_firestore_client
+
+
+@pytest.fixture
+def patch_all_gcp_clients(mock_bq_client, mock_storage_client, mock_pubsub_publisher, mock_firestore_client):
+    """Patch all GCP clients for fully isolated testing."""
+    from unittest.mock import patch
+
+    with patch('scrapers.scraper_base.get_bigquery_client', return_value=mock_bq_client), \
+         patch('google.cloud.storage.Client', return_value=mock_storage_client), \
+         patch('google.cloud.pubsub_v1.PublisherClient', return_value=mock_pubsub_publisher), \
+         patch('google.cloud.firestore.Client', return_value=mock_firestore_client):
+        yield {
+            'bq': mock_bq_client,
+            'storage': mock_storage_client,
+            'pubsub': mock_pubsub_publisher,
+            'firestore': mock_firestore_client
+        }

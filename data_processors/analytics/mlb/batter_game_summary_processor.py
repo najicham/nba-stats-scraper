@@ -98,8 +98,8 @@ class MlbBatterGameSummaryProcessor(AnalyticsProcessorBase):
                         'processor': 'MlbBatterGameSummaryProcessor'
                     }
                 )
-            except Exception:
-                pass
+            except Exception as notify_e:
+                logger.debug(f"Failed to send success notification: {notify_e}")
 
             return {'rows_processed': len(rows), 'date': str(target_date)}
 

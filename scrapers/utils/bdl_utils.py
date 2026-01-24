@@ -148,7 +148,7 @@ def get_json(
                             processor_name="Ball Don't Lie Utils"
                         )
                     except Exception as notify_ex:
-                        pass
+                        logger.debug(f"Failed to send rate limit alert: {notify_ex}")
 
                     raise RuntimeError(error_msg)
 
@@ -171,7 +171,7 @@ def get_json(
                         # Reset counter after notifying
                         _rate_limit_counter = 0
                     except Exception as notify_ex:
-                        pass  # Don't fail on notification issues
+                        logger.debug(f"Failed to send persistent rate limit notification: {notify_ex}")
 
                 # Back off with intelligent wait time
                 time.sleep(wait_time)
@@ -208,9 +208,9 @@ def get_json(
                         processor_name="Ball Don't Lie Utils"
                     )
                 except Exception as notify_ex:
-                    pass
+                    logger.debug(f"Failed to send HTTP error notification: {notify_ex}")
                 raise
-                
+
         except (httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ConnectError) as e:
             # Network/timeout error
             if attempt >= max_retries - 1:
@@ -230,9 +230,9 @@ def get_json(
                         processor_name="Ball Don't Lie Utils"
                     )
                 except Exception as notify_ex:
-                    pass
+                    logger.debug(f"Failed to send connection error notification: {notify_ex}")
                 raise
-        
+
         except Exception as e:
             # Unexpected error
             try:
@@ -249,7 +249,7 @@ def get_json(
                     processor_name="Ball Don't Lie Utils"
                 )
             except Exception as notify_ex:
-                pass
+                logger.debug(f"Failed to send unexpected error notification: {notify_ex}")
             raise
 
         attempt += 1
@@ -272,8 +272,8 @@ def get_json(
                     processor_name="Ball Don't Lie Utils"
                 )
             except Exception as notify_ex:
-                pass
-            
+                logger.debug(f"Failed to send max retries notification: {notify_ex}")
+
             raise RuntimeError(error_msg)
 
 

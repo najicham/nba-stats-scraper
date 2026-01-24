@@ -518,9 +518,9 @@ class SystemHealthChecker:
                     ))
 
             except subprocess.TimeoutExpired:
-                pass  # Skip timeouts silently
-            except Exception:
-                pass  # Skip errors silently for scheduler checks
+                logger.warning(f"Timeout while checking scheduler job audiences - skipping")
+            except Exception as e:
+                logger.warning(f"Error checking scheduler job audiences: {e}")
 
         return issues_found
 

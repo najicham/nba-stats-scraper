@@ -415,8 +415,8 @@ class NbacScoreboardV2Processor(SmartIdempotencyMixin, ProcessorBase):
                 
                 try:
                     self.bq_client.delete_table(temp_table_id, not_found_ok=True)
-                except Exception:
-                    pass
+                except Exception as cleanup_e:
+                    logging.debug(f"Could not clean up temp table on load error: {cleanup_e}")
 
                 # Update stats for failure tracking
                 self.stats['rows_inserted'] = 0

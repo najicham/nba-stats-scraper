@@ -120,8 +120,8 @@ class MlbScheduleProcessor(ProcessorBase):
                 if game.get('game_time_utc'):
                     try:
                         game_time_utc = game['game_time_utc']
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"Could not parse game_time_utc for game {game_pk}: {e}")
 
                 row = {
                     # Core identifiers

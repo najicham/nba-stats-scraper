@@ -1,7 +1,7 @@
 # Comprehensive System Improvements - January 2026
 
 **Created:** 2026-01-23
-**Last Updated:** 2026-01-23
+**Last Updated:** 2026-01-24
 **Status:** In Progress
 
 ## Overview
@@ -14,11 +14,11 @@ This project consolidates all identified improvements from codebase analysis, ha
 
 | Priority | Total | Completed | In Progress | Remaining |
 |----------|-------|-----------|-------------|-----------|
-| P0 - Critical | 9 | 8 | 0 | 1 |
-| P1 - High | 22 | 2 | 0 | 20 |
-| P2 - Medium | 34 | 0 | 0 | 34 |
+| P0 - Critical | 10 | 9 | 0 | 1 |
+| P1 - High | 25 | 5 | 0 | 20 |
+| P2 - Medium | 37 | 3 | 0 | 34 |
 | P3 - Low | 26 | 0 | 0 | 26 |
-| **Total** | **91** | **10** | **0** | **81** |
+| **Total** | **98** | **17** | **0** | **81** |
 
 ---
 
@@ -73,11 +73,16 @@ This project consolidates all identified improvements from codebase analysis, ha
   - Files: `predictions/coordinator/shared/alerts/alert_manager.py`
   - Notes: Full implementations exist for email (SMTP/Brevo), Slack (webhook), Sentry (capture_message)
 
-- [ ] **P0-9: Replace bare except handlers**
-  - Status: In Progress
-  - Files: 50+ files with `except Exception` handlers (bin/, scripts/, data_processors/)
-  - Issue: Silent failures hiding bugs
-  - Solution: Replace with specific exception types, add logging
+- [x] **P0-9: Replace bare except handlers** ✅ FIXED (Critical Ones)
+  - Status: Completed (critical silent handlers fixed)
+  - Files fixed: `bdl_utils.py` (6 handlers), `scraper_base.py` (1 handler), `analytics_base.py` (1 handler)
+  - Files fixed: `system_health_check.py`, MLB/NBA processors (5 files)
+  - Notes: Added `logger.debug()` calls to all silent `pass` statements
+
+- [x] **P0-10: Fix hardcoded project number** ✅ FIXED
+  - Status: Completed
+  - Files: `shared/config/service_urls.py`
+  - Solution: Changed to `os.environ.get('GCP_PROJECT_NUMBER', '756957797294')`
 
 ---
 
@@ -219,6 +224,22 @@ This project consolidates all identified improvements from codebase analysis, ha
   - Issue: Blind retries against blocks
   - Solution: Detect and handle WAF responses
 
+- [x] **P1-23: Improve deployment script error handling** ✅ FIXED
+  - Status: Completed
+  - Files: `bin/deploy/deploy_new_cloud_functions.sh`
+  - Solution: Added `set -euo pipefail`, pre-flight checks, health verification post-deploy
+
+- [x] **P1-24: Add missing test fixtures** ✅ FIXED
+  - Status: Completed
+  - Files: `tests/scrapers/conftest.py`
+  - Solution: Added fixtures for storage_client, pubsub_publisher, firestore_client, and patch_all_gcp_clients
+
+- [ ] **P1-25: Fix hardcoded project IDs**
+  - Status: Not Started
+  - Issue: 50+ files have `'nba-props-platform'` hardcoded
+  - Files: `bin/alerts/`, `bin/infrastructure/`, others
+  - Solution: Replace with `GCP_PROJECT_ID` env var
+
 ---
 
 ## P2 - Medium Priority (Next 2 Weeks)
@@ -335,6 +356,22 @@ This project consolidates all identified improvements from codebase analysis, ha
 - [ ] **P2-33: Per-system prediction success rates**
 - [ ] **P2-34: Rate limiting implementation**
 
+- [x] **P2-35: Add logging to MLB processor handlers** ✅ FIXED
+  - Status: Completed
+  - Files: `pitcher_game_summary_processor.py`, `batter_game_summary_processor.py`, `mlb_schedule_processor.py`
+  - Solution: Added `logger.debug()` to notification and parsing handlers
+
+- [x] **P2-36: Add logging to NBA processor handlers** ✅ FIXED
+  - Status: Completed
+  - Files: `br_roster_processor.py`, `nbac_scoreboard_v2_processor.py`
+  - Solution: Added `logger.debug()` to temp table cleanup handlers
+
+- [ ] **P2-37: Add infinite loop timeout guards**
+  - Status: Not Started
+  - Issue: 19 files use `while True:` without max iteration limits
+  - Files: `bdl_utils.py`, `scraper_base.py`, others
+  - Solution: Add configurable max iterations + timeout safeguards
+
 ---
 
 ## P3 - Low Priority (Technical Debt)
@@ -381,6 +418,12 @@ This project consolidates all identified improvements from codebase analysis, ha
 | 2026-01-23 | P0-9 | Replace bare except handlers | Analyzed - 56 instances found, 7 critical silent passes need fixing |
 | 2026-01-23 | P1-10 | Convert print to logging | Analyzed - prints in coordinator.py are intentional for Cloud Run visibility |
 | 2026-01-23 | P1-11 | Fix remaining SQL injection | Fixed in validate_historical_season.py and check_pipeline_health.py |
+| 2026-01-24 | P0-9 | Fix silent exception handlers | Fixed 14 handlers in bdl_utils.py, scraper_base.py, analytics_base.py, processors |
+| 2026-01-24 | P0-10 | Fix hardcoded project number | service_urls.py now uses GCP_PROJECT_NUMBER env var |
+| 2026-01-24 | P1-23 | Improve deployment script | Added pre-flight checks, health verification to deploy_new_cloud_functions.sh |
+| 2026-01-24 | P1-24 | Add test fixtures | Added storage, pubsub, firestore fixtures to conftest.py |
+| 2026-01-24 | P2-35 | MLB processor logging | Added debug logging to 3 MLB processors |
+| 2026-01-24 | P2-36 | NBA processor logging | Added debug logging to 2 NBA processors |
 
 ---
 
@@ -415,3 +458,31 @@ This project consolidates all identified improvements from codebase analysis, ha
 2. Exception handlers mostly proper, but 7 silent `pass` in bdl_utils.py need logging
 3. Phase 4→5 timeout now implemented with full alerting
 4. Most P0 security items were already addressed in previous security audit
+
+### 2026-01-24 - Comprehensive Fixes Session
+
+**Fixed This Session:**
+- P0-9: Fixed 14 silent exception handlers across 10 files
+- P0-10: Made project number configurable via `GCP_PROJECT_NUMBER` env var
+- P1-23: Improved deploy script with pre-flight checks and health verification
+- P1-24: Added missing GCP client test fixtures (storage, pubsub, firestore)
+- P2-35: Added debug logging to MLB processors
+- P2-36: Added debug logging to NBA processors
+
+**Files Modified:**
+1. `shared/config/service_urls.py` - Env var for project number
+2. `scripts/system_health_check.py` - Scheduler validation logging
+3. `data_processors/analytics/analytics_base.py` - MERGE fallback logging
+4. `data_processors/analytics/mlb/pitcher_game_summary_processor.py` - Notification logging
+5. `data_processors/analytics/mlb/batter_game_summary_processor.py` - Notification logging
+6. `data_processors/raw/mlb/mlb_schedule_processor.py` - Game time parsing logging
+7. `data_processors/raw/basketball_ref/br_roster_processor.py` - Temp table cleanup logging
+8. `data_processors/raw/nbacom/nbac_scoreboard_v2_processor.py` - Temp table cleanup logging
+9. `scrapers/utils/bdl_utils.py` - 6 notification failure handlers
+10. `scrapers/scraper_base.py` - Pub/Sub ImportError handler
+11. `bin/deploy/deploy_new_cloud_functions.sh` - Pre-flight checks, health verification
+12. `tests/scrapers/conftest.py` - New GCP client fixtures
+
+**New Issues Identified:**
+- P1-25: 50+ files with hardcoded 'nba-props-platform' project ID
+- P2-37: 19 files with `while True:` loops needing timeout guards
