@@ -1,8 +1,10 @@
-# Code Quality Session 5 - Handoff Document
+# Code Quality Session 5-6 - Handoff Document
 
 **Date:** 2026-01-24
 **Focus:** Test Suite Repair (Continuation from Session 4)
 **Status:** Test repair phase substantially complete
+
+> **Session 6 Update:** Reduced failures from 66 to 46. See Session 6 section below.
 
 ---
 
@@ -54,59 +56,79 @@ docs/08-projects/current/code-quality-2026-01/PROGRESS.md
 
 ---
 
+## Session 6 Update (2026-01-24)
+
+### Test Results
+| Metric | Session 5 End | Session 6 End | Change |
+|--------|---------------|---------------|--------|
+| Failed | 66 | 46 | -20 |
+| Skipped | 364 | 378 | +14 |
+
+### What Was Fixed
+1. **Parent class mocking** - Changed `patch.object(processor.__class__.__bases__[0], ...)` to `patch.object(processor, ...)`
+2. **Quality score weights** - Phase 3 changed from 75 to 87 points
+3. **Dependency count** - player_game_summary now has 7 dependencies (added team_offense_game_summary)
+4. **Data quality tiers** - Changed from 'high'/'medium' to 'gold'/'silver'
+5. **Critical sources** - BDL is no longer critical, only nbac_gamebook
+6. **Error handling** - Fixed bare except in daily_summary/main.py
+
+### Files Modified
+```
+tests/processors/precompute/player_shot_zone_analysis/test_integration.py
+tests/processors/precompute/ml_feature_store/test_unit.py
+tests/processors/analytics/player_game_summary/test_unit.py
+bin/alerts/daily_summary/main.py
+```
+
+### Commit
+```
+ff563be0 test: Fix stale tests and improve error handling (Session 6)
+```
+
+---
+
 ## Remaining Work
 
-### Test Suite (66 Remaining Failures)
+### Test Suite (46 Remaining Failures)
 
 Run quick check:
 ```bash
 source .venv/bin/activate && python -m pytest tests/processors/ tests/ml/ -q --tb=no
 ```
 
-**Failures by file:**
-| File | Count | Issue |
+**Remaining failures by area:**
+| Area | Count | Issue |
 |------|-------|-------|
-| `player_shot_zone_analysis/test_integration.py` | 9 | GoogleAPIError mock |
-| `ml_feature_store/test_unit.py` | 6 | API signature changes |
-| `player_daily_cache/test_integration.py` | 5 | Mock iterator issues |
-| `player_game_summary/test_unit.py` | 5 | API changes |
-| Various others | 41 | Mixed issues |
+| `prediction_accuracy/test_unit.py` | 4 | API changes |
+| `player_composite_factors/` | 5 | Early season handling changes |
+| `player_daily_cache/` | 5 | Mock iterator issues |
+| `team_defense_zone_analysis/` | 3 | API changes |
+| Various others | 29 | Mixed issues |
 
-**Common patterns in remaining failures:**
-1. `TypeError: catching classes that do not inherit from BaseException` - GoogleAPIError mock issue
-2. `TypeError: missing required positional arguments` - API signature changes
-3. `AttributeError: 'Mock' object has no attribute` - Incomplete mock fixtures
+### Code Quality Tasks
 
-### Code Quality Tasks (8 Pending)
-
-From `docs/08-projects/current/code-quality-2026-01/PROGRESS.md`:
-
-| Priority | Task | Description | Effort |
-|----------|------|-------------|--------|
-| P0-HIGH | #11 | Error Handling for External APIs | 3 hrs |
-| P1-HIGH | #2 | Consolidate Duplicate Utils (17 files × 9 copies) | 8-12 hrs |
-| P1-HIGH | #15 | Deploy Cloud Functions (2 functions) | 30 min |
-| P1-MEDIUM | #6 | Extract Hardcoded URLs (7 files) | 2 hrs |
-| P3-MEDIUM | #7 | Refactor Large Files (12 files >1000 lines) | 16 hrs |
-| P3-MEDIUM | #12 | Convert Raw Processors to BigQuery Pool | 3 hrs |
-| P3-MEDIUM | #14 | Refactor Large Functions (10 functions >250 lines) | 8 hrs |
-| P3-LOW | #9 | Address TODO Comments (47+) | 4 hrs |
+| Status | Task | Description |
+|--------|------|-------------|
+| ✅ Done | #6 | URLs - Already have env var overrides |
+| ✅ Done | #11 | Error handling - Acceptable patterns |
+| ⏳ Ready | #15 | Deploy cloud functions (needs GCP creds) |
+| 📋 Pending | #2 | Consolidate duplicate utils (8-12 hrs) |
 
 ---
 
 ## Recommended Next Steps
 
-### Option A: Quick Wins (1-2 hours)
-1. **Task #15** - Deploy cloud functions (30 min)
-2. **Task #6** - Extract hardcoded URLs (2 hrs)
+### Option A: Deploy Cloud Functions (30 min)
+```bash
+./bin/deploy/deploy_new_cloud_functions.sh
+```
+Deploys: `pipeline-dashboard`, `auto-backfill-orchestrator`
 
-### Option B: High Impact (3-4 hours)
-1. **Task #11** - Error handling improvements (P0 priority)
-2. Continue fixing remaining 66 test failures
+### Option B: Continue Test Fixes
+Focus on `player_daily_cache` mock iterator issues
 
 ### Option C: Large Effort (8+ hours)
-1. **Task #2** - Consolidate duplicate utilities
-2. Rewrite skipped tests for new APIs
+Consolidate duplicate utilities (~62K lines of duplicate code)
 
 ---
 
