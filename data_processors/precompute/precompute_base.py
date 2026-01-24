@@ -50,6 +50,14 @@ except ImportError:
     HEARTBEAT_AVAILABLE = False
     ProcessorHeartbeat = None
 
+# Import soft dependency mixin for graceful degradation (added after Jan 23 incident)
+try:
+    from shared.processors.mixins.soft_dependency_mixin import SoftDependencyMixin
+    SOFT_DEPS_AVAILABLE = True
+except ImportError:
+    SOFT_DEPS_AVAILABLE = False
+    SoftDependencyMixin = object  # Fallback to empty object
+
 # Failure categorization (inlined to avoid cross-package dependency issues in Cloud Run)
 def _categorize_failure(error: Exception, step: str, stats: dict = None) -> str:
     """
@@ -158,12 +166,16 @@ logging.basicConfig(
 logger = logging.getLogger("precompute_base")
 
 
-class PrecomputeProcessorBase(RunHistoryMixin):
+class PrecomputeProcessorBase(SoftDependencyMixin, RunHistoryMixin):
     """
     Base class for Phase 4 precompute processors.
 
     Phase 4 processors depend on Phase 3 (Analytics) and other Phase 4 processors.
     This base class provides dependency checking, source tracking, and validation.
+
+    Soft Dependencies (added after Jan 23 incident):
+    - Set use_soft_dependencies = True in child class to enable graceful degradation
+    - Processors will proceed if coverage > 80% instead of all-or-nothing
 
     Lifecycle:
       1) Check dependencies (are upstream tables ready?)
@@ -184,6 +196,11 @@ class PrecomputeProcessorBase(RunHistoryMixin):
     # Processing settings
     validate_on_extract: bool = True
     save_on_error: bool = True
+
+    # Soft dependency settings (added after Jan 23 incident)
+    # When enabled, processor can proceed with degraded upstream data if coverage > threshold
+    use_soft_dependencies: bool = False  # Override in child class to enable
+    soft_dependency_threshold: float = 0.80  # Minimum coverage to proceed (80%)
 
     # BigQuery settings - now uses sport_config for multi-sport support
     dataset_id: str = None  # Will be set from sport_config in __init__
@@ -1047,6 +1064,32 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         if not strict_mode:
             logger.info("⏭️  STRICT MODE DISABLED: Skipping defensive checks")
             return
+
+        # Use soft dependency checking if enabled (added after Jan 23 incident)
+        # This allows proceeding with degraded data if coverage > threshold
+        if self.use_soft_dependencies and SOFT_DEPS_AVAILABLE:
+            logger.info(f"🔄 Using SOFT DEPENDENCY checking (threshold: {self.soft_dependency_threshold:.0%})")
+            dep_result = self.check_soft_dependencies(analysis_date)
+
+            if dep_result['should_proceed']:
+                if dep_result['degraded']:
+                    logger.warning(f"⚠️  Proceeding with DEGRADED dependencies:")
+                    for warning in dep_result['warnings']:
+                        logger.warning(f"    - {warning}")
+                    # Record degraded state for monitoring
+                    self.dependency_check_passed = True
+                    self.data_completeness_pct = min(dep_result['coverage'].values()) * 100 if dep_result['coverage'] else 100.0
+                else:
+                    logger.info("✅ All soft dependencies met")
+                    self.dependency_check_passed = True
+                return  # Dependencies OK (possibly degraded), continue processing
+            else:
+                # Soft dependencies not met
+                logger.error(f"❌ Soft dependencies not met:")
+                for error in dep_result['errors']:
+                    logger.error(f"    - {error}")
+                self.dependency_check_passed = False
+                raise DependencyError(f"Soft dependencies not met: {'; '.join(dep_result['errors'])}")
 
         logger.info("🛡️  Running defensive checks...")
 
