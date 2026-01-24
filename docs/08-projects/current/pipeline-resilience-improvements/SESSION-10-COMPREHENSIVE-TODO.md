@@ -277,6 +277,32 @@ Session 10 deployed 21 parallel agents to analyze and fix resilience issues acro
 
 ---
 
+## Retry Pattern Gap Analysis (From Agent)
+
+### Critical Paths Missing Retry
+
+| Path | File | Lines | Impact |
+|------|------|-------|--------|
+| Predictions Phase 5 | `predictions/worker/data_loaders.py` | 343,539,682,825,973 | Very High |
+| Daily Alerts | `bin/alerts/daily_summary/main.py` | 385 | High |
+| Processor Alerts | `shared/utils/processor_alerting.py` | 224,415 | High |
+| Data Export | `shared/utils/storage_client.py` | 50,53,81,106 | Very High |
+
+### Available But Underutilized Retry Utilities
+
+- `@retry_on_serialization` - Only used in 3 files
+- `@retry_on_quota_exceeded` - Underutilized
+- `get_http_session()` - 22 files bypass with direct requests
+- `@retry_slack_webhook` - Not used in processor_alerting.py
+- `@retry_with_jitter` - Available but underutilized
+
+### Statistics
+- Files making direct requests calls: 22 (should use http_pool)
+- BQ queries without explicit retry: ~30+ files
+- GCS operations without retry: ~25 files
+
+---
+
 ## Circuit Breaker Gap Analysis (From Agent)
 
 ### Services WITH Protection
