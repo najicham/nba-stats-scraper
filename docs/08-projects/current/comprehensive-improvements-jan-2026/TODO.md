@@ -15,10 +15,10 @@ This project consolidates all identified improvements from codebase analysis, ha
 | Priority | Total | Completed | In Progress | Remaining |
 |----------|-------|-----------|-------------|-----------|
 | P0 - Critical | 10 | 10 | 0 | 0 |
-| P1 - High | 25 | 16 | 0 | 9 |
+| P1 - High | 25 | 21 | 0 | 4 |
 | P2 - Medium | 37 | 3 | 0 | 34 |
 | P3 - Low | 26 | 0 | 0 | 26 |
-| **Total** | **98** | **29** | **0** | **69** |
+| **Total** | **98** | **34** | **0** | **64** |
 
 ---
 
@@ -191,11 +191,10 @@ This project consolidates all identified improvements from codebase analysis, ha
   - Notes: `publish_with_retry()` function (lines 853-890) with exponential backoff
   - Retry delays: 1s, 2s, 4s with max 3 retries
 
-- [ ] **P1-17: Add connection pooling**
-  - Status: Not Started
+- [x] **P1-17: Add connection pooling** ✅ FIXED
+  - Status: Completed
   - Files: `scrapers/scraper_base.py`
-  - Issue: Connection exhaustion risk
-  - Solution: Implement HTTP connection pooling
+  - Solution: Added `pool_connections` and `pool_maxsize` params to `get_http_adapter()`
 
 - [x] **P1-18: Validate pagination cursors** ✅ FIXED
   - Status: Completed
@@ -205,27 +204,29 @@ This project consolidates all identified improvements from codebase analysis, ha
 
 ### Analytics
 
-- [ ] **P1-19: Implement player_age feature**
-  - Status: Not Started
-  - Files: `data_processors/phase3_analytics/upcoming_player_game_context_processor.py`
-  - Issue: Not extracted from rosters
-  - Solution: Extract age from roster data
+- [x] **P1-19: Implement player_age feature** ✅ FIXED
+  - Status: Completed
+  - Files: `data_processors/analytics/upcoming_player_game_context/upcoming_player_game_context_processor.py`
+  - Solution: Implemented `_extract_rosters()` to load age from espn_team_rosters
+  - Populates `player_age` field in output row
 
-- [ ] **P1-20: Implement travel_context feature**
-  - Status: Not Started
-  - Issue: No distance/back-to-back tracking
-  - Solution: Add travel distance calculations
+- [x] **P1-20: Implement travel_context feature** ✅ FIXED
+  - Status: Completed
+  - Files: `data_processors/analytics/upcoming_player_game_context/upcoming_player_game_context_processor.py`
+  - Solution: Added `_calculate_travel_context()` using NBATravel utility
+  - Populates: consecutive_road_games, miles_traveled_last_14_days, time_zones_crossed_last_14_days
 
-- [ ] **P1-21: Implement timezone_conversion**
-  - Status: Not Started
-  - Issue: Incomplete UTC/PT/ET handling
-  - Solution: Standardize timezone conversions
+- [x] **P1-21: Implement timezone_conversion** ✅ FIXED
+  - Status: Completed
+  - Files: `data_processors/analytics/upcoming_player_game_context/upcoming_player_game_context_processor.py`
+  - Solution: Implemented `_extract_game_time()` with proper timezone handling
+  - Outputs formatted time like "7:30 PM ET"
 
-- [ ] **P1-22: Add Cloudflare/WAF detection**
-  - Status: Not Started
+- [x] **P1-22: Add Cloudflare/WAF detection** ✅ FIXED
+  - Status: Completed
   - Files: `scrapers/scraper_base.py`
-  - Issue: Blind retries against blocks
-  - Solution: Detect and handle WAF responses
+  - Solution: Added `_check_for_waf_block()` method called after status check
+  - Detects: Cloudflare headers, challenge patterns, HTML vs JSON mismatch
 
 - [x] **P1-23: Improve deployment script error handling** ✅ FIXED
   - Status: Completed
@@ -441,7 +442,7 @@ This project consolidates all identified improvements from codebase analysis, ha
 | 2026-01-23 | P1-4 | Prediction duplicates | Fixed in Session 92 - distributed lock + ROW_NUMBER deduplication |
 | 2026-01-23 | P1-16 | Pub/Sub publish retries | Already implemented - publish_with_retry() with exponential backoff |
 | 2026-01-23 | P1-18 | Pagination cursor validation | Added max_pages guard to cursor_paginate() in bdl_utils.py |
-| 2026-01-24 | NEW | Grading layer validators | Created prediction_accuracy_validator.py (15 checks) and system_daily_performance_validator.py (12 checks) |
+| 2026-01-24 | NEW | Grading layer validators | Created all 5 validators (62 checks total): prediction_accuracy (15), system_daily_performance (12), performance_summary (14), mlb_prediction_grading (10), mlb_shadow_mode (11) |
 | 2026-01-24 | NEW | Retry config expansion | Added 4 HIGH priority scrapers: oddsa_events, bp_events, nbac_player_movement, espn_scoreboard_api (now 28 total) |
 
 ---

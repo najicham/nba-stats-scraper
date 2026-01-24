@@ -1,12 +1,12 @@
 # Session 7 Handoff - Grading Layer Validators
 **Date:** 2026-01-24
-**Focus:** Grading validators (0% → 40% coverage), retry config expansion
+**Focus:** Grading validators (0% → 100% coverage), retry config expansion
 
 ---
 
 ## What Was Done This Session
 
-### 1. Created Grading Layer Validators (0% → 40% coverage)
+### 1. Created Grading Layer Validators (0% → 100% coverage)
 
 **validation/validators/grading/prediction_accuracy_validator.py** (15 checks)
 - Business key validation: (player_lookup, game_id, system_id, line_value)
@@ -28,6 +28,32 @@
 - Source alignment: matches prediction_accuracy totals
 - System coverage: 5 records per date
 - Data freshness: within 2 days
+
+**validation/validators/grading/performance_summary_validator.py** (14 checks)
+- Summary key uniqueness (CRITICAL)
+- Period value formats (rolling_7d, rolling_30d, month, season)
+- Hit rate bounds: 0-1 range
+- Win rate consistency: hits / total_recommendations
+- Archetype, confidence tier, situation value validation
+- Data hash populated for idempotency
+- Data freshness: within 24 hours
+
+**validation/validators/grading/mlb_prediction_grading_validator.py** (10 checks)
+- No stale ungraded records (CRITICAL)
+- Grading logic: OVER/UNDER vs actual strikeouts
+- Strikeouts bounds: 0-20 range
+- PASS handling: NULL is_correct
+- Volume per date: 5+ predictions expected
+- Data freshness: within 2 days
+
+**validation/validators/grading/mlb_shadow_mode_validator.py** (11 checks)
+- No ungraded comparisons (CRITICAL)
+- Both models graded together
+- Error calculations: predicted - actual
+- Closer prediction logic: v1_4 / v1_6 / tie
+- Tie detection accuracy
+- Win rate tracking: V1.4 vs V1.6 performance
+- Closer prediction distribution balance
 
 ### 2. Expanded Retry Config (24 → 28 scrapers)
 
@@ -53,13 +79,17 @@ Agent analysis confirmed P1-1, P1-2, P1-3, P1-4 are **ALREADY IMPLEMENTED**:
 |-------|--------|-------|--------|
 | Precompute | 100% (5/5) | 100% | No change |
 | Analytics | 80% | 80% | No change |
-| Grading | **0%** | **40%** (2/5) | **+40%** |
+| Grading | **0%** | **100%** (5/5) | **+100%** |
 
-### Grading Validators Still Needed (3 remaining)
+**Total validation checks added: 62**
 
-1. **performance_summary_validator.py** - Multi-dimensional slices
-2. **mlb_prediction_grading_validator.py** - MLB strikeout predictions
-3. **mlb_shadow_mode_validator.py** - V1.4 vs V1.6 comparison
+| Validator | Checks |
+|-----------|--------|
+| prediction_accuracy_validator | 15 |
+| system_daily_performance_validator | 12 |
+| performance_summary_validator | 14 |
+| mlb_prediction_grading_validator | 10 |
+| mlb_shadow_mode_validator | 11 |
 
 ---
 
@@ -70,6 +100,9 @@ Agent analysis confirmed P1-1, P1-2, P1-3, P1-4 are **ALREADY IMPLEMENTED**:
 validation/validators/grading/__init__.py
 validation/validators/grading/prediction_accuracy_validator.py
 validation/validators/grading/system_daily_performance_validator.py
+validation/validators/grading/performance_summary_validator.py
+validation/validators/grading/mlb_prediction_grading_validator.py
+validation/validators/grading/mlb_shadow_mode_validator.py
 ```
 
 ### Modified
@@ -82,10 +115,8 @@ docs/08-projects/current/comprehensive-improvements-jan-2026/TODO.md
 
 ## What Still Needs Work
 
-### Grading Validators (60% remaining)
-1. Performance Summary Validator (14 checks)
-2. MLB Prediction Grading Validator (10 checks)
-3. MLB Shadow Mode Validator (11 checks)
+### Grading Validators - COMPLETE ✅
+All 5 validators created with 62 total validation checks.
 
 ### From TODO Tracker - Open P1 Items
 - P1-10: Convert print() to logging
