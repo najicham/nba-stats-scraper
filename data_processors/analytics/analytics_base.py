@@ -1627,10 +1627,31 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
     
     def extract_raw_data(self) -> None:
         """
-        Extract data from raw BigQuery tables.
-        Child classes must implement.
-        
-        Note: Dependency checking happens BEFORE this is called.
+        Extract raw data from source BigQuery tables for analytics processing.
+
+        Subclasses must implement this method to:
+        1. Query upstream tables (boxscores, play-by-play, etc.)
+        2. Store results in self.raw_data (typically a pandas DataFrame)
+        3. Handle the date range from self.opts['start_date'] to self.opts['end_date']
+
+        This method is called AFTER dependency checking passes, so all required
+        upstream tables should have data available.
+
+        Example:
+            def extract_raw_data(self) -> None:
+                query = '''
+                    SELECT player_id, game_date, points, rebounds, assists
+                    FROM `{project}.{dataset}.bdl_boxscores`
+                    WHERE game_date BETWEEN @start_date AND @end_date
+                '''.format(project=self.project_id, dataset=self.raw_dataset)
+
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter('start_date', 'DATE', self.opts['start_date']),
+                        bigquery.ScalarQueryParameter('end_date', 'DATE', self.opts['end_date']),
+                    ]
+                )
+                self.raw_data = self.bq_client.query(query, job_config=job_config).to_dataframe()
         """
         raise NotImplementedError("Child classes must implement extract_raw_data()")
     
@@ -1655,12 +1676,30 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
     
     def calculate_analytics(self) -> None:
         """
-        Calculate analytics metrics and include source metadata.
-        Child classes must implement.
-        
-        Should populate self.transformed_data with records that include:
-        - Business logic fields
-        - Source tracking fields (via **self.build_source_tracking_fields())
+        Calculate analytics metrics from extracted raw data.
+
+        Subclasses must implement this method to:
+        1. Process self.raw_data (typically a pandas DataFrame)
+        2. Calculate derived metrics (rolling averages, rates, trends, etc.)
+        3. Store results in self.transformed_data as List[Dict]
+        4. Include source tracking via self.build_source_tracking_fields()
+
+        Each record should include both business fields and source tracking:
+        - Business fields: player_id, game_date, points_per_game, etc.
+        - Source tracking: processed_at, run_id, data_version, etc.
+
+        Example:
+            def calculate_analytics(self) -> None:
+                results = []
+                for player_id, group in self.raw_data.groupby('player_id'):
+                    avg_pts = group['points'].rolling(window=5).mean().iloc[-1]
+                    results.append({
+                        'player_id': player_id,
+                        'game_date': self.opts['end_date'],
+                        'points_5_game_avg': avg_pts,
+                        **self.build_source_tracking_fields()
+                    })
+                self.transformed_data = results
         """
         raise NotImplementedError("Child classes must implement calculate_analytics()")
     
@@ -1670,8 +1709,22 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
     
     def save_analytics(self) -> None:
         """
-        Save to analytics BigQuery table using batch INSERT.
-        Uses NDJSON load job with schema enforcement.
+        Save calculated analytics to BigQuery using batch loading.
+
+        Converts self.transformed_data to NDJSON format and loads to the
+        target table specified by self.table_name in the analytics dataset.
+
+        Uses batch loading (load_table_from_file) instead of streaming inserts
+        for better reliability and to avoid streaming buffer conflicts.
+
+        The method handles:
+        - Schema enforcement from target table
+        - Retry logic for serialization conflicts
+        - Graceful handling of streaming buffer conflicts
+        - Statistics tracking (rows_inserted)
+
+        Raises:
+            Exception: On BigQuery load failures after retries
         """
         if not self.transformed_data:
             logger.warning("No transformed data to save")

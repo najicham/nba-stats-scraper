@@ -159,7 +159,7 @@ class TestJSONSerializationPerformance:
 
         assert len(result) > 0
         print(f"\nSmall JSON serialization ({len(result)} bytes): "
-              f"{(stats.mean if stats else 1) * 1000:.3f}ms")
+              f"{stats.mean * 1000:.3f}ms")
 
     def test_benchmark_medium_json_serialization(self, benchmark, sample_export_data):
         """Benchmark medium JSON serialization (~100KB)."""
@@ -169,7 +169,7 @@ class TestJSONSerializationPerformance:
 
         assert len(result) > 0
         print(f"\nMedium JSON serialization ({len(result)} bytes): "
-              f"{(stats.mean if stats else 1) * 1000:.3f}ms")
+              f"{stats.mean * 1000:.3f}ms")
 
     def test_benchmark_large_json_serialization(self, benchmark, sample_export_data):
         """Benchmark large JSON serialization (~1MB)."""
@@ -179,7 +179,7 @@ class TestJSONSerializationPerformance:
 
         assert len(result) > 0
         print(f"\nLarge JSON serialization ({len(result)} bytes): "
-              f"{(stats.mean if stats else 1) * 1000:.2f}ms")
+              f"{stats.mean * 1000:.2f}ms")
 
     def test_benchmark_json_with_custom_encoder(self, benchmark):
         """Benchmark JSON serialization with custom encoder."""
@@ -206,7 +206,7 @@ class TestJSONSerializationPerformance:
 
         assert len(result) > 0
         print(f"\nJSON with custom encoder: "
-              f"{(stats.mean if stats else 1) * 1000:.3f}ms")
+              f"{stats.mean * 1000:.3f}ms")
 
 
 # =============================================================================
@@ -231,7 +231,9 @@ class TestGCSUploadPerformance:
         assert result.startswith('gs://')
         stats = _get_stats(benchmark)
         if stats:
-            print(f"\nSmall upload: {stats.mean * 1000:.3f}ms")
+            stats = _get_stats(benchmark)
+            if stats:
+                print(f"\nSmall upload: {stats.mean * 1000:.3f}ms")
 
     def test_benchmark_medium_upload(self, benchmark, sample_export_data, mock_gcs_client):
         """Benchmark medium payload upload."""
@@ -248,7 +250,9 @@ class TestGCSUploadPerformance:
         assert result.startswith('gs://')
         stats = _get_stats(benchmark)
         if stats:
-            print(f"\nMedium upload: {stats.mean * 1000:.3f}ms")
+            stats = _get_stats(benchmark)
+            if stats:
+                print(f"\nMedium upload: {stats.mean * 1000:.3f}ms")
 
     def test_benchmark_large_upload(self, benchmark, sample_export_data, mock_gcs_client):
         """Benchmark large payload upload."""
@@ -265,7 +269,9 @@ class TestGCSUploadPerformance:
         assert result.startswith('gs://')
         stats = _get_stats(benchmark)
         if stats:
-            print(f"\nLarge upload: {stats.mean * 1000:.2f}ms")
+            stats = _get_stats(benchmark)
+            if stats:
+                print(f"\nLarge upload: {stats.mean * 1000:.2f}ms")
 
 
 # =============================================================================
@@ -287,7 +293,7 @@ class TestCompressionPerformance:
 
         compression_ratio = len(json_str) / len(result)
         print(f"\nGzip compression ({len(json_str)} -> {len(result)} bytes, "
-              f"{compression_ratio:.1f}x): {(stats.mean if stats else 1) * 1000:.2f}ms")
+              f"{compression_ratio:.1f}x): {stats.mean * 1000:.2f}ms")
 
     def test_benchmark_gzip_levels(self, sample_export_data):
         """Compare gzip compression levels."""
@@ -366,8 +372,10 @@ class TestFullExportLifecycle:
         result = benchmark(full_export)
 
         assert result.startswith('gs://')
-        print(f"\nFull predictions export (450 players): "
-              f"{(stats.mean if stats else 1) * 1000:.2f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nFull predictions export (450 players): "
+                      f"{stats.mean * 1000:.2f}ms")
 
     def test_benchmark_results_export_lifecycle(self, benchmark, mock_gcs_client):
         """Benchmark full results export lifecycle."""
@@ -406,8 +414,10 @@ class TestFullExportLifecycle:
         result = benchmark(full_export)
 
         assert result.startswith('gs://')
-        print(f"\nFull results export (450 players): "
-              f"{(stats.mean if stats else 1) * 1000:.2f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nFull results export (450 players): "
+                      f"{stats.mean * 1000:.2f}ms")
 
 
 # =============================================================================
@@ -443,8 +453,8 @@ class TestBatchExportPerformance:
 
         assert len(result) == days
         print(f"\nMulti-day export ({days} days): "
-              f"{(stats.mean if stats else 1) * 1000:.2f}ms "
-              f"({(stats.mean if stats else 1) * 1000 / days:.2f}ms per day)")
+              f"{stats.mean * 1000:.2f}ms "
+              f"({stats.mean * 1000 / days:.2f}ms per day)")
 
     def test_benchmark_parallel_vs_sequential_export(self, mock_gcs_client, sample_export_data):
         """Compare parallel vs sequential export performance."""
@@ -493,7 +503,7 @@ class TestCacheHeaderPerformance:
             )
 
             print(f"\nCache '{cache_control[:20]}...': "
-                  f"{(stats.mean if stats else 1) * 1000:.3f}ms")
+                  f"{stats.mean * 1000:.3f}ms")
 
 
 # =============================================================================

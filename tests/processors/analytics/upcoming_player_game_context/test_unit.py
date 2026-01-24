@@ -526,44 +526,127 @@ class TestSourceTrackingFields:
 
 
 class TestSeasonPhaseDetermination:
-    """Test season phase categorization."""
-    
+    """Test season phase categorization.
+
+    Phase definitions:
+    - preseason: Before regular season starts (typically early-mid October)
+    - early_season: First 20 games per team (Oct-Nov typically)
+    - mid_season: Games 21-60 (Dec-Feb typically)
+    - all_star_break: All-Star Weekend period (mid-February)
+    - post_all_star: After All-Star break until game 67 (late Feb-Mar)
+    - playoff_push: Last 15 games of regular season (games 68-82, Mar-Apr)
+    - playoffs: Postseason games including play-in (Apr-Jun)
+    - offseason: July-September, no games scheduled
+    """
+
     @pytest.fixture
     def processor(self):
-        """Create processor instance."""
+        """Create processor instance with mocked BigQuery."""
         proc = UpcomingPlayerGameContextProcessor()
         proc.bq_client = Mock()
+        proc.project_id = 'test-project'
+        proc.players_to_process = []
         return proc
-    
+
     def test_early_season_october(self, processor):
-        """Test early season detection for October."""
+        """Test early season detection for late October (after typical season start)."""
+        # Late October uses fallback (no BigQuery response)
+        processor.bq_client.query.return_value.result.return_value = iter([])
         result = processor._determine_season_phase(date(2024, 10, 25))
-        assert result == 'early'
-    
+        assert result == 'early_season'
+
     def test_early_season_november(self, processor):
         """Test early season detection for November."""
+        processor.bq_client.query.return_value.result.return_value = iter([])
         result = processor._determine_season_phase(date(2024, 11, 15))
-        assert result == 'early'
-    
+        assert result == 'early_season'
+
     def test_mid_season_december(self, processor):
         """Test mid season detection for December."""
+        processor.bq_client.query.return_value.result.return_value = iter([])
         result = processor._determine_season_phase(date(2024, 12, 25))
-        assert result == 'mid'
-    
+        assert result == 'mid_season'
+
     def test_mid_season_january(self, processor):
         """Test mid season detection for January."""
+        processor.bq_client.query.return_value.result.return_value = iter([])
         result = processor._determine_season_phase(date(2025, 1, 15))
-        assert result == 'mid'
-    
+        assert result == 'mid_season'
+
     def test_late_season_march(self, processor):
-        """Test late season detection for March."""
+        """Test playoff push detection for late March."""
+        processor.bq_client.query.return_value.result.return_value = iter([])
         result = processor._determine_season_phase(date(2025, 3, 20))
-        assert result == 'late'
-    
+        assert result == 'playoff_push'
+
     def test_playoffs_may(self, processor):
         """Test playoffs detection for May."""
+        processor.bq_client.query.return_value.result.return_value = iter([])
         result = processor._determine_season_phase(date(2025, 5, 10))
         assert result == 'playoffs'
+
+    def test_offseason_july(self, processor):
+        """Test offseason detection for July."""
+        result = processor._determine_season_phase(date(2025, 7, 15))
+        assert result == 'offseason'
+
+    def test_preseason_early_october(self, processor):
+        """Test preseason detection for early October."""
+        processor.bq_client.query.return_value.result.return_value = iter([])
+        result = processor._determine_season_phase(date(2024, 10, 5))
+        assert result == 'preseason'
+
+    def test_all_star_break_mid_february(self, processor):
+        """Test All-Star break detection for mid-February."""
+        processor.bq_client.query.return_value.result.return_value = iter([])
+        result = processor._determine_season_phase(date(2025, 2, 16))
+        assert result == 'all_star_break'
+
+    def test_post_all_star_late_february(self, processor):
+        """Test post All-Star detection for late February."""
+        processor.bq_client.query.return_value.result.return_value = iter([])
+        result = processor._determine_season_phase(date(2025, 2, 25))
+        assert result == 'post_all_star'
+
+    def test_with_schedule_data_regular_season(self, processor):
+        """Test season phase with schedule data indicating regular season."""
+        mock_row = Mock()
+        mock_row.is_all_star = False
+        mock_row.is_playoffs = False
+        mock_row.is_regular_season = True
+        mock_row.playoff_round = None
+        mock_row.season_year = 2024
+
+        processor.bq_client.query.return_value.result.return_value = iter([mock_row])
+        result = processor._determine_season_phase(date(2024, 12, 1))
+        # Will use date-based fallback for regular season sub-phase since team_abbr is None
+        assert result == 'mid_season'
+
+    def test_with_schedule_data_playoffs(self, processor):
+        """Test season phase with schedule data indicating playoffs."""
+        mock_row = Mock()
+        mock_row.is_all_star = False
+        mock_row.is_playoffs = True
+        mock_row.is_regular_season = False
+        mock_row.playoff_round = 'first'
+        mock_row.season_year = 2024
+
+        processor.bq_client.query.return_value.result.return_value = iter([mock_row])
+        result = processor._determine_season_phase(date(2025, 4, 20))
+        assert result == 'playoffs'
+
+    def test_with_schedule_data_all_star(self, processor):
+        """Test season phase with schedule data indicating All-Star game."""
+        mock_row = Mock()
+        mock_row.is_all_star = True
+        mock_row.is_playoffs = False
+        mock_row.is_regular_season = False
+        mock_row.playoff_round = None
+        mock_row.season_year = 2024
+
+        processor.bq_client.query.return_value.result.return_value = iter([mock_row])
+        result = processor._determine_season_phase(date(2025, 2, 16))
+        assert result == 'all_star_break'
 
 
 class TestPaceMetricsCalculation:

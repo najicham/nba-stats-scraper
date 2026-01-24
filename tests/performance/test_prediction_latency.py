@@ -218,7 +218,7 @@ class TestSinglePredictionLatency:
         assert recommendation in ['OVER', 'UNDER', 'PASS']
 
         print(f"\nMoving Average single prediction: "
-              f"{(stats.mean if stats else 1) * 1000000:.2f}us")
+              f"{stats.mean * 1000000:.2f}us")
 
     def test_benchmark_ensemble_prediction(self, benchmark, sample_features):
         """Benchmark single ensemble prediction."""
@@ -237,7 +237,7 @@ class TestSinglePredictionLatency:
         assert 10 <= prediction <= 50
 
         print(f"\nEnsemble single prediction: "
-              f"{(stats.mean if stats else 1) * 1000000:.2f}us")
+              f"{stats.mean * 1000000:.2f}us")
 
     def test_benchmark_xgboost_prediction(self, benchmark, sample_features):
         """Benchmark single XGBoost prediction."""
@@ -256,7 +256,7 @@ class TestSinglePredictionLatency:
         assert prediction is not None
 
         print(f"\nXGBoost single prediction: "
-              f"{(stats.mean if stats else 1) * 1000000:.2f}us")
+              f"{stats.mean * 1000000:.2f}us")
 
 
 # =============================================================================
@@ -290,7 +290,7 @@ class TestBatchPredictionThroughput:
 
         assert len(result) == batch_size
         print(f"\nMoving Average batch ({batch_size}): "
-              f"{(stats.mean if stats else 1) * 1000:.2f}ms "
+              f"{stats.mean * 1000:.2f}ms "
               f"({(batch_size / stats.mean if stats else 0):.0f} predictions/sec)")
 
     @pytest.mark.parametrize("batch_size", [50, 100, 200, 450])
@@ -317,7 +317,7 @@ class TestBatchPredictionThroughput:
 
         assert len(result) == batch_size
         print(f"\nEnsemble batch ({batch_size}): "
-              f"{(stats.mean if stats else 1) * 1000:.2f}ms "
+              f"{stats.mean * 1000:.2f}ms "
               f"({(batch_size / stats.mean if stats else 0):.0f} predictions/sec)")
 
 
@@ -337,7 +337,7 @@ class TestFeatureValidationPerformance:
 
         assert result is True
         print(f"\nSingle feature validation: "
-              f"{(stats.mean if stats else 1) * 1000000:.2f}us")
+              f"{stats.mean * 1000000:.2f}us")
 
     def test_benchmark_batch_feature_validation(self, benchmark, sample_features):
         """Benchmark batch feature validation."""
@@ -351,7 +351,7 @@ class TestFeatureValidationPerformance:
 
         assert all(result)
         print(f"\nBatch feature validation (450): "
-              f"{(stats.mean if stats else 1) * 1000:.2f}ms")
+              f"{stats.mean * 1000:.2f}ms")
 
 
 # =============================================================================
@@ -374,7 +374,7 @@ class TestConfidenceCalculationPerformance:
 
         assert 0.2 <= result <= 0.8
         print(f"\nConfidence calculation: "
-              f"{(stats.mean if stats else 1) * 1000000:.2f}us")
+              f"{stats.mean * 1000000:.2f}us")
 
     def test_benchmark_batch_confidence_calculation(self, benchmark):
         """Benchmark batch confidence calculation."""
@@ -396,7 +396,7 @@ class TestConfidenceCalculationPerformance:
 
         assert len(result) == 450
         print(f"\nBatch confidence calculation (450): "
-              f"{(stats.mean if stats else 1) * 1000:.2f}ms")
+              f"{stats.mean * 1000:.2f}ms")
 
 
 # =============================================================================
@@ -420,7 +420,7 @@ class TestRecommendationLogicPerformance:
 
         assert result in ['OVER', 'UNDER', 'PASS']
         print(f"\nSingle recommendation: "
-              f"{(stats.mean if stats else 1) * 1000000:.2f}us")
+              f"{stats.mean * 1000000:.2f}us")
 
     def test_benchmark_batch_recommendation(self, benchmark):
         """Benchmark batch recommendation determination."""
@@ -443,7 +443,7 @@ class TestRecommendationLogicPerformance:
         assert len(result) == 450
         assert all(r in ['OVER', 'UNDER', 'PASS'] for r in result)
         print(f"\nBatch recommendation (450): "
-              f"{(stats.mean if stats else 1) * 1000:.2f}ms")
+              f"{stats.mean * 1000:.2f}ms")
 
 
 # =============================================================================
@@ -488,7 +488,7 @@ class TestEndToEndPipelinePerformance:
         assert 'confidence' in result
         assert 'recommendation' in result
         print(f"\nFull prediction pipeline: "
-              f"{(stats.mean if stats else 1) * 1000000:.2f}us")
+              f"{stats.mean * 1000000:.2f}us")
 
     def test_benchmark_game_day_predictions(self, benchmark, sample_features):
         """Benchmark predictions for a full game day (~450 players)."""
@@ -516,7 +516,7 @@ class TestEndToEndPipelinePerformance:
 
         assert len(result) == 450
         print(f"\nGame day predictions (450 players): "
-              f"{(stats.mean if stats else 1) * 1000:.2f}ms "
+              f"{stats.mean * 1000:.2f}ms "
               f"({(450 / stats.mean if stats else 0):.0f} predictions/sec)")
 
 

@@ -2672,8 +2672,30 @@ class ScraperBase:
 
     def transform_data(self):
         """
-        Child classes override to slice or restructure self.decoded_data into self.data.
-        E.g. self.data["some_key"] = ...
+        Transform decoded API response into the format for export.
+
+        Subclasses must override this method to restructure self.decoded_data
+        into self.data. The transformed data in self.data will be exported
+        to GCS/BigQuery.
+
+        This is where you:
+        - Extract relevant fields from the API response
+        - Rename fields to match your schema
+        - Add computed fields (timestamps, derived values)
+        - Flatten nested structures
+
+        Example:
+            def transform_data(self):
+                games = self.decoded_data.get('scoreboard', {}).get('games', [])
+                self.data['games'] = [
+                    {
+                        'game_id': g['gameId'],
+                        'home_team': g['homeTeam']['teamTricode'],
+                        'away_team': g['awayTeam']['teamTricode'],
+                        'game_date': self.opts['date']
+                    }
+                    for g in games
+                ]
         """
         pass
 
@@ -2703,8 +2725,19 @@ class ScraperBase:
 
     def export_data(self):
         """
-        Evaluate each exporter config in self.exporters.
-        Enhanced with Sentry span tracking and notifications.
+        Export transformed data using configured exporters.
+
+        Iterates through self.exporters and executes each one that matches
+        the current group setting. Exporters can write to GCS, BigQuery,
+        or other destinations.
+
+        Each exporter config should specify:
+        - groups: List of groups to run for (e.g., ['dev', 'prod'])
+        - exporter_class: The exporter class to use (e.g., GCSExporter)
+        - path_template: GCS path with placeholders for opts
+        - export_mode: What to export (DATA, RAW_RESPONSE, BOTH)
+
+        Sends notifications on export failures for monitoring.
         """
         with sentry_sdk.start_span(op="data.export", description="Export scraper data") as span:
             span.set_tag("export.group", self.opts.get("group", "unknown"))

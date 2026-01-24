@@ -4285,6 +4285,167 @@ class UpcomingPlayerGameContextProcessor(
             logger.error(f"Data error getting star tier out for {team_abbr}: {e}")
             return 0
 
+    def _calculate_projected_usage_rate(self, player_lookup: str, team_abbr: str,
+                                        game_date: date, star_teammates_out: int,
+                                        opponent_team_abbr: str, historical_data: pd.DataFrame) -> Optional[float]:
+        """
+        Calculate projected usage rate based on multiple contextual factors.
+
+        The projection combines:
+        1. Historical baseline: Player's average usage rate over last 10 games
+        2. Teammate availability: Boost when star teammates are out (their usage redistributes)
+        3. Matchup context: Adjustment based on opponent's pace and defensive style
+        4. Recent trend: Momentum adjustment based on last 5 vs last 10 games
+
+        Formula:
+            projected_usage = baseline_usage * (1 + injury_boost + matchup_adj + trend_adj)
+
+        Args:
+            player_lookup: Player identifier
+            team_abbr: Player's team abbreviation
+            game_date: Game date for context
+            star_teammates_out: Count of star teammates marked OUT/DOUBTFUL
+            opponent_team_abbr: Opponent team abbreviation
+            historical_data: DataFrame of player's historical boxscores
+
+        Returns:
+            float: Projected usage rate (0-50 range typically), or None if insufficient data
+        """
+        try:
+            # STEP 1: Get baseline usage from player_game_summary
+            baseline_query = f"""
+            WITH recent_games AS (
+                SELECT usage_rate, game_date
+                FROM `{self.project_id}.nba_analytics.player_game_summary`
+                WHERE player_lookup = @player_lookup
+                  AND game_date < @game_date
+                  AND game_date >= DATE_SUB(@game_date, INTERVAL 30 DAY)
+                  AND usage_rate IS NOT NULL
+                ORDER BY game_date DESC
+                LIMIT 10
+            )
+            SELECT AVG(usage_rate) as avg_usage_l10, COUNT(*) as games_count
+            FROM recent_games
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("player_lookup", "STRING", player_lookup),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
+            result = self.bq_client.query(baseline_query, job_config=job_config).result()
+            row = next(result, None)
+
+            if not row or row.avg_usage_l10 is None or row.games_count < 3:
+                return None
+
+            baseline_usage = float(row.avg_usage_l10)
+
+            # STEP 2: Calculate injury boost (teammate availability)
+            injury_boost = 0.0
+            if star_teammates_out > 0:
+                capped_stars_out = min(star_teammates_out, 3)
+                base_boost_per_star = 0.03 if baseline_usage < 20 else 0.05
+                injury_boost = capped_stars_out * base_boost_per_star
+
+            # STEP 3: Calculate matchup adjustment (opponent context)
+            matchup_adj = 0.0
+            try:
+                matchup_query = f"""
+                WITH opponent_games AS (
+                    SELECT pace, def_rating
+                    FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
+                    WHERE team_abbr = @opponent_abbr
+                      AND game_date < @game_date
+                      AND game_date >= DATE_SUB(@game_date, INTERVAL 30 DAY)
+                    ORDER BY game_date DESC
+                    LIMIT 10
+                ),
+                league_avg AS (
+                    SELECT AVG(pace) as avg_pace, AVG(def_rating) as avg_def_rating
+                    FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
+                    WHERE game_date < @game_date
+                      AND game_date >= DATE_SUB(@game_date, INTERVAL 30 DAY)
+                )
+                SELECT
+                    (SELECT AVG(pace) FROM opponent_games) as opp_pace,
+                    (SELECT AVG(def_rating) FROM opponent_games) as opp_def_rating,
+                    (SELECT avg_pace FROM league_avg) as league_pace,
+                    (SELECT avg_def_rating FROM league_avg) as league_def_rating
+                """
+                matchup_job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter("opponent_abbr", "STRING", opponent_team_abbr),
+                        bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                    ]
+                )
+                matchup_result = self.bq_client.query(matchup_query, job_config=matchup_job_config).result()
+                matchup_row = next(matchup_result, None)
+
+                if matchup_row and matchup_row.opp_pace and matchup_row.league_pace:
+                    pace_diff = (matchup_row.opp_pace - matchup_row.league_pace) / matchup_row.league_pace
+                    matchup_adj += max(-0.03, min(0.03, pace_diff * 0.5))
+                    if matchup_row.opp_def_rating and matchup_row.league_def_rating:
+                        def_diff = (matchup_row.opp_def_rating - matchup_row.league_def_rating) / matchup_row.league_def_rating
+                        matchup_adj += max(-0.02, min(0.02, def_diff * 0.3))
+            except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded):
+                pass  # Continue without matchup adjustment
+
+            # STEP 4: Calculate recent trend adjustment
+            trend_adj = 0.0
+            try:
+                trend_query = f"""
+                WITH recent_5 AS (
+                    SELECT AVG(usage_rate) as avg_usage FROM (
+                        SELECT usage_rate FROM `{self.project_id}.nba_analytics.player_game_summary`
+                        WHERE player_lookup = @player_lookup AND game_date < @game_date
+                          AND game_date >= DATE_SUB(@game_date, INTERVAL 30 DAY) AND usage_rate IS NOT NULL
+                        ORDER BY game_date DESC LIMIT 5
+                    )
+                ),
+                recent_10 AS (
+                    SELECT AVG(usage_rate) as avg_usage FROM (
+                        SELECT usage_rate FROM `{self.project_id}.nba_analytics.player_game_summary`
+                        WHERE player_lookup = @player_lookup AND game_date < @game_date
+                          AND game_date >= DATE_SUB(@game_date, INTERVAL 30 DAY) AND usage_rate IS NOT NULL
+                        ORDER BY game_date DESC LIMIT 10
+                    )
+                )
+                SELECT (SELECT avg_usage FROM recent_5) as l5_usage, (SELECT avg_usage FROM recent_10) as l10_usage
+                """
+                trend_job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter("player_lookup", "STRING", player_lookup),
+                        bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                    ]
+                )
+                trend_result = self.bq_client.query(trend_query, job_config=trend_job_config).result()
+                trend_row = next(trend_result, None)
+                if trend_row and trend_row.l5_usage and trend_row.l10_usage:
+                    usage_momentum = (trend_row.l5_usage - trend_row.l10_usage) / trend_row.l10_usage
+                    trend_adj = max(-0.05, min(0.05, usage_momentum * 0.5))
+            except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded):
+                pass  # Continue without trend adjustment
+
+            # STEP 5: Calculate final projected usage
+            total_adjustment = 1 + injury_boost + matchup_adj + trend_adj
+            projected_usage = baseline_usage * total_adjustment
+            projected_usage = max(5.0, min(50.0, projected_usage))
+
+            logger.debug(
+                f"Projected usage for {player_lookup}: baseline={baseline_usage:.1f}, "
+                f"injury_boost={injury_boost:.3f}, matchup_adj={matchup_adj:.3f}, "
+                f"trend_adj={trend_adj:.3f}, projected={projected_usage:.1f}"
+            )
+            return round(projected_usage, 1)
+
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error calculating projected usage for {player_lookup}: {e}")
+            return None
+        except (KeyError, AttributeError, TypeError, ValueError) as e:
+            logger.error(f"Data error calculating projected usage for {player_lookup}: {e}")
+            return None
+
     def _calculate_data_quality(self, historical_data: pd.DataFrame,
                                 game_lines_info: Dict) -> Dict:
         """
