@@ -11,6 +11,7 @@ Usage:
 Expected improvement: 3-7% over mock baseline (4.33 MAE → 4.0-4.2 MAE)
 """
 
+import logging
 import os
 import sys
 from datetime import datetime
@@ -26,24 +27,26 @@ from google.cloud import bigquery
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.model_selection import train_test_split
 
+logger = logging.getLogger(__name__)
+
 # Configuration
 PROJECT_ID = "nba-props-platform"
 MODEL_OUTPUT_DIR = Path("models")
 MODEL_OUTPUT_DIR.mkdir(exist_ok=True)
 
-print("=" * 80)
-print(" TRAINING REAL XGBOOST MODEL TO REPLACE MOCK")
-print("=" * 80)
-print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print()
+logger.info("=" * 80)
+logger.info(" TRAINING REAL XGBOOST MODEL TO REPLACE MOCK")
+logger.info("=" * 80)
+logger.info(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+logger.info("")
 
 # ============================================================================
 # STEP 1: EXTRACT TRAINING DATA FROM BIGQUERY
 # ============================================================================
 
-print("=" * 80)
-print("STEP 1: LOADING TRAINING DATA FROM BIGQUERY")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 1: LOADING TRAINING DATA FROM BIGQUERY")
+logger.info("=" * 80)
 
 client = bigquery.Client(project=PROJECT_ID)
 
@@ -239,24 +242,24 @@ WHERE pp.points_avg_last_5 IS NOT NULL
   AND pp.points_avg_last_10 IS NOT NULL
 """
 
-print("Fetching data from BigQuery...")
-print(f"Date range: 2021-11-01 to 2024-05-01")
-print()
+logger.info("Fetching data from BigQuery...")
+logger.info(f"Date range: 2021-11-01 to 2024-05-01")
+logger.info("")
 
 df = client.query(query).to_dataframe()
 
-print(f"✓ Loaded {len(df):,} games")
-print(f"  Date range: {df['game_date'].min()} to {df['game_date'].max()}")
-print(f"  Unique players: {df['player_lookup'].nunique()}")
-print()
+logger.info(f"Loaded {len(df):,} games")
+logger.info(f"  Date range: {df['game_date'].min()} to {df['game_date'].max()}")
+logger.info(f"  Unique players: {df['player_lookup'].nunique()}")
+logger.info("")
 
 # ============================================================================
 # STEP 2: FEATURE ENGINEERING & DATA PREPARATION
 # ============================================================================
 
-print("=" * 80)
-print("STEP 2: PREPARING FEATURES")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 2: PREPARING FEATURES")
+logger.info("=" * 80)
 
 # Define feature columns - ALL 25 features matching prediction worker expectations
 # ORDER MATTERS! Must match xgboost_v1.py worker expectations exactly
@@ -297,12 +300,12 @@ feature_cols = [
     'usage_rate_last_10',
 ]
 
-print(f"\n🎯 v4 MODEL: Using {len(feature_cols)} REAL features (removed 4 placeholders)")
-print(f"   - 14 from v2 model")
-print(f"   - 7 from v3 model (context/opponent/team)")
-print(f"   - Removed: 4 placeholder features (were all zeros)")
-print(f"   → v4 focuses model capacity on real signals!")
-print()
+logger.info(f"v4 MODEL: Using {len(feature_cols)} REAL features (removed 4 placeholders)")
+logger.info(f"   - 14 from v2 model")
+logger.info(f"   - 7 from v3 model (context/opponent/team)")
+logger.info(f"   - Removed: 4 placeholder features (were all zeros)")
+logger.info(f"   -> v4 focuses model capacity on real signals!")
+logger.info("")
 
 # Target variable (what we're predicting)
 target_col = 'actual_points'
@@ -311,21 +314,21 @@ target_col = 'actual_points'
 X = df[feature_cols].copy()
 y = df[target_col].copy()
 
-print(f"✓ Features: {len(feature_cols)} columns")
-print(f"✓ Target: {target_col}")
-print(f"✓ Samples: {len(X):,}")
-print()
+logger.info(f"Features: {len(feature_cols)} columns")
+logger.info(f"Target: {target_col}")
+logger.info(f"Samples: {len(X):,}")
+logger.info("")
 
 # Convert all columns to float (BigQuery NUMERIC comes as object/Decimal)
-print("Converting data types...")
+logger.info("Converting data types...")
 for col in X.columns:
     X[col] = pd.to_numeric(X[col], errors='coerce')
 y = pd.to_numeric(y, errors='coerce')
-print(f"✓ All features converted to numeric")
-print()
+logger.info(f"All features converted to numeric")
+logger.info("")
 
 # Handle missing values (fill with reasonable defaults - feature-specific, not global zeros)
-print("Handling missing values with feature-specific defaults...")
+logger.info("Handling missing values with feature-specific defaults...")
 missing_before = X.isnull().sum().sum()
 
 # Performance features
@@ -364,23 +367,23 @@ X['usage_rate_last_10'] = X['usage_rate_last_10'].fillna(25.0)
 # Check for any remaining nulls (should be 0)
 missing_after = X.isnull().sum().sum()
 if missing_after > 0:
-    print(f"⚠️  WARNING: {missing_after} missing values remain!")
-    print("Columns with missing values:")
-    print(X.isnull().sum()[X.isnull().sum() > 0])
+    logger.warning(f"WARNING: {missing_after} missing values remain!")
+    logger.warning("Columns with missing values:")
+    logger.warning(X.isnull().sum()[X.isnull().sum() > 0])
     # Fill any remaining with 0 as last resort
     X = X.fillna(0)
-    print("→ Filled remaining with 0")
+    logger.info("-> Filled remaining with 0")
 
-print(f"✓ Missing values handled: {missing_before} → {missing_after}")
-print()
+logger.info(f"Missing values handled: {missing_before} -> {missing_after}")
+logger.info("")
 
 # ============================================================================
 # STEP 3: SPLIT DATA (CHRONOLOGICAL)
 # ============================================================================
 
-print("=" * 80)
-print("STEP 3: SPLITTING DATA CHRONOLOGICALLY")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 3: SPLITTING DATA CHRONOLOGICALLY")
+logger.info("=" * 80)
 
 # Split chronologically to simulate real-world deployment
 # Training: oldest 70% | Validation: next 15% | Test: newest 15%
@@ -407,18 +410,18 @@ X_test = X.iloc[test_idx]
 y_test = y.iloc[test_idx]
 test_dates = df_sorted.iloc[test_idx]
 
-print(f"✓ Training set:   {len(X_train):,} games ({train_dates['game_date'].min()} to {train_dates['game_date'].max()})")
-print(f"✓ Validation set: {len(X_val):,} games ({val_dates['game_date'].min()} to {val_dates['game_date'].max()})")
-print(f"✓ Test set:       {len(X_test):,} games ({test_dates['game_date'].min()} to {test_dates['game_date'].max()})")
-print()
+logger.info(f"Training set:   {len(X_train):,} games ({train_dates['game_date'].min()} to {train_dates['game_date'].max()})")
+logger.info(f"Validation set: {len(X_val):,} games ({val_dates['game_date'].min()} to {val_dates['game_date'].max()})")
+logger.info(f"Test set:       {len(X_test):,} games ({test_dates['game_date'].min()} to {test_dates['game_date'].max()})")
+logger.info("")
 
 # ============================================================================
 # STEP 4: TRAIN XGBOOST MODEL
 # ============================================================================
 
-print("=" * 80)
-print("STEP 4: TRAINING XGBOOST MODEL")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 4: TRAINING XGBOOST MODEL")
+logger.info("=" * 80)
 
 # Hyperparameters - v4 improvements for better performance
 # Changes from v3:
@@ -442,12 +445,12 @@ params = {
     'early_stopping_rounds': 20  # Stop if no improvement for 20 rounds
 }
 
-print("Hyperparameters (v4 - improved for complex rule learning):")
+logger.info("Hyperparameters (v4 - improved for complex rule learning):")
 for key, value in params.items():
-    print(f"  {key}: {value}")
-print()
+    logger.info(f"  {key}: {value}")
+logger.info("")
 
-print(f"Training up to {params['n_estimators']} trees (with early stopping)...")
+logger.info(f"Training up to {params['n_estimators']} trees (with early stopping)...")
 model = xgb.XGBRegressor(**params)
 
 # Train with early stopping on validation set
@@ -457,17 +460,17 @@ model.fit(
     verbose=20  # Print every 20 iterations
 )
 
-print()
-print("✓ Training complete!")
-print()
+logger.info("")
+logger.info("Training complete!")
+logger.info("")
 
 # ============================================================================
 # STEP 5: EVALUATE MODEL
 # ============================================================================
 
-print("=" * 80)
-print("STEP 5: EVALUATING MODEL PERFORMANCE")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 5: EVALUATING MODEL PERFORMANCE")
+logger.info("=" * 80)
 
 def evaluate_model(y_true, y_pred, dataset_name="Test"):
     """Calculate evaluation metrics"""
@@ -480,14 +483,14 @@ def evaluate_model(y_true, y_pred, dataset_name="Test"):
     within_3 = (errors <= 3).mean() * 100
     within_5 = (errors <= 5).mean() * 100
 
-    print(f"\n{dataset_name} Set Evaluation")
-    print("-" * 40)
-    print(f"MAE (Mean Absolute Error):     {mae:.2f} points")
-    print(f"RMSE (Root Mean Squared Error): {rmse:.2f} points")
-    print(f"Within 1 point:                 {within_1:.1f}%")
-    print(f"Within 3 points:                {within_3:.1f}%")
-    print(f"Within 5 points:                {within_5:.1f}%")
-    print(f"Samples:                        {len(y_true):,}")
+    logger.info(f"\n{dataset_name} Set Evaluation")
+    logger.info("-" * 40)
+    logger.info(f"MAE (Mean Absolute Error):     {mae:.2f} points")
+    logger.info(f"RMSE (Root Mean Squared Error): {rmse:.2f} points")
+    logger.info(f"Within 1 point:                 {within_1:.1f}%")
+    logger.info(f"Within 3 points:                {within_3:.1f}%")
+    logger.info(f"Within 5 points:                {within_5:.1f}%")
+    logger.info(f"Samples:                        {len(y_true):,}")
 
     return {
         'mae': mae,
@@ -510,14 +513,14 @@ test_metrics = evaluate_model(y_test, test_pred, "Test")
 # STEP 6: COMPARE TO PRODUCTION MOCK BASELINE
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("STEP 6: COMPARISON TO PRODUCTION MOCK BASELINE")
-print("=" * 80)
+logger.info("\n" + "=" * 80)
+logger.info("STEP 6: COMPARISON TO PRODUCTION MOCK BASELINE")
+logger.info("=" * 80)
 
 # Query actual production mock predictions (FIX: don't use mock_prediction column)
 # The mock_prediction column in the training data is corrupted/placeholder data
 # We need to query the actual production system's predictions
-print("\nQuerying production mock predictions from BigQuery...")
+logger.info("\nQuerying production mock predictions from BigQuery...")
 production_query = f"""
 SELECT
   player_lookup,
@@ -541,8 +544,8 @@ try:
     )
 
     if len(test_with_mock) == 0:
-        print("⚠️  WARNING: No matching production predictions found!")
-        print("   Falling back to mock_prediction column (may be inaccurate)")
+        logger.warning("WARNING: No matching production predictions found!")
+        logger.warning("   Falling back to mock_prediction column (may be inaccurate)")
         mock_predictions = df_sorted.iloc[test_idx]['mock_prediction'].values
         mock_mae = mean_absolute_error(y_test, mock_predictions)
         mock_coverage = 0
@@ -559,14 +562,14 @@ try:
         mock_within_5 = (errors <= 5).mean() * 100
         mock_coverage = len(test_with_mock) / len(test_dates) * 100
 
-        print(f"✓ Matched {len(test_with_mock):,}/{len(test_dates):,} test predictions ({mock_coverage:.1f}% coverage)")
-        print(f"  Production Mock MAE: {mock_mae:.2f}")
-        print(f"  Production Mock within 3 pts: {mock_within_3:.1f}%")
-        print(f"  Production Mock within 5 pts: {mock_within_5:.1f}%")
+        logger.info(f"Matched {len(test_with_mock):,}/{len(test_dates):,} test predictions ({mock_coverage:.1f}% coverage)")
+        logger.info(f"  Production Mock MAE: {mock_mae:.2f}")
+        logger.info(f"  Production Mock within 3 pts: {mock_within_3:.1f}%")
+        logger.info(f"  Production Mock within 5 pts: {mock_within_5:.1f}%")
 
 except Exception as e:
-    print(f"⚠️  ERROR querying production predictions: {e}")
-    print("   Falling back to mock_prediction column (may be inaccurate)")
+    logger.error(f"ERROR querying production predictions: {e}")
+    logger.warning("   Falling back to mock_prediction column (may be inaccurate)")
     mock_predictions = df_sorted.iloc[test_idx]['mock_prediction'].values
     mock_mae = mean_absolute_error(y_test, mock_predictions)
     mock_coverage = 0
@@ -577,38 +580,38 @@ improvement = ((mock_mae - real_mae) / mock_mae) * 100
 # Known production baseline (verified from BigQuery on 2026-01-03)
 PRODUCTION_BASELINE_MAE = 4.27
 
-print(f"\nProduction Mock (xgboost_v1):  {mock_mae:.2f} MAE")
-print(f"Real XGBoost (trained):        {real_mae:.2f} MAE")
-print(f"Difference:                    {improvement:+.1f}%")
-print()
+logger.info(f"\nProduction Mock (xgboost_v1):  {mock_mae:.2f} MAE")
+logger.info(f"Real XGBoost (trained):        {real_mae:.2f} MAE")
+logger.info(f"Difference:                    {improvement:+.1f}%")
+logger.info("")
 
 # Updated success criteria using CORRECT baseline
 if real_mae < PRODUCTION_BASELINE_MAE:
-    print("✅ SUCCESS! Real model beats production baseline (4.27 MAE)")
-    print("   → Ready for production deployment")
+    logger.info("SUCCESS! Real model beats production baseline (4.27 MAE)")
+    logger.info("   -> Ready for production deployment")
 elif real_mae < mock_mae and mock_coverage > 80:
-    print(f"⚠️  Beats test period mock ({mock_mae:.2f}) but NOT production baseline ({PRODUCTION_BASELINE_MAE})")
-    print("   → May have train/test distribution mismatch")
-    print("   → Need more investigation before deployment")
+    logger.warning(f"Beats test period mock ({mock_mae:.2f}) but NOT production baseline ({PRODUCTION_BASELINE_MAE})")
+    logger.warning("   -> May have train/test distribution mismatch")
+    logger.warning("   -> Need more investigation before deployment")
 elif abs(improvement) < 5:
-    print(f"⚠️  Within 5% of test period mock - marginal difference")
-    print(f"   → Still worse than production baseline ({PRODUCTION_BASELINE_MAE} MAE)")
-    print("   → Consider: more data, better features, or accept mock baseline")
+    logger.warning(f"Within 5% of test period mock - marginal difference")
+    logger.warning(f"   -> Still worse than production baseline ({PRODUCTION_BASELINE_MAE} MAE)")
+    logger.warning("   -> Consider: more data, better features, or accept mock baseline")
 else:
-    print(f"❌ Significantly worse than test period mock ({mock_mae:.2f})")
-    print(f"   → Also worse than production baseline ({PRODUCTION_BASELINE_MAE} MAE)")
-    print("   → Recommendation: Accept mock baseline, focus on data quality")
+    logger.warning(f"Significantly worse than test period mock ({mock_mae:.2f})")
+    logger.warning(f"   -> Also worse than production baseline ({PRODUCTION_BASELINE_MAE} MAE)")
+    logger.warning("   -> Recommendation: Accept mock baseline, focus on data quality")
 
-print()
+logger.info("")
 
 # ============================================================================
 # STEP 7: FEATURE IMPORTANCE
 # ============================================================================
 
-print("=" * 80)
-print("TOP 10 MOST IMPORTANT FEATURES")
-print("=" * 80)
-print("(Higher score = more important for predictions)\n")
+logger.info("=" * 80)
+logger.info("TOP 10 MOST IMPORTANT FEATURES")
+logger.info("=" * 80)
+logger.info("(Higher score = more important for predictions)\n")
 
 # Get feature importance
 importance = model.feature_importances_
@@ -620,24 +623,24 @@ feature_importance = pd.DataFrame({
 for idx, row in feature_importance.head(10).iterrows():
     bar_length = int(row['importance'] * 100)
     bar = '█' * (bar_length // 2)
-    print(f"{row['feature']:30s} {row['importance']*100:5.1f}% {bar}")
+    logger.info(f"{row['feature']:30s} {row['importance']*100:5.1f}% {bar}")
 
-print()
+logger.info("")
 
 # ============================================================================
 # STEP 8: SAVE MODEL
 # ============================================================================
 
-print("=" * 80)
-print("STEP 8: SAVING MODEL")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 8: SAVING MODEL")
+logger.info("=" * 80)
 
 model_id = f"xgboost_real_v4_21features_{datetime.now().strftime('%Y%m%d')}"
 local_path = MODEL_OUTPUT_DIR / f"{model_id}.json"
 
 # Save using booster API (avoids sklearn mixin issues)
 model.get_booster().save_model(str(local_path))
-print(f"✓ Model saved: {local_path}")
+logger.info(f"Model saved: {local_path}")
 
 # Save metadata
 metadata = {
@@ -658,35 +661,35 @@ metadata_path = MODEL_OUTPUT_DIR / f"{model_id}_metadata.json"
 with open(metadata_path, 'w') as f:
     json.dump(metadata, f, indent=2, default=str)
 
-print(f"✓ Metadata saved: {metadata_path}")
-print()
+logger.info(f"Metadata saved: {metadata_path}")
+logger.info("")
 
 # ============================================================================
 # SUMMARY
 # ============================================================================
 
-print("=" * 80)
-print("🎉 TRAINING COMPLETE!")
-print("=" * 80)
-print()
-print(f"Model ID: {model_id}")
-print(f"Test MAE: {real_mae:.2f} (vs mock {mock_mae:.2f})")
-print(f"Improvement: {improvement:+.1f}%")
-print()
+logger.info("=" * 80)
+logger.info("TRAINING COMPLETE!")
+logger.info("=" * 80)
+logger.info("")
+logger.info(f"Model ID: {model_id}")
+logger.info(f"Test MAE: {real_mae:.2f} (vs mock {mock_mae:.2f})")
+logger.info(f"Improvement: {improvement:+.1f}%")
+logger.info("")
 
 if improvement > 3.0:
-    print("✅ PRODUCTION READY")
-    print("\nNext steps:")
-    print("1. Upload model to GCS:")
-    print(f"   gsutil cp {local_path} gs://nba-scraped-data/ml-models/")
-    print()
-    print("2. Update prediction worker to load real model")
-    print("   Edit: predictions/worker/prediction_systems/xgboost_v1.py")
-    print()
-    print("3. Deploy to Cloud Run:")
-    print("   ./bin/predictions/deploy/deploy_prediction_worker.sh")
+    logger.info("PRODUCTION READY")
+    logger.info("\nNext steps:")
+    logger.info("1. Upload model to GCS:")
+    logger.info(f"   gsutil cp {local_path} gs://nba-scraped-data/ml-models/")
+    logger.info("")
+    logger.info("2. Update prediction worker to load real model")
+    logger.info("   Edit: predictions/worker/prediction_systems/xgboost_v1.py")
+    logger.info("")
+    logger.info("3. Deploy to Cloud Run:")
+    logger.info("   ./bin/predictions/deploy/deploy_prediction_worker.sh")
 else:
-    print("⚠️  Consider hyperparameter tuning or additional features")
+    logger.warning("Consider hyperparameter tuning or additional features")
 
-print()
-print("=" * 80)
+logger.info("")
+logger.info("=" * 80)

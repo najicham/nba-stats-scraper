@@ -23,9 +23,12 @@ Usage:
     game_props = get_props_for_game('20250331_CHI_OKC')
 """
 
+import logging
 from google.cloud import bigquery
 import pandas as pd
 from typing import Optional, List, Dict
+
+logger = logging.getLogger(__name__)
 
 # Initialize BigQuery client
 client = bigquery.Client()
@@ -496,56 +499,59 @@ def get_todays_props(team_abbr: Optional[str] = None) -> pd.DataFrame:
 
 
 if __name__ == "__main__":
+    # Configure logging for standalone execution
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
+
     # Example usage and testing
-    print("🎯 Player Props Preference Utility - Examples\n")
-    
+    logger.info("Player Props Preference Utility - Examples")
+
     test_date = '2025-03-31'
-    
+
     # Example 1: Get all props for a date
-    print(f"Example 1: Get all props for {test_date}")
+    logger.info(f"Example 1: Get all props for {test_date}")
     try:
         props = get_preferred_player_props(test_date)
-        print(f"  Found {len(props)} player props for {props['player_name'].nunique()} players")
-        print(f"  Top line: {props.iloc[0]['player_name']} - {props.iloc[0]['points_line']} points")
-        print(f"  Bookmakers used: {props['bookmaker'].unique()}\n")
+        logger.info(f"  Found {len(props)} player props for {props['player_name'].nunique()} players")
+        logger.info(f"  Top line: {props.iloc[0]['player_name']} - {props.iloc[0]['points_line']} points")
+        logger.info(f"  Bookmakers used: {props['bookmaker'].unique()}")
     except Exception as e:
-        print(f"  Error: {e}\n")
-    
+        logger.error(f"  Error: {e}")
+
     # Example 2: Get props for specific player
-    print("Example 2: Get props for Shai Gilgeous-Alexander")
+    logger.info("Example 2: Get props for Shai Gilgeous-Alexander")
     try:
         shai = get_player_props_by_player(test_date, 'Shai Gilgeous-Alexander')
         if len(shai) > 0:
-            print(f"  Line: {shai.iloc[0]['points_line']}")
-            print(f"  Over: {shai.iloc[0]['over_price']}")
-            print(f"  Under: {shai.iloc[0]['under_price']}")
-            print(f"  Bookmaker: {shai.iloc[0]['bookmaker']}\n")
+            logger.info(f"  Line: {shai.iloc[0]['points_line']}")
+            logger.info(f"  Over: {shai.iloc[0]['over_price']}")
+            logger.info(f"  Under: {shai.iloc[0]['under_price']}")
+            logger.info(f"  Bookmaker: {shai.iloc[0]['bookmaker']}")
         else:
-            print("  No props found\n")
+            logger.warning("  No props found")
     except Exception as e:
-        print(f"  Error: {e}\n")
-    
+        logger.error(f"  Error: {e}")
+
     # Example 3: Compare bookmakers
-    print("Example 3: Compare bookmakers for a player")
+    logger.info("Example 3: Compare bookmakers for a player")
     try:
         comparison = compare_bookmakers(test_date, 'Shai Gilgeous-Alexander')
         if len(comparison) > 0:
-            print(f"  Found {len(comparison)} bookmaker lines")
+            logger.info(f"  Found {len(comparison)} bookmaker lines")
             for _, row in comparison.iterrows():
-                print(f"    {row['bookmaker']}: {row['points_line']} pts, Over {row['over_price']}")
+                logger.info(f"    {row['bookmaker']}: {row['points_line']} pts, Over {row['over_price']}")
         else:
-            print("  No comparison data found")
+            logger.warning("  No comparison data found")
     except Exception as e:
-        print(f"  Error: {e}\n")
-    
+        logger.error(f"  Error: {e}")
+
     # Example 4: Get top lines
-    print("Example 4: Top 5 highest point lines")
+    logger.info("Example 4: Top 5 highest point lines")
     try:
         top_props = get_top_lines_for_date(test_date, top_n=5)
         if len(top_props) > 0:
             for i, row in top_props.iterrows():
-                print(f"  {row['player_name']}: {row['points_line']} pts ({row['bookmaker']})")
+                logger.info(f"  {row['player_name']}: {row['points_line']} pts ({row['bookmaker']})")
         else:
-            print("  No data found")
+            logger.warning("  No data found")
     except Exception as e:
-        print(f"  Error: {e}\n")
+        logger.error(f"  Error: {e}")

@@ -16,7 +16,10 @@ Usage:
     self.opts["teams"] = teams_suffix
 """
 
+import logging
 from typing import Dict
+
+logger = logging.getLogger(__name__)
 
 # Team name to abbreviation mapping for Odds API responses
 NBA_TEAM_NAME_TO_ABBR: Dict[str, str] = {
@@ -146,21 +149,23 @@ def build_event_teams_suffix(event_data: Dict) -> str:
 
 # Test and validation functions
 if __name__ == "__main__":
-    print("=== NBA Team Mapper Test ===")
-    
+    logging.basicConfig(level=logging.INFO)
+
+    logger.info("=== NBA Team Mapper Test ===")
+
     # Test individual team mapping
     test_teams = [
         "Los Angeles Lakers",
-        "Golden State Warriors", 
+        "Golden State Warriors",
         "Miami Heat",
         "Unknown Team Name"  # Test fallback
     ]
-    
-    print("\n1. Individual Team Mapping:")
+
+    logger.info("1. Individual Team Mapping:")
     for team in test_teams:
         abbr = get_team_abbr(team)
-        print(f"  {team:25} -> {abbr}")
-    
+        logger.info(f"  {team:25} -> {abbr}")
+
     # Test team suffix building
     test_matchups = [
         ("Los Angeles Lakers", "Detroit Pistons"),
@@ -168,15 +173,15 @@ if __name__ == "__main__":
         ("Miami Heat", "Denver Nuggets"),
         ("Phoenix Suns", "Milwaukee Bucks")
     ]
-    
-    print("\n2. Team Suffix Building (NBA.com gameCode style):")
+
+    logger.info("2. Team Suffix Building (NBA.com gameCode style):")
     for away, home in test_matchups:
         suffix = build_teams_suffix(away, home)
-        print(f"  {away} @ {home}")
-        print(f"    -> {suffix}")
-    
+        logger.info(f"  {away} @ {home}")
+        logger.info(f"    -> {suffix}")
+
     # Test with event data structure
-    print("\n3. Event Data Processing:")
+    logger.info("3. Event Data Processing:")
     sample_event = {
         "id": "da359da99aa27e97d38f2df709343998",
         "sport_key": "basketball_nba",
@@ -184,13 +189,13 @@ if __name__ == "__main__":
         "home_team": "Detroit Pistons",
         "away_team": "Los Angeles Lakers"
     }
-    
+
     suffix = build_event_teams_suffix(sample_event)
-    print(f"  Event: {sample_event['away_team']} @ {sample_event['home_team']}")
-    print(f"  Teams suffix: {suffix}")
-    print(f"  Expected GCS path component: {sample_event['id']}-{suffix}")
-    
-    print(f"\n4. All Available Teams ({len(NBA_TEAM_NAME_TO_ABBR)}):")
+    logger.info(f"  Event: {sample_event['away_team']} @ {sample_event['home_team']}")
+    logger.info(f"  Teams suffix: {suffix}")
+    logger.info(f"  Expected GCS path component: {sample_event['id']}-{suffix}")
+
+    logger.info(f"4. All Available Teams ({len(NBA_TEAM_NAME_TO_ABBR)}):")
     for team, abbr in sorted(NBA_TEAM_NAME_TO_ABBR.items()):
-        print(f"  {abbr}: {team}")
+        logger.debug(f"  {abbr}: {team}")
         

@@ -296,15 +296,15 @@ def test_fetcher():
     fetcher = RSSFetcher()
     articles = fetcher.fetch_feed('espn_nba')
 
-    print(f"\n=== Fetched {len(articles)} articles ===\n")
+    logger.info(f"=== Fetched {len(articles)} articles ===")
 
     for article in articles[:5]:
-        print(f"Title: {article.title}")
-        print(f"Source: {article.source}")
-        print(f"Published: {article.published_at}")
-        print(f"Summary: {article.summary[:100]}...")
-        print(f"URL: {article.source_url}")
-        print("-" * 50)
+        logger.info(f"Title: {article.title}")
+        logger.info(f"Source: {article.source}")
+        logger.info(f"Published: {article.published_at}")
+        logger.info(f"Summary: {article.summary[:100]}...")
+        logger.info(f"URL: {article.source_url}")
+        logger.info("-" * 50)
 
 
 if __name__ == '__main__':

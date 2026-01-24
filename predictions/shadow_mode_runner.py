@@ -330,45 +330,45 @@ def write_to_bigquery(
 def print_summary(predictions: List[ShadowPrediction]):
     """Print summary statistics"""
     if not predictions:
-        print("No predictions generated")
+        logger.warning("No predictions generated")
         return
 
-    print("\n" + "=" * 70)
-    print("SHADOW MODE SUMMARY")
-    print("=" * 70)
+    logger.info("=" * 70)
+    logger.info("SHADOW MODE SUMMARY")
+    logger.info("=" * 70)
 
     # Basic stats
-    print(f"\nTotal predictions: {len(predictions)}")
+    logger.info(f"Total predictions: {len(predictions)}")
 
     # Prediction differences
     diffs = [p.prediction_diff for p in predictions]
-    print(f"\nPrediction Differences (v8 - mock):")
-    print(f"  Mean: {sum(diffs) / len(diffs):+.2f} points")
-    print(f"  Min:  {min(diffs):+.2f} points")
-    print(f"  Max:  {max(diffs):+.2f} points")
+    logger.info("Prediction Differences (v8 - mock):")
+    logger.info(f"  Mean: {sum(diffs) / len(diffs):+.2f} points")
+    logger.info(f"  Min:  {min(diffs):+.2f} points")
+    logger.info(f"  Max:  {max(diffs):+.2f} points")
 
     # Recommendation comparison
     agree = sum(1 for p in predictions if p.mock_recommendation == p.v8_recommendation)
-    print(f"\nRecommendation Agreement:")
-    print(f"  Same: {agree} ({100 * agree / len(predictions):.1f}%)")
-    print(f"  Different: {len(predictions) - agree} ({100 * (len(predictions) - agree) / len(predictions):.1f}%)")
+    logger.info("Recommendation Agreement:")
+    logger.info(f"  Same: {agree} ({100 * agree / len(predictions):.1f}%)")
+    logger.info(f"  Different: {len(predictions) - agree} ({100 * (len(predictions) - agree) / len(predictions):.1f}%)")
 
     # Injury warnings
     warned = sum(1 for p in predictions if p.injury_warning)
-    print(f"\nInjury Warnings: {warned} players flagged as QUESTIONABLE/DOUBTFUL")
+    logger.info(f"Injury Warnings: {warned} players flagged as QUESTIONABLE/DOUBTFUL")
 
     # Edge analysis (for players with Vegas lines)
     with_lines = [p for p in predictions if p.betting_line is not None]
     if with_lines:
-        print(f"\nEdge Analysis ({len(with_lines)} players with Vegas lines):")
+        logger.info(f"Edge Analysis ({len(with_lines)} players with Vegas lines):")
 
         # V8 edges
         v8_overs = sum(1 for p in with_lines if p.edge_vs_line_v8 and p.edge_vs_line_v8 > 1)
         v8_unders = sum(1 for p in with_lines if p.edge_vs_line_v8 and p.edge_vs_line_v8 < -1)
-        print(f"  v8 OVER signals (>1pt edge):  {v8_overs}")
-        print(f"  v8 UNDER signals (>1pt edge): {v8_unders}")
+        logger.info(f"  v8 OVER signals (>1pt edge):  {v8_overs}")
+        logger.info(f"  v8 UNDER signals (>1pt edge): {v8_unders}")
 
-    print("\n" + "=" * 70)
+    logger.info("=" * 70)
 
 
 def main():

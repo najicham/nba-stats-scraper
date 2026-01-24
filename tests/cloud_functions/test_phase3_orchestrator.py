@@ -26,6 +26,10 @@ from orchestration.cloud_functions.phase3_to_phase4.main import (
     EXPECTED_PROCESSORS
 )
 
+# Disable mode-aware orchestration for legacy tests
+import orchestration.cloud_functions.phase3_to_phase4.main as phase3_module
+phase3_module.MODE_AWARE_ENABLED = False
+
 
 # ============================================================================
 # FIXTURES
@@ -123,11 +127,12 @@ def test_update_completion_first_processor(mock_db_instance):
             'entities_changed': ['lebron-james']
         }
 
-        should_trigger = update_completion_atomic(
+        should_trigger, mode, reason = update_completion_atomic(
             transaction,
             doc_ref,
             'PlayerGameSummaryProcessor',
-            completion_data
+            completion_data,
+            '2026-01-24'
         )
 
         assert should_trigger is False  # Don't trigger yet (only 1/5)
@@ -168,11 +173,12 @@ def test_update_completion_last_processor_triggers(mock_db_instance):
         }
 
         # Add 5th processor
-        should_trigger = update_completion_atomic(
+        should_trigger, mode, reason = update_completion_atomic(
             transaction,
             doc_ref,
             'UpcomingTeamGameContextProcessor',
-            completion_data
+            completion_data,
+            '2026-01-24'
         )
 
         assert should_trigger is True  # Should trigger Phase 4!
@@ -200,11 +206,12 @@ def test_update_completion_duplicate_message(mock_db_instance):
     with patch.object(Transaction, 'set') as mock_set:
         transaction = Transaction(mock_db_instance)
 
-        should_trigger = update_completion_atomic(
+        should_trigger, mode, reason = update_completion_atomic(
             transaction,
             doc_ref,
             'PlayerGameSummaryProcessor',  # Already exists
-            {'status': 'success'}
+            {'status': 'success'},
+            '2026-01-24'
         )
 
         assert should_trigger is False
@@ -258,7 +265,7 @@ def test_trigger_phase4_aggregates_entities(mock_db, mock_publisher):
     mock_publisher.topic_path.return_value = 'projects/test/topics/nba-phase4-trigger'
 
     # Execute
-    message_id = trigger_phase4('2025-11-29', 'abc-123', doc_ref, {})
+    message_id = trigger_phase4('2025-11-29', 'abc-123', doc_ref, {}, 'legacy', 'all_complete')
 
     # Verify
     assert message_id == 'published-message-id'
@@ -301,7 +308,7 @@ def test_get_completion_status_not_started(mock_db):
 
     assert status['status'] == 'not_started'
     assert status['completed_count'] == 0
-    assert status['expected_count'] == EXPECTED_PROCESSORS
+    assert status['expected_count'] == len(EXPECTED_PROCESSORS)
 
 
 @patch('orchestration.cloud_functions.phase3_to_phase4.main.db')
@@ -326,7 +333,7 @@ def test_get_completion_status_in_progress(mock_db):
 
     assert status['status'] == 'in_progress'
     assert status['completed_count'] == 2
-    assert status['expected_count'] == EXPECTED_PROCESSORS
+    assert status['expected_count'] == len(EXPECTED_PROCESSORS)
 
 
 @patch('orchestration.cloud_functions.phase3_to_phase4.main.db')

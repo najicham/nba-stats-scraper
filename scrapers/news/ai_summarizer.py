@@ -414,12 +414,12 @@ def test_summarizer():
     summarizer = NewsSummarizer()
 
     # Cost estimate
-    print("\nCost Estimate:")
-    print("-" * 40)
+    logger.info("Cost Estimate:")
+    logger.info("-" * 40)
     estimate = summarizer.estimate_cost(100)
-    print(f"100 articles: ${estimate['estimated_cost_usd']:.4f}")
+    logger.info(f"100 articles: ${estimate['estimated_cost_usd']:.4f}")
     estimate = summarizer.estimate_cost(1000)
-    print(f"1000 articles: ${estimate['estimated_cost_usd']:.4f}")
+    logger.info(f"1000 articles: ${estimate['estimated_cost_usd']:.4f}")
 
     # Test articles
     test_articles = [
@@ -435,24 +435,24 @@ def test_summarizer():
         },
     ]
 
-    print("\n" + "="*60)
-    print("  AI Summarization Test")
-    print("="*60)
+    logger.info("=" * 60)
+    logger.info("  AI Summarization Test")
+    logger.info("=" * 60)
 
     for article in test_articles:
-        print(f"\nOriginal: {article['title']}")
+        logger.info(f"Original: {article['title']}")
         result = summarizer.summarize(
             article['article_id'],
             article['title'],
             article['summary']
         )
-        print(f"Summary: {result.summary}")
-        print(f"Facts: {result.key_facts}")
-        print(f"Impact: {result.fantasy_impact}")
-        print(f"Cost: ${result.cost_usd:.6f} ({result.input_tokens} in, {result.output_tokens} out)")
+        logger.info(f"Summary: {result.summary}")
+        logger.info(f"Facts: {result.key_facts}")
+        logger.info(f"Impact: {result.fantasy_impact}")
+        logger.info(f"Cost: ${result.cost_usd:.6f} ({result.input_tokens} in, {result.output_tokens} out)")
 
-    print("\n" + "-"*40)
-    print("Usage Stats:", summarizer.get_usage_stats())
+    logger.info("-" * 40)
+    logger.info(f"Usage Stats: {summarizer.get_usage_stats()}")
 
 
 if __name__ == '__main__':

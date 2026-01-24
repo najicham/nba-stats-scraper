@@ -15,6 +15,7 @@ Usage:
     python ml/train_xgboost_v6.py
 """
 
+import logging
 import os
 import sys
 import json
@@ -30,24 +31,26 @@ import xgboost as xgb
 from google.cloud import bigquery
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
+logger = logging.getLogger(__name__)
+
 # Configuration
 PROJECT_ID = "nba-props-platform"
 MODEL_OUTPUT_DIR = Path("models")
 MODEL_OUTPUT_DIR.mkdir(exist_ok=True)
 
-print("=" * 80)
-print(" XGBOOST V6 TRAINING - USING COMPLETE FEATURE STORE")
-print("=" * 80)
-print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print()
+logger.info("=" * 80)
+logger.info(" XGBOOST V6 TRAINING - USING COMPLETE FEATURE STORE")
+logger.info("=" * 80)
+logger.info(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+logger.info("")
 
 # ============================================================================
 # STEP 1: EXTRACT TRAINING DATA FROM ML_FEATURE_STORE_V2
 # ============================================================================
 
-print("=" * 80)
-print("STEP 1: LOADING DATA FROM ML_FEATURE_STORE_V2")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 1: LOADING DATA FROM ML_FEATURE_STORE_V2")
+logger.info("=" * 80)
 
 client = bigquery.Client(project=PROJECT_ID)
 
@@ -92,31 +95,31 @@ INNER JOIN actuals a
 ORDER BY fd.game_date, fd.player_lookup
 """
 
-print("Fetching data from BigQuery...")
-print("Date range: 2021-11-01 to 2024-06-01")
-print()
+logger.info("Fetching data from BigQuery...")
+logger.info("Date range: 2021-11-01 to 2024-06-01")
+logger.info("")
 
 df = client.query(query).to_dataframe()
 
-print(f"Loaded {len(df):,} player-game samples")
-print(f"Date range: {df['game_date'].min()} to {df['game_date'].max()}")
-print(f"Unique players: {df['player_lookup'].nunique()}")
-print()
+logger.info(f"Loaded {len(df):,} player-game samples")
+logger.info(f"Date range: {df['game_date'].min()} to {df['game_date'].max()}")
+logger.info(f"Unique players: {df['player_lookup'].nunique()}")
+logger.info("")
 
 # Check data quality
 avg_quality = df['feature_quality_score'].astype(float).mean()
 avg_completeness = df['completeness_percentage'].astype(float).mean()
-print(f"Average feature quality score: {avg_quality:.1f}%")
-print(f"Average completeness: {avg_completeness:.1f}%")
-print()
+logger.info(f"Average feature quality score: {avg_quality:.1f}%")
+logger.info(f"Average completeness: {avg_completeness:.1f}%")
+logger.info("")
 
 # ============================================================================
 # STEP 2: PREPARE FEATURES
 # ============================================================================
 
-print("=" * 80)
-print("STEP 2: PREPARING FEATURES")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 2: PREPARING FEATURES")
+logger.info("=" * 80)
 
 # Feature names (from first row - they're all the same)
 feature_names = [
@@ -129,37 +132,37 @@ feature_names = [
     "pct_free_throw", "team_pace", "team_off_rating", "team_win_pct"
 ]
 
-print(f"Features ({len(feature_names)}):")
+logger.info(f"Features ({len(feature_names)}):")
 for i, name in enumerate(feature_names):
-    print(f"  [{i:2d}] {name}")
-print()
+    logger.info(f"  [{i:2d}] {name}")
+logger.info("")
 
 # Convert feature arrays to DataFrame columns
-print("Extracting features from arrays...")
+logger.info("Extracting features from arrays...")
 X = pd.DataFrame(df['features'].tolist(), columns=feature_names)
 y = df['actual_points'].astype(float)
 
 # Handle any remaining nulls
-print("Checking for null values...")
+logger.info("Checking for null values...")
 null_counts = X.isnull().sum()
 if null_counts.sum() > 0:
-    print(f"Found {null_counts.sum()} null values, filling with median...")
+    logger.info(f"Found {null_counts.sum()} null values, filling with median...")
     X = X.fillna(X.median())
 else:
-    print("No null values found!")
-print()
+    logger.info("No null values found!")
+logger.info("")
 
-print(f"Feature matrix shape: {X.shape}")
-print(f"Target vector shape: {y.shape}")
-print()
+logger.info(f"Feature matrix shape: {X.shape}")
+logger.info(f"Target vector shape: {y.shape}")
+logger.info("")
 
 # ============================================================================
 # STEP 3: CHRONOLOGICAL TRAIN/VAL/TEST SPLIT
 # ============================================================================
 
-print("=" * 80)
-print("STEP 3: SPLITTING DATA CHRONOLOGICALLY")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 3: SPLITTING DATA CHRONOLOGICALLY")
+logger.info("=" * 80)
 
 # Sort by date
 df_sorted = df.sort_values('game_date').reset_index(drop=True)
@@ -181,18 +184,18 @@ train_dates = df_sorted.iloc[train_idx]
 val_dates = df_sorted.iloc[val_idx]
 test_dates = df_sorted.iloc[test_idx]
 
-print(f"Training set:   {len(X_train):,} ({train_dates['game_date'].min()} to {train_dates['game_date'].max()})")
-print(f"Validation set: {len(X_val):,} ({val_dates['game_date'].min()} to {val_dates['game_date'].max()})")
-print(f"Test set:       {len(X_test):,} ({test_dates['game_date'].min()} to {test_dates['game_date'].max()})")
-print()
+logger.info(f"Training set:   {len(X_train):,} ({train_dates['game_date'].min()} to {train_dates['game_date'].max()})")
+logger.info(f"Validation set: {len(X_val):,} ({val_dates['game_date'].min()} to {val_dates['game_date'].max()})")
+logger.info(f"Test set:       {len(X_test):,} ({test_dates['game_date'].min()} to {test_dates['game_date'].max()})")
+logger.info("")
 
 # ============================================================================
 # STEP 4: TRAIN XGBOOST WITH STRONGER REGULARIZATION
 # ============================================================================
 
-print("=" * 80)
-print("STEP 4: TRAINING XGBOOST V6")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 4: TRAINING XGBOOST V6")
+logger.info("=" * 80)
 
 # V6 hyperparameters - STRONGER REGULARIZATION to prevent overfitting
 # v4/v5 had train/test gap of 0.49 points (4.14 train vs 4.63 test)
@@ -223,19 +226,19 @@ params = {
     'early_stopping_rounds': 50  # Increased patience
 }
 
-print("V6 Hyperparameters (stronger regularization):")
-print("-" * 50)
-print(f"  max_depth:        {params['max_depth']} (was 8)")
-print(f"  min_child_weight: {params['min_child_weight']} (was 3)")
-print(f"  learning_rate:    {params['learning_rate']} (was 0.05)")
-print(f"  subsample:        {params['subsample']} (was 0.8)")
-print(f"  reg_alpha (L1):   {params['reg_alpha']} (was 0)")
-print(f"  reg_lambda (L2):  {params['reg_lambda']} (was 1)")
-print(f"  gamma:            {params['gamma']} (was 0)")
-print()
+logger.info("V6 Hyperparameters (stronger regularization):")
+logger.info("-" * 50)
+logger.info(f"  max_depth:        {params['max_depth']} (was 8)")
+logger.info(f"  min_child_weight: {params['min_child_weight']} (was 3)")
+logger.info(f"  learning_rate:    {params['learning_rate']} (was 0.05)")
+logger.info(f"  subsample:        {params['subsample']} (was 0.8)")
+logger.info(f"  reg_alpha (L1):   {params['reg_alpha']} (was 0)")
+logger.info(f"  reg_lambda (L2):  {params['reg_lambda']} (was 1)")
+logger.info(f"  gamma:            {params['gamma']} (was 0)")
+logger.info("")
 
-print(f"Training up to {params['n_estimators']} trees (with early stopping at {params['early_stopping_rounds']})...")
-print()
+logger.info(f"Training up to {params['n_estimators']} trees (with early stopping at {params['early_stopping_rounds']})...")
+logger.info("")
 
 model = xgb.XGBRegressor(**params)
 
@@ -246,17 +249,17 @@ model.fit(
     verbose=50  # Print every 50 iterations
 )
 
-print()
-print(f"Training complete! Best iteration: {model.best_iteration}")
-print()
+logger.info("")
+logger.info(f"Training complete! Best iteration: {model.best_iteration}")
+logger.info("")
 
 # ============================================================================
 # STEP 5: EVALUATE MODEL
 # ============================================================================
 
-print("=" * 80)
-print("STEP 5: EVALUATION")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 5: EVALUATION")
+logger.info("=" * 80)
 
 def evaluate_set(y_true, y_pred, name):
     """Evaluate predictions on a dataset."""
@@ -266,11 +269,11 @@ def evaluate_set(y_true, y_pred, name):
     within_3 = (errors <= 3).mean() * 100
     within_5 = (errors <= 5).mean() * 100
 
-    print(f"\n{name} Set:")
-    print(f"  MAE:  {mae:.3f} points")
-    print(f"  RMSE: {rmse:.3f} points")
-    print(f"  Within 3 pts: {within_3:.1f}%")
-    print(f"  Within 5 pts: {within_5:.1f}%")
+    logger.info(f"\n{name} Set:")
+    logger.info(f"  MAE:  {mae:.3f} points")
+    logger.info(f"  RMSE: {rmse:.3f} points")
+    logger.info(f"  Within 3 pts: {within_3:.1f}%")
+    logger.info(f"  Within 5 pts: {within_5:.1f}%")
 
     return mae, rmse
 
@@ -284,48 +287,48 @@ test_mae, _ = evaluate_set(y_test, test_pred, "Test")
 
 # Check overfitting
 train_test_gap = test_mae - train_mae
-print(f"\nTrain/Test Gap: {train_test_gap:.3f} points")
+logger.info(f"\nTrain/Test Gap: {train_test_gap:.3f} points")
 if train_test_gap > 0.3:
-    print("  (Some overfitting - gap > 0.3)")
+    logger.info("  (Some overfitting - gap > 0.3)")
 elif train_test_gap > 0.2:
-    print("  (Minimal overfitting - gap 0.2-0.3)")
+    logger.info("  (Minimal overfitting - gap 0.2-0.3)")
 else:
-    print("  (Well regularized - gap < 0.2)")
+    logger.info("  (Well regularized - gap < 0.2)")
 
 # ============================================================================
 # STEP 6: COMPARE TO MOCK BASELINE
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("STEP 6: COMPARISON TO MOCK V1 BASELINE")
-print("=" * 80)
+logger.info("\n" + "=" * 80)
+logger.info("STEP 6: COMPARISON TO MOCK V1 BASELINE")
+logger.info("=" * 80)
 
 # Mock v1 baseline from Phase 1 evaluation: 4.80 MAE
 MOCK_BASELINE_MAE = 4.80
 
-print(f"\nMock v1 baseline:     {MOCK_BASELINE_MAE:.2f} MAE")
-print(f"XGBoost v6 test:      {test_mae:.2f} MAE")
+logger.info(f"\nMock v1 baseline:     {MOCK_BASELINE_MAE:.2f} MAE")
+logger.info(f"XGBoost v6 test:      {test_mae:.2f} MAE")
 improvement = ((MOCK_BASELINE_MAE - test_mae) / MOCK_BASELINE_MAE) * 100
-print(f"Improvement:          {improvement:+.1f}%")
-print()
+logger.info(f"Improvement:          {improvement:+.1f}%")
+logger.info("")
 
 if test_mae < MOCK_BASELINE_MAE:
-    print("SUCCESS! XGBoost v6 beats mock baseline!")
+    logger.info("SUCCESS! XGBoost v6 beats mock baseline!")
     if improvement > 5:
-        print("DECISIVE WIN - >5% improvement")
+        logger.info("DECISIVE WIN - >5% improvement")
     else:
-        print("Marginal win - consider ensemble approach")
+        logger.info("Marginal win - consider ensemble approach")
 else:
-    print("XGBoost v6 did not beat mock baseline")
-    print("Consider: Mock model is already well-tuned")
+    logger.info("XGBoost v6 did not beat mock baseline")
+    logger.info("Consider: Mock model is already well-tuned")
 
 # ============================================================================
 # STEP 7: FEATURE IMPORTANCE
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("STEP 7: TOP 10 FEATURE IMPORTANCE")
-print("=" * 80)
+logger.info("\n" + "=" * 80)
+logger.info("STEP 7: TOP 10 FEATURE IMPORTANCE")
+logger.info("=" * 80)
 
 importance = model.feature_importances_
 feat_imp = pd.DataFrame({
@@ -333,25 +336,25 @@ feat_imp = pd.DataFrame({
     'importance': importance
 }).sort_values('importance', ascending=False)
 
-print()
+logger.info("")
 for i, row in feat_imp.head(10).iterrows():
     bar = '' * int(row['importance'] * 50)
-    print(f"  {row['feature']:25s} {row['importance']*100:5.1f}% {bar}")
+    logger.info(f"  {row['feature']:25s} {row['importance']*100:5.1f}% {bar}")
 
 # ============================================================================
 # STEP 8: SAVE MODEL
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("STEP 8: SAVING MODEL")
-print("=" * 80)
+logger.info("\n" + "=" * 80)
+logger.info("STEP 8: SAVING MODEL")
+logger.info("=" * 80)
 
 model_id = f"xgboost_v6_25features_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 model_path = MODEL_OUTPUT_DIR / f"{model_id}.json"
 
 # Save model
 model.get_booster().save_model(str(model_path))
-print(f"Model saved: {model_path}")
+logger.info(f"Model saved: {model_path}")
 
 # Save metadata
 metadata = {
@@ -376,34 +379,34 @@ metadata = {
 metadata_path = MODEL_OUTPUT_DIR / f"{model_id}_metadata.json"
 with open(metadata_path, 'w') as f:
     json.dump(metadata, f, indent=2, default=str)
-print(f"Metadata saved: {metadata_path}")
+logger.info(f"Metadata saved: {metadata_path}")
 
 # ============================================================================
 # SUMMARY
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("TRAINING COMPLETE - SUMMARY")
-print("=" * 80)
-print()
-print(f"Model:              XGBoost v6")
-print(f"Features:           25 (from ml_feature_store_v2)")
-print(f"Training samples:   {len(df):,}")
-print(f"Data coverage:      {avg_completeness:.1f}%")
-print()
-print(f"Training MAE:       {train_mae:.3f}")
-print(f"Validation MAE:     {val_mae:.3f}")
-print(f"Test MAE:           {test_mae:.3f}")
-print(f"Train/Test Gap:     {train_test_gap:.3f}")
-print()
-print(f"Mock v1 baseline:   {MOCK_BASELINE_MAE:.2f}")
-print(f"Improvement:        {improvement:+.1f}%")
-print()
+logger.info("\n" + "=" * 80)
+logger.info("TRAINING COMPLETE - SUMMARY")
+logger.info("=" * 80)
+logger.info("")
+logger.info(f"Model:              XGBoost v6")
+logger.info(f"Features:           25 (from ml_feature_store_v2)")
+logger.info(f"Training samples:   {len(df):,}")
+logger.info(f"Data coverage:      {avg_completeness:.1f}%")
+logger.info("")
+logger.info(f"Training MAE:       {train_mae:.3f}")
+logger.info(f"Validation MAE:     {val_mae:.3f}")
+logger.info(f"Test MAE:           {test_mae:.3f}")
+logger.info(f"Train/Test Gap:     {train_test_gap:.3f}")
+logger.info("")
+logger.info(f"Mock v1 baseline:   {MOCK_BASELINE_MAE:.2f}")
+logger.info(f"Improvement:        {improvement:+.1f}%")
+logger.info("")
 
 if test_mae < MOCK_BASELINE_MAE:
-    print("RESULT: XGBoost v6 WINS")
+    logger.info("RESULT: XGBoost v6 WINS")
 else:
-    print("RESULT: Mock v1 still better")
+    logger.info("RESULT: Mock v1 still better")
 
-print()
-print("=" * 80)
+logger.info("")
+logger.info("=" * 80)

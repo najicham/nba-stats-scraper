@@ -249,11 +249,12 @@ def test_pubsub_publisher():
 
     Run with: python -m scrapers.utils.pubsub_utils
     """
-    print("🧪 Testing ScraperPubSubPublisher (v2.0 - UnifiedPubSubPublisher)")
+    logging.basicConfig(level=logging.INFO)
+    logger.info("Testing ScraperPubSubPublisher (v2.0 - UnifiedPubSubPublisher)")
 
     try:
         publisher = ScraperPubSubPublisher()
-        print(f"✅ Publisher initialized: {publisher.topic_name}")
+        logger.info(f"Publisher initialized: {publisher.topic_name}")
 
         # Test event
         message_id = publisher.publish_completion_event(
@@ -268,17 +269,15 @@ def test_pubsub_publisher():
         )
 
         if message_id:
-            print(f"✅ Test event published: {message_id}")
-            print("✅ Message format: unified (phase_1_scrapers)")
+            logger.info(f"Test event published: {message_id}")
+            logger.info("Message format: unified (phase_1_scrapers)")
             return True
         else:
-            print("❌ Test event failed to publish")
+            logger.error("Test event failed to publish")
             return False
 
     except Exception as e:
-        print(f"❌ Test failed: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Test failed: {e}", exc_info=True)
         return False
 
 

@@ -177,81 +177,81 @@ def calculate_metrics(data: List[Dict]) -> Dict:
 
 def print_report(metrics: Dict, start_date: date, end_date: date):
     """Print formatted report"""
-    print("\n" + "=" * 70)
-    print(f"SHADOW MODE COMPARISON REPORT: {start_date} to {end_date}")
-    print("=" * 70)
+    logger.info("=" * 70)
+    logger.info(f"SHADOW MODE COMPARISON REPORT: {start_date} to {end_date}")
+    logger.info("=" * 70)
 
-    print(f"\nTotal Predictions: {metrics['total_predictions']}")
-    print(f"Predictions with Vegas Lines: {metrics['predictions_with_lines']}")
+    logger.info(f"Total Predictions: {metrics['total_predictions']}")
+    logger.info(f"Predictions with Vegas Lines: {metrics['predictions_with_lines']}")
 
-    print("\n" + "-" * 70)
-    print("MODEL ACCURACY")
-    print("-" * 70)
+    logger.info("-" * 70)
+    logger.info("MODEL ACCURACY")
+    logger.info("-" * 70)
 
     mock = metrics['mock']
     v8 = metrics['v8']
     comp = metrics['comparison']
 
-    print(f"\n{'Metric':<25} {'Mock':<15} {'V8':<15} {'Winner':<10}")
-    print("-" * 65)
+    logger.info(f"{'Metric':<25} {'Mock':<15} {'V8':<15} {'Winner':<10}")
+    logger.info("-" * 65)
 
     # MAE (lower is better)
     winner = "v8" if v8['mae'] < mock['mae'] else "mock"
-    print(f"{'MAE':<25} {mock['mae']:<15.3f} {v8['mae']:<15.3f} {winner:<10}")
+    logger.info(f"{'MAE':<25} {mock['mae']:<15.3f} {v8['mae']:<15.3f} {winner:<10}")
 
     # Median Error
     winner = "v8" if v8['median_error'] < mock['median_error'] else "mock"
-    print(f"{'Median Error':<25} {mock['median_error']:<15.3f} {v8['median_error']:<15.3f} {winner:<10}")
+    logger.info(f"{'Median Error':<25} {mock['median_error']:<15.3f} {v8['median_error']:<15.3f} {winner:<10}")
 
     # P90 Error
     winner = "v8" if v8['p90_error'] < mock['p90_error'] else "mock"
-    print(f"{'P90 Error':<25} {mock['p90_error']:<15.3f} {v8['p90_error']:<15.3f} {winner:<10}")
+    logger.info(f"{'P90 Error':<25} {mock['p90_error']:<15.3f} {v8['p90_error']:<15.3f} {winner:<10}")
 
     # Within 3 pts
     winner = "v8" if v8['within_3pts_pct'] > mock['within_3pts_pct'] else "mock"
-    print(f"{'Within 3 pts':<25} {mock['within_3pts_pct']:<14.1f}% {v8['within_3pts_pct']:<14.1f}% {winner:<10}")
+    logger.info(f"{'Within 3 pts':<25} {mock['within_3pts_pct']:<14.1f}% {v8['within_3pts_pct']:<14.1f}% {winner:<10}")
 
     # Within 5 pts
     winner = "v8" if v8['within_5pts_pct'] > mock['within_5pts_pct'] else "mock"
-    print(f"{'Within 5 pts':<25} {mock['within_5pts_pct']:<14.1f}% {v8['within_5pts_pct']:<14.1f}% {winner:<10}")
+    logger.info(f"{'Within 5 pts':<25} {mock['within_5pts_pct']:<14.1f}% {v8['within_5pts_pct']:<14.1f}% {winner:<10}")
 
     # Betting accuracy
     if metrics['predictions_with_lines'] > 0:
         winner = "v8" if v8['betting_accuracy'] > mock['betting_accuracy'] else "mock"
-        print(f"{'Betting Accuracy':<25} {mock['betting_accuracy']:<14.1f}% {v8['betting_accuracy']:<14.1f}% {winner:<10}")
+        logger.info(f"{'Betting Accuracy':<25} {mock['betting_accuracy']:<14.1f}% {v8['betting_accuracy']:<14.1f}% {winner:<10}")
 
-    print("\n" + "-" * 70)
-    print("HEAD-TO-HEAD COMPARISON")
-    print("-" * 70)
+    logger.info("-" * 70)
+    logger.info("HEAD-TO-HEAD COMPARISON")
+    logger.info("-" * 70)
 
-    print(f"\nCloser to Actual:")
-    print(f"  Mock wins:  {comp['mock_wins']} ({100 * comp['mock_wins'] / metrics['total_predictions']:.1f}%)")
-    print(f"  V8 wins:    {comp['v8_wins']} ({100 * comp['v8_wins'] / metrics['total_predictions']:.1f}%)")
-    print(f"  Ties:       {comp['ties']} ({100 * comp['ties'] / metrics['total_predictions']:.1f}%)")
+    logger.info("Closer to Actual:")
+    logger.info(f"  Mock wins:  {comp['mock_wins']} ({100 * comp['mock_wins'] / metrics['total_predictions']:.1f}%)")
+    logger.info(f"  V8 wins:    {comp['v8_wins']} ({100 * comp['v8_wins'] / metrics['total_predictions']:.1f}%)")
+    logger.info(f"  Ties:       {comp['ties']} ({100 * comp['ties'] / metrics['total_predictions']:.1f}%)")
 
-    print(f"\nV8 Win Rate: {comp['v8_win_rate']:.1f}%")
-    print(f"MAE Improvement: {comp['mae_improvement']:+.1f}%")
+    logger.info(f"V8 Win Rate: {comp['v8_win_rate']:.1f}%")
+    logger.info(f"MAE Improvement: {comp['mae_improvement']:+.1f}%")
 
     inj = metrics['injury_filter']
     if inj['predictions_with_warning'] > 0:
-        print("\n" + "-" * 70)
-        print("INJURY FILTER")
-        print("-" * 70)
-        print(f"Predictions with injury warning: {inj['predictions_with_warning']}")
+        logger.info("-" * 70)
+        logger.info("INJURY FILTER")
+        logger.info("-" * 70)
+        logger.info(f"Predictions with injury warning: {inj['predictions_with_warning']}")
 
-    print("\n" + "=" * 70)
+    logger.info("=" * 70)
 
     # Verdict
     if comp['mae_improvement'] > 5:
-        print("\nVERDICT: V8 significantly outperforms mock")
+        logger.info("VERDICT: V8 significantly outperforms mock")
     elif comp['mae_improvement'] > 0:
-        print("\nVERDICT: V8 slightly outperforms mock")
+        logger.info("VERDICT: V8 slightly outperforms mock")
     elif comp['mae_improvement'] > -5:
-        print("\nVERDICT: Models perform similarly")
+        logger.info("VERDICT: Models perform similarly")
     else:
-        print("\nVERDICT: Mock outperforms V8 (investigate)")
+        logger.warning("VERDICT: Mock outperforms V8 (investigate)")
 
-    print("=" * 70 + "\n")
+    logger.info("=" * 70)
 
 
 def main():
@@ -282,10 +282,10 @@ def main():
     logger.info(f"Found {len(data)} predictions with results")
 
     if not data:
-        print("No data found for this date range")
-        print("Make sure:")
-        print("  1. Shadow mode runner was executed for these dates")
-        print("  2. Games have been played and results are in player_game_summary")
+        logger.warning("No data found for this date range")
+        logger.warning("Make sure:")
+        logger.warning("  1. Shadow mode runner was executed for these dates")
+        logger.warning("  2. Games have been played and results are in player_game_summary")
         return
 
     # Calculate metrics
@@ -293,7 +293,7 @@ def main():
 
     # Output
     if args.json:
-        print(json.dumps(metrics, indent=2))
+        logger.info(json.dumps(metrics, indent=2))
     else:
         print_report(metrics, start_date, end_date)
 

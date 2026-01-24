@@ -499,9 +499,9 @@ def test_extractor():
         },
     ]
 
-    print("\n" + "="*60)
-    print("  Keyword Extractor Test")
-    print("="*60 + "\n")
+    logger.info("=" * 60)
+    logger.info("  Keyword Extractor Test")
+    logger.info("=" * 60)
 
     for article in test_articles:
         sport = 'mlb' if 'Cubs' in article['title'] or 'Marlins' in article['title'] else 'nba'
@@ -512,13 +512,12 @@ def test_extractor():
             sport=sport
         )
 
-        print(f"Title: {article['title']}")
-        print(f"  Category: {result.category.value} ({result.confidence:.0%})")
-        print(f"  Subcategory: {result.subcategory}")
-        print(f"  Players: {[m.name_as_written for m in result.player_mentions]}")
-        print(f"  Teams: {result.teams_mentioned}")
-        print(f"  Keywords: {result.keywords_matched}")
-        print()
+        logger.info(f"Title: {article['title']}")
+        logger.info(f"  Category: {result.category.value} ({result.confidence:.0%})")
+        logger.info(f"  Subcategory: {result.subcategory}")
+        logger.info(f"  Players: {[m.name_as_written for m in result.player_mentions]}")
+        logger.info(f"  Teams: {result.teams_mentioned}")
+        logger.info(f"  Keywords: {result.keywords_matched}")
 
 
 if __name__ == '__main__':

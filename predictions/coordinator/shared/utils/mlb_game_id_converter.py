@@ -367,10 +367,11 @@ def create_mlb_game_id(
 
 # Test
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     converter = MLBGameIdConverter()
 
-    print("MLB Game ID Converter Test")
-    print("=" * 60)
+    logger.info("MLB Game ID Converter Test")
+    logger.info("=" * 60)
 
     # Test various formats
     test_ids = [
@@ -387,13 +388,13 @@ if __name__ == "__main__":
         parsed = converter.parse(game_id)
         if parsed.is_valid:
             standard = converter.to_standard(game_id)
-            print(f"{game_id:30} -> {standard}")
+            logger.info(f"{game_id:30} -> {standard}")
             if parsed.game_number:
-                print(f"{'':30}    (Doubleheader game {parsed.game_number})")
+                logger.debug(f"{'':30}    (Doubleheader game {parsed.game_number})")
         else:
-            print(f"{game_id:30} -> INVALID: {parsed.error_message}")
+            logger.warning(f"{game_id:30} -> INVALID: {parsed.error_message}")
 
-    print("\nCreate game IDs:")
-    print(converter.create("2024-06-15", "NYY", "BOS"))
-    print(converter.create("2024-06-15", "NYY", "BOS", game_number=1))
-    print(converter.create("2024-06-15", "NYY", "BOS", game_number=2))
+    logger.info("Create game IDs:")
+    logger.info(converter.create("2024-06-15", "NYY", "BOS"))
+    logger.info(converter.create("2024-06-15", "NYY", "BOS", game_number=1))
+    logger.info(converter.create("2024-06-15", "NYY", "BOS", game_number=2))

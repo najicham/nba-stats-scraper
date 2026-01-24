@@ -8,9 +8,12 @@ This module provides standardized name normalization functions to ensure consist
 name matching between different data sources (NBA.com, Basketball Reference, Ball Don't Lie, etc.)
 """
 
+import logging
 import re
 import unicodedata
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_name_for_lookup(name: str) -> str:
@@ -177,14 +180,17 @@ def handle_suffix_names(name: str) -> str:
 
 # Test cases for validation
 if __name__ == "__main__":
+    # Configure logging for standalone execution
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
+
     # Test cases
     test_names = [
         "LeBron James",
         "LeBron James Jr.",
         "Charlie Brown Jr.",
-        "José Alvarado", 
-        "Dāvis Bertāns",
-        "Bogdanović",
+        "Jose Alvarado",
+        "Davis Bertans",
+        "Bogdanovic",
         "O'Neal",
         "De'Andre Jordan",
         "Karl-Anthony Towns",
@@ -194,41 +200,41 @@ if __name__ == "__main__":
         "Michael Porter Jr.",
         "",
     ]
-    
-    print("Player Name Normalization Test Results:")
-    print("=" * 60)
-    
+
+    logger.info("Player Name Normalization Test Results:")
+    logger.info("=" * 60)
+
     for name in test_names:
         if not name:
             continue
-            
+
         try:
             # Test core normalization function
             normalized = normalize_name_for_lookup(name)
             ascii_name = remove_diacritics(name)
             base_name, suffix = extract_suffix(name)
-            
-            print(f"\nOriginal: '{name}'")
-            print(f"Normalized: '{normalized}'")
-            print(f"ASCII: '{ascii_name}'")
-            print(f"Without suffix: '{base_name}'")
-            print(f"Suffix: {suffix}")
-            
+
+            logger.info(f"Original: '{name}'")
+            logger.info(f"Normalized: '{normalized}'")
+            logger.debug(f"ASCII: '{ascii_name}'")
+            logger.debug(f"Without suffix: '{base_name}'")
+            logger.debug(f"Suffix: {suffix}")
+
             # Show the specific fixes this addresses
             if '.' in name:
-                print(f"  ✓ Fixed period issue: '{name}' → '{normalized}'")
+                logger.debug(f"  Fixed period issue: '{name}' -> '{normalized}'")
             if any(char in name for char in ["'", "-"]):
-                print(f"  ✓ Fixed punctuation: removed apostrophes/hyphens")
+                logger.debug(f"  Fixed punctuation: removed apostrophes/hyphens")
             if suffix:
-                print(f"  ✓ Detected suffix: '{suffix}'")
-                
+                logger.debug(f"  Detected suffix: '{suffix}'")
+
         except Exception as e:
-            print(f"ERROR with '{name}': {e}")
-    
-    print(f"\n{'=' * 60}")
-    print("Testing specific issues from your database:")
-    print(f"{'=' * 60}")
-    
+            logger.error(f"ERROR with '{name}': {e}")
+
+    logger.info("=" * 60)
+    logger.info("Testing specific issues from your database:")
+    logger.info("=" * 60)
+
     # Test the specific cases from the user's database
     problem_cases = [
         ("Charlie Brown Jr.", "charliebrownjr.", "charliebrownjr"),  # current vs expected
@@ -236,11 +242,11 @@ if __name__ == "__main__":
         ("T.J. McConnell", "t.j.mcconnell", "tjmcconnell"),
         ("Michael Porter Jr.", "michaelporterjr.", "michaelporterjr"),
     ]
-    
+
     for original, current_bad, expected_good in problem_cases:
         new_result = normalize_name_for_lookup(original)
-        status = "✅ FIXED" if new_result == expected_good else "❌ STILL BROKEN"
-        print(f"\n{original}:")
-        print(f"  Current (bad): '{current_bad}'")
-        print(f"  Expected: '{expected_good}'")
-        print(f"  New result: '{new_result}' {status}")
+        status = "FIXED" if new_result == expected_good else "STILL BROKEN"
+        logger.info(f"{original}:")
+        logger.info(f"  Current (bad): '{current_bad}'")
+        logger.info(f"  Expected: '{expected_good}'")
+        logger.info(f"  New result: '{new_result}' {status}")

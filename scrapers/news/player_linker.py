@@ -306,21 +306,20 @@ def test_linker():
         ("Fake Player Name", None),  # Should not match
     ]
 
-    print("\n" + "="*60)
-    print("  Player Linker Test")
-    print("="*60 + "\n")
+    logger.info("=" * 60)
+    logger.info("  Player Linker Test")
+    logger.info("=" * 60)
 
     for name, team in test_names:
         result = linker.link_player(name, team_context=team)
         status = "LINKED" if result.player_lookup else "UNLINKED"
-        print(f"{name}")
-        print(f"  Status: {status}")
-        print(f"  Lookup: {result.player_lookup}")
-        print(f"  Method: {result.link_method}")
-        print(f"  Confidence: {result.confidence:.0%}")
-        print()
+        logger.info(f"{name}")
+        logger.info(f"  Status: {status}")
+        logger.info(f"  Lookup: {result.player_lookup}")
+        logger.info(f"  Method: {result.link_method}")
+        logger.info(f"  Confidence: {result.confidence:.0%}")
 
-    print("Stats:", linker.get_stats())
+    logger.info(f"Stats: {linker.get_stats()}")
 
 
 if __name__ == '__main__':

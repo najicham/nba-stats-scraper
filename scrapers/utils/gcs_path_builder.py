@@ -19,8 +19,11 @@ Usage:
     ]
 """
 
+import logging
 from datetime import datetime
 from typing import Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 class GCSPathBuilder:
@@ -259,23 +262,25 @@ def get_gcs_path(template_key: str, **kwargs) -> str:
 
 # Example usage and testing
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
+
     # Test path generation
-    print("=== GCS Path Builder Examples ===")
-    
+    logger.info("=== GCS Path Builder Examples ===")
+
     # Test by template key
-    print("\n1. By Template Key:")
-    print(f"Odds Events: {GCSPathBuilder.get_path('odds_api_events')}")
-    print(f"Player Props: {GCSPathBuilder.get_path('odds_api_player_props')}")
-    print(f"NBA Player List: {GCSPathBuilder.get_path('nba_com_player_list')}")
-    
+    logger.info("1. By Template Key:")
+    logger.info(f"Odds Events: {GCSPathBuilder.get_path('odds_api_events')}")
+    logger.info(f"Player Props: {GCSPathBuilder.get_path('odds_api_player_props')}")
+    logger.info(f"NBA Player List: {GCSPathBuilder.get_path('nba_com_player_list')}")
+
     # Test path previews
-    print("\n2. Path Previews:")
-    print(f"Odds Events Preview: {GCSPathBuilder.preview_path('odds_api_events')}")
-    print(f"Player Props Preview: {GCSPathBuilder.preview_path('odds_api_player_props', event_id='abc123')}")
-    print(f"Team Roster Preview: {GCSPathBuilder.preview_path('espn_team_roster', team_abbr='GSW')}")
-    
+    logger.info("2. Path Previews:")
+    logger.info(f"Odds Events Preview: {GCSPathBuilder.preview_path('odds_api_events')}")
+    logger.info(f"Player Props Preview: {GCSPathBuilder.preview_path('odds_api_player_props', event_id='abc123')}")
+    logger.info(f"Team Roster Preview: {GCSPathBuilder.preview_path('espn_team_roster', team_abbr='GSW')}")
+
     # Test with custom opts
-    print("\n3. With Custom Options:")
+    logger.info("3. With Custom Options:")
     sample_opts = {
         "date": "2025-07-21",
         "timestamp": "20250721_153000",
@@ -283,9 +288,9 @@ if __name__ == "__main__":
     }
     template = GCSPathBuilder.get_path("odds_api_player_props")
     formatted = template % sample_opts
-    print(f"Formatted: {formatted}")
-    
-    print("\n=== All Available Templates ===")
+    logger.info(f"Formatted: {formatted}")
+
+    logger.info("=== All Available Templates ===")
     for key in sorted(GCSPathBuilder.PATH_TEMPLATES.keys()):
-        print(f"{key}: {GCSPathBuilder.PATH_TEMPLATES[key]}")
+        logger.debug(f"{key}: {GCSPathBuilder.PATH_TEMPLATES[key]}")
         

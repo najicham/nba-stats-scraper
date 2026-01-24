@@ -11,6 +11,7 @@ Usage:
 Target: Match or beat V1's 67.27% hit rate
 """
 
+import logging
 import os
 import sys
 import json
@@ -22,6 +23,8 @@ import pandas as pd
 from catboost import CatBoostRegressor, Pool
 from google.cloud import bigquery, storage
 from sklearn.metrics import mean_absolute_error, mean_squared_error
+
+logger = logging.getLogger(__name__)
 
 # Configuration
 PROJECT_ID = "nba-props-platform"
@@ -64,20 +67,20 @@ V2_FEATURES = [
     'f17_ballpark_k_factor',
 ]
 
-print("=" * 80)
-print(" MLB PITCHER STRIKEOUTS V2 MODEL TRAINING (CatBoost)")
-print("=" * 80)
-print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print(f"Features: {len(V2_FEATURES)}")
-print()
+logger.info("=" * 80)
+logger.info(" MLB PITCHER STRIKEOUTS V2 MODEL TRAINING (CatBoost)")
+logger.info("=" * 80)
+logger.info(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+logger.info(f"Features: {len(V2_FEATURES)}")
+logger.info("")
 
 # ============================================================================
 # STEP 1: LOAD TRAINING DATA
 # ============================================================================
 
-print("=" * 80)
-print("STEP 1: LOADING TRAINING DATA")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 1: LOADING TRAINING DATA")
+logger.info("=" * 80)
 
 client = bigquery.Client(project=PROJECT_ID)
 
@@ -296,43 +299,43 @@ WHERE actual_strikeouts IS NOT NULL
 ORDER BY game_date, player_lookup
 """
 
-print("Fetching data from BigQuery...")
-print("Date range: 2024-2025 seasons")
-print()
+logger.info("Fetching data from BigQuery...")
+logger.info("Date range: 2024-2025 seasons")
+logger.info("")
 
 try:
     df = client.query(query).to_dataframe()
-    print(f"Loaded {len(df):,} pitcher starts")
-    print(f"  Date range: {df['game_date'].min()} to {df['game_date'].max()}")
-    print(f"  Unique pitchers: {df['player_lookup'].nunique()}")
-    print(f"  Avg strikeouts: {df['actual_strikeouts'].mean():.2f}")
-    print(f"  Has betting line: {df['strikeouts_line'].notna().sum():,} ({100*df['strikeouts_line'].notna().mean():.1f}%)")
-    print()
+    logger.info(f"Loaded {len(df):,} pitcher starts")
+    logger.info(f"  Date range: {df['game_date'].min()} to {df['game_date'].max()}")
+    logger.info(f"  Unique pitchers: {df['player_lookup'].nunique()}")
+    logger.info(f"  Avg strikeouts: {df['actual_strikeouts'].mean():.2f}")
+    logger.info(f"  Has betting line: {df['strikeouts_line'].notna().sum():,} ({100*df['strikeouts_line'].notna().mean():.1f}%)")
+    logger.info("")
 except Exception as e:
-    print(f"ERROR loading data: {e}")
+    logger.error(f"ERROR loading data: {e}")
     sys.exit(1)
 
 if len(df) < 100:
-    print("ERROR: Not enough training data.")
+    logger.error("ERROR: Not enough training data.")
     sys.exit(1)
 
 # ============================================================================
 # STEP 2: PREPARE FEATURES
 # ============================================================================
 
-print("=" * 80)
-print("STEP 2: PREPARING FEATURES")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 2: PREPARING FEATURES")
+logger.info("=" * 80)
 
 # Filter to available columns
 available_features = [c for c in V2_FEATURES if c in df.columns]
 missing_features = [c for c in V2_FEATURES if c not in df.columns]
 
 if missing_features:
-    print(f"WARNING: Missing {len(missing_features)} features: {missing_features}")
+    logger.warning(f"Missing {len(missing_features)} features: {missing_features}")
 
-print(f"Using {len(available_features)} features")
-print()
+logger.info(f"Using {len(available_features)} features")
+logger.info("")
 
 # Target variable
 target_col = 'actual_strikeouts'
@@ -350,19 +353,19 @@ y = pd.to_numeric(y, errors='coerce')
 X = X.fillna(X.median())
 y = y.fillna(y.median())
 
-print(f"Features: {len(available_features)}")
-print(f"Samples: {len(X):,}")
-print(f"Target mean: {y.mean():.2f}")
-print(f"Target std: {y.std():.2f}")
-print()
+logger.info(f"Features: {len(available_features)}")
+logger.info(f"Samples: {len(X):,}")
+logger.info(f"Target mean: {y.mean():.2f}")
+logger.info(f"Target std: {y.std():.2f}")
+logger.info("")
 
 # ============================================================================
 # STEP 3: SPLIT DATA CHRONOLOGICALLY
 # ============================================================================
 
-print("=" * 80)
-print("STEP 3: CHRONOLOGICAL TRAIN/VAL/TEST SPLIT")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 3: CHRONOLOGICAL TRAIN/VAL/TEST SPLIT")
+logger.info("=" * 80)
 
 df_sorted = df.sort_values('game_date').reset_index(drop=True)
 n = len(df_sorted)
@@ -387,18 +390,18 @@ y_test = y.iloc[test_idx]
 # Keep test metadata for hit rate calculation
 test_df = df_sorted.iloc[test_idx].copy()
 
-print(f"Training:   {len(X_train):,} starts ({df_sorted.iloc[train_idx]['game_date'].min()} to {df_sorted.iloc[train_idx]['game_date'].max()})")
-print(f"Validation: {len(X_val):,} starts")
-print(f"Test:       {len(X_test):,} starts ({df_sorted.iloc[test_idx]['game_date'].min()} to {df_sorted.iloc[test_idx]['game_date'].max()})")
-print()
+logger.info(f"Training:   {len(X_train):,} starts ({df_sorted.iloc[train_idx]['game_date'].min()} to {df_sorted.iloc[train_idx]['game_date'].max()})")
+logger.info(f"Validation: {len(X_val):,} starts")
+logger.info(f"Test:       {len(X_test):,} starts ({df_sorted.iloc[test_idx]['game_date'].min()} to {df_sorted.iloc[test_idx]['game_date'].max()})")
+logger.info("")
 
 # ============================================================================
 # STEP 4: TRAIN CATBOOST MODEL
 # ============================================================================
 
-print("=" * 80)
-print("STEP 4: TRAINING CATBOOST MODEL")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 4: TRAINING CATBOOST MODEL")
+logger.info("=" * 80)
 
 # CatBoost hyperparameters
 params = {
@@ -413,12 +416,12 @@ params = {
     'verbose': 100,
 }
 
-print("Hyperparameters:")
+logger.info("Hyperparameters:")
 for k, v in list(params.items())[:6]:
-    print(f"  {k}: {v}")
-print()
+    logger.info(f"  {k}: {v}")
+logger.info("")
 
-print("Training CatBoost V2...")
+logger.info("Training CatBoost V2...")
 model = CatBoostRegressor(**params)
 
 model.fit(
@@ -427,17 +430,17 @@ model.fit(
     use_best_model=True,
 )
 
-print()
-print("Training complete!")
-print()
+logger.info("")
+logger.info("Training complete!")
+logger.info("")
 
 # ============================================================================
 # STEP 5: EVALUATE MODEL
 # ============================================================================
 
-print("=" * 80)
-print("STEP 5: MODEL EVALUATION")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 5: MODEL EVALUATION")
+logger.info("=" * 80)
 
 def evaluate(y_true, y_pred, name):
     mae = mean_absolute_error(y_true, y_pred)
@@ -447,12 +450,12 @@ def evaluate(y_true, y_pred, name):
     within_2 = (errors <= 2).mean() * 100
     within_3 = (errors <= 3).mean() * 100
 
-    print(f"\n{name} Set:")
-    print(f"  MAE:  {mae:.2f} strikeouts")
-    print(f"  RMSE: {rmse:.2f}")
-    print(f"  Within 1K: {within_1:.1f}%")
-    print(f"  Within 2K: {within_2:.1f}%")
-    print(f"  Within 3K: {within_3:.1f}%")
+    logger.info(f"{name} Set:")
+    logger.info(f"  MAE:  {mae:.2f} strikeouts")
+    logger.info(f"  RMSE: {rmse:.2f}")
+    logger.info(f"  Within 1K: {within_1:.1f}%")
+    logger.info(f"  Within 2K: {within_2:.1f}%")
+    logger.info(f"  Within 3K: {within_3:.1f}%")
 
     return {'mae': mae, 'rmse': rmse, 'within_1': within_1, 'within_2': within_2, 'within_3': within_3}
 
@@ -468,19 +471,19 @@ test_metrics = evaluate(y_test, test_pred, "Test")
 V1_MAE = 1.46
 V1_HIT_RATE = 67.27
 
-print(f"\n\nV1 Baseline: MAE {V1_MAE}, Hit Rate {V1_HIT_RATE}%")
-print(f"V2 CatBoost: MAE {test_metrics['mae']:.2f}")
+logger.info(f"V1 Baseline: MAE {V1_MAE}, Hit Rate {V1_HIT_RATE}%")
+logger.info(f"V2 CatBoost: MAE {test_metrics['mae']:.2f}")
 
 mae_improvement = (V1_MAE - test_metrics['mae']) / V1_MAE * 100
-print(f"MAE Change: {mae_improvement:+.1f}%")
+logger.info(f"MAE Change: {mae_improvement:+.1f}%")
 
 # ============================================================================
 # STEP 6: CALCULATE HIT RATE ON TEST SET
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("STEP 6: HIT RATE CALCULATION")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 6: HIT RATE CALCULATION")
+logger.info("=" * 80)
 
 # Add predictions to test dataframe
 test_df['v2_predicted'] = test_pred
@@ -526,12 +529,12 @@ def calculate_hit_rate(df, pred_col, line_col, actual_col, edge_threshold=0.5):
     hit_rate = wins / total * 100
 
     # Edge bucket analysis
-    print(f"\n  Edge Bucket Analysis (threshold={edge_threshold}):")
+    logger.info(f"  Edge Bucket Analysis (threshold={edge_threshold}):")
     for bucket_min, bucket_max in [(0.5, 1.0), (1.0, 1.5), (1.5, 2.0), (2.0, 100)]:
         bucket_picks = picks[(picks['edge'].abs() >= bucket_min) & (picks['edge'].abs() < bucket_max)]
         if len(bucket_picks) > 0:
             bucket_wr = bucket_picks['is_correct'].mean() * 100
-            print(f"    Edge {bucket_min}-{bucket_max}: {len(bucket_picks)} picks, {bucket_wr:.1f}% win rate")
+            logger.info(f"    Edge {bucket_min}-{bucket_max}: {len(bucket_picks)} picks, {bucket_wr:.1f}% win rate")
 
     return {
         'total': total,
@@ -550,29 +553,29 @@ def calculate_hit_rate(df, pred_col, line_col, actual_col, edge_threshold=0.5):
     }
 
 # Calculate with different thresholds
-print("\nV2 Hit Rate Analysis:")
+logger.info("V2 Hit Rate Analysis:")
 
 for threshold in [0.5, 1.0]:
     result = calculate_hit_rate(test_df, 'v2_predicted', 'strikeouts_line', 'actual_strikeouts', threshold)
-    print(f"\nThreshold {threshold}:")
-    print(f"  Total picks: {result['total']}")
-    print(f"  Wins: {result['wins']}")
-    print(f"  Hit Rate: {result['hit_rate']:.2f}%")
+    logger.info(f"Threshold {threshold}:")
+    logger.info(f"  Total picks: {result['total']}")
+    logger.info(f"  Wins: {result['wins']}")
+    logger.info(f"  Hit Rate: {result['hit_rate']:.2f}%")
     if result['total'] > 0:
         over_stats = result['by_direction']['OVER']
         under_stats = result['by_direction']['UNDER']
         if over_stats['total'] > 0:
-            print(f"  OVER: {over_stats['wins']}/{over_stats['total']} ({100*over_stats['wins']/over_stats['total']:.1f}%)")
+            logger.info(f"  OVER: {over_stats['wins']}/{over_stats['total']} ({100*over_stats['wins']/over_stats['total']:.1f}%)")
         if under_stats['total'] > 0:
-            print(f"  UNDER: {under_stats['wins']}/{under_stats['total']} ({100*under_stats['wins']/under_stats['total']:.1f}%)")
+            logger.info(f"  UNDER: {under_stats['wins']}/{under_stats['total']} ({100*under_stats['wins']/under_stats['total']:.1f}%)")
 
 # ============================================================================
 # STEP 7: FEATURE IMPORTANCE
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("TOP 10 MOST IMPORTANT FEATURES")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("TOP 10 MOST IMPORTANT FEATURES")
+logger.info("=" * 80)
 
 importance = model.feature_importances_
 feat_imp = pd.DataFrame({
@@ -582,28 +585,28 @@ feat_imp = pd.DataFrame({
 
 for _, row in feat_imp.head(10).iterrows():
     bar = '*' * int(row['importance'] * 50)
-    print(f"{row['feature']:30s} {row['importance']*100:5.1f}% {bar}")
+    logger.info(f"{row['feature']:30s} {row['importance']*100:5.1f}% {bar}")
 
 # Highlight V2 new features
-print("\nV2 NEW Features importance:")
+logger.info("V2 NEW Features importance:")
 for feat in ['f15_opponent_team_k_rate', 'f17_ballpark_k_factor']:
     if feat in feat_imp['feature'].values:
         imp = feat_imp[feat_imp['feature'] == feat]['importance'].values[0]
-        print(f"  {feat}: {imp*100:.1f}%")
+        logger.info(f"  {feat}: {imp*100:.1f}%")
 
 # ============================================================================
 # STEP 8: SAVE MODEL
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("STEP 8: SAVING MODEL")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 8: SAVING MODEL")
+logger.info("=" * 80)
 
 model_id = f"pitcher_strikeouts_v2_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 model_path = MODEL_OUTPUT_DIR / f"{model_id}.cbm"
 
 model.save_model(str(model_path))
-print(f"Model saved: {model_path}")
+logger.info(f"Model saved: {model_path}")
 
 # Save metadata
 # Calculate final hit rate at 0.5 threshold
@@ -631,43 +634,43 @@ metadata_path = MODEL_OUTPUT_DIR / f"{model_id}_metadata.json"
 with open(metadata_path, 'w') as f:
     json.dump(metadata, f, indent=2, default=str)
 
-print(f"Metadata saved: {metadata_path}")
+logger.info(f"Metadata saved: {metadata_path}")
 
 # ============================================================================
 # SUMMARY
 # ============================================================================
 
-print("\n" + "=" * 80)
-print(" V2 TRAINING COMPLETE")
-print("=" * 80)
-print()
-print(f"Model: {model_id}")
-print(f"Algorithm: CatBoost")
-print(f"Features: {len(available_features)}")
-print()
-print("Performance Comparison:")
-print(f"  {'Metric':<15} {'V1':<12} {'V2':<12} {'Change':<10}")
-print(f"  {'-'*50}")
-print(f"  {'MAE':<15} {V1_MAE:<12.2f} {test_metrics['mae']:<12.2f} {mae_improvement:+.1f}%")
-print(f"  {'Hit Rate':<15} {V1_HIT_RATE:<12.2f}% {final_hit_rate_result['hit_rate']:<12.2f}%")
-print()
+logger.info("=" * 80)
+logger.info(" V2 TRAINING COMPLETE")
+logger.info("=" * 80)
+logger.info("")
+logger.info(f"Model: {model_id}")
+logger.info(f"Algorithm: CatBoost")
+logger.info(f"Features: {len(available_features)}")
+logger.info("")
+logger.info("Performance Comparison:")
+logger.info(f"  {'Metric':<15} {'V1':<12} {'V2':<12} {'Change':<10}")
+logger.info(f"  {'-'*50}")
+logger.info(f"  {'MAE':<15} {V1_MAE:<12.2f} {test_metrics['mae']:<12.2f} {mae_improvement:+.1f}%")
+logger.info(f"  {'Hit Rate':<15} {V1_HIT_RATE:<12.2f}% {final_hit_rate_result['hit_rate']:<12.2f}%")
+logger.info("")
 
 # Determine if V2 is promotion-ready
 is_better = test_metrics['mae'] <= V1_MAE and final_hit_rate_result['hit_rate'] >= V1_HIT_RATE
 
 if is_better:
-    print("V2 READY FOR PROMOTION")
-    print("\nNext steps:")
-    print(f"  1. gsutil cp {model_path} gs://nba-scraped-data/ml-models/mlb/")
-    print(f"  2. gsutil cp {metadata_path} gs://nba-scraped-data/ml-models/mlb/")
-    print("  3. Update V2 predictor to load this model")
+    logger.info("V2 READY FOR PROMOTION")
+    logger.info("Next steps:")
+    logger.info(f"  1. gsutil cp {model_path} gs://nba-scraped-data/ml-models/mlb/")
+    logger.info(f"  2. gsutil cp {metadata_path} gs://nba-scraped-data/ml-models/mlb/")
+    logger.info("  3. Update V2 predictor to load this model")
 elif test_metrics['mae'] <= V1_MAE:
-    print("V2 HAS LOWER MAE - consider promoting if hit rate improves with more data")
+    logger.info("V2 HAS LOWER MAE - consider promoting if hit rate improves with more data")
 else:
-    print("V2 NEEDS MORE WORK")
-    print("\nConsider:")
-    print("  - Adding more features (pitcher splits, game totals)")
-    print("  - Tuning hyperparameters")
-    print("  - Using larger edge thresholds")
+    logger.info("V2 NEEDS MORE WORK")
+    logger.info("Consider:")
+    logger.info("  - Adding more features (pitcher splits, game totals)")
+    logger.info("  - Tuning hyperparameters")
+    logger.info("  - Using larger edge thresholds")
 
-print()
+logger.info("")

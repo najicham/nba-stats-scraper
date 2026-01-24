@@ -14,6 +14,7 @@ Usage:
     PYTHONPATH=. python scripts/mlb/training/train_pitcher_strikeouts_classifier.py
 """
 
+import logging
 import os
 import sys
 import json
@@ -31,25 +32,27 @@ from sklearn.metrics import (
 )
 from sklearn.calibration import calibration_curve
 
+logger = logging.getLogger(__name__)
+
 # Configuration
 PROJECT_ID = "nba-props-platform"
 MODEL_OUTPUT_DIR = Path("models/mlb")
 MODEL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-print("=" * 80)
-print(" MLB PITCHER STRIKEOUT CLASSIFIER")
-print(" (Direct Over/Under Prediction)")
-print("=" * 80)
-print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print()
+logger.info("=" * 80)
+logger.info(" MLB PITCHER STRIKEOUT CLASSIFIER")
+logger.info(" (Direct Over/Under Prediction)")
+logger.info("=" * 80)
+logger.info(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+logger.info("")
 
 # ============================================================================
 # STEP 1: LOAD TRAINING DATA
 # ============================================================================
 
-print("=" * 80)
-print("STEP 1: LOADING TRAINING DATA")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 1: LOADING TRAINING DATA")
+logger.info("=" * 80)
 
 client = bigquery.Client(project=PROJECT_ID)
 
@@ -204,22 +207,22 @@ WHERE bp.over_line IS NOT NULL
 ORDER BY pgs.game_date, pgs.player_lookup
 """
 
-print("Fetching data from BigQuery...")
+logger.info("Fetching data from BigQuery...")
 df = client.query(query).to_dataframe()
 
-print(f"Loaded {len(df):,} samples")
-print(f"  Date range: {df['game_date'].min()} to {df['game_date'].max()}")
-print(f"  Over rate: {df['went_over'].mean()*100:.1f}%")
-print(f"  Avg line: {df['betting_line'].mean():.2f}")
-print()
+logger.info(f"Loaded {len(df):,} samples")
+logger.info(f"  Date range: {df['game_date'].min()} to {df['game_date'].max()}")
+logger.info(f"  Over rate: {df['went_over'].mean()*100:.1f}%")
+logger.info(f"  Avg line: {df['betting_line'].mean():.2f}")
+logger.info("")
 
 # ============================================================================
 # STEP 2: PREPARE FEATURES
 # ============================================================================
 
-print("=" * 80)
-print("STEP 2: PREPARING FEATURES")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 2: PREPARING FEATURES")
+logger.info("=" * 80)
 
 # All features (including new line-relative features)
 features = [
@@ -246,7 +249,7 @@ features = [
 ]
 
 available_features = [f for f in features if f in df.columns]
-print(f"Using {len(available_features)} features")
+logger.info(f"Using {len(available_features)} features")
 
 # Target: binary over/under
 target = 'went_over'
@@ -255,9 +258,9 @@ target = 'went_over'
 # STEP 3: CHRONOLOGICAL TRAIN/VAL/TEST SPLIT
 # ============================================================================
 
-print("=" * 80)
-print("STEP 3: CHRONOLOGICAL TRAIN/VAL/TEST SPLIT")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 3: CHRONOLOGICAL TRAIN/VAL/TEST SPLIT")
+logger.info("=" * 80)
 
 # IMPORTANT: Sort FIRST, then create X and y from sorted data
 df_sorted = df.sort_values('game_date').reset_index(drop=True)
@@ -276,9 +279,9 @@ for col in X.columns:
 X = X.fillna(X.median())
 y = y.fillna(0).astype(int)
 
-print(f"Feature matrix: {X.shape}")
-print(f"Target distribution: {y.value_counts().to_dict()}")
-print()
+logger.info(f"Feature matrix: {X.shape}")
+logger.info(f"Target distribution: {y.value_counts().to_dict()}")
+logger.info("")
 
 # Split indices
 train_idx = list(range(0, train_end))
@@ -291,21 +294,21 @@ X_test, y_test = X.iloc[test_idx], y.iloc[test_idx]
 
 test_df = df_sorted.iloc[test_idx].copy()
 
-print(f"Training:   {len(X_train):,} samples ({df_sorted.iloc[train_idx]['game_date'].min()} to {df_sorted.iloc[train_idx]['game_date'].max()})")
-print(f"Validation: {len(X_val):,} samples")
-print(f"Test:       {len(X_test):,} samples ({df_sorted.iloc[test_idx]['game_date'].min()} to {df_sorted.iloc[test_idx]['game_date'].max()})")
-print()
-print(f"Train over rate: {y_train.mean()*100:.1f}%")
-print(f"Test over rate:  {y_test.mean()*100:.1f}%")
-print()
+logger.info(f"Training:   {len(X_train):,} samples ({df_sorted.iloc[train_idx]['game_date'].min()} to {df_sorted.iloc[train_idx]['game_date'].max()})")
+logger.info(f"Validation: {len(X_val):,} samples")
+logger.info(f"Test:       {len(X_test):,} samples ({df_sorted.iloc[test_idx]['game_date'].min()} to {df_sorted.iloc[test_idx]['game_date'].max()})")
+logger.info("")
+logger.info(f"Train over rate: {y_train.mean()*100:.1f}%")
+logger.info(f"Test over rate:  {y_test.mean()*100:.1f}%")
+logger.info("")
 
 # ============================================================================
 # STEP 4: TRAIN XGBOOST CLASSIFIER
 # ============================================================================
 
-print("=" * 80)
-print("STEP 4: TRAINING XGBOOST CLASSIFIER")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 4: TRAINING XGBOOST CLASSIFIER")
+logger.info("=" * 80)
 
 params = {
     'max_depth': 5,
@@ -324,22 +327,22 @@ params = {
     'scale_pos_weight': 1.0,  # Balanced classes
 }
 
-print("Training XGBoost Classifier...")
+logger.info("Training XGBoost Classifier...")
 model = xgb.XGBClassifier(**params)
 model.fit(
     X_train, y_train,
     eval_set=[(X_val, y_val)],
     verbose=50
 )
-print()
+logger.info("")
 
 # ============================================================================
 # STEP 5: EVALUATE MODEL
 # ============================================================================
 
-print("=" * 80)
-print("STEP 5: MODEL EVALUATION")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 5: MODEL EVALUATION")
+logger.info("=" * 80)
 
 # Get predictions and probabilities
 train_proba = model.predict_proba(X_train)[:, 1]
@@ -355,10 +358,10 @@ def evaluate_classifier(y_true, y_pred, y_proba, name):
     auc = roc_auc_score(y_true, y_proba)
     ll = log_loss(y_true, y_proba)
 
-    print(f"\n{name}:")
-    print(f"  Accuracy (Hit Rate): {acc*100:.2f}%")
-    print(f"  AUC-ROC: {auc:.4f}")
-    print(f"  Log Loss: {ll:.4f}")
+    logger.info(f"{name}:")
+    logger.info(f"  Accuracy (Hit Rate): {acc*100:.2f}%")
+    logger.info(f"  AUC-ROC: {auc:.4f}")
+    logger.info(f"  Log Loss: {ll:.4f}")
 
     return {'accuracy': acc, 'auc': auc, 'log_loss': ll}
 
@@ -370,9 +373,9 @@ test_metrics = evaluate_classifier(y_test, test_pred, test_proba, "Test")
 # STEP 6: CONFIDENCE-BASED ANALYSIS
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("STEP 6: CONFIDENCE-BASED BETTING ANALYSIS")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 6: CONFIDENCE-BASED BETTING ANALYSIS")
+logger.info("=" * 80)
 
 test_df['prob_over'] = test_proba
 test_df['pred_over'] = test_pred
@@ -390,10 +393,10 @@ def analyze_confidence_tier(df, prob_col, min_conf, max_conf, direction):
 
     return mask.sum(), correct
 
-print("\nConfidence Tier Analysis:")
-print("-" * 70)
-print(f"{'Tier':<25} {'Bets':>8} {'Hit Rate':>12} {'Edge':>10}")
-print("-" * 70)
+logger.info("Confidence Tier Analysis:")
+logger.info("-" * 70)
+logger.info(f"{'Tier':<25} {'Bets':>8} {'Hit Rate':>12} {'Edge':>10}")
+logger.info("-" * 70)
 
 tiers = [
     ('ALL BETS', 0.0, 1.01, 'all'),
@@ -414,38 +417,38 @@ for tier_name, min_conf, max_conf, direction in tiers:
 
     if count > 0 and not np.isnan(hit_rate):
         edge = (hit_rate - 0.5) * 100
-        print(f"{tier_name:<25} {count:>8} {hit_rate*100:>11.1f}% {edge:>+9.1f}%")
+        logger.info(f"{tier_name:<25} {count:>8} {hit_rate*100:>11.1f}% {edge:>+9.1f}%")
     else:
-        print(f"{tier_name:<25} {count:>8} {'N/A':>12} {'N/A':>10}")
+        logger.info(f"{tier_name:<25} {count:>8} {'N/A':>12} {'N/A':>10}")
 
-print("-" * 70)
+logger.info("-" * 70)
 
 # Combined high confidence (either direction)
 high_conf_mask = (test_df['prob_over'] >= 0.60) | (test_df['prob_over'] <= 0.40)
 high_conf_df = test_df[high_conf_mask]
 if len(high_conf_df) > 0:
     high_conf_hit = high_conf_df['correct'].mean()
-    print(f"\nCombined High Confidence (P>60% or P<40%):")
-    print(f"  Bets: {len(high_conf_df)}")
-    print(f"  Hit Rate: {high_conf_hit*100:.1f}%")
-    print(f"  Edge: {(high_conf_hit - 0.5)*100:+.1f}%")
+    logger.info(f"Combined High Confidence (P>60% or P<40%):")
+    logger.info(f"  Bets: {len(high_conf_df)}")
+    logger.info(f"  Hit Rate: {high_conf_hit*100:.1f}%")
+    logger.info(f"  Edge: {(high_conf_hit - 0.5)*100:+.1f}%")
 
 # ============================================================================
 # STEP 7: PROBABILITY CALIBRATION CHECK
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("STEP 7: PROBABILITY CALIBRATION")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 7: PROBABILITY CALIBRATION")
+logger.info("=" * 80)
 
 # Check if probabilities are well-calibrated
 prob_bins = [0, 0.3, 0.4, 0.5, 0.6, 0.7, 1.0]
 test_df['prob_bin'] = pd.cut(test_df['prob_over'], bins=prob_bins)
 
-print("\nCalibration by probability bin:")
-print("-" * 50)
-print(f"{'Prob Bin':<15} {'Count':>8} {'Actual Over%':>15} {'Diff':>10}")
-print("-" * 50)
+logger.info("Calibration by probability bin:")
+logger.info("-" * 50)
+logger.info(f"{'Prob Bin':<15} {'Count':>8} {'Actual Over%':>15} {'Diff':>10}")
+logger.info("-" * 50)
 
 for bin_label in test_df['prob_bin'].unique():
     if pd.isna(bin_label):
@@ -455,15 +458,15 @@ for bin_label in test_df['prob_bin'].unique():
         actual_rate = bin_df['went_over'].mean()
         expected_rate = bin_df['prob_over'].mean()
         diff = (actual_rate - expected_rate) * 100
-        print(f"{str(bin_label):<15} {len(bin_df):>8} {actual_rate*100:>14.1f}% {diff:>+9.1f}%")
+        logger.info(f"{str(bin_label):<15} {len(bin_df):>8} {actual_rate*100:>14.1f}% {diff:>+9.1f}%")
 
 # ============================================================================
 # STEP 8: FEATURE IMPORTANCE
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("STEP 8: FEATURE IMPORTANCE")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 8: FEATURE IMPORTANCE")
+logger.info("=" * 80)
 
 importance = model.feature_importances_
 feat_imp = pd.DataFrame({
@@ -471,47 +474,46 @@ feat_imp = pd.DataFrame({
     'importance': importance
 }).sort_values('importance', ascending=False)
 
-print("\nTop 15 Features:")
+logger.info("Top 15 Features:")
 for i, (_, row) in enumerate(feat_imp.head(15).iterrows()):
-    bar = '█' * int(row['importance'] * 50)
-    print(f"  {row['feature']:30s} {row['importance']*100:5.1f}% {bar}")
+    bar = '*' * int(row['importance'] * 50)
+    logger.info(f"  {row['feature']:30s} {row['importance']*100:5.1f}% {bar}")
 
 # ============================================================================
 # STEP 9: COMPARE WITH REGRESSION BASELINE
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("STEP 9: COMPARISON WITH V1.5 REGRESSION")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 9: COMPARISON WITH V1.5 REGRESSION")
+logger.info("=" * 80)
 
-print("""
-Comparison Summary:
-┌─────────────────────┬────────────────┬────────────────┐
-│ Metric              │ V1.5 Regressor │ Classifier     │
-├─────────────────────┼────────────────┼────────────────┤""")
-print(f"│ Test Hit Rate       │ 52.98%         │ {test_metrics['accuracy']*100:.2f}%         │")
-print(f"│ Test AUC            │ N/A            │ {test_metrics['auc']:.4f}         │")
-print("""└─────────────────────┴────────────────┴────────────────┘
-
-Key advantages of classifier:
-1. Direct probability output for confidence filtering
-2. Optimizes for the actual task (O/U classification)
-3. Can apply different thresholds for over vs under
-""")
+logger.info("Comparison Summary:")
+logger.info("+-----------------+----------------+----------------+")
+logger.info("| Metric              | V1.5 Regressor | Classifier     |")
+logger.info("+-----------------+----------------+----------------+")
+logger.info(f"| Test Hit Rate       | 52.98%         | {test_metrics['accuracy']*100:.2f}%         |")
+logger.info(f"| Test AUC            | N/A            | {test_metrics['auc']:.4f}         |")
+logger.info("+-----------------+----------------+----------------+")
+logger.info("")
+logger.info("Key advantages of classifier:")
+logger.info("1. Direct probability output for confidence filtering")
+logger.info("2. Optimizes for the actual task (O/U classification)")
+logger.info("3. Can apply different thresholds for over vs under")
+logger.info("")
 
 # ============================================================================
 # STEP 10: SAVE MODEL
 # ============================================================================
 
-print("=" * 80)
-print("STEP 10: SAVING MODEL")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 10: SAVING MODEL")
+logger.info("=" * 80)
 
 model_id = f"mlb_pitcher_strikeouts_classifier_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 model_path = MODEL_OUTPUT_DIR / f"{model_id}.json"
 
 model.get_booster().save_model(str(model_path))
-print(f"Model saved: {model_path}")
+logger.info(f"Model saved: {model_path}")
 
 # Save metadata
 metadata = {
@@ -533,31 +535,31 @@ metadata_path = MODEL_OUTPUT_DIR / f"{model_id}_metadata.json"
 with open(metadata_path, 'w') as f:
     json.dump(metadata, f, indent=2, default=str)
 
-print(f"Metadata saved: {metadata_path}")
+logger.info(f"Metadata saved: {metadata_path}")
 
 # ============================================================================
 # SUMMARY
 # ============================================================================
 
-print("\n" + "=" * 80)
-print(" CLASSIFIER TRAINING COMPLETE")
-print("=" * 80)
-print()
-print(f"Model: {model_id}")
-print(f"Test Hit Rate: {test_metrics['accuracy']*100:.2f}%")
-print(f"Test AUC-ROC: {test_metrics['auc']:.4f}")
-print()
+logger.info("=" * 80)
+logger.info(" CLASSIFIER TRAINING COMPLETE")
+logger.info("=" * 80)
+logger.info("")
+logger.info(f"Model: {model_id}")
+logger.info(f"Test Hit Rate: {test_metrics['accuracy']*100:.2f}%")
+logger.info(f"Test AUC-ROC: {test_metrics['auc']:.4f}")
+logger.info("")
 
 if test_metrics['accuracy'] > 0.54:
-    print("✓ Classifier shows improvement over baseline!")
+    logger.info("Classifier shows improvement over baseline!")
 elif test_metrics['accuracy'] > 0.52:
-    print("~ Classifier comparable to regression baseline")
+    logger.info("Classifier comparable to regression baseline")
 else:
-    print("✗ Classifier underperforms - regression may be better")
+    logger.info("Classifier underperforms - regression may be better")
 
-print()
-print("Next steps:")
-print("  1. Compare with V1.5 regression on identical test set")
-print("  2. Test different confidence thresholds")
-print("  3. Try ensemble of classifier + regressor")
-print()
+logger.info("")
+logger.info("Next steps:")
+logger.info("  1. Compare with V1.5 regression on identical test set")
+logger.info("  2. Test different confidence thresholds")
+logger.info("  3. Try ensemble of classifier + regressor")
+logger.info("")

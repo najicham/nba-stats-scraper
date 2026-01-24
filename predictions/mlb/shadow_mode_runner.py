@@ -505,28 +505,28 @@ def write_to_bigquery(
 def print_summary(predictions: List[ShadowPrediction]):
     """Print summary statistics"""
     if not predictions:
-        print("\nNo predictions generated")
+        logger.warning("No predictions generated")
         return
 
-    print("\n" + "=" * 70)
-    print("MLB SHADOW MODE SUMMARY - V1.4 vs V1.6")
-    print("=" * 70)
+    logger.info("=" * 70)
+    logger.info("MLB SHADOW MODE SUMMARY - V1.4 vs V1.6")
+    logger.info("=" * 70)
 
     # Basic stats
-    print(f"\nTotal predictions: {len(predictions)}")
+    logger.info(f"Total predictions: {len(predictions)}")
 
     # Prediction differences
     diffs = [p.prediction_diff for p in predictions]
-    print(f"\nPrediction Differences (V1.6 - V1.4):")
-    print(f"  Mean: {sum(diffs) / len(diffs):+.2f} K")
-    print(f"  Min:  {min(diffs):+.2f} K")
-    print(f"  Max:  {max(diffs):+.2f} K")
+    logger.info("Prediction Differences (V1.6 - V1.4):")
+    logger.info(f"  Mean: {sum(diffs) / len(diffs):+.2f} K")
+    logger.info(f"  Min:  {min(diffs):+.2f} K")
+    logger.info(f"  Max:  {max(diffs):+.2f} K")
 
     # Recommendation comparison
     agree = sum(1 for p in predictions if p.recommendation_agrees)
-    print(f"\nRecommendation Agreement:")
-    print(f"  Same:      {agree} ({100 * agree / len(predictions):.1f}%)")
-    print(f"  Different: {len(predictions) - agree} ({100 * (len(predictions) - agree) / len(predictions):.1f}%)")
+    logger.info("Recommendation Agreement:")
+    logger.info(f"  Same:      {agree} ({100 * agree / len(predictions):.1f}%)")
+    logger.info(f"  Different: {len(predictions) - agree} ({100 * (len(predictions) - agree) / len(predictions):.1f}%)")
 
     # OVER/UNDER breakdown
     v1_4_overs = sum(1 for p in predictions if p.v1_4_recommendation == 'OVER')
@@ -534,27 +534,27 @@ def print_summary(predictions: List[ShadowPrediction]):
     v1_4_unders = sum(1 for p in predictions if p.v1_4_recommendation == 'UNDER')
     v1_6_unders = sum(1 for p in predictions if p.v1_6_recommendation == 'UNDER')
 
-    print(f"\nRecommendation Breakdown:")
-    print(f"  V1.4: {v1_4_overs} OVER, {v1_4_unders} UNDER, {len(predictions) - v1_4_overs - v1_4_unders} PASS")
-    print(f"  V1.6: {v1_6_overs} OVER, {v1_6_unders} UNDER, {len(predictions) - v1_6_overs - v1_6_unders} PASS")
+    logger.info("Recommendation Breakdown:")
+    logger.info(f"  V1.4: {v1_4_overs} OVER, {v1_4_unders} UNDER, {len(predictions) - v1_4_overs - v1_4_unders} PASS")
+    logger.info(f"  V1.6: {v1_6_overs} OVER, {v1_6_unders} UNDER, {len(predictions) - v1_6_overs - v1_6_unders} PASS")
 
     # Confidence comparison
     avg_v1_4_conf = sum(p.v1_4_confidence for p in predictions) / len(predictions)
     avg_v1_6_conf = sum(p.v1_6_confidence for p in predictions) / len(predictions)
-    print(f"\nAverage Confidence:")
-    print(f"  V1.4: {avg_v1_4_conf:.1f}")
-    print(f"  V1.6: {avg_v1_6_conf:.1f}")
+    logger.info("Average Confidence:")
+    logger.info(f"  V1.4: {avg_v1_4_conf:.1f}")
+    logger.info(f"  V1.6: {avg_v1_6_conf:.1f}")
 
     # Edge analysis
     with_edge = [p for p in predictions if p.v1_4_edge is not None and p.v1_6_edge is not None]
     if with_edge:
         v1_4_edges = [abs(p.v1_4_edge) for p in with_edge]
         v1_6_edges = [abs(p.v1_6_edge) for p in with_edge]
-        print(f"\nAverage |Edge|:")
-        print(f"  V1.4: {sum(v1_4_edges) / len(v1_4_edges):.2f}")
-        print(f"  V1.6: {sum(v1_6_edges) / len(v1_6_edges):.2f}")
+        logger.info("Average |Edge|:")
+        logger.info(f"  V1.4: {sum(v1_4_edges) / len(v1_4_edges):.2f}")
+        logger.info(f"  V1.6: {sum(v1_6_edges) / len(v1_6_edges):.2f}")
 
-    print("\n" + "=" * 70)
+    logger.info("=" * 70)
 
 
 def run_shadow_mode(game_date: date, dry_run: bool = False) -> Dict:

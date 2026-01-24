@@ -24,9 +24,12 @@ Usage:
     stats = get_bookmaker_coverage_stats('2021-10-01', '2025-03-31')
 """
 
+import logging
 from google.cloud import bigquery
 import pandas as pd
 from typing import Optional, List, Dict
+
+logger = logging.getLogger(__name__)
 
 # Initialize BigQuery client
 client = bigquery.Client()
@@ -343,38 +346,41 @@ def get_todays_lines() -> pd.DataFrame:
 
 
 if __name__ == "__main__":
+    # Configure logging for standalone execution
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
+
     # Example usage and testing
-    print("🎯 Odds Preference Utility - Examples\n")
-    
+    logger.info("Odds Preference Utility - Examples")
+
     # Example 1: Get lines for a specific date
-    print("Example 1: Get all lines for 2024-01-24")
+    logger.info("Example 1: Get all lines for 2024-01-24")
     lines = get_preferred_game_lines('2024-01-24')
-    print(f"  Found {len(lines)} rows for {lines['game_id'].nunique()} games")
-    print(f"  Bookmakers used: {lines['bookmaker_key'].unique()}\n")
-    
+    logger.info(f"  Found {len(lines)} rows for {lines['game_id'].nunique()} games")
+    logger.info(f"  Bookmakers used: {lines['bookmaker_key'].unique()}")
+
     # Example 2: Get summary
-    print("Example 2: Get game summary for 2024-01-24")
+    logger.info("Example 2: Get game summary for 2024-01-24")
     summary = get_game_lines_summary('2024-01-24')
-    print(f"  Found {len(summary)} games")
+    logger.info(f"  Found {len(summary)} games")
     if len(summary) > 0:
-        print("  Sample game:")
-        print(f"    {summary.iloc[0]['home_team']} vs {summary.iloc[0]['away_team']}")
-        print(f"    Spread: {summary.iloc[0]['spread_value']} (via {summary.iloc[0]['spread_bookmaker']})")
-        print(f"    Total: {summary.iloc[0]['total_value']} (via {summary.iloc[0]['total_bookmaker']})\n")
-    
+        logger.info("  Sample game:")
+        logger.info(f"    {summary.iloc[0]['home_team']} vs {summary.iloc[0]['away_team']}")
+        logger.info(f"    Spread: {summary.iloc[0]['spread_value']} (via {summary.iloc[0]['spread_bookmaker']})")
+        logger.info(f"    Total: {summary.iloc[0]['total_value']} (via {summary.iloc[0]['total_bookmaker']})")
+
     # Example 3: Coverage stats
-    print("Example 3: Check bookmaker coverage (Oct 2021 - Mar 2025)")
+    logger.info("Example 3: Check bookmaker coverage (Oct 2021 - Mar 2025)")
     stats = get_bookmaker_coverage_stats('2021-10-01', '2025-03-31')
-    print(f"  Total games: {stats['total_games']}")
-    print(f"  DraftKings: {stats['games_using_draftkings']} ({stats['dk_coverage_pct']:.2f}%)")
-    print(f"  FanDuel fallback: {stats['games_using_fanduel']}\n")
-    
+    logger.info(f"  Total games: {stats['total_games']}")
+    logger.info(f"  DraftKings: {stats['games_using_draftkings']} ({stats['dk_coverage_pct']:.2f}%)")
+    logger.info(f"  FanDuel fallback: {stats['games_using_fanduel']}")
+
     # Example 4: Check specific team
-    print("Example 4: Check Clippers game bookmakers")
+    logger.info("Example 4: Check Clippers game bookmakers")
     bookmakers = get_game_bookmakers('2024-01-24', 'Los Angeles Clippers')
     if len(bookmakers) > 0:
-        print(f"  Bookmakers for Clippers game on 2024-01-24:")
+        logger.info("  Bookmakers for Clippers game on 2024-01-24:")
         for _, row in bookmakers.iterrows():
-            print(f"    {row['market_key']}: {row['bookmaker_title']}")
+            logger.info(f"    {row['market_key']}: {row['bookmaker_title']}")
     else:
-        print("  No Clippers game found on this date")
+        logger.warning("  No Clippers game found on this date")

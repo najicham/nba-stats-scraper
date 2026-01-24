@@ -20,6 +20,7 @@ Usage:
     PYTHONPATH=. python ml/train_xgboost_v7.py
 """
 
+import logging
 import os
 import sys
 import json
@@ -34,24 +35,26 @@ import xgboost as xgb
 from google.cloud import bigquery
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
+logger = logging.getLogger(__name__)
+
 # Configuration
 PROJECT_ID = "nba-props-platform"
 MODEL_OUTPUT_DIR = Path("models")
 MODEL_OUTPUT_DIR.mkdir(exist_ok=True)
 
-print("=" * 80)
-print(" XGBOOST V7 TRAINING - VEGAS LINES + OPPONENT HISTORY")
-print("=" * 80)
-print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print()
+logger.info("=" * 80)
+logger.info(" XGBOOST V7 TRAINING - VEGAS LINES + OPPONENT HISTORY")
+logger.info("=" * 80)
+logger.info(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+logger.info("")
 
 # ============================================================================
 # STEP 1: LOAD BASE FEATURES + VEGAS + OPPONENT HISTORY
 # ============================================================================
 
-print("=" * 80)
-print("STEP 1: LOADING DATA WITH VEGAS & OPPONENT FEATURES")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 1: LOADING DATA WITH VEGAS & OPPONENT FEATURES")
+logger.info("=" * 80)
 
 client = bigquery.Client(project=PROJECT_ID)
 
@@ -164,24 +167,24 @@ LEFT JOIN opponent_history oh
 ORDER BY fd.game_date, fd.player_lookup
 """
 
-print("Fetching data from BigQuery (this may take a minute)...")
-print("Date range: 2021-11-01 to 2024-06-01")
-print()
+logger.info("Fetching data from BigQuery (this may take a minute)...")
+logger.info("Date range: 2021-11-01 to 2024-06-01")
+logger.info("")
 
 df = client.query(query).to_dataframe()
 
-print(f"Loaded {len(df):,} player-game samples")
-print(f"Date range: {df['game_date'].min()} to {df['game_date'].max()}")
-print(f"Unique players: {df['player_lookup'].nunique()}")
-print()
+logger.info(f"Loaded {len(df):,} player-game samples")
+logger.info(f"Date range: {df['game_date'].min()} to {df['game_date'].max()}")
+logger.info(f"Unique players: {df['player_lookup'].nunique()}")
+logger.info("")
 
 # ============================================================================
 # STEP 2: PREPARE FEATURES (BASE + VEGAS + OPPONENT)
 # ============================================================================
 
-print("=" * 80)
-print("STEP 2: PREPARING EXPANDED FEATURE SET")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 2: PREPARING EXPANDED FEATURE SET")
+logger.info("=" * 80)
 
 # Original 25 features
 base_feature_names = [
@@ -206,21 +209,21 @@ new_feature_names = [
 
 all_feature_names = base_feature_names + new_feature_names
 
-print(f"Base features: {len(base_feature_names)}")
-print(f"New features: {len(new_feature_names)}")
-print(f"Total features: {len(all_feature_names)}")
-print()
+logger.info(f"Base features: {len(base_feature_names)}")
+logger.info(f"New features: {len(new_feature_names)}")
+logger.info(f"Total features: {len(all_feature_names)}")
+logger.info("")
 
 # Extract base features
-print("Extracting base features from arrays...")
+logger.info("Extracting base features from arrays...")
 X_base = pd.DataFrame(df['features'].tolist(), columns=base_feature_names)
 
 # Extract new features
-print("Adding Vegas and opponent history features...")
+logger.info("Adding Vegas and opponent history features...")
 
 # Vegas features - impute missing with player season average
 vegas_coverage = df['has_vegas_line'].mean()
-print(f"Vegas line coverage: {vegas_coverage:.1%}")
+logger.info(f"Vegas line coverage: {vegas_coverage:.1%}")
 
 # For missing Vegas lines, use the player's season average (feature 2: points_avg_season)
 df['vegas_points_line_imputed'] = df['vegas_points_line'].fillna(df['player_season_avg'])
@@ -229,7 +232,7 @@ df['vegas_line_move_imputed'] = df['vegas_line_move'].fillna(0)  # No movement i
 
 # Opponent history - impute missing with season average
 opponent_coverage = df['avg_points_vs_opponent'].notna().mean()
-print(f"Opponent history coverage: {opponent_coverage:.1%}")
+logger.info(f"Opponent history coverage: {opponent_coverage:.1%}")
 df['avg_points_vs_opponent_imputed'] = df['avg_points_vs_opponent'].fillna(df['player_season_avg'])
 
 # Build new feature columns
@@ -247,36 +250,36 @@ X = pd.concat([X_base, X_new], axis=1)
 y = df['actual_points'].astype(float)
 
 # Handle any remaining nulls
-print("Checking for null values...")
+logger.info("Checking for null values...")
 null_counts = X.isnull().sum()
 if null_counts.sum() > 0:
-    print(f"Found {null_counts.sum()} null values:")
+    logger.info(f"Found {null_counts.sum()} null values:")
     for col in null_counts[null_counts > 0].index:
-        print(f"  {col}: {null_counts[col]}")
-    print("Filling with median...")
+        logger.info(f"  {col}: {null_counts[col]}")
+    logger.info("Filling with median...")
     X = X.fillna(X.median())
 else:
-    print("No null values!")
-print()
+    logger.info("No null values!")
+logger.info("")
 
-print(f"Feature matrix shape: {X.shape}")
-print(f"Target vector shape: {y.shape}")
-print()
+logger.info(f"Feature matrix shape: {X.shape}")
+logger.info(f"Target vector shape: {y.shape}")
+logger.info("")
 
 # Print new feature statistics
-print("New feature statistics:")
-print("-" * 50)
+logger.info("New feature statistics:")
+logger.info("-" * 50)
 for feat in new_feature_names:
-    print(f"  {feat:25s} mean={X[feat].mean():7.2f}  std={X[feat].std():6.2f}")
-print()
+    logger.info(f"  {feat:25s} mean={X[feat].mean():7.2f}  std={X[feat].std():6.2f}")
+logger.info("")
 
 # ============================================================================
 # STEP 3: CHRONOLOGICAL TRAIN/VAL/TEST SPLIT
 # ============================================================================
 
-print("=" * 80)
-print("STEP 3: SPLITTING DATA CHRONOLOGICALLY")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 3: SPLITTING DATA CHRONOLOGICALLY")
+logger.info("=" * 80)
 
 df_sorted = df.sort_values('game_date').reset_index(drop=True)
 X = X.iloc[df_sorted.index].reset_index(drop=True)
@@ -300,24 +303,24 @@ train_dates = df_sorted.iloc[train_idx]
 val_dates = df_sorted.iloc[val_idx]
 test_dates = df_sorted.iloc[test_idx]
 
-print(f"Training set:   {len(X_train):,} ({train_dates['game_date'].min()} to {train_dates['game_date'].max()})")
-print(f"Validation set: {len(X_val):,} ({val_dates['game_date'].min()} to {val_dates['game_date'].max()})")
-print(f"Test set:       {len(X_test):,} ({test_dates['game_date'].min()} to {test_dates['game_date'].max()})")
-print()
+logger.info(f"Training set:   {len(X_train):,} ({train_dates['game_date'].min()} to {train_dates['game_date'].max()})")
+logger.info(f"Validation set: {len(X_val):,} ({val_dates['game_date'].min()} to {val_dates['game_date'].max()})")
+logger.info(f"Test set:       {len(X_test):,} ({test_dates['game_date'].min()} to {test_dates['game_date'].max()})")
+logger.info("")
 
 # Check Vegas coverage in each split
 for name, idx in [("Train", train_idx), ("Val", val_idx), ("Test", test_idx)]:
     coverage = X.iloc[idx]['has_vegas_line'].mean()
-    print(f"{name} Vegas coverage: {coverage:.1%}")
-print()
+    logger.info(f"{name} Vegas coverage: {coverage:.1%}")
+logger.info("")
 
 # ============================================================================
 # STEP 4: TRAIN XGBOOST V7
 # ============================================================================
 
-print("=" * 80)
-print("STEP 4: TRAINING XGBOOST V7")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 4: TRAINING XGBOOST V7")
+logger.info("=" * 80)
 
 # Same hyperparameters as v6 (proven regularization)
 params = {
@@ -337,13 +340,13 @@ params = {
     'early_stopping_rounds': 50
 }
 
-print("Hyperparameters (same as v6):")
-print(f"  max_depth: {params['max_depth']}, min_child_weight: {params['min_child_weight']}")
-print(f"  learning_rate: {params['learning_rate']}, reg_lambda: {params['reg_lambda']}")
-print()
+logger.info("Hyperparameters (same as v6):")
+logger.info(f"  max_depth: {params['max_depth']}, min_child_weight: {params['min_child_weight']}")
+logger.info(f"  learning_rate: {params['learning_rate']}, reg_lambda: {params['reg_lambda']}")
+logger.info("")
 
-print(f"Training with {len(all_feature_names)} features...")
-print()
+logger.info(f"Training with {len(all_feature_names)} features...")
+logger.info("")
 
 model = xgb.XGBRegressor(**params)
 
@@ -353,17 +356,17 @@ model.fit(
     verbose=50
 )
 
-print()
-print(f"Training complete! Best iteration: {model.best_iteration}")
-print()
+logger.info("")
+logger.info(f"Training complete! Best iteration: {model.best_iteration}")
+logger.info("")
 
 # ============================================================================
 # STEP 5: EVALUATE MODEL
 # ============================================================================
 
-print("=" * 80)
-print("STEP 5: EVALUATION")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 5: EVALUATION")
+logger.info("=" * 80)
 
 def evaluate_set(y_true, y_pred, name):
     mae = mean_absolute_error(y_true, y_pred)
@@ -372,11 +375,11 @@ def evaluate_set(y_true, y_pred, name):
     within_3 = (errors <= 3).mean() * 100
     within_5 = (errors <= 5).mean() * 100
 
-    print(f"\n{name} Set:")
-    print(f"  MAE:  {mae:.3f} points")
-    print(f"  RMSE: {rmse:.3f} points")
-    print(f"  Within 3 pts: {within_3:.1f}%")
-    print(f"  Within 5 pts: {within_5:.1f}%")
+    logger.info(f"\n{name} Set:")
+    logger.info(f"  MAE:  {mae:.3f} points")
+    logger.info(f"  RMSE: {rmse:.3f} points")
+    logger.info(f"  Within 3 pts: {within_3:.1f}%")
+    logger.info(f"  Within 5 pts: {within_5:.1f}%")
 
     return mae, rmse
 
@@ -389,44 +392,44 @@ val_mae, _ = evaluate_set(y_val, val_pred, "Validation")
 test_mae, _ = evaluate_set(y_test, test_pred, "Test")
 
 train_test_gap = test_mae - train_mae
-print(f"\nTrain/Test Gap: {train_test_gap:.3f} points")
+logger.info(f"\nTrain/Test Gap: {train_test_gap:.3f} points")
 
 # ============================================================================
 # STEP 6: COMPARE TO BASELINES
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("STEP 6: COMPARISON TO BASELINES")
-print("=" * 80)
+logger.info("\n" + "=" * 80)
+logger.info("STEP 6: COMPARISON TO BASELINES")
+logger.info("=" * 80)
 
 V6_BASELINE_MAE = 4.14  # XGBoost v6
 MOCK_BASELINE_MAE = 4.80  # Mock v1
 VEGAS_BASELINE_MAE = 4.97  # Vegas consensus
 
-print(f"\n{'Model':<25} {'MAE':>8} {'vs Mock':>10} {'vs v6':>10}")
-print("-" * 55)
-print(f"{'Mock v1':<25} {MOCK_BASELINE_MAE:>8.2f} {'baseline':>10} {'+16.0%':>10}")
-print(f"{'Vegas Consensus':<25} {VEGAS_BASELINE_MAE:>8.2f} {'+3.5%':>10} {'+20.0%':>10}")
-print(f"{'XGBoost v6':<25} {V6_BASELINE_MAE:>8.2f} {'-13.8%':>10} {'baseline':>10}")
+logger.info(f"\n{'Model':<25} {'MAE':>8} {'vs Mock':>10} {'vs v6':>10}")
+logger.info("-" * 55)
+logger.info(f"{'Mock v1':<25} {MOCK_BASELINE_MAE:>8.2f} {'baseline':>10} {'+16.0%':>10}")
+logger.info(f"{'Vegas Consensus':<25} {VEGAS_BASELINE_MAE:>8.2f} {'+3.5%':>10} {'+20.0%':>10}")
+logger.info(f"{'XGBoost v6':<25} {V6_BASELINE_MAE:>8.2f} {'-13.8%':>10} {'baseline':>10}")
 
 v7_vs_mock = ((MOCK_BASELINE_MAE - test_mae) / MOCK_BASELINE_MAE) * 100
 v7_vs_v6 = ((V6_BASELINE_MAE - test_mae) / V6_BASELINE_MAE) * 100
-print(f"{'XGBoost v7 (NEW)':<25} {test_mae:>8.2f} {v7_vs_mock:>+9.1f}% {v7_vs_v6:>+9.1f}%")
+logger.info(f"{'XGBoost v7 (NEW)':<25} {test_mae:>8.2f} {v7_vs_mock:>+9.1f}% {v7_vs_v6:>+9.1f}%")
 
-print()
+logger.info("")
 if test_mae < V6_BASELINE_MAE:
     improvement = V6_BASELINE_MAE - test_mae
-    print(f"SUCCESS! v7 beats v6 by {improvement:.3f} MAE ({v7_vs_v6:+.1f}%)")
+    logger.info(f"SUCCESS! v7 beats v6 by {improvement:.3f} MAE ({v7_vs_v6:+.1f}%)")
 else:
-    print(f"v7 did not beat v6 (diff: {test_mae - V6_BASELINE_MAE:+.3f})")
+    logger.info(f"v7 did not beat v6 (diff: {test_mae - V6_BASELINE_MAE:+.3f})")
 
 # ============================================================================
 # STEP 7: FEATURE IMPORTANCE
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("STEP 7: FEATURE IMPORTANCE (Top 15)")
-print("=" * 80)
+logger.info("\n" + "=" * 80)
+logger.info("STEP 7: FEATURE IMPORTANCE (Top 15)")
+logger.info("=" * 80)
 
 importance = model.feature_importances_
 feat_imp = pd.DataFrame({
@@ -434,29 +437,29 @@ feat_imp = pd.DataFrame({
     'importance': importance
 }).sort_values('importance', ascending=False)
 
-print()
-print(f"{'Rank':<5} {'Feature':<30} {'Importance':>10} {'Type':>10}")
-print("-" * 60)
+logger.info("")
+logger.info(f"{'Rank':<5} {'Feature':<30} {'Importance':>10} {'Type':>10}")
+logger.info("-" * 60)
 for rank, (i, row) in enumerate(feat_imp.head(15).iterrows(), 1):
     feat_type = "NEW" if row['feature'] in new_feature_names else "base"
     bar = '█' * int(row['importance'] * 40)
-    print(f"{rank:<5} {row['feature']:<30} {row['importance']*100:>9.1f}% {feat_type:>10}")
+    logger.info(f"{rank:<5} {row['feature']:<30} {row['importance']*100:>9.1f}% {feat_type:>10}")
 
 # Show specifically how new features rank
-print()
-print("New feature rankings:")
+logger.info("")
+logger.info("New feature rankings:")
 for feat in new_feature_names:
     rank = feat_imp[feat_imp['feature'] == feat].index[0] + 1
     imp = feat_imp[feat_imp['feature'] == feat]['importance'].values[0]
-    print(f"  {feat:<25} rank {rank:>2}, importance {imp*100:.1f}%")
+    logger.info(f"  {feat:<25} rank {rank:>2}, importance {imp*100:.1f}%")
 
 # ============================================================================
 # STEP 8: ANALYZE VEGAS IMPACT
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("STEP 8: VEGAS LINE IMPACT ANALYSIS")
-print("=" * 80)
+logger.info("\n" + "=" * 80)
+logger.info("STEP 8: VEGAS LINE IMPACT ANALYSIS")
+logger.info("=" * 80)
 
 # Compare performance on games WITH vs WITHOUT Vegas lines
 test_df = df_sorted.iloc[test_idx].copy()
@@ -466,33 +469,33 @@ test_df['error'] = np.abs(test_df['actual_points'] - test_df['prediction'])
 with_vegas = test_df[test_df['has_vegas_line'] == 1]
 without_vegas = test_df[test_df['has_vegas_line'] == 0]
 
-print(f"\nTest set breakdown:")
-print(f"  With Vegas line:    {len(with_vegas):,} games, MAE = {with_vegas['error'].mean():.3f}")
-print(f"  Without Vegas line: {len(without_vegas):,} games, MAE = {without_vegas['error'].mean():.3f}")
+logger.info(f"\nTest set breakdown:")
+logger.info(f"  With Vegas line:    {len(with_vegas):,} games, MAE = {with_vegas['error'].mean():.3f}")
+logger.info(f"  Without Vegas line: {len(without_vegas):,} games, MAE = {without_vegas['error'].mean():.3f}")
 
 # Compare our predictions vs Vegas on games with Vegas lines
 if len(with_vegas) > 0:
     our_mae = with_vegas['error'].mean()
     vegas_error = np.abs(with_vegas['actual_points'] - with_vegas['vegas_points_line'])
     vegas_mae = vegas_error.mean()
-    print(f"\nOn Vegas-covered games:")
-    print(f"  Our v7 MAE:   {our_mae:.3f}")
-    print(f"  Vegas MAE:    {vegas_mae:.3f}")
-    print(f"  Improvement:  {((vegas_mae - our_mae) / vegas_mae) * 100:+.1f}%")
+    logger.info(f"\nOn Vegas-covered games:")
+    logger.info(f"  Our v7 MAE:   {our_mae:.3f}")
+    logger.info(f"  Vegas MAE:    {vegas_mae:.3f}")
+    logger.info(f"  Improvement:  {((vegas_mae - our_mae) / vegas_mae) * 100:+.1f}%")
 
 # ============================================================================
 # STEP 9: SAVE MODEL
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("STEP 9: SAVING MODEL")
-print("=" * 80)
+logger.info("\n" + "=" * 80)
+logger.info("STEP 9: SAVING MODEL")
+logger.info("=" * 80)
 
 model_id = f"xgboost_v7_31features_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 model_path = MODEL_OUTPUT_DIR / f"{model_id}.json"
 
 model.get_booster().save_model(str(model_path))
-print(f"Model saved: {model_path}")
+logger.info(f"Model saved: {model_path}")
 
 metadata = {
     'model_id': model_id,
@@ -521,36 +524,36 @@ metadata = {
 metadata_path = MODEL_OUTPUT_DIR / f"{model_id}_metadata.json"
 with open(metadata_path, 'w') as f:
     json.dump(metadata, f, indent=2, default=str)
-print(f"Metadata saved: {metadata_path}")
+logger.info(f"Metadata saved: {metadata_path}")
 
 # ============================================================================
 # SUMMARY
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("TRAINING COMPLETE - SUMMARY")
-print("=" * 80)
-print()
-print(f"Model:              XGBoost v7")
-print(f"Features:           {len(all_feature_names)} (25 base + 6 new)")
-print(f"Training samples:   {len(df):,}")
-print(f"Vegas coverage:     {vegas_coverage:.1%}")
-print()
-print(f"Training MAE:       {train_mae:.3f}")
-print(f"Validation MAE:     {val_mae:.3f}")
-print(f"Test MAE:           {test_mae:.3f}")
-print(f"Train/Test Gap:     {train_test_gap:.3f}")
-print()
-print(f"XGBoost v6:         {V6_BASELINE_MAE:.2f}")
-print(f"Improvement vs v6:  {v7_vs_v6:+.1f}%")
-print()
+logger.info("\n" + "=" * 80)
+logger.info("TRAINING COMPLETE - SUMMARY")
+logger.info("=" * 80)
+logger.info("")
+logger.info(f"Model:              XGBoost v7")
+logger.info(f"Features:           {len(all_feature_names)} (25 base + 6 new)")
+logger.info(f"Training samples:   {len(df):,}")
+logger.info(f"Vegas coverage:     {vegas_coverage:.1%}")
+logger.info("")
+logger.info(f"Training MAE:       {train_mae:.3f}")
+logger.info(f"Validation MAE:     {val_mae:.3f}")
+logger.info(f"Test MAE:           {test_mae:.3f}")
+logger.info(f"Train/Test Gap:     {train_test_gap:.3f}")
+logger.info("")
+logger.info(f"XGBoost v6:         {V6_BASELINE_MAE:.2f}")
+logger.info(f"Improvement vs v6:  {v7_vs_v6:+.1f}%")
+logger.info("")
 
 if test_mae < V6_BASELINE_MAE:
-    print("RESULT: XGBoost v7 WINS!")
-    print(f"New best MAE: {test_mae:.3f}")
+    logger.info("RESULT: XGBoost v7 WINS!")
+    logger.info(f"New best MAE: {test_mae:.3f}")
 else:
-    print("RESULT: v6 still better - Vegas features didn't help")
-    print("Consider: Features may need different handling")
+    logger.info("RESULT: v6 still better - Vegas features didn't help")
+    logger.info("Consider: Features may need different handling")
 
-print()
-print("=" * 80)
+logger.info("")
+logger.info("=" * 80)

@@ -34,11 +34,14 @@ Usage:
 Created: 2026-01-13
 """
 
+import logging
 import math
 from dataclasses import dataclass
 from typing import Dict, Optional, List
 
 from .mlb_team_mapper import get_mlb_team_mapper, MLBTeamInfo
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -320,23 +323,26 @@ def get_travel_schedule_impact(
 
 # Test
 if __name__ == "__main__":
-    print("MLB Travel Info Test")
-    print("=" * 60)
+    # Configure logging for standalone execution
+    logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
+
+    logger.info("MLB Travel Info Test")
+    logger.info("=" * 60)
 
     # Test stadium info
     for team_code in ["NYY", "LAD", "COL", "TB"]:
         info = get_mlb_stadium_info(team_code)
         if info:
-            print(f"\n{info.team_name} - {info.stadium_name}")
-            print(f"  Location: ({info.latitude:.4f}, {info.longitude:.4f})")
-            print(f"  Timezone: {info.timezone}")
-            print(f"  Roof: {info.roof_type}, Surface: {info.surface}")
-            print(f"  Park Factor (Runs): {info.park_factor_runs:.2f}")
-            print(f"  Dimensions: LF={info.lf_distance}, CF={info.cf_distance}, RF={info.rf_distance}")
+            logger.info(f"{info.team_name} - {info.stadium_name}")
+            logger.info(f"  Location: ({info.latitude:.4f}, {info.longitude:.4f})")
+            logger.info(f"  Timezone: {info.timezone}")
+            logger.info(f"  Roof: {info.roof_type}, Surface: {info.surface}")
+            logger.info(f"  Park Factor (Runs): {info.park_factor_runs:.2f}")
+            logger.info(f"  Dimensions: LF={info.lf_distance}, CF={info.cf_distance}, RF={info.rf_distance}")
 
     # Test distance calculation
-    print("\n" + "=" * 60)
-    print("Travel Distances:")
+    logger.info("=" * 60)
+    logger.info("Travel Distances:")
 
     pairs = [
         ("NYY", "BOS"),  # Short trip
@@ -348,25 +354,25 @@ if __name__ == "__main__":
     for team1, team2 in pairs:
         distance = calculate_travel_distance(team1, team2)
         if distance:
-            print(f"  {team1} -> {team2}: {distance:.0f} miles")
+            logger.info(f"  {team1} -> {team2}: {distance:.0f} miles")
 
     # Test hitter/pitcher friendly parks
-    print("\n" + "=" * 60)
-    print("Hitter-Friendly Parks (runs factor > 1.05):")
+    logger.info("=" * 60)
+    logger.info("Hitter-Friendly Parks (runs factor > 1.05):")
     for park in get_hitter_friendly_parks()[:5]:
-        print(f"  {park.stadium_name}: {park.park_factor_runs:.2f}")
+        logger.info(f"  {park.stadium_name}: {park.park_factor_runs:.2f}")
 
-    print("\nPitcher-Friendly Parks (runs factor < 0.95):")
+    logger.info("Pitcher-Friendly Parks (runs factor < 0.95):")
     for park in get_pitcher_friendly_parks()[:5]:
-        print(f"  {park.stadium_name}: {park.park_factor_runs:.2f}")
+        logger.info(f"  {park.stadium_name}: {park.park_factor_runs:.2f}")
 
     # Test travel impact
-    print("\n" + "=" * 60)
-    print("Travel Impact Example:")
+    logger.info("=" * 60)
+    logger.info("Travel Impact Example:")
     impact = get_travel_schedule_impact("NYY", ["BOS", "TOR", "TB"])
-    print(f"  Team: {impact['team']}")
-    print(f"  Total Distance: {impact['total_distance_miles']} miles")
-    print(f"  Timezone Changes: {impact['timezone_changes']}")
-    print(f"  Legs:")
+    logger.info(f"  Team: {impact['team']}")
+    logger.info(f"  Total Distance: {impact['total_distance_miles']} miles")
+    logger.info(f"  Timezone Changes: {impact['timezone_changes']}")
+    logger.info("  Legs:")
     for leg in impact['legs']:
-        print(f"    {leg['from']} -> {leg['to']}: {leg['distance']} miles")
+        logger.info(f"    {leg['from']} -> {leg['to']}: {leg['distance']} miles")

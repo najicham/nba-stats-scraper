@@ -334,25 +334,25 @@ class BackfillCheckpoint:
         summary = self.get_summary()
         stats = summary['stats']
 
-        print(f"\n{'='*60}")
-        print(f"CHECKPOINT STATUS: {summary['job_name']}")
-        print(f"{'='*60}")
-        print(f"  Date range: {summary['date_range']}")
-        print(f"  Total days: {stats['total_days']}")
-        print(f"  Processed:  {stats['processed']}")
-        print(f"    - Successful: {stats['successful']}")
-        print(f"    - Failed:     {stats['failed']}")
-        print(f"    - Skipped:    {stats['skipped']}")
+        logger.info("=" * 60)
+        logger.info(f"CHECKPOINT STATUS: {summary['job_name']}")
+        logger.info("=" * 60)
+        logger.info(f"  Date range: {summary['date_range']}")
+        logger.info(f"  Total days: {stats['total_days']}")
+        logger.info(f"  Processed:  {stats['processed']}")
+        logger.info(f"    - Successful: {stats['successful']}")
+        logger.info(f"    - Failed:     {stats['failed']}")
+        logger.info(f"    - Skipped:    {stats['skipped']}")
 
         if summary['last_successful_date']:
-            print(f"  Last success: {summary['last_successful_date']}")
+            logger.info(f"  Last success: {summary['last_successful_date']}")
 
         resume_date = self.get_resume_date()
         if resume_date:
             remaining = (self.end_date - resume_date).days + 1
-            print(f"  Resume from: {resume_date} ({remaining} days remaining)")
+            logger.info(f"  Resume from: {resume_date} ({remaining} days remaining)")
         else:
-            print(f"  Status: COMPLETE")
+            logger.info("  Status: COMPLETE")
 
-        print(f"  Checkpoint file: {summary['checkpoint_file']}")
-        print(f"{'='*60}\n")
+        logger.info(f"  Checkpoint file: {summary['checkpoint_file']}")
+        logger.info("=" * 60)

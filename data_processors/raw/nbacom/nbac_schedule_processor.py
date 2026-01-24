@@ -23,6 +23,9 @@ from shared.utils.notification_system import (
     notify_info
 )
 
+logger = logging.getLogger(__name__)
+
+
 class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
     """
     NBA.com Schedule Processor
@@ -87,7 +90,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
             return "api_stats"
         else:
             # Default to api_stats for backwards compatibility
-            logging.warning(f"Could not detect source from path: {file_path}, defaulting to api_stats")
+            logger.warning(f"Could not detect source from path: {file_path}, defaulting to api_stats")
             return "api_stats"
     
     def get_file_content(self, file_path: str) -> Dict:
@@ -122,7 +125,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                         processor_name="NBA.com Schedule Processor"
                     )
                 except Exception as notify_ex:
-                    logging.warning(f"Failed to send notification: {notify_ex}")
+                    logger.warning(f"Failed to send notification: {notify_ex}")
                 
                 raise FileNotFoundError(error_msg)
             
@@ -131,7 +134,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
             return json.loads(content)
             
         except json.JSONDecodeError as e:
-            logging.error(f"JSON parse error for {file_path}: {e}")
+            logger.error(f"JSON parse error for {file_path}: {e}")
             
             # Notify about JSON parsing failure
             try:
@@ -146,12 +149,12 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                     processor_name="NBA.com Schedule Processor"
                 )
             except Exception as notify_ex:
-                logging.warning(f"Failed to send notification: {notify_ex}")
+                logger.warning(f"Failed to send notification: {notify_ex}")
             
             raise
             
         except Exception as e:
-            logging.error(f"Error reading file {file_path}: {e}")
+            logger.error(f"Error reading file {file_path}: {e}")
             
             # Notify about file reading failure
             try:
@@ -166,7 +169,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                     processor_name="NBA.com Schedule Processor"
                 )
             except Exception as notify_ex:
-                logging.warning(f"Failed to send notification: {notify_ex}")
+                logger.warning(f"Failed to send notification: {notify_ex}")
             
             raise
     
@@ -194,7 +197,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
             else:
                 return datetime.fromisoformat(timestamp_str)
         except (ValueError, AttributeError):
-            logging.warning(f"Could not parse timestamp: {timestamp_str}")
+            logger.warning(f"Could not parse timestamp: {timestamp_str}")
             return None
     
     def calculate_season_year(self, game_date_str: str) -> int:
@@ -208,7 +211,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
             # NBA season runs Oct-June, so games in Oct+ are start of new season
             return game_date.year if game_date.month >= 10 else game_date.year - 1
         except (ValueError, AttributeError):
-            logging.warning(f"Could not parse game date: {game_date_str}")
+            logger.warning(f"Could not parse game date: {game_date_str}")
             return None
     
     def determine_game_status_text(self, status_id: int) -> str:
@@ -306,7 +309,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                         }
                     )
                 except Exception as notify_ex:
-                    logging.warning(f"Failed to send notification: {notify_ex}")
+                    logger.warning(f"Failed to send notification: {notify_ex}")
             else:
                 # Validate first few games structure
                 for i, game in enumerate(data['games'][:3]):
@@ -334,7 +337,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                         }
                     )
                 except Exception as notify_ex:
-                    logging.warning(f"Failed to send notification: {notify_ex}")
+                    logger.warning(f"Failed to send notification: {notify_ex}")
         
         # Notify about validation failures
         if errors:
@@ -350,7 +353,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                     }
                 )
             except Exception as notify_ex:
-                logging.warning(f"Failed to send notification: {notify_ex}")
+                logger.warning(f"Failed to send notification: {notify_ex}")
                 
         return errors
     
@@ -518,7 +521,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                     
                 except Exception as e:
                     self.games_failed += 1
-                    logging.warning(f"Error processing game {game.get('gameId', 'unknown')}: {e}")
+                    logger.warning(f"Error processing game {game.get('gameId', 'unknown')}: {e}")
                     
                     # Notify on first game failure
                     if self.games_failed == 1:
@@ -535,7 +538,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                                 processor_name="NBA.com Schedule Processor"
                             )
                         except Exception as notify_ex:
-                            logging.warning(f"Failed to send notification: {notify_ex}")
+                            logger.warning(f"Failed to send notification: {notify_ex}")
                     continue
             
             # Check for high failure rate
@@ -556,12 +559,12 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                             }
                         )
                     except Exception as notify_ex:
-                        logging.warning(f"Failed to send notification: {notify_ex}")
+                        logger.warning(f"Failed to send notification: {notify_ex}")
             
             # Log filtering summary
             excluded_games = total_games - business_relevant_games
             if excluded_games > 0:
-                logging.info(f"Filtered out {excluded_games} preseason games, processing {business_relevant_games} business-relevant games")
+                logger.info(f"Filtered out {excluded_games} preseason games, processing {business_relevant_games} business-relevant games")
 
             self.transformed_data = rows
 
@@ -572,7 +575,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
             return
 
         except Exception as e:
-            logging.error(f"Critical error in transform_data: {e}")
+            logger.error(f"Critical error in transform_data: {e}")
             
             # Notify about critical transformation failure
             try:
@@ -589,7 +592,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                     processor_name="NBA.com Schedule Processor"
                 )
             except Exception as notify_ex:
-                logging.warning(f"Failed to send notification: {notify_ex}")
+                logger.warning(f"Failed to send notification: {notify_ex}")
             
             raise e
     
@@ -604,7 +607,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
         """
         rows = self.transformed_data
         if not rows:
-            logging.warning("No rows to load")
+            logger.warning("No rows to load")
             return {'rows_processed': 0, 'errors': []}
 
         table_id = f"{self.project_id}.{self.table_name}"
@@ -619,8 +622,8 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
             table = self.bq_client.get_table(table_id)
             table_schema = table.schema
 
-            logging.info(f"Using SQL MERGE to load {len(rows)} rows to {table_id}")
-            logging.info(f"Primary keys for MERGE: {self.PRIMARY_KEY_FIELDS}")
+            logger.info(f"Using SQL MERGE to load {len(rows)} rows to {table_id}")
+            logger.info(f"Primary keys for MERGE: {self.PRIMARY_KEY_FIELDS}")
 
             # Step 1: Sanitize rows for JSON serialization
             sanitized_rows = []
@@ -630,11 +633,11 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                     json.dumps(sanitized)  # Validate JSON serialization
                     sanitized_rows.append(sanitized)
                 except (TypeError, ValueError) as e:
-                    logging.warning(f"Skipping row {i} due to JSON error: {e}")
+                    logger.warning(f"Skipping row {i} due to JSON error: {e}")
                     continue
 
             if not sanitized_rows:
-                logging.warning("No valid rows after sanitization")
+                logger.warning("No valid rows after sanitization")
                 return {'rows_processed': 0, 'errors': ['No valid rows after sanitization']}
 
             # Step 2: Load data into temp table
@@ -655,7 +658,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
             )
 
             load_job.result(timeout=300)
-            logging.info(f"Loaded {len(sanitized_rows)} rows into temp table {temp_table_name}")
+            logger.info(f"Loaded {len(sanitized_rows)} rows into temp table {temp_table_name}")
 
             # Step 3: Build and execute MERGE statement
             primary_keys = self.PRIMARY_KEY_FIELDS
@@ -694,24 +697,24 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                 VALUES ({insert_values})
             """
 
-            logging.info(f"Executing MERGE on primary keys: {', '.join(primary_keys)}")
+            logger.info(f"Executing MERGE on primary keys: {', '.join(primary_keys)}")
             merge_job = self.bq_client.query(merge_query)
             merge_job.result(timeout=300)
 
             # Get stats
             if merge_job.num_dml_affected_rows is not None:
-                logging.info(f"MERGE completed: {merge_job.num_dml_affected_rows} rows affected")
+                logger.info(f"MERGE completed: {merge_job.num_dml_affected_rows} rows affected")
             else:
-                logging.info("MERGE completed successfully")
+                logger.info("MERGE completed successfully")
 
             # CRITICAL: Update stats for tracking (required by base class and Layer 5 validation)
             self.stats["rows_inserted"] = len(sanitized_rows)
-            logging.info(f"Successfully merged {len(sanitized_rows)} rows to {self.table_name} (source: {self.data_source})")
+            logger.info(f"Successfully merged {len(sanitized_rows)} rows to {self.table_name} (source: {self.data_source})")
 
         except Exception as e:
             error_msg = str(e)
             errors.append(error_msg)
-            logging.error(f"Error loading data to BigQuery: {error_msg}")
+            logger.error(f"Error loading data to BigQuery: {error_msg}")
 
             # Notify about load failure
             try:
@@ -728,15 +731,15 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                     processor_name="NBA.com Schedule Processor"
                 )
             except Exception as notify_ex:
-                logging.warning(f"Failed to send notification: {notify_ex}")
+                logger.warning(f"Failed to send notification: {notify_ex}")
 
         finally:
             # Always clean up temp table
             try:
                 self.bq_client.delete_table(temp_table_id, not_found_ok=True)
-                logging.debug(f"Cleaned up temp table: {temp_table_name}")
+                logger.debug(f"Cleaned up temp table: {temp_table_name}")
             except Exception as cleanup_e:
-                logging.warning(f"Could not clean up temp table: {cleanup_e}")
+                logger.warning(f"Could not clean up temp table: {cleanup_e}")
 
         return {'rows_processed': len(rows) if not errors else 0, 'errors': errors}
 
@@ -761,14 +764,14 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
         try:
             # NEW: Detect data source from file path
             self.data_source = self.detect_data_source(file_path)
-            logging.info(f"Processing file: {file_path} (source: {self.data_source})")
+            logger.info(f"Processing file: {file_path} (source: {self.data_source})")
             
             # Get and validate data
             raw_data = self.get_file_content(file_path)
             validation_errors = self.validate_data(raw_data)
             
             if validation_errors:
-                logging.warning(f"Validation errors for {file_path}: {validation_errors}")
+                logger.warning(f"Validation errors for {file_path}: {validation_errors}")
                 return {
                     'file_path': file_path,
                     'status': 'validation_failed',
@@ -788,10 +791,10 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
 
             if result.get('errors'):
                 status = 'partial_success' if result.get('rows_processed', 0) > 0 else 'failed'
-                logging.warning(f"{status.title()}: {len(result['errors'])} errors for {file_path}")
+                logger.warning(f"{status.title()}: {len(result['errors'])} errors for {file_path}")
             else:
                 status = 'success'
-                logging.info(f"Successfully processed {file_path}: {result['rows_processed']} rows from {self.data_source}")
+                logger.info(f"Successfully processed {file_path}: {result['rows_processed']} rows from {self.data_source}")
 
                 # Send success notification
                 try:
@@ -807,7 +810,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                         }
                     )
                 except Exception as notify_ex:
-                    logging.warning(f"Failed to send notification: {notify_ex}")
+                    logger.warning(f"Failed to send notification: {notify_ex}")
             
             return {
                 'file_path': file_path,
@@ -819,7 +822,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
             
         except Exception as e:
             error_msg = str(e)
-            logging.error(f"Error processing file {file_path}: {error_msg}")
+            logger.error(f"Error processing file {file_path}: {error_msg}")
             
             # Notify about general processing failure
             try:
@@ -834,7 +837,7 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                     processor_name="NBA.com Schedule Processor"
                 )
             except Exception as notify_ex:
-                logging.warning(f"Failed to send notification: {notify_ex}")
+                logger.warning(f"Failed to send notification: {notify_ex}")
             
             return {
                 'file_path': file_path,

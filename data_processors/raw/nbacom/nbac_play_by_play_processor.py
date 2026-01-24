@@ -23,6 +23,9 @@ from shared.utils.notification_system import (
 # Schedule service for season type detection
 from shared.utils.schedule import NBAScheduleService
 
+logger = logging.getLogger(__name__)
+
+
 class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
     """
     NBA.com Play-by-Play Processor
@@ -113,7 +116,7 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                 return f"{minutes:02d}:{int(seconds):02d}", total_seconds_remaining, total_elapsed
             
         except (ValueError, IndexError) as e:
-            logging.warning(f"Failed to parse clock: {clock_str}, error: {e}")
+            logger.warning(f"Failed to parse clock: {clock_str}, error: {e}")
         
         return clock_str, 0, 0
     
@@ -244,7 +247,7 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                     }
                 )
             except Exception as notify_ex:
-                logging.warning(f"Failed to send notification: {notify_ex}")
+                logger.warning(f"Failed to send notification: {notify_ex}")
             
             return errors
         
@@ -268,7 +271,7 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                     }
                 )
             except Exception as notify_ex:
-                logging.warning(f"Failed to send notification: {notify_ex}")
+                logger.warning(f"Failed to send notification: {notify_ex}")
         
         return errors
     
@@ -309,7 +312,7 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                         }
                     )
                 except Exception as notify_ex:
-                    logging.warning(f"Failed to send notification: {notify_ex}")
+                    logger.warning(f"Failed to send notification: {notify_ex}")
 
             # Check game type - skip exhibition games (All-Star and Pre-Season)
             if game_date_str:
@@ -319,7 +322,7 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                 # All-Star: Uses non-NBA teams (Team LeBron, Team Giannis, etc.)
                 # Pre-Season: Teams rest starters, rosters not finalized, stats not indicative
                 if season_type in ["All Star", "Pre Season"]:
-                    logging.info(f"Skipping {season_type} game data for {game_date_str} (NBA ID: {nba_game_id}) - "
+                    logger.info(f"Skipping {season_type} game data for {game_date_str} (NBA ID: {nba_game_id}) - "
                                "exhibition games not processed")
                     self.transformed_data = []
                     return
@@ -329,7 +332,7 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
             
             # First pass: build comprehensive player-team lookup from game data
             player_team_lookup = self.build_player_team_lookup(actions)
-            logging.info(f"Built player-team lookup for {len(player_team_lookup)} players")
+            logger.info(f"Built player-team lookup for {len(player_team_lookup)} players")
             
             # Determine teams that played (we still can't determine home/away without schedule)
             teams_in_game = set()
@@ -352,7 +355,7 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                         }
                     )
                 except Exception as notify_ex:
-                    logging.warning(f"Failed to send notification: {notify_ex}")
+                    logger.warning(f"Failed to send notification: {notify_ex}")
             
             # For now, assign teams arbitrarily - this needs schedule cross-reference
             team_1 = teams_list[0] if len(teams_list) > 0 else None
@@ -454,10 +457,10 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                 
                 rows.append(row)
             
-            logging.info(f"Transformed {len(rows)} play-by-play events")
+            logger.info(f"Transformed {len(rows)} play-by-play events")
         
         except KeyError as e:
-            logging.error(f"Missing required field in play-by-play data: {e}")
+            logger.error(f"Missing required field in play-by-play data: {e}")
             
             # Notify about missing field
             try:
@@ -472,12 +475,12 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                     processor_name="NBA.com Play-by-Play Processor"
                 )
             except Exception as notify_ex:
-                logging.warning(f"Failed to send notification: {notify_ex}")
+                logger.warning(f"Failed to send notification: {notify_ex}")
             
             return []
             
         except Exception as e:
-            logging.error(f"Error transforming play-by-play data: {e}")
+            logger.error(f"Error transforming play-by-play data: {e}")
             
             # Notify about transformation failure
             try:
@@ -492,7 +495,7 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                     processor_name="NBA.com Play-by-Play Processor"
                 )
             except Exception as notify_ex:
-                logging.warning(f"Failed to send notification: {notify_ex}")
+                logger.warning(f"Failed to send notification: {notify_ex}")
             
             return []
 
@@ -527,7 +530,7 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                         processor_name="NBA.com Play-by-Play Processor"
                     )
                 except Exception as notify_ex:
-                    logging.warning(f"Failed to send notification: {notify_ex}")
+                    logger.warning(f"Failed to send notification: {notify_ex}")
                 
                 return {'errors': [error_msg], 'rows_processed': 0}
             
@@ -556,7 +559,7 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                         }
                     )
                 except Exception as notify_ex:
-                    logging.warning(f"Failed to send notification: {notify_ex}")
+                    logger.warning(f"Failed to send notification: {notify_ex}")
                 
                 return {'errors': [error_msg], 'rows_processed': 0}
             
@@ -576,7 +579,7 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                         }
                     )
                 except Exception as notify_ex:
-                    logging.warning(f"Failed to send notification: {notify_ex}")
+                    logger.warning(f"Failed to send notification: {notify_ex}")
             
             return {
                 'rows_processed': load_result.get('rows_processed', 0),
@@ -599,12 +602,12 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                     processor_name="NBA.com Play-by-Play Processor"
                 )
             except Exception as notify_ex:
-                logging.warning(f"Failed to send notification: {notify_ex}")
+                logger.warning(f"Failed to send notification: {notify_ex}")
             
             return {'errors': [error_msg], 'rows_processed': 0}
             
         except Exception as e:
-            logging.error(f"Error processing file {file_path}: {str(e)}")
+            logger.error(f"Error processing file {file_path}: {str(e)}")
             
             # Notify about general processing failure
             try:
@@ -618,7 +621,7 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                     processor_name="NBA.com Play-by-Play Processor"
                 )
             except Exception as notify_ex:
-                logging.warning(f"Failed to send notification: {notify_ex}")
+                logger.warning(f"Failed to send notification: {notify_ex}")
             
             return {'errors': [str(e)], 'rows_processed': 0}
 
@@ -650,9 +653,9 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
 
                 try:
                     self.bq_client.query(delete_query, job_config=job_config).result(timeout=60)
-                    logging.info(f"Deleted existing data for game_id: {game_id}")
+                    logger.info(f"Deleted existing data for game_id: {game_id}")
                 except Exception as e:
-                    logging.error(f"Error deleting existing data: {e}")
+                    logger.error(f"Error deleting existing data: {e}")
                     
                     # Notify about delete failure
                     try:
@@ -668,13 +671,13 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                             processor_name="NBA.com Play-by-Play Processor"
                         )
                     except Exception as notify_ex:
-                        logging.warning(f"Failed to send notification: {notify_ex}")
+                        logger.warning(f"Failed to send notification: {notify_ex}")
                     
                     raise e
             
             # Insert new data using batch loading (not streaming insert)
             # This avoids the 20 DML limit and streaming buffer issues
-            logging.info(f"Loading {len(rows)} rows to {table_id} using batch load")
+            logger.info(f"Loading {len(rows)} rows to {table_id} using batch load")
 
             # Get table schema for load job
             table = self.bq_client.get_table(table_id)
@@ -696,14 +699,14 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
 
             # Wait for completion
             load_job.result(timeout=60)
-            logging.info(f"Successfully loaded {len(rows)} play-by-play events")
+            logger.info(f"Successfully loaded {len(rows)} play-by-play events")
 
             # Update stats for processor_base tracking
             self.stats['rows_inserted'] = len(rows)
 
         except Exception as e:
             errors.append(str(e))
-            logging.error(f"Error loading play-by-play data: {e}")
+            logger.error(f"Error loading play-by-play data: {e}")
 
             # Update stats for failure tracking
             self.stats['rows_inserted'] = 0
@@ -722,7 +725,7 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                     processor_name="NBA.com Play-by-Play Processor"
                 )
             except Exception as notify_ex:
-                logging.warning(f"Failed to send notification: {notify_ex}")
+                logger.warning(f"Failed to send notification: {notify_ex}")
         
         return {
             'rows_processed': len(rows) if not errors else 0,

@@ -14,6 +14,7 @@ Expected performance:
     - With ML: MAE 1.5-1.7 (target)
 """
 
+import logging
 import os
 import sys
 import json
@@ -26,24 +27,26 @@ import xgboost as xgb
 from google.cloud import bigquery
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
+logger = logging.getLogger(__name__)
+
 # Configuration
 PROJECT_ID = "nba-props-platform"
 MODEL_OUTPUT_DIR = Path("models/mlb")
 MODEL_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-print("=" * 80)
-print(" MLB PITCHER STRIKEOUT MODEL TRAINING")
-print("=" * 80)
-print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-print()
+logger.info("=" * 80)
+logger.info(" MLB PITCHER STRIKEOUT MODEL TRAINING")
+logger.info("=" * 80)
+logger.info(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+logger.info("")
 
 # ============================================================================
 # STEP 1: LOAD TRAINING DATA FROM BIGQUERY
 # ============================================================================
 
-print("=" * 80)
-print("STEP 1: LOADING TRAINING DATA")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 1: LOADING TRAINING DATA")
+logger.info("=" * 80)
 
 client = bigquery.Client(project=PROJECT_ID)
 
@@ -340,20 +343,20 @@ WHERE actual_strikeouts IS NOT NULL
 ORDER BY game_date, player_lookup
 """
 
-print("Fetching data from BigQuery...")
-print("Date range: 2024-2025 seasons")
-print()
+logger.info("Fetching data from BigQuery...")
+logger.info("Date range: 2024-2025 seasons")
+logger.info("")
 
 try:
     df = client.query(query).to_dataframe()
-    print(f"Loaded {len(df):,} pitcher starts")
-    print(f"  Date range: {df['game_date'].min()} to {df['game_date'].max()}")
-    print(f"  Unique pitchers: {df['player_lookup'].nunique()}")
-    print(f"  Avg strikeouts: {df['actual_strikeouts'].mean():.2f}")
-    print()
+    logger.info(f"Loaded {len(df):,} pitcher starts")
+    logger.info(f"  Date range: {df['game_date'].min()} to {df['game_date'].max()}")
+    logger.info(f"  Unique pitchers: {df['player_lookup'].nunique()}")
+    logger.info(f"  Avg strikeouts: {df['actual_strikeouts'].mean():.2f}")
+    logger.info("")
 except Exception as e:
-    print(f"ERROR loading data: {e}")
-    print("\nFalling back to simplified query without lineup features...")
+    logger.error(f"ERROR loading data: {e}")
+    logger.warning("Falling back to simplified query without lineup features...")
 
     # Simplified query without lineup_k_analysis join
     simple_query = """
@@ -409,23 +412,23 @@ except Exception as e:
     """
 
     df = client.query(simple_query).to_dataframe()
-    print(f"Loaded {len(df):,} pitcher starts (simplified)")
-    print(f"  Date range: {df['game_date'].min()} to {df['game_date'].max()}")
-    print()
+    logger.info(f"Loaded {len(df):,} pitcher starts (simplified)")
+    logger.info(f"  Date range: {df['game_date'].min()} to {df['game_date'].max()}")
+    logger.info("")
 
 if len(df) < 100:
-    print("ERROR: Not enough training data. Need at least 100 samples.")
-    print("Run analytics processors first:")
-    print("  PYTHONPATH=. python -m data_processors.analytics.mlb.pitcher_game_summary_processor --start-date 2024-03-28 --end-date 2025-09-28")
+    logger.error("ERROR: Not enough training data. Need at least 100 samples.")
+    logger.error("Run analytics processors first:")
+    logger.error("  PYTHONPATH=. python -m data_processors.analytics.mlb.pitcher_game_summary_processor --start-date 2024-03-28 --end-date 2025-09-28")
     sys.exit(1)
 
 # ============================================================================
 # STEP 2: PREPARE FEATURES
 # ============================================================================
 
-print("=" * 80)
-print("STEP 2: PREPARING FEATURES")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 2: PREPARING FEATURES")
+logger.info("=" * 80)
 
 # Define feature columns - using available features
 feature_cols = [
@@ -478,10 +481,10 @@ available_features = [c for c in feature_cols if c in df.columns]
 missing_features = [c for c in feature_cols if c not in df.columns]
 
 if missing_features:
-    print(f"WARNING: Missing {len(missing_features)} features: {missing_features[:5]}...")
+    logger.warning(f"Missing {len(missing_features)} features: {missing_features[:5]}...")
 
-print(f"Using {len(available_features)} features")
-print()
+logger.info(f"Using {len(available_features)} features")
+logger.info("")
 
 # Target variable
 target_col = 'actual_strikeouts'
@@ -499,19 +502,19 @@ y = pd.to_numeric(y, errors='coerce')
 X = X.fillna(X.median())
 y = y.fillna(y.median())
 
-print(f"Features: {len(available_features)}")
-print(f"Samples: {len(X):,}")
-print(f"Target mean: {y.mean():.2f}")
-print(f"Target std: {y.std():.2f}")
-print()
+logger.info(f"Features: {len(available_features)}")
+logger.info(f"Samples: {len(X):,}")
+logger.info(f"Target mean: {y.mean():.2f}")
+logger.info(f"Target std: {y.std():.2f}")
+logger.info("")
 
 # ============================================================================
 # STEP 3: SPLIT DATA CHRONOLOGICALLY
 # ============================================================================
 
-print("=" * 80)
-print("STEP 3: CHRONOLOGICAL TRAIN/VAL/TEST SPLIT")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 3: CHRONOLOGICAL TRAIN/VAL/TEST SPLIT")
+logger.info("=" * 80)
 
 df_sorted = df.sort_values('game_date').reset_index(drop=True)
 n = len(df_sorted)
@@ -532,18 +535,18 @@ y_val = y.iloc[val_idx]
 X_test = X.iloc[test_idx]
 y_test = y.iloc[test_idx]
 
-print(f"Training:   {len(X_train):,} starts ({df_sorted.iloc[train_idx]['game_date'].min()} to {df_sorted.iloc[train_idx]['game_date'].max()})")
-print(f"Validation: {len(X_val):,} starts")
-print(f"Test:       {len(X_test):,} starts ({df_sorted.iloc[test_idx]['game_date'].min()} to {df_sorted.iloc[test_idx]['game_date'].max()})")
-print()
+logger.info(f"Training:   {len(X_train):,} starts ({df_sorted.iloc[train_idx]['game_date'].min()} to {df_sorted.iloc[train_idx]['game_date'].max()})")
+logger.info(f"Validation: {len(X_val):,} starts")
+logger.info(f"Test:       {len(X_test):,} starts ({df_sorted.iloc[test_idx]['game_date'].min()} to {df_sorted.iloc[test_idx]['game_date'].max()})")
+logger.info("")
 
 # ============================================================================
 # STEP 4: TRAIN XGBOOST MODEL
 # ============================================================================
 
-print("=" * 80)
-print("STEP 4: TRAINING XGBOOST MODEL")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 4: TRAINING XGBOOST MODEL")
+logger.info("=" * 80)
 
 # Hyperparameters tuned for strikeout prediction
 params = {
@@ -562,12 +565,12 @@ params = {
     'early_stopping_rounds': 20
 }
 
-print("Hyperparameters:")
+logger.info("Hyperparameters:")
 for k, v in list(params.items())[:6]:
-    print(f"  {k}: {v}")
-print()
+    logger.info(f"  {k}: {v}")
+logger.info("")
 
-print("Training...")
+logger.info("Training...")
 model = xgb.XGBRegressor(**params)
 
 model.fit(
@@ -576,17 +579,17 @@ model.fit(
     verbose=50
 )
 
-print()
-print("Training complete!")
-print()
+logger.info("")
+logger.info("Training complete!")
+logger.info("")
 
 # ============================================================================
 # STEP 5: EVALUATE MODEL
 # ============================================================================
 
-print("=" * 80)
-print("STEP 5: MODEL EVALUATION")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 5: MODEL EVALUATION")
+logger.info("=" * 80)
 
 def evaluate(y_true, y_pred, name):
     mae = mean_absolute_error(y_true, y_pred)
@@ -596,12 +599,12 @@ def evaluate(y_true, y_pred, name):
     within_2 = (errors <= 2).mean() * 100
     within_3 = (errors <= 3).mean() * 100
 
-    print(f"\n{name} Set:")
-    print(f"  MAE:  {mae:.2f} strikeouts")
-    print(f"  RMSE: {rmse:.2f}")
-    print(f"  Within 1K: {within_1:.1f}%")
-    print(f"  Within 2K: {within_2:.1f}%")
-    print(f"  Within 3K: {within_3:.1f}%")
+    logger.info(f"{name} Set:")
+    logger.info(f"  MAE:  {mae:.2f} strikeouts")
+    logger.info(f"  RMSE: {rmse:.2f}")
+    logger.info(f"  Within 1K: {within_1:.1f}%")
+    logger.info(f"  Within 2K: {within_2:.1f}%")
+    logger.info(f"  Within 3K: {within_3:.1f}%")
 
     return {'mae': mae, 'rmse': rmse, 'within_1': within_1, 'within_2': within_2, 'within_3': within_3}
 
@@ -615,24 +618,24 @@ test_metrics = evaluate(y_test, test_pred, "Test")
 
 # Compare to baseline
 BASELINE_MAE = 1.92  # From bottom-up formula validation
-print(f"\n\nBaseline (bottom-up formula): MAE {BASELINE_MAE}")
-print(f"XGBoost model:                MAE {test_metrics['mae']:.2f}")
+logger.info(f"Baseline (bottom-up formula): MAE {BASELINE_MAE}")
+logger.info(f"XGBoost model:                MAE {test_metrics['mae']:.2f}")
 
 improvement = (BASELINE_MAE - test_metrics['mae']) / BASELINE_MAE * 100
-print(f"Improvement:                  {improvement:+.1f}%")
+logger.info(f"Improvement:                  {improvement:+.1f}%")
 
 if test_metrics['mae'] < BASELINE_MAE:
-    print("\n SUCCESS! Model beats baseline")
+    logger.info("SUCCESS! Model beats baseline")
 else:
-    print("\n Model does not beat baseline - may need more features/data")
+    logger.info("Model does not beat baseline - may need more features/data")
 
 # ============================================================================
 # STEP 6: FEATURE IMPORTANCE
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("TOP 10 MOST IMPORTANT FEATURES")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("TOP 10 MOST IMPORTANT FEATURES")
+logger.info("=" * 80)
 
 importance = model.feature_importances_
 feat_imp = pd.DataFrame({
@@ -641,22 +644,22 @@ feat_imp = pd.DataFrame({
 }).sort_values('importance', ascending=False)
 
 for _, row in feat_imp.head(10).iterrows():
-    bar = '' * int(row['importance'] * 50)
-    print(f"{row['feature']:30s} {row['importance']*100:5.1f}% {bar}")
+    bar = '*' * int(row['importance'] * 50)
+    logger.info(f"{row['feature']:30s} {row['importance']*100:5.1f}% {bar}")
 
 # ============================================================================
 # STEP 7: SAVE MODEL
 # ============================================================================
 
-print("\n" + "=" * 80)
-print("STEP 7: SAVING MODEL")
-print("=" * 80)
+logger.info("=" * 80)
+logger.info("STEP 7: SAVING MODEL")
+logger.info("=" * 80)
 
 model_id = f"mlb_pitcher_strikeouts_v1_5_splits_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 model_path = MODEL_OUTPUT_DIR / f"{model_id}.json"
 
 model.get_booster().save_model(str(model_path))
-print(f"Model saved: {model_path}")
+logger.info(f"Model saved: {model_path}")
 
 # Save metadata
 metadata = {
@@ -676,30 +679,30 @@ metadata_path = MODEL_OUTPUT_DIR / f"{model_id}_metadata.json"
 with open(metadata_path, 'w') as f:
     json.dump(metadata, f, indent=2, default=str)
 
-print(f"Metadata saved: {metadata_path}")
+logger.info(f"Metadata saved: {metadata_path}")
 
 # ============================================================================
 # SUMMARY
 # ============================================================================
 
-print("\n" + "=" * 80)
-print(" TRAINING COMPLETE")
-print("=" * 80)
-print()
-print(f"Model: {model_id}")
-print(f"Test MAE: {test_metrics['mae']:.2f} (baseline: {BASELINE_MAE})")
-print(f"Within 2K accuracy: {test_metrics['within_2']:.1f}%")
-print()
+logger.info("=" * 80)
+logger.info(" TRAINING COMPLETE")
+logger.info("=" * 80)
+logger.info("")
+logger.info(f"Model: {model_id}")
+logger.info(f"Test MAE: {test_metrics['mae']:.2f} (baseline: {BASELINE_MAE})")
+logger.info(f"Within 2K accuracy: {test_metrics['within_2']:.1f}%")
+logger.info("")
 
 if test_metrics['mae'] < BASELINE_MAE:
-    print("READY FOR PRODUCTION")
-    print("\nNext steps:")
-    print(f"  1. gsutil cp {model_path} gs://nba-scraped-data/ml-models/mlb/")
-    print("  2. Update prediction worker to load this model")
+    logger.info("READY FOR PRODUCTION")
+    logger.info("Next steps:")
+    logger.info(f"  1. gsutil cp {model_path} gs://nba-scraped-data/ml-models/mlb/")
+    logger.info("  2. Update prediction worker to load this model")
 else:
-    print("Consider:")
-    print("  - Adding more features (platoon splits, umpire data)")
-    print("  - Collecting more training data")
-    print("  - Tuning hyperparameters")
+    logger.info("Consider:")
+    logger.info("  - Adding more features (platoon splits, umpire data)")
+    logger.info("  - Collecting more training data")
+    logger.info("  - Tuning hyperparameters")
 
-print()
+logger.info("")

@@ -605,10 +605,11 @@ def get_mlb_team_info(identifier: str) -> Optional[MLBTeamInfo]:
 
 # Test
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
     mapper = get_mlb_team_mapper()
 
-    print("MLB Team Mapper Test")
-    print("=" * 60)
+    logger.info("MLB Team Mapper Test")
+    logger.info("=" * 60)
 
     # Test various lookups
     test_cases = [
@@ -622,10 +623,10 @@ if __name__ == "__main__":
     for query in test_cases:
         team = mapper.get_team(query)
         if team:
-            print(f"{query:25} -> {team.mlb_tricode} ({team.full_name})")
+            logger.info(f"{query:25} -> {team.mlb_tricode} ({team.full_name})")
         else:
-            print(f"{query:25} -> NOT FOUND")
+            logger.warning(f"{query:25} -> NOT FOUND")
 
-    print(f"\nTotal teams: {len(mapper.get_all_teams())}")
-    print(f"AL teams: {len(mapper.get_teams_by_league('AL'))}")
-    print(f"NL teams: {len(mapper.get_teams_by_league('NL'))}")
+    logger.info(f"Total teams: {len(mapper.get_all_teams())}")
+    logger.info(f"AL teams: {len(mapper.get_teams_by_league('AL'))}")
+    logger.info(f"NL teams: {len(mapper.get_teams_by_league('NL'))}")
