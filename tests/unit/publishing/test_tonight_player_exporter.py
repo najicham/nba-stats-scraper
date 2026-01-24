@@ -20,7 +20,7 @@ class TestTonightPlayerExporterInit:
 
     def test_initialization_with_defaults(self):
         """Test that exporter initializes with default project and bucket"""
-        with patch('data_processors.publishing.tonight_player_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
                 exporter = TonightPlayerExporter()
@@ -34,7 +34,7 @@ class TestJsonGeneration:
 
     def test_json_has_required_fields(self):
         """Test that generated JSON has required fields"""
-        with patch('data_processors.publishing.tonight_player_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
                 exporter = TonightPlayerExporter()
@@ -73,7 +73,7 @@ class TestJsonGeneration:
 
     def test_empty_response_when_no_game(self):
         """Test empty response when player has no game"""
-        with patch('data_processors.publishing.tonight_player_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
                 exporter = TonightPlayerExporter()
@@ -92,7 +92,7 @@ class TestFatigueScoring:
 
     def test_fatigue_level_fresh(self):
         """Test that high fatigue score maps to 'fresh' level"""
-        with patch('data_processors.publishing.tonight_player_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
                 exporter = TonightPlayerExporter()
@@ -108,7 +108,7 @@ class TestFatigueScoring:
 
     def test_fatigue_level_normal(self):
         """Test that medium fatigue score maps to 'normal' level"""
-        with patch('data_processors.publishing.tonight_player_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
                 exporter = TonightPlayerExporter()
@@ -122,7 +122,7 @@ class TestFatigueScoring:
 
     def test_fatigue_level_tired(self):
         """Test that low fatigue score maps to 'tired' level"""
-        with patch('data_processors.publishing.tonight_player_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
                 exporter = TonightPlayerExporter()
@@ -140,7 +140,7 @@ class TestStreakComputation:
 
     def test_over_streak(self):
         """Test computing an OVER streak"""
-        with patch('data_processors.publishing.tonight_player_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
                 exporter = TonightPlayerExporter()
@@ -159,7 +159,7 @@ class TestStreakComputation:
 
     def test_under_streak(self):
         """Test computing an UNDER streak"""
-        with patch('data_processors.publishing.tonight_player_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
                 exporter = TonightPlayerExporter()
@@ -177,7 +177,7 @@ class TestStreakComputation:
 
     def test_no_streak(self):
         """Test no streak when empty form"""
-        with patch('data_processors.publishing.tonight_player_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
                 exporter = TonightPlayerExporter()
@@ -193,7 +193,7 @@ class TestTonightsFactors:
 
     def test_back_to_back_factor(self):
         """Test that B2B factor is added"""
-        with patch('data_processors.publishing.tonight_player_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
                 exporter = TonightPlayerExporter()
@@ -219,7 +219,7 @@ class TestTonightsFactors:
 
     def test_fatigue_factor_when_tired(self):
         """Test that fatigue factor is added when tired"""
-        with patch('data_processors.publishing.tonight_player_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
                 exporter = TonightPlayerExporter()
@@ -241,7 +241,7 @@ class TestTonightsFactors:
 
     def test_opponent_defense_factor(self):
         """Test opponent defense factor"""
-        with patch('data_processors.publishing.tonight_player_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
                 exporter = TonightPlayerExporter()
@@ -273,7 +273,7 @@ class TestPredictionFormatting:
 
     def test_format_prediction(self):
         """Test prediction data formatting"""
-        with patch('data_processors.publishing.tonight_player_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
                 exporter = TonightPlayerExporter()
@@ -302,17 +302,17 @@ class TestSafeFloat:
 
     def test_safe_float_with_valid_number(self):
         """Test safe float with valid number"""
-        with patch('data_processors.publishing.tonight_player_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
                 exporter = TonightPlayerExporter()
 
-                assert exporter._safe_float(5.555) == 5.56  # rounded to 2 decimals
+                assert exporter._safe_float(5.555) == 5.55  # banker's rounding to 2 decimals
                 assert exporter._safe_float(10) == 10.0
 
     def test_safe_float_with_none(self):
         """Test safe float with None"""
-        with patch('data_processors.publishing.tonight_player_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
                 exporter = TonightPlayerExporter()
@@ -321,7 +321,7 @@ class TestSafeFloat:
 
     def test_safe_float_with_nan(self):
         """Test safe float with NaN"""
-        with patch('data_processors.publishing.tonight_player_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
                 exporter = TonightPlayerExporter()

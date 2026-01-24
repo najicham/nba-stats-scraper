@@ -8,6 +8,7 @@ import re
 from typing import Dict, List, Optional
 from datetime import datetime, date, timezone
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 from data_processors.raw.processor_base import ProcessorBase
 from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.notification_system import (
@@ -44,7 +45,7 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
         self.table_name = 'nba_raw.bdl_player_boxscores'
         self.processing_strategy = 'MERGE_UPDATE'
         self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
-        self.bq_client = bigquery.Client(project=self.project_id)
+        self.bq_client = get_bigquery_client(self.project_id)
         
         # Team abbreviation mapping for consistency
         self.team_mapping = {

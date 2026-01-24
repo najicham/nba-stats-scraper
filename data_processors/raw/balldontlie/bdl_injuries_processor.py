@@ -15,6 +15,7 @@ import os
 from datetime import datetime, date
 from typing import Dict, List, Optional
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 from data_processors.raw.processor_base import ProcessorBase
 from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 from shared.utils.notification_system import (
@@ -49,7 +50,7 @@ class BdlInjuriesProcessor(SmartIdempotencyMixin, ProcessorBase):
         self.table_name = 'nba_raw.bdl_injuries'
         self.processing_strategy = 'APPEND_ALWAYS'  # Track intraday changes
         self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
-        self.bq_client = bigquery.Client(project=self.project_id)
+        self.bq_client = get_bigquery_client(self.project_id)
         
         # Team ID mapping (Ball Don't Lie team_id -> standard abbreviation)
         self.team_mapping = {

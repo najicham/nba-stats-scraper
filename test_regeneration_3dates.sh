@@ -10,7 +10,7 @@ RED='\033[0;31m'
 NC='\033[0m'
 
 COORDINATOR_URL="https://prediction-coordinator-756957797294.us-west2.run.app/start"
-API_KEY="0B5gc7vv9oNZYjST9lhe4rY2jEG2kYdz"
+API_KEY="${COORDINATOR_API_KEY:?Error: COORDINATOR_API_KEY environment variable not set}"
 
 # Test with 3 December dates (more likely to work than November)
 DATES=(

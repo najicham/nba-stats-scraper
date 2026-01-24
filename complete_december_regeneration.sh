@@ -9,7 +9,7 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 COORDINATOR_URL="https://prediction-coordinator-756957797294.us-west2.run.app/start"
-API_KEY="0B5gc7vv9oNZYjST9lhe4rY2jEG2kYdz"
+API_KEY="${COORDINATOR_API_KEY:?Error: COORDINATOR_API_KEY environment variable not set}"
 BATCH_DELAY=180  # 3 minutes
 
 # Remaining December + January dates (XGBoost V1 confirmed working)

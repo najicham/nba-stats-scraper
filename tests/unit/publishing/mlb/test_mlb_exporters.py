@@ -23,7 +23,7 @@ class TestMlbPredictionsExporterInit:
 
     def test_initialization_with_defaults(self):
         """Test that exporter initializes with MLB-specific defaults"""
-        with patch('data_processors.publishing.mlb.mlb_predictions_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.mlb.mlb_predictions_exporter import MlbPredictionsExporter
                 exporter = MlbPredictionsExporter()
@@ -37,7 +37,7 @@ class TestMlbPredictionsJsonGeneration:
 
     def test_json_has_required_fields(self):
         """Test that generated JSON has required fields"""
-        with patch('data_processors.publishing.mlb.mlb_predictions_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.mlb.mlb_predictions_exporter import MlbPredictionsExporter
                 exporter = MlbPredictionsExporter()
@@ -56,7 +56,7 @@ class TestMlbPredictionsJsonGeneration:
 
     def test_json_with_predictions(self):
         """Test JSON generation with actual predictions"""
-        with patch('data_processors.publishing.mlb.mlb_predictions_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.mlb.mlb_predictions_exporter import MlbPredictionsExporter
                 exporter = MlbPredictionsExporter()
@@ -89,7 +89,7 @@ class TestMlbSystemPerformanceExporterInit:
 
     def test_initialization(self):
         """Test that exporter initializes correctly"""
-        with patch('data_processors.publishing.mlb.mlb_system_performance_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.mlb.mlb_system_performance_exporter import MlbSystemPerformanceExporter
                 exporter = MlbSystemPerformanceExporter()
@@ -102,7 +102,7 @@ class TestMlbSystemPerformanceJsonGeneration:
 
     def test_json_structure(self):
         """Test that generated JSON has expected structure"""
-        with patch('data_processors.publishing.mlb.mlb_system_performance_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.mlb.mlb_system_performance_exporter import MlbSystemPerformanceExporter
                 exporter = MlbSystemPerformanceExporter()
@@ -124,7 +124,7 @@ class TestMlbBestBetsExporterInit:
 
     def test_initialization(self):
         """Test that exporter initializes correctly"""
-        with patch('data_processors.publishing.mlb.mlb_best_bets_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.mlb.mlb_best_bets_exporter import MlbBestBetsExporter
                 exporter = MlbBestBetsExporter()
@@ -137,7 +137,7 @@ class TestMlbBestBetsJsonGeneration:
 
     def test_json_has_required_fields(self):
         """Test that generated JSON has required fields"""
-        with patch('data_processors.publishing.mlb.mlb_best_bets_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.mlb.mlb_best_bets_exporter import MlbBestBetsExporter
                 exporter = MlbBestBetsExporter()
@@ -152,7 +152,7 @@ class TestMlbBestBetsJsonGeneration:
 
     def test_best_bets_filtering(self):
         """Test that best bets are filtered by confidence"""
-        with patch('data_processors.publishing.mlb.mlb_best_bets_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.mlb.mlb_best_bets_exporter import MlbBestBetsExporter
                 exporter = MlbBestBetsExporter()
@@ -178,7 +178,7 @@ class TestMlbResultsExporterInit:
 
     def test_initialization(self):
         """Test that exporter initializes correctly"""
-        with patch('data_processors.publishing.mlb.mlb_results_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.mlb.mlb_results_exporter import MlbResultsExporter
                 exporter = MlbResultsExporter()
@@ -191,7 +191,7 @@ class TestMlbResultsJsonGeneration:
 
     def test_json_has_required_fields(self):
         """Test that generated JSON has required fields"""
-        with patch('data_processors.publishing.mlb.mlb_results_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.mlb.mlb_results_exporter import MlbResultsExporter
                 exporter = MlbResultsExporter()
@@ -207,7 +207,7 @@ class TestMlbResultsJsonGeneration:
 
     def test_results_include_actual_strikeouts(self):
         """Test that results include actual strikeouts"""
-        with patch('data_processors.publishing.mlb.mlb_results_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.mlb.mlb_results_exporter import MlbResultsExporter
                 exporter = MlbResultsExporter()

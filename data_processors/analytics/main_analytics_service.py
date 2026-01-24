@@ -36,6 +36,7 @@ from data_processors.analytics.async_orchestration import (
 
 # Import BigQuery client for completeness checks
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -127,7 +128,7 @@ def verify_boxscore_completeness(game_date: str, project_id: str) -> dict:
         }
 
     try:
-        bq_client = bigquery.Client(project=project_id)
+        bq_client = get_bigquery_client(project_id)
 
         # Q1: How many games scheduled and completed?
         # Use parameterized query to prevent SQL injection

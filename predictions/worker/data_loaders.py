@@ -27,9 +27,12 @@ from google.cloud.exceptions import GoogleCloudError
 from datetime import date, datetime
 import logging
 import os
+import random
+import time
 
 from shared.utils.query_cache import QueryCache, get_query_cache
 from shared.utils.bigquery_retry import TRANSIENT_RETRY
+from shared.utils.retry_with_jitter import retry_with_jitter
 
 logger = logging.getLogger(__name__)
 
@@ -275,28 +278,56 @@ class PredictionDataLoader:
             # Player not in cache - might not have games, fall through to query
 
         # Try batch loading all players for this game_date (first request populates cache)
+        # Uses exponential backoff with jitter for transient errors before falling back
         if game_date not in self._historical_games_cache:
-            try:
-                # Get all player_lookups with games on this date from feature store
-                all_players = self._get_players_for_date(game_date)
-                if all_players:
-                    logger.info(f"Batch loading historical games for {len(all_players)} players on {game_date}")
-                    batch_result = self.load_historical_games_batch(all_players, game_date, lookback_days, max_games)
-                    self._historical_games_cache[game_date] = batch_result
-                    # Return from cache
-                    return batch_result.get(player_lookup, [])
-            except (gcp_exceptions.BadRequest, gcp_exceptions.NotFound) as e:
-                logger.warning(f"Batch load query error, falling back to individual query: {e}")
-                # Fall through to individual query
-            except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
-                logger.warning(f"Batch load timeout/unavailable, falling back to individual query: {e}")
-                # Fall through to individual query
-            except GoogleCloudError as e:
-                logger.warning(f"Batch load GCP error, falling back to individual query: {e}")
-                # Fall through to individual query
-            except Exception as e:
-                logger.warning(f"Batch load unexpected error, falling back to individual query: {type(e).__name__}: {e}")
-                # Fall through to individual query
+            max_retries = 3
+            base_delay = 1.0
+            max_delay = 15.0
+            last_transient_error = None
+
+            for attempt in range(1, max_retries + 1):
+                try:
+                    # Get all player_lookups with games on this date from feature store
+                    all_players = self._get_players_for_date(game_date)
+                    if all_players:
+                        logger.info(f"Batch loading historical games for {len(all_players)} players on {game_date}")
+                        batch_result = self.load_historical_games_batch(all_players, game_date, lookback_days, max_games)
+                        self._historical_games_cache[game_date] = batch_result
+                        if attempt > 1:
+                            logger.info(f"Batch load succeeded on attempt {attempt}/{max_retries}")
+                        # Return from cache
+                        return batch_result.get(player_lookup, [])
+                    break  # No players found, fall through to individual query
+
+                except (gcp_exceptions.BadRequest, gcp_exceptions.NotFound) as e:
+                    # Non-transient errors - don't retry, fall through immediately
+                    logger.warning(f"Batch load query error, falling back to individual query: {e}")
+                    break
+
+                except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
+                    # Transient errors - retry with exponential backoff
+                    last_transient_error = e
+                    if attempt < max_retries:
+                        delay = min(max_delay, base_delay * (2 ** (attempt - 1)))
+                        jitter = delay * 0.3 * (2 * random.random() - 1)
+                        sleep_time = max(0, delay + jitter)
+                        logger.warning(
+                            f"Batch load attempt {attempt}/{max_retries} failed: {type(e).__name__}. "
+                            f"Retrying in {sleep_time:.2f}s..."
+                        )
+                        time.sleep(sleep_time)
+                    else:
+                        logger.warning(
+                            f"Batch load failed after {max_retries} attempts, falling back to individual query: {e}"
+                        )
+
+                except GoogleCloudError as e:
+                    logger.warning(f"Batch load GCP error, falling back to individual query: {e}")
+                    break
+
+                except Exception as e:
+                    logger.warning(f"Batch load unexpected error, falling back to individual query: {type(e).__name__}: {e}")
+                    break
         # Query only columns that exist in player_game_summary
         query = """
         WITH recent_games AS (

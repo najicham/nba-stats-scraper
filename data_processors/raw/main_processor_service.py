@@ -181,6 +181,7 @@ def check_boxscore_completeness():
     """
     from google.cloud import bigquery, storage
     from datetime import date, timedelta
+    from shared.clients.bigquery_pool import get_bigquery_client
 
     logger = logging.getLogger(__name__)
 
@@ -194,7 +195,7 @@ def check_boxscore_completeness():
 
         logger.info(f"Checking boxscore completeness: {start_date} to {end_date}")
 
-        bq_client = bigquery.Client()
+        bq_client = get_bigquery_client()
 
         # Query coverage
         coverage_query = f"""

@@ -27,6 +27,7 @@ from dataclasses import dataclass, asdict
 from enum import Enum
 
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ class RosterHistoryProcessor:
         self.project_id = project_id
         self.dataset_id = dataset_id
         self.table_name = "roster_history"
-        self.bq_client = bigquery.Client(project=project_id)
+        self.bq_client = get_bigquery_client(project_id)
 
         # Stats tracking
         self.changes_detected = 0

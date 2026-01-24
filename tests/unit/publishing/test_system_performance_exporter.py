@@ -20,7 +20,7 @@ class TestSystemPerformanceExporterInit:
 
     def test_initialization_with_defaults(self):
         """Test that exporter initializes with default project and bucket"""
-        with patch('data_processors.publishing.system_performance_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.system_performance_exporter import SystemPerformanceExporter
                 exporter = SystemPerformanceExporter()
@@ -59,7 +59,7 @@ class TestJsonGeneration:
 
     def test_json_has_required_fields(self):
         """Test that generated JSON has required fields"""
-        with patch('data_processors.publishing.system_performance_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.system_performance_exporter import SystemPerformanceExporter
                 exporter = SystemPerformanceExporter()
@@ -84,7 +84,7 @@ class TestJsonGeneration:
 
     def test_empty_response_when_no_data(self):
         """Test empty response when no performance data"""
-        with patch('data_processors.publishing.system_performance_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.system_performance_exporter import SystemPerformanceExporter
                 exporter = SystemPerformanceExporter()
@@ -102,7 +102,7 @@ class TestSystemsArrayBuilding:
 
     def test_systems_include_metadata(self):
         """Test that systems array includes metadata from constants"""
-        with patch('data_processors.publishing.system_performance_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.system_performance_exporter import (
                     SystemPerformanceExporter,
@@ -135,7 +135,7 @@ class TestComparisonBuilding:
 
     def test_comparison_structure(self):
         """Test that comparison has expected structure"""
-        with patch('data_processors.publishing.system_performance_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.system_performance_exporter import SystemPerformanceExporter
                 exporter = SystemPerformanceExporter()
@@ -164,7 +164,7 @@ class TestEmptyResponse:
 
     def test_empty_response_structure(self):
         """Test empty response has correct structure"""
-        with patch('data_processors.publishing.system_performance_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.system_performance_exporter import SystemPerformanceExporter
                 exporter = SystemPerformanceExporter()

@@ -13,7 +13,7 @@ NC='\033[0m'
 
 # Configuration
 COORDINATOR_URL="https://prediction-coordinator-756957797294.us-west2.run.app/start"
-API_KEY="0B5gc7vv9oNZYjST9lhe4rY2jEG2kYdz"
+API_KEY="${COORDINATOR_API_KEY:?Error: COORDINATOR_API_KEY environment variable not set}"
 BATCH_DELAY=180  # 3 minutes between batches
 
 # Missing dates (20 total - dates without XGBoost V1 predictions)

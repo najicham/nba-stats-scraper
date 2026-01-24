@@ -19,6 +19,7 @@ import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
 from google.cloud import bigquery
+from shared.clients.bigquery_pool import get_bigquery_client
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +43,7 @@ class ScoringTierProcessor:
             lookback_days: Number of days of historical data to analyze (default 30)
             min_sample_size: Minimum predictions per tier to compute adjustment (default 20)
         """
-        self.client = bigquery.Client()
+        self.client = get_bigquery_client()
         self.lookback_days = lookback_days
         self.min_sample_size = min_sample_size
         self.table_id = 'nba-props-platform.nba_predictions.scoring_tier_adjustments'

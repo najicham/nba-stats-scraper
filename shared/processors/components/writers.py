@@ -445,7 +445,8 @@ class BigQueryMergeWriter(OutputWriter):
                 try:
                     json.dumps(value)
                     sanitized[key] = value
-                except:
+                except (TypeError, ValueError, OverflowError) as e:
+                    logger.debug(f"Could not JSON-serialize field '{key}': {e}")
                     sanitized[key] = str(value)
             else:
                 sanitized[key] = str(value)

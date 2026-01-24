@@ -13,6 +13,7 @@ Path: shared/utils/bigquery_utils.py
 
 import logging
 import os
+import re
 from typing import List, Dict, Any, Optional
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
@@ -30,6 +31,36 @@ DEFAULT_PROJECT_ID = get_project_id()
 # Week 1: Query caching feature flags (enabled by default for cost savings)
 ENABLE_QUERY_CACHING = os.getenv('ENABLE_QUERY_CACHING', 'true').lower() == 'true'
 QUERY_CACHE_TTL_SECONDS = int(os.getenv('QUERY_CACHE_TTL_SECONDS', '3600'))  # 1 hour default
+
+# Pattern for safe SQL identifiers (alphanumeric, underscores, hyphens)
+_SAFE_IDENTIFIER_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+
+def _validate_sql_identifier(value: str, param_name: str) -> str:
+    """
+    Validate that a string is safe for SQL interpolation.
+
+    Prevents SQL injection by ensuring identifiers only contain
+    alphanumeric characters, underscores, and hyphens.
+
+    Args:
+        value: The string to validate
+        param_name: Name of the parameter (for error messages)
+
+    Returns:
+        The validated string (unchanged if valid)
+
+    Raises:
+        ValueError: If the string contains unsafe characters
+    """
+    if not value:
+        raise ValueError(f"{param_name} cannot be empty")
+    if not _SAFE_IDENTIFIER_PATTERN.match(value):
+        raise ValueError(
+            f"{param_name} contains invalid characters. "
+            f"Only alphanumeric, underscore, and hyphen allowed. Got: {value!r}"
+        )
+    return value
 
 
 @retry_with_jitter(
@@ -421,6 +452,11 @@ def get_last_scraper_run(
         >>> if last_run:
         ...     print(f"Last ran at: {last_run['triggered_at']}")
     """
+    # Validate inputs to prevent SQL injection
+    _validate_sql_identifier(scraper_name, "scraper_name")
+    if workflow:
+        _validate_sql_identifier(workflow, "workflow")
+
     workflow_filter = f"AND workflow = '{workflow}'" if workflow else ""
 
     # Week 1: Add date filter to reduce bytes scanned
@@ -428,7 +464,7 @@ def get_last_scraper_run(
     SELECT *
     FROM `{project_id}.nba_orchestration.scraper_execution_log`
     WHERE scraper_name = '{scraper_name}'
-    AND DATE(triggered_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
+    AND DATE(triggered_at) >= DATE_SUB(CURRENT_DATE(), INTERVAL {int(lookback_days)} DAY)
     {workflow_filter}
     ORDER BY triggered_at DESC
     LIMIT 1
@@ -457,12 +493,15 @@ def get_last_workflow_decision(
     Returns:
         Dictionary with last decision info, or None if not found
     """
+    # Validate inputs to prevent SQL injection
+    _validate_sql_identifier(workflow_name, "workflow_name")
+
     # Week 1: Add date filter to reduce bytes scanned
     query = f"""
     SELECT *
     FROM `{project_id}.nba_orchestration.workflow_decisions`
     WHERE workflow_name = '{workflow_name}'
-    AND DATE(decision_time) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
+    AND DATE(decision_time) >= DATE_SUB(CURRENT_DATE(), INTERVAL {int(lookback_days)} DAY)
     ORDER BY decision_time DESC
     LIMIT 1
     """

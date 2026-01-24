@@ -20,7 +20,7 @@ class TestPlayerProfileExporterInit:
 
     def test_initialization_with_defaults(self):
         """Test that exporter initializes with default project and bucket"""
-        with patch('data_processors.publishing.player_profile_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
                 exporter = PlayerProfileExporter()
@@ -34,7 +34,7 @@ class TestIndexJsonGeneration:
 
     def test_index_json_structure(self):
         """Test that index JSON has required structure"""
-        with patch('data_processors.publishing.player_profile_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
                 exporter = PlayerProfileExporter()
@@ -63,7 +63,7 @@ class TestIndexJsonGeneration:
 
     def test_index_json_empty_players(self):
         """Test index JSON with no players"""
-        with patch('data_processors.publishing.player_profile_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
                 exporter = PlayerProfileExporter()
@@ -77,7 +77,7 @@ class TestIndexJsonGeneration:
 
     def test_players_sorted_by_games_predicted(self):
         """Test that players are sorted by games predicted descending"""
-        with patch('data_processors.publishing.player_profile_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
                 exporter = PlayerProfileExporter()
@@ -100,7 +100,7 @@ class TestPlayerDetailJsonGeneration:
 
     def test_player_json_structure(self):
         """Test that player detail JSON has required structure"""
-        with patch('data_processors.publishing.player_profile_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
                 exporter = PlayerProfileExporter()
@@ -142,7 +142,7 @@ class TestPlayerDetailJsonGeneration:
 
     def test_empty_player_response(self):
         """Test response for player with no data"""
-        with patch('data_processors.publishing.player_profile_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
                 exporter = PlayerProfileExporter()
@@ -161,7 +161,7 @@ class TestInterpretationBuilding:
 
     def test_bias_interpretation_under_predict(self):
         """Test bias interpretation for under-prediction"""
-        with patch('data_processors.publishing.player_profile_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
                 exporter = PlayerProfileExporter()
@@ -173,7 +173,7 @@ class TestInterpretationBuilding:
 
     def test_bias_interpretation_over_predict(self):
         """Test bias interpretation for over-prediction"""
-        with patch('data_processors.publishing.player_profile_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
                 exporter = PlayerProfileExporter()
@@ -185,7 +185,7 @@ class TestInterpretationBuilding:
 
     def test_bias_interpretation_well_calibrated(self):
         """Test bias interpretation for well-calibrated predictions"""
-        with patch('data_processors.publishing.player_profile_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
                 exporter = PlayerProfileExporter()
@@ -197,7 +197,7 @@ class TestInterpretationBuilding:
 
     def test_accuracy_interpretation_excellent(self):
         """Test accuracy interpretation for excellent win rate"""
-        with patch('data_processors.publishing.player_profile_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
                 exporter = PlayerProfileExporter()
@@ -209,7 +209,7 @@ class TestInterpretationBuilding:
 
     def test_sample_size_interpretation_limited(self):
         """Test sample size interpretation for few games"""
-        with patch('data_processors.publishing.player_profile_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
                 exporter = PlayerProfileExporter()
@@ -225,7 +225,7 @@ class TestSafeFloat:
 
     def test_safe_float_with_valid_number(self):
         """Test safe float with valid number"""
-        with patch('data_processors.publishing.player_profile_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
                 exporter = PlayerProfileExporter()
@@ -235,7 +235,7 @@ class TestSafeFloat:
 
     def test_safe_float_with_none(self):
         """Test safe float with None"""
-        with patch('data_processors.publishing.player_profile_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
                 exporter = PlayerProfileExporter()
@@ -244,7 +244,7 @@ class TestSafeFloat:
 
     def test_safe_float_with_nan(self):
         """Test safe float with NaN"""
-        with patch('data_processors.publishing.player_profile_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.player_profile_exporter import PlayerProfileExporter
                 exporter = PlayerProfileExporter()

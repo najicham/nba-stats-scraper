@@ -21,7 +21,7 @@ class TestNewsExporterInit:
 
     def test_initialization_with_nba_sport(self):
         """Test that exporter initializes with NBA sport"""
-        with patch('data_processors.publishing.news_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.news_exporter import NewsExporter
                 exporter = NewsExporter(sport='nba')
@@ -30,7 +30,7 @@ class TestNewsExporterInit:
 
     def test_initialization_with_mlb_sport(self):
         """Test that exporter initializes with MLB sport"""
-        with patch('data_processors.publishing.news_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.news_exporter import NewsExporter
                 exporter = NewsExporter(sport='mlb')
@@ -83,7 +83,7 @@ class TestHeadlineCreation:
 
     def test_short_title_not_truncated(self):
         """Test that short titles are not truncated"""
-        with patch('data_processors.publishing.news_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.news_exporter import NewsExporter
                 exporter = NewsExporter(sport='nba')
@@ -95,7 +95,7 @@ class TestHeadlineCreation:
 
     def test_long_title_truncated_at_word_boundary(self):
         """Test that long titles are truncated at word boundary"""
-        with patch('data_processors.publishing.news_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.news_exporter import NewsExporter
                 exporter = NewsExporter(sport='nba')
@@ -108,7 +108,7 @@ class TestHeadlineCreation:
 
     def test_empty_title_returns_empty(self):
         """Test that empty title returns empty string"""
-        with patch('data_processors.publishing.news_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.news_exporter import NewsExporter
                 exporter = NewsExporter(sport='nba')
@@ -119,7 +119,7 @@ class TestHeadlineCreation:
 
     def test_none_title_returns_empty(self):
         """Test that None title returns empty string"""
-        with patch('data_processors.publishing.news_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.news_exporter import NewsExporter
                 exporter = NewsExporter(sport='nba')
@@ -134,7 +134,7 @@ class TestTimestampFormatting:
 
     def test_format_datetime_object(self):
         """Test formatting datetime object to ISO string"""
-        with patch('data_processors.publishing.news_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.news_exporter import NewsExporter
                 exporter = NewsExporter(sport='nba')
@@ -147,7 +147,7 @@ class TestTimestampFormatting:
 
     def test_format_none_timestamp(self):
         """Test that None timestamp returns None"""
-        with patch('data_processors.publishing.news_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.news_exporter import NewsExporter
                 exporter = NewsExporter(sport='nba')
@@ -162,7 +162,7 @@ class TestPlayerJsonGeneration:
 
     def test_player_json_has_required_fields(self):
         """Test that player JSON has required fields"""
-        with patch('data_processors.publishing.news_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.news_exporter import NewsExporter
                 exporter = NewsExporter(sport='nba')
@@ -187,7 +187,7 @@ class TestPlayerJsonGeneration:
 
     def test_critical_news_flag_set(self):
         """Test that critical news flag is set correctly"""
-        with patch('data_processors.publishing.news_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.news_exporter import NewsExporter
                 exporter = NewsExporter(sport='nba')
@@ -218,7 +218,7 @@ class TestTonightSummary:
 
     def test_tonight_summary_structure(self):
         """Test tonight summary has required structure"""
-        with patch('data_processors.publishing.news_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.news_exporter import NewsExporter
                 exporter = NewsExporter(sport='nba')
@@ -242,7 +242,7 @@ class TestTonightSummary:
 
     def test_tonight_summary_critical_detection(self):
         """Test that tonight summary detects critical news"""
-        with patch('data_processors.publishing.news_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.news_exporter import NewsExporter
                 exporter = NewsExporter(sport='nba')
@@ -266,7 +266,7 @@ class TestSafeFloat:
 
     def test_safe_float_with_valid_number(self):
         """Test safe float with valid number"""
-        with patch('data_processors.publishing.news_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.news_exporter import NewsExporter
                 exporter = NewsExporter(sport='nba')
@@ -276,7 +276,7 @@ class TestSafeFloat:
 
     def test_safe_float_with_none(self):
         """Test safe float with None returns default"""
-        with patch('data_processors.publishing.news_exporter.get_bigquery_client'):
+        with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.news_exporter import NewsExporter
                 exporter = NewsExporter(sport='nba')
