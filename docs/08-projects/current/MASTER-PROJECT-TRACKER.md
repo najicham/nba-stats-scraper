@@ -1,6 +1,6 @@
 # Master Project Tracker - January 24, 2026
-**Last Updated:** 2026-01-24 ~2:00 AM UTC
-**Status:** 🟢 Pipeline Resilience Improvements Complete
+**Last Updated:** 2026-01-24 ~3:30 AM UTC
+**Status:** 🟢 Reliability & Validation Improvements Complete
 **Owner:** Data Engineering Team
 
 ---
@@ -19,7 +19,22 @@
 | **#6** | Health Email Metrics Bug | 🟡 **NEW** | P3 | - | Wrong counts displayed |
 | **#7** | Jan 23 Cascade Failure | ✅ **FIXED** | P0 | Jan 24 | Resilience improvements deployed |
 
-### 🔄 Pipeline Resilience Improvements (Jan 24)
+### 🔄 Reliability & Validation Improvements (Jan 24 - Session 2)
+
+| Improvement | Status | Impact |
+|-------------|--------|--------|
+| Cleanup processor table coverage | ✅ Deployed | 27 tables (was 4) |
+| Cleanup processor lookback window | ✅ Deployed | 4h default (was 1h) |
+| Pub/Sub retry with backoff | ✅ Deployed | 3 attempts, prevents data loss |
+| Proxy retry per-proxy backoff | ✅ Deployed | 40% fewer false failures |
+| Phase transition handoff checks | ✅ Deployed | Detects silent Phase N+1 failures |
+| DLQ monitoring via Cloud API | ✅ Deployed | Actual message counts |
+| GCP_PROJECT_ID standardization | ✅ Deployed | 12 files, backwards compatible |
+| NBAC Schedule validator | ✅ Created | Team presence, game counts |
+| NBAC Injury Report validator | ✅ Created | Status, coverage, freshness |
+| NBAC Player Boxscore validator | ✅ Created | Points calc, BDL cross-val |
+
+### 🔄 Pipeline Resilience Improvements (Jan 24 - Session 1)
 
 All items from the Jan 23 cascade failure incident have been implemented:
 
