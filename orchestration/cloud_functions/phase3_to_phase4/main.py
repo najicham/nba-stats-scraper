@@ -978,7 +978,6 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
             )
 
             # Get expected game count from schedule
-            from datetime import datetime as dt
             expected_game_count = 0
             try:
                 schedule_query = f"""
@@ -998,7 +997,7 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
             expected_processors = mode_config.get('expected_processors', [])
 
             validation_result = validator.run_validation(
-                game_date=dt.strptime(game_date, '%Y-%m-%d').date(),
+                game_date=datetime.strptime(game_date, '%Y-%m-%d').date(),
                 validation_config={
                     'check_game_count': True,
                     'expected_game_count': expected_game_count,
