@@ -395,7 +395,13 @@ def send_to_slack(message: Dict[str, Any]) -> bool:
         else:
             print(f"❌ Slack webhook returned {response.status_code}: {response.text}")
             return False
-    except Exception as e:
+    except requests.exceptions.Timeout:
+        print("❌ Slack webhook timed out after 10s")
+        return False
+    except requests.exceptions.ConnectionError as e:
+        print(f"❌ Connection error to Slack: {e}")
+        return False
+    except requests.exceptions.RequestException as e:
         print(f"❌ Error sending to Slack: {e}")
         return False
 
