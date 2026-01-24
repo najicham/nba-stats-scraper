@@ -1,7 +1,7 @@
 # Comprehensive System Improvements - January 2026
 
 **Created:** 2026-01-23
-**Last Updated:** 2026-01-24
+**Last Updated:** 2026-01-23
 **Status:** In Progress
 
 ## Overview
@@ -15,10 +15,10 @@ This project consolidates all identified improvements from codebase analysis, ha
 | Priority | Total | Completed | In Progress | Remaining |
 |----------|-------|-----------|-------------|-----------|
 | P0 - Critical | 10 | 10 | 0 | 0 |
-| P1 - High | 25 | 9 | 0 | 16 |
+| P1 - High | 25 | 16 | 0 | 9 |
 | P2 - Medium | 37 | 3 | 0 | 34 |
 | P3 - Low | 26 | 0 | 0 | 26 |
-| **Total** | **98** | **19** | **0** | **79** |
+| **Total** | **98** | **29** | **0** | **69** |
 
 ---
 
@@ -53,11 +53,11 @@ This project consolidates all identified improvements from codebase analysis, ha
   - Files: `orchestration/cloud_functions/phase4_to_phase5/main.py`
   - Notes: Configurable PHASE4_TIMEOUT_MINUTES with 80% warning and Slack alerts
 
-- [ ] **P0-6: Fix cleanup processor Pub/Sub**
-  - Status: Not Started
-  - Files: `data_processors/cleanup_processor.py`
-  - Issue: Self-healing via Pub/Sub never implemented
-  - Solution: Implement Pub/Sub handler for cleanup triggers
+- [x] **P0-6: Fix cleanup processor Pub/Sub** ✅ ALREADY DONE
+  - Status: Completed (was already implemented)
+  - Files: `orchestration/cleanup_processor.py`
+  - Notes: Full Pub/Sub implementation exists with `_republish_messages()` method (lines 309-416)
+  - Features: Exponential backoff retry (3 attempts), error notifications, logging to BigQuery
 
 ### Reliability
 
@@ -88,30 +88,33 @@ This project consolidates all identified improvements from codebase analysis, ha
 
 ### Performance
 
-- [ ] **P1-1: Batch load historical games**
-  - Status: Not Started
+- [x] **P1-1: Batch load historical games** ✅ ALREADY DONE
+  - Status: Completed (was already implemented)
   - Files: `predictions/worker/data_loaders.py`
-  - Issue: Loading games one-by-one instead of batch
-  - Solution: Implement batch loading for 50x speedup
+  - Notes: `_historical_games_cache` implemented with batch loading (~50x speedup)
+  - First request batch-loads all players, subsequent requests use cache
 
-- [ ] **P1-2: Add BigQuery query timeouts**
-  - Status: Not Started
+- [x] **P1-2: Add BigQuery query timeouts** ✅ ALREADY DONE
+  - Status: Completed (was already implemented)
   - Files: `predictions/worker/data_loaders.py`
-  - Issue: Queries can run indefinitely
-  - Solution: Add job timeout configuration
+  - Notes: `QUERY_TIMEOUT_SECONDS = 120` with `.result(timeout=QUERY_TIMEOUT_SECONDS)` on all 5 queries
 
-- [ ] **P1-3: Add feature caching**
-  - Status: Not Started
-  - Issue: Same game_date queried 450x per batch
-  - Solution: Cache feature results by date
+- [x] **P1-3: Add feature caching** ✅ ALREADY DONE
+  - Status: Completed (was already implemented)
+  - Files: `predictions/worker/data_loaders.py`
+  - Notes: `_features_cache` and `_game_context_cache` with TTL management
+  - 5-min TTL for same-day, 1-hour TTL for historical dates
 
 ### Data Quality
 
-- [ ] **P1-4: Fix prediction duplicates**
-  - Status: Not Started
-  - Files: `predictions/worker/worker.py`
-  - Issue: MERGE vs WRITE_APPEND logic causing 5x data bloat
-  - Solution: Fix write mode logic
+- [x] **P1-4: Fix prediction duplicates** ✅ ALREADY DONE (Session 92)
+  - Status: Completed (was already implemented)
+  - Files: `predictions/worker/batch_staging_writer.py`
+  - Notes: Comprehensive fix with:
+    - Two-phase write pattern (staging tables → MERGE)
+    - DistributedLock on game_date to prevent race conditions
+    - ROW_NUMBER deduplication in MERGE query
+    - Post-consolidation validation with error logging
 
 - [x] **P1-5: Fix validation threshold inconsistency** ✅ FIXED
   - Status: Completed
@@ -121,27 +124,30 @@ This project consolidates all identified improvements from codebase analysis, ha
 
 ### Monitoring
 
-- [ ] **P1-6: Move self-heal before Phase 6 export**
-  - Status: Not Started
-  - Issue: Self-heal at 2:15 PM, export at 1:00 PM
-  - Solution: Move self-heal to 12:45 PM
+- [x] **P1-6: Move self-heal before Phase 6 export** ✅ ALREADY DONE
+  - Status: Completed (was already implemented)
+  - Files: `bin/deploy/deploy_self_heal_function.sh`
+  - Notes: Self-heal scheduler is at 12:45 PM ET (15 min before Phase 6 export at 1 PM)
 
 - [x] **P1-7: Add DLQ monitoring alerts** ✅ ALREADY DONE
   - Status: Completed (was already implemented)
   - Files: `orchestration/cloud_functions/dlq_monitor/main.py`
   - Notes: Comprehensive DLQ monitoring with AlertManager, Cloud Logging checks, cooldown logic
 
-- [ ] **P1-8: Add stuck processor visibility in dashboard**
-  - Status: Not Started
-  - Files: `services/admin_dashboard/`
-  - Issue: `get_run_history_stuck()` exists but not exposed
-  - Solution: Add `/api/stuck-processors` endpoint
+- [x] **P1-8: Add stuck processor visibility in dashboard** ✅ FIXED
+  - Status: Completed
+  - Files: `services/admin_dashboard/main.py`
+  - Solution: Added `/api/stuck-processors` endpoint that exposes `firestore_service.get_run_history_stuck()`
+  - Returns: List of stuck processors (running > 30 min) with count and threshold
 
-- [ ] **P1-9: Implement dashboard action endpoints**
-  - Status: Not Started
-  - Files: `services/admin_dashboard/`
-  - Issue: "Force Predictions" and "Retry Phase" buttons are stubs
-  - Solution: Implement HTTP calls to Cloud Run endpoints
+- [x] **P1-9: Implement dashboard action endpoints** ✅ ALREADY DONE
+  - Status: Completed (was already implemented)
+  - Files: `services/admin_dashboard/main.py`
+  - Notes: Action endpoints fully implemented with real HTTP calls to Cloud Run:
+    - `/api/actions/force-predictions` - calls prediction coordinator
+    - `/api/actions/retry-phase` - calls phase 3/4/5 services
+    - `/api/actions/trigger-self-heal` - calls self-heal function
+  - Features: Audit logging to BigQuery, proper error handling
 
 ### Code Quality
 
@@ -179,11 +185,11 @@ This project consolidates all identified improvements from codebase analysis, ha
   - Issue: No CPU/memory tracking
   - Solution: Add Cloud Monitoring dashboards
 
-- [ ] **P1-16: Add Pub/Sub publish retries**
-  - Status: Not Started
+- [x] **P1-16: Add Pub/Sub publish retries** ✅ ALREADY DONE
+  - Status: Completed (was already implemented)
   - Files: `predictions/coordinator/coordinator.py`
-  - Issue: Can lose messages on transient failures
-  - Solution: Add retry logic with exponential backoff
+  - Notes: `publish_with_retry()` function (lines 853-890) with exponential backoff
+  - Retry delays: 1s, 2s, 4s with max 3 retries
 
 - [ ] **P1-17: Add connection pooling**
   - Status: Not Started
@@ -191,11 +197,11 @@ This project consolidates all identified improvements from codebase analysis, ha
   - Issue: Connection exhaustion risk
   - Solution: Implement HTTP connection pooling
 
-- [ ] **P1-18: Validate pagination cursors**
-  - Status: Not Started
+- [x] **P1-18: Validate pagination cursors** ✅ FIXED
+  - Status: Completed
   - Files: `scrapers/utils/bdl_utils.py`
-  - Issue: Infinite loops possible with invalid cursors
-  - Solution: Add cursor validation
+  - Solution: Added `max_pages` parameter (default 1000) to `cursor_paginate()`
+  - Logs warning when max pages reached to detect API issues
 
 ### Analytics
 
@@ -425,6 +431,16 @@ This project consolidates all identified improvements from codebase analysis, ha
 | 2026-01-24 | NEW | team_offense_game_summary validator | Created validator matching defense validator pattern |
 | 2026-01-24 | NEW | Schedule service timeout | Added 30s timeout to parameter_resolver.py |
 | 2026-01-24 | NEW | Retry config expansion | Added 7 scrapers (now 24 total): nbac_scoreboard_v2, nbac_player_boxscore, nbac_team_boxscore, nbac_roster, nbac_referee_assignments, bdl_live_box_scores, bdl_odds |
+| 2026-01-23 | P0-6 | Cleanup processor Pub/Sub | Already implemented - full republish logic with retries |
+| 2026-01-23 | P1-6 | Self-heal timing | Already at 12:45 PM ET (before 1 PM export) |
+| 2026-01-23 | P1-8 | Stuck processor dashboard endpoint | Added /api/stuck-processors endpoint |
+| 2026-01-23 | P1-9 | Dashboard action endpoints | Already implemented - force predictions, retry phase, self-heal |
+| 2026-01-23 | P1-1 | Batch load historical games | Already implemented - _historical_games_cache with ~50x speedup |
+| 2026-01-23 | P1-2 | BigQuery query timeouts | Already implemented - QUERY_TIMEOUT_SECONDS = 120 on all queries |
+| 2026-01-23 | P1-3 | Feature caching | Already implemented - _features_cache with TTL management |
+| 2026-01-23 | P1-4 | Prediction duplicates | Fixed in Session 92 - distributed lock + ROW_NUMBER deduplication |
+| 2026-01-23 | P1-16 | Pub/Sub publish retries | Already implemented - publish_with_retry() with exponential backoff |
+| 2026-01-23 | P1-18 | Pagination cursor validation | Added max_pages guard to cursor_paginate() in bdl_utils.py |
 
 ---
 

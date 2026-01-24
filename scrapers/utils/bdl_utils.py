@@ -282,9 +282,16 @@ def cursor_paginate(
     params: Optional[Dict[str, Any]] = None,
     *,
     per_page: int = 100,
+    max_pages: int = 1000,
 ) -> Iterator[Dict[str, Any]]:
     """
     Generator that transparently walks BALLDONTLIE's cursor‑based pagination.
+
+    Args:
+        path: API endpoint path
+        params: Query parameters
+        per_page: Results per page (default 100)
+        max_pages: Maximum pages to fetch (default 1000, prevents infinite loops)
 
     Example:
         for row in cursor_paginate("players", {"search": "curry"}):
@@ -293,17 +300,26 @@ def cursor_paginate(
     q: Dict[str, Any] = dict(params or {})
     q["per_page"] = per_page
     cursor: Optional[str] = None
+    page_count = 0
 
     while True:
+        page_count += 1
+        if page_count > max_pages:
+            logger.warning(
+                f"cursor_paginate: Hit max_pages limit ({max_pages}) for path={path}. "
+                f"This may indicate an API issue or unusually large dataset."
+            )
+            break
+
         if cursor:
             q["cursor"] = cursor
-        
+
         try:
             data = get_json(f"{API_ROOT}{path}", params=q)
         except Exception as e:
             # get_json already notified on failure, just log and re-raise
             raise
-        
+
         yield from data["data"]
 
         cursor = data.get("meta", {}).get("next_cursor")

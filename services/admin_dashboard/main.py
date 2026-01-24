@@ -745,6 +745,30 @@ def api_schedulers():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/stuck-processors')
+@rate_limit
+def api_stuck_processors():
+    """
+    Get processors that are stuck (running > 30 minutes).
+
+    Returns:
+        JSON with list of stuck processors and count
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        stuck_processors = firestore_service.get_run_history_stuck()
+        return jsonify({
+            'stuck_processors': stuck_processors,
+            'count': len(stuck_processors),
+            'threshold_minutes': 30
+        })
+    except Exception as e:
+        logger.error(f"Error in api_stuck_processors: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/history')
 @rate_limit
 def api_history():
