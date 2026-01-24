@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Any, Optional
 
 from data_processors.publishing.base_exporter import BaseExporter
+from data_processors.publishing.exporter_utils import safe_float, safe_int
 
 logger = logging.getLogger(__name__)
 

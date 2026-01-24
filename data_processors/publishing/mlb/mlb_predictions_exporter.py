@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Dict, List, Any, Optional
 
 from data_processors.publishing.base_exporter import BaseExporter
+from data_processors.publishing.exporter_utils import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -104,11 +105,11 @@ class MlbPredictionsExporter(BaseExporter):
                 'team': row.get('team'),
                 'opponent': row.get('opponent'),
                 'is_home': bool(row.get('home_away')),
-                'strikeouts_line': float(row.get('strikeouts_line', 0)),
-                'predicted_strikeouts': round(float(row.get('predicted_strikeouts', 0)), 1),
+                'strikeouts_line': safe_float(row.get('strikeouts_line'), default=0.0),
+                'predicted_strikeouts': safe_float(row.get('predicted_strikeouts'), default=0.0, precision=1),
                 'recommendation': row.get('recommendation'),
-                'confidence': round(float(row.get('confidence', 0)), 2),
-                'edge': round(float(row.get('edge', 0)), 2),
+                'confidence': safe_float(row.get('confidence'), default=0.0),
+                'edge': safe_float(row.get('edge'), default=0.0),
                 'model_version': row.get('model_version')
             }
 

@@ -13,6 +13,7 @@ from typing import Dict, Any
 from datetime import date
 
 from .base_exporter import BaseExporter
+from .exporter_utils import get_generated_at
 
 logger = logging.getLogger(__name__)
 

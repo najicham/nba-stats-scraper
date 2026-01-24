@@ -1,20 +1,25 @@
 # shared/utils/sentry_config.py
 import sentry_sdk
 from sentry_sdk.integrations.flask import FlaskIntegration
-from sentry_sdk.integrations.sqlalchemy import SqlAlchemyIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 import os
-from .env_utils import is_local
-from .auth_utils import get_api_key
+
+
+def is_local():
+    """Check if running in local development environment."""
+    return os.environ.get("ENV", "") == "local"
+
+
+def get_sentry_dsn():
+    """Get Sentry DSN from environment or return None."""
+    return os.environ.get("SENTRY_DSN")
 
 def configure_sentry():
     """Configure Sentry with optimal settings for NBA analytics platform"""
 
-    # Get Sentry DSN from Secret Manager (with env var fallback for local dev)
-    sentry_dsn = get_api_key(
-        secret_name='sentry-dsn',
-        default_env_var='SENTRY_DSN'
-    )
+    # Get Sentry DSN from environment variable
+    sentry_dsn = get_sentry_dsn()
     if not sentry_dsn:
         return
         
@@ -53,7 +58,7 @@ def configure_sentry():
             FlaskIntegration(
                 transaction_style='endpoint'  # Track by Flask route
             ),
-            SqlAlchemyIntegration(),  # Track database queries
+            SqlalchemyIntegration(),  # Track database queries
             LoggingIntegration(
                 level=None,  # Capture all log levels
                 event_level=None  # Send logs as breadcrumbs

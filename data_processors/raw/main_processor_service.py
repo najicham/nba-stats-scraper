@@ -30,6 +30,10 @@ import requests.exceptions
 # This prevents runaway batch jobs from exceeding the Firestore lock TTL (2 hours)
 BATCH_PROCESSOR_TIMEOUT_SECONDS = 600
 
+# Initialize Sentry first (before other imports that might error)
+from shared.utils.sentry_config import configure_sentry
+configure_sentry()
+
 # Import GCP config
 from shared.config.gcp_config import get_project_id
 

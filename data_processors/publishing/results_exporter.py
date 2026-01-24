@@ -18,6 +18,7 @@ from datetime import date
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from .exporter_utils import safe_float, get_generated_at
 
 logger = logging.getLogger(__name__)
 
@@ -210,8 +211,10 @@ class ResultsExporter(BaseExporter):
         incorrect = rec_count - correct
 
         # Calculate averages
-        errors = [float(r['absolute_error']) for r in results if r['absolute_error'] is not None]
-        signed_errors = [float(r['signed_error']) for r in results if r['signed_error'] is not None]
+        errors = [safe_float(r['absolute_error']) for r in results if r['absolute_error'] is not None]
+        errors = [e for e in errors if e is not None]
+        signed_errors = [safe_float(r['signed_error']) for r in results if r['signed_error'] is not None]
+        signed_errors = [e for e in signed_errors if e is not None]
 
         avg_mae = round(sum(errors) / len(errors), 2) if errors else 0
         avg_bias = round(sum(signed_errors) / len(signed_errors), 2) if signed_errors else 0
@@ -254,23 +257,23 @@ class ResultsExporter(BaseExporter):
                 result_status = 'PUSH'  # Exactly hit the line
 
             # Calculate tiers
-            confidence_score = float(r['confidence_score']) if r['confidence_score'] else None
-            season_ppg = float(r['points_avg_season']) if r.get('points_avg_season') else None
+            confidence_score = safe_float(r['confidence_score'])
+            season_ppg = safe_float(r.get('points_avg_season'))
 
             formatted.append({
                 'player_lookup': r['player_lookup'],
                 'game_id': r['game_id'],
                 'team': r['team_abbr'],
                 'opponent': r['opponent_team_abbr'],
-                'predicted': float(r['predicted_points']) if r['predicted_points'] else None,
+                'predicted': safe_float(r['predicted_points']),
                 'actual': r['actual_points'],
-                'line': float(r['line_value']) if r['line_value'] else None,
+                'line': safe_float(r['line_value']),
                 'recommendation': r['recommendation'],
                 'result': result_status,
-                'error': float(r['absolute_error']) if r['absolute_error'] else None,
-                'bias': float(r['signed_error']) if r['signed_error'] else None,
+                'error': safe_float(r['absolute_error']),
+                'bias': safe_float(r['signed_error']),
                 'confidence': confidence_score,
-                'minutes': float(r['minutes_played']) if r['minutes_played'] else None,
+                'minutes': safe_float(r['minutes_played']),
                 # NEW: Tier fields
                 'confidence_tier': get_confidence_tier(confidence_score),
                 'player_tier': get_player_tier(season_ppg),
@@ -293,26 +296,26 @@ class ResultsExporter(BaseExporter):
             return {}
 
         # Best prediction (smallest error)
-        best = min(with_errors, key=lambda r: float(r['absolute_error']))
+        best = min(with_errors, key=lambda r: safe_float(r['absolute_error'], default=float('inf')))
 
         # Worst prediction (largest error)
-        worst = max(with_errors, key=lambda r: float(r['absolute_error']))
+        worst = max(with_errors, key=lambda r: safe_float(r['absolute_error'], default=0))
 
         return {
             'best_prediction': {
                 'player': best['player_lookup'],
                 'team': best['team_abbr'],
-                'predicted': float(best['predicted_points']),
+                'predicted': safe_float(best['predicted_points']),
                 'actual': best['actual_points'],
-                'error': float(best['absolute_error'])
+                'error': safe_float(best['absolute_error'])
             },
             'worst_prediction': {
                 'player': worst['player_lookup'],
                 'team': worst['team_abbr'],
-                'predicted': float(worst['predicted_points']),
+                'predicted': safe_float(worst['predicted_points']),
                 'actual': worst['actual_points'],
-                'error': float(worst['absolute_error']),
-                'minutes': float(worst['minutes_played']) if worst['minutes_played'] else None
+                'error': safe_float(worst['absolute_error']),
+                'minutes': safe_float(worst['minutes_played'])
             }
         }
 

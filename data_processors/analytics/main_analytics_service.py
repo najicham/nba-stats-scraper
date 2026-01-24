@@ -14,6 +14,11 @@ from flask import Flask, request, jsonify
 
 # Add project root to path for shared imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
+
+# Initialize Sentry first (before other imports that might error)
+from shared.utils.sentry_config import configure_sentry
+configure_sentry()
+
 from shared.endpoints.health import create_health_blueprint, HealthChecker
 from shared.utils.validation import validate_game_date, validate_project_id, ValidationError
 from shared.config.gcp_config import get_project_id
