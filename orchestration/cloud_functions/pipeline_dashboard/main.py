@@ -629,3 +629,13 @@ def render_dashboard_html(data: Dict) -> str:
 </html>
 """
     return html
+
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for pipeline_dashboard."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'pipeline_dashboard',
+        'version': '1.0'
+    }), 200, {'Content-Type': 'application/json'}

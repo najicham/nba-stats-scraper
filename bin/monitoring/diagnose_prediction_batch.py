@@ -31,7 +31,10 @@ from shared.utils.validation import validate_game_date, validate_project_id, Val
 class PredictionBatchDiagnostics:
     """Comprehensive prediction batch diagnostics."""
 
-    def __init__(self, project_id: str = 'nba-props-platform'):
+    def __init__(self, project_id: str = None):
+        # Use env var if not specified
+        if project_id is None:
+            project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         # Input validation (Issue #4: Input Validation)
         try:
             project_id = validate_project_id(project_id)

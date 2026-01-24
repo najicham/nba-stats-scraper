@@ -12,10 +12,11 @@ Usage:
 import argparse
 import sys
 from datetime import datetime, timedelta
+import os
 
 from google.cloud import bigquery
 
-PROJECT_ID = 'nba-props-platform'
+PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
 
 # All 33 features required for CatBoost v8
 REQUIRED_FEATURES = [

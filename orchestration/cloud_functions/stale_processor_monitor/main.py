@@ -336,3 +336,13 @@ def cleanup_old_heartbeats(fs_client: firestore.Client, max_age_days: int = 7) -
         logger.info(f"Cleaned up {count} old heartbeat documents")
 
     return count
+
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for stale_processor_monitor."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'stale_processor_monitor',
+        'version': '1.0'
+    }), 200, {'Content-Type': 'application/json'}

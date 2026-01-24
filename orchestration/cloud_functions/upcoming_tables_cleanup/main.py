@@ -275,3 +275,13 @@ if __name__ == "__main__":
     print("Testing upcoming tables cleanup...")
     result = cleanup_upcoming_tables()
     print(f"\nResult: {json.dumps(result, indent=2, default=str)}")
+
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for upcoming_tables_cleanup."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'upcoming_tables_cleanup',
+        'version': '1.0'
+    }), 200, {'Content-Type': 'application/json'}

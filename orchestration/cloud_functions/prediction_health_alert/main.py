@@ -333,3 +333,13 @@ def check_prediction_health(request):
     except Exception as e:
         logger.exception(f"Error checking prediction health: {e}")
         return {'error': str(e)}, 500
+
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for prediction_health_alert."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'prediction_health_alert',
+        'version': '1.0'
+    }), 200, {'Content-Type': 'application/json'}

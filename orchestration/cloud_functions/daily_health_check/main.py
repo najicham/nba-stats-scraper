@@ -411,3 +411,13 @@ def daily_health_check(request):
         'checks': results.checks,
         'timestamp': datetime.now(timezone.utc).isoformat()
     }, 200 if results.critical == 0 else 500
+
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for daily_health_check."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'daily_health_check',
+        'version': '1.0'
+    }), 200, {'Content-Type': 'application/json'}

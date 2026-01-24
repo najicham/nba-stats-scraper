@@ -94,7 +94,9 @@ class NBAPlayerCountValidator:
     MAJOR_TOTAL_DISCREPANCY = 3           # 2-3 player difference  
     CRITICAL_TOTAL_DISCREPANCY = 3        # >3 player difference
     
-    def __init__(self, project_id: str = "nba-props-platform"):
+    def __init__(self, project_id: str = None):
+        if project_id is None:
+            project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.project_id = project_id
         self.client = bigquery.Client(project=project_id)
         

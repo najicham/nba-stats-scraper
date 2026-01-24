@@ -482,3 +482,13 @@ if __name__ == '__main__':
     healer = LineQualitySelfHealer()
     result = healer.run(dry_run=dry_run)
     print(json.dumps(result, indent=2, default=str))
+
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for line_quality_self_heal."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'line_quality_self_heal',
+        'version': '1.0'
+    }), 200, {'Content-Type': 'application/json'}

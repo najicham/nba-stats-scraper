@@ -413,3 +413,13 @@ def scraper_dashboard(request):
             status=500,
             mimetype='text/html'
         )
+
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for scraper_dashboard."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'scraper_dashboard',
+        'version': '1.0'
+    }), 200, {'Content-Type': 'application/json'}

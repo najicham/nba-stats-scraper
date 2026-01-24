@@ -94,7 +94,9 @@ class NBADataValidator:
         'OKC', 'ORL', 'PHI', 'PHX', 'POR', 'SAC', 'SAS', 'TOR', 'UTA', 'WAS'
     }
     
-    def __init__(self, project_id: str = "nba-props-platform", bucket_name: str = "nba-scraped-data"):
+    def __init__(self, project_id: str = None, bucket_name: str = "nba-scraped-data"):
+        if project_id is None:
+            project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.project_id = project_id
         self.bucket_name = bucket_name
         self.client = bigquery.Client(project=project_id)

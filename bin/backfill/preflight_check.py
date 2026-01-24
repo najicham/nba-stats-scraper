@@ -13,6 +13,7 @@ Usage:
 """
 
 import argparse
+import os
 from datetime import date, datetime, timedelta
 from google.cloud import bigquery
 from google.cloud import storage
@@ -20,7 +21,7 @@ import sys
 from collections import defaultdict
 
 # Configuration
-PROJECT_ID = "nba-props-platform"
+PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
 GCS_BUCKET = "nba-scraped-data"
 
 # Phase 1: Scraper -> GCS paths

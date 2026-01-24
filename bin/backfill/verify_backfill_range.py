@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import os
 from datetime import date, datetime, timedelta
 from google.cloud import bigquery
 import sys
@@ -34,7 +35,7 @@ def run_verification(start_date: date, end_date: date, verbose: bool = False):
     """Run all verification checks for the date range."""
 
     client = bigquery.Client()
-    project = "nba-props-platform"
+    project = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
 
     print("=" * 70)
     print(f"BACKFILL VERIFICATION: {start_date} to {end_date}")

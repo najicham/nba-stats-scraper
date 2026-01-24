@@ -319,3 +319,13 @@ def get_game_count(bq_client: bigquery.Client, date_str: str) -> int:
     if result:
         return result[0].game_count
     return 0
+
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for game_coverage_alert."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'game_coverage_alert',
+        'version': '1.0'
+    }), 200, {'Content-Type': 'application/json'}

@@ -415,3 +415,13 @@ def send_shadow_report(request):
     except Exception as e:
         logger.exception(f"Error generating shadow report: {e}")
         return {'error': str(e)}, 500
+
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for shadow_performance_report."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'shadow_performance_report',
+        'version': '1.0'
+    }), 200, {'Content-Type': 'application/json'}

@@ -340,3 +340,13 @@ def check_system_performance(request):
         'all_systems_7d': all_systems_7d,
         'alerts': alerts
     }
+
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for system_performance_alert."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'system_performance_alert',
+        'version': '1.0'
+    }), 200, {'Content-Type': 'application/json'}

@@ -367,3 +367,13 @@ if __name__ == '__main__':
             print(f"  - {item['game_date']}: {item['wait_hours']:.1f}h, missing: {item['missing_processors']}")
     else:
         print("No stale states found")
+
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for phase4_timeout_check."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'phase4_timeout_check',
+        'version': '1.0'
+    }), 200, {'Content-Type': 'application/json'}

@@ -499,3 +499,13 @@ def reconcile_pipeline_event(cloud_event):
     except Exception as e:
         logger.error(f"R-007: Reconciliation failed: {e}", exc_info=True)
         raise
+
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for pipeline_reconciliation."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'pipeline_reconciliation',
+        'version': '1.0'
+    }), 200, {'Content-Type': 'application/json'}

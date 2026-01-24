@@ -285,7 +285,9 @@ class GCSInventory:
 class BQCounter:
     """Utility for counting BigQuery records."""
 
-    def __init__(self, project_id: str = 'nba-props-platform'):
+    def __init__(self, project_id: str = None):
+        if project_id is None:
+            project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.client = bigquery.Client(project=project_id)
         self._cache: Dict[str, int] = {}
 

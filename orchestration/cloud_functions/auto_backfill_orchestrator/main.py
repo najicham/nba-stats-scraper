@@ -514,3 +514,13 @@ def send_backfill_summary_alert(results: Dict) -> bool:
     except Exception as e:
         logger.error(f"Failed to send backfill alert: {e}")
         return False
+
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for auto_backfill_orchestrator."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'auto_backfill_orchestrator',
+        'version': '1.0'
+    }), 200, {'Content-Type': 'application/json'}

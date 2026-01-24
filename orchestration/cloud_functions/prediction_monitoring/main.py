@@ -205,3 +205,13 @@ def reconcile(request: Request):
             'error': str(e),
             'timestamp': datetime.utcnow().isoformat()
         }), 500
+
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for prediction_monitoring."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'prediction_monitoring',
+        'version': '1.0'
+    }), 200, {'Content-Type': 'application/json'}

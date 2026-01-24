@@ -382,3 +382,13 @@ def scraper_gap_backfiller(request):
             "status": "error",
             "error": str(e)
         }), 500
+
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for scraper_gap_backfiller."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'scraper_gap_backfiller',
+        'version': '1.0'
+    }), 200, {'Content-Type': 'application/json'}

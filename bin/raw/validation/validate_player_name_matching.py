@@ -87,7 +87,9 @@ class NBAPlayerNameValidator:
     - Confidence scoring for match quality assessment
     """
     
-    def __init__(self, project_id: str = "nba-props-platform"):
+    def __init__(self, project_id: str = None):
+        if project_id is None:
+            project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.project_id = project_id
         self.client = bigquery.Client(project=project_id)
         

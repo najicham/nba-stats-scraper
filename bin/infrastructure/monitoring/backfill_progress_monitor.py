@@ -49,7 +49,7 @@ from google.cloud import bigquery
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
 
 # Initialize BigQuery client
-PROJECT_ID = 'nba-props-platform'
+PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
 bq_client = bigquery.Client(project=PROJECT_ID)
 
 # Phase 3 Analytics Tables (5 processors)

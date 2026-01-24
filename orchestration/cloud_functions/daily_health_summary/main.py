@@ -555,3 +555,13 @@ if __name__ == '__main__':
 
     print("\nChecks:")
     print(json.dumps(results['checks'], indent=2, default=str))
+
+
+@functions_framework.http
+def health(request):
+    """Health check endpoint for daily_health_summary."""
+    return json.dumps({
+        'status': 'healthy',
+        'function': 'daily_health_summary',
+        'version': '1.0'
+    }), 200, {'Content-Type': 'application/json'}
