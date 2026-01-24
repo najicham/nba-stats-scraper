@@ -20,6 +20,11 @@ from typing import Dict, Optional
 import logging
 import numpy as np
 
+from shared.utils.external_service_circuit_breaker import (
+    get_service_circuit_breaker,
+    CircuitBreakerError,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -231,20 +236,20 @@ class XGBoostV1:
     def _load_model_from_gcs(self, model_path: str):
         """
         Load trained XGBoost model from Google Cloud Storage
-        
+
         Args:
             model_path: Path to model in GCS (e.g., 'models/xgboost_v1.json')
-        
+
         Returns:
             Loaded XGBoost model
         """
         # This would be used in production
         # For now, falls back to mock model
-        
+
         try:
             import xgboost as xgb
             from google.cloud import storage
-            
+
             # Parse GCS path
             if model_path.startswith('gs://'):
                 parts = model_path.replace('gs://', '').split('/', 1)
@@ -252,22 +257,37 @@ class XGBoostV1:
                 blob_path = parts[1]
             else:
                 raise ValueError(f"Invalid GCS path: {model_path}")
-            
-            # Download from GCS
-            client = storage.Client()
-            bucket = client.bucket(bucket_name)
-            blob = bucket.blob(blob_path)
-            
-            # Save to local temp file
-            local_path = '/tmp/xgboost_model.json'
-            blob.download_to_filename(local_path)
-            
+
+            # Get circuit breaker for GCS model loading
+            # This prevents cascading failures if GCS is unavailable
+            gcs_cb = get_service_circuit_breaker("gcs_model_loading")
+
+            try:
+                def download_model():
+                    client = storage.Client()
+                    bucket = client.bucket(bucket_name)
+                    blob = bucket.blob(blob_path)
+                    local_path = '/tmp/xgboost_model.json'
+                    blob.download_to_filename(local_path)
+                    return local_path
+
+                local_path = gcs_cb.call(download_model)
+                logger.info(f"GCS model download successful for xgboost_v1")
+
+            except CircuitBreakerError as e:
+                logger.error(
+                    f"Circuit breaker OPEN for GCS model loading: {e}. "
+                    f"XGBoost v1 falling back to mock model."
+                )
+                from predictions.shared.mock_xgboost_model import load_mock_model
+                return load_mock_model(seed=42)
+
             # Load model
             model = xgb.Booster()
             model.load_model(local_path)
-            
+
             return model
-            
+
         except ImportError as e:
             logger.warning(f"XGBoost or GCS library not available: {e}")
             logger.info("Falling back to mock model for testing")

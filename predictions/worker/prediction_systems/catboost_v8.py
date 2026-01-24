@@ -31,6 +31,11 @@ import logging
 import json
 from pathlib import Path
 
+from shared.utils.external_service_circuit_breaker import (
+    get_service_circuit_breaker,
+    CircuitBreakerError,
+)
+
 logger = logging.getLogger(__name__)
 
 # Feature order must match training exactly
@@ -168,19 +173,34 @@ class CatBoostV8:
             import catboost as cb
 
             if model_path.startswith("gs://"):
-                # Load from GCS
+                # Load from GCS with circuit breaker protection
                 from google.cloud import storage
 
                 parts = model_path.replace("gs://", "").split("/", 1)
                 bucket_name, blob_path = parts[0], parts[1]
 
-                client = storage.Client()
-                bucket = client.bucket(bucket_name)
-                blob = bucket.blob(blob_path)
+                # Get circuit breaker for GCS model loading
+                # This prevents cascading failures if GCS is unavailable
+                gcs_cb = get_service_circuit_breaker("gcs_model_loading")
 
-                local_path = "/tmp/catboost_v8.cbm"
-                blob.download_to_filename(local_path)
-                model_path = local_path
+                try:
+                    def download_model():
+                        client = storage.Client()
+                        bucket = client.bucket(bucket_name)
+                        blob = bucket.blob(blob_path)
+                        local_path = "/tmp/catboost_v8.cbm"
+                        blob.download_to_filename(local_path)
+                        return local_path
+
+                    model_path = gcs_cb.call(download_model)
+                    logger.info(f"GCS model download successful for catboost_v8")
+
+                except CircuitBreakerError as e:
+                    logger.error(
+                        f"Circuit breaker OPEN for GCS model loading: {e}. "
+                        f"CatBoost v8 will use fallback predictions."
+                    )
+                    return  # Model stays None, fallback will be used
 
             self.model = cb.CatBoostRegressor()
             self.model.load_model(model_path)
