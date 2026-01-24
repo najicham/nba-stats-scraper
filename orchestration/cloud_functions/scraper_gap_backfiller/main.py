@@ -65,7 +65,7 @@ def send_gap_alert_email(gap_data: dict) -> bool:
         aws_secret_key = get_secret("aws-ses-secret-access-key")
 
         if not aws_access_key or not aws_secret_key:
-            logger.error("AWS SES credentials not available")
+            logger.error("AWS SES credentials not available", exc_info=True)
             return False
 
         ses_client = boto3.client(
@@ -156,10 +156,10 @@ def send_gap_alert_email(gap_data: dict) -> bool:
         return True
 
     except ClientError as e:
-        logger.error(f"AWS SES error: {e.response['Error']['Message']}")
+        logger.error(f"AWS SES error: {e.response['Error']['Message']}", exc_info=True)
         return False
     except Exception as e:
-        logger.error(f"Failed to send gap alert: {e}")
+        logger.error(f"Failed to send gap alert: {e}", exc_info=True)
         return False
 
 
@@ -264,7 +264,7 @@ def trigger_backfill(scraper_name: str, game_date: str) -> bool:
             return False
 
     except Exception as e:
-        logger.error(f"Backfill failed for {scraper_name}/{game_date}: {e}")
+        logger.error(f"Backfill failed for {scraper_name}/{game_date}: {e}", exc_info=True)
         return False
 
 

@@ -427,7 +427,7 @@ def send_reconciliation_alert(result: Dict) -> bool:
         return True
 
     except Exception as e:
-        logger.error(f"Failed to send reconciliation alert: {e}")
+        logger.error(f"Failed to send reconciliation alert: {e}", exc_info=True)
         return False
 
 

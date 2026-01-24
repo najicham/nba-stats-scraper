@@ -227,7 +227,7 @@ def _query_gamebook_players(
             )
 
     except Exception as e:
-        logger.error(f"Error querying gamebook for {game_date}: {e}")
+        logger.error(f"Error querying gamebook for {game_date}: {e}", exc_info=True)
 
 
 def _query_bdl_players(
@@ -275,7 +275,7 @@ def _query_bdl_players(
             )
 
     except Exception as e:
-        logger.error(f"Error querying BDL boxscores for {game_date}: {e}")
+        logger.error(f"Error querying BDL boxscores for {game_date}: {e}", exc_info=True)
 
 
 def _query_roster_players(
@@ -378,7 +378,7 @@ def _query_roster_players(
                 )
 
     except Exception as e:
-        logger.error(f"Error querying roster for {game_date}: {e}")
+        logger.error(f"Error querying roster for {game_date}: {e}", exc_info=True)
 
 
 def _query_prop_players(
@@ -441,7 +441,7 @@ def _query_prop_players(
                 )
 
     except Exception as e:
-        logger.error(f"Error querying props for {game_date}: {e}")
+        logger.error(f"Error querying props for {game_date}: {e}", exc_info=True)
 
 
 def format_player_universe(universe: PlayerUniverse) -> str:

@@ -209,7 +209,7 @@ class BackfillCheckpoint:
                     fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
         except IOError as e:
-            logger.error(f"Failed to save checkpoint: {e}")
+            logger.error(f"Failed to save checkpoint: {e}", exc_info=True)
             # Clean up temp file if it exists
             if temp_path.exists():
                 try:

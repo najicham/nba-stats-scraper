@@ -208,7 +208,7 @@ class UniversalPlayerIDResolver:
             return mappings
             
         except Exception as e:
-            logger.error(f"Error in bulk lookup of existing universal IDs: {e}")
+            logger.error(f"Error in bulk lookup of existing universal IDs: {e}", exc_info=True)
             return {}
     
     def _bulk_resolve_via_aliases(self, player_lookups: List[str]) -> Dict[str, str]:
@@ -254,7 +254,7 @@ class UniversalPlayerIDResolver:
             return mappings
             
         except Exception as e:
-            logger.error(f"Error in bulk alias resolution: {e}")
+            logger.error(f"Error in bulk alias resolution: {e}", exc_info=True)
             return {}
     
     def _bulk_create_new_universal_ids(self, player_lookups: List[str]) -> Dict[str, str]:

@@ -124,7 +124,7 @@ def get_processor_runs(bq_client: bigquery.Client, date_str: str, phase: str = N
         result = list(bq_client.query(query, job_config=job_config).result())
         return [dict(row) for row in result]
     except Exception as e:
-        logger.error(f"Error getting processor runs: {e}")
+        logger.error(f"Error getting processor runs: {e}", exc_info=True)
         return []
 
 
@@ -165,7 +165,7 @@ def get_active_heartbeats(fs_client: firestore.Client) -> List[Dict]:
         return heartbeats
 
     except Exception as e:
-        logger.error(f"Error getting heartbeats: {e}")
+        logger.error(f"Error getting heartbeats: {e}", exc_info=True)
         return []
 
 
@@ -230,7 +230,7 @@ def get_prediction_coverage(bq_client: bigquery.Client, date_str: str) -> Dict:
         }
 
     except Exception as e:
-        logger.error(f"Error getting coverage: {e}")
+        logger.error(f"Error getting coverage: {e}", exc_info=True)
         return {'games': [], 'summary': {'total': 0, 'ok': 0, 'low': 0, 'critical': 0}}
 
 
@@ -256,7 +256,7 @@ def get_recent_alerts(bq_client: bigquery.Client) -> List[Dict]:
         result = list(bq_client.query(query).result())
         return [dict(row) for row in result]
     except Exception as e:
-        logger.error(f"Error getting alerts: {e}")
+        logger.error(f"Error getting alerts: {e}", exc_info=True)
         return []
 
 
@@ -286,7 +286,7 @@ def get_phase_summary(bq_client: bigquery.Client, date_str: str) -> Dict:
         result = list(bq_client.query(query, job_config=job_config).result())
         return {row['phase']: dict(row) for row in result}
     except Exception as e:
-        logger.error(f"Error getting phase summary: {e}")
+        logger.error(f"Error getting phase summary: {e}", exc_info=True)
         return {}
 
 
@@ -354,7 +354,7 @@ def get_degraded_dependency_runs(bq_client: bigquery.Client, date_str: str) -> D
         }
 
     except Exception as e:
-        logger.error(f"Error getting degraded runs: {e}")
+        logger.error(f"Error getting degraded runs: {e}", exc_info=True)
         return {'runs': [], 'summary': {'degraded_count': 0, 'processors_affected': 0}}
 
 

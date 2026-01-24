@@ -123,7 +123,7 @@ def check_scraper_availability(target_date: str) -> dict:
             'alert_level': row.daily_alert_level
         }
     except Exception as e:
-        logger.error(f"Error querying availability: {e}")
+        logger.error(f"Error querying availability: {e}", exc_info=True)
         raise
 
 
@@ -240,7 +240,7 @@ def send_slack_alert(data: dict) -> bool:
         logger.info(f"Slack alert sent successfully for {data['game_date']}")
         return True
     except Exception as e:
-        logger.error(f"Failed to send Slack alert: {e}")
+        logger.error(f"Failed to send Slack alert: {e}", exc_info=True)
         return False
 
 
@@ -268,7 +268,7 @@ def log_to_firestore(data: dict, alert_sent: bool) -> bool:
         logger.info(f"Logged to Firestore: {doc_id}")
         return True
     except Exception as e:
-        logger.error(f"Failed to log to Firestore: {e}")
+        logger.error(f"Failed to log to Firestore: {e}", exc_info=True)
         return False
 
 
@@ -332,7 +332,7 @@ def check_scraper_availability_handler(request):
         return jsonify(result), 200
 
     except Exception as e:
-        logger.error(f"Error checking availability: {e}")
+        logger.error(f"Error checking availability: {e}", exc_info=True)
         result['status'] = 'error'
         result['error'] = str(e)
         return jsonify(result), 500

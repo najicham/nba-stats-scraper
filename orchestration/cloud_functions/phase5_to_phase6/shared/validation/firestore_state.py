@@ -153,7 +153,7 @@ def _get_phase_completion(
             state.completed_count = completed
 
     except Exception as e:
-        logger.error(f"Error getting {collection} for {game_date}: {e}")
+        logger.error(f"Error getting {collection} for {game_date}: {e}", exc_info=True)
 
     return state
 

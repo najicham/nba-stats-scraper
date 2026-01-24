@@ -278,7 +278,7 @@ class RegistryReader:
         except PlayerNotFoundError:
             raise
         except Exception as e:
-            logger.error(f"Error querying universal ID for {player_lookup}: {e}")
+            logger.error(f"Error querying universal ID for {player_lookup}: {e}", exc_info=True)
             raise RegistryConnectionError(e)
 
     def get_player(self,
@@ -388,7 +388,7 @@ class RegistryReader:
         except (PlayerNotFoundError, MultipleRecordsError):
             raise
         except Exception as e:
-            logger.error(f"Error querying player {player_lookup}: {e}")
+            logger.error(f"Error querying player {player_lookup}: {e}", exc_info=True)
             raise RegistryConnectionError(e)
     
     def get_current_team(self,
@@ -454,7 +454,7 @@ class RegistryReader:
         except PlayerNotFoundError:
             raise
         except Exception as e:
-            logger.error(f"Error querying current team for {player_lookup}: {e}")
+            logger.error(f"Error querying current team for {player_lookup}: {e}", exc_info=True)
             raise RegistryConnectionError(e)
     
     def player_exists(self,
@@ -635,7 +635,7 @@ class RegistryReader:
                             self._log_unresolved_player(lookup, context)
 
             except Exception as e:
-                logger.error(f"Error in batch universal ID query: {e}")
+                logger.error(f"Error in batch universal ID query: {e}", exc_info=True)
                 raise RegistryConnectionError(e)
 
         return result
@@ -715,7 +715,7 @@ class RegistryReader:
                     self._log_unresolved_player(lookup, context)
                 
             except Exception as e:
-                logger.error(f"Error in batch player query: {e}")
+                logger.error(f"Error in batch player query: {e}", exc_info=True)
                 raise RegistryConnectionError(e)
         
         return result
@@ -768,7 +768,7 @@ class RegistryReader:
             return roster
             
         except Exception as e:
-            logger.error(f"Error querying team roster for {team_abbr}: {e}")
+            logger.error(f"Error querying team roster for {team_abbr}: {e}", exc_info=True)
             raise RegistryConnectionError(e)
     
     def get_active_teams(self, season: str) -> List[str]:
@@ -804,7 +804,7 @@ class RegistryReader:
             return teams
             
         except Exception as e:
-            logger.error(f"Error querying active teams: {e}")
+            logger.error(f"Error querying active teams: {e}", exc_info=True)
             raise RegistryConnectionError(e)
     
     # =========================================================================
@@ -855,7 +855,7 @@ class RegistryReader:
             return results.to_dict('records')
             
         except Exception as e:
-            logger.error(f"Error searching players with pattern '{name_pattern}': {e}")
+            logger.error(f"Error searching players with pattern '{name_pattern}': {e}", exc_info=True)
             raise RegistryConnectionError(e)
     
     def lookup_by_display_name(self,
@@ -931,7 +931,7 @@ class RegistryReader:
             return results.iloc[0]['count'] > 0
             
         except Exception as e:
-            logger.error(f"Error validating player-team: {e}")
+            logger.error(f"Error validating player-team: {e}", exc_info=True)
             return False
     
     # =========================================================================
@@ -1052,7 +1052,7 @@ class RegistryReader:
             self._unresolved_queue.clear()
             
         except Exception as e:
-            logger.error(f"Failed to flush unresolved players: {e}")
+            logger.error(f"Failed to flush unresolved players: {e}", exc_info=True)
             # Don't raise - this is non-critical
     
     # =========================================================================

@@ -254,7 +254,7 @@ class AlertManager:
             try:
                 return send_fn(severity, title, message, context)
             except Exception as e:
-                logger.error(f"Custom send_fn failed: {e}")
+                logger.error(f"Custom send_fn failed: {e}", exc_info=True)
                 return False
         
         # Log the alert (actual sending done by caller)

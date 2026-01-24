@@ -94,7 +94,7 @@ class DataFreshnessValidator:
             return True, "Phase 3 data is fresh", details
 
         except Exception as e:
-            logger.error(f"Error validating Phase 3 freshness: {e}")
+            logger.error(f"Error validating Phase 3 freshness: {e}", exc_info=True)
             return False, f"Validation error: {str(e)}", {}
 
     def validate_phase4_freshness(self, game_date: date, max_age_hours: int = 24) -> Tuple[bool, str, Dict]:
@@ -154,7 +154,7 @@ class DataFreshnessValidator:
             return True, "Phase 4 data is fresh", details
 
         except Exception as e:
-            logger.error(f"Error validating Phase 4 freshness: {e}")
+            logger.error(f"Error validating Phase 4 freshness: {e}", exc_info=True)
             return False, f"Validation error: {str(e)}", {}
 
     def validate_all(self, game_date: date, max_age_hours: int = 24) -> Tuple[bool, List[str], Dict]:

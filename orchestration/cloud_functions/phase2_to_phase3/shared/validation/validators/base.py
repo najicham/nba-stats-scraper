@@ -195,7 +195,7 @@ def query_table_count(
         row = next(iter(result))
         return row.cnt
     except Exception as e:
-        logger.error(f"Error querying {dataset}.{table}: {e}")
+        logger.error(f"Error querying {dataset}.{table}: {e}", exc_info=True)
         return 0
 
 
@@ -225,7 +225,7 @@ def query_player_count(
         row = next(iter(result))
         return row.cnt
     except Exception as e:
-        logger.error(f"Error querying player count in {dataset}.{table}: {e}")
+        logger.error(f"Error querying player count in {dataset}.{table}: {e}", exc_info=True)
         return 0
 
 
@@ -307,7 +307,7 @@ def query_actual_players(
         result = client.query(query, job_config=job_config).result(timeout=60)
         return {row[0] for row in result}
     except Exception as e:
-        logger.error(f"Error querying players in {dataset}.{table}: {e}")
+        logger.error(f"Error querying players in {dataset}.{table}: {e}", exc_info=True)
         return set()
 
 

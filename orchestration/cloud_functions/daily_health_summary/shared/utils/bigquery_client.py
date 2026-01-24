@@ -60,7 +60,7 @@ class BigQueryClient:
             return True
             
         except Exception as e:
-            logger.error(f"Failed to load data into {table_id}: {e}")
+            logger.error(f"Failed to load data into {table_id}: {e}", exc_info=True)
             return False
     
     def query_to_dataframe(self, query: str, 
@@ -90,7 +90,7 @@ class BigQueryClient:
             return df
             
         except Exception as e:
-            logger.error(f"Query failed: {e}")
+            logger.error(f"Query failed: {e}", exc_info=True)
             return pd.DataFrame()
     
     def table_exists(self, table_name: str) -> bool:
@@ -145,6 +145,6 @@ class BigQueryClient:
             logger.info(f"Created table {table_id}")
             return True
         except Exception as e:
-            logger.error(f"Failed to create table {table_id}: {e}")
+            logger.error(f"Failed to create table {table_id}: {e}", exc_info=True)
             return False
         

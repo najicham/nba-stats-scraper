@@ -139,7 +139,7 @@ def validate_predictions_exist(game_date: str) -> Tuple[bool, int, str]:
         return (True, count, f"Found {count} predictions")
 
     except Exception as e:
-        logger.error(f"Failed to validate predictions for {game_date}: {e}")
+        logger.error(f"Failed to validate predictions for {game_date}: {e}", exc_info=True)
         # On error, allow proceeding but log warning
         return (True, -1, f"Validation query failed: {e}")
 
@@ -174,7 +174,7 @@ def orchestrate_phase5_to_phase6(cloud_event):
 
     # Validate required fields - permanent failure, don't retry
     if not game_date:
-        logger.error(f"Missing game_date in message: {message_data}")
+        logger.error(f"Missing game_date in message: {message_data}", exc_info=True)
         return  # Acknowledge message - retrying won't help
 
     logger.info(
@@ -316,7 +316,7 @@ def parse_pubsub_message(cloud_event) -> Dict:
         return message_data
 
     except Exception as e:
-        logger.error(f"Failed to parse Pub/Sub message: {e}")
+        logger.error(f"Failed to parse Pub/Sub message: {e}", exc_info=True)
         raise ValueError(f"Invalid Pub/Sub message format: {e}")
 
 
@@ -367,7 +367,7 @@ def get_export_status(game_date: str) -> Dict:
         return status
 
     except Exception as e:
-        logger.error(f"Error checking export status: {e}")
+        logger.error(f"Error checking export status: {e}", exc_info=True)
         return {'game_date': game_date, 'error': str(e)}
 
 

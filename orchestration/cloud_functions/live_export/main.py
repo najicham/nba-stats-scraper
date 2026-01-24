@@ -151,7 +151,7 @@ def main(request):
             logger.info(f"Live export completed in {duration:.2f}s")
             return jsonify(result), 200
         else:
-            logger.error(f"Live export failed in {duration:.2f}s: {result.get('error')}")
+            logger.error(f"Live export failed in {duration:.2f}s: {result.get('error')}", exc_info=True)
             return jsonify(result), 500
 
     except Exception as e:

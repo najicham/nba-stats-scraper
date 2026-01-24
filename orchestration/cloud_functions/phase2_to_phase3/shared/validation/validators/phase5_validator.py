@@ -173,7 +173,7 @@ def _query_predictions(client: bigquery.Client, game_date: date) -> Dict:
                     result['players_without_prop_line'].add(player)
 
     except Exception as e:
-        logger.error(f"Error querying predictions for {game_date}: {e}")
+        logger.error(f"Error querying predictions for {game_date}: {e}", exc_info=True)
 
     return result
 

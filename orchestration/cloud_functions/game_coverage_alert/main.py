@@ -285,10 +285,10 @@ def send_coverage_alert(coverage: Dict) -> bool:
     except ImportError:
         logger.warning("Slack alerting not available, falling back to logging")
         for game in coverage.get('issues', []):
-            logger.error(f"LOW COVERAGE: {game['matchup']} - {game['player_count']} players")
+            logger.error(f"LOW COVERAGE: {game['matchup']} - {game['player_count']} players", exc_info=True)
         return False
     except Exception as e:
-        logger.error(f"Failed to send Slack alert: {e}")
+        logger.error(f"Failed to send Slack alert: {e}", exc_info=True)
         return False
 
 

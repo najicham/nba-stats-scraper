@@ -139,7 +139,7 @@ def cleanup_upcoming_tables(request) -> Dict[str, Any]:
         try:
             _log_cleanup_operation(client, summary)
         except Exception as log_ex:
-            logger.error(f"Failed to log cleanup operation: {log_ex}")
+            logger.error(f"Failed to log cleanup operation: {log_ex}", exc_info=True)
 
         # Return error response (don't raise - Cloud Scheduler expects HTTP response)
         return jsonify({
@@ -204,7 +204,7 @@ def _cleanup_single_table(client: bigquery.Client, table_name: str, cutoff_date:
         }
 
     except Exception as e:
-        logger.error(f"   ❌ {table_name}: Cleanup failed - {e}")
+        logger.error(f"   ❌ {table_name}: Cleanup failed - {e}", exc_info=True)
         return {
             'table_name': table_name,
             'records_deleted': 0,
@@ -243,7 +243,7 @@ def _log_cleanup_operation(client: bigquery.Client, summary: Dict[str, Any]) -> 
             logger.info("✅ Logged cleanup operation to BigQuery audit table")
 
     except Exception as e:
-        logger.error(f"Failed to log cleanup operation: {e}")
+        logger.error(f"Failed to log cleanup operation: {e}", exc_info=True)
         # Don't raise - logging failure shouldn't fail the cleanup
 
 

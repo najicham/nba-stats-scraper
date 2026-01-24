@@ -218,7 +218,7 @@ def get_run_history(
                 })
 
     except Exception as e:
-        logger.error(f"Error querying run history for {game_date}: {e}")
+        logger.error(f"Error querying run history for {game_date}: {e}", exc_info=True)
 
     return summary
 

@@ -143,7 +143,7 @@ def _check_gcs_files(
         json_count = len(json_files)
 
     except Exception as e:
-        logger.error(f"Error checking GCS {prefix}: {e}")
+        logger.error(f"Error checking GCS {prefix}: {e}", exc_info=True)
         return TableValidation(
             table_name=source_name,
             dataset='gcs',

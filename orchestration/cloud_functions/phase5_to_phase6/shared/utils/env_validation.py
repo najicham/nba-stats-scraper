@@ -92,7 +92,7 @@ def validate_required_env_vars(
 
         # Log each missing variable for easier debugging
         for var in missing_vars:
-            logger.error(f"  - {var} is not set")
+            logger.error(f"  - {var} is not set", exc_info=True)
 
         if raise_on_missing:
             raise MissingEnvironmentVariablesError(missing_vars, service_name)

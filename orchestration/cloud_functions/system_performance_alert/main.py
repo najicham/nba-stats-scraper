@@ -288,7 +288,7 @@ def send_slack_alert(message: Dict) -> bool:
     if success:
         logger.info("Slack alert sent successfully")
     else:
-        logger.error("Failed to send Slack alert after retries")
+        logger.error("Failed to send Slack alert after retries", exc_info=True)
 
     return success
 

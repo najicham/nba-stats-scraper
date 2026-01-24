@@ -249,7 +249,7 @@ def _query_mlb_schedule(client: bigquery.Client, game_date: date) -> tuple:
         return games, date_type
 
     except Exception as e:
-        logger.error(f"Error querying MLB schedule for {game_date}: {e}")
+        logger.error(f"Error querying MLB schedule for {game_date}: {e}", exc_info=True)
         return [], 'error'
 
 
@@ -279,7 +279,7 @@ def has_mlb_games_on_date(game_date: date, client: Optional[bigquery.Client] = N
         count = int(result[0].cnt) if result else 0
         return count > 0
     except Exception as e:
-        logger.error(f"Error checking MLB games on {game_date}: {e}")
+        logger.error(f"Error checking MLB games on {game_date}: {e}", exc_info=True)
         return True  # Fail open
 
 

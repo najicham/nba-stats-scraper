@@ -57,7 +57,7 @@ class PlayerNameResolver:
         try:
             self.bq_client = bigquery.Client(project=self.project_id)
         except Exception as e:
-            logger.error(f"Failed to initialize BigQuery client for PlayerNameResolver: {e}")
+            logger.error(f"Failed to initialize BigQuery client for PlayerNameResolver: {e}", exc_info=True)
             try:
                 notify_error(
                     title="Player Name Resolver: BigQuery Initialization Failed",
@@ -158,7 +158,7 @@ class PlayerNameResolver:
             return input_name
             
         except Exception as e:
-            logger.error(f"Error resolving name '{input_name}': {e}")
+            logger.error(f"Error resolving name '{input_name}': {e}", exc_info=True)
             
             # Track consecutive failures for infrastructure issues
             self._consecutive_failures += 1
@@ -343,7 +343,7 @@ class PlayerNameResolver:
         except Exception as e:
             # Don't notify for individual validation failures - this is expected
             # Calling processor should handle this
-            logger.error(f"Error validating player '{player_name}': {e}")
+            logger.error(f"Error validating player '{player_name}': {e}", exc_info=True)
             return False
     
     def handle_player_name(self, input_name: str, source: str, game_context: Dict) -> Optional[str]:
@@ -555,7 +555,7 @@ class PlayerNameResolver:
                 errors = load_job.errors
 
                 if errors:
-                    logger.error(f"Failed to insert unresolved name: {errors}")
+                    logger.error(f"Failed to insert unresolved name: {errors}", exc_info=True)
                     # Only notify on insert failures - these indicate infrastructure issues
                     try:
                         notify_error(
@@ -577,7 +577,7 @@ class PlayerNameResolver:
                     logger.info(f"Added new unresolved name: {original_name} from {source}")
                     
         except Exception as e:
-            logger.error(f"Error adding to unresolved queue: {e}")
+            logger.error(f"Error adding to unresolved queue: {e}", exc_info=True)
             # Notify on critical queue management failures
             try:
                 notify_error(
@@ -654,7 +654,7 @@ class PlayerNameResolver:
             errors = load_job.errors
 
             if errors:
-                logger.error(f"Failed to create alias mapping: {errors}")
+                logger.error(f"Failed to create alias mapping: {errors}", exc_info=True)
                 # Notify on alias creation failures - these affect future resolution
                 try:
                     notify_error(
@@ -679,7 +679,7 @@ class PlayerNameResolver:
                 return True
                 
         except Exception as e:
-            logger.error(f"Error creating alias mapping: {e}")
+            logger.error(f"Error creating alias mapping: {e}", exc_info=True)
             try:
                 notify_error(
                     title="Player Name Resolver: Alias Creation Error",
@@ -759,7 +759,7 @@ class PlayerNameResolver:
             return result_df
             
         except Exception as e:
-            logger.error(f"Error getting unresolved names: {e}")
+            logger.error(f"Error getting unresolved names: {e}", exc_info=True)
             return pd.DataFrame()
     
     def mark_unresolved_as_resolved(self, source: str, original_name: str, 
@@ -818,7 +818,7 @@ class PlayerNameResolver:
                 return False
                 
         except Exception as e:
-            logger.error(f"Error marking as resolved: {e}")
+            logger.error(f"Error marking as resolved: {e}", exc_info=True)
             return False
     
     def add_player_to_registry(self, player_name: str, team_abbr: str, season: str,
@@ -880,14 +880,14 @@ class PlayerNameResolver:
             errors = load_job.errors
 
             if errors:
-                logger.error(f"Failed to add player to registry: {errors}")
+                logger.error(f"Failed to add player to registry: {errors}", exc_info=True)
                 return False
             else:
                 logger.info(f"Added player to registry: {player_name} ({team_abbr}, {season})")
                 return True
                 
         except Exception as e:
-            logger.error(f"Error adding player to registry: {e}")
+            logger.error(f"Error adding player to registry: {e}", exc_info=True)
             return False
     
     # Legacy compatibility methods from existing gamebook processor

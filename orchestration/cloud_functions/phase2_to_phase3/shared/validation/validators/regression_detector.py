@@ -157,7 +157,7 @@ def detect_regression(
             )
 
         except Exception as e:
-            logger.error(f"Error detecting regression for {feature}: {e}")
+            logger.error(f"Error detecting regression for {feature}: {e}", exc_info=True)
             results[feature] = {
                 'status': 'ERROR',
                 'error': str(e),

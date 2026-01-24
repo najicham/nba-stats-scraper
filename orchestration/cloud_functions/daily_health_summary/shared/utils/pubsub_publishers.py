@@ -65,7 +65,7 @@ class RawDataPubSubPublisher:
             self.topic_path = self.publisher.topic_path(self.project_id, self.topic_name)
             logger.info(f"Initialized Phase 2 publisher: {self.topic_name}")
         except Exception as e:
-            logger.error(f"Failed to initialize Phase 2 publisher: {e}")
+            logger.error(f"Failed to initialize Phase 2 publisher: {e}", exc_info=True)
             raise
 
     def publish_raw_data_loaded(
@@ -109,15 +109,15 @@ class RawDataPubSubPublisher:
 
         # Validate required fields
         if not source_table:
-            logger.error("Cannot publish event: source_table is required")
+            logger.error("Cannot publish event: source_table is required", exc_info=True)
             return None
 
         if not game_date:
-            logger.error("Cannot publish event: game_date is required")
+            logger.error("Cannot publish event: game_date is required", exc_info=True)
             return None
 
         if not execution_id:
-            logger.error("Cannot publish event: execution_id is required")
+            logger.error("Cannot publish event: execution_id is required", exc_info=True)
             return None
 
         # Build message payload
@@ -204,7 +204,7 @@ class AnalyticsPubSubPublisher:
             self.topic_path = self.publisher.topic_path(self.project_id, self.topic_name)
             logger.info(f"Initialized Phase 3 publisher: {self.topic_name}")
         except Exception as e:
-            logger.error(f"Failed to initialize Phase 3 publisher: {e}")
+            logger.error(f"Failed to initialize Phase 3 publisher: {e}", exc_info=True)
             raise
 
     def publish_analytics_complete(
@@ -237,15 +237,15 @@ class AnalyticsPubSubPublisher:
 
         # Validate required fields
         if not analytics_table:
-            logger.error("Cannot publish event: analytics_table is required")
+            logger.error("Cannot publish event: analytics_table is required", exc_info=True)
             return None
 
         if not game_date:
-            logger.error("Cannot publish event: game_date is required")
+            logger.error("Cannot publish event: game_date is required", exc_info=True)
             return None
 
         if not execution_id:
-            logger.error("Cannot publish event: execution_id is required")
+            logger.error("Cannot publish event: execution_id is required", exc_info=True)
             return None
 
         # Build message payload

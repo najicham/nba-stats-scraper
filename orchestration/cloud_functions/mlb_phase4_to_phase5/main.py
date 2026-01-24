@@ -204,7 +204,7 @@ def trigger_predictions(game_date: str, correlation_id: str, trigger_reason: str
         return response.status_code == 200
 
     except Exception as e:
-        logger.error(f"Failed to trigger predictions: {e}")
+        logger.error(f"Failed to trigger predictions: {e}", exc_info=True)
         doc_ref.update({
             '_prediction_triggered': False,
             '_prediction_error': str(e)[:200]

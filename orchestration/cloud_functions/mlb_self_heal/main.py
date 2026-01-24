@@ -40,7 +40,7 @@ def get_auth_token(audience):
         with urllib.request.urlopen(req, timeout=10) as response:
             return response.read().decode("utf-8")
     except Exception as e:
-        logger.error(f"Failed to get auth token: {e}")
+        logger.error(f"Failed to get auth token: {e}", exc_info=True)
         raise
 
 
@@ -174,7 +174,7 @@ def trigger_phase3(target_date):
         logger.info(f"Phase 3 response: {response.status_code} - {response.text[:200]}")
         return response.status_code in [200, 207]
     except Exception as e:
-        logger.error(f"Phase 3 trigger failed: {e}")
+        logger.error(f"Phase 3 trigger failed: {e}", exc_info=True)
         return False
 
 
@@ -200,7 +200,7 @@ def trigger_phase4(target_date):
         logger.info(f"Phase 4 response: {response.status_code} - {response.text[:200]}")
         return response.status_code in [200, 207]
     except Exception as e:
-        logger.error(f"Phase 4 trigger failed: {e}")
+        logger.error(f"Phase 4 trigger failed: {e}", exc_info=True)
         return False
 
 
@@ -224,7 +224,7 @@ def trigger_predictions(target_date):
         logger.info(f"Prediction response: {response.status_code} - {response.text[:200]}")
         return response.status_code == 200
     except Exception as e:
-        logger.error(f"Prediction trigger failed: {e}")
+        logger.error(f"Prediction trigger failed: {e}", exc_info=True)
         return False
 
 
@@ -375,7 +375,7 @@ def mlb_self_heal_check(request):
         return jsonify(result), 200
 
     except Exception as e:
-        logger.error(f"MLB Self-heal check failed: {str(e)}")
+        logger.error(f"MLB Self-heal check failed: {str(e)}", exc_info=True)
         result["status"] = "error"
         result["error"] = str(e)
         return jsonify(result), 500

@@ -341,7 +341,7 @@ def send_slack_message(message: Dict) -> bool:
             logger.info("Slack message sent successfully")
         return success
     except Exception as e:
-        logger.error(f"Failed to send Slack message: {e}")
+        logger.error(f"Failed to send Slack message: {e}", exc_info=True)
         return False
 
 

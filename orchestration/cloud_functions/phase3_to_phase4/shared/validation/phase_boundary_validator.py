@@ -325,7 +325,7 @@ class PhaseBoundaryValidator:
             return None
 
         except Exception as e:
-            logger.error(f"Error validating data quality for {dataset}.{table}: {e}")
+            logger.error(f"Error validating data quality for {dataset}.{table}: {e}", exc_info=True)
             return ValidationIssue(
                 validation_type='data_quality',
                 severity=ValidationSeverity.WARNING,
@@ -366,7 +366,7 @@ class PhaseBoundaryValidator:
             return 0
 
         except Exception as e:
-            logger.error(f"Error getting game count from {dataset}.{table}: {e}")
+            logger.error(f"Error getting game count from {dataset}.{table}: {e}", exc_info=True)
             return 0
 
     def get_completed_processors(self, game_date: date) -> List[str]:
@@ -395,7 +395,7 @@ class PhaseBoundaryValidator:
             return [row.scraper_name for row in results]
 
         except Exception as e:
-            logger.error(f"Error getting completed processors: {e}")
+            logger.error(f"Error getting completed processors: {e}", exc_info=True)
             return []
 
     def run_validation(
@@ -525,9 +525,9 @@ class PhaseBoundaryValidator:
             if rows_to_insert:
                 errors = self.bq_client.insert_rows_json(table_id, rows_to_insert)
                 if errors:
-                    logger.error(f"Failed to log validation to BigQuery: {errors}")
+                    logger.error(f"Failed to log validation to BigQuery: {errors}", exc_info=True)
                 else:
                     logger.info(f"Logged {len(rows_to_insert)} validation issues to BigQuery")
 
         except Exception as e:
-            logger.error(f"Error logging validation to BigQuery: {e}")
+            logger.error(f"Error logging validation to BigQuery: {e}", exc_info=True)

@@ -56,7 +56,7 @@ class StorageClient:
             return True
             
         except Exception as e:
-            logger.error(f"Failed to upload to gs://{bucket_name}/{blob_name}: {e}")
+            logger.error(f"Failed to upload to gs://{bucket_name}/{blob_name}: {e}", exc_info=True)
             return False
     
     def download_json(self, bucket_name: str, blob_name: str) -> Optional[Dict[str, Any]]:
@@ -94,7 +94,7 @@ class StorageClient:
             return data
             
         except Exception as e:
-            logger.error(f"Failed to download from gs://{bucket_name}/{blob_name}: {e}")
+            logger.error(f"Failed to download from gs://{bucket_name}/{blob_name}: {e}", exc_info=True)
             return None
     
     def upload_raw_bytes(self, bucket_name: str, blob_name: str, 
@@ -109,7 +109,7 @@ class StorageClient:
             return True
             
         except Exception as e:
-            logger.error(f"Failed to upload bytes to gs://{bucket_name}/{blob_name}: {e}")
+            logger.error(f"Failed to upload bytes to gs://{bucket_name}/{blob_name}: {e}", exc_info=True)
             return False
     
     def list_objects(self, bucket_name: str, prefix: str = "", 
@@ -134,7 +134,7 @@ class StorageClient:
             return object_names
             
         except Exception as e:
-            logger.error(f"Failed to list objects in gs://{bucket_name}: {e}")
+            logger.error(f"Failed to list objects in gs://{bucket_name}: {e}", exc_info=True)
             return []
     
     def delete_object(self, bucket_name: str, blob_name: str) -> bool:
@@ -151,7 +151,7 @@ class StorageClient:
             logger.warning(f"Object gs://{bucket_name}/{blob_name} not found")
             return True  # Consider this success
         except Exception as e:
-            logger.error(f"Failed to delete gs://{bucket_name}/{blob_name}: {e}")
+            logger.error(f"Failed to delete gs://{bucket_name}/{blob_name}: {e}", exc_info=True)
             return False
     
     def object_exists(self, bucket_name: str, blob_name: str) -> bool:
@@ -161,7 +161,7 @@ class StorageClient:
             blob = bucket.blob(blob_name)
             return blob.exists()
         except Exception as e:
-            logger.error(f"Error checking if gs://{bucket_name}/{blob_name} exists: {e}")
+            logger.error(f"Error checking if gs://{bucket_name}/{blob_name} exists: {e}", exc_info=True)
             return False
     
     def generate_storage_path(self, service: str, component: str, 

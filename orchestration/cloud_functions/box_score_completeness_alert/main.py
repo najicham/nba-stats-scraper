@@ -258,7 +258,7 @@ def send_slack_alert(status: str, message: str, context: Dict) -> bool:
         return success
 
     except Exception as e:
-        logger.error(f"Failed to send Slack alert: {e}")
+        logger.error(f"Failed to send Slack alert: {e}", exc_info=True)
         return False
 
 

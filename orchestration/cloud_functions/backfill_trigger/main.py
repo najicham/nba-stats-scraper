@@ -267,7 +267,7 @@ def get_auth_token(audience: str) -> str:
         with urllib.request.urlopen(req, timeout=10) as response:
             return response.read().decode("utf-8")
     except Exception as e:
-        logger.error(f"Failed to get auth token: {e}")
+        logger.error(f"Failed to get auth token: {e}", exc_info=True)
         raise
 
 
@@ -291,7 +291,7 @@ def trigger_backfill(
 
     action = GAP_TYPE_ACTIONS.get(gap_type)
     if not action:
-        logger.error(f"Unknown gap type: {gap_type}")
+        logger.error(f"Unknown gap type: {gap_type}", exc_info=True)
         return False
 
     if not game_dates:
@@ -349,7 +349,7 @@ def trigger_backfill(
             return False
 
     except Exception as e:
-        logger.error(f"Error triggering backfill: {e}")
+        logger.error(f"Error triggering backfill: {e}", exc_info=True)
         return False
 
 
@@ -440,7 +440,7 @@ def parse_pubsub_message(cloud_event) -> Dict:
         return message_data
 
     except Exception as e:
-        logger.error(f"Failed to parse Pub/Sub message: {e}")
+        logger.error(f"Failed to parse Pub/Sub message: {e}", exc_info=True)
         raise ValueError(f"Invalid Pub/Sub message format: {e}")
 
 
@@ -497,7 +497,7 @@ def handle_gaps_detected(cloud_event):
         # Validate message
         is_valid, error = validate_message(message_data)
         if not is_valid:
-            logger.error(f"Invalid message: {error}")
+            logger.error(f"Invalid message: {error}", exc_info=True)
             return
 
         # Extract fields
@@ -551,7 +551,7 @@ def handle_gaps_detected(cloud_event):
             send_backfill_notification(
                 request_id, game_ids, gap_type, 'failed', message_data
             )
-            logger.error(f"Backfill trigger failed for request {request_id}")
+            logger.error(f"Backfill trigger failed for request {request_id}", exc_info=True)
 
     except Exception as e:
         logger.error(f"Error handling gap detection event: {e}", exc_info=True)
@@ -609,7 +609,7 @@ def list_pending_backfills(request):
         }, indent=2), 200, {'Content-Type': 'application/json'}
 
     except Exception as e:
-        logger.error(f"Error listing backfill requests: {e}")
+        logger.error(f"Error listing backfill requests: {e}", exc_info=True)
         return json.dumps({
             'error': str(e)
         }), 500, {'Content-Type': 'application/json'}
@@ -692,7 +692,7 @@ def manual_trigger(request):
             }), 500, {'Content-Type': 'application/json'}
 
     except Exception as e:
-        logger.error(f"Error in manual trigger: {e}")
+        logger.error(f"Error in manual trigger: {e}", exc_info=True)
         return json.dumps({'error': str(e)}), 500, {'Content-Type': 'application/json'}
 
 
@@ -732,7 +732,7 @@ def cleanup_old_requests(request):
         }), 200, {'Content-Type': 'application/json'}
 
     except Exception as e:
-        logger.error(f"Error cleaning up requests: {e}")
+        logger.error(f"Error cleaning up requests: {e}", exc_info=True)
         return json.dumps({'error': str(e)}), 500, {'Content-Type': 'application/json'}
 
 

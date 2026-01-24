@@ -377,7 +377,7 @@ def send_cleanup_notification(summary: Dict[str, Any]) -> bool:
         return success
 
     except Exception as e:
-        logger.error(f"Failed to send cleanup notification: {e}")
+        logger.error(f"Failed to send cleanup notification: {e}", exc_info=True)
         return False
 
 

@@ -95,7 +95,7 @@ class LineQualitySelfHealer:
                 response = client.access_secret_version(name=name)
                 self._api_key = response.payload.data.decode('UTF-8')
             except Exception as e:
-                logger.error(f"Failed to load API key: {e}")
+                logger.error(f"Failed to load API key: {e}", exc_info=True)
                 self._api_key = ""
         return self._api_key
 
@@ -174,7 +174,7 @@ class LineQualitySelfHealer:
             result = self.bq_client.query(query).to_dataframe()
             return result.to_dict('records')
         except Exception as e:
-            logger.error(f"Error finding placeholder predictions: {e}")
+            logger.error(f"Error finding placeholder predictions: {e}", exc_info=True)
             return []
 
     def get_regeneration_summary(
@@ -232,7 +232,7 @@ class LineQualitySelfHealer:
             result.result()  # Wait for completion
             return result.num_dml_affected_rows or 0
         except Exception as e:
-            logger.error(f"Error deactivating predictions for {game_date}: {e}")
+            logger.error(f"Error deactivating predictions for {game_date}: {e}", exc_info=True)
             return 0
 
     def trigger_regeneration(
@@ -280,7 +280,7 @@ class LineQualitySelfHealer:
                 )
                 return {'error': response.text, 'status_code': response.status_code}
         except Exception as e:
-            logger.error(f"Error triggering regeneration: {e}")
+            logger.error(f"Error triggering regeneration: {e}", exc_info=True)
             return {'error': str(e)}
 
     def log_self_heal_action(

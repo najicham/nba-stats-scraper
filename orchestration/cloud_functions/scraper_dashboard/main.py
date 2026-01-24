@@ -43,7 +43,7 @@ def get_scraper_gaps(client: bigquery.Client) -> list:
         result = client.query(query).result()
         return [dict(row) for row in result]
     except Exception as e:
-        logger.error(f"Error getting gaps: {e}")
+        logger.error(f"Error getting gaps: {e}", exc_info=True)
         return []
 
 
@@ -64,7 +64,7 @@ def get_recent_runs(client: bigquery.Client) -> list:
         result = client.query(query).result()
         return [dict(row) for row in result]
     except Exception as e:
-        logger.error(f"Error getting runs: {e}")
+        logger.error(f"Error getting runs: {e}", exc_info=True)
         return []
 
 
@@ -87,7 +87,7 @@ def get_proxy_health(client: bigquery.Client) -> list:
         result = client.query(query).result()
         return [dict(row) for row in result]
     except Exception as e:
-        logger.error(f"Error getting proxy health: {e}")
+        logger.error(f"Error getting proxy health: {e}", exc_info=True)
         return []
 
 
@@ -130,7 +130,7 @@ def get_recent_backfills(client: bigquery.Client) -> list:
         result = client.query(query).result()
         return [dict(row) for row in result]
     except Exception as e:
-        logger.error(f"Error getting backfills: {e}")
+        logger.error(f"Error getting backfills: {e}", exc_info=True)
         return []
 
 

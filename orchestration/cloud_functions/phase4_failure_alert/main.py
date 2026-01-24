@@ -125,7 +125,7 @@ def check_processor_records(bq_client: bigquery.Client, game_date: str, table_na
         result = list(bq_client.query(query).result(timeout=60))
         return result[0].record_count if result else 0
     except Exception as e:
-        logger.error(f"Error checking {table_name} for {game_date}: {e}")
+        logger.error(f"Error checking {table_name} for {game_date}: {e}", exc_info=True)
         return 0
 
 
@@ -288,7 +288,7 @@ def send_slack_alert(status: str, message: str, context: Dict) -> bool:
         return success
 
     except Exception as e:
-        logger.error(f"Failed to send Slack alert: {e}")
+        logger.error(f"Failed to send Slack alert: {e}", exc_info=True)
         return False
 
 
@@ -372,7 +372,7 @@ def check_phase4_status(request):
 
         # Log based on status
         if status == 'CRITICAL':
-            logger.error(f"CRITICAL: {message}")
+            logger.error(f"CRITICAL: {message}", exc_info=True)
         elif status == 'WARNING':
             logger.warning(f"WARNING: {message}")
         else:

@@ -335,10 +335,10 @@ def send_slack_notification(results: HealthCheckResult):
         if success:
             logger.info("Slack notification sent successfully")
         else:
-            logger.error("Failed to send Slack notification after retries")
+            logger.error("Failed to send Slack notification after retries", exc_info=True)
 
     except (requests.exceptions.RequestException, ValueError, KeyError) as e:
-        logger.error(f"Failed to send Slack notification: {e}")
+        logger.error(f"Failed to send Slack notification: {e}", exc_info=True)
 
 
 @functions_framework.http

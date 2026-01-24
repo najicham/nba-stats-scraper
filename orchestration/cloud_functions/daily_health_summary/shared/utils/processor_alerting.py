@@ -198,7 +198,7 @@ class ProcessorAlerting:
                 return self._send_via_smtp(subject, body, recipients)
                 
         except Exception as e:
-            logger.error(f"Failed to send email alert: {e}")
+            logger.error(f"Failed to send email alert: {e}", exc_info=True)
             return False
     
     def _send_via_sendgrid(self, subject: str, body: str, recipients: List[str]) -> bool:
@@ -222,7 +222,7 @@ class ProcessorAlerting:
             logger.info(f"Email alert sent successfully to {len(recipients)} recipients")
             return True
         else:
-            logger.error(f"SendGrid API error: {response.status_code} - {response.text}")
+            logger.error(f"SendGrid API error: {response.status_code} - {response.text}", exc_info=True)
             return False
     
     def _send_via_smtp(self, subject: str, body: str, recipients: List[str]) -> bool:
@@ -256,7 +256,7 @@ class ProcessorAlerting:
             return True
             
         except Exception as e:
-            logger.error(f"SMTP send error: {e}")
+            logger.error(f"SMTP send error: {e}", exc_info=True)
             return False
     
     def _send_slack_alert(self, alert_data: Dict[str, Any]) -> bool:
@@ -278,11 +278,11 @@ class ProcessorAlerting:
                 logger.info("Slack alert sent successfully")
                 return True
             else:
-                logger.error(f"Slack webhook error: {response.status_code} - {response.text}")
+                logger.error(f"Slack webhook error: {response.status_code} - {response.text}", exc_info=True)
                 return False
                 
         except Exception as e:
-            logger.error(f"Failed to send Slack alert: {e}")
+            logger.error(f"Failed to send Slack alert: {e}", exc_info=True)
             return False
     
     def _build_email_subject(self, alert_data: Dict[str, Any]) -> str:
@@ -404,7 +404,7 @@ class ProcessorAlerting:
             response = requests.post(self.slack_webhook_url, json=payload, timeout=10)
             return response.status_code == 200
         except Exception as e:
-            logger.error(f"Failed to send Slack message: {e}")
+            logger.error(f"Failed to send Slack message: {e}", exc_info=True)
             return False
     
     def get_alert_stats(self) -> Dict[str, Any]:

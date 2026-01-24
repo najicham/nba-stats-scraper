@@ -96,7 +96,7 @@ class QualityMixin:
         try:
             self.flush_events()
         except Exception as e:
-            logger.error(f"Failed to flush events on exit: {e}")
+            logger.error(f"Failed to flush events on exit: {e}", exc_info=True)
         return False  # Don't suppress exceptions
 
     # ==========================================================================
@@ -327,7 +327,7 @@ class QualityMixin:
             self._insert_quality_events_batch(self._event_buffer)
             logger.info(f"Flushed {len(self._event_buffer)} quality events to BigQuery")
         except Exception as e:
-            logger.error(f"FAILED to flush quality events: {e}")
+            logger.error(f"FAILED to flush quality events: {e}", exc_info=True)
             notify_error(
                 title="Source coverage event logging failed",
                 message=str(e),
@@ -560,7 +560,7 @@ class QualityMixin:
         except ImportError as e:
             logger.warning(f"Email alerter not available: {e}")
         except Exception as e:
-            logger.error(f"Error sending quality degradation alert: {e}")
+            logger.error(f"Error sending quality degradation alert: {e}", exc_info=True)
 
     # ==========================================================================
     # HELPER METHODS

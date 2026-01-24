@@ -118,7 +118,7 @@ def validate_predictions_exist(target_date: str, min_predictions: int = 50) -> D
         }
 
     except Exception as e:
-        logger.error(f"Error validating predictions: {e}")
+        logger.error(f"Error validating predictions: {e}", exc_info=True)
         return {
             'ready': False,
             'predictions_count': 0,
@@ -173,7 +173,7 @@ def validate_analytics_ready(target_date: str, min_players: int = 30) -> Dict:
         }
 
     except Exception as e:
-        logger.error(f"Error validating analytics: {e}")
+        logger.error(f"Error validating analytics: {e}", exc_info=True)
         return {
             'ready': False,
             'player_count': 0,
@@ -228,11 +228,11 @@ def trigger_self_heal(target_date: str) -> bool:
             logger.info(f"Self-heal triggered successfully: {response.json()}")
             return True
         else:
-            logger.error(f"Self-heal trigger failed: {response.status_code} - {response.text}")
+            logger.error(f"Self-heal trigger failed: {response.status_code} - {response.text}", exc_info=True)
             return False
 
     except Exception as e:
-        logger.error(f"Error triggering self-heal: {e}")
+        logger.error(f"Error triggering self-heal: {e}", exc_info=True)
         return False
 
 
@@ -563,7 +563,7 @@ def parse_pubsub_message(cloud_event) -> Dict:
         return message_data
 
     except Exception as e:
-        logger.error(f"Failed to parse Pub/Sub message: {e}")
+        logger.error(f"Failed to parse Pub/Sub message: {e}", exc_info=True)
         return {}
 
 

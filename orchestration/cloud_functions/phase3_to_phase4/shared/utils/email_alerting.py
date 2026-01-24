@@ -97,7 +97,7 @@ class EmailAlerter:
         missing_settings = [name for name, value in required_settings if not value]
         
         if missing_settings:
-            logger.error(f"Missing required email settings: {', '.join(missing_settings)}")
+            logger.error(f"Missing required email settings: {', '.join(missing_settings)}", exc_info=True)
             raise ValueError(f"Email alerting requires these environment variables: {', '.join(missing_settings)}")
         
         if not self.alert_recipients:
@@ -131,10 +131,10 @@ class EmailAlerter:
             return True
             
         except smtplib.SMTPException as e:
-            logger.error(f"SMTP error sending {alert_level} alert '{subject}': {str(e)}")
+            logger.error(f"SMTP error sending {alert_level} alert '{subject}': {str(e)}", exc_info=True)
             return False
         except Exception as e:
-            logger.error(f"Failed to send {alert_level} alert '{subject}': {str(e)}")
+            logger.error(f"Failed to send {alert_level} alert '{subject}': {str(e)}", exc_info=True)
             return False
     
     def send_error_alert(self, error_message: str, error_details: Dict = None,
@@ -494,5 +494,5 @@ def send_quick_error_alert(error_message: str, processor_name: str = "NBA Regist
         alerter = EmailAlerter()
         return alerter.send_error_alert(error_message, processor_name=processor_name)
     except Exception as e:
-        logger.error(f"Failed to send quick error alert: {e}")
+        logger.error(f"Failed to send quick error alert: {e}", exc_info=True)
         return False

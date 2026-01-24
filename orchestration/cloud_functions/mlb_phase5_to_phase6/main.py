@@ -97,7 +97,7 @@ def trigger_grading(game_date: str, correlation_id: str) -> bool:
         return response.status_code == 200
 
     except Exception as e:
-        logger.error(f"Failed to trigger grading: {e}")
+        logger.error(f"Failed to trigger grading: {e}", exc_info=True)
         return False
 
 
@@ -143,7 +143,7 @@ def orchestrate_mlb_phase5_to_phase6(cloud_event):
         if success:
             logger.info(f"Successfully triggered grading for {game_date}")
         else:
-            logger.error(f"Failed to trigger grading for {game_date}")
+            logger.error(f"Failed to trigger grading for {game_date}", exc_info=True)
 
     except Exception as e:
         logger.error(f"Error in MLB Phase 5→6 orchestrator: {e}", exc_info=True)

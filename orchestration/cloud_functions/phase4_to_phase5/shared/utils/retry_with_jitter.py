@@ -118,7 +118,8 @@ def retry_with_jitter(
                     if attempt >= max_attempts:
                         logger.error(
                             f"{func.__name__} failed after {max_attempts} attempts. "
-                            f"Last error: {type(e).__name__}: {str(e)}"
+                            f"Last error: {type(e).__name__}: {str(e)}",
+                            exc_info=True
                         )
                         raise
 

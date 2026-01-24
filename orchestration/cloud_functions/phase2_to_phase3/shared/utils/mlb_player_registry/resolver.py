@@ -244,7 +244,7 @@ class MLBPlayerIDResolver:
             results = self.bq_client.query(query, job_config=job_config).result()
             return {row.player_lookup: row.universal_player_id for row in results}
         except Exception as e:
-            logger.error(f"Error in bulk lookup: {e}")
+            logger.error(f"Error in bulk lookup: {e}", exc_info=True)
             return {}
 
     def _resolve_via_alias(self, player_lookup: str) -> Optional[str]:
@@ -365,7 +365,7 @@ class MLBPlayerIDResolver:
             if errors:
                 logger.warning(f"Errors inserting {len(errors)} players")
         except Exception as e:
-            logger.error(f"Failed bulk insert: {e}")
+            logger.error(f"Failed bulk insert: {e}", exc_info=True)
 
         self.stats['new_ids_created'] += len(mappings)
         return mappings

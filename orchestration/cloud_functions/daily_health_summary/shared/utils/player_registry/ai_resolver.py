@@ -124,7 +124,7 @@ class AINameResolver:
             return result
 
         except Exception as e:
-            logger.error(f"AI resolution failed for {context.unresolved_lookup}: {e}")
+            logger.error(f"AI resolution failed for {context.unresolved_lookup}: {e}", exc_info=True)
             # Return low-confidence error rather than failing
             return AIResolution(
                 unresolved_lookup=context.unresolved_lookup,
@@ -276,8 +276,8 @@ Confidence must be between 0.7 and 1.0. If less confident than 0.7, choose DATA_
             )
 
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse AI response as JSON: {e}")
-            logger.error(f"Response content: {response.content[0].text[:500]}")
+            logger.error(f"Failed to parse AI response as JSON: {e}", exc_info=True)
+            logger.error(f"Response content: {response.content[0].text[:500]}", exc_info=True)
 
             return AIResolution(
                 unresolved_lookup=context.unresolved_lookup,
@@ -291,7 +291,7 @@ Confidence must be between 0.7 and 1.0. If less confident than 0.7, choose DATA_
                 output_tokens=response.usage.output_tokens if hasattr(response, 'usage') else 0
             )
         except Exception as e:
-            logger.error(f"Unexpected error parsing response: {e}")
+            logger.error(f"Unexpected error parsing response: {e}", exc_info=True)
 
             return AIResolution(
                 unresolved_lookup=context.unresolved_lookup,

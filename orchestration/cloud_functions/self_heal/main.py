@@ -47,7 +47,7 @@ def retry_with_backoff(max_attempts=3, base_delay=2.0, max_delay=30.0, exception
                     return func(*args, **kwargs)
                 except exceptions as e:
                     if attempt >= max_attempts:
-                        logger.error(f"{func.__name__} failed after {max_attempts} attempts: {e}")
+                        logger.error(f"{func.__name__} failed after {max_attempts} attempts: {e}", exc_info=True)
                         raise
                     delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
                     logger.warning(f"{func.__name__} attempt {attempt}/{max_attempts} failed: {e}. Retrying in {delay}s...")
@@ -76,7 +76,7 @@ def get_auth_token(audience):
         with urllib.request.urlopen(req, timeout=10) as response:
             return response.read().decode("utf-8")
     except Exception as e:
-        logger.error(f"Failed to get auth token: {e}")
+        logger.error(f"Failed to get auth token: {e}", exc_info=True)
         raise
 
 
@@ -271,7 +271,7 @@ def check_phase2_completeness(bq_client, target_date):
                 missing_processors.append(processor_name)
                 logger.warning(f"Phase 2: {processor_name} has 0 records for {target_date}")
         except Exception as e:
-            logger.error(f"Error checking {processor_name}: {e}")
+            logger.error(f"Error checking {processor_name}: {e}", exc_info=True)
             missing_processors.append(processor_name)
             record_counts[processor_name] = 0
 
@@ -322,7 +322,7 @@ def check_phase4_completeness(bq_client, target_date):
                 missing_processors.append(processor_name)
                 logger.warning(f"Phase 4: {processor_name} has 0 records for {target_date}")
         except Exception as e:
-            logger.error(f"Error checking Phase 4 {processor_name}: {e}")
+            logger.error(f"Error checking Phase 4 {processor_name}: {e}", exc_info=True)
             missing_processors.append(processor_name)
             record_counts[processor_name] = 0
 
@@ -375,7 +375,7 @@ def trigger_phase3_only(target_date):
         logger.info(f"Phase 3 only response for {target_date}: {response.status_code} - {response.text[:200]}")
         return True
     except Exception as e:
-        logger.error(f"Phase 3 only failed for {target_date} after retries: {e}")
+        logger.error(f"Phase 3 only failed for {target_date} after retries: {e}", exc_info=True)
         return False
 
 
@@ -440,7 +440,7 @@ def trigger_phase3(target_date):
         logger.info(f"Phase 3 response: {response.status_code} - {response.text[:200]}")
         return True
     except Exception as e:
-        logger.error(f"Phase 3 failed after retries: {e}")
+        logger.error(f"Phase 3 failed after retries: {e}", exc_info=True)
         return False
 
 
@@ -493,7 +493,7 @@ def trigger_phase4(target_date):
         logger.info(f"Phase 4 response: {response.status_code} - {response.text[:200]}")
         return True
     except Exception as e:
-        logger.error(f"Phase 4 failed after retries: {e}")
+        logger.error(f"Phase 4 failed after retries: {e}", exc_info=True)
         return False
 
 
@@ -595,7 +595,7 @@ def trigger_predictions(target_date):
         logger.info(f"Coordinator response: {response.status_code} - {response.text[:200]}")
         return True
     except Exception as e:
-        logger.error(f"Coordinator failed after retries: {e}")
+        logger.error(f"Coordinator failed after retries: {e}", exc_info=True)
         return False
 
 
@@ -656,7 +656,7 @@ def send_healing_alert(phase, target_date, missing_components, healing_triggered
         logger.info(f"Healing alert sent for {phase} on {target_date}")
         return True
     except Exception as e:
-        logger.error(f"Failed to send healing alert: {e}")
+        logger.error(f"Failed to send healing alert: {e}", exc_info=True)
         return False
 
 
@@ -690,7 +690,7 @@ def log_healing_to_firestore(phase, target_date, missing_components, healing_res
         logger.info(f"Logged healing to Firestore: {doc_id}")
         return True
     except Exception as e:
-        logger.error(f"Failed to log healing to Firestore: {e}")
+        logger.error(f"Failed to log healing to Firestore: {e}", exc_info=True)
         return False
 
 
@@ -845,7 +845,7 @@ def self_heal_check(request):
                     )
 
                 except Exception as e:
-                    logger.error(f"Phase 2 healing error: {e}")
+                    logger.error(f"Phase 2 healing error: {e}", exc_info=True)
                     result["actions_taken"].append(f"Phase 2 healing error: {str(e)[:50]}")
             else:
                 phase2_check["status"] = "healthy"
@@ -1010,7 +1010,7 @@ def self_heal_check(request):
                     )
 
                 except Exception as e:
-                    logger.error(f"Phase 4 healing error: {e}")
+                    logger.error(f"Phase 4 healing error: {e}", exc_info=True)
                     result["actions_taken"].append(f"Phase 4 healing error: {str(e)[:50]}")
             else:
                 phase4_check["status"] = "healthy"
@@ -1107,7 +1107,7 @@ def self_heal_check(request):
         return jsonify(result), 200
 
     except Exception as e:
-        logger.error(f"Self-heal check failed: {str(e)}")
+        logger.error(f"Self-heal check failed: {str(e)}", exc_info=True)
         result["status"] = "error"
         result["error"] = str(e)
         return jsonify(result), 500

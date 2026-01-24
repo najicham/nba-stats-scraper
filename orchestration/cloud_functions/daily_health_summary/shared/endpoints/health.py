@@ -220,7 +220,7 @@ def create_bigquery_checker(project_id: str) -> Callable[[], bool]:
             result = client.query(query, timeout=5).result()
             return True
         except Exception as e:
-            logger.error(f"BigQuery health check failed: {e}")
+            logger.error(f"BigQuery health check failed: {e}", exc_info=True)
             return False
     return check_bigquery
 
@@ -236,7 +236,7 @@ def create_firestore_checker(project_id: str) -> Callable[[], bool]:
             test_ref.get(timeout=5)
             return True
         except Exception as e:
-            logger.error(f"Firestore health check failed: {e}")
+            logger.error(f"Firestore health check failed: {e}", exc_info=True)
             return False
     return check_firestore
 
@@ -252,6 +252,6 @@ def create_pubsub_checker(project_id: str) -> Callable[[], bool]:
             list(publisher.list_topics(request={"project": project_path}, timeout=5))
             return True
         except Exception as e:
-            logger.error(f"Pub/Sub health check failed: {e}")
+            logger.error(f"Pub/Sub health check failed: {e}", exc_info=True)
             return False
     return check_pubsub

@@ -207,7 +207,7 @@ def _query_schedule(client: bigquery.Client, game_date: date) -> tuple:
         return games, date_type
 
     except Exception as e:
-        logger.error(f"Error querying schedule for {game_date}: {e}")
+        logger.error(f"Error querying schedule for {game_date}: {e}", exc_info=True)
         return [], 'error'
 
 

@@ -111,7 +111,7 @@ class MetricsClient:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to send metric {metric_name}: {e}")
+            logger.error(f"Failed to send metric {metric_name}: {e}", exc_info=True)
             return False
     
     def create_metric_descriptor(self, metric_name: str, description: str,
@@ -168,7 +168,7 @@ class MetricsClient:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to create metric descriptor {metric_name}: {e}")
+            logger.error(f"Failed to create metric descriptor {metric_name}: {e}", exc_info=True)
             return False
 
 

@@ -230,7 +230,7 @@ def auto_recover_processor(
         logger.info(f"Recovered {processor_name}: {result['actions']}")
 
     except Exception as e:
-        logger.error(f"Recovery failed for {processor_name}: {e}")
+        logger.error(f"Recovery failed for {processor_name}: {e}", exc_info=True)
         result['error'] = str(e)
 
     return result
@@ -301,7 +301,7 @@ def send_stale_alert(results: Dict) -> bool:
         return True
 
     except Exception as e:
-        logger.error(f"Failed to send stale alert: {e}")
+        logger.error(f"Failed to send stale alert: {e}", exc_info=True)
         return False
 
 

@@ -123,7 +123,7 @@ def check_prediction_coverage(
         }
 
     except Exception as e:
-        logger.error(f"Prediction coverage check failed: {e}")
+        logger.error(f"Prediction coverage check failed: {e}", exc_info=True)
         return {
             "check": "prediction_coverage",
             "status": "fail",
@@ -190,7 +190,7 @@ def check_data_freshness(
         }
 
     except Exception as e:
-        logger.error(f"Data freshness check failed: {e}")
+        logger.error(f"Data freshness check failed: {e}", exc_info=True)
         return {
             "check": "data_freshness",
             "status": "fail",
@@ -257,7 +257,7 @@ def check_validation_failures(
         }
 
     except Exception as e:
-        logger.error(f"Validation failures check failed: {e}")
+        logger.error(f"Validation failures check failed: {e}", exc_info=True)
         return {
             "check": "validation_failures",
             "status": "fail",

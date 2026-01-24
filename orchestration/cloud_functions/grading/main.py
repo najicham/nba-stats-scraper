@@ -210,7 +210,7 @@ def validate_grading_prerequisites(target_date: str) -> Dict:
         }
 
     except Exception as e:
-        logger.error(f"Error validating grading prerequisites: {e}")
+        logger.error(f"Error validating grading prerequisites: {e}", exc_info=True)
         return {
             'ready': False,
             'predictions_count': 0,
@@ -250,7 +250,7 @@ def get_auth_token(audience: str) -> str:
         with urllib.request.urlopen(req, timeout=10) as response:
             return response.read().decode("utf-8")
     except Exception as e:
-        logger.error(f"Failed to get auth token for {audience}: {e}")
+        logger.error(f"Failed to get auth token for {audience}: {e}", exc_info=True)
         raise
 
 
@@ -295,7 +295,7 @@ def check_phase3_health() -> Dict:
             }
 
     except requests.exceptions.Timeout:
-        logger.error("Phase 3 health check timed out")
+        logger.error("Phase 3 health check timed out", exc_info=True)
         return {
             'healthy': False,
             'status_code': None,
@@ -303,7 +303,7 @@ def check_phase3_health() -> Dict:
             'error': 'Health check timeout'
         }
     except Exception as e:
-        logger.error(f"Phase 3 health check failed: {e}")
+        logger.error(f"Phase 3 health check failed: {e}", exc_info=True)
         return {
             'healthy': False,
             'status_code': None,
@@ -349,7 +349,7 @@ def trigger_phase3_analytics(target_date: str, max_retries: int = 3) -> Dict:
                 'error': health['error']
             }
         )
-        logger.error(f"Auto-heal: Phase 3 service unhealthy, skipping trigger: {health['error']}")
+        logger.error(f"Auto-heal: Phase 3 service unhealthy, skipping trigger: {health['error']}", exc_info=True)
         return {
             'success': False,
             'status_code': health.get('status_code'),
@@ -430,7 +430,7 @@ def trigger_phase3_analytics(target_date: str, max_retries: int = 3) -> Dict:
                             'error': last_error
                         }
                     )
-                    logger.error(f"Auto-heal: Phase 3 trigger failed after {max_retries + 1} attempts: {last_error}")
+                    logger.error(f"Auto-heal: Phase 3 trigger failed after {max_retries + 1} attempts: {last_error}", exc_info=True)
                     return {
                         'success': False,
                         'status_code': 503,
@@ -451,7 +451,7 @@ def trigger_phase3_analytics(target_date: str, max_retries: int = 3) -> Dict:
                         'retries': retry_count
                     }
                 )
-                logger.error(f"Auto-heal: Phase 3 trigger failed with {response.status_code}: {response.text}")
+                logger.error(f"Auto-heal: Phase 3 trigger failed with {response.status_code}: {response.text}", exc_info=True)
                 return {
                     'success': False,
                     'status_code': response.status_code,
@@ -479,7 +479,7 @@ def trigger_phase3_analytics(target_date: str, max_retries: int = 3) -> Dict:
                         'error': last_error
                     }
                 )
-                logger.error(f"Auto-heal: Phase 3 trigger timed out after {max_retries + 1} attempts")
+                logger.error(f"Auto-heal: Phase 3 trigger timed out after {max_retries + 1} attempts", exc_info=True)
                 return {
                     'success': False,
                     'status_code': None,
@@ -499,7 +499,7 @@ def trigger_phase3_analytics(target_date: str, max_retries: int = 3) -> Dict:
                     'retries': retry_count
                 }
             )
-            logger.error(f"Auto-heal: Error triggering Phase 3 analytics: {e}")
+            logger.error(f"Auto-heal: Error triggering Phase 3 analytics: {e}", exc_info=True)
             return {
                 'success': False,
                 'status_code': None,
@@ -833,7 +833,7 @@ def main(cloud_event):
         # We need to alert on this scenario even though grading "succeeded"
         lock_failure_indicator = grading_result.get('lock_acquisition_failed', False)
         if lock_failure_indicator:
-            logger.error(f"Lock acquisition failed for grading {target_date} - operation ran WITHOUT lock!")
+            logger.error(f"Lock acquisition failed for grading {target_date} - operation ran WITHOUT lock!", exc_info=True)
             send_lock_failure_alert(target_date, 'grading', 'Lock acquisition timeout or Firestore error')
 
         # Step 2: Run system daily performance aggregation (if enabled)
@@ -861,7 +861,7 @@ def main(cloud_event):
 
                 # Check for lock failures
                 if aggregation_result.get('lock_acquisition_failed', False):
-                    logger.error(f"Lock acquisition failed for daily_performance {target_date}")
+                    logger.error(f"Lock acquisition failed for daily_performance {target_date}", exc_info=True)
                     send_lock_failure_alert(target_date, 'daily_performance', 'Lock acquisition timeout')
 
             except Exception as e:
@@ -1032,7 +1032,7 @@ def parse_pubsub_message(cloud_event) -> Dict:
         return message_data
 
     except Exception as e:
-        logger.error(f"Failed to parse Pub/Sub message: {e}")
+        logger.error(f"Failed to parse Pub/Sub message: {e}", exc_info=True)
         return {}
 
 

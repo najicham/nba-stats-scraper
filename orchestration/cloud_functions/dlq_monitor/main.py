@@ -169,7 +169,7 @@ def get_subscription_message_count(subscription_path: str) -> int:
         if "NOT_FOUND" in str(e) or "404" in str(e):
             logger.debug(f"Subscription not found: {subscription_path}")
             return -1  # Subscription doesn't exist
-        logger.error(f"Error getting message count for {subscription_path}: {e}")
+        logger.error(f"Error getting message count for {subscription_path}: {e}", exc_info=True)
         return -1
 
 
@@ -275,7 +275,7 @@ def sample_dlq_messages(subscription_path: str, max_messages: int = 5) -> List[D
         subscriber.close()
 
     except Exception as e:
-        logger.error(f"Error sampling messages from {subscription_path}: {e}")
+        logger.error(f"Error sampling messages from {subscription_path}: {e}", exc_info=True)
 
     return messages
 
@@ -527,7 +527,7 @@ def check_cloud_logging_errors(lookback_minutes: int = 15) -> Dict:
         results['status'] = 'skipped'
         results['note'] = 'google-cloud-logging not available'
     except Exception as e:
-        logger.error(f"Cloud Logging check failed: {e}")
+        logger.error(f"Cloud Logging check failed: {e}", exc_info=True)
         results['status'] = 'error'
         results['error'] = str(e)
 

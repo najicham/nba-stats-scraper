@@ -47,7 +47,7 @@ def send_slack_notification(message: str):
     if success:
         logger.info("Slack notification sent successfully")
     else:
-        logger.error("Failed to send Slack notification after retries")
+        logger.error("Failed to send Slack notification after retries", exc_info=True)
 
     return success
 
@@ -169,7 +169,7 @@ def cleanup_stale_running(request):
         return jsonify(result), 200
 
     except Exception as e:
-        logger.error(f"Stale cleanup failed: {str(e)}")
+        logger.error(f"Stale cleanup failed: {str(e)}", exc_info=True)
         result["status"] = "error"
         result["error"] = str(e)
 

@@ -102,7 +102,7 @@ def validate_feature_coverage(
             )
 
         except Exception as e:
-            logger.error(f"Error validating feature {feature}: {e}")
+            logger.error(f"Error validating feature {feature}: {e}", exc_info=True)
             results[feature] = {
                 'coverage_pct': 0.0,
                 'total_records': 0,

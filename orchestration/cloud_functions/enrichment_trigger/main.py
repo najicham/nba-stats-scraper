@@ -50,7 +50,7 @@ def get_processor():
             _processor = PredictionLineEnrichmentProcessor(project_id=PROJECT_ID)
             logger.info("PredictionLineEnrichmentProcessor initialized successfully")
         except Exception as e:
-            logger.error(f"Failed to initialize PredictionLineEnrichmentProcessor: {e}")
+            logger.error(f"Failed to initialize PredictionLineEnrichmentProcessor: {e}", exc_info=True)
             raise
     return _processor
 

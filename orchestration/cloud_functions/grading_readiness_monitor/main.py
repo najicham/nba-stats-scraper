@@ -94,7 +94,7 @@ def check_scheduled_games(target_date: str) -> int:
         result = list(bq_client.query(query).result())
         return result[0].game_count if result else 0
     except Exception as e:
-        logger.error(f"Error checking scheduled games: {e}")
+        logger.error(f"Error checking scheduled games: {e}", exc_info=True)
         return 0
 
 
@@ -124,7 +124,7 @@ def check_final_boxscores(target_date: str) -> Tuple[int, int]:
             return result[0].games_with_boxscores, result[0].player_records
         return 0, 0
     except Exception as e:
-        logger.error(f"Error checking final boxscores: {e}")
+        logger.error(f"Error checking final boxscores: {e}", exc_info=True)
         return 0, 0
 
 
@@ -152,7 +152,7 @@ def check_already_graded(target_date: str) -> bool:
         graded_count = result[0].graded_count if result else 0
         return graded_count > 0
     except Exception as e:
-        logger.error(f"Error checking grading status: {e}")
+        logger.error(f"Error checking grading status: {e}", exc_info=True)
         return False
 
 
@@ -178,7 +178,7 @@ def check_predictions_exist(target_date: str) -> int:
         result = list(bq_client.query(query).result())
         return result[0].prediction_count if result else 0
     except Exception as e:
-        logger.error(f"Error checking predictions: {e}")
+        logger.error(f"Error checking predictions: {e}", exc_info=True)
         return 0
 
 
@@ -213,7 +213,7 @@ def trigger_grading(target_date: str) -> Optional[str]:
         return message_id
 
     except Exception as e:
-        logger.error(f"Failed to trigger grading: {e}")
+        logger.error(f"Failed to trigger grading: {e}", exc_info=True)
         return None
 
 

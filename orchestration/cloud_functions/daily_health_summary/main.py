@@ -502,12 +502,12 @@ def send_slack_summary(results: Dict) -> bool:
         if success:
             logger.info("Health summary sent to Slack")
         else:
-            logger.error("Failed to send Slack summary after retries")
+            logger.error("Failed to send Slack summary after retries", exc_info=True)
 
         return success
 
     except Exception as e:
-        logger.error(f"Failed to send Slack summary: {e}")
+        logger.error(f"Failed to send Slack summary: {e}", exc_info=True)
         return False
 
 

@@ -118,7 +118,7 @@ class ChangeDetector:
             return changed_entities
 
         except Exception as e:
-            logger.error(f"Change detection failed (non-fatal): {e}")
+            logger.error(f"Change detection failed (non-fatal): {e}", exc_info=True)
             # On failure, return empty list (will trigger full processing)
             # This is safer than blocking - let processor decide how to handle
             return []

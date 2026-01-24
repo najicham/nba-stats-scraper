@@ -168,7 +168,7 @@ def trigger_phase5_for_date(game_date: str, correlation_id: Optional[str] = None
         })
         logger.info(f"Updated Firestore state for {game_date}")
     except Exception as e:
-        logger.error(f"Failed to update Firestore for {game_date}: {e}")
+        logger.error(f"Failed to update Firestore for {game_date}: {e}", exc_info=True)
         success = False
 
     # Publish to Pub/Sub
@@ -185,7 +185,7 @@ def trigger_phase5_for_date(game_date: str, correlation_id: Optional[str] = None
         message_id = future.result(timeout=10.0)
         logger.info(f"Published Phase 5 trigger for {game_date}: message_id={message_id}")
     except Exception as e:
-        logger.error(f"Failed to publish Phase 5 trigger for {game_date}: {e}")
+        logger.error(f"Failed to publish Phase 5 trigger for {game_date}: {e}", exc_info=True)
         success = False
 
     # Call prediction coordinator directly
@@ -294,7 +294,7 @@ def send_staleness_alert(stale_dates: List[Dict]) -> bool:
         return True
 
     except Exception as e:
-        logger.error(f"Failed to send staleness alert: {e}")
+        logger.error(f"Failed to send staleness alert: {e}", exc_info=True)
         return False
 
 
@@ -333,7 +333,7 @@ def check_phase4_timeouts(request):
             if trigger_phase5_for_date(game_date):
                 triggered.append(game_date)
             else:
-                logger.error(f"Failed to fully trigger Phase 5 for {game_date}")
+                logger.error(f"Failed to fully trigger Phase 5 for {game_date}", exc_info=True)
 
         # Send alert
         send_staleness_alert(stale_dates)

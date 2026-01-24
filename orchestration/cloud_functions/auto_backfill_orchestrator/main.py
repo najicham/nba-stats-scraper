@@ -215,7 +215,7 @@ def find_failed_runs(
         return runs
 
     except Exception as e:
-        logger.error(f"Error finding failed runs: {e}")
+        logger.error(f"Error finding failed runs: {e}", exc_info=True)
         return []
 
 
@@ -344,7 +344,7 @@ def trigger_backfill(bq_client: bigquery.Client, run: Dict) -> Dict:
         logger.info(f"Backfill result for {processor_name}: {result['message']}")
 
     except Exception as e:
-        logger.error(f"Error triggering backfill for {processor_name}: {e}")
+        logger.error(f"Error triggering backfill for {processor_name}: {e}", exc_info=True)
         result['message'] = str(e)
 
     return result
@@ -425,7 +425,7 @@ def trigger_via_pubsub(processor_name: str, data_date: str) -> bool:
         return True
 
     except Exception as e:
-        logger.error(f"Failed to publish to Pub/Sub: {e}")
+        logger.error(f"Failed to publish to Pub/Sub: {e}", exc_info=True)
         return False
 
 
@@ -476,7 +476,7 @@ def trigger_via_cloud_run(processor_name: str, data_date: str) -> bool:
         return True
 
     except Exception as e:
-        logger.error(f"Failed to trigger Cloud Run job: {e}")
+        logger.error(f"Failed to trigger Cloud Run job: {e}", exc_info=True)
         # Fall back to Pub/Sub
         logger.info("Falling back to Pub/Sub trigger")
         return trigger_via_pubsub(processor_name, data_date)
@@ -542,7 +542,7 @@ def send_backfill_summary_alert(results: Dict) -> bool:
         return True
 
     except Exception as e:
-        logger.error(f"Failed to send backfill alert: {e}")
+        logger.error(f"Failed to send backfill alert: {e}", exc_info=True)
         return False
 
 

@@ -133,7 +133,7 @@ def send_stuck_transition_alert(stuck_transitions: List[Dict]) -> bool:
         aws_secret_key = _get_secret("aws-ses-secret-access-key")
 
         if not aws_access_key or not aws_secret_key:
-            logger.error("AWS SES credentials not available")
+            logger.error("AWS SES credentials not available", exc_info=True)
             return False
 
         ses_client = boto3.client(
@@ -210,10 +210,10 @@ def send_stuck_transition_alert(stuck_transitions: List[Dict]) -> bool:
         return True
 
     except ClientError as e:
-        logger.error(f"AWS SES error: {e.response['Error']['Message']}")
+        logger.error(f"AWS SES error: {e.response['Error']['Message']}", exc_info=True)
         return False
     except Exception as e:
-        logger.error(f"Failed to send stuck transition alert: {e}")
+        logger.error(f"Failed to send stuck transition alert: {e}", exc_info=True)
         return False
 
 
@@ -302,7 +302,7 @@ def check_player_game_summary_for_yesterday() -> Dict:
         }
 
     except Exception as e:
-        logger.error(f"Error checking player_game_summary: {e}")
+        logger.error(f"Error checking player_game_summary: {e}", exc_info=True)
         return {
             'has_data': False,
             'row_count': 0,
@@ -407,7 +407,7 @@ def monitor_transitions(request):
 
     # Send alerts if needed
     if overall_status == 'critical':
-        logger.error(f"🚨 CRITICAL: {pgs_check.get('message', 'player_game_summary missing')}")
+        logger.error(f"🚨 CRITICAL: {pgs_check.get('message', 'player_game_summary missing')}", exc_info=True)
         send_alerts(results, include_pgs_alert=True)
     elif stuck_count > 0 or failed_handoff_count > 0:
         logger.warning(f"⚠️  Found {stuck_count} stuck transition(s), {failed_handoff_count} failed handoff(s)")

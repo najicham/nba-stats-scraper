@@ -130,7 +130,7 @@ class EarlyExitMixin:
             return count > 0
 
         except Exception as e:
-            logger.error(f"Error checking game schedule: {e}")
+            logger.error(f"Error checking game schedule: {e}", exc_info=True)
             # Fail open - proceed with processing
             return True
 
@@ -197,7 +197,7 @@ class EarlyExitMixin:
             return True
 
         except Exception as e:
-            logger.error(f"Error checking games finished status: {e}")
+            logger.error(f"Error checking games finished status: {e}", exc_info=True)
             # Fail open - proceed with processing
             return True
 

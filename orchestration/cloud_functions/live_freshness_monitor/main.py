@@ -135,7 +135,7 @@ def check_live_data_freshness() -> dict:
         }
 
     except Exception as e:
-        logger.error(f"Error checking live data freshness: {e}")
+        logger.error(f"Error checking live data freshness: {e}", exc_info=True)
         return {
             "status": "error",
             "age_minutes": None,
@@ -191,7 +191,7 @@ from shared.clients.bigquery_pool import get_bigquery_client
         }
 
     except Exception as e:
-        logger.error(f"Error checking processor health: {e}")
+        logger.error(f"Error checking processor health: {e}", exc_info=True)
         return {
             "status": "error",
             "error": str(e),
@@ -211,7 +211,7 @@ def trigger_live_export() -> dict:
         response.raise_for_status()
         return response.json()
     except Exception as e:
-        logger.error(f"Error triggering live export: {e}")
+        logger.error(f"Error triggering live export: {e}", exc_info=True)
         return {"status": "error", "error": str(e)}
 
 
@@ -276,7 +276,7 @@ def send_slack_alert(message: str, severity: str = "warning", context: dict = No
         return True
 
     except Exception as e:
-        logger.error(f"Failed to send Slack alert: {e}")
+        logger.error(f"Failed to send Slack alert: {e}", exc_info=True)
         return False
 
 
@@ -304,7 +304,7 @@ def send_alert(message: str, severity: str = "warning"):
     except Exception as e:
         # Just log if notification fails
         if not slack_sent:
-            logger.error(f"Failed to send any alert: {e}")
+            logger.error(f"Failed to send any alert: {e}", exc_info=True)
 
 
 @functions_framework.http
@@ -346,7 +346,7 @@ def main(request):
         minutes_ago = processor_health.get("minutes_since_last_run")
         if minutes_ago and minutes_ago > 30:
             # Significant gap - send alert
-            logger.error(f"PROCESSOR DOWN: BdlLiveBoxscoresProcessor hasn't run in {minutes_ago} minutes")
+            logger.error(f"PROCESSOR DOWN: BdlLiveBoxscoresProcessor hasn't run in {minutes_ago} minutes", exc_info=True)
             send_slack_alert(
                 message=f"BdlLiveBoxscoresProcessor hasn't run in {minutes_ago} minutes!\n"
                         f"This will cause live data to become stale. Check Cloud Scheduler and logs.",
@@ -377,7 +377,7 @@ def main(request):
     age_minutes = freshness.get("age_minutes")
     if age_minutes and age_minutes > (CRITICAL_STALE_HOURS * 60):
         age_hours = round(age_minutes / 60, 1)
-        logger.error(f"CRITICAL: Live data is {age_hours} hours old (threshold: {CRITICAL_STALE_HOURS}h)")
+        logger.error(f"CRITICAL: Live data is {age_hours} hours old (threshold: {CRITICAL_STALE_HOURS}h)", exc_info=True)
         result["critical_alert"] = True
 
         send_slack_alert(

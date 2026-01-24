@@ -173,7 +173,8 @@ def retry_on_serialization(func):
                     'error_message': error_info[:200],
                     'duration_ms': duration_ms,
                     'timestamp': datetime.utcnow().isoformat()
-                }
+                },
+                exc_info=True
             )
 
             raise
@@ -312,7 +313,8 @@ def retry_on_quota_exceeded(func):
                     'duration_ms': duration_ms,
                     'timestamp': datetime.utcnow().isoformat(),
                     'recommendation': 'Implement table-level semaphore or reduce concurrent operations' if is_quota_exceeded_error(e) else None
-                }
+                },
+                exc_info=True
             )
 
             raise

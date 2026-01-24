@@ -371,7 +371,7 @@ def send_slack_alert(status: str, message: str, context: Dict) -> bool:
         return True
 
     except Exception as e:
-        logger.error(f"Failed to send Slack alert: {e}")
+        logger.error(f"Failed to send Slack alert: {e}", exc_info=True)
         return False
 
 
@@ -450,7 +450,7 @@ def check_grading_status(request):
 
         # Log based on status
         if status == 'CRITICAL':
-            logger.error(f"CRITICAL: {message}")
+            logger.error(f"CRITICAL: {message}", exc_info=True)
         elif status == 'WARNING':
             logger.warning(f"WARNING: {message}")
         else:

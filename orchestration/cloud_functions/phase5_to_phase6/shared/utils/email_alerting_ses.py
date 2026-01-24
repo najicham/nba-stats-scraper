@@ -81,7 +81,7 @@ class EmailAlerterSES:
             )
             logger.info(f"AWS SES client initialized for region: {self.aws_region}")
         except Exception as e:
-            logger.error(f"Failed to initialize AWS SES client: {e}")
+            logger.error(f"Failed to initialize AWS SES client: {e}", exc_info=True)
             raise
 
         # Validate configuration
@@ -129,10 +129,10 @@ class EmailAlerterSES:
             return True
 
         except ClientError as e:
-            logger.error(f"AWS SES error sending {alert_level} alert '{subject}': {e.response['Error']['Message']}")
+            logger.error(f"AWS SES error sending {alert_level} alert '{subject}': {e.response['Error']['Message']}", exc_info=True)
             return False
         except Exception as e:
-            logger.error(f"Failed to send {alert_level} alert '{subject}': {str(e)}")
+            logger.error(f"Failed to send {alert_level} alert '{subject}': {str(e)}", exc_info=True)
             return False
 
     def send_error_alert(self, error_message: str, error_details: Dict = None,

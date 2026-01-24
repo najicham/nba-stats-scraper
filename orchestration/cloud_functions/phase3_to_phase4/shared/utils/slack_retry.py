@@ -124,7 +124,7 @@ def send_slack_webhook_with_retry(webhook_url: str, payload: dict, timeout: int 
             {"text": "Alert message"}
         )
         if not success:
-            logger.error("Failed to send Slack alert")
+            logger.error("Failed to send Slack alert", exc_info=True)
     """
     @retry_slack_webhook()
     def _send():
@@ -136,7 +136,7 @@ def send_slack_webhook_with_retry(webhook_url: str, payload: dict, timeout: int 
         _send()
         return True
     except Exception as e:
-        logger.error(f"Failed to send Slack webhook after retries: {e}")
+        logger.error(f"Failed to send Slack webhook after retries: {e}", exc_info=True)
         return False
 
 

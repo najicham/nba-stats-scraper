@@ -42,7 +42,7 @@ def get_service_account_credentials(
             return credentials
             
     except Exception as e:
-        logger.error(f"Failed to get credentials: {e}")
+        logger.error(f"Failed to get credentials: {e}", exc_info=True)
         return None
 
 
@@ -108,7 +108,7 @@ def get_api_key(secret_name: str, default_env_var: Optional[str] = None) -> Opti
         project_id = get_project_id()
         
         if not project_id:
-            logger.error("No project ID available for Secret Manager")
+            logger.error("No project ID available for Secret Manager", exc_info=True)
             return None
         
         secret_path = f"projects/{project_id}/secrets/{secret_name}/versions/latest"
@@ -119,7 +119,7 @@ def get_api_key(secret_name: str, default_env_var: Optional[str] = None) -> Opti
         return api_key
         
     except Exception as e:
-        logger.error(f"Failed to get API key from Secret Manager ({secret_name}): {e}")
+        logger.error(f"Failed to get API key from Secret Manager ({secret_name}): {e}", exc_info=True)
         return None
 
 
@@ -136,7 +136,7 @@ def setup_google_cloud_auth():
         return False
     
     if not is_authenticated():
-        logger.error("Google Cloud authentication not available")
+        logger.error("Google Cloud authentication not available", exc_info=True)
         return False
     
     logger.info(f"Google Cloud authentication configured for project: {project_id}")

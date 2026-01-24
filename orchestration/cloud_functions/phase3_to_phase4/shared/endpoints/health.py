@@ -737,7 +737,7 @@ def create_health_blueprint(health_checker: Optional[HealthChecker] = None) -> B
             return jsonify(result), status_code
 
         except Exception as e:
-            logger.error(f"Readiness check failed with exception: {e}")
+            logger.error(f"Readiness check failed with exception: {e}", exc_info=True)
             return jsonify({
                 'status': 'unhealthy',
                 'service': health_checker.service_name,

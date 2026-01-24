@@ -282,21 +282,21 @@ def check_service_health(service_url: str, timeout: int = 5) -> Dict[str, any]:
             "details": health_data
         }
     except requests.exceptions.Timeout:
-        logger.error(f"Health check timeout for {service_url}")
+        logger.error(f"Health check timeout for {service_url}", exc_info=True)
         return {
             "healthy": False,
             "status": "timeout",
             "error": f"Request timed out after {timeout}s"
         }
     except requests.exceptions.RequestException as e:
-        logger.error(f"Health check failed for {service_url}: {e}")
+        logger.error(f"Health check failed for {service_url}: {e}", exc_info=True)
         return {
             "healthy": False,
             "status": "unreachable",
             "error": str(e)
         }
     except Exception as e:
-        logger.error(f"Unexpected error checking health for {service_url}: {e}")
+        logger.error(f"Unexpected error checking health for {service_url}: {e}", exc_info=True)
         return {
             "healthy": False,
             "status": "error",
@@ -395,7 +395,7 @@ def verify_phase3_data_ready(game_date: str) -> tuple:
 
             except Exception as query_error:
                 # If query fails (table doesn't exist, etc.), treat as missing
-                logger.error(f"R-008: Failed to verify {dataset}.{table}: {query_error}")
+                logger.error(f"R-008: Failed to verify {dataset}.{table}: {query_error}", exc_info=True)
                 missing.append(f"{dataset}.{table}")
                 table_counts[f"{dataset}.{table}"] = -1  # Error marker
 
@@ -408,7 +408,7 @@ def verify_phase3_data_ready(game_date: str) -> tuple:
         return (is_ready, missing, table_counts)
 
     except Exception as e:
-        logger.error(f"R-008: Data freshness verification failed: {e}")
+        logger.error(f"R-008: Data freshness verification failed: {e}", exc_info=True)
         # On error, return False with empty details
         return (False, ['verification_error'], {'error': str(e)})
 
@@ -486,7 +486,7 @@ def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_c
         return success
 
     except Exception as e:
-        logger.error(f"Failed to send data freshness alert: {e}")
+        logger.error(f"Failed to send data freshness alert: {e}", exc_info=True)
         return False
 
 
@@ -585,7 +585,7 @@ def send_validation_blocking_alert(game_date: str, validation_result) -> bool:
         return success
 
     except Exception as e:
-        logger.error(f"Failed to send validation alert: {e}")
+        logger.error(f"Failed to send validation alert: {e}", exc_info=True)
         return False
 
 
@@ -672,7 +672,7 @@ def orchestrate_phase3_to_phase4(cloud_event):
 
         # Validate required fields
         if not game_date or not raw_processor_name:
-            logger.error(f"Missing required fields in message: {message_data}")
+            logger.error(f"Missing required fields in message: {message_data}", exc_info=True)
             return
 
         # Normalize processor name to match config format
@@ -1028,7 +1028,7 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
                 try:
                     validator.log_validation_to_bigquery(validation_result)
                 except Exception as log_error:
-                    logger.error(f"Failed to log validation to BigQuery: {log_error}")
+                    logger.error(f"Failed to log validation to BigQuery: {log_error}", exc_info=True)
 
                 # CRITICAL: Raise exception to BLOCK Phase 4
                 error_messages = [issue.message for issue in validation_result.issues]
@@ -1047,7 +1047,7 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
                 try:
                     validator.log_validation_to_bigquery(validation_result)
                 except Exception as log_error:
-                    logger.error(f"Failed to log validation to BigQuery: {log_error}")
+                    logger.error(f"Failed to log validation to BigQuery: {log_error}", exc_info=True)
             else:
                 logger.info(f"Phase 3→4 validation PASSED for {game_date} (no issues)")
 
@@ -1183,7 +1183,7 @@ def parse_pubsub_message(cloud_event) -> Dict:
         return message_data
 
     except Exception as e:
-        logger.error(f"Failed to parse Pub/Sub message: {e}")
+        logger.error(f"Failed to parse Pub/Sub message: {e}", exc_info=True)
         raise ValueError(f"Invalid Pub/Sub message format: {e}")
 
 

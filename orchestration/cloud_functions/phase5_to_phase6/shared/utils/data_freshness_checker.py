@@ -133,7 +133,7 @@ class DataFreshnessChecker:
             return result
 
         except Exception as e:
-            logger.error(f"Error checking freshness for {table}: {e}")
+            logger.error(f"Error checking freshness for {table}: {e}", exc_info=True)
             return {
                 'table': table,
                 'is_fresh': False,
@@ -227,7 +227,7 @@ class DataFreshnessChecker:
                 return result[0].last_updated
             return None
         except Exception as e:
-            logger.error(f"Error getting last update for {table}: {e}")
+            logger.error(f"Error getting last update for {table}: {e}", exc_info=True)
             return None
 
     def _send_stale_alert(
@@ -261,7 +261,7 @@ class DataFreshnessChecker:
             logger.warning(f"Email alerter not available: {e}")
             return False
         except Exception as e:
-            logger.error(f"Error sending stale data alert: {e}")
+            logger.error(f"Error sending stale data alert: {e}", exc_info=True)
             return False
 
 

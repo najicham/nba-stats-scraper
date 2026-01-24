@@ -241,7 +241,7 @@ def run_news_fetch(sports: list = None, generate_summaries: bool = True, max_art
                             total_exports += len(paths) + 1
                             logger.info(f"Fallback full export for {sport}: {len(paths)+1} files")
                         except Exception as e2:
-                            logger.error(f"Full export also failed for {sport}: {e2}")
+                            logger.error(f"Full export also failed for {sport}: {e2}", exc_info=True)
                             result['errors'].append(f"gcs_export_{sport}: {str(e2)}")
 
                 result['gcs_exports'] = total_exports
@@ -308,7 +308,7 @@ def main(request):
             logger.warning(f"News fetch partial in {duration:.2f}s: {result['errors']}")
             return jsonify(result), 200
         else:
-            logger.error(f"News fetch failed in {duration:.2f}s: {result['errors']}")
+            logger.error(f"News fetch failed in {duration:.2f}s: {result['errors']}", exc_info=True)
             return jsonify(result), 500
 
     except Exception as e:

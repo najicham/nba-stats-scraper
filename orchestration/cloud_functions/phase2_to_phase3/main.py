@@ -206,7 +206,7 @@ def verify_phase2_data_ready(game_date: str) -> tuple:
 
             except Exception as query_error:
                 # If query fails (table doesn't exist, etc.), treat as missing
-                logger.error(f"R-007: Failed to verify {dataset}.{table}: {query_error}")
+                logger.error(f"R-007: Failed to verify {dataset}.{table}: {query_error}", exc_info=True)
                 missing.append(f"{dataset}.{table}")
                 table_counts[f"{dataset}.{table}"] = -1  # Error marker
 
@@ -219,7 +219,7 @@ def verify_phase2_data_ready(game_date: str) -> tuple:
         return (is_ready, missing, table_counts)
 
     except Exception as e:
-        logger.error(f"R-007: Data freshness verification failed: {e}")
+        logger.error(f"R-007: Data freshness verification failed: {e}", exc_info=True)
         # On error, return False with empty details
         return (False, ['verification_error'], {'error': str(e)})
 
@@ -294,7 +294,7 @@ def verify_gamebook_data_quality(game_date: str) -> tuple:
         return (is_quality_ok, incomplete_games, quality_details)
 
     except Exception as e:
-        logger.error(f"R-009: Gamebook data quality verification failed: {e}")
+        logger.error(f"R-009: Gamebook data quality verification failed: {e}", exc_info=True)
         return (False, ['verification_error'], {'error': str(e)})
 
 
@@ -337,7 +337,7 @@ def send_gamebook_quality_alert(game_date: str, incomplete_games: list, quality_
             logger.warning(f"No Slack webhook configured. Alert message:\n{message}")
 
     except Exception as e:
-        logger.error(f"Failed to send gamebook quality alert: {e}")
+        logger.error(f"Failed to send gamebook quality alert: {e}", exc_info=True)
 
 
 def check_completion_deadline(game_date: str, current_processor: str) -> tuple:
@@ -401,7 +401,7 @@ def check_completion_deadline(game_date: str, current_processor: str) -> tuple:
         return (deadline_exceeded, first_completion_dt, completed_processors)
 
     except Exception as e:
-        logger.error(f"Failed to check completion deadline: {e}")
+        logger.error(f"Failed to check completion deadline: {e}", exc_info=True)
         return (False, None, [])
 
 
@@ -484,7 +484,7 @@ def send_completion_deadline_alert(game_date: str, completed_processors: list,
         return True
 
     except Exception as e:
-        logger.error(f"Failed to send completion deadline alert: {e}")
+        logger.error(f"Failed to send completion deadline alert: {e}", exc_info=True)
         return False
 
 
@@ -558,7 +558,7 @@ def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_c
         return True
 
     except Exception as e:
-        logger.error(f"Failed to send data freshness alert: {e}")
+        logger.error(f"Failed to send data freshness alert: {e}", exc_info=True)
         return False
 
 
@@ -652,7 +652,7 @@ def send_validation_warning_alert(game_date: str, validation_result) -> bool:
         return True
 
     except Exception as e:
-        logger.error(f"Failed to send validation alert: {e}")
+        logger.error(f"Failed to send validation alert: {e}", exc_info=True)
         return False
 
 
@@ -702,7 +702,7 @@ def orchestrate_phase2_to_phase3(cloud_event):
 
         # Validate required fields
         if not game_date or not raw_processor_name:
-            logger.error(f"Missing required fields in message: {message_data}")
+            logger.error(f"Missing required fields in message: {message_data}", exc_info=True)
             return
 
         # Normalize processor name to match config format
@@ -1065,7 +1065,7 @@ def parse_pubsub_message(cloud_event) -> Dict:
         return message_data
 
     except Exception as e:
-        logger.error(f"Failed to parse Pub/Sub message: {e}")
+        logger.error(f"Failed to parse Pub/Sub message: {e}", exc_info=True)
         raise ValueError(f"Invalid Pub/Sub message format: {e}")
 
 

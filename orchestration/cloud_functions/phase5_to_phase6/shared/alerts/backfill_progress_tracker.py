@@ -169,7 +169,7 @@ class BackfillProgressTracker:
         except ImportError as e:
             logger.warning(f"Email alerter not available: {e}")
         except Exception as e:
-            logger.error(f"Error sending progress report: {e}")
+            logger.error(f"Error sending progress report: {e}", exc_info=True)
 
     def _send_final_report(self):
         """Send final completion report."""
@@ -205,7 +205,7 @@ class BackfillProgressTracker:
         except ImportError as e:
             logger.warning(f"Email alerter not available: {e}")
         except Exception as e:
-            logger.error(f"Error sending final report: {e}")
+            logger.error(f"Error sending final report: {e}", exc_info=True)
 
     def _build_progress_data(self) -> Dict:
         """Build progress data dictionary for email."""

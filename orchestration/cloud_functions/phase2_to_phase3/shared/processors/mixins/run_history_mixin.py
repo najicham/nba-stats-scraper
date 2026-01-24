@@ -486,7 +486,7 @@ class RunHistoryMixin:
 
         except Exception as e:
             # Don't fail the processor if logging fails
-            logger.error(f"Failed to insert run history (non-fatal): {e}")
+            logger.error(f"Failed to insert run history (non-fatal): {e}", exc_info=True)
 
     # =========================================================================
     # CONVENIENCE METHODS

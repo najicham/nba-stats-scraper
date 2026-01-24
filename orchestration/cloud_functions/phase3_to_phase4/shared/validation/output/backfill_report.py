@@ -184,14 +184,14 @@ def get_validation_exit_code(
     if feature_results:
         for feature, result in feature_results.items():
             if result.get('critical', False) and not result.get('passed', False):
-                logger.error(f"Critical feature {feature} failed validation")
+                logger.error(f"Critical feature {feature} failed validation", exc_info=True)
                 return 1
 
     # Check regressions
     if regression_results:
         for feature, result in regression_results.items():
             if result.get('status') == 'REGRESSION':
-                logger.error(f"Regression detected for {feature}")
+                logger.error(f"Regression detected for {feature}", exc_info=True)
                 return 1
 
     return 0
