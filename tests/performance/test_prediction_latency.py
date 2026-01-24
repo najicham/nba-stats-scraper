@@ -217,8 +217,10 @@ class TestSinglePredictionLatency:
         assert 0.2 <= confidence <= 0.8
         assert recommendation in ['OVER', 'UNDER', 'PASS']
 
-        print(f"\nMoving Average single prediction: "
-              f"{stats.mean * 1000000:.2f}us")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nMoving Average single prediction: "
+                  f"{stats.mean * 1000000:.2f}us")
 
     def test_benchmark_ensemble_prediction(self, benchmark, sample_features):
         """Benchmark single ensemble prediction."""

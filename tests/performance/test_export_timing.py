@@ -158,8 +158,10 @@ class TestJSONSerializationPerformance:
         result = benchmark(json.dumps, data, indent=2)
 
         assert len(result) > 0
-        print(f"\nSmall JSON serialization ({len(result)} bytes): "
-              f"{stats.mean * 1000:.3f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nSmall JSON serialization ({len(result)} bytes): "
+                  f"{stats.mean * 1000:.3f}ms")
 
     def test_benchmark_medium_json_serialization(self, benchmark, sample_export_data):
         """Benchmark medium JSON serialization (~100KB)."""
@@ -168,8 +170,10 @@ class TestJSONSerializationPerformance:
         result = benchmark(json.dumps, data, indent=2)
 
         assert len(result) > 0
-        print(f"\nMedium JSON serialization ({len(result)} bytes): "
-              f"{stats.mean * 1000:.3f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nMedium JSON serialization ({len(result)} bytes): "
+                  f"{stats.mean * 1000:.3f}ms")
 
     def test_benchmark_large_json_serialization(self, benchmark, sample_export_data):
         """Benchmark large JSON serialization (~1MB)."""
@@ -178,8 +182,10 @@ class TestJSONSerializationPerformance:
         result = benchmark(json.dumps, data, indent=2)
 
         assert len(result) > 0
-        print(f"\nLarge JSON serialization ({len(result)} bytes): "
-              f"{stats.mean * 1000:.2f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nLarge JSON serialization ({len(result)} bytes): "
+                  f"{stats.mean * 1000:.2f}ms")
 
     def test_benchmark_json_with_custom_encoder(self, benchmark):
         """Benchmark JSON serialization with custom encoder."""
@@ -205,8 +211,10 @@ class TestJSONSerializationPerformance:
         result = benchmark(serialize)
 
         assert len(result) > 0
-        print(f"\nJSON with custom encoder: "
-              f"{stats.mean * 1000:.3f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nJSON with custom encoder: "
+                  f"{stats.mean * 1000:.3f}ms")
 
 
 # =============================================================================
@@ -292,8 +300,10 @@ class TestCompressionPerformance:
         result = benchmark(compress)
 
         compression_ratio = len(json_str) / len(result)
-        print(f"\nGzip compression ({len(json_str)} -> {len(result)} bytes, "
-              f"{compression_ratio:.1f}x): {stats.mean * 1000:.2f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nGzip compression ({len(json_str)} -> {len(result)} bytes, "
+                  f"{compression_ratio:.1f}x): {stats.mean * 1000:.2f}ms")
 
     def test_benchmark_gzip_levels(self, sample_export_data):
         """Compare gzip compression levels."""
@@ -452,9 +462,11 @@ class TestBatchExportPerformance:
         result = benchmark(export_multiple_days)
 
         assert len(result) == days
-        print(f"\nMulti-day export ({days} days): "
-              f"{stats.mean * 1000:.2f}ms "
-              f"({stats.mean * 1000 / days:.2f}ms per day)")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nMulti-day export ({days} days): "
+                  f"{stats.mean * 1000:.2f}ms "
+                  f"({stats.mean * 1000 / days:.2f}ms per day)")
 
     def test_benchmark_parallel_vs_sequential_export(self, mock_gcs_client, sample_export_data):
         """Compare parallel vs sequential export performance."""
@@ -502,8 +514,10 @@ class TestCacheHeaderPerformance:
                 cache_control
             )
 
-            print(f"\nCache '{cache_control[:20]}...': "
-                  f"{stats.mean * 1000:.3f}ms")
+            stats = _get_stats(benchmark)
+            if stats:
+                print(f"\nCache '{cache_control[:20]}...': "
+                      f"{stats.mean * 1000:.3f}ms")
 
 
 # =============================================================================
