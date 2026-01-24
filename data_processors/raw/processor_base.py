@@ -59,6 +59,15 @@ from shared.config.sport_config import (
     get_current_sport,
 )
 
+# Import heartbeat for stuck processor detection (added after Jan 23, 2026 incident)
+# This enables 15-minute detection of stuck processors vs 4-hour Cloud Run timeout
+try:
+    from shared.monitoring.processor_heartbeat import ProcessorHeartbeat
+    HEARTBEAT_AVAILABLE = True
+except ImportError:
+    ProcessorHeartbeat = None
+    HEARTBEAT_AVAILABLE = False
+
 # Configure logging to match scraper_base pattern
 logging.basicConfig(
     level=logging.INFO,
@@ -231,6 +240,9 @@ class ProcessorBase(RunHistoryMixin):
         self.bq_client = None
         self.gcs_client = None
 
+        # Heartbeat for stuck processor detection
+        self.heartbeat = None
+
         # Set dataset from sport_config if not overridden by child class
         if self.dataset_id is None:
             self.dataset_id = get_raw_dataset()
@@ -298,6 +310,21 @@ class ProcessorBase(RunHistoryMixin):
                 parent_processor=opts.get('parent_processor')
             )
 
+            # Start heartbeat for stale processor detection (added after Jan 23 incident)
+            # This enables 15-minute detection of stuck processors vs 4-hour timeout
+            if HEARTBEAT_AVAILABLE:
+                try:
+                    self.heartbeat = ProcessorHeartbeat(
+                        processor_name=self.__class__.__name__,
+                        run_id=self.run_id,
+                        data_date=str(data_date) if data_date else None
+                    )
+                    self.heartbeat.start()
+                    logger.debug(f"💓 Heartbeat started for {self.__class__.__name__}")
+                except Exception as hb_e:
+                    logger.warning(f"Failed to start heartbeat: {hb_e}")
+                    self.heartbeat = None
+
             # Load from source
             self.mark_time("load")
             self.load_data()
@@ -341,6 +368,13 @@ class ProcessorBase(RunHistoryMixin):
                 records_created=self.stats.get('rows_inserted', 0),
                 summary=self.stats
             )
+
+            # Stop heartbeat on successful completion
+            if self.heartbeat:
+                try:
+                    self.heartbeat.stop(final_status="completed")
+                except Exception as hb_e:
+                    logger.warning(f"Failed to stop heartbeat: {hb_e}")
 
             return True
 
@@ -410,6 +444,13 @@ class ProcessorBase(RunHistoryMixin):
                 summary=self.stats,
                 failure_category=failure_category
             )
+
+            # Stop heartbeat on failure
+            if self.heartbeat:
+                try:
+                    self.heartbeat.stop(final_status="failed")
+                except Exception as hb_e:
+                    logger.warning(f"Failed to stop heartbeat: {hb_e}")
 
             return False
     
@@ -1255,6 +1296,27 @@ class ProcessorBase(RunHistoryMixin):
                     logger.warning(f"⚠️ Load blocked by streaming buffer - {len(rows)} rows skipped")
                     logger.info("Records will be processed on next run")
                     self.stats["rows_skipped"] = len(rows)
+                    self.stats["skipped_streaming_buffer"] = True
+
+                    # Notify operators about streaming buffer conflict (added 2026-01-24)
+                    # This was previously a silent failure that could cause data gaps
+                    try:
+                        notify_warning(
+                            title=f"Streaming Buffer Conflict: {self.__class__.__name__}",
+                            message=f"BigQuery streaming buffer blocked batch load - {len(rows)} rows skipped",
+                            details={
+                                'processor': self.__class__.__name__,
+                                'run_id': self.run_id,
+                                'rows_skipped': len(rows),
+                                'table': self.table_name,
+                                'dataset': self.dataset_id,
+                                'remediation': 'Records will be processed on next run. If this persists, check for active streaming inserts.',
+                            },
+                            processor_name=self.__class__.__name__
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send streaming buffer notification: {notify_ex}")
+
                     return  # Graceful failure
                 # Log if this was a serialization conflict that exhausted retries
                 elif is_serialization_error(load_e):
