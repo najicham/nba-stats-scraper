@@ -275,6 +275,27 @@ Session 10 deployed 21 parallel agents to analyze and fix resilience issues acro
 
 ---
 
+---
+
+## Circuit Breaker Gap Analysis (From Agent)
+
+### Services WITH Protection
+- Slack API - `notification_system.py` - FULLY PROTECTED
+- GCS Uploads - `base_exporter.py` - FULLY PROTECTED
+
+### Services MISSING Protection (Priority Order)
+
+| Service | Files | Risk | Priority |
+|---------|-------|------|----------|
+| GCS Model Loading | `catboost_v8.py`, `xgboost_v1.py` | Very High | P0 |
+| BigQuery Queries | `data_loaders.py`, all processors | Very High | P0 |
+| Pub/Sub Publishing | `worker.py`, `batch_staging_writer.py` | Medium | P1 |
+| Scraper Proxies | `scraper_base.py`, `proxy_manager.py` | High | P1 |
+| Discord Webhook | `notification_system.py` | Low | P2 |
+| Third-party APIs | Various scrapers | Medium | P2 |
+
+---
+
 ## Session 10 Progress
 
 ### Agents Deployed
