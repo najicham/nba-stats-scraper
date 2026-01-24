@@ -5,6 +5,7 @@ Central configuration for pipeline validation.
 Update this file when prediction systems, tables, or thresholds change.
 """
 
+import os
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 from enum import Enum
@@ -13,7 +14,7 @@ from enum import Enum
 # PROJECT CONFIGURATION
 # =============================================================================
 
-PROJECT_ID = 'nba-props-platform'
+PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
 
 # =============================================================================
 # PREDICTION SYSTEMS

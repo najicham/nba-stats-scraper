@@ -1145,7 +1145,7 @@ def process_pubsub():
         
         opts['bucket'] = bucket
         opts['file_path'] = file_path
-        opts['project_id'] = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        opts['project_id'] = get_project_id()
 
         # Add trigger context for error notifications
         opts['trigger_source'] = normalized_message.get('_original_format', 'unknown')

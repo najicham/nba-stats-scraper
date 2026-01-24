@@ -9,7 +9,7 @@ Provides resilient phase completion tracking with:
 Usage:
     from shared.utils.completion_tracker import CompletionTracker
 
-    tracker = CompletionTracker(project_id="nba-props-platform")
+    tracker = CompletionTracker()  # Uses default from shared.config.gcp_config
 
     # Record completion (writes to both Firestore and BigQuery)
     tracker.record_completion(
@@ -629,11 +629,8 @@ def get_completion_tracker(project_id: Optional[str] = None) -> CompletionTracke
 
     if _tracker_instance is None:
         if project_id is None:
-            try:
-                from shared.config.gcp_config import get_project_id
-                project_id = get_project_id()
-            except ImportError:
-                project_id = "nba-props-platform"
+            from shared.config.gcp_config import get_project_id
+            project_id = get_project_id()
 
         _tracker_instance = CompletionTracker(project_id=project_id)
 

@@ -41,6 +41,8 @@ from typing import Optional, Dict, List, Tuple
 from google.cloud import bigquery
 import logging
 
+from shared.config.gcp_config import get_project_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -69,14 +71,14 @@ class InjuryFilter:
     # Status levels that should flag uncertainty (but still predict)
     WARNING_STATUSES = {'doubtful', 'questionable'}
 
-    def __init__(self, project_id: str = "nba-props-platform"):
+    def __init__(self, project_id: str = None):
         """
         Initialize injury filter
 
         Args:
-            project_id: GCP project ID for BigQuery
+            project_id: GCP project ID for BigQuery (defaults to shared.config)
         """
-        self.project_id = project_id
+        self.project_id = project_id or get_project_id()
         self._client = None
         self._cache: Dict[str, InjuryStatus] = {}  # Cache for batch operations
 

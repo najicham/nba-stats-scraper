@@ -49,6 +49,7 @@ from data_processors.analytics.analytics_base import AnalyticsProcessorBase
 # Pattern imports (Week 1 - Foundation Patterns)
 from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
 from shared.processors.patterns.quality_columns import build_standard_quality_columns
+from shared.config.gcp_config import get_project_id
 
 # Completeness checking (Week 7 - Phase 3 Multi-Window for Teams)
 from shared.utils.completeness_checker import CompletenessChecker
@@ -155,7 +156,7 @@ class UpcomingTeamGameContextProcessor(
         self.entity_field = 'team_abbr'
 
         # Initialize BigQuery client
-        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.project_id = get_project_id()
         self.bq_client = bigquery.Client(project=self.project_id)
 
         # Initialize completeness checker (Week 7 - Team Multi-Window)

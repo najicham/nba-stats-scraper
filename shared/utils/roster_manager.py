@@ -29,6 +29,8 @@ from enum import Enum
 from typing import Dict, List, Optional, Set, Tuple
 from google.cloud import bigquery
 
+from shared.config.gcp_config import get_project_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -139,8 +141,8 @@ class RosterChangeTracker:
         'Suspended': TransactionType.SUSPENSION,
     }
 
-    def __init__(self, project_id: str = "nba-props-platform"):
-        self.project_id = project_id
+    def __init__(self, project_id: str = None):
+        self.project_id = project_id or get_project_id()
         self._client = None
         self._cache: Dict[str, List[RosterChange]] = {}
 
@@ -397,8 +399,8 @@ class ActiveRosterCalculator:
     - Suspended players
     """
 
-    def __init__(self, project_id: str = "nba-props-platform"):
-        self.project_id = project_id
+    def __init__(self, project_id: str = None):
+        self.project_id = project_id or get_project_id()
         self._client = None
 
     @property
@@ -614,10 +616,10 @@ class RosterManager:
     - Roster change history
     """
 
-    def __init__(self, project_id: str = "nba-props-platform"):
-        self.project_id = project_id
-        self.change_tracker = RosterChangeTracker(project_id)
-        self.roster_calculator = ActiveRosterCalculator(project_id)
+    def __init__(self, project_id: str = None):
+        self.project_id = project_id or get_project_id()
+        self.change_tracker = RosterChangeTracker(self.project_id)
+        self.roster_calculator = ActiveRosterCalculator(self.project_id)
         self._availability_cache: Dict[str, PlayerAvailability] = {}
 
     def get_active_roster(

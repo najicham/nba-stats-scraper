@@ -8,6 +8,7 @@ These are simple, stateless functions for quick queries and inserts.
 Path: shared/utils/bigquery_utils.py
 """
 
+import os
 import logging
 from typing import List, Dict, Any, Optional
 from google.cloud import bigquery
@@ -16,8 +17,8 @@ from google.api_core import exceptions as gcp_exceptions
 
 logger = logging.getLogger(__name__)
 
-# Default project ID (can be overridden)
-DEFAULT_PROJECT_ID = "nba-props-platform"
+# Default project ID from environment
+DEFAULT_PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
 
 
 def execute_bigquery(

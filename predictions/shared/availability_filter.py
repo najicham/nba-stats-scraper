@@ -28,6 +28,8 @@ from typing import Optional, Dict, List, Tuple
 from google.cloud import bigquery
 import logging
 
+from shared.config.gcp_config import get_project_id
+
 # Import injury filter for backward compatibility
 from predictions.shared.injury_filter import (
     InjuryFilter,
@@ -84,9 +86,9 @@ class AvailabilityFilter:
     # Roster statuses that skip prediction
     SKIP_ROSTER_STATUSES = {'g_league', 'suspended', 'inactive'}
 
-    def __init__(self, project_id: str = "nba-props-platform"):
+    def __init__(self, project_id: str = None):
         """Initialize availability filter."""
-        self.project_id = project_id
+        self.project_id = project_id or get_project_id()
         self._client = None
         self._injury_filter = InjuryFilter(project_id)
         self._cache: Dict[str, AvailabilityStatus] = {}
