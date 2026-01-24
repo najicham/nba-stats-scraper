@@ -490,7 +490,7 @@ def get_decodo_proxy_url(port: int = 10001) -> Optional[str]:
 
 def get_proxyfuel_proxy_url() -> Optional[str]:
     """Get ProxyFuel proxy URL specifically."""
-    proxyfuel_creds = os.getenv("PROXYFUEL_CREDENTIALS", "nchammas.gmail.com:bbuyfd")
+    proxyfuel_creds = os.getenv("PROXYFUEL_CREDENTIALS")
     if proxyfuel_creds:
         return f"http://{proxyfuel_creds}@gate2.proxyfuel.com:2000"
     return None
