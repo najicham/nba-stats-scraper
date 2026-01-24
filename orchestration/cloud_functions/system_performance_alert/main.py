@@ -40,7 +40,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
+PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
 CHAMPION_SYSTEM = 'catboost_v8'
 
 # Alert thresholds

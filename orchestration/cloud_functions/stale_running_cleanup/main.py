@@ -30,7 +30,7 @@ import os
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-PROJECT_ID = os.environ.get("GCP_PROJECT", "nba-props-platform")
+PROJECT_ID = os.environ.get("GCP_PROJECT_ID") or os.environ.get("GCP_PROJECT", "nba-props-platform")
 STALE_THRESHOLD_HOURS = 4  # Match Layer 1's threshold
 
 

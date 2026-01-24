@@ -35,7 +35,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
+PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
 PREDICTION_URL = "https://mlb-prediction-worker-f7p3g7f6ya-wl.a.run.app"
 
 # Timeout configuration - configurable via environment variable

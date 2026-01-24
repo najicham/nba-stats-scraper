@@ -59,7 +59,7 @@ logger = logging.getLogger(__name__)
 print("Phase2-to-Phase3 Orchestrator module loaded")
 
 # Constants
-PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
+PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
 SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
 
 # Week 1: Phase 2 Completion Deadline Feature
@@ -204,6 +204,122 @@ def verify_phase2_data_ready(game_date: str) -> tuple:
         logger.error(f"R-007: Data freshness verification failed: {e}")
         # On error, return False with empty details
         return (False, ['verification_error'], {'error': str(e)})
+
+
+def verify_gamebook_data_quality(game_date: str) -> tuple:
+    """
+    R-009: Verify gamebook data quality - check for incomplete games.
+
+    A gamebook with 0 active players but roster entries indicates the PDF
+    was scraped before game data was available. This was the root cause of
+    data gaps on Jan 17-18, 2026 (WAS@DEN, POR@SAC).
+
+    Args:
+        game_date: The date to verify (YYYY-MM-DD)
+
+    Returns:
+        tuple: (is_quality_ok: bool, incomplete_games: list, quality_details: dict)
+            - incomplete_games: list of game_ids with 0 active players
+            - quality_details: dict with per-game active/roster counts
+    """
+    try:
+        bq_client = get_bigquery_client(project_id=os.environ.get('GCP_PROJECT', 'nba-props-platform'))
+
+        # Query for games with potential data quality issues
+        query = f"""
+        SELECT
+            game_id,
+            game_date,
+            COUNT(*) as total_records,
+            COUNTIF(player_status = 'active') as active_count,
+            COUNTIF(player_status IN ('inactive', 'dnp')) as roster_count
+        FROM `{PROJECT_ID}.nba_raw.nbac_gamebook_player_stats`
+        WHERE game_date = '{game_date}'
+        GROUP BY game_id, game_date
+        ORDER BY game_id
+        """
+
+        result = list(bq_client.query(query).result())
+
+        incomplete_games = []
+        quality_details = {}
+
+        for row in result:
+            game_id = row.game_id
+            active_count = row.active_count
+            roster_count = row.roster_count
+
+            quality_details[game_id] = {
+                'active_count': active_count,
+                'roster_count': roster_count,
+                'total_records': row.total_records
+            }
+
+            # R-009: Game has roster data but no active players = incomplete gamebook
+            if active_count == 0 and roster_count > 0:
+                incomplete_games.append(game_id)
+                logger.warning(
+                    f"R-009: Incomplete gamebook data for {game_id} on {game_date}: "
+                    f"0 active players, {roster_count} roster entries"
+                )
+
+        is_quality_ok = len(incomplete_games) == 0
+
+        if is_quality_ok:
+            logger.info(f"R-009: Gamebook data quality OK for {game_date}: {len(result)} games verified")
+        else:
+            logger.warning(
+                f"R-009: Gamebook data quality FAILED for {game_date}: "
+                f"{len(incomplete_games)} incomplete games: {incomplete_games}"
+            )
+
+        return (is_quality_ok, incomplete_games, quality_details)
+
+    except Exception as e:
+        logger.error(f"R-009: Gamebook data quality verification failed: {e}")
+        return (False, ['verification_error'], {'error': str(e)})
+
+
+def send_gamebook_quality_alert(game_date: str, incomplete_games: list, quality_details: dict) -> None:
+    """
+    Send alert for gamebook data quality issues.
+
+    These alerts indicate games where the gamebook PDF was scraped before
+    stats were available. The games need to be re-scraped.
+
+    Args:
+        game_date: The date with quality issues
+        incomplete_games: List of game_ids with incomplete data
+        quality_details: Per-game quality details
+    """
+    try:
+        # Format game details for alert
+        game_details = []
+        for game_id in incomplete_games:
+            details = quality_details.get(game_id, {})
+            game_details.append(
+                f"  - {game_id}: {details.get('active_count', 0)} active, "
+                f"{details.get('roster_count', 0)} roster"
+            )
+
+        message = (
+            f"🚨 *R-009: Incomplete Gamebook Data Detected*\n"
+            f"Date: {game_date}\n"
+            f"Incomplete Games ({len(incomplete_games)}):\n" +
+            "\n".join(game_details) +
+            f"\n\n*Action Required:* Re-scrape these games using:\n"
+            f"```\npython -m data_processors.raw.nbacom.nbac_gamebook_processor "
+            f"--start-date {game_date} --end-date {game_date}\n```"
+        )
+
+        if SLACK_WEBHOOK_URL:
+            requests.post(SLACK_WEBHOOK_URL, json={"text": message}, timeout=10)
+            logger.info(f"Sent gamebook quality alert for {game_date}")
+        else:
+            logger.warning(f"No Slack webhook configured. Alert message:\n{message}")
+
+    except Exception as e:
+        logger.error(f"Failed to send gamebook quality alert: {e}")
 
 
 def check_completion_deadline(game_date: str, current_processor: str) -> tuple:
@@ -703,6 +819,19 @@ def orchestrate_phase2_to_phase3(cloud_event):
                 send_data_freshness_alert(game_date, missing_tables, table_counts)
             else:
                 logger.info(f"R-007: Data freshness check PASSED for {game_date}")
+
+            # R-009: Verify gamebook data quality (check for incomplete games)
+            is_quality_ok, incomplete_games, quality_details = verify_gamebook_data_quality(game_date)
+
+            if not is_quality_ok:
+                logger.warning(
+                    f"R-009: Gamebook data quality check FAILED for {game_date}. "
+                    f"Incomplete games: {incomplete_games}"
+                )
+                # Send alert for visibility and action
+                send_gamebook_quality_alert(game_date, incomplete_games, quality_details)
+            else:
+                logger.info(f"R-009: Gamebook data quality check PASSED for {game_date}")
 
             # Phase Boundary Validation (WARNING mode - non-blocking)
             try:

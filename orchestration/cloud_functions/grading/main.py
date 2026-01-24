@@ -81,7 +81,7 @@ class StructuredLogger:
 structured_logger = StructuredLogger('grading-function')
 
 # Project configuration
-PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
+PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
 GRADING_COMPLETE_TOPIC = 'nba-grading-complete'
 
 # Lazy-loaded publisher

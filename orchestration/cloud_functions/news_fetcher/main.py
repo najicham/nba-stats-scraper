@@ -34,7 +34,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Project configuration
-PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
+PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
 
 
 def run_news_fetch(sports: list = None, generate_summaries: bool = True, max_articles: int = 50, export_to_gcs: bool = True) -> dict:

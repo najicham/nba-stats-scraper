@@ -31,7 +31,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Configuration
-PROJECT_ID = os.environ.get("GCP_PROJECT", "nba-props-platform")
+PROJECT_ID = os.environ.get("GCP_PROJECT_ID") or os.environ.get("GCP_PROJECT", "nba-props-platform")
 GCS_BUCKET = "nba-props-platform-api"
 LIVE_EXPORT_URL = "https://us-west2-nba-props-platform.cloudfunctions.net/live-export"
 SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")

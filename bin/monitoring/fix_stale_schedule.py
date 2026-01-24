@@ -13,6 +13,7 @@ Safe to run: Only updates games that are > 4 hours past their start time.
 
 import argparse
 import logging
+import os
 import sys
 from datetime import datetime, timezone, timedelta
 from google.cloud import bigquery
@@ -20,7 +21,7 @@ from google.cloud import bigquery
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-PROJECT_ID = "nba-props-platform"
+PROJECT_ID = os.environ.get("GCP_PROJECT_ID") or os.environ.get("GCP_PROJECT", "nba-props-platform")
 
 
 def find_stale_games(client: bigquery.Client) -> list:

@@ -47,7 +47,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
+PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
 PHASE5_TRIGGER_TOPIC = 'nba-predictions-trigger'  # Downstream topic for predictions
 MAX_WAIT_HOURS = 4  # Maximum hours to wait for all processors before timeout
 MAX_WAIT_SECONDS = MAX_WAIT_HOURS * 3600

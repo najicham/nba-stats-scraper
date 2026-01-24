@@ -41,7 +41,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Project configuration
-PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
+PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
 GCS_BUCKET = os.environ.get('GCS_BUCKET', 'nba-props-platform-api')
 PHASE6_COMPLETE_TOPIC = 'nba-phase6-export-complete'
 

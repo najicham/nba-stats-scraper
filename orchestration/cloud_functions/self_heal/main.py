@@ -51,7 +51,7 @@ PHASE3_URL = "https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app"
 PHASE4_URL = "https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app"
 COORDINATOR_URL = "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app"
 
-PROJECT_ID = os.environ.get("GCP_PROJECT", "nba-props-platform")
+PROJECT_ID = os.environ.get("GCP_PROJECT_ID") or os.environ.get("GCP_PROJECT", "nba-props-platform")
 
 
 def get_auth_token(audience):
