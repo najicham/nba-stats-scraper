@@ -222,7 +222,7 @@ class TestOptionValidationPerformance:
 
         result = benchmark(scraper.set_url)
 
-        assert 'gamedate' in scraper.url
+        assert 'date=' in scraper.url
         stats = _get_stats(benchmark)
         if stats:
             print(f"\nURL generation: {stats.mean * 1000:.3f}ms")

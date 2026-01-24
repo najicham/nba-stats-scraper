@@ -506,18 +506,24 @@ class TestCacheHeaderPerformance:
             'private, no-cache',
         ]
 
-        for cache_control in cache_settings:
-            result = benchmark(
-                exporter.upload_to_gcs,
-                data,
-                f'test/cache_test.json',
-                cache_control
-            )
+        def upload_with_all_cache_settings():
+            results = []
+            for cache_control in cache_settings:
+                result = exporter.upload_to_gcs(
+                    data,
+                    f'test/cache_test.json',
+                    cache_control
+                )
+                results.append(result)
+            return results
 
-            stats = _get_stats(benchmark)
-            if stats:
-                print(f"\nCache '{cache_control[:20]}...': "
-                      f"{stats.mean * 1000:.3f}ms")
+        result = benchmark(upload_with_all_cache_settings)
+
+        assert len(result) == len(cache_settings)
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nCache settings benchmark ({len(cache_settings)} settings): "
+                  f"{stats.mean * 1000:.3f}ms")
 
 
 # =============================================================================
