@@ -512,6 +512,15 @@ class TestProcessDate:
         with patch('data_processors.grading.prediction_accuracy.prediction_accuracy_processor.bigquery'):
             proc = PredictionAccuracyProcessor(project_id='test-project')
             proc.bq_client = Mock()
+
+            # Mock query results to return proper iterables
+            mock_query_result = Mock()
+            mock_query_result.result.return_value = iter([])  # Empty iterable
+            proc.bq_client.query.return_value = mock_query_result
+
+            # Mock _check_for_duplicates to avoid BQ calls
+            proc._check_for_duplicates = Mock(return_value=0)
+
             return proc
 
     def test_returns_no_predictions_status(self, processor):

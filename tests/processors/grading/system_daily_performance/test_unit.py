@@ -272,6 +272,10 @@ class TestWriteSummaries:
             mock_table = Mock()
             mock_table.schema = []
             proc.bq_client.get_table.return_value = mock_table
+
+            # Mock _check_for_duplicates to return 0 (no duplicates)
+            proc._check_for_duplicates = Mock(return_value=0)
+
             return proc
 
     def test_returns_zero_for_empty_list(self, processor):
@@ -293,7 +297,7 @@ class TestWriteSummaries:
         processor.bq_client.load_table_from_json.return_value = mock_load_job
 
         summaries = [{'system_id': 'ensemble_v1', 'game_date': '2025-12-15'}]
-        processor._write_summaries(summaries, date(2025, 12, 15))
+        processor._write_summaries(summaries, date(2025, 12, 15), use_lock=False)
 
         # Verify delete query was called
         delete_call = processor.bq_client.query.call_args[0][0]
@@ -317,7 +321,7 @@ class TestWriteSummaries:
             {'system_id': 'ensemble_v1'},
             {'system_id': 'xgboost_v1'},
         ]
-        result = processor._write_summaries(summaries, date(2025, 12, 15))
+        result = processor._write_summaries(summaries, date(2025, 12, 15), use_lock=False)
 
         assert result == 5
 
@@ -326,7 +330,7 @@ class TestWriteSummaries:
         processor.bq_client.query.side_effect = Exception("Delete failed")
 
         summaries = [{'system_id': 'ensemble_v1'}]
-        result = processor._write_summaries(summaries, date(2025, 12, 15))
+        result = processor._write_summaries(summaries, date(2025, 12, 15), use_lock=False)
 
         assert result == 0
 

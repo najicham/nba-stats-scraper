@@ -618,6 +618,16 @@ class TestWriteSummaries:
             mock_table = Mock()
             mock_table.schema = []
             proc.bq_client.get_table.return_value = mock_table
+
+            # Mock delete query job
+            mock_delete_job = Mock()
+            mock_delete_job.result.return_value = None
+            mock_delete_job.num_dml_affected_rows = 0
+            proc.bq_client.query.return_value = mock_delete_job
+
+            # Mock _check_for_duplicates to return 0 (no duplicates)
+            proc._check_for_duplicates = Mock(return_value=0)
+
             return proc
 
     def test_returns_zero_for_empty_list(self, processor):
@@ -633,7 +643,7 @@ class TestWriteSummaries:
         processor.bq_client.load_table_from_json.return_value = mock_load_job
 
         summaries = [{'summary_key': 'test', 'hits': 10}]
-        processor._write_summaries(summaries, date(2024, 12, 15))
+        processor._write_summaries(summaries, date(2024, 12, 15), use_lock=False)
 
         # Check delete was called
         delete_call = processor.bq_client.query.call_args[0][0]
@@ -648,7 +658,7 @@ class TestWriteSummaries:
         processor.bq_client.load_table_from_json.return_value = mock_load_job
 
         summaries = [{'summary_key': 'test', 'hits': 10}]
-        result = processor._write_summaries(summaries, date(2024, 12, 15))
+        result = processor._write_summaries(summaries, date(2024, 12, 15), use_lock=False)
 
         assert result == 42
 
@@ -657,7 +667,7 @@ class TestWriteSummaries:
         processor.bq_client.query.side_effect = Exception("Delete failed")
 
         summaries = [{'summary_key': 'test', 'hits': 10}]
-        result = processor._write_summaries(summaries, date(2024, 12, 15))
+        result = processor._write_summaries(summaries, date(2024, 12, 15), use_lock=False)
 
         assert result == 0
 
