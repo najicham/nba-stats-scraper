@@ -725,9 +725,17 @@ WHERE game_date >= CURRENT_DATE() - 3
 | 2026-01-24 01:45 AM | Integrated: soft dependencies, ESPN Pub/Sub completion | ✅ |
 | 2026-01-24 02:00 AM | Created: pipeline-dashboard, auto-backfill-orchestrator Cloud Functions | ✅ |
 | 2026-01-24 02:00 AM | Enabled soft deps on 3 key processors (MLFeatureStore, PlayerCompositeFactors, UpcomingPlayerGameContext) | ✅ |
+| 2026-01-24 03:30 AM | Expanded cleanup processor table coverage (4 → 27 tables) | ✅ |
+| 2026-01-24 03:30 AM | Increased cleanup lookback window (1h → 4h) with env var override | ✅ |
+| 2026-01-24 03:30 AM | Added Pub/Sub retry logic with exponential backoff (3 attempts) | ✅ |
+| 2026-01-24 03:30 AM | Improved proxy retry strategy with per-proxy backoff | ✅ |
+| 2026-01-24 03:30 AM | Added phase transition handoff verification | ✅ |
+| 2026-01-24 03:30 AM | Implemented DLQ monitoring via Cloud Monitoring API | ✅ |
+| 2026-01-24 03:30 AM | Standardized GCP_PROJECT_ID env var across 12 files | ✅ |
+| 2026-01-24 03:30 AM | Created NBAC Schedule, Injury Report, Player Boxscore validators | ✅ |
 
 ---
 
-**Last Updated:** January 24, 2026, 2:00 AM UTC
-**Next Update:** After pipeline dashboard deployed
-**Status:** 🟢 All Resilience Items Complete
+**Last Updated:** January 24, 2026, 3:30 AM UTC
+**Next Update:** As needed
+**Status:** 🟢 Reliability & Validation Improvements Complete
