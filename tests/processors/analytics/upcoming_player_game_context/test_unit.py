@@ -659,9 +659,11 @@ class TestPaceMetricsCalculation:
         assert result == 0.0
 
     def test_get_opponent_ft_rate_allowed_normal(self, processor):
-        """Test FT rate allowed calculation with normal data."""
+        """Test FT rate allowed per 100 possessions with normal data."""
         mock_row = Mock()
-        mock_row.avg_opp_fta = 22.5
+        # FT rate per 100 possessions (e.g., 22.5 FTA per 100 possessions)
+        mock_row.avg_ft_rate_allowed = 22.5
+        mock_row.games_count = 10
         mock_result = [mock_row]
         processor.bq_client.query.return_value.result.return_value = mock_result
 
@@ -671,9 +673,10 @@ class TestPaceMetricsCalculation:
         assert processor.bq_client.query.called
 
     def test_get_opponent_ft_rate_allowed_high_fouls(self, processor):
-        """Test FT rate allowed with foul-prone defense."""
+        """Test FT rate allowed with foul-prone defense (high FT rate per 100 poss)."""
         mock_row = Mock()
-        mock_row.avg_opp_fta = 28.3
+        mock_row.avg_ft_rate_allowed = 28.3
+        mock_row.games_count = 10
         mock_result = [mock_row]
         processor.bq_client.query.return_value.result.return_value = mock_result
 
@@ -682,15 +685,29 @@ class TestPaceMetricsCalculation:
         assert result == pytest.approx(28.3, abs=0.1)
 
     def test_get_opponent_ft_rate_allowed_low_fouls(self, processor):
-        """Test FT rate allowed with disciplined defense."""
+        """Test FT rate allowed with disciplined defense (low FT rate per 100 poss)."""
         mock_row = Mock()
-        mock_row.avg_opp_fta = 18.1
+        mock_row.avg_ft_rate_allowed = 18.1
+        mock_row.games_count = 10
         mock_result = [mock_row]
         processor.bq_client.query.return_value.result.return_value = mock_result
 
         result = processor._get_opponent_ft_rate_allowed('GSW', date(2025, 1, 20))
 
         assert result == pytest.approx(18.1, abs=0.1)
+
+    def test_get_opponent_ft_rate_allowed_few_games(self, processor):
+        """Test FT rate allowed with limited games still returns result."""
+        mock_row = Mock()
+        mock_row.avg_ft_rate_allowed = 20.5
+        mock_row.games_count = 2  # Less than 3 games
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_ft_rate_allowed('GSW', date(2025, 1, 20))
+
+        # Should still return the value even with few games
+        assert result == pytest.approx(20.5, abs=0.1)
 
     def test_get_opponent_ft_rate_allowed_no_data(self, processor):
         """Test FT rate allowed when no data available."""
@@ -702,7 +719,8 @@ class TestPaceMetricsCalculation:
 
     def test_get_opponent_ft_rate_allowed_query_error(self, processor):
         """Test FT rate allowed handles BigQuery errors."""
-        processor.bq_client.query.side_effect = Exception("BigQuery error")
+        from google.api_core.exceptions import GoogleAPIError
+        processor.bq_client.query.side_effect = GoogleAPIError("BigQuery error")
 
         result = processor._get_opponent_ft_rate_allowed('GSW', date(2025, 1, 20))
 
@@ -899,7 +917,7 @@ class TestPaceMetricsCalculation:
 
 
 class TestOpponentFTRateVariance:
-    """Test opponent FT rate variance calculation."""
+    """Test opponent FT rate variance calculation (per 100 possessions)."""
 
     @pytest.fixture
     def processor(self):
@@ -911,9 +929,10 @@ class TestOpponentFTRateVariance:
         return proc
 
     def test_get_opponent_ft_rate_variance_normal(self, processor):
-        """Test opponent FT rate variance calculation with normal data."""
+        """Test opponent FT rate variance per 100 possessions with normal data."""
         mock_row = Mock()
         mock_row.ft_rate_stddev = 2.3
+        mock_row.games_count = 10
         mock_result = [mock_row]
         processor.bq_client.query.return_value.result.return_value = mock_result
 
@@ -923,15 +942,29 @@ class TestOpponentFTRateVariance:
         assert processor.bq_client.query.called
 
     def test_get_opponent_ft_rate_variance_high_variance(self, processor):
-        """Test opponent FT rate variance with inconsistent team."""
+        """Test opponent FT rate variance with inconsistent team (high stddev)."""
         mock_row = Mock()
         mock_row.ft_rate_stddev = 5.8
+        mock_row.games_count = 10
         mock_result = [mock_row]
         processor.bq_client.query.return_value.result.return_value = mock_result
 
         result = processor._get_opponent_ft_rate_variance('LAL', date(2025, 1, 20))
 
         assert result == pytest.approx(5.8, abs=0.1)
+
+    def test_get_opponent_ft_rate_variance_insufficient_games(self, processor):
+        """Test opponent FT rate variance with only 1 game returns 0."""
+        mock_row = Mock()
+        mock_row.ft_rate_stddev = 0.0  # Can't calculate stddev with 1 game
+        mock_row.games_count = 1
+        mock_result = [mock_row]
+        processor.bq_client.query.return_value.result.return_value = mock_result
+
+        result = processor._get_opponent_ft_rate_variance('GSW', date(2025, 1, 20))
+
+        # Need at least 2 games for stddev
+        assert result == 0.0
 
     def test_get_opponent_ft_rate_variance_no_data(self, processor):
         """Test opponent FT rate variance when no data available."""
@@ -943,7 +976,8 @@ class TestOpponentFTRateVariance:
 
     def test_get_opponent_ft_rate_variance_query_error(self, processor):
         """Test opponent FT rate variance handles BigQuery errors."""
-        processor.bq_client.query.side_effect = Exception("BigQuery error")
+        from google.api_core.exceptions import GoogleAPIError
+        processor.bq_client.query.side_effect = GoogleAPIError("BigQuery error")
 
         result = processor._get_opponent_ft_rate_variance('GSW', date(2025, 1, 20))
 

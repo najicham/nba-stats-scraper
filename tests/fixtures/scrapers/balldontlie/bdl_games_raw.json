@@ -1,0 +1,66 @@
+{
+  "data": [
+    {
+      "id": 1087392,
+      "date": "2025-01-20",
+      "season": 2024,
+      "status": "Final",
+      "period": 4,
+      "time": "",
+      "postseason": false,
+      "home_team": {
+        "id": 14,
+        "conference": "West",
+        "division": "Pacific",
+        "city": "Los Angeles",
+        "name": "Lakers",
+        "full_name": "Los Angeles Lakers",
+        "abbreviation": "LAL"
+      },
+      "visitor_team": {
+        "id": 2,
+        "conference": "East",
+        "division": "Atlantic",
+        "city": "Boston",
+        "name": "Celtics",
+        "full_name": "Boston Celtics",
+        "abbreviation": "BOS"
+      },
+      "home_team_score": 110,
+      "visitor_team_score": 105
+    },
+    {
+      "id": 1087393,
+      "date": "2025-01-20",
+      "season": 2024,
+      "status": "Final",
+      "period": 4,
+      "time": "",
+      "postseason": false,
+      "home_team": {
+        "id": 10,
+        "conference": "West",
+        "division": "Southwest",
+        "city": "Dallas",
+        "name": "Mavericks",
+        "full_name": "Dallas Mavericks",
+        "abbreviation": "DAL"
+      },
+      "visitor_team": {
+        "id": 20,
+        "conference": "East",
+        "division": "Central",
+        "city": "Milwaukee",
+        "name": "Bucks",
+        "full_name": "Milwaukee Bucks",
+        "abbreviation": "MIL"
+      },
+      "home_team_score": 118,
+      "visitor_team_score": 112
+    }
+  ],
+  "meta": {
+    "next_cursor": null,
+    "per_page": 100
+  }
+}

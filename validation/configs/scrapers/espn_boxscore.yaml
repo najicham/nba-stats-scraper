@@ -1,0 +1,136 @@
+# File: validation/configs/scrapers/espn_boxscore.yaml
+# Description: Scraper-level validation schema for ESPN Boxscore
+# Used for immediate validation after scraping (before GCS export)
+
+scraper:
+  name: "espn_boxscore"
+  class: "GetEspnBoxscore"
+  description: "Validates ESPN game boxscore data at scraper output level"
+  data_type: "json"
+
+# Schema validation for the scraped data structure
+schema:
+  type: "object"
+  required_fields:
+    - game_id
+    - gamedate
+    - timestamp
+    - teams
+    - playerCount
+    - players
+
+  field_types:
+    game_id: "string"
+    gamedate: "string"
+    timestamp: "string"
+    teams: "object"
+    playerCount: "integer"
+    players: "array"
+
+# Player record validation
+player_schema:
+  type: "object"
+  required_fields:
+    - playerId
+    - playerName
+    - team
+    - teamType
+    - stats
+
+  field_types:
+    playerId: "string"
+    playerName: "string"
+    team: "string"
+    teamType: "string"  # "home" or "away"
+    stats: "array"
+    type: "string"  # "starters", "bench", "team"
+    jersey: "string"
+
+  allowed_values:
+    teamType:
+      values: ["home", "away"]
+      severity: "error"
+
+    type:
+      values: ["starters", "bench", "team", "unknown"]
+      severity: "warning"
+
+# Row count expectations
+row_count:
+  field: "playerCount"
+  min: 18  # Minimum players per game (9 per team minimum)
+  max: 40  # Maximum players per game (20 per team maximum)
+  severity: "warning"
+  message: "Player count outside expected range (18-40)"
+
+# Value range validations (for player stats)
+value_ranges:
+  - field: "playerCount"
+    min: 0
+    max: 50
+    severity: "warning"
+
+# Stats array validation (14 ESPN stats columns)
+stats_validation:
+  array_field: "stats"
+  expected_length: 14  # ESPN boxscore has 14 stat columns
+  allow_empty: true  # DNP players have empty stats
+  severity: "warning"
+
+# Teams validation
+teams_validation:
+  required_keys:
+    - home
+    - away
+  value_format: "team_abbr"  # 2-4 letter team abbreviation
+  severity: "error"
+
+# DNP handling
+dnp_validation:
+  field: "dnpReason"
+  optional: true
+  valid_patterns:
+    - "^[A-Z\\s\\-]+$"  # All caps reason like "RIGHT ANKLE SPRAIN"
+  severity: "info"
+
+# Zero row handling
+zero_row_handling:
+  acceptable_reasons:
+    - "game_not_played"
+    - "game_postponed"
+    - "all_star_game"  # Different page structure
+    - "preseason_game"  # May not be available
+
+  unacceptable_if:
+    - "game_status_final"  # Should always have data for final games
+
+  severity: "error"
+
+# Custom validations
+custom_validations:
+  - name: "two_teams_present"
+    description: "Verify exactly 2 teams in boxscore"
+    severity: "error"
+
+  - name: "balanced_player_count"
+    description: "Each team should have 8-15 players"
+    min_per_team: 8
+    max_per_team: 15
+    severity: "warning"
+
+  - name: "starter_count"
+    description: "Each team should have exactly 5 starters"
+    expected: 5
+    severity: "warning"
+
+# Notifications
+notifications:
+  on_failure:
+    - severity: "error"
+      channels: ["slack"]
+    - severity: "critical"
+      channels: ["slack", "email"]
+
+  suppress:
+    - condition: "game_not_started"
+    - condition: "preseason"

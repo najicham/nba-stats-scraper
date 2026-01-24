@@ -1,0 +1,27 @@
+{
+  "data": [
+    {
+      "id": 1087392,
+      "date": "2025-01-20",
+      "season": 2024,
+      "status": "Final",
+      "period": 4,
+      "time": "",
+      "postseason": false,
+      "home_team": {
+        "id": 14,
+        "abbreviation": "LAL"
+      },
+      "visitor_team": {
+        "id": 2,
+        "abbreviation": "BOS"
+      },
+      "home_team_score": 110,
+      "visitor_team_score": 105
+    }
+  ],
+  "meta": {
+    "next_cursor": 1087393,
+    "per_page": 1
+  }
+}

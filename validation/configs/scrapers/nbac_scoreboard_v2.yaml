@@ -1,0 +1,197 @@
+# File: validation/configs/scrapers/nbac_scoreboard_v2.yaml
+# Description: Scraper-level validation schema for NBA.com Scoreboard V2
+# Used for immediate validation after scraping (before GCS export)
+
+scraper:
+  name: "nbac_scoreboard_v2"
+  class: "GetNbaComScoreboardV2"
+  description: "Validates NBA.com scoreboard v2 data at scraper output level"
+  data_type: "json"
+
+# Schema validation for the scraped data structure
+schema:
+  type: "object"
+  required_fields:
+    - timestamp
+    - gamedate
+    - gameCount
+    - games
+    - source
+
+  field_types:
+    timestamp: "string"  # ISO timestamp
+    gamedate: "string"   # YYYYMMDD format
+    gameCount: "integer"
+    games: "array"
+    source: "string"
+
+# Game record validation
+game_schema:
+  type: "object"
+  required_fields:
+    - gameId
+    - home
+    - away
+    - gameStatus
+    - state
+
+  field_types:
+    gameId: "string"
+    home: "string"         # Team tricode
+    away: "string"         # Team tricode
+    gameStatus: "integer"  # 1=Scheduled, 2=In Progress, 3=Final
+    state: "string"        # "pre", "in", "post"
+    startTimeET: "string"
+    gameCode: "string"
+
+  optional_fields:
+    - gameSequence
+    - gameStatusText
+    - season
+    - arenaName
+    - broadcasts
+    - livePeriod
+    - livePcTime
+    - teams
+    - homeTeamId
+    - awayTeamId
+
+  allowed_values:
+    gameStatus:
+      values: [1, 2, 3]
+      severity: "error"
+      message: "Invalid game status (must be 1, 2, or 3)"
+
+    state:
+      values: ["pre", "in", "post", "unknown"]
+      severity: "warning"
+
+# Row count expectations (number of games)
+row_count:
+  field: "gameCount"
+  min: 0   # Valid to have 0 games (off-days)
+  max: 16  # Maximum NBA games per day
+  severity: "warning"
+  message: "Game count outside expected range (0-16)"
+
+# Team tricode validation
+team_validation:
+  fields:
+    - home
+    - away
+  format: "nba_tricode"  # 3-letter team code
+  valid_tricodes:
+    - ATL
+    - BOS
+    - BKN
+    - CHA
+    - CHI
+    - CLE
+    - DAL
+    - DEN
+    - DET
+    - GSW
+    - HOU
+    - IND
+    - LAC
+    - LAL
+    - MEM
+    - MIA
+    - MIL
+    - MIN
+    - NOP
+    - NYK
+    - OKC
+    - ORL
+    - PHI
+    - PHX
+    - POR
+    - SAC
+    - SAS
+    - TOR
+    - UTA
+    - WAS
+  severity: "warning"
+
+# Score validation (for completed games)
+score_validation:
+  enabled: true
+  condition: "gameStatus == 3"  # Only for final games
+
+  home_score:
+    field: "teams.home.points"
+    min: 70
+    max: 200
+    severity: "warning"
+
+  away_score:
+    field: "teams.away.points"
+    min: 70
+    max: 200
+    severity: "warning"
+
+  total_score:
+    min: 150
+    max: 350
+    severity: "warning"
+    message: "Total game score outside expected range"
+
+# Zero row handling (no games)
+zero_row_handling:
+  acceptable_reasons:
+    - "off_day"          # No scheduled games
+    - "all_star_break"   # All-Star break
+    - "preseason_gap"    # Gap between preseason and regular season
+    - "postseason_off"   # Off days during playoffs
+
+  check_schedule: true   # Validate against nbac_schedule
+  severity: "info"       # Just informational for off-days
+
+# Date format validation
+date_validation:
+  field: "gamedate"
+  format: "YYYYMMDD"
+  severity: "error"
+
+# Timestamp validation
+timestamp_validation:
+  field: "timestamp"
+  format: "iso8601"
+  max_age_minutes: 5  # Should be very recent
+  severity: "warning"
+
+# Custom validations
+custom_validations:
+  - name: "unique_game_ids"
+    description: "All game IDs should be unique"
+    severity: "error"
+
+  - name: "no_duplicate_matchups"
+    description: "No duplicate home/away team pairs"
+    severity: "warning"
+
+  - name: "game_status_consistency"
+    description: "Past games should be status 3 (Final)"
+    severity: "warning"
+
+# Broadcasts validation (optional enrichment)
+broadcasts_validation:
+  enabled: true
+  optional: true
+  fields:
+    - national
+    - home
+    - away
+  severity: "info"
+
+# Notifications
+notifications:
+  on_failure:
+    - severity: "error"
+      channels: ["slack"]
+    - severity: "critical"
+      channels: ["slack", "email"]
+
+  suppress:
+    - condition: "off_day"
+      message: "No games scheduled"

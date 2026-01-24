@@ -1,0 +1,277 @@
+# File: validation/configs/scrapers/bettingpros_player_props.yaml
+# Description: Scraper-level validation schema for BettingPros Player Props
+# Used for immediate validation after scraping (before GCS export)
+# Critical for betting operations - strict validation required
+
+scraper:
+  name: "bettingpros_player_props"
+  class: "BettingProsPlayerProps"
+  description: "Validates BettingPros player props data at scraper output level"
+  data_type: "json"
+  critical: true  # Flag for priority alerting
+
+# Schema validation for the scraped data structure
+schema:
+  type: "object"
+  required_fields:
+    - date
+    - sport
+    - market_id
+    - market_type
+    - market_name
+    - event_ids
+    - timestamp
+    - source
+    - props_count
+    - players_count
+    - props
+
+  field_types:
+    date: "string"           # YYYY-MM-DD format
+    sport: "string"          # "NBA"
+    market_id: "integer"     # 156 for points, etc.
+    market_type: "string"    # "points", "rebounds", etc.
+    market_name: "string"
+    event_ids: "array"
+    timestamp: "string"
+    source: "string"
+    props_count: "integer"
+    players_count: "integer"
+    failed_offers: "integer"
+    players_summary: "object"
+    pagination_info: "object"
+    props: "array"
+
+# Prop record validation
+prop_schema:
+  type: "object"
+  required_fields:
+    - offer_id
+    - event_id
+    - player_id
+    - player_name
+    - player_team
+    - market
+    - market_id
+    - over
+    - under
+
+  field_types:
+    offer_id: "integer"
+    event_id: "integer"
+    player_id: "integer"
+    player_name: "string"
+    player_team: "string"
+    player_position: "string"
+    market: "string"
+    market_id: "integer"
+    over: "object"
+    under: "object"
+    link: "string"
+    active: "boolean"
+
+# Over/Under selection validation
+selection_schema:
+  type: "object"
+  required_fields:
+    - selection_id
+    - sportsbooks
+
+  sportsbook_schema:
+    required_fields:
+      - book_id
+      - book_name
+      - line
+      - odds
+    field_types:
+      book_id: "integer"
+      book_name: "string"
+      line: "number"      # The points line (e.g., 28.5)
+      odds: "integer"     # American odds (e.g., -110)
+      line_id: "integer"
+      updated: "string"
+      active: "boolean"
+      best: "boolean"
+
+# Row count expectations
+row_count:
+  field: "props_count"
+  min: 10   # Minimum props expected per scrape
+  max: 500  # Maximum reasonable props per market per day
+  severity: "warning"
+  message: "Props count outside expected range"
+
+# Player count expectations
+player_count:
+  field: "players_count"
+  min: 10    # At least 10 players with props
+  max: 150   # Maximum reasonable players per day
+  severity: "warning"
+
+# Value range validations (by market type)
+value_ranges:
+  points:
+    field: "line"
+    min: 3.5
+    max: 55.5
+    severity: "warning"
+    message: "Points line outside expected range (3.5-55.5)"
+
+  rebounds:
+    field: "line"
+    min: 1.5
+    max: 20.5
+    severity: "warning"
+
+  assists:
+    field: "line"
+    min: 0.5
+    max: 18.5
+    severity: "warning"
+
+  threes:
+    field: "line"
+    min: 0.5
+    max: 10.5
+    severity: "warning"
+
+# Odds validation
+odds_validation:
+  field: "odds"
+  min: -500     # Very juiced odds
+  max: 500      # Very plus odds
+  severity: "warning"
+  message: "Odds value outside expected range (-500 to +500)"
+
+# Bookmaker validation
+bookmaker_validation:
+  min_bookmakers: 2   # At least 2 sportsbooks per prop
+  expected_bookmakers: 8  # Expected number of major books
+
+  primary_bookmakers:
+    - "DraftKings"
+    - "FanDuel"
+    - "BetMGM"
+    - "Caesars"
+
+  known_book_ids:
+    0: "BettingPros Consensus"
+    19: "BetMGM"
+    27: "PartyCasino"
+    10: "FanDuel"
+    12: "DraftKings"
+    20: "FOX Bet"
+    14: "PointsBet"
+    13: "Caesars"
+    15: "SugarHouse"
+    18: "BetRivers"
+    28: "UniBet"
+    21: "BetAmerica"
+    29: "TwinSpires"
+    22: "Oregon Lottery"
+    24: "bet365"
+    25: "WynnBET"
+    26: "Tipico"
+    30: "Betway"
+    31: "Fubo"
+
+  severity: "warning"
+
+# Team validation
+team_validation:
+  field: "player_team"
+  format: "nba_tricode_or_city"  # Can be "LAL" or "Lakers"
+  allow_empty: false
+  severity: "warning"
+
+# Event ID validation
+event_validation:
+  field: "event_ids"
+  min_events: 1
+  max_events: 16  # Max NBA games per day
+  severity: "error"
+
+# Failed offers tracking
+failed_offers_validation:
+  field: "failed_offers"
+  max_failure_rate: 0.10  # Max 10% failure rate
+  severity: "warning"
+  message: "High offer processing failure rate"
+
+# Zero row handling
+zero_row_handling:
+  acceptable_reasons:
+    - "no_scheduled_games"
+    - "games_already_started"  # Props removed after tipoff
+    - "all_star_break"
+    - "off_season"
+
+  unacceptable_if:
+    - "games_scheduled_not_started"  # Should have props
+
+  check_schedule: true
+  severity: "error"
+
+# Market-specific validations
+market_validations:
+  - market_id: 156
+    market_name: "points-by-player"
+    min_props: 20
+
+  - market_id: 157
+    market_name: "rebounds-by-player"
+    min_props: 15
+
+  - market_id: 151
+    market_name: "assists-by-player"
+    min_props: 15
+
+# Custom validations
+custom_validations:
+  - name: "line_consistency"
+    description: "Lines for same player should be within 3 points across books"
+    max_variance: 3.0
+    severity: "warning"
+
+  - name: "odds_symmetry"
+    description: "Over + Under odds should sum to reasonable vig"
+    min_combined_odds: -250  # Max 20% vig
+    max_combined_odds: -180  # Min 10% vig
+    severity: "info"
+
+  - name: "active_props"
+    description: "Majority of props should be active"
+    min_active_rate: 0.80
+    severity: "warning"
+
+  - name: "player_coverage"
+    description: "Star players should have props"
+    min_star_coverage: 0.90
+    severity: "info"
+
+# Pagination validation
+pagination_validation:
+  max_pages: 50
+  expected_per_page: 10
+  severity: "info"
+
+# Notifications (critical for betting ops)
+notifications:
+  on_failure:
+    - severity: "warning"
+      channels: ["slack"]
+    - severity: "error"
+      channels: ["slack", "email"]
+    - severity: "critical"
+      channels: ["slack", "email", "pagerduty"]
+
+  # Alert thresholds
+  alert_on:
+    - "zero_props_with_games"
+    - "missing_primary_bookmaker"
+    - "high_failure_rate"
+
+  suppress:
+    - condition: "no_games_today"
+    - condition: "off_season"
+    - condition: "all_star_break"
