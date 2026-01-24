@@ -48,6 +48,22 @@ def pipeline_dashboard(request):
         date_str = request_args.get('date', datetime.now().strftime('%Y-%m-%d'))
         phase_filter = request_args.get('phase')
 
+        # Validate format parameter
+        valid_formats = ('html', 'json')
+        if output_format not in valid_formats:
+            return {'error': f'Invalid format: {output_format}. Must be one of: {valid_formats}'}, 400
+
+        # Validate date format
+        try:
+            datetime.strptime(date_str, '%Y-%m-%d')
+        except ValueError:
+            return {'error': f'Invalid date format: {date_str}. Expected YYYY-MM-DD'}, 400
+
+        # Validate phase if provided
+        valid_phases = ('phase1', 'phase2', 'phase3', 'phase4', 'phase5', 'phase6')
+        if phase_filter and phase_filter.lower() not in valid_phases:
+            return {'error': f'Invalid phase: {phase_filter}. Must be one of: {valid_phases}'}, 400
+
         # Initialize clients
         fs_client = firestore.Client(project=PROJECT_ID)
         bq_client = bigquery.Client(project=PROJECT_ID)

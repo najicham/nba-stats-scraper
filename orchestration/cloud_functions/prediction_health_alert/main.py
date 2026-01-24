@@ -285,12 +285,15 @@ def check_prediction_health(request):
         JSON response with health status and any alerts sent.
     """
     try:
-        # Parse request
+        # Parse and validate request parameters
         game_date_str = request.args.get('game_date')
         dry_run = request.args.get('dry_run', 'false').lower() == 'true'
 
         if game_date_str:
-            game_date = date.fromisoformat(game_date_str)
+            try:
+                game_date = date.fromisoformat(game_date_str)
+            except ValueError:
+                return {'error': f'Invalid date format: {game_date_str}. Expected YYYY-MM-DD'}, 400
         else:
             game_date = date.today()
 
