@@ -48,7 +48,10 @@ requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+# Note: pytest.ini is the authoritative config; this mirrors it for consistency
+pythonpath = ["."]
+testpaths = ["tests", "shared/utils/schedule/tests"]
+addopts = "--import-mode=importlib"
 python_files = "test_*.py"
 python_classes = "Test*"
 python_functions = "test_*"
@@ -57,6 +60,7 @@ markers = [
     "unit: unit tests",
     "integration: integration tests",
     "property: property-based tests using Hypothesis",
+    "sql: tests that verify SQL query correctness",
 ]
 
 [tool.black]

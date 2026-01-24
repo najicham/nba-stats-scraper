@@ -29,12 +29,17 @@ class TestExecuteBigQueryV2:
         mock_client = Mock()
         mock_client_class.return_value = mock_client
 
-        mock_result = [
-            {'id': 1, 'name': 'test1'},
-            {'id': 2, 'name': 'test2'}
-        ]
+        # Create mock rows that support dict() conversion like BigQuery Row objects
+        mock_rows = []
+        for row_data in [{'id': 1, 'name': 'test1'}, {'id': 2, 'name': 'test2'}]:
+            mock_row = MagicMock()
+            mock_row.keys.return_value = row_data.keys()
+            mock_row.__iter__ = lambda s, d=row_data: iter(d.keys())
+            mock_row.__getitem__ = lambda s, k, d=row_data: d[k]
+            mock_rows.append(mock_row)
+
         mock_query_job = Mock()
-        mock_query_job.result.return_value = [Mock(**row) for row in mock_result]
+        mock_query_job.result.return_value = mock_rows
         mock_client.query.return_value = mock_query_job
 
         # Execute
