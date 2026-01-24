@@ -1,7 +1,7 @@
 # Comprehensive System Improvements - January 2026
 
 **Created:** 2026-01-23
-**Last Updated:** 2026-01-23
+**Last Updated:** 2026-01-24
 **Status:** In Progress
 
 ## Overview
@@ -441,6 +441,8 @@ This project consolidates all identified improvements from codebase analysis, ha
 | 2026-01-23 | P1-4 | Prediction duplicates | Fixed in Session 92 - distributed lock + ROW_NUMBER deduplication |
 | 2026-01-23 | P1-16 | Pub/Sub publish retries | Already implemented - publish_with_retry() with exponential backoff |
 | 2026-01-23 | P1-18 | Pagination cursor validation | Added max_pages guard to cursor_paginate() in bdl_utils.py |
+| 2026-01-24 | NEW | Grading layer validators | Created prediction_accuracy_validator.py (15 checks) and system_daily_performance_validator.py (12 checks) |
+| 2026-01-24 | NEW | Retry config expansion | Added 4 HIGH priority scrapers: oddsa_events, bp_events, nbac_player_movement, espn_scoreboard_api (now 28 total) |
 
 ---
 

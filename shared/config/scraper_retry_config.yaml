@@ -100,6 +100,48 @@ scrapers:
       NBAC gamebook is the reliable fallback (100% coverage)
 
   # --------------------------------------------------------------------------
+  # ODDS API EVENTS - Foundational event listings for all odds data
+  # --------------------------------------------------------------------------
+  oddsa_events:
+    enabled: true
+    priority: HIGH
+
+    comparison:
+      source_table: "nba_raw.nbac_schedule"
+      target_table: "nba_raw.odds_api_events"
+      join_keys:
+        - game_date
+      min_rows_per_game: 1
+      filter: "game_status != 3"  # Pre-game only
+
+    retry_windows:
+      - time: "10:00"
+        name: "events_catchup_morning"
+        description: "Morning events sync"
+      - time: "14:00"
+        name: "events_catchup_afternoon"
+        description: "Afternoon events retry"
+      - time: "18:00"
+        name: "events_catchup_evening"
+        description: "Pre-game events final"
+
+    lookback_days: 0
+    lookahead_days: 1
+
+    alerts:
+      max_missing_games: 1
+      severity_by_hours:
+        - hours: 2
+          severity: WARNING
+        - hours: 4
+          severity: ERROR
+
+    notes: |
+      Odds API events - foundational for all odds data.
+      All game lines and player props depend on event IDs.
+      Critical for odds pipeline integrity.
+
+  # --------------------------------------------------------------------------
   # ODDS API PLAYER PROPS - 40% coverage suggests timing/availability issues
   # --------------------------------------------------------------------------
   oddsa_player_props:
@@ -305,6 +347,48 @@ scrapers:
       Scraping may be rate-limited.
 
   # --------------------------------------------------------------------------
+  # BETTINGPROS EVENTS - Event listings for props pipeline
+  # --------------------------------------------------------------------------
+  bp_events:
+    enabled: true
+    priority: HIGH
+
+    comparison:
+      source_table: "nba_raw.nbac_schedule"
+      target_table: "nba_raw.bettingpros_events"
+      join_keys:
+        - game_date
+      min_rows_per_game: 1
+      filter: "game_status != 3"
+
+    retry_windows:
+      - time: "11:00"
+        name: "bp_events_catchup_morning"
+        description: "Morning events sync"
+      - time: "15:00"
+        name: "bp_events_catchup_afternoon"
+        description: "Afternoon events retry"
+      - time: "18:00"
+        name: "bp_events_catchup_evening"
+        description: "Pre-game events final"
+
+    lookback_days: 0
+    lookahead_days: 1
+
+    alerts:
+      max_missing_games: 1
+      severity_by_hours:
+        - hours: 2
+          severity: WARNING
+        - hours: 4
+          severity: ERROR
+
+    notes: |
+      BettingPros events - fallback for Odds API events.
+      Required for BettingPros props pipeline.
+      Critical for betting data completeness.
+
+  # --------------------------------------------------------------------------
   # ESPN BOXSCORES - Additional boxscore source
   # --------------------------------------------------------------------------
   espn_boxscore:
@@ -373,6 +457,46 @@ scrapers:
       BR rosters is the fallback source.
 
   # --------------------------------------------------------------------------
+  # ESPN SCOREBOARD API - Live scoreboard data
+  # --------------------------------------------------------------------------
+  espn_scoreboard_api:
+    enabled: true
+    priority: HIGH
+
+    comparison:
+      source_table: null
+      target_table: "nba_raw.espn_scoreboard"
+      freshness_check: true
+      max_staleness_hours: 2  # Should update frequently on game days
+
+    retry_windows:
+      - time: "11:00"
+        name: "espn_scoreboard_catchup_morning"
+        description: "Morning scoreboard sync"
+      - time: "15:00"
+        name: "espn_scoreboard_catchup_afternoon"
+        description: "Afternoon scoreboard check"
+      - time: "19:00"
+        name: "espn_scoreboard_catchup_evening"
+        description: "Pre-game scoreboard refresh"
+
+    lookback_days: 1
+    lookahead_days: 1
+
+    alerts:
+      max_staleness_hours: 4
+      severity_by_hours:
+        - hours: 2
+          severity: WARNING
+        - hours: 4
+          severity: ERROR
+
+    notes: |
+      ESPN scoreboard API - live scores and game status.
+      Backup for NBA.com scoreboard V2.
+      Used for game status tracking.
+
+  # --------------------------------------------------------------------------
   # NBA.COM SCHEDULE - Primary schedule source
   # --------------------------------------------------------------------------
   nbac_schedule:
@@ -411,6 +535,42 @@ scrapers:
       NBA.com schedule is the source of truth for game data.
       Critical for all downstream processing.
       Must stay fresh for accurate game targeting.
+
+  # --------------------------------------------------------------------------
+  # NBA.COM PLAYER MOVEMENT - Transactions, trades, signings
+  # --------------------------------------------------------------------------
+  nbac_player_movement:
+    enabled: true
+    priority: HIGH
+
+    comparison:
+      source_table: null
+      target_table: "nba_raw.nbac_player_movement"
+      freshness_check: true
+      max_staleness_hours: 24
+
+    retry_windows:
+      - time: "08:00"
+        name: "movement_catchup_morning"
+        description: "Morning transaction check"
+      - time: "14:00"
+        name: "movement_catchup_afternoon"
+        description: "Afternoon transaction check"
+
+    lookback_days: 1
+
+    alerts:
+      max_staleness_hours: 48
+      severity_by_hours:
+        - hours: 24
+          severity: WARNING
+        - hours: 48
+          severity: ERROR
+
+    notes: |
+      NBA.com player movement - trades, signings, waivers.
+      Critical for roster eligibility in predictions.
+      Important during trade deadline period.
 
   # --------------------------------------------------------------------------
   # NBA.COM PLAY-BY-PLAY - Detailed game events
