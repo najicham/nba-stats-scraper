@@ -76,7 +76,7 @@ def validate_predictions_exist(target_date: str, min_predictions: int = 50) -> D
         - missing_reason: str (if not ready)
     """
     from google.cloud import bigquery
-from shared.clients.bigquery_pool import get_bigquery_client
+    from shared.clients.bigquery_pool import get_bigquery_client
 
     bq_client = get_bigquery_client(project_id=PROJECT_ID)
 
@@ -124,6 +124,60 @@ from shared.clients.bigquery_pool import get_bigquery_client
             'predictions_count': 0,
             'players_count': 0,
             'missing_reason': f'validation_error: {str(e)}'
+        }
+
+
+def validate_analytics_ready(target_date: str, min_players: int = 30) -> Dict:
+    """
+    Validate that Phase 3 analytics data is available before exporting.
+
+    This pre-flight check ensures upcoming_player_game_context has been
+    processed before running tonight's export. The export was failing because
+    it ran at 2:49 AM UTC but analytics didn't complete until 7:08 AM UTC.
+
+    Args:
+        target_date: Date to validate (YYYY-MM-DD format)
+        min_players: Minimum number of players required (default 30)
+
+    Returns:
+        Dict with:
+        - ready: bool - True if analytics data is available
+        - player_count: int - Number of players in game context
+        - reason: str (if not ready)
+    """
+    from shared.clients.bigquery_pool import get_bigquery_client
+
+    bq_client = get_bigquery_client(project_id=PROJECT_ID)
+
+    query = f"""
+    SELECT COUNT(*) as player_count
+    FROM `{PROJECT_ID}.nba_analytics.upcoming_player_game_context`
+    WHERE game_date = '{target_date}'
+    """
+
+    try:
+        result = bq_client.query(query).to_dataframe()
+        player_count = int(result.iloc[0]['player_count'])
+
+        if player_count < min_players:
+            return {
+                'ready': False,
+                'player_count': player_count,
+                'reason': f'Only {player_count} players in game context (need {min_players}+)'
+            }
+
+        return {
+            'ready': True,
+            'player_count': player_count,
+            'reason': None
+        }
+
+    except Exception as e:
+        logger.error(f"Error validating analytics: {e}")
+        return {
+            'ready': False,
+            'player_count': 0,
+            'reason': f'validation_error: {str(e)}'
         }
 
 
@@ -304,11 +358,43 @@ def main(cloud_event):
             export_types = message_data.get('export_types', [])
             update_latest = message_data.get('update_latest', True)
 
-            # Pre-export validation for tonight's picks (requires predictions)
+            # Pre-export validation for tonight's picks (requires analytics + predictions)
             tonight_types = {'tonight', 'tonight-players', 'predictions', 'best-bets', 'streaks'}
             requires_predictions = bool(tonight_types.intersection(set(export_types)))
 
             if requires_predictions:
+                # First check if Phase 3 analytics data is ready
+                analytics_check = validate_analytics_ready(target_date)
+                logger.info(
+                    f"[{correlation_id}] Analytics pre-flight for {target_date}: "
+                    f"players_in_context={analytics_check['player_count']}, "
+                    f"ready={analytics_check['ready']}"
+                )
+
+                if not analytics_check['ready']:
+                    logger.error(
+                        f"[{correlation_id}] Analytics NOT READY: {analytics_check['reason']}"
+                    )
+                    # Don't trigger self-heal for analytics - it needs Phase 3 to complete
+                    result = {
+                        'status': 'analytics_not_ready',
+                        'target_date': target_date,
+                        'export_types': export_types,
+                        'analytics_check': analytics_check,
+                        'errors': [f"Phase 3 analytics not ready: {analytics_check['reason']}"]
+                    }
+
+                    duration_seconds = time.time() - start_time
+                    publish_completion(
+                        correlation_id=correlation_id,
+                        export_type=export_type,
+                        result=result,
+                        duration_seconds=duration_seconds,
+                        message_data=message_data
+                    )
+                    return result
+
+                # Then check if predictions exist
                 validation = validate_predictions_exist(target_date)
                 logger.info(
                     f"[{correlation_id}] Pre-export validation for {target_date}: "

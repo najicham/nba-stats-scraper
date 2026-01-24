@@ -37,7 +37,7 @@ bigquery_validations:
         i.player_lookup,
         i.team_id
       FROM `{project_id}.nba_raw.bdl_injuries` i
-      LEFT JOIN `{project_id}.nba_raw.bdl_active_players` p
+      LEFT JOIN `{project_id}.nba_raw.bdl_active_players_current` p
         ON i.player_id = p.player_id
       WHERE i.processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
         AND p.player_id IS NULL

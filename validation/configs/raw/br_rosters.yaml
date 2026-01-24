@@ -73,7 +73,7 @@ bigquery_validations:
       ),
       bdl_players AS (
         SELECT DISTINCT player_lookup
-        FROM `{project_id}.nba_raw.bdl_active_players`
+        FROM `{project_id}.nba_raw.bdl_active_players_current`
         WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
       )
       SELECT COUNT(*) as missing_count

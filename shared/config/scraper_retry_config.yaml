@@ -693,7 +693,7 @@ scrapers:
 
     comparison:
       source_table: null
-      target_table: "nba_raw.bdl_active_players"
+      target_table: "nba_raw.bdl_active_players_current"
       freshness_check: true
       max_staleness_hours: 24
 

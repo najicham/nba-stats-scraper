@@ -512,7 +512,7 @@ class TestDataValidation:
 
 class TestDataTransformation:
     """Test data transformation to BigQuery format (v2.0 with is_home and dual game IDs)."""
-    
+
     @pytest.fixture
     def processor(self):
         """Create processor instance with mocked dependencies."""
@@ -520,6 +520,12 @@ class TestDataTransformation:
         proc.bq_client = Mock()
         proc.project_id = 'test-project'
         return proc
+
+    def run_transform(self, processor, raw_game_data, file_path='gs://test-bucket/test-file.json'):
+        """Helper to run transform_data with proper setup."""
+        processor.raw_data = {**raw_game_data, 'metadata': {'source_file': file_path}}
+        processor.transform_data()
+        return processor.transformed_data
     
     @pytest.fixture
     def raw_game_data(self):
@@ -572,13 +578,13 @@ class TestDataTransformation:
     def test_transform_returns_two_records(self, processor, raw_game_data):
         """Test transformation returns exactly 2 records (one per team)."""
         file_path = 'gs://test-bucket/test-file.json'
-        rows = processor.transform_data(raw_game_data, file_path)
+        rows = self.run_transform(processor, raw_game_data, file_path)
         assert len(rows) == 2
     
     def test_transform_game_identity_fields_v2(self, processor, raw_game_data):
         """Test game identity fields are correctly mapped (v2.0 with dual IDs)."""
         file_path = 'gs://test-bucket/test-file.json'
-        rows = processor.transform_data(raw_game_data, file_path)
+        rows = self.run_transform(processor, raw_game_data, file_path)
         
         row = rows[0]
         # v2.0: game_id is standardized format
@@ -591,7 +597,7 @@ class TestDataTransformation:
     def test_transform_home_away_assignment(self, processor, raw_game_data):
         """Test is_home field is correctly assigned (v2.0 NEW)."""
         file_path = 'gs://test-bucket/test-file.json'
-        rows = processor.transform_data(raw_game_data, file_path)
+        rows = self.run_transform(processor, raw_game_data, file_path)
         
         # First row should be LAL (away)
         lal_row = rows[0]
@@ -610,7 +616,7 @@ class TestDataTransformation:
         del raw_game_data['teams'][1]['homeAway']
         
         file_path = 'gs://test-bucket/test-file.json'
-        rows = processor.transform_data(raw_game_data, file_path)
+        rows = self.run_transform(processor, raw_game_data, file_path)
         
         # Should still work using array order: teams[0]=away, teams[1]=home
         assert rows[0]['team_abbr'] == 'LAL'
@@ -621,7 +627,7 @@ class TestDataTransformation:
     def test_transform_game_id_format(self, processor, raw_game_data):
         """Test game_id format is YYYYMMDD_AWAY_HOME (v2.0)."""
         file_path = 'gs://test-bucket/test-file.json'
-        rows = processor.transform_data(raw_game_data, file_path)
+        rows = self.run_transform(processor, raw_game_data, file_path)
         
         game_id = rows[0]['game_id']
         parts = game_id.split('_')
@@ -634,7 +640,7 @@ class TestDataTransformation:
     def test_transform_team_identity_fields(self, processor, raw_game_data):
         """Test team identity fields are correctly mapped."""
         file_path = 'gs://test-bucket/test-file.json'
-        rows = processor.transform_data(raw_game_data, file_path)
+        rows = self.run_transform(processor, raw_game_data, file_path)
         
         lal_row = rows[0]
         assert lal_row['team_id'] == 1610612747
@@ -649,7 +655,7 @@ class TestDataTransformation:
     def test_transform_shooting_stats(self, processor, raw_game_data):
         """Test shooting statistics are correctly mapped."""
         file_path = 'gs://test-bucket/test-file.json'
-        rows = processor.transform_data(raw_game_data, file_path)
+        rows = self.run_transform(processor, raw_game_data, file_path)
         
         row = rows[0]
         # Field goals
@@ -670,7 +676,7 @@ class TestDataTransformation:
     def test_transform_rebound_stats(self, processor, raw_game_data):
         """Test rebound statistics are correctly mapped."""
         file_path = 'gs://test-bucket/test-file.json'
-        rows = processor.transform_data(raw_game_data, file_path)
+        rows = self.run_transform(processor, raw_game_data, file_path)
         
         row = rows[0]
         assert row['offensive_rebounds'] == 12
@@ -680,7 +686,7 @@ class TestDataTransformation:
     def test_transform_other_stats(self, processor, raw_game_data):
         """Test other statistics are correctly mapped."""
         file_path = 'gs://test-bucket/test-file.json'
-        rows = processor.transform_data(raw_game_data, file_path)
+        rows = self.run_transform(processor, raw_game_data, file_path)
         
         row = rows[0]
         assert row['assists'] == 28
@@ -694,7 +700,7 @@ class TestDataTransformation:
     def test_transform_metadata_fields(self, processor, raw_game_data):
         """Test metadata fields are correctly set."""
         file_path = 'gs://test-bucket/test-file.json'
-        rows = processor.transform_data(raw_game_data, file_path)
+        rows = self.run_transform(processor, raw_game_data, file_path)
         
         row = rows[0]
         assert row['source_file_path'] == file_path
@@ -710,7 +716,7 @@ class TestDataTransformation:
         del raw_game_data['teams'][0]['plusMinus']
         
         file_path = 'gs://test-bucket/test-file.json'
-        rows = processor.transform_data(raw_game_data, file_path)
+        rows = self.run_transform(processor, raw_game_data, file_path)
         
         row = rows[0]
         assert row['plus_minus'] is None  # Should be None, not crash
@@ -723,7 +729,7 @@ class TestDataTransformation:
         raw_game_data['teams'][0]['threePointers']['percentage'] = None
         
         file_path = 'gs://test-bucket/test-file.json'
-        rows = processor.transform_data(raw_game_data, file_path)
+        rows = self.run_transform(processor, raw_game_data, file_path)
         
         row = rows[0]
         assert row['three_pt_made'] == 0
@@ -737,7 +743,7 @@ class TestDataTransformation:
         raw_game_data['teams'][1]['minutes'] = '265:00'
         
         file_path = 'gs://test-bucket/test-file.json'
-        rows = processor.transform_data(raw_game_data, file_path)
+        rows = self.run_transform(processor, raw_game_data, file_path)
         
         assert rows[0]['minutes'] == '265:00'
         assert rows[1]['minutes'] == '265:00'
@@ -750,7 +756,7 @@ class TestDataTransformation:
         raw_game_data['teams'][0]['teamCity'] = 'Los Angeles   '
         
         file_path = 'gs://test-bucket/test-file.json'
-        rows = processor.transform_data(raw_game_data, file_path)
+        rows = self.run_transform(processor, raw_game_data, file_path)
         
         row = rows[0]
         assert row['team_abbr'] == 'LAL'  # Normalized and uppercase
@@ -763,7 +769,7 @@ class TestDataTransformation:
         raw_game_data['teams'] = []
         
         file_path = 'gs://test-bucket/test-file.json'
-        rows = processor.transform_data(raw_game_data, file_path)
+        rows = self.run_transform(processor, raw_game_data, file_path)
         assert len(rows) == 0
 
 

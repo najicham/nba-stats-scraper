@@ -461,7 +461,8 @@ class NbacTeamBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
         except ValueError as e:
             logger.error(f"Cannot determine home/away for {file_path}: {e}")
             self.transformed_data = rows
-        
+            return
+
         # Generate standardized game_id: YYYYMMDD_AWAY_HOME
         away_abbr = self.normalize_team_abbr(away_team.get('teamAbbreviation', ''))
         home_abbr = self.normalize_team_abbr(home_team.get('teamAbbreviation', ''))

@@ -559,10 +559,12 @@ class PlayerCompositeFactorsProcessor(
         Thresholds are lowered in backfill mode to accommodate early season
         where fewer players have enough games for rolling calculations.
         """
-        # Lower thresholds for backfill mode (early season has fewer players with history)
-        # Production: 100 players expected, Backfill: 20 (minimum viable)
-        player_threshold = 20 if self.is_backfill_mode else 100
-        team_threshold = 5 if self.is_backfill_mode else 10
+        # Lower thresholds for flexibility on low-game days
+        # Production: 30 players minimum viable for predictions
+        # Team threshold: 2 minimum (at least 2 teams playing)
+        # Backfill mode uses even lower thresholds for early season
+        player_threshold = 20 if self.is_backfill_mode else 30
+        team_threshold = 2 if self.is_backfill_mode else 2
 
         return {
             'nba_analytics.upcoming_player_game_context': {

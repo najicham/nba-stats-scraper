@@ -684,10 +684,10 @@ class TeamOffenseGameSummaryProcessor(
     
     def validate_extracted_data(self) -> None:
         """Enhanced validation for team offensive data."""
-        super().validate_extracted_data()
-
-        if self.raw_data.empty:
-            # Check if we used fallback and got a placeholder/skip result
+        # Check for graceful empty handling FIRST (before calling super)
+        # Base class raises ValueError("No data extracted") which prevents
+        # graceful handling, so we must check _fallback_handled before super()
+        if self.raw_data is None or (hasattr(self.raw_data, 'empty') and self.raw_data.empty):
             if hasattr(self, '_fallback_handled') and self._fallback_handled:
                 logger.info("Validation passed: fallback already handled empty data gracefully")
                 return
@@ -708,7 +708,10 @@ class TeamOffenseGameSummaryProcessor(
             # Mark as handled - transform will check this
             self._no_data_available = True
             return
-        
+
+        # Have data - call parent for standard validation
+        super().validate_extracted_data()
+
         # Validate points calculation
         for _, row in self.raw_data.iterrows():
             two_pt_makes = row['fg_made'] - row['three_pt_made']
