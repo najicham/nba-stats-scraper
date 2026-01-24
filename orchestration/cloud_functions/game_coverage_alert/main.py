@@ -118,13 +118,17 @@ def get_game_coverage(bq_client: bigquery.Client, date_str: str) -> Dict:
     Returns:
         Dictionary with game coverage data
     """
+    # Note: Predictions use game_id format like "20260124_BOS_CHI" (date_away_home)
+    # Schedule uses NBA game_id like "0022500647"
+    # We join by constructing the prediction game_id from schedule data
     query = f"""
     WITH scheduled_games AS (
         SELECT
-            game_id,
+            game_id as nba_game_id,
             home_team_tricode,
             away_team_tricode,
-            game_time_utc
+            -- Construct prediction-style game_id: YYYYMMDD_AWAY_HOME
+            FORMAT_DATE('%Y%m%d', game_date) || '_' || away_team_tricode || '_' || home_team_tricode as pred_game_id
         FROM `{PROJECT_ID}.nba_reference.nba_schedule`
         WHERE game_date = @game_date
     ),
@@ -148,10 +152,10 @@ def get_game_coverage(bq_client: bigquery.Client, date_str: str) -> Dict:
         GROUP BY game_id
     )
     SELECT
-        s.game_id,
+        s.nba_game_id as game_id,
+        s.pred_game_id,
         s.home_team_tricode,
         s.away_team_tricode,
-        s.game_time_utc,
         COALESCE(p.player_count, 0) as player_count,
         COALESCE(p.prediction_count, 0) as prediction_count,
         COALESCE(f.feature_count, 0) as feature_count,
@@ -162,9 +166,9 @@ def get_game_coverage(bq_client: bigquery.Client, date_str: str) -> Dict:
             ELSE 'OK'
         END as status
     FROM scheduled_games s
-    LEFT JOIN prediction_coverage p ON s.game_id = p.game_id
-    LEFT JOIN feature_coverage f ON s.game_id = f.game_id
-    ORDER BY s.game_time_utc
+    LEFT JOIN prediction_coverage p ON s.pred_game_id = p.game_id
+    LEFT JOIN feature_coverage f ON s.pred_game_id = f.game_id
+    ORDER BY s.nba_game_id
     """
 
     job_config = bigquery.QueryJobConfig(
@@ -181,8 +185,8 @@ def get_game_coverage(bq_client: bigquery.Client, date_str: str) -> Dict:
     for row in bq_client.query(query, job_config=job_config):
         game = {
             'game_id': row.game_id,
+            'pred_game_id': row.pred_game_id,
             'matchup': f"{row.away_team_tricode}@{row.home_team_tricode}",
-            'game_time_utc': row.game_time_utc.isoformat() if row.game_time_utc else None,
             'player_count': row.player_count,
             'prediction_count': row.prediction_count,
             'feature_count': row.feature_count,
@@ -288,19 +292,19 @@ def send_coverage_alert(coverage: Dict) -> bool:
         return False
 
 
-def get_first_game_time(bq_client: bigquery.Client, date_str: str) -> Optional[datetime]:
+def get_game_count(bq_client: bigquery.Client, date_str: str) -> int:
     """
-    Get the start time of the first game on the given date.
+    Get the number of games scheduled on the given date.
 
     Args:
         bq_client: BigQuery client
         date_str: Date to check
 
     Returns:
-        datetime of first game, or None if no games
+        Number of games scheduled
     """
     query = f"""
-    SELECT MIN(game_time_utc) as first_game
+    SELECT COUNT(*) as game_count
     FROM `{PROJECT_ID}.nba_reference.nba_schedule`
     WHERE game_date = @game_date
     """
@@ -312,6 +316,6 @@ def get_first_game_time(bq_client: bigquery.Client, date_str: str) -> Optional[d
     )
 
     result = list(bq_client.query(query, job_config=job_config))
-    if result and result[0].first_game:
-        return result[0].first_game
-    return None
+    if result:
+        return result[0].game_count
+    return 0
