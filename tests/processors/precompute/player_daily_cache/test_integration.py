@@ -37,7 +37,7 @@ class TestEndToEndFlow:
         client = Mock()
         
         # Mock query responses
-        def mock_query(sql):
+        def mock_query(sql, **kwargs):
             result = Mock()
             
             # Determine which query based on SQL content
