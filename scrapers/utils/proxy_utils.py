@@ -16,11 +16,21 @@ Usage:
 
 import os
 import logging
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
 # Decodo ports - different ports may use different IP pools
 DECODO_PORTS = [10001, 10002, 10003]
+
+
+def _url_encode_credentials(creds: str) -> str:
+    """URL encode username:password, handling special characters."""
+    if ":" not in creds:
+        return creds
+    username, password = creds.split(":", 1)
+    # URL encode password (special chars like ~ need encoding for proxy auth)
+    return f"{quote(username, safe='')}:{quote(password, safe='')}"
 
 
 def get_proxy_urls():
@@ -41,9 +51,11 @@ def get_proxy_urls():
     # Fallback: Decodo (residential) - try multiple ports for different IP pools
     decodo_creds = os.getenv("DECODO_PROXY_CREDENTIALS")
     if decodo_creds:
+        # URL encode credentials (password may have special chars like ~)
+        encoded_creds = _url_encode_credentials(decodo_creds)
         # Use global gateway with multiple ports (each port may route to different IPs)
         for port in DECODO_PORTS:
-            proxies.append(f"http://{decodo_creds}@gate.decodo.com:{port}")
+            proxies.append(f"http://{encoded_creds}@gate.decodo.com:{port}")
     else:
         logger.debug("DECODO_PROXY_CREDENTIALS not set - Decodo fallback unavailable")
 
@@ -62,7 +74,8 @@ def get_decodo_proxy_url(port: int = 10001):
     """
     decodo_creds = os.getenv("DECODO_PROXY_CREDENTIALS")
     if decodo_creds:
-        return f"http://{decodo_creds}@gate.decodo.com:{port}"
+        encoded_creds = _url_encode_credentials(decodo_creds)
+        return f"http://{encoded_creds}@gate.decodo.com:{port}"
     return None
 
 
