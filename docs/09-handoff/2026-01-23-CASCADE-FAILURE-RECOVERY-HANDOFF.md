@@ -121,31 +121,40 @@ Teams with rosters older than 3 days:
 
 ## Pending Issues
 
-### 1. TOR@POR Predictions - NOT RESOLVED ❌
-**Why:** The `upcoming_player_game_context` table has 0 POR players because:
-- ESPN roster for POR is stale (Jan 14)
-- Players aren't being matched through the roster → schedule join
+### 1. TOR@POR Predictions - ROSTERS FIXED, PREDICTIONS PENDING ⚠️
+**Status Update:**
+- ESPN rosters now have all 30 teams as of Jan 22 ✅
+- For future dates, predictions will work correctly
+- Jan 23 predictions were not regenerated (game already starting)
 
-**Fix Required:**
-1. Refresh ESPN roster for POR and SAC
-2. Re-run UpcomingPlayerGameContextProcessor
-3. Re-run MLFeatureStoreProcessor
-4. Trigger PredictionCoordinator
-
-### 2. ESPN Roster Scraper - NEEDS ATTENTION
-**Issue:** Rosters haven't updated since Jan 14 (9 days ago)
-**Impact:** Any team without recent roster data can't generate predictions
-
-**Commands to investigate:**
+**To regenerate predictions for a game day after roster fix:**
 ```bash
-# Check ESPN scraper scheduler
-gcloud scheduler jobs describe espn-roster-scraper --location=us-west2
+# 1. Re-run UpcomingPlayerGameContextProcessor
+source .venv/bin/activate && python3 -c "
+from data_processors.analytics.upcoming_player_game_context.upcoming_player_game_context_processor import UpcomingPlayerGameContextProcessor
+processor = UpcomingPlayerGameContextProcessor()
+processor.run(opts={'start_date': '2026-01-24', 'end_date': '2026-01-24', 'backfill_mode': True})
+"
 
-# Check recent scraper runs
-bq query --use_legacy_sql=false '
-SELECT scrape_date, team_count, status
-FROM `nba_orchestration.espn_roster_scrape_history`
-ORDER BY scrape_date DESC LIMIT 10'
+# 2. Re-run MLFeatureStoreProcessor
+# 3. Trigger PredictionCoordinator
+```
+
+### 2. ESPN Roster Scraper - FIXED ✅
+**Root Cause:**
+- GCS files were being scraped (30 teams/day) but processor wasn't triggered
+- `br-rosters-batch-daily` scheduler had PERMISSION_DENIED (missing run.invoker role)
+
+**Fixes Applied:**
+1. Added `run.invoker` role to scheduler service account
+2. Manually ran ESPN roster processor for Jan 22 (30 teams loaded)
+3. Created `monitoring/nba/roster_coverage_monitor.py` to catch future issues
+4. Updated monitoring config to make ESPN roster alerts CRITICAL
+
+**Verification:**
+```bash
+# Check roster coverage (should show all 30 teams current)
+python3 -m monitoring.nba.roster_coverage_monitor
 ```
 
 ---
