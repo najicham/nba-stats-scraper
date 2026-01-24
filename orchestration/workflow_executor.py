@@ -30,6 +30,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from orchestration.parameter_resolver import ParameterResolver
 from orchestration.config_loader import WorkflowConfig
 from shared.utils.bigquery_utils import execute_bigquery, insert_bigquery_rows
+from shared.utils.notification_system import notify_warning
 from orchestration.shared.utils.circuit_breaker import (
     CircuitBreakerManager,
     CircuitBreakerConfig,
@@ -899,14 +900,46 @@ class WorkflowExecutor:
         logger.debug(f"Extracted {len(event_ids)} event_ids: {event_ids}")
         return event_ids
 
+    # Track consecutive logging failures for alerting
+    _logging_failure_count = 0
+    _logging_failure_threshold = 3  # Alert after 3 consecutive failures
+
     def _log_workflow_execution(self, execution: WorkflowExecution) -> None:
-        """Log workflow execution to BigQuery."""
+        """
+        Log workflow execution to BigQuery.
+
+        Includes alerting for consecutive logging failures to detect BigQuery issues.
+        """
         try:
             record = execution.to_dict()
             insert_bigquery_rows('nba_orchestration.workflow_executions', [record])
             logger.debug(f"✅ Logged workflow execution to BigQuery: {execution.execution_id}")
+
+            # Reset failure count on success
+            WorkflowExecutor._logging_failure_count = 0
+
         except Exception as e:
             logger.error(f"Failed to log workflow execution: {e}")
             # Don't fail the workflow if logging fails - execution already completed
-            # TODO: Add monitoring/alerting for logging failures to detect BigQuery issues
-            # Metric: workflow_execution_logging_errors_total
+
+            # Track consecutive failures for alerting
+            WorkflowExecutor._logging_failure_count += 1
+
+            # Alert if we've had multiple consecutive failures (indicates systemic issue)
+            if WorkflowExecutor._logging_failure_count >= self._logging_failure_threshold:
+                try:
+                    notify_warning(
+                        title="Workflow Executor: BigQuery Logging Failures",
+                        message=f"Failed to log {WorkflowExecutor._logging_failure_count} consecutive workflow executions to BigQuery",
+                        details={
+                            'execution_id': execution.execution_id,
+                            'workflow_name': execution.workflow_name,
+                            'consecutive_failures': WorkflowExecutor._logging_failure_count,
+                            'error': str(e)[:500],
+                            'error_type': type(e).__name__
+                        }
+                    )
+                    # Reset after alerting to avoid alert spam
+                    WorkflowExecutor._logging_failure_count = 0
+                except Exception as notify_error:
+                    logger.error(f"Failed to send logging failure alert: {notify_error}")

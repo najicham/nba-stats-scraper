@@ -649,7 +649,6 @@ class MasterWorkflowController:
 
         # Check 1: Any early games today?
         # Early games = games starting before the cutoff hour (in ET)
-        et_tz = pytz.timezone('America/New_York')
         early_games = []
 
         for game in games_today:
@@ -662,10 +661,10 @@ class MasterWorkflowController:
                     # Format: "2025-12-25T17:00:00Z"
                     commence_time = dt.fromisoformat(commence_time.replace('Z', '+00:00'))
 
-                # Convert to ET
+                # Convert to ET using class-level timezone (self.ET)
                 if commence_time.tzinfo is None:
                     commence_time = pytz.utc.localize(commence_time)
-                game_time_et = commence_time.astimezone(et_tz)
+                game_time_et = commence_time.astimezone(self.ET)
                 game_hour = game_time_et.hour
 
                 if game_hour < early_game_cutoff_hour:
@@ -722,7 +721,7 @@ class MasterWorkflowController:
                         commence_time = dt.fromisoformat(commence_time.replace('Z', '+00:00'))
                     if commence_time.tzinfo is None:
                         commence_time = pytz.utc.localize(commence_time)
-                    game_start = commence_time.astimezone(et_tz)
+                    game_start = commence_time.astimezone(self.ET)
 
             if game_start:
                 hours_since_start = (current_time - game_start).total_seconds() / 3600

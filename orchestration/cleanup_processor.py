@@ -24,8 +24,12 @@ from google.cloud import pubsub_v1
 from shared.utils.bigquery_utils import execute_bigquery, insert_bigquery_rows
 from shared.utils.notification_system import notify_warning, notify_error
 from shared.config.pubsub_topics import TOPICS
+from orchestration.config_loader import WorkflowConfig
 
 logger = logging.getLogger(__name__)
+
+# Global config instance for cleanup settings
+_workflow_config = WorkflowConfig()
 
 
 class CleanupProcessor:
@@ -41,20 +45,45 @@ class CleanupProcessor:
     
     VERSION = "1.0"
     
+    # Default notification threshold if not configured
+    DEFAULT_NOTIFICATION_THRESHOLD = 5
+
     def __init__(self, lookback_hours: int = None, min_file_age_minutes: int = 30, project_id: str = None):
         """
         Initialize cleanup processor.
 
         Args:
-            lookback_hours: How far back to check for files (default: 4, or CLEANUP_LOOKBACK_HOURS env var)
+            lookback_hours: How far back to check for files (default: from config or 4 hours)
             min_file_age_minutes: Only process files older than this (avoid race conditions)
             project_id: GCP project ID for Pub/Sub publishing
         """
-        # Default to 4 hours lookback, with env var override
-        default_lookback = int(os.environ.get('CLEANUP_LOOKBACK_HOURS', '4'))
-        self.lookback_hours = lookback_hours if lookback_hours is not None else default_lookback
+        # Load settings from config
+        try:
+            settings = _workflow_config.get_settings()
+            cleanup_config = settings.get('cleanup_processor', {})
+        except Exception as e:
+            logger.warning(f"Failed to load cleanup config: {e}, using defaults")
+            cleanup_config = {}
+
+        # Lookback hours: parameter > env var > config > default
+        default_lookback = cleanup_config.get('lookback_hours', 4)
+        env_lookback = os.environ.get('CLEANUP_LOOKBACK_HOURS')
+        if lookback_hours is not None:
+            self.lookback_hours = lookback_hours
+        elif env_lookback:
+            self.lookback_hours = int(env_lookback)
+        else:
+            self.lookback_hours = default_lookback
+
         self.min_file_age_minutes = min_file_age_minutes
         self.ET = pytz.timezone('America/New_York')
+
+        # Notification threshold: how many files need cleanup before alerting
+        # This prevents noisy alerts for occasional missed files
+        self.notification_threshold = cleanup_config.get(
+            'notification_threshold',
+            self.DEFAULT_NOTIFICATION_THRESHOLD
+        )
 
         # Initialize Pub/Sub publisher for republishing missed files
         self.project_id = project_id or os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
@@ -116,17 +145,19 @@ class CleanupProcessor:
                 republished_count
             )
             
-            # Send notification if significant cleanup needed
-            if len(missing_files) >= 5:
+            # Send notification if significant cleanup needed (configurable threshold)
+            # This prevents noisy alerts for occasional missed files
+            if len(missing_files) >= self.notification_threshold:
                 try:
                     notify_warning(
                         title="Phase 1 Cleanup: Multiple Files Republished",
-                        message=f"Republished {republished_count} missed Pub/Sub messages",
+                        message=f"Republished {republished_count} missed Pub/Sub messages (threshold: {self.notification_threshold})",
                         details={
                             'cleanup_id': cleanup_id,
                             'files_checked': len(scraper_files),
                             'missing_files': len(missing_files),
                             'republished': republished_count,
+                            'notification_threshold': self.notification_threshold,
                             'scrapers_affected': list(set(f['scraper_name'] for f in missing_files))
                         }
                     )

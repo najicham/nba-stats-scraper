@@ -23,6 +23,11 @@ from datetime import datetime, timezone
 
 from google.cloud import bigquery
 from data_processors.raw.processor_base import ProcessorBase
+from shared.utils.notification_system import (
+    notify_error,
+    notify_warning,
+    notify_info
+)
 
 logger = logging.getLogger(__name__)
 
@@ -350,6 +355,18 @@ class BdlLiveBoxscoresProcessor(ProcessorBase):
 
         except Exception as e:
             logger.error(f"Error creating player row: {e}")
+            try:
+                notify_warning(
+                    title="BDL Live Boxscores Player Parse Error",
+                    message=f"Failed to parse player data: {str(e)}",
+                    details={
+                        'player_id': player.get('id', 'unknown') if player else 'unknown',
+                        'game_id': kwargs.get('game_id', 'unknown'),
+                        'error_type': type(e).__name__
+                    }
+                )
+            except Exception:
+                pass  # Don't fail on notification errors
             return None
 
     def save_data(self) -> None:
@@ -395,6 +412,20 @@ class BdlLiveBoxscoresProcessor(ProcessorBase):
 
         except Exception as e:
             logger.error(f"Error saving live boxscores: {e}")
+            try:
+                notify_error(
+                    title="BDL Live Boxscores Save Failed",
+                    message=f"Failed to save live boxscore data: {str(e)}",
+                    details={
+                        'table_id': table_id,
+                        'rows_attempted': len(rows),
+                        'games_affected': list(game_ids) if game_ids else [],
+                        'error_type': type(e).__name__
+                    },
+                    processor_name="BDL Live Boxscores Processor"
+                )
+            except Exception as notify_ex:
+                logger.warning(f"Failed to send notification: {notify_ex}")
             raise
 
     def get_processor_stats(self) -> Dict:

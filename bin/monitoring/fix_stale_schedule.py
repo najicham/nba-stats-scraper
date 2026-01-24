@@ -44,7 +44,7 @@ def find_stale_games(client: bigquery.Client) -> list:
     ORDER BY game_date DESC, time_slot
     """
     
-    results = list(client.query(query).result())
+    results = list(client.query(query).result(timeout=60))
     stale_games = []
     
     for row in results:
@@ -88,14 +88,20 @@ def fix_stale_games(client: bigquery.Client, stale_games: list, dry_run: bool = 
 
     total_updated = 0
     for gdate, gids in games_by_date.items():
-        game_ids_str = "', '".join(gids)
-        update_query = f"""
+        # Use parameterized query to prevent SQL injection
+        update_query = """
         UPDATE `nba_raw.nbac_schedule`
         SET game_status = 3, game_status_text = 'Final'
-        WHERE game_date = '{gdate}'
-          AND game_id IN ('{game_ids_str}')
+        WHERE game_date = @game_date
+          AND game_id IN UNNEST(@game_ids)
         """
-        client.query(update_query).result()
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", gdate),
+                bigquery.ArrayQueryParameter("game_ids", "STRING", gids),
+            ]
+        )
+        client.query(update_query, job_config=job_config).result(timeout=60)
         total_updated += len(gids)
         logger.info(f"  Updated {len(gids)} games for {gdate}")
 

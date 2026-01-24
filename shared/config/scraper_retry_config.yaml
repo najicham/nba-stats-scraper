@@ -221,6 +221,158 @@ scrapers:
       Enable catch-up if gap analysis shows persistent delays.
 
   # --------------------------------------------------------------------------
+  # ODDS API GAME LINES - Pre-game odds for spread/total
+  # --------------------------------------------------------------------------
+  oddsa_game_lines:
+    enabled: true
+    priority: HIGH
+
+    comparison:
+      source_table: "nba_raw.nbac_schedule"
+      target_table: "nba_raw.odds_api_game_lines"
+      join_keys:
+        - game_date
+      min_rows_per_game: 5  # At least a few bookmaker lines per game
+      filter: "game_status != 3"  # Pre-game only
+
+    retry_windows:
+      - time: "11:00"
+        name: "game_lines_catchup_morning"
+        description: "Morning odds check"
+      - time: "14:00"
+        name: "game_lines_catchup_afternoon"
+        description: "Afternoon odds retry"
+      - time: "17:00"
+        name: "game_lines_catchup_pregame"
+        description: "Pre-game final odds check"
+
+    lookback_days: 0  # Only today's games
+    lookahead_days: 1  # Check today and tomorrow
+
+    alerts:
+      max_missing_games: 1
+      severity_by_hours:
+        - hours: 2
+          severity: WARNING
+        - hours: 4
+          severity: ERROR
+
+    notes: |
+      Odds API game lines for spread/total betting.
+      Critical for prediction inputs.
+      Time-sensitive - lines change frequently.
+
+  # --------------------------------------------------------------------------
+  # BETTINGPROS PLAYER PROPS - High coverage fallback for Odds API
+  # --------------------------------------------------------------------------
+  bp_player_props:
+    enabled: true
+    priority: MEDIUM
+
+    comparison:
+      source_table: "nba_raw.nbac_schedule"
+      target_table: "nba_raw.bettingpros_player_props"
+      join_keys:
+        - game_date
+      min_rows_per_game: 30  # Multiple props per player
+      filter: "game_status != 3"
+
+    retry_windows:
+      - time: "10:00"
+        name: "bettingpros_catchup_morning"
+        description: "Morning props scrape"
+      - time: "15:00"
+        name: "bettingpros_catchup_afternoon"
+        description: "Afternoon props update"
+      - time: "18:00"
+        name: "bettingpros_catchup_pregame"
+        description: "Pre-game props final"
+
+    lookback_days: 0
+    lookahead_days: 1
+
+    alerts:
+      max_missing_games: 2
+      severity_by_hours:
+        - hours: 3
+          severity: INFO
+        - hours: 6
+          severity: WARNING
+
+    notes: |
+      BettingPros props - 99.7% coverage.
+      Primary fallback for Odds API props.
+      Scraping may be rate-limited.
+
+  # --------------------------------------------------------------------------
+  # ESPN BOXSCORES - Additional boxscore source
+  # --------------------------------------------------------------------------
+  espn_boxscore:
+    enabled: false  # Enable when monitoring shows ESPN gaps
+    priority: LOW
+
+    comparison:
+      source_table: "nba_raw.nbac_schedule"
+      target_table: "nba_raw.espn_boxscore"
+      join_keys:
+        - game_date
+      min_rows_per_game: 20
+      filter: "game_status = 3"
+
+    retry_windows:
+      - time: "09:00"
+        name: "espn_catchup_morning"
+        description: "Morning ESPN retry"
+
+    lookback_days: 2
+
+    alerts:
+      max_missing_games: 3
+      severity_by_hours:
+        - hours: 24
+          severity: INFO
+
+    notes: |
+      ESPN boxscores - supplementary source.
+      NBAC gamebook is primary, BDL is secondary.
+      Enable if ESPN data is critical for specific metrics.
+
+  # --------------------------------------------------------------------------
+  # ESPN ROSTERS - Team roster updates
+  # --------------------------------------------------------------------------
+  espn_roster:
+    enabled: true
+    priority: MEDIUM
+
+    comparison:
+      # No direct game comparison - roster is team-level
+      source_table: null
+      target_table: "nba_raw.espn_team_roster"
+      # Check for roster freshness instead of game coverage
+      freshness_check: true
+      max_staleness_hours: 24
+
+    retry_windows:
+      - time: "07:00"
+        name: "roster_catchup_morning"
+        description: "Morning roster refresh"
+
+    lookback_days: 1
+
+    alerts:
+      max_stale_teams: 5
+      severity_by_hours:
+        - hours: 24
+          severity: INFO
+        - hours: 48
+          severity: WARNING
+
+    notes: |
+      ESPN roster data for player-team associations.
+      Important for trade deadline, injury updates.
+      BR rosters is the fallback source.
+
+  # --------------------------------------------------------------------------
   # PBPSTATS - Library-dependent, provider fallback sequence
   # --------------------------------------------------------------------------
   pbpstats_boxscore:
@@ -352,6 +504,80 @@ completeness_queries:
                           AND s.home_team_tricode = g.home_team_abbr
     WHERE g.player_count IS NULL OR g.player_count = 0
     ORDER BY s.game_date DESC
+
+  oddsa_game_lines: |
+    WITH schedule AS (
+      SELECT game_date, COUNT(*) AS expected_games
+      FROM nba_raw.nbac_schedule
+      WHERE game_date BETWEEN CURRENT_DATE()
+                          AND DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY)
+        AND season_year = CASE
+            WHEN EXTRACT(MONTH FROM CURRENT_DATE()) >= 10
+            THEN EXTRACT(YEAR FROM CURRENT_DATE())
+            ELSE EXTRACT(YEAR FROM CURRENT_DATE()) - 1
+          END
+        AND game_status != 3  -- Pre-game only
+      GROUP BY game_date
+    ),
+    lines AS (
+      SELECT game_date, COUNT(DISTINCT game_id) AS games_with_lines
+      FROM nba_raw.odds_api_game_lines
+      WHERE game_date >= CURRENT_DATE()
+      GROUP BY game_date
+    )
+    SELECT s.game_date, s.expected_games, COALESCE(l.games_with_lines, 0) AS games_with_lines,
+           s.expected_games - COALESCE(l.games_with_lines, 0) AS missing_games
+    FROM schedule s
+    LEFT JOIN lines l ON s.game_date = l.game_date
+    WHERE COALESCE(l.games_with_lines, 0) < s.expected_games
+    ORDER BY s.game_date
+
+  bp_player_props: |
+    WITH schedule AS (
+      SELECT game_date, COUNT(*) AS expected_games
+      FROM nba_raw.nbac_schedule
+      WHERE game_date BETWEEN CURRENT_DATE()
+                          AND DATE_ADD(CURRENT_DATE(), INTERVAL 1 DAY)
+        AND season_year = CASE
+            WHEN EXTRACT(MONTH FROM CURRENT_DATE()) >= 10
+            THEN EXTRACT(YEAR FROM CURRENT_DATE())
+            ELSE EXTRACT(YEAR FROM CURRENT_DATE()) - 1
+          END
+        AND game_status != 3
+      GROUP BY game_date
+    ),
+    props AS (
+      SELECT game_date, COUNT(DISTINCT game_id) AS games_with_props
+      FROM nba_raw.bettingpros_player_props
+      WHERE game_date >= CURRENT_DATE()
+      GROUP BY game_date
+    )
+    SELECT s.game_date, s.expected_games, COALESCE(p.games_with_props, 0) AS games_with_props,
+           s.expected_games - COALESCE(p.games_with_props, 0) AS missing_games
+    FROM schedule s
+    LEFT JOIN props p ON s.game_date = p.game_date
+    WHERE COALESCE(p.games_with_props, 0) < s.expected_games
+    ORDER BY s.game_date
+
+  espn_roster: |
+    WITH teams AS (
+      SELECT DISTINCT team_abbr
+      FROM nba_reference.teams
+      WHERE is_active = true
+    ),
+    roster_freshness AS (
+      SELECT team_abbr, MAX(processed_at) AS last_updated
+      FROM nba_raw.espn_team_roster
+      GROUP BY team_abbr
+    )
+    SELECT t.team_abbr,
+           r.last_updated,
+           TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), r.last_updated, HOUR) AS hours_stale
+    FROM teams t
+    LEFT JOIN roster_freshness r ON t.team_abbr = r.team_abbr
+    WHERE r.last_updated IS NULL
+       OR TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), r.last_updated, HOUR) > 24
+    ORDER BY hours_stale DESC NULLS FIRST
 
 # ============================================================================
 # DEPLOYMENT NOTES

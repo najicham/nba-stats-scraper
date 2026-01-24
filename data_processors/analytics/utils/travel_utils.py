@@ -150,25 +150,91 @@ class NBATravel:
     def get_travel_last_n_days(self, team_abbr: str, current_date: datetime, days: int = 14) -> Dict:
         """
         Calculate travel metrics for last N days (for fatigue analysis)
-        
-        This is a placeholder - you'll need to integrate with your game schedule data
-        
+
+        Queries the schedule to get actual game locations and calculates
+        cumulative travel distance and timezone changes.
+
         Args:
             team_abbr: Team abbreviation
-            current_date: Current date  
+            current_date: Current date
             days: Number of days to look back
-            
+
         Returns:
-            Dict with miles_traveled, time_zones_crossed, jet_lag_factor
+            Dict with miles_traveled, time_zones_crossed, jet_lag_factor, games_played
         """
-        # TODO: Integrate with your game schedule data to get actual game locations
-        # For now, return placeholder structure
-        return {
-            'miles_traveled_last_14_days': 0,
-            'time_zones_crossed_last_14_days': 0,
-            'jet_lag_factor_last_14_days': 0.0,
-            'games_played_last_14_days': 0
+        start_date = current_date - timedelta(days=days)
+
+        # Query schedule for team's recent games
+        query = f"""
+        WITH team_games AS (
+            SELECT
+                game_date,
+                CASE
+                    WHEN home_team_tricode = @team_abbr THEN home_team_tricode
+                    ELSE away_team_tricode
+                END AS playing_as,
+                CASE
+                    WHEN home_team_tricode = @team_abbr THEN 'HOME'
+                    ELSE 'AWAY'
+                END AS home_away,
+                home_team_tricode AS game_location
+            FROM `{self.project_id}.nba_raw.nbac_schedule`
+            WHERE (home_team_tricode = @team_abbr OR away_team_tricode = @team_abbr)
+              AND game_date BETWEEN @start_date AND @end_date
+              AND game_status = 3  -- Completed games only
+            ORDER BY game_date
+        )
+        SELECT
+            game_date,
+            home_away,
+            game_location,
+            LAG(game_location) OVER (ORDER BY game_date) AS prev_game_location
+        FROM team_games
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("team_abbr", "STRING", team_abbr),
+                bigquery.ScalarQueryParameter("start_date", "DATE", start_date.strftime('%Y-%m-%d')),
+                bigquery.ScalarQueryParameter("end_date", "DATE", current_date.strftime('%Y-%m-%d'))
+            ]
+        )
+
+        result = {
+            f'miles_traveled_last_{days}_days': 0,
+            f'time_zones_crossed_last_{days}_days': 0,
+            f'jet_lag_factor_last_{days}_days': 0.0,
+            f'games_played_last_{days}_days': 0
         }
+
+        try:
+            df = self.client.query(query, job_config=job_config).to_dataframe()
+
+            if df.empty:
+                return result
+
+            result[f'games_played_last_{days}_days'] = len(df)
+
+            total_miles = 0
+            total_tz_crossed = 0
+            total_jet_lag = 0.0
+
+            for _, row in df.iterrows():
+                if pd.notna(row['prev_game_location']) and row['prev_game_location'] != row['game_location']:
+                    travel = self.get_travel_distance(row['prev_game_location'], row['game_location'])
+                    if travel:
+                        total_miles += travel['distance_miles']
+                        total_tz_crossed += abs(travel['time_zones_crossed'])
+                        total_jet_lag += travel['jet_lag_factor']
+
+            result[f'miles_traveled_last_{days}_days'] = total_miles
+            result[f'time_zones_crossed_last_{days}_days'] = total_tz_crossed
+            result[f'jet_lag_factor_last_{days}_days'] = round(total_jet_lag, 2)
+
+        except Exception as e:
+            logger.warning(f"Error calculating travel for {team_abbr} over last {days} days: {e}")
+
+        return result
     
     def estimate_international_distance(self, from_team: str, international_city: str) -> int:
         """
