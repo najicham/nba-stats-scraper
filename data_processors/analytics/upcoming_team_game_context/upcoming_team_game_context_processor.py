@@ -306,11 +306,34 @@ class UpcomingTeamGameContextProcessor(
                 'critical': False  # Can process without injury data
             }
         }
-    
+
+    def get_upstream_data_check_query(self, start_date: str, end_date: str) -> Optional[str]:
+        """
+        Check if upstream data is available for circuit breaker auto-reset.
+
+        For upcoming games, verifies:
+        1. Schedule data exists for the target date range
+        2. There are scheduled games to process
+
+        Args:
+            start_date: Start of date range (YYYY-MM-DD)
+            end_date: End of date range (YYYY-MM-DD)
+
+        Returns:
+            SQL query that returns {data_available: boolean}
+        """
+        return f"""
+        SELECT
+            COUNT(*) > 0 AS data_available
+        FROM `nba_raw.nbac_schedule`
+        WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+          AND game_status IN (1, 2)  -- Scheduled or In Progress
+        """
+
     # ========================================================================
     # DATA EXTRACTION
     # ========================================================================
-    
+
     def extract_raw_data(self) -> None:
         """
         Extract data from Phase 2 sources with full dependency checking.

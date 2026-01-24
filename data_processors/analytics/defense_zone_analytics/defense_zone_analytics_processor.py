@@ -252,6 +252,33 @@ class DefenseZoneAnalyticsProcessor(
             }
         }
 
+    def get_upstream_data_check_query(self, start_date: str, end_date: str) -> Optional[str]:
+        """
+        Check if upstream data is available for circuit breaker auto-reset.
+
+        Verifies:
+        1. Games are finished (game_status >= 3)
+        2. Team boxscore data exists
+
+        Args:
+            start_date: Start of date range (YYYY-MM-DD)
+            end_date: End of date range (YYYY-MM-DD)
+
+        Returns:
+            SQL query that returns {data_available: boolean}
+        """
+        return f"""
+        SELECT
+            COUNTIF(
+                schedule.game_status >= 3  -- Final only
+                AND team_box.game_id IS NOT NULL
+            ) > 0 AS data_available
+        FROM `nba_raw.nbac_schedule` AS schedule
+        LEFT JOIN `nba_raw.nbac_team_boxscore` AS team_box
+            ON schedule.game_id = team_box.game_id
+        WHERE schedule.game_date BETWEEN '{start_date}' AND '{end_date}'
+        """
+
     def extract_raw_data(self) -> None:
         """
         Extract data from all Phase 2 raw sources.
