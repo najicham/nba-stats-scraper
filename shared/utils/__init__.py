@@ -28,6 +28,17 @@ from .env_validation import (
     MissingEnvironmentVariablesError
 )
 
+# Prometheus metrics utilities
+from .prometheus_metrics import (
+    PrometheusMetrics,
+    create_metrics_blueprint,
+    setup_prometheus_metrics,
+    MetricsMiddleware,
+    Counter,
+    Gauge,
+    Histogram
+)
+
 
 __all__ = [
     "BigQueryClient",
@@ -49,5 +60,13 @@ __all__ = [
     # Environment validation
     "validate_required_env_vars",
     "get_required_env_var",
-    "MissingEnvironmentVariablesError"
+    "MissingEnvironmentVariablesError",
+    # Prometheus metrics
+    "PrometheusMetrics",
+    "create_metrics_blueprint",
+    "setup_prometheus_metrics",
+    "MetricsMiddleware",
+    "Counter",
+    "Gauge",
+    "Histogram",
 ]
