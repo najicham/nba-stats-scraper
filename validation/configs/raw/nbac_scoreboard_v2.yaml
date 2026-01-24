@@ -1,0 +1,153 @@
+# File: validation/configs/raw/nbac_scoreboard_v2.yaml
+# Description: NBA.com Scoreboard V2 Validation Config
+
+processor:
+  name: "nbac_scoreboard_v2"
+  description: "Validates NBA.com scoreboard v2 data (live scores and game status)"
+  table: "nba_raw.nbac_scoreboard_v2"
+  partition_required: true
+  partition_field: "game_date"
+  layers:
+    - bigquery
+    - schedule
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  field_validation:
+    target_table: "nba_raw.nbac_scoreboard_v2"
+
+    required_not_null:
+      - game_id
+      - game_date
+      - game_status
+      - home_team_id
+      - away_team_id
+
+    value_ranges:
+      - field: home_team_score
+        min: 0
+        max: 200
+        severity: "warning"
+
+      - field: away_team_score
+        min: 0
+        max: 200
+        severity: "warning"
+
+      - field: period
+        min: 0
+        max: 10
+        severity: "warning"
+
+    allowed_values:
+      - field: game_status
+        values: [1, 2, 3]  # 1=Scheduled, 2=In Progress, 3=Final
+        severity: "error"
+
+  # Compare with schedule
+  schedule_match:
+    enabled: true
+    query: |
+      WITH scoreboard AS (
+        SELECT
+          game_id,
+          game_date,
+          home_team_id,
+          away_team_id
+        FROM `{project_id}.nba_raw.nbac_scoreboard_v2`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+      ),
+      schedule AS (
+        SELECT
+          game_id,
+          game_date,
+          home_team_id,
+          away_team_id
+        FROM `{project_id}.nba_raw.nbac_schedule`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+      )
+      SELECT
+        COALESCE(s.game_id, sb.game_id) as game_id,
+        COALESCE(s.game_date, sb.game_date) as game_date,
+        CASE
+          WHEN s.game_id IS NULL THEN 'in_scoreboard_not_schedule'
+          WHEN sb.game_id IS NULL THEN 'in_schedule_not_scoreboard'
+          ELSE 'mismatch'
+        END as issue_type
+      FROM schedule s
+      FULL OUTER JOIN scoreboard sb
+        ON s.game_id = sb.game_id
+      WHERE s.game_id IS NULL OR sb.game_id IS NULL
+    severity: "warning"
+    message: "Scoreboard/schedule mismatch"
+
+  # Final game score validation
+  final_scores:
+    enabled: true
+    query: |
+      SELECT
+        game_id,
+        game_date,
+        home_team_score,
+        away_team_score,
+        home_team_score + away_team_score as total_score
+      FROM `{project_id}.nba_raw.nbac_scoreboard_v2`
+      WHERE game_date >= '{start_date}'
+        AND game_date <= '{end_date}'
+        AND game_status = 3
+        AND (home_team_score + away_team_score < 150
+             OR home_team_score + away_team_score > 350)
+    severity: "warning"
+    message: "Unusual total game score"
+
+  # Status progression validation
+  status_progression:
+    enabled: true
+    query: |
+      WITH latest AS (
+        SELECT
+          game_id,
+          game_date,
+          game_status,
+          ROW_NUMBER() OVER (PARTITION BY game_id ORDER BY processed_at DESC) as rn
+        FROM `{project_id}.nba_raw.nbac_scoreboard_v2`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+      )
+      SELECT
+        game_id,
+        game_date,
+        game_status
+      FROM latest
+      WHERE rn = 1
+        AND game_date < CURRENT_DATE()
+        AND game_status != 3
+    severity: "warning"
+    message: "Past games should have Final status"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  data_freshness:
+    target_table: "nba_raw.nbac_scoreboard_v2"
+    timestamp_field: "processed_at"
+    max_age_hours: 6
+    severity: "warning"
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute nbac-scoreboard-processor \
+      --args=--date={date} \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

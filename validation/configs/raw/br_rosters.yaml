@@ -1,0 +1,108 @@
+# File: validation/configs/raw/br_rosters.yaml
+# Description: Basketball Reference Rosters Validation Config
+
+processor:
+  name: "br_rosters"
+  description: "Validates Basketball Reference roster data"
+  table: "nba_raw.br_season_rosters"
+  partition_required: false
+  layers:
+    - bigquery
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  field_validation:
+    target_table: "nba_raw.br_season_rosters"
+
+    required_not_null:
+      - player_lookup
+      - team_abbr
+      - season_year
+      - player_name
+
+    value_ranges:
+      - field: jersey_number
+        min: 0
+        max: 99
+        severity: "warning"
+        message: "Invalid jersey number"
+
+      - field: experience_years
+        min: 0
+        max: 25
+        severity: "warning"
+        message: "Unusual experience years"
+
+  # All 30 teams present for current season
+  team_coverage:
+    enabled: true
+    query: |
+      SELECT COUNT(DISTINCT team_abbr) as team_count
+      FROM `{project_id}.nba_raw.br_season_rosters`
+      WHERE season_year = {season_year}
+    expected_teams: 30
+    severity: "error"
+    message: "Not all 30 teams have roster data"
+
+  # Player count per team (12-20 expected)
+  roster_size:
+    enabled: true
+    query: |
+      SELECT
+        team_abbr,
+        COUNT(*) as player_count
+      FROM `{project_id}.nba_raw.br_season_rosters`
+      WHERE season_year = {season_year}
+      GROUP BY team_abbr
+      HAVING player_count < 12 OR player_count > 20
+    min_players: 12
+    max_players: 20
+    severity: "warning"
+    message: "Unusual roster size"
+
+  # Cross-validate with BDL active players
+  cross_source_validation:
+    enabled: true
+    query: |
+      WITH br_players AS (
+        SELECT DISTINCT player_lookup
+        FROM `{project_id}.nba_raw.br_season_rosters`
+        WHERE season_year = {season_year}
+      ),
+      bdl_players AS (
+        SELECT DISTINCT player_lookup
+        FROM `{project_id}.nba_raw.bdl_active_players`
+        WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+      )
+      SELECT COUNT(*) as missing_count
+      FROM br_players br
+      LEFT JOIN bdl_players bdl ON br.player_lookup = bdl.player_lookup
+      WHERE bdl.player_lookup IS NULL
+    max_missing: 50
+    severity: "warning"
+    message: "Some BR players not found in BDL"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  data_freshness:
+    target_table: "nba_raw.br_season_rosters"
+    timestamp_field: "processed_at"
+    max_age_hours: 168  # 7 days - BR rosters don't update frequently
+    severity: "warning"
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute br-roster-processor \
+      --args=--season-year={season_year} \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

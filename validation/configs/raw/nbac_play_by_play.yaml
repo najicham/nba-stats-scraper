@@ -1,0 +1,136 @@
+# File: validation/configs/raw/nbac_play_by_play.yaml
+# Description: NBA.com Play-by-Play Validation Config
+
+processor:
+  name: "nbac_play_by_play"
+  description: "Validates NBA.com official play-by-play data"
+  table: "nba_raw.nbac_play_by_play"
+  partition_required: true
+  partition_field: "game_date"
+  layers:
+    - gcs
+    - bigquery
+    - schedule
+
+# GCS Layer Validations
+gcs_validations:
+  enabled: true
+
+  file_presence:
+    bucket: "nba-scraped-data"
+    path_pattern: "nbacom/pbp/{date}/*.json"
+    severity: "error"
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  # Compare against schedule
+  completeness:
+    target_table: "nba_raw.nbac_play_by_play"
+    reference_table: "nba_raw.nbac_schedule"
+    match_field: "game_id"
+    reference_filter: "game_status = 3"
+    severity: "warning"
+
+  field_validation:
+    target_table: "nba_raw.nbac_play_by_play"
+
+    required_not_null:
+      - game_id
+      - game_date
+      - play_id
+      - period
+      - clock
+      - action_type
+
+    value_ranges:
+      - field: period
+        min: 1
+        max: 10
+        severity: "warning"
+
+      - field: score_home
+        min: 0
+        max: 200
+        severity: "warning"
+
+      - field: score_away
+        min: 0
+        max: 200
+        severity: "warning"
+
+  # Play count validation
+  play_count:
+    enabled: true
+    query: |
+      WITH game_plays AS (
+        SELECT
+          game_id,
+          game_date,
+          COUNT(*) as play_count
+        FROM `{project_id}.nba_raw.nbac_play_by_play`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+        GROUP BY game_id, game_date
+      )
+      SELECT game_id, game_date, play_count
+      FROM game_plays
+      WHERE play_count < 200 OR play_count > 700
+    severity: "warning"
+    message: "Unusual play count per game"
+
+  # Scoring events validation
+  scoring_validation:
+    enabled: true
+    query: |
+      WITH final_plays AS (
+        SELECT
+          game_id,
+          game_date,
+          MAX(score_home) as final_home,
+          MAX(score_away) as final_away
+        FROM `{project_id}.nba_raw.nbac_play_by_play`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+        GROUP BY game_id, game_date
+      ),
+      schedule AS (
+        SELECT game_id, home_team_score, away_team_score
+        FROM `{project_id}.nba_raw.nbac_schedule`
+        WHERE game_status = 3
+      )
+      SELECT
+        p.game_id,
+        p.game_date,
+        p.final_home,
+        s.home_team_score,
+        ABS(p.final_home - s.home_team_score) as diff
+      FROM final_plays p
+      JOIN schedule s ON p.game_id = s.game_id
+      WHERE ABS(p.final_home - s.home_team_score) > 2
+    severity: "error"
+    message: "PBP final score doesn't match schedule"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  data_freshness:
+    target_table: "nba_raw.nbac_play_by_play"
+    timestamp_field: "processed_at"
+    max_age_hours: 48
+    severity: "warning"
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute nbac-pbp-processor \
+      --args=--start-date={start_date},--end-date={end_date} \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

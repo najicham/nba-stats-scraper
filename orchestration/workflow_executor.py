@@ -28,6 +28,7 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from orchestration.parameter_resolver import ParameterResolver
+from orchestration.config_loader import WorkflowConfig
 from shared.utils.bigquery_utils import execute_bigquery, insert_bigquery_rows
 from orchestration.shared.utils.circuit_breaker import (
     CircuitBreakerManager,
@@ -37,6 +38,9 @@ from orchestration.shared.utils.circuit_breaker import (
 from shared.clients.http_pool import get_http_session
 
 logger = logging.getLogger(__name__)
+
+# Global config instance for timeout settings
+_workflow_config = WorkflowConfig()
 
 
 @dataclass
@@ -111,13 +115,11 @@ class WorkflowExecutor:
     # Service URL for calling scrapers
     # Default to localhost for same-service calls, override via env var
     SERVICE_URL = os.getenv("SERVICE_URL", "http://localhost:8080")
-    
-    # Timeout for scraper HTTP calls (3 minutes)
-    SCRAPER_TIMEOUT = 180
 
-    # Future timeout for parallel execution (slightly higher than HTTP timeout for overhead)
-    FUTURE_TIMEOUT = SCRAPER_TIMEOUT + 10  # 190 seconds
-    
+    # Default timeouts (can be overridden via config/workflows.yaml settings.scraper_timeouts)
+    DEFAULT_SCRAPER_TIMEOUT = 180  # 3 minutes
+    DEFAULT_FUTURE_OVERHEAD = 10   # Extra time for ThreadPoolExecutor overhead
+
     def __init__(self):
         """Initialize executor with parameter resolver."""
         self.parameter_resolver = ParameterResolver()
@@ -138,6 +140,60 @@ class WorkflowExecutor:
         else:
             self.circuit_breaker_manager = None
             logger.warning("⚠️  Circuit breaker DISABLED")
+
+    def _get_scraper_timeout(self, scraper_name: str) -> int:
+        """
+        Get the timeout for a specific scraper from config.
+
+        Checks in order:
+        1. Per-scraper override in settings.scraper_timeouts.overrides
+        2. Default timeout in settings.scraper_timeouts.default
+        3. Class default (DEFAULT_SCRAPER_TIMEOUT)
+
+        Args:
+            scraper_name: Name of the scraper
+
+        Returns:
+            Timeout in seconds
+        """
+        try:
+            settings = _workflow_config.get_settings()
+            timeout_config = settings.get('scraper_timeouts', {})
+
+            # Check for per-scraper override
+            overrides = timeout_config.get('overrides', {})
+            if scraper_name in overrides:
+                return overrides[scraper_name]
+
+            # Use default from config or class default
+            return timeout_config.get('default', self.DEFAULT_SCRAPER_TIMEOUT)
+
+        except Exception as e:
+            logger.warning(f"Failed to load timeout config: {e}, using default")
+            return self.DEFAULT_SCRAPER_TIMEOUT
+
+    def _get_future_timeout(self, scraper_name: str) -> int:
+        """
+        Get the future timeout for parallel execution.
+
+        This is the scraper timeout plus overhead for ThreadPoolExecutor.
+
+        Args:
+            scraper_name: Name of the scraper
+
+        Returns:
+            Future timeout in seconds
+        """
+        scraper_timeout = self._get_scraper_timeout(scraper_name)
+
+        try:
+            settings = _workflow_config.get_settings()
+            timeout_config = settings.get('scraper_timeouts', {})
+            overhead = timeout_config.get('future_overhead', self.DEFAULT_FUTURE_OVERHEAD)
+        except Exception:
+            overhead = self.DEFAULT_FUTURE_OVERHEAD
+
+        return scraper_timeout + overhead
 
     @staticmethod
     def _calculate_jittered_backoff(attempt: int, base_delay: float = 1.0, max_delay: float = 30.0) -> float:
@@ -445,15 +501,16 @@ class WorkflowExecutor:
                 # Collect results as they complete
                 for future in as_completed(futures):
                     scraper_name = futures[future]
+                    future_timeout = self._get_future_timeout(scraper_name)
                     try:
-                        results = future.result(timeout=self.FUTURE_TIMEOUT)  # Aligned with HTTP timeout
+                        results = future.result(timeout=future_timeout)  # Configurable per-scraper timeout
                         scraper_executions.extend(results)
                     except TimeoutError:
-                        logger.error(f"⏱️ Scraper {scraper_name} timed out after {self.FUTURE_TIMEOUT}s")
+                        logger.error(f"⏱️ Scraper {scraper_name} timed out after {future_timeout}s")
                         scraper_executions.append(ScraperExecution(
                             scraper_name=scraper_name,
                             status='failed',
-                            error_message=f'Timeout after {self.FUTURE_TIMEOUT}s'
+                            error_message=f'Timeout after {future_timeout}s'
                         ))
                     except Exception as e:
                         logger.error(f"❌ Failed to get result from {scraper_name}: {e}")

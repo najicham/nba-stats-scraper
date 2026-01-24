@@ -1,0 +1,98 @@
+# File: validation/configs/raw/bdl_active_players.yaml
+# Description: Ball Don't Lie Active Players Validation Config
+
+processor:
+  name: "bdl_active_players"
+  description: "Validates Ball Don't Lie active players roster data"
+  table: "nba_raw.bdl_active_players"
+  partition_required: false
+  layers:
+    - bigquery
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  field_validation:
+    target_table: "nba_raw.bdl_active_players"
+
+    required_not_null:
+      - player_id
+      - player_lookup
+      - team_id
+      - first_name
+      - last_name
+
+    value_ranges:
+      - field: height_inches
+        min: 60
+        max: 96
+        severity: "warning"
+        message: "Unusual player height"
+
+      - field: weight_pounds
+        min: 150
+        max: 400
+        severity: "warning"
+        message: "Unusual player weight"
+
+  # Team coverage validation
+  team_coverage:
+    enabled: true
+    query: |
+      SELECT COUNT(DISTINCT team_id) as team_count
+      FROM `{project_id}.nba_raw.bdl_active_players`
+      WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+    expected_teams: 30
+    severity: "error"
+    message: "Not all 30 teams represented"
+
+  # Player count per team (should be 12-20 players per team)
+  player_per_team:
+    enabled: true
+    query: |
+      SELECT
+        team_id,
+        team_name,
+        COUNT(*) as player_count
+      FROM `{project_id}.nba_raw.bdl_active_players`
+      WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+      GROUP BY team_id, team_name
+      HAVING player_count < 12 OR player_count > 20
+    min_players_per_team: 12
+    max_players_per_team: 20
+    severity: "warning"
+    message: "Unusual roster size"
+
+  # Total player count (should be ~450-500 active players)
+  total_players:
+    enabled: true
+    query: |
+      SELECT COUNT(DISTINCT player_id) as total_players
+      FROM `{project_id}.nba_raw.bdl_active_players`
+      WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+    min_total_players: 400
+    max_total_players: 550
+    severity: "warning"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  data_freshness:
+    target_table: "nba_raw.bdl_active_players"
+    timestamp_field: "processed_at"
+    max_age_hours: 48
+    severity: "warning"
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute bdl-active-players-processor \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

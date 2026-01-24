@@ -620,8 +620,21 @@ settings:
   cleanup_processor:
     enabled: true
     interval_minutes: 15
-    lookback_hours: 1
+    lookback_hours: 4  # Extended from 1 hour to catch delayed files
     min_file_age_minutes: 30
+    notification_threshold: 5  # Alert if >= 5 files need cleanup in a single run
+
+  # Scraper execution timeouts (in seconds)
+  # These can be overridden per-scraper in the scrapers section
+  scraper_timeouts:
+    default: 180          # Default timeout for all scrapers (3 minutes)
+    future_overhead: 10   # Extra time for ThreadPoolExecutor overhead
+    # Per-scraper overrides (use scraper name as key)
+    overrides:
+      espn_roster: 240       # ESPN roster takes longer (30 teams)
+      br_season_roster: 180  # BR season roster - many teams
+      oddsa_player_props: 180  # Props can be slow
+      bigdataball_pbp: 120   # Play-by-play is faster
   
   monitoring:
     enable_bigquery_logging: true

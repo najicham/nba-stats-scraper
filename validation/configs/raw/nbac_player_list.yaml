@@ -1,0 +1,113 @@
+# File: validation/configs/raw/nbac_player_list.yaml
+# Description: NBA.com Player List Validation Config - Critical for player identity
+
+processor:
+  name: "nbac_player_list"
+  description: "Validates NBA.com player list (official roster)"
+  table: "nba_raw.nbac_player_list"
+  partition_required: false
+  layers:
+    - bigquery
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  field_validation:
+    target_table: "nba_raw.nbac_player_list"
+
+    required_not_null:
+      - player_id
+      - player_lookup
+      - team_id
+      - first_name
+      - last_name
+
+    value_ranges:
+      - field: jersey
+        min: 0
+        max: 99
+        severity: "warning"
+
+      - field: height_inches
+        min: 60
+        max: 96
+        severity: "warning"
+
+      - field: weight_lbs
+        min: 150
+        max: 400
+        severity: "warning"
+
+  # All 30 teams present
+  team_coverage:
+    enabled: true
+    query: |
+      SELECT COUNT(DISTINCT team_id) as team_count
+      FROM `{project_id}.nba_raw.nbac_player_list`
+      WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+    expected_teams: 30
+    severity: "error"
+    message: "Not all 30 teams in player list"
+
+  # Total player count
+  total_players:
+    enabled: true
+    query: |
+      SELECT COUNT(DISTINCT player_id) as player_count
+      FROM `{project_id}.nba_raw.nbac_player_list`
+      WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+    min_players: 400
+    max_players: 600
+    severity: "warning"
+
+  # Players per team
+  players_per_team:
+    enabled: true
+    query: |
+      SELECT
+        team_id,
+        team_abbreviation,
+        COUNT(*) as player_count
+      FROM `{project_id}.nba_raw.nbac_player_list`
+      WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+      GROUP BY team_id, team_abbreviation
+      HAVING player_count < 12 OR player_count > 20
+    severity: "warning"
+    message: "Unusual roster size"
+
+  # Duplicate player IDs (should be 0)
+  duplicate_players:
+    enabled: true
+    query: |
+      SELECT
+        player_id,
+        COUNT(*) as count
+      FROM `{project_id}.nba_raw.nbac_player_list`
+      WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+      GROUP BY player_id
+      HAVING COUNT(*) > 1
+    severity: "error"
+    message: "Duplicate player IDs found"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  data_freshness:
+    target_table: "nba_raw.nbac_player_list"
+    timestamp_field: "processed_at"
+    max_age_hours: 48
+    severity: "warning"
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute nbac-player-list-processor \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

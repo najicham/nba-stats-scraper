@@ -1,0 +1,83 @@
+# File: validation/configs/raw/bdl_injuries.yaml
+# Description: Ball Don't Lie Injuries Validation Config
+
+processor:
+  name: "bdl_injuries"
+  description: "Validates Ball Don't Lie injury report data"
+  table: "nba_raw.bdl_injuries"
+  partition_required: false
+  layers:
+    - bigquery
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  field_validation:
+    target_table: "nba_raw.bdl_injuries"
+
+    required_not_null:
+      - player_id
+      - player_lookup
+      - team_id
+      - status
+
+    # Valid injury statuses
+    allowed_values:
+      - field: status
+        values: ["Out", "Doubtful", "Questionable", "Probable", "Day-To-Day", "Available"]
+        severity: "warning"
+
+  # Cross-validate with active players
+  player_exists:
+    enabled: true
+    query: |
+      SELECT
+        i.player_id,
+        i.player_lookup,
+        i.team_id
+      FROM `{project_id}.nba_raw.bdl_injuries` i
+      LEFT JOIN `{project_id}.nba_raw.bdl_active_players` p
+        ON i.player_id = p.player_id
+      WHERE i.processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+        AND p.player_id IS NULL
+      LIMIT 20
+    severity: "warning"
+    message: "Injured player not found in active roster"
+
+  # Injury status distribution (sanity check)
+  status_distribution:
+    enabled: true
+    query: |
+      SELECT
+        status,
+        COUNT(*) as count,
+        ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 2) as percentage
+      FROM `{project_id}.nba_raw.bdl_injuries`
+      WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+      GROUP BY status
+      ORDER BY count DESC
+    severity: "info"
+    message: "Injury status distribution"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  data_freshness:
+    target_table: "nba_raw.bdl_injuries"
+    timestamp_field: "processed_at"
+    max_age_hours: 24
+    severity: "warning"
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute bdl-injuries-processor \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

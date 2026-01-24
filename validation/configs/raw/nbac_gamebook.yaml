@@ -1,0 +1,213 @@
+# File: validation/configs/raw/nbac_gamebook.yaml
+# Description: NBA.com Gamebook Validation Config - Box scores with DNP/inactive players
+# Created: 2026-01-24 (Jan 24 Session improvements)
+
+name: "nbac_gamebook"
+description: "Validates NBA.com gamebook data - critical for player game stats and availability"
+type: "raw"
+
+processor:
+  name: "nbac_gamebook_player_stats"
+  description: "Processes NBA.com gamebook PDFs into BigQuery"
+  table: "nba_raw.nbac_gamebook_player_stats"
+  partition_required: true
+  partition_field: "game_date"
+  layers:
+    - bigquery
+    - schedule
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  # Basic data presence check
+  data_presence:
+    enabled: true
+    query: |
+      SELECT
+        game_date,
+        COUNT(DISTINCT game_id) as game_count,
+        COUNT(*) as total_records,
+        COUNTIF(player_status = 'active') as active_records,
+        COUNTIF(player_status IN ('inactive', 'dnp')) as roster_records
+      FROM `{project_id}.nba_raw.nbac_gamebook_player_stats`
+      WHERE game_date >= '{start_date}'
+        AND game_date <= '{end_date}'
+      GROUP BY game_date
+      ORDER BY game_date
+    severity: "warning"
+    message: "Checking gamebook data presence"
+
+  # R-009: Active player count per game (CRITICAL)
+  # Games with 0 active players indicate incomplete gamebook data
+  active_players_per_game:
+    enabled: true
+    query: |
+      SELECT
+        game_id,
+        game_date,
+        COUNTIF(player_status = 'active') as active_count,
+        COUNTIF(player_status IN ('inactive', 'dnp')) as roster_count,
+        COUNT(*) as total_count
+      FROM `{project_id}.nba_raw.nbac_gamebook_player_stats`
+      WHERE game_date >= '{start_date}'
+        AND game_date <= '{end_date}'
+      GROUP BY game_id, game_date
+      HAVING COUNTIF(player_status = 'active') = 0
+        AND COUNTIF(player_status IN ('inactive', 'dnp')) > 0
+    severity: "critical"
+    message: "R-009 ISSUE DETECTED: Game has 0 active players but roster entries - gamebook incomplete"
+    threshold: 0  # Should find 0 such games
+
+  # Active player count bounds (each team should have 5-15 active players)
+  active_players_bounds:
+    enabled: true
+    query: |
+      WITH team_counts AS (
+        SELECT
+          game_id,
+          game_date,
+          team_abbr,
+          COUNTIF(player_status = 'active') as active_count
+        FROM `{project_id}.nba_raw.nbac_gamebook_player_stats`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+          AND team_abbr IS NOT NULL
+        GROUP BY game_id, game_date, team_abbr
+      )
+      SELECT
+        game_id,
+        game_date,
+        team_abbr,
+        active_count
+      FROM team_counts
+      WHERE active_count < 5 OR active_count > 15
+    severity: "warning"
+    message: "Unusual active player count for team (expected 5-15)"
+
+  # Duplicate player entries check
+  duplicate_players:
+    enabled: true
+    query: |
+      SELECT
+        game_id,
+        game_date,
+        player_lookup,
+        COUNT(*) as entry_count
+      FROM `{project_id}.nba_raw.nbac_gamebook_player_stats`
+      WHERE game_date >= '{start_date}'
+        AND game_date <= '{end_date}'
+      GROUP BY game_id, game_date, player_lookup
+      HAVING COUNT(*) > 1
+    severity: "warning"
+    message: "Duplicate player entries found in gamebook"
+    threshold: 0
+
+  # Data freshness check
+  data_freshness:
+    enabled: true
+    query: |
+      SELECT
+        MAX(TIMESTAMP(PARSE_DATE('%Y-%m-%d', game_date))) as last_game_date,
+        DATE_DIFF(CURRENT_DATE(), MAX(PARSE_DATE('%Y-%m-%d', game_date)), DAY) as days_old
+      FROM `{project_id}.nba_raw.nbac_gamebook_player_stats`
+      WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+    max_age_days: 2
+    severity: "warning"
+    message: "Gamebook data should be within 2 days of current date"
+
+  # Expected fields per game
+  stats_completeness:
+    enabled: true
+    query: |
+      SELECT
+        game_id,
+        game_date,
+        COUNTIF(player_status = 'active' AND points IS NULL) as missing_points,
+        COUNTIF(player_status = 'active' AND minutes IS NULL) as missing_minutes,
+        COUNTIF(player_status = 'active' AND total_rebounds IS NULL) as missing_rebounds
+      FROM `{project_id}.nba_raw.nbac_gamebook_player_stats`
+      WHERE game_date >= '{start_date}'
+        AND game_date <= '{end_date}'
+      GROUP BY game_id, game_date
+      HAVING
+        COUNTIF(player_status = 'active' AND points IS NULL) > 0
+        OR COUNTIF(player_status = 'active' AND minutes IS NULL) > 0
+    severity: "warning"
+    message: "Active players missing critical stats"
+
+# Schedule-based validations
+schedule_validations:
+  enabled: true
+
+  # Check gamebook exists for completed games
+  game_coverage:
+    enabled: true
+    check_scheduled_games: true
+    target_table: "nba_raw.nbac_gamebook_player_stats"
+    schedule_table: "nba_raw.nbac_schedule"
+    game_status_filter: "Final"
+    severity: "critical"
+    message: "Verifying gamebook data exists for completed games"
+
+# Data quality checks
+data_quality:
+  required_fields:
+    - game_id
+    - game_date
+    - player_status
+    - team_abbr
+
+  field_validations:
+    game_id:
+      not_null: true
+      pattern: "^\\d{8}_[A-Z]{3}_[A-Z]{3}$"
+    game_date:
+      not_null: true
+      pattern: "^\\d{4}-\\d{2}-\\d{2}$"
+    player_status:
+      not_null: true
+      valid_values:
+        - "active"
+        - "inactive"
+        - "dnp"
+    team_abbr:
+      not_null: true
+      pattern: "^[A-Z]{3}$"
+
+  # Active player stats should not be null
+  active_player_stats:
+    when: "player_status = 'active'"
+    fields:
+      minutes:
+        not_null: true
+      points:
+        not_null: true
+        min_value: 0
+        max_value: 100
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    # Re-process gamebook data for date range
+    python -m data_processors.raw.nbacom.nbac_gamebook_processor \
+      --start-date={start_date} --end-date={end_date}
+
+  incomplete_data_template: |
+    # Re-scrape gamebook PDFs for incomplete games
+    # First, identify games needing re-scrape:
+    SELECT game_id, game_date
+    FROM `nba_raw.nbac_gamebook_player_stats`
+    WHERE game_date = '{date}'
+    GROUP BY game_id, game_date
+    HAVING COUNTIF(player_status = 'active') = 0
+
+notifications:
+  enabled: true
+  channels: ["slack", "email"]
+  on_failure: true
+  on_success: false
+  critical_issues:
+    - "R-009"
+    - "zero_active_players"
+    - "missing_game_coverage"

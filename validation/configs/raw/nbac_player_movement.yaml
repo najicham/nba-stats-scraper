@@ -1,0 +1,100 @@
+# File: validation/configs/raw/nbac_player_movement.yaml
+# Description: NBA.com Player Movement (Trades/Signings) Validation Config
+
+processor:
+  name: "nbac_player_movement"
+  description: "Validates NBA.com player movement data (trades, signings, waivers)"
+  table: "nba_raw.nbac_player_movement"
+  partition_required: false
+  layers:
+    - bigquery
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  field_validation:
+    target_table: "nba_raw.nbac_player_movement"
+
+    required_not_null:
+      - player_id
+      - player_lookup
+      - transaction_type
+      - transaction_date
+
+    allowed_values:
+      - field: transaction_type
+        values: ["trade", "signing", "waiver", "two-way", "10-day", "extension", "release"]
+        severity: "warning"
+
+  # Recent transactions check
+  recent_transactions:
+    enabled: true
+    query: |
+      SELECT
+        transaction_type,
+        COUNT(*) as count,
+        MIN(transaction_date) as earliest,
+        MAX(transaction_date) as latest
+      FROM `{project_id}.nba_raw.nbac_player_movement`
+      WHERE transaction_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+      GROUP BY transaction_type
+      ORDER BY count DESC
+    severity: "info"
+    message: "Recent transaction summary"
+
+  # Duplicate transactions check
+  duplicate_transactions:
+    enabled: true
+    query: |
+      SELECT
+        player_id,
+        transaction_type,
+        transaction_date,
+        COUNT(*) as count
+      FROM `{project_id}.nba_raw.nbac_player_movement`
+      WHERE transaction_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+      GROUP BY player_id, transaction_type, transaction_date
+      HAVING COUNT(*) > 1
+    severity: "warning"
+    message: "Duplicate transaction entries"
+
+  # Player validation - moved players should exist
+  player_exists:
+    enabled: true
+    query: |
+      SELECT
+        m.player_id,
+        m.player_lookup,
+        m.transaction_type
+      FROM `{project_id}.nba_raw.nbac_player_movement` m
+      LEFT JOIN `{project_id}.nba_raw.nbac_player_list` p
+        ON m.player_id = p.player_id
+      WHERE m.transaction_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+        AND p.player_id IS NULL
+        AND m.transaction_type NOT IN ('waiver', 'release')
+      LIMIT 20
+    severity: "warning"
+    message: "Moved player not in current roster"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  data_freshness:
+    target_table: "nba_raw.nbac_player_movement"
+    timestamp_field: "processed_at"
+    max_age_hours: 72
+    severity: "warning"
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute nbac-player-movement-processor \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

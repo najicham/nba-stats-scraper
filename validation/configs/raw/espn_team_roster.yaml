@@ -1,0 +1,106 @@
+# File: validation/configs/raw/espn_team_roster.yaml
+# Description: ESPN Team Roster Validation Config
+
+processor:
+  name: "espn_team_roster"
+  description: "Validates ESPN team roster data"
+  table: "nba_raw.espn_team_roster"
+  partition_required: false
+  layers:
+    - bigquery
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  field_validation:
+    target_table: "nba_raw.espn_team_roster"
+
+    required_not_null:
+      - player_id
+      - player_lookup
+      - team_id
+      - team_abbr
+      - player_name
+
+    value_ranges:
+      - field: jersey_number
+        min: 0
+        max: 99
+        severity: "warning"
+
+      - field: age
+        min: 18
+        max: 50
+        severity: "warning"
+        message: "Unusual player age"
+
+  # All 30 teams present
+  team_coverage:
+    enabled: true
+    query: |
+      SELECT COUNT(DISTINCT team_id) as team_count
+      FROM `{project_id}.nba_raw.espn_team_roster`
+      WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+    expected_teams: 30
+    severity: "error"
+    message: "Not all 30 teams have ESPN roster data"
+
+  # Player count per team
+  roster_size:
+    enabled: true
+    query: |
+      SELECT
+        team_id,
+        team_abbr,
+        COUNT(*) as player_count
+      FROM `{project_id}.nba_raw.espn_team_roster`
+      WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+      GROUP BY team_id, team_abbr
+      HAVING player_count < 12 OR player_count > 20
+    severity: "warning"
+    message: "Unusual roster size"
+
+  # Cross-validate with other sources
+  cross_source:
+    enabled: true
+    query: |
+      WITH espn_players AS (
+        SELECT DISTINCT player_lookup, team_abbr
+        FROM `{project_id}.nba_raw.espn_team_roster`
+        WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+      ),
+      bdl_players AS (
+        SELECT DISTINCT player_lookup
+        FROM `{project_id}.nba_raw.bdl_active_players`
+        WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+      )
+      SELECT COUNT(*) as missing_in_bdl
+      FROM espn_players e
+      LEFT JOIN bdl_players b ON e.player_lookup = b.player_lookup
+      WHERE b.player_lookup IS NULL
+    max_missing: 30
+    severity: "warning"
+    message: "ESPN players not found in BDL"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  data_freshness:
+    target_table: "nba_raw.espn_team_roster"
+    timestamp_field: "processed_at"
+    max_age_hours: 72
+    severity: "warning"
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute espn-roster-processor \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

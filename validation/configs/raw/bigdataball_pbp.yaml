@@ -1,0 +1,162 @@
+# File: validation/configs/raw/bigdataball_pbp.yaml
+# Description: BigDataBall Play-by-Play Validation Config - Critical for advanced analytics
+
+processor:
+  name: "bigdataball_pbp"
+  description: "Validates BigDataBall play-by-play data"
+  table: "nba_raw.bigdataball_pbp"
+  partition_required: true
+  partition_field: "game_date"
+  layers:
+    - gcs
+    - bigquery
+    - schedule
+
+# GCS Layer Validations
+gcs_validations:
+  enabled: true
+
+  file_presence:
+    bucket: "nba-scraped-data"
+    path_pattern: "bigdataball/pbp/{date}/*.json"
+    severity: "error"
+
+  file_structure:
+    format: "json"
+    required_keys:
+      - game_id
+      - plays
+    severity: "error"
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  # Compare against schedule - should have PBP for completed games
+  completeness:
+    target_table: "nba_raw.bigdataball_pbp"
+    reference_table: "nba_raw.nbac_schedule"
+    match_field: "game_id"
+    reference_filter: "game_status = 3"
+    severity: "warning"
+    message: "BigDataBall PBP may not be available for all games immediately"
+
+  field_validation:
+    target_table: "nba_raw.bigdataball_pbp"
+
+    required_not_null:
+      - game_id
+      - game_date
+      - play_id
+      - period
+      - clock
+      - play_type
+
+    value_ranges:
+      - field: period
+        min: 1
+        max: 10
+        severity: "warning"
+        message: "Period value out of range"
+
+      - field: home_score
+        min: 0
+        max: 200
+        severity: "warning"
+
+      - field: away_score
+        min: 0
+        max: 200
+        severity: "warning"
+
+  # Play count per game (should have significant number of plays)
+  play_count_validation:
+    enabled: true
+    query: |
+      WITH game_play_counts AS (
+        SELECT
+          game_id,
+          game_date,
+          COUNT(*) as play_count
+        FROM `{project_id}.nba_raw.bigdataball_pbp`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+        GROUP BY game_id, game_date
+      )
+      SELECT
+        game_id,
+        game_date,
+        play_count
+      FROM game_play_counts
+      WHERE play_count < 200 OR play_count > 600
+    min_plays_per_game: 200
+    max_plays_per_game: 600
+    severity: "warning"
+    message: "Unusual play count per game"
+
+  # Score progression validation (final score should match)
+  score_validation:
+    enabled: true
+    query: |
+      WITH final_scores AS (
+        SELECT
+          game_id,
+          game_date,
+          MAX(home_score) as pbp_home_score,
+          MAX(away_score) as pbp_away_score
+        FROM `{project_id}.nba_raw.bigdataball_pbp`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+        GROUP BY game_id, game_date
+      ),
+      schedule_scores AS (
+        SELECT
+          game_id,
+          home_team_score as schedule_home_score,
+          away_team_score as schedule_away_score
+        FROM `{project_id}.nba_raw.nbac_schedule`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+          AND game_status = 3
+      )
+      SELECT
+        p.game_id,
+        p.game_date,
+        p.pbp_home_score,
+        s.schedule_home_score,
+        p.pbp_away_score,
+        s.schedule_away_score
+      FROM final_scores p
+      JOIN schedule_scores s ON p.game_id = s.game_id
+      WHERE ABS(p.pbp_home_score - s.schedule_home_score) > 2
+         OR ABS(p.pbp_away_score - s.schedule_away_score) > 2
+    severity: "error"
+    message: "PBP final score does not match schedule"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  data_freshness:
+    target_table: "nba_raw.bigdataball_pbp"
+    timestamp_field: "processed_at"
+    max_age_hours: 48
+    severity: "warning"
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute bigdataball-pbp-processor-backfill \
+      --args=--start-date={start_date},--end-date={end_date} \
+      --region=us-west2
+
+  scraper_backfill_template: |
+    gcloud run jobs execute bigdataball-pbp-scraper \
+      --args=--date={date} \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

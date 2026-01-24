@@ -38,6 +38,7 @@ from shared.utils.notification_system import (
     notify_warning,
     notify_info
 )
+from shared.monitoring.processor_heartbeat import ProcessorHeartbeat
 
 # Support both module execution and direct execution
 try:
@@ -122,6 +123,10 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
         self.log_batch_size = 100  # Insert logs in batches
         self.processing_start_time = datetime.now()
         self.files_processed = 0
+        self.total_files_expected = 0  # Set when processing begins
+
+        # Heartbeat for stale processor detection (Jan 24, 2026 improvement)
+        self.heartbeat = None  # Initialized when processing starts with date context
 
         logger.info(f"Initialized processor with run ID: {self.processing_run_id}")
 
@@ -165,6 +170,50 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
         self.processing_date_range_start = start_date
         self.processing_date_range_end = end_date
         logger.info(f"Set processing date range: {start_date} to {end_date}")
+
+    def start_heartbeat(self, data_date: str, total_files: int = 0):
+        """
+        Start heartbeat monitoring for this processing run.
+
+        Call this at the beginning of a batch processing run to enable
+        stale processor detection. The heartbeat will emit every 60 seconds
+        and allow the monitor to detect if this processor gets stuck.
+
+        Args:
+            data_date: The data date being processed (YYYY-MM-DD)
+            total_files: Expected number of files to process (for progress tracking)
+        """
+        self.total_files_expected = total_files
+
+        # Initialize and start heartbeat
+        self.heartbeat = ProcessorHeartbeat(
+            processor_name="NbacGamebookProcessor",
+            run_id=self.processing_run_id,
+            data_date=data_date,
+            project_id=self.project_id
+        )
+        self.heartbeat.start()
+        logger.info(f"Started heartbeat for NbacGamebookProcessor (data_date={data_date}, run_id={self.processing_run_id})")
+
+    def update_heartbeat_progress(self, message: str = ""):
+        """Update heartbeat with current progress."""
+        if self.heartbeat:
+            self.heartbeat.update_progress(
+                current=self.files_processed,
+                total=self.total_files_expected,
+                message=message
+            )
+
+    def stop_heartbeat(self, status: str = "completed"):
+        """
+        Stop the heartbeat with final status.
+
+        Args:
+            status: Final status - "completed" or "failed"
+        """
+        if self.heartbeat:
+            self.heartbeat.stop(final_status=status)
+            logger.info(f"Stopped heartbeat with status: {status}")
 
     def log_quality_issue(self, issue_type: str, severity: str, identifier: str, details: Dict):
         """Log data quality issues for review."""
@@ -638,14 +687,17 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
 
-    def finalize_processing(self):
-        """Call this at the end of processing to flush remaining logs."""
+    def finalize_processing(self, status: str = "completed"):
+        """Call this at the end of processing to flush remaining logs and stop heartbeat."""
+        # Stop heartbeat first (signals completion to monitor)
+        self.stop_heartbeat(status)
+
         # Flush any remaining resolution logs
         self.flush_resolution_logs()
-        
+
         # Log final performance summary
         self.log_processing_performance()
-        
+
         # Send success notification with summary
         try:
             notify_info(
@@ -660,7 +712,7 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
-        
+
         logger.info(f"Processing run {self.processing_run_id} completed")
 
     
@@ -1379,6 +1431,9 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
 
             logger.info(f"Processed {len(rows)} players from {file_path} (File #{self.files_processed}) - {active_count} active, {roster_count} roster")
 
+            # Update heartbeat progress (for stale processor detection)
+            self.update_heartbeat_progress(f"Processed {self.files_processed}/{self.total_files_expected} files")
+
             # CRITICAL: Alert if gamebook has only DNP/inactive players (no actual stats)
             # This indicates the PDF was scraped before game data was available
             if active_count == 0 and roster_count > 0:
@@ -1536,6 +1591,9 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
+
+            # Stop heartbeat with failed status
+            self.stop_heartbeat("failed")
 
         return {
             'rows_processed': rows_saved,

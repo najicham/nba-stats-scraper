@@ -1,0 +1,117 @@
+# File: validation/configs/raw/nbac_referee.yaml
+# Description: NBA.com Referee Assignments Validation Config
+
+processor:
+  name: "nbac_referee"
+  description: "Validates NBA.com referee assignment data"
+  table: "nba_raw.nbac_referee_assignments"
+  partition_required: true
+  partition_field: "game_date"
+  layers:
+    - bigquery
+    - schedule
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  field_validation:
+    target_table: "nba_raw.nbac_referee_assignments"
+
+    required_not_null:
+      - game_id
+      - game_date
+      - referee_name
+      - referee_role
+
+    allowed_values:
+      - field: referee_role
+        values: ["crew_chief", "referee", "umpire", "alternate"]
+        severity: "warning"
+
+  # Games should have 3 referees
+  referee_count:
+    enabled: true
+    query: |
+      WITH game_refs AS (
+        SELECT
+          game_id,
+          game_date,
+          COUNT(DISTINCT referee_name) as ref_count
+        FROM `{project_id}.nba_raw.nbac_referee_assignments`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+          AND referee_role != 'alternate'
+        GROUP BY game_id, game_date
+      )
+      SELECT game_id, game_date, ref_count
+      FROM game_refs
+      WHERE ref_count != 3
+    expected_referees: 3
+    severity: "warning"
+    message: "Game should have exactly 3 referees"
+
+  # Coverage against schedule
+  game_coverage:
+    enabled: true
+    query: |
+      WITH schedule AS (
+        SELECT game_id, game_date
+        FROM `{project_id}.nba_raw.nbac_schedule`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+          AND game_status IN (1, 2, 3)
+      ),
+      refs AS (
+        SELECT DISTINCT game_id
+        FROM `{project_id}.nba_raw.nbac_referee_assignments`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+      )
+      SELECT s.game_id, s.game_date
+      FROM schedule s
+      LEFT JOIN refs r ON s.game_id = r.game_id
+      WHERE r.game_id IS NULL
+    severity: "warning"
+    message: "Referee assignments not available for all games"
+
+  # Duplicate ref assignments (same ref in multiple games same day)
+  ref_scheduling:
+    enabled: true
+    query: |
+      SELECT
+        referee_name,
+        game_date,
+        COUNT(DISTINCT game_id) as game_count
+      FROM `{project_id}.nba_raw.nbac_referee_assignments`
+      WHERE game_date >= '{start_date}'
+        AND game_date <= '{end_date}'
+        AND referee_role != 'alternate'
+      GROUP BY referee_name, game_date
+      HAVING COUNT(DISTINCT game_id) > 1
+    severity: "warning"
+    message: "Referee assigned to multiple games same day"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  data_freshness:
+    target_table: "nba_raw.nbac_referee_assignments"
+    timestamp_field: "processed_at"
+    max_age_hours: 48
+    severity: "info"
+    message: "Referee data may not be released until close to game time"
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute nbac-referee-processor \
+      --args=--start-date={start_date},--end-date={end_date} \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

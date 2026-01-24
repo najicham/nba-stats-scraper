@@ -1,0 +1,112 @@
+# File: validation/configs/raw/bdl_standings.yaml
+# Description: Ball Don't Lie Standings Validation Config
+
+processor:
+  name: "bdl_standings"
+  description: "Validates Ball Don't Lie standings data"
+  table: "nba_raw.bdl_standings"
+  partition_required: false
+  layers:
+    - bigquery
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  field_validation:
+    target_table: "nba_raw.bdl_standings"
+
+    required_not_null:
+      - team_id
+      - team_name
+      - conference
+      - wins
+      - losses
+
+    value_ranges:
+      - field: wins
+        min: 0
+        max: 82
+        severity: "error"
+        message: "Wins out of valid range"
+
+      - field: losses
+        min: 0
+        max: 82
+        severity: "error"
+        message: "Losses out of valid range"
+
+      - field: win_pct
+        min: 0.0
+        max: 1.0
+        severity: "error"
+        message: "Win percentage out of range"
+
+    allowed_values:
+      - field: conference
+        values: ["East", "West"]
+        severity: "error"
+
+  # All 30 teams present
+  team_coverage:
+    enabled: true
+    query: |
+      SELECT COUNT(DISTINCT team_id) as team_count
+      FROM `{project_id}.nba_raw.bdl_standings`
+      WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+    expected_teams: 30
+    severity: "error"
+    message: "Not all 30 teams in standings"
+
+  # Conference balance (15 per conference)
+  conference_balance:
+    enabled: true
+    query: |
+      SELECT
+        conference,
+        COUNT(*) as team_count
+      FROM `{project_id}.nba_raw.bdl_standings`
+      WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+      GROUP BY conference
+      HAVING team_count != 15
+    expected_per_conference: 15
+    severity: "error"
+    message: "Conference should have exactly 15 teams"
+
+  # Wins + Losses consistency
+  record_consistency:
+    enabled: true
+    query: |
+      SELECT
+        team_id,
+        team_name,
+        wins,
+        losses,
+        games_played
+      FROM `{project_id}.nba_raw.bdl_standings`
+      WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+        AND wins + losses != games_played
+    severity: "error"
+    message: "Wins + Losses should equal games played"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  data_freshness:
+    target_table: "nba_raw.bdl_standings"
+    timestamp_field: "processed_at"
+    max_age_hours: 24
+    severity: "warning"
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute bdl-standings-processor \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

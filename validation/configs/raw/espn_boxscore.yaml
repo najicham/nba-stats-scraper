@@ -1,0 +1,133 @@
+# File: validation/configs/raw/espn_boxscore.yaml
+# Description: ESPN Boxscore Validation Config
+
+processor:
+  name: "espn_boxscore"
+  description: "Validates ESPN game boxscore data"
+  table: "nba_raw.espn_boxscore"
+  partition_required: true
+  partition_field: "game_date"
+  layers:
+    - bigquery
+    - schedule
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  # Compare against schedule
+  completeness:
+    target_table: "nba_raw.espn_boxscore"
+    reference_table: "nba_raw.nbac_schedule"
+    match_field: "game_id"
+    reference_filter: "game_status = 3"
+    severity: "warning"
+
+  field_validation:
+    target_table: "nba_raw.espn_boxscore"
+
+    required_not_null:
+      - game_id
+      - game_date
+      - player_id
+      - player_name
+      - team_id
+
+    value_ranges:
+      - field: points
+        min: 0
+        max: 100
+        severity: "warning"
+
+      - field: minutes
+        min: 0
+        max: 65
+        severity: "warning"
+
+      - field: rebounds
+        min: 0
+        max: 35
+        severity: "warning"
+
+      - field: assists
+        min: 0
+        max: 30
+        severity: "warning"
+
+  # Player count per game
+  player_count:
+    enabled: true
+    query: |
+      WITH game_counts AS (
+        SELECT
+          game_id,
+          game_date,
+          COUNT(*) as player_count
+        FROM `{project_id}.nba_raw.espn_boxscore`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+        GROUP BY game_id, game_date
+      )
+      SELECT game_id, game_date, player_count
+      FROM game_counts
+      WHERE player_count < 20 OR player_count > 40
+    severity: "warning"
+    message: "Unusual player count in boxscore"
+
+  # Cross-validate scores with schedule
+  score_validation:
+    enabled: true
+    query: |
+      WITH espn_scores AS (
+        SELECT
+          game_id,
+          game_date,
+          SUM(CASE WHEN is_home = true THEN points ELSE 0 END) as home_total,
+          SUM(CASE WHEN is_home = false THEN points ELSE 0 END) as away_total
+        FROM `{project_id}.nba_raw.espn_boxscore`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+        GROUP BY game_id, game_date
+      ),
+      schedule AS (
+        SELECT
+          game_id,
+          home_team_score,
+          away_team_score
+        FROM `{project_id}.nba_raw.nbac_schedule`
+        WHERE game_status = 3
+      )
+      SELECT
+        e.game_id,
+        e.game_date,
+        e.home_total as espn_home,
+        s.home_team_score as schedule_home,
+        ABS(e.home_total - s.home_team_score) as diff
+      FROM espn_scores e
+      JOIN schedule s ON e.game_id = s.game_id
+      WHERE ABS(e.home_total - s.home_team_score) > 5
+    severity: "error"
+    message: "ESPN boxscore totals don't match schedule"
+
+# Schedule Validations
+schedule_validations:
+  enabled: true
+
+  data_freshness:
+    target_table: "nba_raw.espn_boxscore"
+    timestamp_field: "processed_at"
+    max_age_hours: 24
+    severity: "warning"
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute espn-boxscore-processor \
+      --args=--start-date={start_date},--end-date={end_date} \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false
