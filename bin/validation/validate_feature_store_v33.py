@@ -79,7 +79,7 @@ def validate_features(client: bigquery.Client, game_date: str) -> dict:
         ]
     )
 
-    result = list(client.query(query, job_config=job_config).result())[0]
+    result = list(client.query(query, job_config=job_config).result(timeout=60))[0]
 
     total = result.total_players
 

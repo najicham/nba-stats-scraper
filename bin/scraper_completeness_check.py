@@ -118,7 +118,7 @@ def check_completeness(scraper_name: str, lookback_days: Optional[int] = None) -
     logger.info(f"Checking completeness for {scraper_name} (last {lookback_days} days)...")
 
     try:
-        results = client.query(query).result()
+        results = client.query(query).result(timeout=60)
 
         missing_games = []
         for row in results:

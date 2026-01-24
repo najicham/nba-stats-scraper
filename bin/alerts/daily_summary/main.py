@@ -62,7 +62,7 @@ def query_yesterday_summary(client: bigquery.Client) -> Dict[str, Any]:
     """
 
     query_job = client.query(query)
-    results = list(query_job.result())
+    results = list(query_job.result(timeout=60))
 
     if not results:
         return {
@@ -108,7 +108,7 @@ def query_top_picks(client: bigquery.Client) -> List[Dict[str, Any]]:
     """
 
     query_job = client.query(query)
-    results = list(query_job.result())
+    results = list(query_job.result(timeout=60))
 
     picks = []
     for row in results:
@@ -137,7 +137,7 @@ def query_unique_players(client: bigquery.Client) -> Dict[str, int]:
     """
 
     query_job = client.query(query)
-    results = list(query_job.result())
+    results = list(query_job.result(timeout=60))
 
     if not results:
         return {'unique_players': 0, 'unique_games': 0}
@@ -164,7 +164,7 @@ def query_feature_quality(client: bigquery.Client) -> Dict[str, Any]:
 
     try:
         query_job = client.query(query)
-        results = list(query_job.result())
+        results = list(query_job.result(timeout=60))
 
         if not results:
             return {'status': 'unknown', 'hours_old': 999}

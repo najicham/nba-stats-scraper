@@ -205,7 +205,7 @@ def validate_data_population(game_date: date, verbose: bool = False) -> bool:
         WHERE game_date = '{game_date}'
         """
 
-        result = list(client.query(query).result())[0]
+        result = list(client.query(query).result(timeout=60))[0]
 
         total = result.total
         with_completeness = result.with_completeness
@@ -265,7 +265,7 @@ def validate_monitoring_views() -> bool:
         # Test v_historical_completeness_daily
         try:
             query = "SELECT COUNT(*) as cnt FROM `nba-props-platform.nba_predictions.v_historical_completeness_daily`"
-            result = list(client.query(query).result())[0]
+            result = list(client.query(query).result(timeout=60))[0]
             print(f"  ✅ v_historical_completeness_daily: {result.cnt} rows")
         except Exception as e:
             print(f"  ❌ v_historical_completeness_daily: {e}")
@@ -274,7 +274,7 @@ def validate_monitoring_views() -> bool:
         # Test v_incomplete_features
         try:
             query = "SELECT COUNT(*) as cnt FROM `nba-props-platform.nba_predictions.v_incomplete_features`"
-            result = list(client.query(query).result())[0]
+            result = list(client.query(query).result(timeout=60))[0]
             print(f"  ✅ v_incomplete_features: {result.cnt} rows")
         except Exception as e:
             print(f"  ❌ v_incomplete_features: {e}")

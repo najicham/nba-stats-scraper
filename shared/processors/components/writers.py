@@ -146,8 +146,8 @@ class BigQueryWriter(OutputWriter):
             if 'temp_path' in locals():
                 try:
                     os.unlink(temp_path)
-                except:
-                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to cleanup temp file {temp_path}: {e}")
 
     def _get_table_id(self, context: ComponentContext) -> str:
         """Get full table ID."""

@@ -20,6 +20,7 @@ from typing import Dict, List, Optional
 import json
 
 from google.cloud import bigquery, pubsub_v1
+from google.cloud.bigquery import ScalarQueryParameter
 import functions_framework
 
 logging.basicConfig(level=logging.INFO)
@@ -145,10 +146,24 @@ def find_failed_runs(
     Returns:
         List of failed run records
     """
-    date_filter = f"data_date = '{specific_date}'" if specific_date else \
-                  "data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)"
+    # Build parameterized query with optional filters
+    query_parameters = []
 
-    processor_filter = f"AND processor_name = '{specific_processor}'" if specific_processor else ""
+    if specific_date:
+        date_filter = "data_date = @specific_date"
+        query_parameters.append(
+            ScalarQueryParameter("specific_date", "DATE", specific_date)
+        )
+    else:
+        date_filter = "data_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)"
+
+    if specific_processor:
+        processor_filter = "AND processor_name = @specific_processor"
+        query_parameters.append(
+            ScalarQueryParameter("specific_processor", "STRING", specific_processor)
+        )
+    else:
+        processor_filter = ""
 
     query = f"""
     WITH latest_runs AS (
@@ -184,7 +199,8 @@ def find_failed_runs(
     """
 
     try:
-        result = list(bq_client.query(query).result())
+        job_config = bigquery.QueryJobConfig(query_parameters=query_parameters)
+        result = list(bq_client.query(query, job_config=job_config).result())
         runs = []
         for row in result:
             runs.append({
@@ -230,12 +246,18 @@ def filter_eligible_runs(bq_client: bigquery.Client, runs: List[Dict]) -> List[D
             MAX(attempted_at) as last_attempt,
             LOGICAL_OR(circuit_breaker_tripped) as tripped
         FROM `{PROJECT_ID}.nba_orchestration.reprocess_attempts`
-        WHERE processor_name = '{processor_name}'
-          AND analysis_date = DATE('{data_date}')
+        WHERE processor_name = @processor_name
+          AND analysis_date = DATE(@data_date)
         """
 
         try:
-            cb_result = list(bq_client.query(cb_query).result())
+            cb_job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    ScalarQueryParameter("processor_name", "STRING", processor_name),
+                    ScalarQueryParameter("data_date", "STRING", data_date),
+                ]
+            )
+            cb_result = list(bq_client.query(cb_query, job_config=cb_job_config).result())
 
             if cb_result and cb_result[0]:
                 row = cb_result[0]
@@ -335,9 +357,9 @@ def record_backfill_attempt(bq_client: bigquery.Client, processor_name: str, dat
     (processor_name, entity_id, analysis_date, attempt_number, attempted_at,
      completeness_pct, skip_reason, circuit_breaker_tripped, notes)
     SELECT
-        '{processor_name}' as processor_name,
+        @processor_name as processor_name,
         'auto_backfill' as entity_id,
-        DATE('{data_date}') as analysis_date,
+        DATE(@data_date) as analysis_date,
         COALESCE(MAX(attempt_number), 0) + 1 as attempt_number,
         CURRENT_TIMESTAMP() as attempted_at,
         0.0 as completeness_pct,
@@ -345,12 +367,18 @@ def record_backfill_attempt(bq_client: bigquery.Client, processor_name: str, dat
         FALSE as circuit_breaker_tripped,
         'Triggered by auto_backfill_orchestrator' as notes
     FROM `{PROJECT_ID}.nba_orchestration.reprocess_attempts`
-    WHERE processor_name = '{processor_name}'
-      AND analysis_date = DATE('{data_date}')
+    WHERE processor_name = @processor_name
+      AND analysis_date = DATE(@data_date)
     """
 
     try:
-        bq_client.query(query).result()
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                ScalarQueryParameter("processor_name", "STRING", processor_name),
+                ScalarQueryParameter("data_date", "STRING", data_date),
+            ]
+        )
+        bq_client.query(query, job_config=job_config).result()
     except Exception as e:
         logger.warning(f"Failed to record backfill attempt: {e}")
 

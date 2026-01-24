@@ -149,7 +149,7 @@ def get_latency_data(start_date: str, end_date: str) -> Tuple[List[Dict], Dict]:
             ]
         )
 
-        results = client.query(games_query, job_config=job_config).result()
+        results = client.query(games_query, job_config=job_config).result(timeout=60)
 
         games = []
         for row in results:
