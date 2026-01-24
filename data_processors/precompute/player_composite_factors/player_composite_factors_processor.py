@@ -534,6 +534,14 @@ class PlayerCompositeFactorsProcessor(
     CIRCUIT_BREAKER_THRESHOLD = 5  # Open after 5 consecutive failures
     CIRCUIT_BREAKER_TIMEOUT = timedelta(minutes=30)  # Stay open 30 minutes
 
+    # ============================================================
+    # Soft Dependency Configuration (added after Jan 23 incident)
+    # ============================================================
+    # When enabled, processor can proceed with degraded upstream data if coverage > threshold
+    # This prevents all-or-nothing blocking when upstream processors have partial failures
+    use_soft_dependencies = True
+    soft_dependency_threshold = 0.80  # Proceed if >80% upstream coverage
+
     # ========================================================================
     # DEPENDENCY CONFIGURATION
     # ========================================================================

@@ -50,6 +50,14 @@ except ImportError:
     HEARTBEAT_AVAILABLE = False
     ProcessorHeartbeat = None
 
+# Import soft dependency mixin for graceful degradation (added after Jan 23 incident)
+try:
+    from shared.processors.mixins.soft_dependency_mixin import SoftDependencyMixin
+    SOFT_DEPS_AVAILABLE = True
+except ImportError:
+    SOFT_DEPS_AVAILABLE = False
+    SoftDependencyMixin = object  # Fallback to empty object
+
 # Failure categorization (inlined to avoid cross-package dependency issues in Cloud Run)
 def _categorize_failure(error: Exception, step: str, stats: dict = None) -> str:
     """
@@ -156,12 +164,16 @@ logging.basicConfig(
 logger = logging.getLogger("analytics_base")
 
 
-class AnalyticsProcessorBase(RunHistoryMixin):
+class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
     """
     Base class for Phase 3 analytics processors with full dependency tracking.
 
     Phase 3 processors depend on Phase 2 (Raw) tables.
     This base class provides dependency checking, source tracking, and validation.
+
+    Soft Dependencies (added after Jan 23 incident):
+    - Set use_soft_dependencies = True in child class to enable graceful degradation
+    - Processors will proceed if coverage > 80% instead of all-or-nothing
 
     Lifecycle:
       1) Check dependencies (are upstream Phase 2 tables ready?)
@@ -182,6 +194,11 @@ class AnalyticsProcessorBase(RunHistoryMixin):
     # Processing settings
     validate_on_extract: bool = True
     save_on_error: bool = True
+
+    # Soft dependency settings (added after Jan 23 incident)
+    # When enabled, processor can proceed with degraded upstream data if coverage > threshold
+    use_soft_dependencies: bool = False  # Override in child class to enable
+    soft_dependency_threshold: float = 0.80  # Minimum coverage to proceed (80%)
 
     # BigQuery settings - now uses sport_config for multi-sport support
     dataset_id: str = None  # Will be set from sport_config in __init__
