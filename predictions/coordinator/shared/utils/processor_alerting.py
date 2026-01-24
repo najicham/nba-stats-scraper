@@ -215,14 +215,21 @@ class ProcessorAlerting:
             "subject": subject,
             "content": [{"type": "text/html", "value": body}]
         }
-        
-        response = requests.post(url, headers=headers, json=data)
-        
-        if response.status_code == 202:
-            logger.info(f"Email alert sent successfully to {len(recipients)} recipients")
-            return True
-        else:
-            logger.error(f"SendGrid API error: {response.status_code} - {response.text}")
+
+        try:
+            response = requests.post(url, headers=headers, json=data, timeout=30)
+
+            if response.status_code == 202:
+                logger.info(f"Email alert sent successfully to {len(recipients)} recipients")
+                return True
+            else:
+                logger.error(f"SendGrid API error: {response.status_code} - {response.text}")
+                return False
+        except requests.exceptions.Timeout:
+            logger.error("SendGrid API request timed out after 30 seconds")
+            return False
+        except requests.exceptions.RequestException as e:
+            logger.error(f"SendGrid API request failed: {e}")
             return False
     
     def _send_via_smtp(self, subject: str, body: str, recipients: List[str]) -> bool:

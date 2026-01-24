@@ -35,6 +35,8 @@ import json
 import logging
 import os
 import requests
+import signal
+import threading
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -45,6 +47,18 @@ import functions_framework
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# EXECUTION TIMEOUT CONFIGURATION
+# ============================================================================
+# Configurable timeout to prevent pipeline from freezing indefinitely
+# This is separate from the tiered timeout logic which waits for processor completion
+PHASE4_TIMEOUT_MINUTES = int(os.environ.get('PHASE4_TIMEOUT_MINUTES', '60'))
+PHASE4_TIMEOUT_SECONDS = PHASE4_TIMEOUT_MINUTES * 60
+PHASE4_WARNING_THRESHOLD = 0.8  # Warn at 80% of timeout
+
+# Thread-local storage for tracking execution start time
+_execution_context = threading.local()
 
 # Constants
 PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
@@ -77,6 +91,10 @@ logger.info(
     f"Tier2({TIER2_TIMEOUT_SECONDS}s, {TIER2_REQUIRED_PROCESSORS} procs), "
     f"Tier3({TIER3_TIMEOUT_SECONDS}s, {TIER3_REQUIRED_PROCESSORS} procs), "
     f"Max({MAX_WAIT_SECONDS}s)"
+)
+logger.info(
+    f"Execution timeout config: PHASE4_TIMEOUT_MINUTES={PHASE4_TIMEOUT_MINUTES} "
+    f"(warning at {PHASE4_WARNING_THRESHOLD * 100:.0f}%)"
 )
 
 # Processor name normalization - maps various formats to config names
@@ -235,6 +253,161 @@ def send_timeout_alert(game_date: str, completed_count: int, expected_count: int
     except Exception as e:
         logger.error(f"Failed to send timeout alert: {e}")
         return False
+
+
+# ============================================================================
+# EXECUTION TIMEOUT FUNCTIONS
+# ============================================================================
+
+def start_execution_timer(game_date: str, correlation_id: Optional[str] = None) -> None:
+    """
+    Start tracking execution time for timeout monitoring.
+
+    Stores the start time in thread-local storage for later checks.
+
+    Args:
+        game_date: The game date being processed
+        correlation_id: Optional correlation ID for tracing
+    """
+    _execution_context.start_time = datetime.now(timezone.utc)
+    _execution_context.game_date = game_date
+    _execution_context.correlation_id = correlation_id
+    _execution_context.warning_sent = False
+
+    logger.info(
+        f"Started execution timer for {game_date} "
+        f"(timeout: {PHASE4_TIMEOUT_MINUTES}min, correlation_id={correlation_id})"
+    )
+
+
+def check_execution_timeout() -> Tuple[bool, bool, float]:
+    """
+    Check if execution is approaching or has exceeded the timeout.
+
+    Returns:
+        Tuple of (is_timed_out: bool, is_warning: bool, elapsed_minutes: float)
+        - is_timed_out: True if timeout has been reached
+        - is_warning: True if approaching timeout (past warning threshold)
+        - elapsed_minutes: Minutes elapsed since execution started
+    """
+    if not hasattr(_execution_context, 'start_time') or _execution_context.start_time is None:
+        return (False, False, 0.0)
+
+    now = datetime.now(timezone.utc)
+    elapsed = (now - _execution_context.start_time).total_seconds()
+    elapsed_minutes = elapsed / 60
+
+    is_timed_out = elapsed >= PHASE4_TIMEOUT_SECONDS
+    warning_threshold_seconds = PHASE4_TIMEOUT_SECONDS * PHASE4_WARNING_THRESHOLD
+    is_warning = elapsed >= warning_threshold_seconds and not _execution_context.warning_sent
+
+    return (is_timed_out, is_warning, elapsed_minutes)
+
+
+def log_timeout_warning() -> None:
+    """
+    Log a warning when execution is approaching the timeout threshold.
+
+    Only logs once per execution (tracks via _execution_context.warning_sent).
+    """
+    if not hasattr(_execution_context, 'start_time') or _execution_context.start_time is None:
+        return
+
+    if _execution_context.warning_sent:
+        return
+
+    game_date = getattr(_execution_context, 'game_date', 'unknown')
+    correlation_id = getattr(_execution_context, 'correlation_id', 'unknown')
+
+    _, _, elapsed_minutes = check_execution_timeout()
+    remaining_minutes = PHASE4_TIMEOUT_MINUTES - elapsed_minutes
+
+    logger.warning(
+        f"⚠️ TIMEOUT WARNING: Phase 4→5 execution for {game_date} approaching timeout. "
+        f"Elapsed: {elapsed_minutes:.1f}min, Remaining: {remaining_minutes:.1f}min, "
+        f"Timeout: {PHASE4_TIMEOUT_MINUTES}min (correlation_id={correlation_id})"
+    )
+
+    _execution_context.warning_sent = True
+
+
+def send_execution_timeout_alert(game_date: str, elapsed_minutes: float,
+                                  correlation_id: Optional[str] = None) -> bool:
+    """
+    Send Slack alert when Phase 4→5 execution timeout is reached.
+
+    This indicates the Cloud Function itself is taking too long to complete,
+    which is different from waiting for processor completion.
+
+    Args:
+        game_date: The date being processed
+        elapsed_minutes: How long the execution has been running
+        correlation_id: Optional correlation ID for tracing
+
+    Returns:
+        True if alert sent successfully, False otherwise
+    """
+    if not SLACK_WEBHOOK_URL:
+        logger.warning("SLACK_WEBHOOK_URL not configured, skipping execution timeout alert")
+        return False
+
+    try:
+        payload = {
+            "attachments": [{
+                "color": "#FF0000",  # Red for critical
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": ":alarm_clock: Phase 4→5 Execution Timeout",
+                            "emoji": True
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*CRITICAL: Phase 4→5 orchestrator execution timed out!*\n"
+                                   f"The Cloud Function has been running for {elapsed_minutes:.1f} minutes "
+                                   f"(timeout: {PHASE4_TIMEOUT_MINUTES} minutes)."
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
+                            {"type": "mrkdwn", "text": f"*Elapsed:*\n{elapsed_minutes:.1f} min"},
+                            {"type": "mrkdwn", "text": f"*Timeout:*\n{PHASE4_TIMEOUT_MINUTES} min"},
+                            {"type": "mrkdwn", "text": f"*Correlation ID:*\n{correlation_id or 'N/A'}"},
+                        ]
+                    },
+                    {
+                        "type": "context",
+                        "elements": [{
+                            "type": "mrkdwn",
+                            "text": "⚠️ Action: Check for stuck operations (BigQuery queries, HTTP calls). "
+                                   "Consider investigating Cloud Function logs and increasing timeout if needed."
+                        }]
+                    }
+                ]
+            }]
+        }
+
+        from shared.utils.slack_retry import send_slack_webhook_with_retry
+        success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
+        if success:
+            logger.info(f"Execution timeout alert sent successfully for {game_date}")
+        return success
+
+    except Exception as e:
+        logger.error(f"Failed to send execution timeout alert: {e}")
+        return False
+
+
+class ExecutionTimeoutError(Exception):
+    """Raised when Phase 4→5 execution exceeds the configured timeout."""
+    pass
 
 
 # ============================================================================
@@ -562,18 +735,30 @@ def orchestrate_phase4_to_phase5(cloud_event):
         ...
     }
 
+    Timeout Behavior:
+    - Configurable via PHASE4_TIMEOUT_MINUTES env var (default: 60 minutes)
+    - Warning logged at 80% of timeout threshold
+    - Alert sent if timeout is reached
+    - Raises ExecutionTimeoutError to allow Pub/Sub retry
+
     Args:
         cloud_event: CloudEvent from Pub/Sub containing Phase 4 completion data
     """
+    game_date = None
+    correlation_id = None
+
     try:
         # Parse Pub/Sub message
         message_data = parse_pubsub_message(cloud_event)
-
-        # Extract key fields
         game_date = message_data.get('game_date')
+        correlation_id = message_data.get('correlation_id')
+
+        # Start execution timer for timeout monitoring (as early as possible)
+        start_execution_timer(game_date, correlation_id)
+
+        # Extract remaining key fields
         raw_processor_name = message_data.get('processor_name')
         output_table = message_data.get('output_table')
-        correlation_id = message_data.get('correlation_id')
         status = message_data.get('status')
 
         # Validate required fields
@@ -594,6 +779,23 @@ def orchestrate_phase4_to_phase5(cloud_event):
             f"(status={status}, correlation_id={correlation_id})"
         )
 
+        # Check execution timeout before proceeding with Firestore operations
+        is_timed_out, is_warning, elapsed_minutes = check_execution_timeout()
+
+        if is_warning:
+            log_timeout_warning()
+
+        if is_timed_out:
+            logger.error(
+                f"🚨 EXECUTION TIMEOUT: Phase 4→5 execution exceeded {PHASE4_TIMEOUT_MINUTES} minutes "
+                f"for {game_date} (elapsed: {elapsed_minutes:.1f}min)"
+            )
+            send_execution_timeout_alert(game_date, elapsed_minutes, correlation_id)
+            raise ExecutionTimeoutError(
+                f"Phase 4→5 execution timed out after {elapsed_minutes:.1f} minutes "
+                f"(limit: {PHASE4_TIMEOUT_MINUTES} minutes)"
+            )
+
         # Update completion state with atomic transaction
         doc_ref = db.collection('phase4_completion').document(game_date)
 
@@ -613,6 +815,22 @@ def orchestrate_phase4_to_phase5(cloud_event):
         )
 
         if should_trigger:
+            # Check execution timeout before triggering Phase 5 (which involves BigQuery queries)
+            is_timed_out, is_warning, elapsed_minutes = check_execution_timeout()
+
+            if is_warning:
+                log_timeout_warning()
+
+            if is_timed_out:
+                logger.error(
+                    f"🚨 EXECUTION TIMEOUT before Phase 5 trigger: Exceeded {PHASE4_TIMEOUT_MINUTES} minutes "
+                    f"for {game_date} (elapsed: {elapsed_minutes:.1f}min)"
+                )
+                send_execution_timeout_alert(game_date, elapsed_minutes, correlation_id)
+                raise ExecutionTimeoutError(
+                    f"Phase 4→5 execution timed out after {elapsed_minutes:.1f} minutes before triggering Phase 5"
+                )
+
             # All tier-based triggers should activate Phase 5
             if trigger_reason == 'all_complete':
                 # All processors complete - trigger Phase 5 (predictions)
@@ -689,6 +907,15 @@ def orchestrate_phase4_to_phase5(cloud_event):
         elif trigger_reason == 'waiting':
             # Still waiting for more processors
             logger.info(f"Registered completion for {processor_name}, waiting for {len(missing)} more: {missing}")
+
+    except ExecutionTimeoutError as e:
+        # Execution timeout - already logged and alerted
+        logger.critical(
+            f"🚨 ExecutionTimeoutError in Phase 4→5 orchestrator for {game_date}: {e}"
+        )
+        # Re-raise to NACK message so Pub/Sub will retry after backoff
+        # This allows the system to recover if the timeout was transient
+        raise
 
     except Exception as e:
         logger.error(f"Error in Phase 4→5 orchestrator: {e}", exc_info=True)
@@ -1091,7 +1318,15 @@ def health(request):
         'status': 'healthy',
         'function': 'phase4_to_phase5',
         'expected_processors': EXPECTED_PROCESSOR_COUNT,
-        'version': '1.0'
+        'execution_timeout_minutes': PHASE4_TIMEOUT_MINUTES,
+        'timeout_warning_threshold': f"{PHASE4_WARNING_THRESHOLD * 100:.0f}%",
+        'tiered_timeouts': {
+            'tier1': {'seconds': TIER1_TIMEOUT_SECONDS, 'required_processors': TIER1_REQUIRED_PROCESSORS},
+            'tier2': {'seconds': TIER2_TIMEOUT_SECONDS, 'required_processors': TIER2_REQUIRED_PROCESSORS},
+            'tier3': {'seconds': TIER3_TIMEOUT_SECONDS, 'required_processors': TIER3_REQUIRED_PROCESSORS},
+            'max': {'seconds': MAX_WAIT_SECONDS}
+        },
+        'version': '1.1'
     }), 200, {'Content-Type': 'application/json'}
 
 

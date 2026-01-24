@@ -46,17 +46,20 @@ class BdlDataAnalyzer:
         }
         
         try:
-            response = requests.get(url, headers=self.headers, params=params)
+            response = requests.get(url, headers=self.headers, params=params, timeout=30)
             response.raise_for_status()
             data = response.json()
-            
+
             if not data.get('data'):
                 print(f"❌ No games found for {test_date}")
                 return None
-            
+
             return self.analyze_data_structure(data, test_date)
-            
-        except Exception as e:
+
+        except requests.exceptions.Timeout:
+            print(f"❌ Request timed out after 30 seconds")
+            return None
+        except requests.exceptions.RequestException as e:
             print(f"❌ Error fetching data: {e}")
             return None
     

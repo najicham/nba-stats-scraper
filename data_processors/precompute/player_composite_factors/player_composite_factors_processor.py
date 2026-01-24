@@ -809,28 +809,33 @@ class PlayerCompositeFactorsProcessor(
     def _extract_source_hashes(self, analysis_date: date) -> None:
         """Extract data_hash from all 4 upstream tables (2 Phase 3, 2 Phase 4)."""
         try:
+            # Use parameterized query to prevent SQL injection
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[bigquery.ScalarQueryParameter("analysis_date", "DATE", analysis_date)]
+            )
+
             # 1. upcoming_player_game_context (Phase 3)
             query = f"""SELECT data_hash FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
-            WHERE game_date = '{analysis_date}' AND data_hash IS NOT NULL ORDER BY processed_at DESC LIMIT 1"""
-            result = self.bq_client.query(query).to_dataframe()
+            WHERE game_date = @analysis_date AND data_hash IS NOT NULL ORDER BY processed_at DESC LIMIT 1"""
+            result = self.bq_client.query(query, job_config=job_config).to_dataframe()
             self.source_player_context_hash = str(result['data_hash'].iloc[0]) if not result.empty else None
 
             # 2. upcoming_team_game_context (Phase 3)
             query = f"""SELECT data_hash FROM `{self.project_id}.nba_analytics.upcoming_team_game_context`
-            WHERE game_date = '{analysis_date}' AND data_hash IS NOT NULL ORDER BY processed_at DESC LIMIT 1"""
-            result = self.bq_client.query(query).to_dataframe()
+            WHERE game_date = @analysis_date AND data_hash IS NOT NULL ORDER BY processed_at DESC LIMIT 1"""
+            result = self.bq_client.query(query, job_config=job_config).to_dataframe()
             self.source_team_context_hash = str(result['data_hash'].iloc[0]) if not result.empty else None
 
             # 3. player_shot_zone_analysis (Phase 4!)
             query = f"""SELECT data_hash FROM `{self.project_id}.nba_precompute.player_shot_zone_analysis`
-            WHERE analysis_date = '{analysis_date}' AND data_hash IS NOT NULL ORDER BY processed_at DESC LIMIT 1"""
-            result = self.bq_client.query(query).to_dataframe()
+            WHERE analysis_date = @analysis_date AND data_hash IS NOT NULL ORDER BY processed_at DESC LIMIT 1"""
+            result = self.bq_client.query(query, job_config=job_config).to_dataframe()
             self.source_player_shot_hash = str(result['data_hash'].iloc[0]) if not result.empty else None
 
             # 4. team_defense_zone_analysis (Phase 4!)
             query = f"""SELECT data_hash FROM `{self.project_id}.nba_precompute.team_defense_zone_analysis`
-            WHERE analysis_date = '{analysis_date}' AND data_hash IS NOT NULL ORDER BY processed_at DESC LIMIT 1"""
-            result = self.bq_client.query(query).to_dataframe()
+            WHERE analysis_date = @analysis_date AND data_hash IS NOT NULL ORDER BY processed_at DESC LIMIT 1"""
+            result = self.bq_client.query(query, job_config=job_config).to_dataframe()
             self.source_team_defense_hash = str(result['data_hash'].iloc[0]) if not result.empty else None
 
             logger.info(f"Extracted 4 source hashes for smart reprocessing")

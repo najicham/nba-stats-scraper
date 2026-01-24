@@ -54,6 +54,13 @@ except ImportError as e:
     print("Run: pip install google-cloud-bigquery requests")
     sys.exit(1)
 
+# Import centralized service URLs config
+try:
+    from shared.config.service_urls import get_service_url, Services
+    USE_CENTRALIZED_CONFIG = True
+except ImportError:
+    USE_CENTRALIZED_CONFIG = False
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -66,29 +73,39 @@ logger = logging.getLogger(__name__)
 # Configuration
 # =============================================================================
 
-# Cloud Run service URLs
-SERVICE_URLS = {
-    'phase2_raw': os.environ.get(
-        'PHASE2_URL',
-        'https://nba-phase2-raw-processors-756957797294.us-west2.run.app'
-    ),
-    'phase3_analytics': os.environ.get(
-        'PHASE3_URL',
-        'https://nba-phase3-analytics-processors-756957797294.us-west2.run.app'
-    ),
-    'phase4_precompute': os.environ.get(
-        'PHASE4_URL',
-        'https://nba-phase4-precompute-processors-756957797294.us-west2.run.app'
-    ),
-    'phase5_predictions': os.environ.get(
-        'PHASE5_URL',
-        'https://prediction-coordinator-756957797294.us-west2.run.app'
-    ),
-    'phase6_export': os.environ.get(
-        'PHASE6_URL',
-        'https://phase6-export-756957797294.us-west2.run.app'
-    ),
-}
+# Cloud Run service URLs (use centralized config with env var fallback)
+if USE_CENTRALIZED_CONFIG:
+    SERVICE_URLS = {
+        'phase2_raw': get_service_url(Services.PHASE2_PROCESSORS),
+        'phase3_analytics': get_service_url(Services.PHASE3_ANALYTICS),
+        'phase4_precompute': get_service_url(Services.PHASE4_PRECOMPUTE),
+        'phase5_predictions': get_service_url(Services.PREDICTION_COORDINATOR),
+        'phase6_export': get_service_url(Services.PHASE6_EXPORT),
+    }
+else:
+    # Fallback to direct env var / hardcoded URLs if shared config unavailable
+    SERVICE_URLS = {
+        'phase2_raw': os.environ.get(
+            'PHASE2_URL',
+            'https://nba-phase2-raw-processors-756957797294.us-west2.run.app'
+        ),
+        'phase3_analytics': os.environ.get(
+            'PHASE3_URL',
+            'https://nba-phase3-analytics-processors-756957797294.us-west2.run.app'
+        ),
+        'phase4_precompute': os.environ.get(
+            'PHASE4_URL',
+            'https://nba-phase4-precompute-processors-756957797294.us-west2.run.app'
+        ),
+        'phase5_predictions': os.environ.get(
+            'PHASE5_URL',
+            'https://prediction-coordinator-756957797294.us-west2.run.app'
+        ),
+        'phase6_export': os.environ.get(
+            'PHASE6_URL',
+            'https://phase6-export-756957797294.us-west2.run.app'
+        ),
+    }
 
 # Performance thresholds (seconds)
 PHASE_THRESHOLDS = {

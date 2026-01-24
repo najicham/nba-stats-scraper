@@ -42,37 +42,42 @@ class SmokeTest:
 
         Returns dict with PASS/FAIL for each phase
         """
+        # Use parameterized query to prevent SQL injection
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("game_date", "STRING", game_date)]
+        )
+
         # Single batch query checks all phases at once
         query = f"""
         SELECT
           -- Phase 2: Box scores exist (ANY source)
           IF(
             EXISTS(SELECT 1 FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
-                   WHERE game_date = '{game_date}' LIMIT 1)
+                   WHERE game_date = @game_date LIMIT 1)
             OR
             EXISTS(SELECT 1 FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
-                   WHERE game_date = '{game_date}' LIMIT 1),
+                   WHERE game_date = @game_date LIMIT 1),
             'PASS', 'FAIL'
           ) as phase2,
 
           -- Phase 3: Analytics exist
           IF(
             EXISTS(SELECT 1 FROM `{self.project_id}.nba_analytics.player_game_summary`
-                   WHERE game_date = '{game_date}' LIMIT 1),
+                   WHERE game_date = @game_date LIMIT 1),
             'PASS', 'FAIL'
           ) as phase3,
 
-          -- Phase 4: Processors exist (≥3 required for PASS)
+          -- Phase 4: Processors exist (>=3 required for PASS)
           CASE
             WHEN (
               IF(EXISTS(SELECT 1 FROM `{self.project_id}.nba_precompute.player_daily_cache`
-                        WHERE cache_date = '{game_date}' LIMIT 1), 1, 0) +
+                        WHERE cache_date = @game_date LIMIT 1), 1, 0) +
               IF(EXISTS(SELECT 1 FROM `{self.project_id}.nba_precompute.player_shot_zone_analysis`
-                        WHERE analysis_date = '{game_date}' LIMIT 1), 1, 0) +
+                        WHERE analysis_date = @game_date LIMIT 1), 1, 0) +
               IF(EXISTS(SELECT 1 FROM `{self.project_id}.nba_precompute.player_composite_factors`
-                        WHERE game_date = '{game_date}' LIMIT 1), 1, 0) +
+                        WHERE game_date = @game_date LIMIT 1), 1, 0) +
               IF(EXISTS(SELECT 1 FROM `{self.project_id}.nba_precompute.team_defense_zone_analysis`
-                        WHERE analysis_date = '{game_date}' LIMIT 1), 1, 0)
+                        WHERE analysis_date = @game_date LIMIT 1), 1, 0)
             ) >= 3 THEN 'PASS'
             ELSE 'FAIL'
           END as phase4,
@@ -80,14 +85,14 @@ class SmokeTest:
           -- Phase 5: Predictions exist
           IF(
             EXISTS(SELECT 1 FROM `{self.project_id}.nba_predictions.player_prop_predictions`
-                   WHERE game_date = '{game_date}' LIMIT 1),
+                   WHERE game_date = @game_date LIMIT 1),
             'PASS', 'FAIL'
           ) as phase5,
 
           -- Phase 6: Grading exists
           IF(
             EXISTS(SELECT 1 FROM `{self.project_id}.nba_predictions.prediction_grades`
-                   WHERE game_date = '{game_date}' LIMIT 1),
+                   WHERE game_date = @game_date LIMIT 1),
             'PASS', 'FAIL'
           ) as phase6,
 
@@ -96,7 +101,7 @@ class SmokeTest:
         """
 
         try:
-            result = list(self.bq_client.query(query).result())[0]
+            result = list(self.bq_client.query(query, job_config=job_config).result())[0]
 
             return {
                 'game_date': game_date,

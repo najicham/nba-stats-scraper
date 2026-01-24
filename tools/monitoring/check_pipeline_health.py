@@ -42,52 +42,59 @@ class PipelineHealthChecker:
         self.verbose = verbose
         self.issues: List[str] = []
 
-    def run_query(self, query: str) -> List[Dict]:
+    def run_query(self, query: str, params: Optional[List] = None) -> List[Dict]:
         """Run a BigQuery query and return results as list of dicts."""
         try:
-            result = self.client.query(query).result(timeout=60)
+            job_config = None
+            if params:
+                job_config = bigquery.QueryJobConfig(query_parameters=params)
+            result = self.client.query(query, job_config=job_config).result(timeout=60)
             return [dict(row) for row in result]
         except Exception as e:
             if self.verbose:
                 print(f"  Query error: {e}")
             return []
 
+    def _date_param(self, date: str) -> List:
+        """Create a date query parameter."""
+        return [bigquery.ScalarQueryParameter("date", "STRING", date)]
+
     def check_schedule(self, date: str) -> Dict:
         """Check schedule status for a date."""
-        query = f"""
+        query = """
         SELECT
             COUNT(*) as total_games,
             COUNTIF(game_status_text = 'Final') as final_games,
             COUNTIF(game_status_text != 'Final') as pending_games
         FROM `nba_raw.v_nbac_schedule_latest`
-        WHERE game_date = '{date}'
+        WHERE game_date = @date
         """
-        results = self.run_query(query)
+        results = self.run_query(query, self._date_param(date))
         if results:
             return results[0]
         return {'total_games': 0, 'final_games': 0, 'pending_games': 0}
 
     def check_player_game_summary(self, date: str) -> int:
         """Check player_game_summary records for a date."""
-        query = f"""
+        query = """
         SELECT COUNT(*) as records
         FROM `nba_analytics.player_game_summary`
-        WHERE game_date = '{date}'
+        WHERE game_date = @date
         """
-        results = self.run_query(query)
+        results = self.run_query(query, self._date_param(date))
         return results[0]['records'] if results else 0
 
     def check_prediction_accuracy(self, date: str) -> Dict:
         """Check grading records for a date."""
-        query = f"""
+        query = """
         SELECT
             COUNT(*) as total_records,
             COUNTIF(recommendation IN ('OVER', 'UNDER')) as actionable,
             COUNTIF(prediction_correct = TRUE) as correct
         FROM `nba_predictions.prediction_accuracy`
-        WHERE game_date = '{date}'
+        WHERE game_date = @date
         """
-        results = self.run_query(query)
+        results = self.run_query(query, self._date_param(date))
         if results:
             r = results[0]
             r['win_rate'] = round(r['correct'] / r['actionable'] * 100, 1) if r['actionable'] > 0 else 0
@@ -96,30 +103,31 @@ class PipelineHealthChecker:
 
     def check_predictions(self, date: str) -> Dict:
         """Check predictions for a date."""
-        query = f"""
+        query = """
         SELECT
             COUNT(*) as total,
             COUNT(DISTINCT player_lookup) as players,
             COUNT(DISTINCT system_id) as systems
         FROM `nba_predictions.player_prop_predictions`
-        WHERE game_date = '{date}' AND is_active = TRUE
+        WHERE game_date = @date AND is_active = TRUE
         """
-        results = self.run_query(query)
+        results = self.run_query(query, self._date_param(date))
         return results[0] if results else {'total': 0, 'players': 0, 'systems': 0}
 
     def check_phase4_tables(self, date: str) -> Dict:
         """Check Phase 4 precompute tables for a date."""
         tables = {
-            'team_defense_zone_analysis': f"SELECT COUNT(*) as cnt FROM `nba_precompute.team_defense_zone_analysis` WHERE analysis_date = '{date}'",
-            'player_shot_zone_analysis': f"SELECT COUNT(*) as cnt FROM `nba_precompute.player_shot_zone_analysis` WHERE analysis_date = '{date}'",
-            'player_composite_factors': f"SELECT COUNT(*) as cnt FROM `nba_precompute.player_composite_factors` WHERE game_date = '{date}'",
-            'player_daily_cache': f"SELECT COUNT(*) as cnt FROM `nba_precompute.player_daily_cache` WHERE cache_date = '{date}'",
-            'ml_feature_store_v2': f"SELECT COUNT(*) as cnt FROM `nba_predictions.ml_feature_store_v2` WHERE game_date = '{date}'",
+            'team_defense_zone_analysis': "SELECT COUNT(*) as cnt FROM `nba_precompute.team_defense_zone_analysis` WHERE analysis_date = @date",
+            'player_shot_zone_analysis': "SELECT COUNT(*) as cnt FROM `nba_precompute.player_shot_zone_analysis` WHERE analysis_date = @date",
+            'player_composite_factors': "SELECT COUNT(*) as cnt FROM `nba_precompute.player_composite_factors` WHERE game_date = @date",
+            'player_daily_cache': "SELECT COUNT(*) as cnt FROM `nba_precompute.player_daily_cache` WHERE cache_date = @date",
+            'ml_feature_store_v2': "SELECT COUNT(*) as cnt FROM `nba_predictions.ml_feature_store_v2` WHERE game_date = @date",
         }
 
         results = {}
+        params = self._date_param(date)
         for table, query in tables.items():
-            r = self.run_query(query)
+            r = self.run_query(query, params)
             results[table] = r[0]['cnt'] if r else 0
         return results
 

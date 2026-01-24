@@ -48,15 +48,23 @@ class HistoricalValidator:
         """Get all game dates from schedule."""
         # NOTE: nbac_schedule is partitioned and requires date filter
         # Default to past 18 months if no dates specified
+        query_params = []
+
         if not start_date and not end_date:
             # Default: 18 months ago to today
             where_clause = "WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 18 MONTH)"
         elif start_date and end_date:
-            where_clause = f"WHERE game_date BETWEEN '{start_date}' AND '{end_date}'"
+            where_clause = "WHERE game_date BETWEEN @start_date AND @end_date"
+            query_params = [
+                bigquery.ScalarQueryParameter("start_date", "STRING", start_date),
+                bigquery.ScalarQueryParameter("end_date", "STRING", end_date),
+            ]
         elif start_date:
-            where_clause = f"WHERE game_date >= '{start_date}'"
+            where_clause = "WHERE game_date >= @start_date"
+            query_params = [bigquery.ScalarQueryParameter("start_date", "STRING", start_date)]
         elif end_date:
-            where_clause = f"WHERE game_date <= '{end_date}'"
+            where_clause = "WHERE game_date <= @end_date"
+            query_params = [bigquery.ScalarQueryParameter("end_date", "STRING", end_date)]
 
         query = f"""
         SELECT DISTINCT game_date
@@ -65,28 +73,33 @@ class HistoricalValidator:
         ORDER BY game_date
         """
 
-        results = self.bq_client.query(query).result()
+        job_config = bigquery.QueryJobConfig(query_parameters=query_params) if query_params else None
+        results = self.bq_client.query(query, job_config=job_config).result()
         return [row.game_date.strftime('%Y-%m-%d') for row in results]
 
     def validate_phase2_scrapers(self, game_date: str) -> Dict:
         """Validate Phase 2 scraper completeness."""
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("game_date", "STRING", game_date)]
+        )
+
         # Check key scraper tables
         scrapers = {
-            'bdl_box_scores': f"SELECT COUNT(DISTINCT game_id) FROM `{self.project_id}.nba_raw.bdl_player_boxscores` WHERE game_date = '{game_date}'",
-            'nbac_gamebook': f"SELECT COUNT(DISTINCT game_id) FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats` WHERE game_date = '{game_date}'",
-            'bettingpros_props': f"SELECT COUNT(DISTINCT player_name) FROM `{self.project_id}.nba_raw.bettingpros_player_points_props` WHERE game_date = '{game_date}'"
+            'bdl_box_scores': f"SELECT COUNT(DISTINCT game_id) FROM `{self.project_id}.nba_raw.bdl_player_boxscores` WHERE game_date = @game_date",
+            'nbac_gamebook': f"SELECT COUNT(DISTINCT game_id) FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats` WHERE game_date = @game_date",
+            'bettingpros_props': f"SELECT COUNT(DISTINCT player_name) FROM `{self.project_id}.nba_raw.bettingpros_player_points_props` WHERE game_date = @game_date"
         }
 
         # Get scheduled games
-        scheduled_query = f"SELECT COUNT(DISTINCT game_id) as games FROM `{self.project_id}.nba_raw.nbac_schedule` WHERE game_date = '{game_date}'"
-        scheduled_result = list(self.bq_client.query(scheduled_query).result())
+        scheduled_query = f"SELECT COUNT(DISTINCT game_id) as games FROM `{self.project_id}.nba_raw.nbac_schedule` WHERE game_date = @game_date"
+        scheduled_result = list(self.bq_client.query(scheduled_query, job_config=job_config).result())
         scheduled_games = scheduled_result[0].games if scheduled_result else 0
 
         results = {'scheduled_games': scheduled_games}
 
         for scraper_name, query in scrapers.items():
             try:
-                result = list(self.bq_client.query(query).result())
+                result = list(self.bq_client.query(query, job_config=job_config).result())
                 count = result[0][0] if result else 0
                 results[scraper_name] = count
             except Exception as e:
@@ -97,16 +110,20 @@ class HistoricalValidator:
 
     def validate_phase3_analytics(self, game_date: str) -> Dict:
         """Validate Phase 3 analytics completeness."""
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("game_date", "STRING", game_date)]
+        )
+
         tables = {
-            'player_game_summary': f"SELECT COUNT(*) FROM `{self.project_id}.nba_analytics.player_game_summary` WHERE game_date = '{game_date}'",
-            'team_defense': f"SELECT COUNT(*) FROM `{self.project_id}.nba_analytics.team_defense_game_summary` WHERE game_date = '{game_date}'",
-            'upcoming_context': f"SELECT COUNT(*) FROM `{self.project_id}.nba_analytics.upcoming_player_game_context` WHERE game_date = '{game_date}'"
+            'player_game_summary': f"SELECT COUNT(*) FROM `{self.project_id}.nba_analytics.player_game_summary` WHERE game_date = @game_date",
+            'team_defense': f"SELECT COUNT(*) FROM `{self.project_id}.nba_analytics.team_defense_game_summary` WHERE game_date = @game_date",
+            'upcoming_context': f"SELECT COUNT(*) FROM `{self.project_id}.nba_analytics.upcoming_player_game_context` WHERE game_date = @game_date"
         }
 
         results = {}
         for table_name, query in tables.items():
             try:
-                result = list(self.bq_client.query(query).result())
+                result = list(self.bq_client.query(query, job_config=job_config).result())
                 count = result[0][0] if result else 0
                 results[table_name] = count
             except Exception as e:
@@ -117,18 +134,22 @@ class HistoricalValidator:
 
     def validate_phase4_processors(self, game_date: str) -> Dict:
         """Validate Phase 4 processor completeness."""
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("game_date", "STRING", game_date)]
+        )
+
         processors = {
-            'PDC': f"SELECT COUNT(*) FROM `{self.project_id}.nba_precompute.player_daily_cache` WHERE cache_date = '{game_date}'",
-            'PSZA': f"SELECT COUNT(*) FROM `{self.project_id}.nba_precompute.player_shot_zone_analysis` WHERE analysis_date = '{game_date}'",
-            'PCF': f"SELECT COUNT(*) FROM `{self.project_id}.nba_precompute.player_composite_factors` WHERE game_date = '{game_date}'",
+            'PDC': f"SELECT COUNT(*) FROM `{self.project_id}.nba_precompute.player_daily_cache` WHERE cache_date = @game_date",
+            'PSZA': f"SELECT COUNT(*) FROM `{self.project_id}.nba_precompute.player_shot_zone_analysis` WHERE analysis_date = @game_date",
+            'PCF': f"SELECT COUNT(*) FROM `{self.project_id}.nba_precompute.player_composite_factors` WHERE game_date = @game_date",
             # 'MLFS': removed - table ml_feature_store_v2 doesn't exist
-            'TDZA': f"SELECT COUNT(*) FROM `{self.project_id}.nba_precompute.team_defense_zone_analysis` WHERE analysis_date = '{game_date}'"
+            'TDZA': f"SELECT COUNT(*) FROM `{self.project_id}.nba_precompute.team_defense_zone_analysis` WHERE analysis_date = @game_date"
         }
 
         results = {}
         for proc_name, query in processors.items():
             try:
-                result = list(self.bq_client.query(query).result())
+                result = list(self.bq_client.query(query, job_config=job_config).result())
                 count = result[0][0] if result else 0
                 results[proc_name] = count
             except Exception as e:
@@ -144,17 +165,21 @@ class HistoricalValidator:
 
     def validate_phase5_predictions(self, game_date: str) -> Dict:
         """Validate Phase 5 predictions completeness."""
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("game_date", "STRING", game_date)]
+        )
+
         query = f"""
         SELECT
           COUNT(*) as total_predictions,
           COUNT(DISTINCT player_lookup) as unique_players,
           COUNT(DISTINCT system_id) as unique_systems
         FROM `{self.project_id}.nba_predictions.player_prop_predictions`
-        WHERE game_date = '{game_date}'
+        WHERE game_date = @game_date
         """
 
         try:
-            result = list(self.bq_client.query(query).result())
+            result = list(self.bq_client.query(query, job_config=job_config).result())
             if result:
                 row = result[0]
                 return {
@@ -169,17 +194,21 @@ class HistoricalValidator:
 
     def validate_phase6_grading(self, game_date: str) -> Dict:
         """Validate Phase 6 grading completeness."""
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[bigquery.ScalarQueryParameter("game_date", "STRING", game_date)]
+        )
+
         query = f"""
         SELECT
           COUNT(*) as total_graded,
           COUNT(DISTINCT player_lookup) as unique_players_graded,
           ROUND(100.0 * COUNTIF(prediction_correct = TRUE) / NULLIF(COUNT(*), 0), 1) as win_rate
         FROM `{self.project_id}.nba_predictions.prediction_grades`
-        WHERE game_date = '{game_date}'
+        WHERE game_date = @game_date
         """
 
         try:
-            result = list(self.bq_client.query(query).result())
+            result = list(self.bq_client.query(query, job_config=job_config).result())
             if result:
                 row = result[0]
                 return {
