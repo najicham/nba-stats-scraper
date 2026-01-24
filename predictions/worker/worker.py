@@ -735,8 +735,9 @@ def process_player_predictions(
     from data_loaders import validate_features
     quality_score = features.get('feature_quality_score', 0)
 
-    # Use lower threshold (50) but track confidence level
-    is_valid, validation_errors = validate_features(features, min_quality_score=50.0)
+    # Configurable threshold - default 50 allows more predictions with confidence tracking
+    min_quality_threshold = float(os.environ.get('PREDICTION_MIN_QUALITY_THRESHOLD', '50.0'))
+    is_valid, validation_errors = validate_features(features, min_quality_score=min_quality_threshold)
 
     if not is_valid:
         logger.error(

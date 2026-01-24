@@ -15,7 +15,7 @@ This project consolidates all identified improvements from codebase analysis, ha
 | Priority | Total | Completed | In Progress | Remaining |
 |----------|-------|-----------|-------------|-----------|
 | P0 - Critical | 10 | 10 | 0 | 0 |
-| P1 - High | 25 | 8 | 0 | 17 |
+| P1 - High | 25 | 9 | 0 | 16 |
 | P2 - Medium | 37 | 3 | 0 | 34 |
 | P3 - Low | 26 | 0 | 0 | 26 |
 | **Total** | **98** | **19** | **0** | **79** |
@@ -113,11 +113,11 @@ This project consolidates all identified improvements from codebase analysis, ha
   - Issue: MERGE vs WRITE_APPEND logic causing 5x data bloat
   - Solution: Fix write mode logic
 
-- [ ] **P1-5: Fix validation threshold inconsistency**
-  - Status: Not Started
-  - Files: `data_loaders.py` vs `worker.py`
-  - Issue: Threshold 50 vs 70 in different places
-  - Solution: Centralize configuration
+- [x] **P1-5: Fix validation threshold inconsistency** ✅ FIXED
+  - Status: Completed
+  - Files: `predictions/worker/data_loaders.py`, `predictions/worker/worker.py`
+  - Solution: Made threshold configurable via PREDICTION_MIN_QUALITY_THRESHOLD env var
+  - Notes: 50 vs 70 is intentional (lenient vs strict), now documented and configurable
 
 ### Monitoring
 

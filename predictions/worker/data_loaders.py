@@ -847,19 +847,25 @@ class PredictionDataLoader:
 # FEATURE VALIDATION
 # ============================================================================
 
-def validate_features(features: Dict, min_quality_score: float = 70.0) -> tuple:
+def validate_features(features: Dict, min_quality_score: float = None) -> tuple:
     """
     Validate features are complete and high quality
-    
+
     Checks:
     1. All required fields present
     2. No null/NaN values
     3. Quality score meets minimum threshold
     4. Values in reasonable ranges
-    
+
     Args:
         features: Feature dictionary from ml_feature_store_v2
-        min_quality_score: Minimum acceptable quality score (default: 70)
+        min_quality_score: Minimum acceptable quality score.
+            Default reads from PREDICTION_MIN_QUALITY_THRESHOLD env var (70.0 if not set).
+            Worker.py typically passes 50.0 for more lenient validation with confidence tracking.
+
+    Note: The threshold difference (50 vs 70) is intentional:
+        - 70: Default for strict validation (data quality checks)
+        - 50: Used in worker for predictions (allows more through, tracks confidence)
     
     Returns:
         tuple: (is_valid, list_of_errors)
@@ -870,8 +876,12 @@ def validate_features(features: Dict, min_quality_score: float = 70.0) -> tuple:
             logger.error(f"Invalid features: {errors}")
             return []
     """
+    # Apply default if not specified
+    if min_quality_score is None:
+        min_quality_score = float(os.environ.get('PREDICTION_MIN_QUALITY_THRESHOLD', '70.0'))
+
     errors = []
-    
+
     # Required fields (25 features) - matches ml_feature_store_v2 schema
     required_fields = [
         # Recent performance (0-4)
