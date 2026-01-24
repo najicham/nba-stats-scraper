@@ -60,7 +60,7 @@ class UnifiedPubSubPublisher:
         Args:
             project_id: GCP project ID (defaults to environment)
         """
-        self.project_id = project_id or os.environ.get('GCP_PROJECT', 'nba-props-platform')
+        self.project_id = project_id or os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
         self._client = None
 
     @property
@@ -299,18 +299,41 @@ class UnifiedPubSubPublisher:
 
     def _alert_publish_failure(self, topic: str, message: Dict, error: Exception) -> None:
         """
-        Alert on publish failure (placeholder - will integrate with AlertManager).
+        Alert on publish failure via notification system.
 
         Args:
             topic: Topic that failed
             message: Message that failed to publish
             error: Exception that occurred
         """
-        # TODO: Integrate with AlertManager in next step
+        processor_name = message.get('processor_name', 'Unknown')
+        game_date = message.get('game_date', 'Unknown')
+
         logger.warning(
-            f"Pub/Sub publishing failed for {message.get('processor_name')}. "
+            f"Pub/Sub publishing failed for {processor_name}. "
             f"Downstream will use scheduler backup."
         )
+
+        # Send alert via notification system
+        try:
+            from shared.utils.notification_system import notify_warning
+
+            notify_warning(
+                title=f"Pub/Sub Publish Failed: {processor_name}",
+                message=f"Message failed to publish to topic '{topic}'. Downstream orchestrators will use scheduler backup instead of event-driven trigger.",
+                details={
+                    "topic": topic,
+                    "processor_name": processor_name,
+                    "game_date": game_date,
+                    "error_type": type(error).__name__,
+                    "error_message": str(error)[:500],
+                    "impact": "Downstream phases may be delayed by up to scheduler interval"
+                }
+            )
+        except ImportError:
+            logger.debug("Notification system not available")
+        except Exception as notify_error:
+            logger.debug(f"Failed to send notification: {notify_error}")
 
     def publish_batch(
         self,
