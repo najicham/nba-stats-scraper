@@ -2,6 +2,14 @@
 Base Exporter for Phase 6 Publishing
 
 Provides common functionality for exporting BigQuery data to GCS as JSON.
+
+Circuit Breaker Protection:
+- GCS uploads are protected by circuit breaker to prevent cascading failures
+- If GCS becomes unavailable, circuit opens and exports fail fast
+- Circuit auto-recovers after timeout period
+
+Version: 1.1
+Updated: 2026-01-23 - Added circuit breaker protection for GCS operations
 """
 
 import json
@@ -12,16 +20,30 @@ from typing import Dict, List, Any, Optional
 
 from google.cloud import bigquery
 from google.cloud import storage
-from google.api_core.exceptions import ServiceUnavailable, DeadlineExceeded, InternalServerError
+from google.api_core.exceptions import (
+    ServiceUnavailable,
+    DeadlineExceeded,
+    InternalServerError,
+)
 from shared.clients.bigquery_pool import get_bigquery_client
 from shared.utils.retry_with_jitter import retry_with_jitter
+
+# Circuit breaker for GCS operations
+from shared.utils.external_service_circuit_breaker import (
+    get_service_circuit_breaker,
+    CircuitBreakerError,
+)
 
 logger = logging.getLogger(__name__)
 
 from shared.config.gcp_config import get_project_id, Buckets
+
 PROJECT_ID = get_project_id()
 BUCKET_NAME = Buckets.API
 API_VERSION = 'v1'
+
+# Circuit breaker service name for GCS uploads
+GCS_CIRCUIT_BREAKER_SERVICE = "gcs_api_export"
 
 
 class BaseExporter(ABC):
@@ -74,6 +96,9 @@ class BaseExporter(ABC):
         """
         Upload JSON data to GCS with cache headers.
 
+        Protected by circuit breaker to prevent cascading failures when
+        GCS is unavailable. If circuit is open, raises CircuitBreakerError.
+
         Args:
             json_data: Dictionary to serialize as JSON
             path: Path within bucket (e.g., 'results/2021-11-10.json')
@@ -81,7 +106,27 @@ class BaseExporter(ABC):
 
         Returns:
             Full GCS path (gs://bucket/v1/path)
+
+        Raises:
+            CircuitBreakerError: If GCS circuit breaker is open
+            Exception: Any GCS upload error after retries
         """
+        # Get circuit breaker for GCS operations
+        cb = get_service_circuit_breaker(GCS_CIRCUIT_BREAKER_SERVICE)
+
+        # Check if circuit is available before doing work
+        if not cb.is_available():
+            status = cb.get_status()
+            logger.error(
+                f"GCS circuit breaker OPEN - skipping upload to {path}. "
+                f"Timeout remaining: {status.get('timeout_remaining', 0):.1f}s"
+            )
+            raise CircuitBreakerError(
+                GCS_CIRCUIT_BREAKER_SERVICE,
+                datetime.now(timezone.utc),
+                status.get('timeout_remaining', 0)
+            )
+
         bucket = self.gcs_client.bucket(self.bucket_name)
         full_path = f'{API_VERSION}/{path}'
         blob = bucket.blob(full_path)
@@ -94,8 +139,15 @@ class BaseExporter(ABC):
             ensure_ascii=False
         )
 
-        # Upload with retry for transient GCS errors
-        self._upload_blob_with_retry(blob, json_str, cache_control)
+        # Upload with retry, protected by circuit breaker
+        try:
+            self._upload_blob_with_retry(blob, json_str, cache_control)
+            # Record success with circuit breaker
+            cb._record_success()
+        except (ServiceUnavailable, DeadlineExceeded, InternalServerError) as e:
+            # Record failure with circuit breaker for GCS-specific errors
+            cb._record_failure(e)
+            raise
 
         gcs_path = f'gs://{self.bucket_name}/{full_path}'
         logger.info(f"Uploaded {len(json_str)} bytes to {gcs_path}")

@@ -1,0 +1,227 @@
+<!-- System Performance Component -->
+<div class="space-y-6">
+    <!-- Period Selector -->
+    <div class="flex items-center space-x-4 mb-4">
+        <span class="text-sm font-medium text-gray-700">Period:</span>
+        <div class="inline-flex rounded-md shadow-sm" role="group">
+            <button type="button" id="period-7d" onclick="loadSystemPerformance('rolling_7d')"
+                class="period-btn px-4 py-2 text-sm font-medium text-gray-900 bg-white border border-gray-200 rounded-l-lg hover:bg-gray-100 focus:z-10 focus:ring-2 focus:ring-blue-500">
+                7 Days
+            </button>
+            <button type="button" id="period-30d" onclick="loadSystemPerformance('rolling_30d')"
+                class="period-btn px-4 py-2 text-sm font-medium text-gray-900 bg-white border-t border-b border-gray-200 hover:bg-gray-100 focus:z-10 focus:ring-2 focus:ring-blue-500">
+                30 Days
+            </button>
+            <button type="button" id="period-season" onclick="loadSystemPerformance('season')"
+                class="period-btn px-4 py-2 text-sm font-medium text-gray-900 bg-white border border-gray-200 rounded-r-lg hover:bg-gray-100 focus:z-10 focus:ring-2 focus:ring-blue-500">
+                Season
+            </button>
+        </div>
+    </div>
+
+    <!-- Performance Table -->
+    <div id="system-performance-table">
+        <div class="animate-pulse">
+            <div class="h-8 bg-gray-200 rounded mb-2"></div>
+            <div class="h-64 bg-gray-100 rounded"></div>
+        </div>
+    </div>
+
+    <!-- Legend -->
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <h5 class="text-sm font-semibold text-blue-900 mb-2">Understanding System Performance</h5>
+        <div class="text-xs text-blue-800 space-y-1">
+            <ul class="list-disc list-inside space-y-1">
+                <li><strong>Success Rate</strong>: Percentage of OVER/UNDER recommendations that were correct</li>
+                <li><strong>MAE</strong>: Mean Absolute Error - average points difference between prediction and actual</li>
+                <li><strong>Bias</strong>: Average signed error - positive means over-predicting, negative means under-predicting</li>
+                <li><strong>High Conf</strong>: Performance on predictions with confidence >= 70%</li>
+                <li><strong>Very High Conf</strong>: Performance on predictions with confidence >= 80%</li>
+            </ul>
+        </div>
+    </div>
+</div>
+
+<script>
+// Store the API key for authenticated requests
+const apiKey = new URLSearchParams(window.location.search).get('key') || '';
+
+function loadSystemPerformance(period = 'rolling_7d') {
+    // Update button styles
+    document.querySelectorAll('.period-btn').forEach(btn => {
+        btn.classList.remove('bg-blue-100', 'text-blue-700');
+        btn.classList.add('bg-white', 'text-gray-900');
+    });
+
+    const periodMap = {
+        'rolling_7d': 'period-7d',
+        'rolling_30d': 'period-30d',
+        'season': 'period-season'
+    };
+
+    const activeBtn = document.getElementById(periodMap[period]);
+    if (activeBtn) {
+        activeBtn.classList.remove('bg-white', 'text-gray-900');
+        activeBtn.classList.add('bg-blue-100', 'text-blue-700');
+    }
+
+    // Show loading state
+    document.getElementById('system-performance-table').innerHTML = `
+        <div class="animate-pulse">
+            <div class="h-8 bg-gray-200 rounded mb-2"></div>
+            <div class="h-64 bg-gray-100 rounded"></div>
+        </div>
+    `;
+
+    // Fetch data
+    fetch(`/api/system-performance?period=${period}&key=${apiKey}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.error) {
+                document.getElementById('system-performance-table').innerHTML = `
+                    <div class="text-red-500 text-center py-8">Error: ${data.error}</div>
+                `;
+                return;
+            }
+            renderPerformanceTable(data.systems, data.period, data.data_source);
+        })
+        .catch(error => {
+            document.getElementById('system-performance-table').innerHTML = `
+                <div class="text-red-500 text-center py-8">Error loading data: ${error.message}</div>
+            `;
+        });
+}
+
+function renderPerformanceTable(systems, period, dataSource) {
+    if (!systems || systems.length === 0) {
+        document.getElementById('system-performance-table').innerHTML = `
+            <div class="text-gray-500 text-center py-8">No performance data available for this period.</div>
+        `;
+        return;
+    }
+
+    // Build table HTML
+    let html = `
+        <div class="text-xs text-gray-500 mb-2 text-right">Data source: ${dataSource}</div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">System</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Predictions</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">W/L</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Success Rate</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">MAE</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Bias</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Over Rate</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Under Rate</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">High Conf</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Within 5</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+    `;
+
+    systems.forEach((system, index) => {
+        const successClass = getSuccessRateClass(system.success_rate_pct);
+        const biasClass = getBiasClass(system.avg_bias);
+        const highConfClass = getSuccessRateClass(system.high_conf_success_rate_pct);
+        const rowBg = index === 0 ? 'bg-green-50' : (system.success_rate_pct >= 55 ? 'bg-blue-50' : '');
+
+        html += `
+            <tr class="${rowBg}">
+                <td class="px-3 py-2 whitespace-nowrap font-medium text-gray-900">
+                    ${system.system_id}
+                    ${index === 0 ? '<span class="ml-1 text-xs text-green-600 font-normal">(Best)</span>' : ''}
+                </td>
+                <td class="px-3 py-2 text-center text-gray-700">${system.total_predictions || 0}</td>
+                <td class="px-3 py-2 text-center text-gray-700">
+                    <span class="text-green-600">${system.wins || 0}</span> /
+                    <span class="text-red-600">${system.losses || 0}</span>
+                </td>
+                <td class="px-3 py-2 text-center">
+                    <span class="font-semibold ${successClass}">
+                        ${system.success_rate_pct != null ? system.success_rate_pct.toFixed(1) + '%' : 'N/A'}
+                    </span>
+                </td>
+                <td class="px-3 py-2 text-center text-gray-700">
+                    ${system.mae != null ? system.mae.toFixed(1) : 'N/A'}
+                </td>
+                <td class="px-3 py-2 text-center ${biasClass}">
+                    ${system.avg_bias != null ? (system.avg_bias > 0 ? '+' : '') + system.avg_bias.toFixed(1) : 'N/A'}
+                </td>
+                <td class="px-3 py-2 text-center text-gray-700">
+                    ${system.over_success_rate_pct != null ? system.over_success_rate_pct.toFixed(1) + '%' : 'N/A'}
+                    <span class="text-xs text-gray-400">(${system.over_wins || 0}/${system.over_count || 0})</span>
+                </td>
+                <td class="px-3 py-2 text-center text-gray-700">
+                    ${system.under_success_rate_pct != null ? system.under_success_rate_pct.toFixed(1) + '%' : 'N/A'}
+                    <span class="text-xs text-gray-400">(${system.under_wins || 0}/${system.under_count || 0})</span>
+                </td>
+                <td class="px-3 py-2 text-center ${highConfClass}">
+                    ${system.high_conf_success_rate_pct != null ? system.high_conf_success_rate_pct.toFixed(1) + '%' : 'N/A'}
+                    <span class="text-xs text-gray-400">(${system.high_conf_wins || 0}/${system.high_conf_count || 0})</span>
+                </td>
+                <td class="px-3 py-2 text-center text-gray-700">
+                    ${system.within_5_pct != null ? system.within_5_pct.toFixed(1) + '%' : 'N/A'}
+                </td>
+            </tr>
+        `;
+    });
+
+    html += `
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Summary Stats -->
+        <div class="grid grid-cols-4 gap-4 mt-4">
+            <div class="bg-gray-50 rounded-lg p-3 text-center">
+                <div class="text-2xl font-bold text-blue-600">${systems.length}</div>
+                <div class="text-xs text-gray-500">Active Systems</div>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-3 text-center">
+                <div class="text-2xl font-bold ${getSuccessRateClass(systems[0]?.success_rate_pct)}">
+                    ${systems[0]?.success_rate_pct != null ? systems[0].success_rate_pct.toFixed(1) + '%' : 'N/A'}
+                </div>
+                <div class="text-xs text-gray-500">Best System Rate</div>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-3 text-center">
+                <div class="text-2xl font-bold text-gray-700">
+                    ${systems.reduce((sum, s) => sum + (s.total_predictions || 0), 0).toLocaleString()}
+                </div>
+                <div class="text-xs text-gray-500">Total Predictions</div>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-3 text-center">
+                <div class="text-2xl font-bold text-gray-700">
+                    ${systems.reduce((sum, s) => sum + (s.unique_games || 0), 0).toLocaleString()}
+                </div>
+                <div class="text-xs text-gray-500">Games Covered</div>
+            </div>
+        </div>
+    `;
+
+    document.getElementById('system-performance-table').innerHTML = html;
+}
+
+function getSuccessRateClass(rate) {
+    if (rate == null) return 'text-gray-500';
+    if (rate >= 60) return 'text-green-600';
+    if (rate >= 55) return 'text-blue-600';
+    if (rate >= 50) return 'text-gray-700';
+    return 'text-red-600';
+}
+
+function getBiasClass(bias) {
+    if (bias == null) return 'text-gray-500';
+    const absBias = Math.abs(bias);
+    if (absBias >= 3) return 'text-red-600 font-semibold';
+    if (absBias >= 2) return 'text-yellow-600';
+    return 'text-gray-700';
+}
+
+// Load default period on page load
+document.addEventListener('DOMContentLoaded', function() {
+    loadSystemPerformance('rolling_7d');
+});
+</script>

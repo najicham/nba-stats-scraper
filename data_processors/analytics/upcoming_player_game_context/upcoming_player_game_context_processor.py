@@ -2539,6 +2539,16 @@ class UpcomingPlayerGameContextProcessor(
         questionable_star_teammates = self._get_questionable_star_teammates(team_abbr, self.target_date)
         star_tier_out = self._get_star_tier_out(team_abbr, self.target_date)
 
+        # Calculate projected usage rate (Session 108)
+        projected_usage_rate = self._calculate_projected_usage_rate(
+            player_lookup=player_lookup,
+            team_abbr=team_abbr,
+            game_date=self.target_date,
+            star_teammates_out=star_teammates_out,
+            opponent_team_abbr=opponent_team_abbr,
+            historical_data=historical_data
+        )
+
         # Calculate travel context (P1-20)
         travel_context = self._calculate_travel_context(team_abbr, game_info)
 
@@ -2602,8 +2612,8 @@ class UpcomingPlayerGameContextProcessor(
             'home_game': (team_abbr == game_info['home_team_abbr']),
             'back_to_back': fatigue_metrics['back_to_back'],
             'season_phase': self._determine_season_phase(self.target_date),
-            'projected_usage_rate': None,  # TODO: future
-            
+            'projected_usage_rate': projected_usage_rate,
+
             # Fatigue metrics
             **fatigue_metrics,
             

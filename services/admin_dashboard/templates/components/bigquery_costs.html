@@ -1,0 +1,138 @@
+<!-- BigQuery Costs Component -->
+<div class="space-y-6">
+    <!-- Summary Cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-gray-50 rounded-lg p-4 text-center">
+            <div class="text-2xl font-bold text-gray-900">
+                ${{ "%.4f"|format(summary.estimated_cost_usd) if summary.estimated_cost_usd else '0.00' }}
+            </div>
+            <div class="text-xs text-gray-500">Est. Cost ({{ days }} days)</div>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-4 text-center">
+            <div class="text-2xl font-bold text-blue-600">
+                {{ "{:,.0f}".format(summary.total_queries) if summary.total_queries else '0' }}
+            </div>
+            <div class="text-xs text-gray-500">Total Queries</div>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-4 text-center">
+            <div class="text-2xl font-bold text-green-600">
+                {{ "%.2f"|format(summary.total_gb_billed) if summary.total_gb_billed else '0' }} GB
+            </div>
+            <div class="text-xs text-gray-500">Data Processed</div>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-4 text-center">
+            <div class="text-2xl font-bold {% if summary.cache_hit_rate_pct and summary.cache_hit_rate_pct >= 30 %}text-green-600{% else %}text-yellow-600{% endif %}">
+                {{ "%.1f"|format(summary.cache_hit_rate_pct) if summary.cache_hit_rate_pct else '0' }}%
+            </div>
+            <div class="text-xs text-gray-500">Cache Hit Rate</div>
+        </div>
+    </div>
+
+    <!-- Additional Stats Row -->
+    <div class="grid grid-cols-3 gap-4">
+        <div class="bg-gray-50 rounded-lg p-3 text-center">
+            <div class="text-lg font-semibold text-gray-800">
+                {{ "%.2f"|format(summary.avg_mb_per_query) if summary.avg_mb_per_query else '0' }} MB
+            </div>
+            <div class="text-xs text-gray-500">Avg per Query</div>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-3 text-center">
+            <div class="text-lg font-semibold text-gray-800">
+                {{ summary.unique_users if summary.unique_users else '0' }}
+            </div>
+            <div class="text-xs text-gray-500">Unique Users</div>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-3 text-center">
+            <div class="text-lg font-semibold {% if summary.error_rate_pct and summary.error_rate_pct > 5 %}text-red-600{% else %}text-gray-800{% endif %}">
+                {{ "%.1f"|format(summary.error_rate_pct) if summary.error_rate_pct else '0' }}%
+            </div>
+            <div class="text-xs text-gray-500">Error Rate</div>
+        </div>
+    </div>
+
+    <!-- Daily Costs Table -->
+    <div>
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Daily Breakdown</h4>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Queries</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">GB Billed</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Est. Cost</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Cache Hits</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Errors</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for day in daily_costs %}
+                    <tr class="{% if day.error_count > 10 %}bg-red-50{% elif day.estimated_cost_usd > 0.1 %}bg-yellow-50{% endif %}">
+                        <td class="px-3 py-2 whitespace-nowrap font-medium">{{ day.date }}</td>
+                        <td class="px-3 py-2 text-center">{{ "{:,}".format(day.query_count) }}</td>
+                        <td class="px-3 py-2 text-center">{{ "%.2f"|format(day.total_gb_billed) }}</td>
+                        <td class="px-3 py-2 text-center font-semibold">${{ "%.4f"|format(day.estimated_cost_usd) }}</td>
+                        <td class="px-3 py-2 text-center">
+                            <span class="{% if day.cache_hit_rate_pct >= 30 %}text-green-600{% else %}text-gray-600{% endif %}">
+                                {{ "%.1f"|format(day.cache_hit_rate_pct) }}%
+                            </span>
+                        </td>
+                        <td class="px-3 py-2 text-center">
+                            {% if day.error_count > 0 %}
+                            <span class="px-2 py-1 bg-red-100 text-red-800 text-xs rounded-full">{{ day.error_count }}</span>
+                            {% else %}
+                            <span class="text-gray-400">0</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" class="px-3 py-4 text-center text-gray-500">No data available</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Top Users by Cost -->
+    {% if costs_by_user %}
+    <div>
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Top Users by Cost</h4>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">User</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Queries</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">GB Billed</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Est. Cost</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Avg MB/Query</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for user in costs_by_user %}
+                    <tr>
+                        <td class="px-3 py-2 whitespace-nowrap">
+                            <span class="font-medium text-gray-900" title="{{ user.user_email }}">
+                                {{ user.user_display[:35] }}{% if user.user_display|length > 35 %}...{% endif %}
+                            </span>
+                        </td>
+                        <td class="px-3 py-2 text-center">{{ "{:,}".format(user.query_count) }}</td>
+                        <td class="px-3 py-2 text-center">{{ "%.2f"|format(user.total_gb_billed) }}</td>
+                        <td class="px-3 py-2 text-center font-semibold">${{ "%.4f"|format(user.estimated_cost_usd) }}</td>
+                        <td class="px-3 py-2 text-center">{{ "%.2f"|format(user.avg_mb_per_query) }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Pricing Note -->
+    <div class="text-xs text-gray-400 mt-4">
+        <p>* Costs estimated at $6.25/TB (BigQuery on-demand pricing). First 1TB/month is free.</p>
+        <p>* Slot hours: {{ "%.2f"|format(summary.total_slot_hours) if summary.total_slot_hours else '0' }} hours total.</p>
+    </div>
+</div>

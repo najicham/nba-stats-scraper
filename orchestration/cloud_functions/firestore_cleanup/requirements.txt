@@ -1,0 +1,15 @@
+# Firestore Cleanup Cloud Function Requirements
+# Cloud Function dependencies
+
+# Cloud Functions framework
+functions-framework==3.*
+
+# Google Cloud libraries
+google-cloud-firestore==2.*
+google-cloud-secret-manager==2.16.0
+
+# HTTP framework
+flask==3.*
+
+# HTTP client for Slack notifications
+requests>=2.31.0

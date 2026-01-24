@@ -52,14 +52,16 @@ Migration Strategy:
 Author: Claude Code
 Date: January 1, 2026
 Updated: January 20, 2026 (Week 1 - Subcollection migration)
+Updated: January 2026 (Multi-instance coordination support)
 """
 
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, timezone
-from typing import Dict, List, Set, Optional
+from datetime import datetime, timezone, timedelta
+from typing import Dict, List, Set, Optional, Callable
 import logging
 import os
 import sys
+import time
 
 # Add path for slack utilities
 sys.path.append('/home/naji/code/nba-stats-scraper/orchestration/cloud_functions/self_heal')

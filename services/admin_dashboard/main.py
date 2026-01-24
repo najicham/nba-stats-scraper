@@ -339,6 +339,29 @@ app = Flask(__name__)
 app.register_blueprint(create_health_blueprint('admin-dashboard'))
 logger.info("Health check endpoints registered: /health, /ready, /health/deep")
 
+# Prometheus metrics endpoint
+# Initialize metrics collector for this service
+prometheus_metrics = PrometheusMetrics(service_name='admin-dashboard', version='1.0.0')
+app.register_blueprint(create_metrics_blueprint(prometheus_metrics))
+logger.info("Prometheus metrics endpoint registered: /metrics, /metrics/json")
+
+# Register custom metrics for admin dashboard
+dashboard_api_requests = prometheus_metrics.register_counter(
+    'dashboard_api_requests_total',
+    'Total dashboard API requests by endpoint',
+    ['endpoint', 'sport']
+)
+dashboard_action_requests = prometheus_metrics.register_counter(
+    'dashboard_action_requests_total',
+    'Total admin action requests',
+    ['action_type', 'result']
+)
+pipeline_status_checks = prometheus_metrics.register_counter(
+    'pipeline_status_checks_total',
+    'Total pipeline status checks',
+    ['sport', 'date_type']
+)
+
 # Import services
 from services.bigquery_service import BigQueryService
 from services.firestore_service import FirestoreService
@@ -643,6 +666,10 @@ def api_status():
     sport = get_sport_from_request()
     bq_svc, _ = get_service_for_sport(sport)
     today, tomorrow, now_et = get_et_dates()
+
+    # Track metrics
+    dashboard_api_requests.inc(labels={'endpoint': '/api/status', 'sport': sport})
+    pipeline_status_checks.inc(labels={'sport': sport, 'date_type': 'today_tomorrow'})
 
     try:
         if sport == 'mlb':
@@ -1052,6 +1079,16 @@ def partial_player_insights():
     )
 
 
+@app.route('/partials/system-performance')
+@rate_limit
+def partial_system_performance():
+    """HTMX partial: System performance display."""
+    if not check_auth():
+        return '<div class="text-red-500">Unauthorized</div>', 401
+
+    return render_template('components/system_performance.html')
+
+
 @app.route('/api/grading-by-system')
 @rate_limit
 def api_grading_by_system():
@@ -1181,6 +1218,8 @@ def action_force_predictions():
         if result.get('success'):
             # Log successful action to BigQuery audit trail
             audit_logger.log_action('force_predictions', endpoint, parameters, 'success')
+            # Track metrics
+            dashboard_action_requests.inc(labels={'action_type': 'force_predictions', 'result': 'success'})
 
             return jsonify({
                 'status': 'triggered',
@@ -1191,6 +1230,8 @@ def action_force_predictions():
         else:
             # Log failed action to BigQuery audit trail
             audit_logger.log_action('force_predictions', endpoint, parameters, 'failure')
+            # Track metrics
+            dashboard_action_requests.inc(labels={'action_type': 'force_predictions', 'result': 'failure'})
 
             return jsonify({
                 'status': 'failed',
@@ -1203,6 +1244,8 @@ def action_force_predictions():
         logger.error(f"Error forcing predictions: {e}")
         # Log error action to BigQuery audit trail
         audit_logger.log_action('force_predictions', endpoint, parameters, 'error')
+        # Track metrics
+        dashboard_action_requests.inc(labels={'action_type': 'force_predictions', 'result': 'error'})
         return jsonify({'error': str(e)}), 500
 
 

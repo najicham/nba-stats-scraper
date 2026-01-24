@@ -7,8 +7,11 @@ Checks player injury status before generating predictions to:
 1. Skip predictions for players listed as OUT (prevents DNP errors)
 2. Flag predictions for QUESTIONABLE/DOUBTFUL players (high uncertainty)
 3. Pass through all other players normally
+4. Calculate teammate injury impact for usage adjustments (v2.0)
 
-Data Source: nba_raw.nbac_injury_report (NBA.com official injury reports)
+Data Sources (v2.0):
+- nba_raw.nbac_injury_report: NBA.com official injury reports (primary)
+- nba_raw.bdl_injuries: Ball Don't Lie backup source (validation)
 
 Based on analysis of 2024-25 season:
 - 28.6% of DNPs (1,833) were catchable by checking OUT status
@@ -25,11 +28,16 @@ Usage:
         # Don't generate prediction
     elif status.has_warning:
         # Generate prediction but flag uncertainty
+
+    # v2.0: Get teammate impact for usage adjustments
+    impact = filter.get_teammate_impact(player_lookup, team_abbr, game_date)
+    if impact.has_significant_impact:
+        adjusted_usage = base_usage * impact.usage_boost_factor
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 from google.cloud import bigquery
 import logging
 

@@ -591,6 +591,30 @@ class PredictionDataLoader:
         if not player_lookups:
             return {}
 
+        # Generate cache key for this batch query
+        # Sort player_lookups for consistent cache key
+        sorted_players = sorted(player_lookups)
+        cache_key = self._query_cache.generate_key(
+            query_template="historical_games_batch",
+            params={
+                "players_hash": hash(tuple(sorted_players)),
+                "game_date": game_date,
+                "lookback_days": lookback_days,
+                "max_games": max_games,
+                "dataset": self.analytics_dataset
+            },
+            prefix="hist_games"
+        )
+
+        # Check cache first
+        cached_result = self._query_cache.get(cache_key)
+        if cached_result is not None:
+            logger.info(f"Query cache HIT for historical games batch on {game_date}")
+            return cached_result
+
+        # Cache miss - execute query
+        logger.debug(f"Query cache MISS for historical games batch on {game_date}")
+
         # Batch query for all players at once using UNNEST
         query = """
         WITH recent_games AS (
@@ -685,6 +709,12 @@ class PredictionDataLoader:
 
             total_games = sum(len(games) for games in player_games.values())
             logger.info(f"Batch loaded {total_games} historical games for {len(player_lookups)} players")
+
+            # Cache the result with TTL based on data freshness
+            # Historical data uses longer TTL since it doesn't change
+            cache_ttl = self._query_cache.get_ttl_for_date(game_date)
+            self._query_cache.set(cache_key, player_games, ttl_seconds=cache_ttl)
+
             return player_games
 
         except gcp_exceptions.BadRequest as e:
@@ -726,6 +756,28 @@ class PredictionDataLoader:
         """
         if not player_lookups:
             return {}
+
+        # Generate cache key for this batch query
+        sorted_players = sorted(player_lookups)
+        cache_key = self._query_cache.generate_key(
+            query_template="features_batch_for_date",
+            params={
+                "players_hash": hash(tuple(sorted_players)),
+                "game_date": game_date,
+                "feature_version": feature_version,
+                "dataset": self.predictions_dataset
+            },
+            prefix="features"
+        )
+
+        # Check cache first
+        cached_result = self._query_cache.get(cache_key)
+        if cached_result is not None:
+            logger.info(f"Query cache HIT for features batch on {game_date}")
+            return cached_result
+
+        # Cache miss - execute query
+        logger.debug(f"Query cache MISS for features batch on {game_date}")
 
         query = """
         SELECT
@@ -821,6 +873,12 @@ class PredictionDataLoader:
                 player_features[row.player_lookup] = features
 
             logger.info(f"Batch loaded features for {len(player_features)}/{len(player_lookups)} players")
+
+            # Cache the result with TTL based on data freshness
+            # Same-day data uses shorter TTL (may be updated), historical uses longer
+            cache_ttl = self._query_cache.get_ttl_for_date(game_date)
+            self._query_cache.set(cache_key, player_features, ttl_seconds=cache_ttl)
+
             return player_features
 
         except gcp_exceptions.BadRequest as e:
