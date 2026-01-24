@@ -104,7 +104,7 @@ def find_missing_dates(scraper_name: str, lookback_days: int = 3) -> List[str]:
         from google.cloud import bigquery
         client = bigquery.Client()
     except Exception as e:
-        logger.error(f"Failed to initialize BigQuery client: {e}")
+        logger.error(f"Failed to initialize BigQuery client: {e}", exc_info=True)
         raise
 
     # Load config to get the completeness query
@@ -143,7 +143,7 @@ def find_missing_dates(scraper_name: str, lookback_days: int = 3) -> List[str]:
         return missing_dates
 
     except Exception as e:
-        logger.error(f"Completeness query failed: {e}")
+        logger.error(f"Completeness query failed: {e}", exc_info=True)
         raise
 
 
@@ -231,13 +231,13 @@ def invoke_scraper(
             }
 
     except requests.Timeout:
-        logger.error(f"  Timeout: {scraper_name} for {date}")
+        logger.error(f"  Timeout: {scraper_name} for {date}", exc_info=True)
         return {
             "status": "timeout",
             "date": date,
         }
     except Exception as e:
-        logger.error(f"  Error: {scraper_name} for {date} - {e}")
+        logger.error(f"  Error: {scraper_name} for {date} - {e}", exc_info=True)
         return {
             "status": "error",
             "date": date,
@@ -325,7 +325,7 @@ def run_catchup(
         results["message"] = f"Retried {len(missing_dates)} dates: {results['successes']} succeeded, {results['failures']} failed"
 
     except Exception as e:
-        logger.error(f"Catch-up failed: {e}")
+        logger.error(f"Catch-up failed: {e}", exc_info=True)
         results["status"] = "error"
         results["message"] = str(e)
 
@@ -378,7 +378,7 @@ def create_flask_app():
             return jsonify(result), status_code
 
         except Exception as e:
-            logger.error(f"Catch-up endpoint error: {e}")
+            logger.error(f"Catch-up endpoint error: {e}", exc_info=True)
             return jsonify({"error": str(e)}), 500
 
     @app.route("/health", methods=["GET"])

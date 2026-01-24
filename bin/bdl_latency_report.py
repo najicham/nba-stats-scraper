@@ -223,7 +223,7 @@ def get_latency_data(start_date: str, end_date: str) -> Tuple[List[Dict], Dict]:
         return games, summary
 
     except Exception as e:
-        logger.error(f"Failed to query latency data: {e}")
+        logger.error(f"Failed to query latency data: {e}", exc_info=True)
         raise
 
 
@@ -442,7 +442,7 @@ def main():
         return 0 if summary['games_missing_bdl'] == 0 else 1
 
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Error: {e}", exc_info=True)
         return 2
 
 

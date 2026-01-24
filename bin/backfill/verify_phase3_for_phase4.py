@@ -100,7 +100,7 @@ def get_dates_with_data(bq_client: bigquery.Client, table: str, date_field: str,
             import pandas as pd
             return set(pd.to_datetime(dates).dt.date)
     except Exception as e:
-        logger.error(f"Error querying {table}: {e}")
+        logger.error(f"Error querying {table}: {e}", exc_info=True)
         return set()
 
 
@@ -126,7 +126,7 @@ def get_expected_game_dates(bq_client: bigquery.Client, start_date: date, end_da
                 import pandas as pd
                 return set(pd.to_datetime(dates).dt.date)
     except Exception as e:
-        logger.error(f"Error querying schedule: {e}")
+        logger.error(f"Error querying schedule: {e}", exc_info=True)
 
     # Fallback: Get dates from player_game_summary (authoritative source)
     logger.info("Falling back to player_game_summary for expected dates")
@@ -149,7 +149,7 @@ def get_expected_game_dates(bq_client: bigquery.Client, start_date: date, end_da
             import pandas as pd
             return set(pd.to_datetime(dates).dt.date)
     except Exception as e:
-        logger.error(f"Error querying player_game_summary fallback: {e}")
+        logger.error(f"Error querying player_game_summary fallback: {e}", exc_info=True)
         return set()
 
 
@@ -290,7 +290,7 @@ If coverage is <95%, consider running Phase 3 backfill before Phase 4.
         start_date = datetime.strptime(args.start_date, '%Y-%m-%d').date()
         end_date = datetime.strptime(args.end_date, '%Y-%m-%d').date()
     except ValueError as e:
-        logger.error(f"Invalid date format: {e}")
+        logger.error(f"Invalid date format: {e}", exc_info=True)
         sys.exit(1)
 
     if start_date > end_date:

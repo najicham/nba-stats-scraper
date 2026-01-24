@@ -270,7 +270,7 @@ def _get_processed_players(client: bigquery.Client, game_date: date) -> set:
         result = client.query(query, job_config=job_config).result(timeout=60)
         return {row.player_lookup for row in result}
     except Exception as e:
-        logger.error(f"Error querying processed players: {e}")
+        logger.error(f"Error querying processed players: {e}", exc_info=True)
         return set()
 
 

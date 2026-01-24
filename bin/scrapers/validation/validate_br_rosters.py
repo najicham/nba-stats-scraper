@@ -222,7 +222,7 @@ class BasketballRefDataValidator:
             }
             
         except subprocess.CalledProcessError as e:
-            logger.error(f"Failed to list GCS files: {e}")
+            logger.error(f"Failed to list GCS files: {e}", exc_info=True)
             return {
                 "files_exist": False,
                 "error": str(e),
@@ -390,7 +390,7 @@ class BasketballRefDataValidator:
                 print("   ✅ All required fields present")
         
         except Exception as e:
-            logger.error(f"Error running jq analysis: %s", e)
+            logger.error(f"Error running jq analysis: %s", e, exc_info=True)
             print(f"   ❌ Error: {e}")
         
         print(f"\n{'='*70}")
@@ -435,7 +435,7 @@ class BasketballRefDataValidator:
                     
             except Exception as e:
                 error_msg = f"File read error: {e}"
-                logger.error(f"❌ Error analyzing {team}: {error_msg}")
+                logger.error(f"❌ Error analyzing {team}: {error_msg}", exc_info=True)
                 teams_with_issues.append({"team": team, "issues": [error_msg]})
         
         # Aggregate analysis
@@ -984,7 +984,7 @@ def main():
         return 0 if total_issues == 0 else 1
         
     except Exception as e:
-        logger.error(f"Validation failed: %s", e)
+        logger.error(f"Validation failed: %s", e, exc_info=True)
         return 1
 
 

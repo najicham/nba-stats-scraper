@@ -38,12 +38,15 @@ Version: 1.0
 """
 
 import argparse
+import logging
 import os
 import sys
 import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from google.cloud import bigquery
+
+logger = logging.getLogger(__name__)
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))))
@@ -239,6 +242,7 @@ class BackfillProgressMonitor:
                 'last_run': row.last_run,
             }
         except Exception:
+            logger.warning("Failed to query run history, returning zeros", exc_info=True)
             return {'dates_processed': 0, 'total_runs': 0}
 
     def get_season_breakdown(self) -> List[Dict]:

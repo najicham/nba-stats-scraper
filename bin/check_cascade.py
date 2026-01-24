@@ -363,7 +363,7 @@ Examples:
             print(format_terminal_output(result, mode))
 
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Error: {e}", exc_info=True)
         sys.exit(1)
 
 

@@ -337,7 +337,7 @@ def main():
     try:
         target_date = datetime.strptime(args.date, '%Y-%m-%d').date()
     except ValueError:
-        logger.error("Invalid date format. Use YYYY-MM-DD")
+        logger.error("Invalid date format. Use YYYY-MM-DD", exc_info=True)
         return
     
     matcher = DailyPlayerMatcher()

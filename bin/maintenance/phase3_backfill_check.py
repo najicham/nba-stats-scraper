@@ -104,7 +104,7 @@ def find_all_backfill_candidates(lookback_days: int = 30) -> Dict[str, List]:
                 logger.info(f"  ✅ All games processed (no backfill needed)")
 
         except Exception as e:
-            logger.error(f"  ❌ Error checking {processor_name}: {e}")
+            logger.error(f"  ❌ Error checking {processor_name}: {e}", exc_info=True)
             all_candidates[processor_name] = []
 
     return all_candidates
@@ -183,7 +183,7 @@ def process_backfill_candidates(candidates_by_processor: Dict[str, List],
                 except Exception as e:
                     processor_results['failed'] += 1
                     results['failed'] += 1
-                    logger.error(f"    ❌ Error: {e}")
+                    logger.error(f"    ❌ Error: {e}", exc_info=True)
 
         results['total_games'] += len(candidates)
         results['by_processor'][processor_name] = processor_results

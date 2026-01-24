@@ -137,6 +137,7 @@ def get_phase4_cache_value(client, player_lookup: str, cache_date: date) -> Opti
             return None
         return result.iloc[0].to_dict()
     except Exception:
+        logger.warning(f"Failed to query cache for {player_lookup} on {cache_date}", exc_info=True)
         return None
 
 

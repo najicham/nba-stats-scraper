@@ -152,7 +152,7 @@ class NBAPlayerNameValidator:
         try:
             results = self.client.query(query).to_dataframe()
         except Exception as e:
-            logger.error(f"Failed to load NBA.com data: {e}")
+            logger.error(f"Failed to load NBA.com data: {e}", exc_info=True)
             return []
         
         players = []
@@ -199,7 +199,7 @@ class NBAPlayerNameValidator:
         try:
             results = self.client.query(query).to_dataframe()
         except Exception as e:
-            logger.error(f"Failed to load BDL data: {e}")
+            logger.error(f"Failed to load BDL data: {e}", exc_info=True)
             return []
         
         players = []

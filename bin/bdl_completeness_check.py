@@ -149,7 +149,7 @@ def get_bdl_gaps(lookback_days: int = 3) -> List[Dict]:
         return gaps
 
     except Exception as e:
-        logger.error(f"Failed to query BDL gaps: {e}")
+        logger.error(f"Failed to query BDL gaps: {e}", exc_info=True)
         raise
 
 
@@ -271,7 +271,7 @@ def main():
         return 1  # Exit code 1 = gaps found
 
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Error: {e}", exc_info=True)
         return 2
 
 

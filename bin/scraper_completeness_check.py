@@ -80,7 +80,7 @@ def check_completeness(scraper_name: str, lookback_days: Optional[int] = None) -
         from google.cloud import bigquery
         client = bigquery.Client()
     except Exception as e:
-        logger.error(f"Failed to initialize BigQuery client: {e}")
+        logger.error(f"Failed to initialize BigQuery client: {e}", exc_info=True)
         raise
 
     config = load_config()
@@ -155,7 +155,7 @@ def check_completeness(scraper_name: str, lookback_days: Optional[int] = None) -
         }
 
     except Exception as e:
-        logger.error(f"Query failed for {scraper_name}: {e}")
+        logger.error(f"Query failed for {scraper_name}: {e}", exc_info=True)
         raise
 
 
@@ -207,7 +207,7 @@ def check_all_enabled_scrapers(lookback_days: Optional[int] = None) -> List[Dict
             result = check_completeness(scraper_name, lookback_days)
             results.append(result)
         except Exception as e:
-            logger.error(f"Failed to check {scraper_name}: {e}")
+            logger.error(f"Failed to check {scraper_name}: {e}", exc_info=True)
             results.append({
                 "scraper": scraper_name,
                 "error": str(e),
@@ -363,7 +363,7 @@ def main():
         return 1 if total_missing > 0 else 0
 
     except Exception as e:
-        logger.error(f"Error: {e}")
+        logger.error(f"Error: {e}", exc_info=True)
         return 2
 
 

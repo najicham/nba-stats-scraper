@@ -76,7 +76,7 @@ def get_dates_with_data(bq_client: bigquery.Client, table: str, date_field: str,
             import pandas as pd
             return set(pd.to_datetime(dates).dt.date)
     except Exception as e:
-        logger.error(f"Error querying {table}: {e}")
+        logger.error(f"Error querying {table}: {e}", exc_info=True)
         return set()
 
 
@@ -225,7 +225,7 @@ def main():
         start_date = datetime.strptime(args.start_date, '%Y-%m-%d').date()
         end_date = datetime.strptime(args.end_date, '%Y-%m-%d').date()
     except ValueError as e:
-        logger.error(f"Invalid date format: {e}")
+        logger.error(f"Invalid date format: {e}", exc_info=True)
         sys.exit(1)
 
     if start_date > end_date:

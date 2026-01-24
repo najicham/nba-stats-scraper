@@ -196,6 +196,7 @@ class WorkflowExecutor:
             timeout_config = settings.get('scraper_timeouts', {})
             overhead = timeout_config.get('future_overhead', self.DEFAULT_FUTURE_OVERHEAD)
         except Exception:
+            logger.debug("Config loading failed, using default future overhead", exc_info=True)
             overhead = self.DEFAULT_FUTURE_OVERHEAD
 
         return scraper_timeout + overhead
