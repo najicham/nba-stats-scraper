@@ -7,7 +7,10 @@
 
 ## Overview
 
-Automatic failure tracking and recovery system for scrapers. When a scraper fails for a specific date, the system logs it and automatically backfills when the scraper recovers.
+Comprehensive scraper resilience system with automatic failure tracking, recovery, alerting, and intelligent proxy management.
+
+**Phase 1 (Complete):** Automatic gap detection and backfill
+**Phase 2 (Complete):** Gap alerting, dashboard, circuit breaker, multi-provider proxy support
 
 ## Architecture
 
@@ -164,7 +167,88 @@ gcloud scheduler jobs create http scraper-gap-backfiller-schedule \
 | `orchestration/cloud_functions/scraper_gap_backfiller/main.py` | Recovery logic |
 | `nba_orchestration.scraper_failures` | BigQuery table for tracking |
 
+---
+
+## Phase 2: Enhanced Resilience
+
+### Gap Alerting
+
+Automatic alerts when gaps accumulate beyond threshold (>= 3 days):
+- Integrated into gap backfiller Cloud Function
+- Sends email via AWS SES
+- Includes affected scrapers, gap counts, oldest gaps
+
+### Health Dashboard
+
+Visual dashboard at `/scraper-dashboard`:
+- Real-time gap counts per scraper
+- Last run times with color-coded status
+- Proxy health metrics (24h success rates)
+- Recent backfills
+
+**URL:** `https://us-west2-nba-props-platform.cloudfunctions.net/scraper-dashboard`
+
+### Circuit Breaker
+
+Intelligent proxy rotation that skips blocked proxies:
+
+```
+CLOSED ──(3 failures)──► OPEN ──(5min cooldown)──► HALF_OPEN
+        ◄────────────── SUCCESS ◄─────────────────
+```
+
+**States:**
+- **CLOSED:** Proxy working, use normally
+- **OPEN:** Proxy blocked for target, skip it
+- **HALF_OPEN:** Cooldown elapsed, test once
+
+**BigQuery Table:** `nba_orchestration.proxy_circuit_breaker`
+
+### Multi-Provider Proxy Support
+
+Abstract provider interface for easy addition of new proxies:
+
+| Provider | Priority | Type | Status |
+|----------|----------|------|--------|
+| ProxyFuel | 1 | Datacenter | Active |
+| Decodo | 2 | Residential | Active |
+| Bright Data | 3 | Premium | Placeholder |
+
+## Phase 2 Files
+
+| File | Purpose |
+|------|---------|
+| `shared/utils/email_alerting_ses.py` | `send_scraper_gap_alert()` method |
+| `orchestration/cloud_functions/scraper_dashboard/main.py` | Health dashboard |
+| `scrapers/utils/proxy_utils.py` | Circuit breaker + multi-provider |
+| `nba_orchestration.proxy_circuit_breaker` | Circuit state table |
+
+## Phase 2 Deployment
+
+```bash
+# Deploy gap backfiller with alerting
+cd orchestration/cloud_functions/scraper_gap_backfiller
+gcloud functions deploy scraper-gap-backfiller \
+  --gen2 --runtime python311 --trigger-http \
+  --entry-point scraper_gap_backfiller \
+  --region us-west2 --memory 512Mi --timeout 540s
+
+# Deploy dashboard
+cd ../scraper_dashboard
+gcloud functions deploy scraper-dashboard \
+  --gen2 --runtime python311 --trigger-http \
+  --entry-point scraper_dashboard \
+  --region us-west2 --memory 256Mi --timeout 60s \
+  --allow-unauthenticated
+
+# Deploy nba-scrapers with circuit breaker (from repo root)
+gcloud run deploy nba-scrapers --source scrapers/
+```
+
+---
+
 ## Related
 
+- [Phase 2 Enhancements](./PHASE2-ENHANCEMENTS.md) - Detailed design doc
 - [Proxy Infrastructure](../proxy-infrastructure/README.md) - Proxy health monitoring
 - [Grading Improvements](../grading-improvements/README.md) - Data quality monitoring
