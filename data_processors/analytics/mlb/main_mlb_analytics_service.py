@@ -49,29 +49,11 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize AlertManager (with backfill mode detection)
-def get_mlb_alert_manager():
-    """Get AlertManager instance with MLB-specific configuration."""
-    if not ALERTING_ENABLED:
-        return None
-    backfill_mode = os.environ.get('BACKFILL_MODE', 'false').lower() == 'true'
-    return get_alert_manager(backfill_mode=backfill_mode)
-
-
-def send_mlb_alert(severity: str, title: str, message: str, context: dict = None):
-    """Send alert via AlertManager with rate limiting."""
-    alert_mgr = get_mlb_alert_manager()
-    if alert_mgr:
-        try:
-            alert_mgr.send_alert(
-                severity=severity,
-                title=title,
-                message=message,
-                category='mlb_analytics_failure',
-                context=context or {}
-            )
-        except Exception as e:
-            logger.error(f"Failed to send alert: {e}")
+# MLB Alert utilities (consolidated in shared module)
+from shared.utils.mlb_alert_utils import (
+    get_mlb_alert_manager,
+    send_mlb_analytics_alert as send_mlb_alert,
+)
 
 
 # MLB Analytics processor registry
