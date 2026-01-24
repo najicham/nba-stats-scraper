@@ -321,17 +321,58 @@ class MLBRegistryReader:
         """
         Flush unresolved players to BigQuery for review.
 
+        Inserts unresolved player records into mlb_reference.unresolved_players
+        for systematic resolution and data quality monitoring.
+
         Returns:
             Number of records flushed
         """
         if not self._unresolved:
             return 0
 
-        # TODO: Implement BigQuery insert for unresolved tracking
-        # For now, just log them
-        logger.warning(f"Unresolved MLB players ({len(self._unresolved)}):")
+        # Prepare rows for BigQuery insert
+        table_id = f"{self.project_id}.mlb_reference.unresolved_players"
+        reported_at = datetime.utcnow().isoformat()
+        rows = []
+
+        for player in self._unresolved.values():
+            rows.append({
+                'player_lookup': player.player_lookup,
+                'player_type': player.player_type.upper(),
+                'source': player.source,
+                'first_seen': player.first_seen.isoformat(),
+                'occurrence_count': player.count,
+                'reported_at': reported_at
+            })
+
+        # Also log for Cloud Logging backup
+        logger.warning(f"Flushing {len(rows)} unresolved MLB players to BigQuery:")
         for player in self._unresolved.values():
             logger.warning(f"  {player.player_lookup} ({player.player_type}): {player.count} occurrences")
+
+        try:
+            # Use batch loading for insert
+            table_ref = self.bq_client.get_table(table_id)
+            job_config = bigquery.LoadJobConfig(
+                schema=table_ref.schema,
+                autodetect=False,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                ignore_unknown_values=True
+            )
+
+            load_job = self.bq_client.load_table_from_json(rows, table_id, job_config=job_config)
+            load_job.result(timeout=30)
+
+            if load_job.errors:
+                logger.error(f"BigQuery load errors: {load_job.errors}")
+            else:
+                logger.info(f"✅ Flushed {len(rows)} unresolved players to {table_id}")
+
+        except Exception as e:
+            # Log error but don't fail the calling process
+            # Unresolved players are already logged to Cloud Logging as backup
+            logger.error(f"Failed to flush unresolved players to BigQuery: {e}", exc_info=True)
 
         count = len(self._unresolved)
         self._unresolved.clear()

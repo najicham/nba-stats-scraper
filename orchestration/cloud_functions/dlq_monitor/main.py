@@ -32,8 +32,9 @@ Scheduler:
         --http-method GET \
         --location us-west2
 
-Version: 1.0
+Version: 1.1
 Created: 2025-12-30
+Updated: 2026-01-24 - Added Cloud Logging monitoring for BQ/Firestore/GCS errors
 """
 
 import json
@@ -392,6 +393,147 @@ def send_dlq_alert(
     return True
 
 
+# ============================================================================
+# CLOUD LOGGING ERROR MONITORING (Week 2 Addition)
+# ============================================================================
+# Monitors Cloud Logging for errors from BigQuery, Firestore, and GCS
+# that don't have dedicated DLQs but represent processing failures.
+
+# Error threshold for Cloud Logging alerts (errors in last 15 minutes)
+CLOUD_LOGGING_ERROR_THRESHOLD = int(os.environ.get('CLOUD_LOGGING_ERROR_THRESHOLD', '5'))
+
+# Service error patterns to monitor
+CLOUD_LOGGING_FILTERS = {
+    'bigquery_errors': {
+        'description': 'BigQuery Query/Insert Errors',
+        'severity': 'warning',
+        'filter': (
+            'resource.type="cloud_run_revision" OR resource.type="cloud_function" '
+            'AND (textPayload=~"BigQuery.*failed" OR textPayload=~"Failed to insert" '
+            'OR textPayload=~"BigQuery query failed" OR textPayload=~"bq_client.*error")'
+        ),
+        'recovery_command': 'Check BigQuery quotas and query syntax',
+    },
+    'firestore_errors': {
+        'description': 'Firestore Operation Errors',
+        'severity': 'warning',
+        'filter': (
+            'resource.type="cloud_run_revision" OR resource.type="cloud_function" '
+            'AND (textPayload=~"Firestore.*failed" OR textPayload=~"Firestore.*error" '
+            'OR textPayload=~"document.*not found" OR textPayload=~"transaction.*failed")'
+        ),
+        'recovery_command': 'Check Firestore indexes and quotas',
+    },
+    'gcs_errors': {
+        'description': 'Cloud Storage Errors',
+        'severity': 'warning',
+        'filter': (
+            'resource.type="cloud_run_revision" OR resource.type="cloud_function" '
+            'AND (textPayload=~"GCS.*failed" OR textPayload=~"storage.*error" '
+            'OR textPayload=~"Failed to upload" OR textPayload=~"bucket.*not found")'
+        ),
+        'recovery_command': 'Check GCS bucket permissions and quotas',
+    },
+}
+
+
+def check_cloud_logging_errors(lookback_minutes: int = 15) -> Dict:
+    """
+    Query Cloud Logging for recent errors from BigQuery, Firestore, and GCS.
+
+    Args:
+        lookback_minutes: How far back to check for errors
+
+    Returns:
+        Dict with error counts by category
+    """
+    results = {
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+        'lookback_minutes': lookback_minutes,
+        'categories': [],
+        'total_errors': 0,
+    }
+
+    try:
+        from google.cloud import logging as cloud_logging
+        from google.cloud.logging_v2 import DESCENDING
+
+        client = cloud_logging.Client(project=PROJECT_ID)
+
+        # Calculate time range
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(minutes=lookback_minutes)
+
+        for category_name, config in CLOUD_LOGGING_FILTERS.items():
+            try:
+                # Build filter with time constraint
+                full_filter = (
+                    f'severity>=ERROR '
+                    f'AND timestamp>="{start_time.isoformat()}" '
+                    f'AND timestamp<="{end_time.isoformat()}" '
+                    f'AND ({config["filter"]})'
+                )
+
+                # Query logs
+                entries = list(client.list_entries(
+                    filter_=full_filter,
+                    order_by=DESCENDING,
+                    max_results=50
+                ))
+
+                error_count = len(entries)
+
+                category_result = {
+                    'category': category_name,
+                    'description': config['description'],
+                    'error_count': error_count,
+                    'status': 'ok' if error_count <= CLOUD_LOGGING_ERROR_THRESHOLD else 'errors_found',
+                }
+
+                if error_count > CLOUD_LOGGING_ERROR_THRESHOLD:
+                    # Include sample error messages
+                    samples = []
+                    for entry in entries[:3]:
+                        samples.append({
+                            'timestamp': entry.timestamp.isoformat() if entry.timestamp else None,
+                            'message': str(entry.payload)[:200] if entry.payload else None,
+                            'resource': str(entry.resource.type) if entry.resource else None,
+                        })
+                    category_result['samples'] = samples
+                    category_result['recovery_command'] = config['recovery_command']
+                    results['total_errors'] += error_count
+
+                    logger.warning(
+                        f"Cloud Logging: {error_count} {config['description']} errors "
+                        f"in last {lookback_minutes} minutes"
+                    )
+
+                results['categories'].append(category_result)
+
+            except Exception as e:
+                logger.warning(f"Error querying {category_name}: {e}")
+                results['categories'].append({
+                    'category': category_name,
+                    'description': config['description'],
+                    'error_count': -1,
+                    'status': 'query_failed',
+                    'error': str(e),
+                })
+
+        results['status'] = 'errors_found' if results['total_errors'] > 0 else 'healthy'
+
+    except ImportError:
+        logger.warning("google-cloud-logging not available, skipping Cloud Logging check")
+        results['status'] = 'skipped'
+        results['note'] = 'google-cloud-logging not available'
+    except Exception as e:
+        logger.error(f"Cloud Logging check failed: {e}")
+        results['status'] = 'error'
+        results['error'] = str(e)
+
+    return results
+
+
 def check_all_dlqs() -> Dict:
     """
     Check all configured DLQ subscriptions.
@@ -485,6 +627,7 @@ def monitor_dlqs(request):
 
     Query params:
         - dry_run: If 'true', check but don't send alerts
+        - include_logging: If 'true', also check Cloud Logging for errors (default: true)
 
     Returns:
         JSON response with monitoring results
@@ -497,6 +640,7 @@ def monitor_dlqs(request):
         # Check for dry run mode
         request_args = request.args if hasattr(request, 'args') else {}
         dry_run = request_args.get('dry_run', 'false').lower() == 'true'
+        include_logging = request_args.get('include_logging', 'true').lower() == 'true'
 
         if dry_run:
             logger.info("DRY RUN MODE - alerts will not be sent")
@@ -504,6 +648,18 @@ def monitor_dlqs(request):
         # Check all DLQs
         results = check_all_dlqs()
         results['dry_run'] = dry_run
+
+        # Week 2: Also check Cloud Logging for BQ/Firestore/GCS errors
+        if include_logging:
+            logger.info("Checking Cloud Logging for service errors...")
+            cloud_logging_results = check_cloud_logging_errors(lookback_minutes=15)
+            results['cloud_logging'] = cloud_logging_results
+
+            if cloud_logging_results.get('total_errors', 0) > 0:
+                logger.warning(
+                    f"Cloud Logging: {cloud_logging_results['total_errors']} errors "
+                    f"found across BQ/Firestore/GCS"
+                )
 
         # Summary logging
         if results['dlqs_with_messages'] > 0:

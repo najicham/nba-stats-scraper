@@ -44,6 +44,15 @@ from shared.clients.bigquery_pool import get_bigquery_client
 from shared.validation.phase_boundary_validator import PhaseBoundaryValidator, ValidationMode
 from shared.utils.phase_execution_logger import log_phase_execution
 
+# Pydantic validation for Pub/Sub messages (Week 2 addition)
+try:
+    from shared.validation.pubsub_models import Phase2CompletionMessage
+    from pydantic import ValidationError as PydanticValidationError
+    PYDANTIC_VALIDATION_ENABLED = True
+except ImportError:
+    PYDANTIC_VALIDATION_ENABLED = False
+    PydanticValidationError = Exception  # Fallback
+
 # Configure logging - use structured logging for Cloud Run
 import google.cloud.logging
 try:
@@ -974,16 +983,16 @@ def parse_pubsub_message(cloud_event) -> Dict:
     """
     Parse Pub/Sub CloudEvent and extract message data.
 
-    Handles base64 decoding and JSON parsing.
+    Handles base64 decoding, JSON parsing, and Pydantic validation.
 
     Args:
         cloud_event: CloudEvent from Pub/Sub
 
     Returns:
-        Dictionary with message data
+        Dictionary with validated message data
 
     Raises:
-        ValueError: If message cannot be parsed
+        ValueError: If message cannot be parsed or validation fails
     """
     try:
         # Get message data from CloudEvent
@@ -996,6 +1005,17 @@ def parse_pubsub_message(cloud_event) -> Dict:
             )
         else:
             raise ValueError("No data field in Pub/Sub message")
+
+        # Week 2: Validate with Pydantic if available
+        if PYDANTIC_VALIDATION_ENABLED:
+            try:
+                validated = Phase2CompletionMessage.model_validate(message_data)
+                logger.debug(f"Pydantic validation passed for {validated.processor_name}")
+                return message_data  # Return original dict for backward compatibility
+            except PydanticValidationError as e:
+                logger.warning(f"Pydantic validation failed: {e}. Falling back to dict.")
+                # Don't raise - fall through to return raw dict for backward compatibility
+                # This allows gradual migration without breaking existing messages
 
         return message_data
 

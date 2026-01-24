@@ -22,6 +22,7 @@ Migration Guide:
         alert(result.error.message)
 
 Week 1 P0-1: Fixes 19 silent failure patterns across codebase
+Week 2 Update: Added retry_with_jitter for transient failure resilience
 Path: shared/utils/bigquery_utils_v2.py
 """
 
@@ -30,8 +31,10 @@ import os
 from typing import List, Dict, Any, Optional
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound, Forbidden, BadRequest
+from google.api_core.exceptions import ServiceUnavailable, DeadlineExceeded
 
 from shared.utils.result import Result, ErrorType, classify_exception
+from shared.utils.retry_with_jitter import retry_with_jitter
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +46,44 @@ ENABLE_QUERY_CACHING = os.getenv('ENABLE_QUERY_CACHING', 'true').lower() == 'tru
 QUERY_CACHE_TTL_SECONDS = int(os.getenv('QUERY_CACHE_TTL_SECONDS', '3600'))
 
 
+@retry_with_jitter(
+    max_attempts=3,
+    base_delay=1.0,
+    max_delay=15.0,
+    exceptions=(ServiceUnavailable, DeadlineExceeded)
+)
+def _execute_bigquery_v2_internal(
+    query: str,
+    project_id: str,
+    as_dict: bool,
+    use_cache: Optional[bool]
+) -> List[Dict[str, Any]]:
+    """Internal function with retry logic for BigQuery queries."""
+    client = bigquery.Client(project=project_id)
+
+    # Configure query caching
+    job_config = bigquery.QueryJobConfig()
+    should_cache = use_cache if use_cache is not None else ENABLE_QUERY_CACHING
+
+    if should_cache:
+        job_config.use_query_cache = True
+        logger.debug(f"Query caching enabled (TTL: {QUERY_CACHE_TTL_SECONDS}s)")
+    else:
+        job_config.use_query_cache = False
+
+    query_job = client.query(query, job_config=job_config)
+    results = query_job.result(timeout=60)
+
+    # Log cache hit/miss for monitoring
+    if should_cache and hasattr(query_job, 'cache_hit'):
+        if query_job.cache_hit:
+            logger.debug("✅ BigQuery cache HIT")
+        else:
+            logger.debug(f"❌ BigQuery cache MISS - {query_job.total_bytes_processed} bytes")
+
+    return [dict(row) for row in results] if as_dict else list(results)
+
+
 def execute_bigquery_v2(
     query: str,
     project_id: str = DEFAULT_PROJECT_ID,
@@ -51,6 +92,8 @@ def execute_bigquery_v2(
 ) -> Result[List[Dict[str, Any]]]:
     """
     Execute a BigQuery query and return results with structured error handling.
+
+    Week 2 Update: Now retries on transient failures (ServiceUnavailable, DeadlineExceeded).
 
     Args:
         query: SQL query to execute
@@ -74,31 +117,8 @@ def execute_bigquery_v2(
         ...     send_alert(f"Query failed: {result.error.message}")
     """
     try:
-        client = bigquery.Client(project=project_id)
-
-        # Configure query caching
-        job_config = bigquery.QueryJobConfig()
-        should_cache = use_cache if use_cache is not None else ENABLE_QUERY_CACHING
-
-        if should_cache:
-            job_config.use_query_cache = True
-            logger.debug(f"Query caching enabled (TTL: {QUERY_CACHE_TTL_SECONDS}s)")
-        else:
-            job_config.use_query_cache = False
-
-        query_job = client.query(query, job_config=job_config)
-        results = query_job.result(timeout=60)
-
-        # Log cache hit/miss for monitoring
-        if should_cache and hasattr(query_job, 'cache_hit'):
-            if query_job.cache_hit:
-                logger.debug("✅ BigQuery cache HIT")
-            else:
-                logger.debug(f"❌ BigQuery cache MISS - {query_job.total_bytes_processed} bytes")
-
-        data = [dict(row) for row in results] if as_dict else list(results)
+        data = _execute_bigquery_v2_internal(query, project_id, as_dict, use_cache)
         return Result.success(data)
-
     except NotFound as e:
         return Result.failure(
             error_type=ErrorType.PERMANENT,

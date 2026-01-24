@@ -26,6 +26,9 @@ from shared.utils.schedule import NBAScheduleService, GameType
 from shared.utils.bigquery_utils import execute_bigquery, insert_bigquery_rows
 from orchestration.shared.utils.distributed_lock import DistributedLock, LockAcquisitionError
 
+# Specific exceptions for better error handling
+from google.api_core.exceptions import GoogleAPIError
+
 # Import orchestration config for schedule staleness settings
 try:
     from shared.config.orchestration_config import get_orchestration_config
@@ -329,7 +332,7 @@ class MasterWorkflowController:
                 alert_level=AlertLevel.INFO
             )
 
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.error(f"Failed to check schedule status: {e}")
             return WorkflowDecision(
                 action=DecisionAction.ABORT,
@@ -616,11 +619,11 @@ class MasterWorkflowController:
                 }
             )
             
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.error(f"Error checking collected games: {e}")
             # Assume need to collect, better to retry than skip
             scrapers = self._extract_scrapers_from_plan(config['execution_plan'])
-            
+
             return WorkflowDecision(
                 action=DecisionAction.RUN,
                 reason=f"Cannot verify collected games, attempting collection",
@@ -788,7 +791,7 @@ class MasterWorkflowController:
                 }
             )
 
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.error(f"Error checking collected early games: {e}")
             scrapers = self._extract_scrapers_from_plan(config['execution_plan'])
 
@@ -985,7 +988,7 @@ class MasterWorkflowController:
         try:
             insert_bigquery_rows('nba_orchestration.workflow_decisions', records)
             logger.info(f"✅ Logged {len(records)} workflow decisions to BigQuery")
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.error(f"Failed to log decisions to BigQuery: {e}")
             # CRITICAL: Decision logging failure is a serious audit issue - propagate error
             # This allows monitoring/alerting systems to detect and respond

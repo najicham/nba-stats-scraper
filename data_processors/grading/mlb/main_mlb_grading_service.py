@@ -21,6 +21,9 @@ import base64
 from data_processors.grading.mlb.mlb_prediction_grading_processor import MlbPredictionGradingProcessor
 from data_processors.grading.mlb.mlb_shadow_grading_processor import MLBShadowGradingProcessor
 
+# Specific exceptions for better error handling
+from google.api_core.exceptions import GoogleAPIError
+
 # Import AlertManager for intelligent alerting
 try:
     from shared.alerts.alert_manager import get_alert_manager
@@ -103,7 +106,7 @@ def process_grading():
                 "game_date": game_date
             }), 500
 
-    except Exception as e:
+    except (GoogleAPIError, ValueError, json.JSONDecodeError) as e:
         logger.error(f"Error in grading: {e}", exc_info=True)
         # Send alert for grading failure
         send_mlb_alert(
@@ -153,7 +156,7 @@ def grade_date():
                 "game_date": game_date
             }), 500
 
-    except Exception as e:
+    except (GoogleAPIError, ValueError) as e:
         logger.error(f"Error in grade-date: {e}", exc_info=True)
         # Send alert for grading failure
         send_mlb_alert(
@@ -197,7 +200,7 @@ def grade_shadow():
             **result
         }), 200
 
-    except Exception as e:
+    except (GoogleAPIError, ValueError) as e:
         logger.error(f"Error in grade-shadow: {e}", exc_info=True)
         return jsonify({"error": str(e)}), 500
 
