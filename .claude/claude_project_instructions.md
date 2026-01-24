@@ -258,34 +258,136 @@ docs/
 
 **Full guide:** `docs/05-development/docs-organization.md`
 
+### Project Documentation Workflow
+
+**START HERE for any multi-session work:**
+
+1. **Read First**: `docs/08-projects/CLAUDE-CODE-PROJECT-WORKFLOW.md`
+2. **Check Existing Projects**: Look in `docs/08-projects/current/` for related work
+3. **Project Summaries**: `docs/08-projects/project-summaries/` for high-level status
+
+**IMPORTANT - When Starting New Work:**
+
+When beginning any non-trivial task (bug investigation, feature work, refactoring, etc.):
+1. **Always create a project directory**: `docs/08-projects/current/{topic}-{YYYY-MM}/`
+2. **Create README.md** with: Goal, Status, Quick Context
+3. **Create PROGRESS.md** with: Task checklist, Last Updated date
+4. **Update as you work**: Mark tasks complete, add notes
+
+**Naming Convention:** `{descriptive-topic}-{YYYY-MM}` (e.g., `code-quality-2026-01`)
+
+**When User Says "Keep Project Docs Updated":**
+
+This means:
+1. **Find the relevant project** in `docs/08-projects/current/`
+2. **Update PROGRESS.md**: Mark completed tasks, add new tasks discovered, update "Last Updated" date
+3. **Update README.md** if status changed (e.g., "In Progress" → "Complete")
+4. **Add session notes** if significant work was done (what was accomplished, blockers, next steps)
+
+If no project exists yet, create one following the structure above.
+
+**Creating/Continuing Project Documentation:**
+
+| Situation | Action |
+|-----------|--------|
+| Starting new work | Create `current/{topic}-{YYYY-MM}/` with README.md + PROGRESS.md |
+| Continuing existing work | Find project in `current/`, update its `PROGRESS.md` |
+| User says "update project docs" | Update PROGRESS.md and README.md status in relevant project |
+| Single-session trivial task | Can skip docs, but prefer creating project if work spans >1 hour |
+
+**Required Files for Project Directories:**
+- `README.md` - Goal, status, quick context for someone new
+- `PROGRESS.md` - Task checklist with checkboxes, last updated date
+
+### Morning Orchestration Validation
+
+**When asked to "validate today's orchestration" or "validate yesterday's orchestration":**
+
+1. **Read the guide first**: `docs/02-operations/MORNING-VALIDATION-GUIDE.md`
+2. **Run health check**: `./bin/orchestration/quick_health_check.sh`
+3. **Follow scenario-specific checks** in the guide
+
+**Two scenarios:**
+
+| Request | What to Check |
+|---------|---------------|
+| "Validate today" | Same-day predictions ready for tonight's games |
+| "Validate yesterday" | Overnight processing completed (boxscores, Phase 4, grading) |
+
+**Key documentation for orchestration:**
+- `docs/03-phases/phase1-orchestration/` - How orchestration works
+- `docs/02-operations/daily-operations-runbook.md` - Daily procedures
+- `bin/orchestration/README.md` - Available validation scripts
+
+**If you find issues or missing info in orchestration docs:**
+1. Fix small errors directly in the relevant doc
+2. Add new checks to `docs/02-operations/MORNING-VALIDATION-GUIDE.md`
+3. For incidents, create postmortem in `docs/02-operations/postmortems/`
+
+### End-of-Session Checklist
+
+**Before ending a session, always:**
+
+1. **Update project docs** (if worked on a project):
+   - Update `PROGRESS.md` - mark tasks done, add new discoveries
+   - Update `README.md` status if changed
+   - Update "Last Updated" date
+
+2. **Create handoff** (if session had significant work):
+   - Save to `docs/09-handoff/YYYY-MM-DD-DESCRIPTION.md`
+   - Include: what was done, current status, next steps
+   - Reference the project directory
+
+3. **Update project summary** (weekly, or if major milestone):
+   - Check if `docs/08-projects/project-summaries/` needs a new dated summary
+   - Create new summary if last one is >7 days old
+
 ### Session Handoff Workflow
 
-**CRITICAL: When ending a session and creating handoff documentation, follow this workflow:**
+**Location**: `docs/09-handoff/`
 
-1. **Location**: ALWAYS save handoff documents to `docs/09-handoff/` (root level)
-   - ❌ Do NOT use project subdirectories like `docs/08-projects/.../session-handoffs/`
-   - ❌ Do NOT create subdirectories within `09-handoff/`
+**Naming Convention (MANDATORY)**:
+- Format: `YYYY-MM-DD-DESCRIPTION.md`
+- Date prefix is **required** for all handoff docs
+- Examples:
+  - `2026-01-24-SESSION-HANDOFF-TEST-INFRASTRUCTURE.md`
+  - `2026-01-24-SESSION16-REFACTORING-HANDOFF.md`
+  - `2026-01-24-FUTURE-WORK-ROADMAP.md`
 
-2. **Naming Convention**:
-   - Date-specific: `YYYY-MM-DD-description.md`
-   - Session-numbered: `YYYY-MM-DD-SESSION{N}-description.md`
-   - Next session guides: `YYYY-MM-DD-NEXT-SESSION-description.md`
+**Handoff Types**:
 
-3. **Required Content**:
-   - Summary of work completed in this session
-   - Current system status and any issues encountered
-   - Clear next steps for the following session
-   - References to related documentation or project directories
+| Type | Naming Pattern | Purpose |
+|------|----------------|---------|
+| Session handoff | `YYYY-MM-DD-SESSION{N}-*.md` | End-of-session context for next session |
+| Task handoff | `YYYY-MM-DD-SESSION-HANDOFF-{TOPIC}.md` | Focused handoff for specific work stream |
+| Session queue | `YYYY-MM-DD-SESSION-QUEUE.md` | Master index of pending sessions/tasks |
+| Roadmap/Future | `YYYY-MM-DD-FUTURE-*.md` or `YYYY-MM-DD-*-ROADMAP.md` | Long-term improvement plans |
 
-4. **Examples** (for reference):
-   - `docs/09-handoff/2025-12-31-OVERNIGHT-SESSION-HANDOFF.md`
-   - `docs/09-handoff/2025-12-30-MORNING-SESSION-HANDOFF.md`
-   - `docs/09-handoff/2025-12-29-SESSION184-PIPELINE-ROBUSTNESS.md`
+**Required Content**:
+- Summary of work completed
+- Current system status and any issues
+- Clear next steps for following session
+- Reference to project directory (e.g., "See `docs/08-projects/current/code-quality-2026-01/`")
+- Quick start commands (if applicable)
 
-5. **Lifecycle**:
-   - Handoffs remain in root `docs/09-handoff/` for 7 days
-   - After 7 days, they are archived to `docs/09-handoff/archive/YYYY-MM/`
-   - Monthly summaries are created when archiving
+**Lifecycle**: Handoffs archived after 5 days to `docs/09-handoff/archive/`
+
+**Master Session Queue**:
+- Maintain `YYYY-MM-DD-SESSION-QUEUE.md` as index of pending work
+- Links to individual handoff docs
+- Priority order for sessions
+
+### Project Lifecycle
+
+**When a project is complete:**
+1. Mark all tasks done in `PROGRESS.md`
+2. Update `README.md` status to "Complete"
+3. Move directory: `docs/08-projects/current/{project}` → `docs/08-projects/completed/{project}`
+4. Update `docs/08-projects/completed/README.md` index
+
+**Stale project guidance:**
+- Projects not updated in 14+ days should be reviewed
+- Either: update with current status, mark as paused, or move to `archive/` if abandoned
 
 ### Documentation Types
 
@@ -361,28 +463,24 @@ docs/
 
 ---
 
-*Last Updated: 2025-12-10 PM PST*
-*Recent Changes:*
-- **2025-12-10**: Added backfill validation checklist reference and monitoring script
-  - `backfill-validation-checklist.md` - Comprehensive validation for Phase 4 & 5 backfills
-  - `bin/backfill/monitor_backfill.sh` - Real-time monitoring during backfills
-- **2025-12-08**: Consolidated backfill documentation into `docs/02-operations/backfill/`
-  - Added backfill navigation hub with key references
-  - Moved data-gap-prevention, cascade-contamination, and performance analysis docs
-  - Added "Backfill Operations" section to project instructions
-- **2025-11-25**: Major documentation reorganization - 23 directories consolidated to 10 numbered directories
-  - New structure: `00-start-here/` through `09-handoff/` + `archive/`
-  - All phases consolidated in `03-phases/phase{1-6}/`
-  - Active work tracking in `08-projects/current/`
-  - All patterns consolidated in `05-development/patterns/`
-  - Single archive location for all historical docs
-- **2025-11-21**: Emphasized timestamp requirements (date + time + timezone mandatory)
-- **2025-11-15**: Initial documentation reorganization
+*Last Updated: 2026-01-24 PST*
 
-*Project Status:*
-- **Phase 1 (Orchestration)**: ✅ Deployed to production (Nov 2025)
-- **Phase 2 (Raw Processing)**: ✅ Deployed to production (Nov 2025)
-- **Phase 3 (Analytics)**: ✅ Deployed to production (Nov 2025)
-- **Phase 4 (Precompute)**: ✅ Deployed to production (Nov 2025)
-- **Phase 5 (Predictions)**: 🧪 Testing
-- **Phase 6 (Publishing)**: 🚧 Planned
+*Recent Changes:*
+- **2026-01-24**: Enhanced project documentation workflow
+  - Added `docs/08-projects/CLAUDE-CODE-PROJECT-WORKFLOW.md` - comprehensive workflow guide
+  - Added `docs/08-projects/project-summaries/` - periodic status snapshots
+  - Cleaned up duplicate docs directories (06-operations, 07-operations, runbooks, handoffs)
+  - Updated handoff archival policy to 5 days
+- **2025-12-10**: Added backfill validation checklist reference and monitoring script
+- **2025-12-08**: Consolidated backfill documentation into `docs/02-operations/backfill/`
+- **2025-11-25**: Major documentation reorganization - 23 directories consolidated to 10
+
+*Pipeline Status (All Phases Deployed):*
+- **Phase 1-4**: ✅ Production (stable)
+- **Phase 5 (Predictions)**: ✅ Production (ensemble v1.1)
+- **Phase 6 (Publishing)**: ✅ Production (JSON exports to Firestore)
+
+*Current Focus Areas (Jan 2026):*
+- Architecture refactoring (code duplication cleanup)
+- Code quality improvements (testing, security)
+- Pipeline reliability monitoring
