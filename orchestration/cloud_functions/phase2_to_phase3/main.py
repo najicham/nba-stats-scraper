@@ -768,7 +768,6 @@ def orchestrate_phase2_to_phase3(cloud_event):
                 missing_processors = list(EXPECTED_PROCESSOR_SET - set(completed_processors))
 
                 # Calculate elapsed time
-                from datetime import datetime, timezone
                 now = datetime.now(timezone.utc)
                 elapsed = now - first_completion_time
                 elapsed_minutes = elapsed.total_seconds() / 60
