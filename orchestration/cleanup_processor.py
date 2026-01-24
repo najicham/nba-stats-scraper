@@ -89,7 +89,11 @@ class CleanupProcessor:
 
         # Initialize Pub/Sub publisher for republishing missed files
         self.project_id = project_id or get_project_id()
-        self.publisher = pubsub_v1.PublisherClient()
+        try:
+            from shared.clients import get_pubsub_publisher
+            self.publisher = get_pubsub_publisher()
+        except ImportError:
+            self.publisher = pubsub_v1.PublisherClient()
         self.topic_path = self.publisher.topic_path(
             self.project_id,
             TOPICS.PHASE1_SCRAPERS_COMPLETE

@@ -214,8 +214,8 @@ def create_bigquery_checker(project_id: str) -> Callable[[], bool]:
     """Create a BigQuery dependency checker."""
     def check_bigquery() -> bool:
         try:
-            from google.cloud import bigquery
-            client = bigquery.Client(project=project_id)
+            from shared.clients import get_bigquery_client
+            client = get_bigquery_client(project_id)
             # Simple query to test connection
             query = "SELECT 1 as test"
             result = client.query(query, timeout=5).result()
@@ -230,8 +230,8 @@ def create_firestore_checker(project_id: str) -> Callable[[], bool]:
     """Create a Firestore dependency checker."""
     def check_firestore() -> bool:
         try:
-            from google.cloud import firestore
-            db = firestore.Client(project=project_id)
+            from shared.clients import get_firestore_client
+            db = get_firestore_client(project_id)
             # Try to read from a test collection
             test_ref = db.collection('_health_check').document('test')
             test_ref.get(timeout=5)
@@ -246,8 +246,8 @@ def create_pubsub_checker(project_id: str) -> Callable[[], bool]:
     """Create a Pub/Sub dependency checker."""
     def check_pubsub() -> bool:
         try:
-            from google.cloud import pubsub_v1
-            publisher = pubsub_v1.PublisherClient()
+            from shared.clients import get_pubsub_publisher
+            publisher = get_pubsub_publisher()
             # List topics to test connection
             project_path = f"projects/{project_id}"
             list(publisher.list_topics(request={"project": project_path}, timeout=5))

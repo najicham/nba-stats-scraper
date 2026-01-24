@@ -155,9 +155,10 @@ class UpcomingTeamGameContextProcessor(
         self.entity_type = 'team_game'
         self.entity_field = 'team_abbr'
 
-        # Initialize BigQuery client
+        # Initialize BigQuery client via pool
         self.project_id = get_project_id()
-        self.bq_client = bigquery.Client(project=self.project_id)
+        from shared.clients import get_bigquery_client
+        self.bq_client = get_bigquery_client(self.project_id)
 
         # Initialize completeness checker (Week 7 - Team Multi-Window)
         self.completeness_checker = CompletenessChecker(self.bq_client, self.project_id)

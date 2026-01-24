@@ -185,7 +185,8 @@ class CatBoostV8:
 
                 try:
                     def download_model():
-                        client = storage.Client()
+                        from shared.clients import get_storage_client
+                        client = get_storage_client()
                         bucket = client.bucket(bucket_name)
                         blob = bucket.blob(blob_path)
                         local_path = "/tmp/catboost_v8.cbm"

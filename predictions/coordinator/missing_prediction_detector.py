@@ -33,7 +33,8 @@ class MissingPredictionDetector:
             project_id: GCP project ID (defaults to env var)
         """
         self.project_id = project_id or os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
-        self.bq_client = bigquery.Client(project=self.project_id)
+        from shared.clients import get_bigquery_client
+        self.bq_client = get_bigquery_client(self.project_id)
 
     def detect_missing_predictions(self, game_date: date) -> Tuple[List[Dict], Dict]:
         """

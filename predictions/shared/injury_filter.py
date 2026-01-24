@@ -84,9 +84,10 @@ class InjuryFilter:
 
     @property
     def client(self) -> bigquery.Client:
-        """Lazy-load BigQuery client"""
+        """Lazy-load BigQuery client via pool"""
         if self._client is None:
-            self._client = bigquery.Client(project=self.project_id)
+            from shared.clients import get_bigquery_client
+            self._client = get_bigquery_client(self.project_id)
         return self._client
 
     def check_player(

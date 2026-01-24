@@ -33,9 +33,10 @@ class ScheduleDatabaseReader:
             table_name: BigQuery table with schedule data (format: dataset.table)
         """
         from shared.config.gcp_config import get_project_id
+        from shared.clients import get_bigquery_client
         self.project_id = project_id or get_project_id()
         self.table_name = table_name
-        self.bq_client = bigquery.Client(project=project_id)
+        self.bq_client = get_bigquery_client(self.project_id)
         
         # Cache for exists checks
         self._table_exists: Optional[bool] = None

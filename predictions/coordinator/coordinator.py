@@ -48,7 +48,7 @@ from predictions.coordinator.instance_manager import (
 )
 
 # Import batch consolidator for staging table merging
-from predictions.coordinator.batch_staging_writer import BatchConsolidator
+from predictions.shared.batch_staging_writer import BatchConsolidator
 
 # Import unified publishing (lazy import to avoid cold start)
 import sys
@@ -236,12 +236,12 @@ def get_player_loader() -> PlayerLoader:
     return _player_loader
 
 def get_pubsub_publisher() -> 'pubsub_v1.PublisherClient':
-    """Lazy-load Pub/Sub publisher on first use"""
-    from google.cloud import pubsub_v1
+    """Lazy-load Pub/Sub publisher on first use via pool"""
+    from shared.clients import get_pubsub_publisher as get_pooled_publisher
     global _pubsub_publisher
     if _pubsub_publisher is None:
-        logger.info("Initializing Pub/Sub publisher...")
-        _pubsub_publisher = pubsub_v1.PublisherClient()
+        logger.info("Initializing Pub/Sub publisher via pool...")
+        _pubsub_publisher = get_pooled_publisher()
         logger.info("Pub/Sub publisher initialized successfully")
     return _pubsub_publisher
 
@@ -257,12 +257,12 @@ def get_run_history() -> CoordinatorRunHistory:
 
 
 def get_bq_client() -> 'bigquery.Client':
-    """Lazy-load BigQuery client on first use"""
-    from google.cloud import bigquery
+    """Lazy-load BigQuery client on first use via pool"""
+    from shared.clients import get_bigquery_client
     global _bq_client
     if _bq_client is None:
-        logger.info("Initializing BigQuery client...")
-        _bq_client = bigquery.Client(project=PROJECT_ID, location='us-west2')
+        logger.info("Initializing BigQuery client via pool...")
+        _bq_client = get_bigquery_client(PROJECT_ID)
         logger.info("BigQuery client initialized")
     return _bq_client
 
@@ -680,8 +680,8 @@ def start_prediction_batch():
         filtered_count = 0
 
         try:
-            from google.cloud import bigquery
-            bq_client = bigquery.Client(project=PROJECT_ID)
+            from shared.clients import get_bigquery_client
+            bq_client = get_bigquery_client(PROJECT_ID)
 
             # Query feature quality scores for all players in this batch
             player_lookups = [r.get('player_lookup') for r in requests if r.get('player_lookup')]
@@ -765,10 +765,11 @@ def check_and_mark_message_processed(message_id: str) -> bool:
         return False  # Idempotency disabled, treat as new
 
     try:
-        # Lazy load Firestore
+        # Lazy load Firestore via pool
         from google.cloud import firestore
+        from shared.clients import get_firestore_client
 
-        db = firestore.Client(project=PROJECT_ID)
+        db = get_firestore_client(PROJECT_ID)
         dedup_ref = db.collection('pubsub_deduplication').document(message_id)
 
         # Atomic transaction to check-and-set

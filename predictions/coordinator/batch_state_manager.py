@@ -187,9 +187,9 @@ class BatchStateManager:
         """
         self.project_id = project_id
 
-        # Lazy-load Firestore client
-        firestore = _get_firestore()
-        self.db = firestore.Client(project=project_id)
+        # Use pooled Firestore client
+        from shared.clients import get_firestore_client
+        self.db = get_firestore_client(project_id)
         self.collection = self.db.collection(self.COLLECTION_NAME)
 
         # Week 1: Feature flags for ArrayUnion → Subcollection migration

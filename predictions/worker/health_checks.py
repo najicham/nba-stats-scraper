@@ -35,8 +35,9 @@ class HealthChecker:
             project_id: GCP project ID
         """
         self.project_id = project_id
-        self.storage_client = storage.Client(project=project_id)
-        self.bq_client = bigquery.Client(project=project_id)
+        from shared.clients import get_storage_client, get_bigquery_client
+        self.storage_client = get_storage_client(project_id)
+        self.bq_client = get_bigquery_client(project_id)
 
     def check_gcs_access(self) -> Dict[str, Any]:
         """

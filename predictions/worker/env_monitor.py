@@ -49,8 +49,9 @@ class EnvVarMonitor:
             project_id: GCP project ID
         """
         self.project_id = project_id
-        self.storage_client = storage.Client(project=project_id)
-        self.bigquery_client = bigquery.Client(project=project_id)
+        from shared.clients import get_storage_client, get_bigquery_client
+        self.storage_client = get_storage_client(project_id)
+        self.bigquery_client = get_bigquery_client(project_id)
 
     def get_current_env_vars(self) -> Dict[str, Optional[str]]:
         """

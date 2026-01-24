@@ -751,8 +751,9 @@ def process_pubsub():
                 lock_id = f"espn_roster_batch_{roster_date}"
 
                 try:
-                    # Initialize Firestore client
-                    db = firestore.Client()
+                    # Initialize Firestore client via pool
+                    from shared.clients import get_firestore_client
+                    db = get_firestore_client()
                     lock_ref = db.collection('batch_processing_locks').document(lock_id)
 
                     # Try to create lock document (atomic operation)
@@ -889,8 +890,9 @@ def process_pubsub():
                 lock_id = f"br_roster_batch_{season}"
 
                 try:
-                    # Initialize Firestore client
-                    db = firestore.Client()
+                    # Initialize Firestore client via pool
+                    from shared.clients import get_firestore_client
+                    db = get_firestore_client()
                     lock_ref = db.collection('batch_processing_locks').document(lock_id)
 
                     # Try to create lock document (atomic operation)
@@ -983,8 +985,9 @@ def process_pubsub():
                     lock_id = f"oddsapi_{endpoint_type}_batch_{game_date}"
 
                     try:
-                        # Initialize Firestore client
-                        db = firestore.Client()
+                        # Initialize Firestore client via pool
+                        from shared.clients import get_firestore_client
+                        db = get_firestore_client()
                         lock_ref = db.collection('batch_processing_locks').document(lock_id)
 
                         # Try to create lock document (atomic operation)
@@ -1339,7 +1342,8 @@ def extract_opts_from_path(file_path: str) -> dict:
             from google.cloud import storage
 
             # Download and read the JSON file to get actual dates
-            storage_client = storage.Client()
+            from shared.clients import get_storage_client
+            storage_client = get_storage_client()
             bucket_name = 'nba-scraped-data'  # Standard bucket for all scraped data
             bucket_obj = storage_client.bucket(bucket_name)
             blob = bucket_obj.blob(file_path)

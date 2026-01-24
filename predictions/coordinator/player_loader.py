@@ -56,7 +56,8 @@ class PlayerLoader:
         self.project_id = project_id
         self.location = location
         self.dataset_prefix = dataset_prefix
-        self.client = bigquery.Client(project=project_id, location=location)
+        from shared.clients import get_bigquery_client
+        self.client = get_bigquery_client(project_id)
 
         logger.info(f"Initialized PlayerLoader for project {project_id} (location: {location}, dataset_prefix: {dataset_prefix or 'production'})")
     

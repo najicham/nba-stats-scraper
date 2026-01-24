@@ -30,7 +30,8 @@ class DataFreshnessValidator:
             project_id: GCP project ID (defaults to env var)
         """
         self.project_id = project_id or os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
-        self.bq_client = bigquery.Client(project=self.project_id)
+        from shared.clients import get_bigquery_client
+        self.bq_client = get_bigquery_client(self.project_id)
 
     def validate_phase3_freshness(self, game_date: date, max_age_hours: int = 24) -> Tuple[bool, str, Dict]:
         """

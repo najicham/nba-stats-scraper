@@ -89,8 +89,9 @@ class RegistryReader:
             self.bq_client = bq_client
             self.project_id = project_id or bq_client.project
         else:
-            self.bq_client = bigquery.Client(project=project_id)
-            self.project_id = project_id or os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
+            from shared.clients import get_bigquery_client
+            self.project_id = project_id or os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+            self.bq_client = get_bigquery_client(self.project_id)
         
         # Table names
         if test_mode:

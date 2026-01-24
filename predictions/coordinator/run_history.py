@@ -84,9 +84,10 @@ class CoordinatorRunHistory:
 
     @property
     def bq_client(self) -> bigquery.Client:
-        """Lazy-load BigQuery client."""
+        """Lazy-load BigQuery client via pool."""
         if self._bq_client is None:
-            self._bq_client = bigquery.Client(project=self.project_id)
+            from shared.clients import get_bigquery_client
+            self._bq_client = get_bigquery_client(self.project_id)
         return self._bq_client
 
     def start_batch(

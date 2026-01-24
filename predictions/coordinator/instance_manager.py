@@ -213,9 +213,9 @@ class CoordinatorInstanceManager:
         self.project_id = project_id
         self.instance_id = instance_id or str(uuid.uuid4())
 
-        # Lazy-load Firestore client
-        firestore = _get_firestore()
-        self.db = firestore.Client(project=project_id)
+        # Use pooled Firestore client
+        from shared.clients import get_firestore_client
+        self.db = get_firestore_client(project_id)
         self.instances_collection = self.db.collection(self.INSTANCES_COLLECTION)
         self.locks_collection = self.db.collection(self.LOCKS_COLLECTION)
 

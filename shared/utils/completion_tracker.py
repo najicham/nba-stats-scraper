@@ -34,8 +34,10 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set, Tuple, Any
 
-from google.cloud import firestore, bigquery
+from google.cloud import bigquery
 from google.cloud.exceptions import GoogleCloudError
+
+from shared.clients import get_bigquery_client, get_firestore_client
 
 logger = logging.getLogger(__name__)
 
@@ -117,21 +119,17 @@ class CompletionTracker:
         self._firestore_check_interval_seconds = 60  # Re-check every minute
 
     @property
-    def firestore_client(self) -> firestore.Client:
-        """Get or create Firestore client (lazy initialization)."""
+    def firestore_client(self):
+        """Get or create Firestore client (lazy initialization via pool)."""
         if self._firestore_client is None:
-            self._firestore_client = firestore.Client(project=self.project_id)
+            self._firestore_client = get_firestore_client(self.project_id)
         return self._firestore_client
 
     @property
     def bq_client(self) -> bigquery.Client:
-        """Get or create BigQuery client (lazy initialization)."""
+        """Get or create BigQuery client (lazy initialization via pool)."""
         if self._bq_client is None:
-            try:
-                from shared.clients.bigquery_pool import get_bigquery_client
-                self._bq_client = get_bigquery_client(project_id=self.project_id)
-            except ImportError:
-                self._bq_client = bigquery.Client(project=self.project_id)
+            self._bq_client = get_bigquery_client(self.project_id)
         return self._bq_client
 
     def _get_firestore_collection(self, phase: str) -> str:

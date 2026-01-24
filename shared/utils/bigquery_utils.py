@@ -76,7 +76,8 @@ def _execute_bigquery_internal(
     use_cache: Optional[bool]
 ) -> List[Dict[str, Any]]:
     """Internal function with retry logic for BigQuery queries."""
-    client = bigquery.Client(project=project_id)
+    from shared.clients import get_bigquery_client
+    client = get_bigquery_client(project_id)
 
     # Week 1: Configure query caching
     job_config = bigquery.QueryJobConfig()
@@ -159,7 +160,8 @@ def _insert_bigquery_rows_internal(
     project_id: str
 ) -> bool:
     """Internal function with retry logic for BigQuery inserts."""
-    client = bigquery.Client(project=project_id)
+    from shared.clients import get_bigquery_client
+    client = get_bigquery_client(project_id)
 
     # Ensure table_id has project prefix
     if not table_id.startswith(f"{project_id}."):
@@ -250,7 +252,8 @@ def table_exists(
         ...     print("Table exists!")
     """
     try:
-        client = bigquery.Client(project=project_id)
+        from shared.clients import get_bigquery_client
+    client = get_bigquery_client(project_id)
         
         # Ensure table_id has project prefix
         if not table_id.startswith(f"{project_id}."):
@@ -285,7 +288,8 @@ def get_table_row_count(
         >>> print(f"Table has {count} rows")
     """
     try:
-        client = bigquery.Client(project=project_id)
+        from shared.clients import get_bigquery_client
+    client = get_bigquery_client(project_id)
         
         # Ensure table_id has project prefix
         if not table_id.startswith(f"{project_id}."):
@@ -345,7 +349,8 @@ def _execute_bigquery_with_params_internal(
     project_id: str
 ) -> List[Dict[str, Any]]:
     """Internal function with retry logic for parameterized queries."""
-    client = bigquery.Client(project=project_id)
+    from shared.clients import get_bigquery_client
+    client = get_bigquery_client(project_id)
 
     # Build query parameters
     job_config = bigquery.QueryJobConfig()
@@ -381,7 +386,8 @@ def _execute_bigquery_with_params_internal(
 )
 def _update_bigquery_rows_internal(query: str, project_id: str) -> int:
     """Internal function with retry logic for DML statements."""
-    client = bigquery.Client(project=project_id)
+    from shared.clients import get_bigquery_client
+    client = get_bigquery_client(project_id)
     query_job = client.query(query)
     # Wait for completion with timeout to prevent indefinite hangs
     result = query_job.result(timeout=60)

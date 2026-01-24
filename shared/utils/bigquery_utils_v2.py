@@ -60,7 +60,8 @@ def _execute_bigquery_v2_internal(
     use_cache: Optional[bool]
 ) -> List[Dict[str, Any]]:
     """Internal function with retry logic for BigQuery queries."""
-    client = bigquery.Client(project=project_id)
+    from shared.clients import get_bigquery_client
+    client = get_bigquery_client(project_id)
 
     # Configure query caching
     job_config = bigquery.QueryJobConfig()
@@ -180,7 +181,8 @@ def insert_bigquery_rows_v2(
         return Result.success(0)
 
     try:
-        client = bigquery.Client(project=project_id)
+        from shared.clients import get_bigquery_client
+    client = get_bigquery_client(project_id)
 
         # Ensure table_id has project prefix
         if not table_id.startswith(f"{project_id}."):
@@ -261,7 +263,8 @@ def get_table_row_count_v2(
         ...     print("Table doesn't exist or no access")
     """
     try:
-        client = bigquery.Client(project=project_id)
+        from shared.clients import get_bigquery_client
+    client = get_bigquery_client(project_id)
 
         # Ensure table_id has project prefix
         if not table_id.startswith(f"{project_id}."):
@@ -318,7 +321,8 @@ def execute_bigquery_with_params_v2(
         ...     process(result.data)
     """
     try:
-        client = bigquery.Client(project=project_id)
+        from shared.clients import get_bigquery_client
+    client = get_bigquery_client(project_id)
 
         # Build query parameters
         job_config = bigquery.QueryJobConfig()
@@ -385,7 +389,8 @@ def update_bigquery_rows_v2(
         ...     logger.error(f"DML failed: {result.error.message}", exc_info=True)
     """
     try:
-        client = bigquery.Client(project=project_id)
+        from shared.clients import get_bigquery_client
+    client = get_bigquery_client(project_id)
         query_job = client.query(query)
         result = query_job.result(timeout=60)
 
@@ -438,7 +443,8 @@ def table_exists_v2(
         ...     print(f"Error checking: {result.error.message}")
     """
     try:
-        client = bigquery.Client(project=project_id)
+        from shared.clients import get_bigquery_client
+    client = get_bigquery_client(project_id)
 
         # Ensure table_id has project prefix
         if not table_id.startswith(f"{project_id}."):

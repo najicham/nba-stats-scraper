@@ -58,7 +58,8 @@ class BaseExporter(ABC):
         self.project_id = project_id
         self.bucket_name = bucket_name
         self.bq_client = get_bigquery_client(project_id=project_id)
-        self.gcs_client = storage.Client(project=project_id)
+        from shared.clients import get_storage_client
+        self.gcs_client = get_storage_client(project_id)
 
     @abstractmethod
     def generate_json(self, **kwargs) -> Dict[str, Any]:
@@ -84,7 +85,7 @@ class BaseExporter(ABC):
             result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
             return [dict(row) for row in result]
         except Exception as e:
-            logger.error(f"Query failed: {e}")
+            logger.error(f"Query failed: {e}", exc_info=True)
             raise
 
     def upload_to_gcs(

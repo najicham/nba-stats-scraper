@@ -55,9 +55,10 @@ class StatusExporter(BaseExporter):
         self._bigquery_client = None
 
     def _get_storage_client(self):
-        """Get or create storage client."""
+        """Get or create storage client via pool."""
         if self._gcs_storage_client is None:
-            self._gcs_storage_client = storage.Client()
+            from shared.clients import get_storage_client
+            self._gcs_storage_client = get_storage_client(self.project_id)
         return self._gcs_storage_client
 
     def _get_bq_client(self):
@@ -169,7 +170,7 @@ class StatusExporter(BaseExporter):
             }
 
         except Exception as e:
-            logger.error(f"Error checking live data status: {e}")
+            logger.error(f"Error checking live data status: {e}", exc_info=True)
             return {
                 'status': 'unknown',
                 'message': f'Error checking status: {str(e)}',
@@ -205,7 +206,7 @@ class StatusExporter(BaseExporter):
             }
 
         except Exception as e:
-            logger.error(f"Error checking tonight data status: {e}")
+            logger.error(f"Error checking tonight data status: {e}", exc_info=True)
             return {
                 'status': 'unknown',
                 'message': f'Error checking status: {str(e)}',
@@ -235,7 +236,7 @@ class StatusExporter(BaseExporter):
             }
 
         except Exception as e:
-            logger.error(f"Error checking grading status: {e}")
+            logger.error(f"Error checking grading status: {e}", exc_info=True)
             return {
                 'status': 'unknown',
                 'message': f'Error checking status: {str(e)}'
@@ -279,7 +280,7 @@ class StatusExporter(BaseExporter):
                 }
 
         except Exception as e:
-            logger.error(f"Error checking predictions status: {e}")
+            logger.error(f"Error checking predictions status: {e}", exc_info=True)
             return {
                 'status': 'unknown',
                 'message': f'Error checking status: {str(e)}'

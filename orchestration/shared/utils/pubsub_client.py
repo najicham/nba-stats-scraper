@@ -20,8 +20,14 @@ class PubSubClient:
 
     def __init__(self, project_id: str):
         self.project_id = project_id
-        self.publisher = pubsub_v1.PublisherClient()
-        self.subscriber = pubsub_v1.SubscriberClient()
+        try:
+            from shared.clients import get_pubsub_publisher, get_pubsub_subscriber
+            self.publisher = get_pubsub_publisher()
+            self.subscriber = get_pubsub_subscriber()
+        except ImportError:
+            # Fallback for cloud functions without shared.clients
+            self.publisher = pubsub_v1.PublisherClient()
+            self.subscriber = pubsub_v1.SubscriberClient()
 
     def publish_message(self, topic_name: str, data: Dict[str, Any],
                        attributes: Optional[Dict[str, str]] = None) -> bool:

@@ -61,8 +61,13 @@ class StorageClient:
     """Centralized Cloud Storage operations for NBA platform"""
 
     def __init__(self, project_id: str):
-        self.client = storage.Client(project=project_id)
         self.project_id = project_id
+        try:
+            from shared.clients import get_storage_client
+            self.client = get_storage_client(project_id)
+        except ImportError:
+            # Fallback for cloud functions without shared.clients
+            self.client = storage.Client(project=project_id)
 
     def upload_json(self, bucket_name: str, blob_name: str,
                    data: Dict[str, Any], compress: bool = True) -> bool:

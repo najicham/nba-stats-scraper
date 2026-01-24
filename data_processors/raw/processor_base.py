@@ -521,7 +521,8 @@ class ProcessorBase(RunHistoryMixin):
             # Use project_id from opts, falling back to sport_config
             project_id = self.opts.get("project_id", self.project_id)
             self.bq_client = get_bigquery_client(project_id=project_id)
-            self.gcs_client = storage.Client(project=project_id)
+            from shared.clients import get_storage_client
+            self.gcs_client = get_storage_client(project_id)
         except Exception as e:
             logger.error(f"Failed to initialize GCP clients: {e}")
             try:

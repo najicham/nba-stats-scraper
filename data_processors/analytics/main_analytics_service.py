@@ -258,10 +258,9 @@ def trigger_missing_boxscore_scrapes(missing_games: list, game_date: str) -> int
         Number of scrape requests triggered (always 1 for date-based scraping)
     """
     try:
-        from google.cloud import pubsub_v1
-
+        from shared.clients import get_pubsub_publisher
         from shared.config.gcp_config import get_project_id
-        publisher = pubsub_v1.PublisherClient()
+        publisher = get_pubsub_publisher()
         topic_path = publisher.topic_path(get_project_id(), 'nba-scraper-trigger')
 
         # Trigger BDL box scores scraper for the entire date

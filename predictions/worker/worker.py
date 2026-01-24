@@ -197,12 +197,12 @@ def get_data_loader() -> 'PredictionDataLoader':
     return _data_loader
 
 def get_bq_client() -> 'bigquery.Client':
-    """Lazy-load BigQuery client on first use"""
-    from google.cloud import bigquery
+    """Lazy-load BigQuery client on first use via pool"""
+    from shared.clients import get_bigquery_client
     global _bq_client
     if _bq_client is None:
-        logger.info("Initializing BigQuery client...")
-        _bq_client = bigquery.Client(project=PROJECT_ID, location='us-west2')
+        logger.info("Initializing BigQuery client via pool...")
+        _bq_client = get_bigquery_client(PROJECT_ID)
         logger.info("BigQuery client initialized")
     return _bq_client
 
@@ -217,12 +217,12 @@ def get_staging_writer() -> 'BatchStagingWriter':
     return _staging_writer
 
 def get_pubsub_publisher() -> 'pubsub_v1.PublisherClient':
-    """Lazy-load Pub/Sub publisher on first use"""
-    from google.cloud import pubsub_v1
+    """Lazy-load Pub/Sub publisher on first use via pool"""
+    from shared.clients import get_pubsub_publisher as get_pooled_publisher
     global _pubsub_publisher
     if _pubsub_publisher is None:
-        logger.info("Initializing Pub/Sub publisher...")
-        _pubsub_publisher = pubsub_v1.PublisherClient()
+        logger.info("Initializing Pub/Sub publisher via pool...")
+        _pubsub_publisher = get_pooled_publisher()
         logger.info("Pub/Sub publisher initialized")
     return _pubsub_publisher
 

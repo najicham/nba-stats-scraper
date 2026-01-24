@@ -33,6 +33,8 @@ from enum import Enum
 from google.cloud import firestore
 from google.cloud import bigquery
 
+from shared.clients import get_firestore_client, get_bigquery_client
+
 logger = logging.getLogger(__name__)
 
 
@@ -108,9 +110,9 @@ class ProcessorHeartbeat:
 
     @property
     def firestore(self) -> firestore.Client:
-        """Lazy-load Firestore client."""
+        """Lazy-load Firestore client via pool."""
         if self._firestore is None:
-            self._firestore = firestore.Client(project=self.project_id)
+            self._firestore = get_firestore_client(self.project_id)
         return self._firestore
 
     @property
@@ -236,16 +238,16 @@ class HeartbeatMonitor:
 
     @property
     def firestore(self) -> firestore.Client:
-        """Lazy-load Firestore client."""
+        """Lazy-load Firestore client via pool."""
         if self._firestore is None:
-            self._firestore = firestore.Client(project=self.project_id)
+            self._firestore = get_firestore_client(self.project_id)
         return self._firestore
 
     @property
     def bigquery(self) -> bigquery.Client:
-        """Lazy-load BigQuery client."""
+        """Lazy-load BigQuery client via pool."""
         if self._bigquery is None:
-            self._bigquery = bigquery.Client(project=self.project_id)
+            self._bigquery = get_bigquery_client(self.project_id)
         return self._bigquery
 
     def check_all(self) -> list:

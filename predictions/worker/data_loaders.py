@@ -63,7 +63,8 @@ class PredictionDataLoader:
         """
         self.project_id = project_id
         self.dataset_prefix = dataset_prefix
-        self.client = bigquery.Client(project=project_id, location=location)
+        from shared.clients import get_bigquery_client
+        self.client = get_bigquery_client(project_id)
 
         # Construct dataset names with optional prefix
         self.predictions_dataset = f"{dataset_prefix}_nba_predictions" if dataset_prefix else "nba_predictions"

@@ -71,8 +71,8 @@ def get_orchestration_state(game_date: date) -> OrchestrationState:
     state = OrchestrationState(game_date=game_date)
 
     try:
-        from google.cloud import firestore
-        db = firestore.Client()
+        from shared.clients import get_firestore_client
+        db = get_firestore_client()
 
         # Check Phase 2 completion
         state.phases[2] = _get_phase_completion(

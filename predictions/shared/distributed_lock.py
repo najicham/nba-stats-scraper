@@ -1,4 +1,4 @@
-# predictions/worker/distributed_lock.py
+# predictions/shared/distributed_lock.py
 
 """
 Distributed Lock for Preventing Concurrent Operations
@@ -24,7 +24,7 @@ Fix:
 - Automatic cleanup via Firestore TTL
 
 Usage:
-    from distributed_lock import DistributedLock
+    from predictions.shared.distributed_lock import DistributedLock
 
     # For consolidation
     lock = DistributedLock(project_id=PROJECT_ID, lock_type="consolidation")
@@ -48,10 +48,15 @@ from google.api_core import exceptions as gcp_exceptions
 logger = logging.getLogger(__name__)
 
 # Lazy-load firestore to avoid Python 3.13 import errors at module load time
-def _get_firestore_client():
-    """Lazy-load Firestore client to avoid import errors."""
+def _get_firestore_module():
+    """Lazy-load Firestore module to avoid import errors."""
     from google.cloud import firestore
     return firestore
+
+def _get_firestore_client(project_id: str):
+    """Get Firestore client via pool."""
+    from shared.clients import get_firestore_client
+    return get_firestore_client(project_id)
 
 # Lock configuration
 LOCK_TIMEOUT_SECONDS = 300  # 5 minutes - prevents deadlocks from crashed processes
@@ -98,13 +103,7 @@ class DistributedLock:
         self.project_id = project_id
         self.lock_type = lock_type
         self.collection_name = f"{lock_type}_locks"
-        try:
-            from shared.clients import get_firestore_client
-            self.db = get_firestore_client(project_id)
-        except ImportError:
-            # Fallback for cloud functions without shared.clients
-            firestore = _get_firestore_client()
-            self.db = firestore.Client(project=project_id)
+        self.db = _get_firestore_client(project_id)
         self.lock_doc_ref: Optional[object] = None  # firestore.DocumentReference lazy-loaded
 
         logger.info(f"Initialized DistributedLock (type={lock_type}, collection={self.collection_name})")
@@ -142,7 +141,7 @@ class DistributedLock:
         """
         lock_ref = self.db.collection(self.collection_name).document(lock_key)
 
-        firestore = _get_firestore_client()
+        firestore = _get_firestore_module()
 
         @firestore.transactional
         def acquire_in_transaction(transaction):
@@ -174,7 +173,7 @@ class DistributedLock:
                 'operation_id': operation_id,
                 'holder_id': holder_id,
                 'lock_type': self.lock_type,
-                'acquired_at': _get_firestore_client().SERVER_TIMESTAMP,
+                'acquired_at': _get_firestore_module().SERVER_TIMESTAMP,
                 'expires_at': datetime.utcnow() + timedelta(seconds=LOCK_TIMEOUT_SECONDS),
                 'lock_key': lock_key
             }
@@ -188,12 +187,12 @@ class DistributedLock:
             if acquired:
                 self.lock_doc_ref = lock_ref
                 logger.info(
-                    f"✅ Acquired {self.lock_type} lock: {lock_key} "
+                    f"Acquired {self.lock_type} lock: {lock_key} "
                     f"(operation={operation_id}, timeout={LOCK_TIMEOUT_SECONDS}s)"
                 )
             return acquired
         except gcp_exceptions.GoogleAPICallError as e:
-            logger.error(f"Firestore error acquiring lock: {e}")
+            logger.error(f"Firestore error acquiring lock: {e}", exc_info=True)
             return False
 
     @contextmanager
@@ -295,14 +294,14 @@ class DistributedLock:
 
         try:
             self.lock_doc_ref.delete()
-            logger.info(f"🔓 Released {self.lock_type} lock: {lock_key} (operation={operation_id})")
+            logger.info(f"Released {self.lock_type} lock: {lock_key} (operation={operation_id})")
             self.lock_doc_ref = None
         except gcp_exceptions.NotFound:
             # Lock already deleted (e.g., TTL expired)
             logger.info(f"Lock {lock_key} already released (not found)")
             self.lock_doc_ref = None
         except Exception as e:
-            logger.error(f"Error releasing lock {lock_key}: {e}")
+            logger.error(f"Error releasing lock {lock_key}: {e}", exc_info=True)
             # Don't raise - lock will expire via TTL
 
     def force_release(self, game_date: str):
@@ -320,11 +319,11 @@ class DistributedLock:
 
         try:
             lock_ref.delete()
-            logger.warning(f"⚠️  FORCE RELEASED {self.lock_type} lock: {lock_key}")
+            logger.warning(f"FORCE RELEASED {self.lock_type} lock: {lock_key}")
         except gcp_exceptions.NotFound:
             logger.info(f"Lock {lock_key} not found (already released)")
         except Exception as e:
-            logger.error(f"Error force releasing lock {lock_key}: {e}")
+            logger.error(f"Error force releasing lock {lock_key}: {e}", exc_info=True)
             raise
 
 
