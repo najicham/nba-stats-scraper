@@ -508,8 +508,8 @@ def cleanup_firestore(request: Request):
                     "text": f":x: *Firestore Cleanup Failed*\nError: {str(e)[:200]}"
                 }
                 send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
-        except Exception:
-            pass
+        except Exception as slack_err:
+            logger.warning(f"Failed to send Slack notification for cleanup failure: {slack_err}")
 
         return jsonify(summary), 500
 

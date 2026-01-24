@@ -222,8 +222,9 @@ def auto_recover_processor(
         try:
             fs_client.collection('processing_locks').document(lock_id).delete()
             result['actions'].append('cleared_lock')
-        except Exception:
-            pass  # Lock may not exist
+        except Exception as lock_err:
+            # Lock may not exist - log at debug level but don't fail recovery
+            logger.debug(f"Lock {lock_id} not found or already deleted: {lock_err}")
 
         result['success'] = True
         logger.info(f"Recovered {processor_name}: {result['actions']}")
