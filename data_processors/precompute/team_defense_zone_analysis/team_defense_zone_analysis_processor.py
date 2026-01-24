@@ -179,6 +179,25 @@ class TeamDefenseZoneAnalysisProcessor(
     CIRCUIT_BREAKER_THRESHOLD = 5  # Open after 5 consecutive failures
     CIRCUIT_BREAKER_TIMEOUT = timedelta(minutes=30)  # Stay open 30 minutes
 
+    def get_upstream_data_check_query(self, start_date: str, end_date: str) -> Optional[str]:
+        """
+        Check if upstream data is available for circuit breaker auto-reset.
+
+        Prevents retry storms by checking Phase 3 team_defense_game_summary data exists.
+
+        Args:
+            start_date: Start of date range (YYYY-MM-DD)
+            end_date: End of date range (YYYY-MM-DD)
+
+        Returns:
+            SQL query that returns {data_available: boolean}
+        """
+        return f"""
+        SELECT COUNT(*) > 0 AS data_available
+        FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
+        WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+        """
+
     def get_dependencies(self) -> dict:
         """
         Define Phase 3 dependency: team_defense_game_summary table.
