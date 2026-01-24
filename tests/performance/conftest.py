@@ -21,57 +21,6 @@ if project_root not in sys.path:
 
 
 # =============================================================================
-# Benchmark Stats Helper
-# =============================================================================
-
-def get_benchmark_stats(benchmark, stat_name='mean'):
-    """
-    Safely get benchmark stats, handling both enabled and disabled modes.
-
-    When running with --benchmark-only or --benchmark-enable, returns actual stats.
-    When running without benchmarking (--benchmark-disable), returns None.
-
-    Args:
-        benchmark: The pytest-benchmark fixture
-        stat_name: The stat to retrieve ('mean', 'stddev', 'min', 'max')
-
-    Returns:
-        The stat value or None if benchmarking is disabled
-    """
-    try:
-        stats = benchmark.stats
-        if hasattr(stats, stat_name):
-            return getattr(stats, stat_name)
-    except Exception:
-        pass
-    return None
-
-
-def format_benchmark_time(benchmark, unit='ms'):
-    """
-    Format benchmark timing for display.
-
-    Args:
-        benchmark: The pytest-benchmark fixture
-        unit: Time unit - 'ms' (milliseconds), 'us' (microseconds), 's' (seconds)
-
-    Returns:
-        Formatted string with timing info, or 'N/A' if benchmarking disabled
-    """
-    mean = get_benchmark_stats(benchmark, 'mean')
-    if mean is None:
-        return 'N/A (benchmarking disabled)'
-
-    multipliers = {'s': 1, 'ms': 1000, 'us': 1000000}
-    mult = multipliers.get(unit, 1000)
-
-    stddev = get_benchmark_stats(benchmark, 'stddev')
-    if stddev is not None:
-        return f"{mean * mult:.3f}{unit} (+/-{stddev * mult:.3f}{unit})"
-    return f"{mean * mult:.3f}{unit}"
-
-
-# =============================================================================
 # Scraper Fixtures
 # =============================================================================
 
