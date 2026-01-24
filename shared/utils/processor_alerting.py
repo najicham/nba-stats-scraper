@@ -26,6 +26,7 @@ from email.mime.multipart import MIMEMultipart
 from typing import Dict, List, Optional, Any
 import requests
 from shared.utils.auth_utils import get_api_key
+from shared.utils.slack_retry import send_slack_webhook_with_retry
 
 # Import alert type system
 from shared.utils.alert_types import get_alert_html_heading, detect_alert_type, format_alert_heading
@@ -260,27 +261,33 @@ class ProcessorAlerting:
             return False
     
     def _send_slack_alert(self, alert_data: Dict[str, Any]) -> bool:
-        """Send alert to Slack via webhook."""
+        """
+        Send alert to Slack via webhook with retry logic.
+
+        Uses send_slack_webhook_with_retry for automatic retries on transient failures.
+        This prevents silent alert failures when Slack API has temporary issues.
+        """
         if not self.slack_webhook_url:
             logger.warning("No Slack webhook URL configured - skipping Slack alert")
             return False
-        
+
         try:
             message = self._build_slack_message(alert_data)
-            
-            response = requests.post(
-                self.slack_webhook_url,
-                json=message,
+
+            # Use retry-enabled webhook sender (3 attempts with exponential backoff)
+            success = send_slack_webhook_with_retry(
+                webhook_url=self.slack_webhook_url,
+                payload=message,
                 timeout=10
             )
-            
-            if response.status_code == 200:
+
+            if success:
                 logger.info("Slack alert sent successfully")
                 return True
             else:
-                logger.error(f"Slack webhook error: {response.status_code} - {response.text}")
+                logger.error("Slack webhook failed after retries")
                 return False
-                
+
         except Exception as e:
             logger.error(f"Failed to send Slack alert: {e}")
             return False
