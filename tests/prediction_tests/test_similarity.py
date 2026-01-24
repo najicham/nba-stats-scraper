@@ -515,14 +515,14 @@ class TestConfidence:
             {'similarity_score': 90, 'points': 26.0 + i * 0.2}
             for i in range(15)
         ]
-        
+
         confidence = similarity_system._calculate_confidence(
             similar_games,
             {'points_std_last_10': 3.5}
         )
-        
-        # Should be high (15 games, 90 avg similarity, low variance)
-        assert confidence > 80
+
+        # After Jan 2026 recalibration: base 35 + 12 (15 games) + 12 (90 sim) + 10 (low var) = 69
+        assert confidence >= 65
     
     def test_confidence_low_count(self, similarity_system):
         """Test lower confidence with few matches"""
@@ -530,14 +530,14 @@ class TestConfidence:
             {'similarity_score': 85, 'points': 26.0}
             for i in range(5)
         ]
-        
+
         confidence = similarity_system._calculate_confidence(
             similar_games,
             {}
         )
-        
-        # Should be moderate (only 5 games)
-        assert 60 < confidence < 75
+
+        # After Jan 2026 recalibration: base 35 - 10 (5 games) + 12 (85 sim) + 10 (low var) = 47
+        assert 40 < confidence < 55
     
     def test_confidence_high_variance(self, similarity_system):
         """Test lower confidence with high outcome variance"""
@@ -782,26 +782,28 @@ class TestEdgeCases:
     
     def test_extreme_predictions_clamped(self, similarity_system, sample_features):
         """Test that extreme predictions are clamped to 0-60"""
-        # Create games with extreme outcomes
+        # Create games with extreme outcomes but matching context
+        # sample_features: is_home=0.0 (away), days_rest=1.0, opponent_def_rating=112.5 (tier_2)
         historical_games = [
             {
-                'opponent_tier': 'tier_3_weak',
-                'days_rest': 3,
-                'is_home': True,
-                'recent_form': 'hot',
-                'points': 55.0  # Very high
+                'opponent_tier': 'tier_2_average',  # Match sample_features opponent tier
+                'days_rest': 1,  # Match sample_features rest
+                'is_home': False,  # Match sample_features venue
+                'recent_form': 'normal',  # Match likely form from sample_features
+                'points': 55.0  # Very high outcome
             }
             for i in range(10)
         ]
-        
+
         result = similarity_system.predict(
             player_lookup='test-player',
             features=sample_features,
             historical_games=historical_games,
             betting_line=25.5
         )
-        
+
         # Should clamp to reasonable range
+        assert result['predicted_points'] is not None
         assert 0 <= result['predicted_points'] <= 60
 
 

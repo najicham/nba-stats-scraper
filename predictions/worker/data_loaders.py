@@ -29,6 +29,7 @@ import logging
 import os
 
 from shared.utils.query_cache import QueryCache, get_query_cache
+from shared.utils.bigquery_retry import TRANSIENT_RETRY
 
 logger = logging.getLogger(__name__)
 
