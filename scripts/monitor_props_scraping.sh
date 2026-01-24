@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Props Scraping Monitor
 # Run at 10:00 AM PST (1:00 PM ET) to verify betting_lines workflow
 

@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Quick Win #1 Validation Script (CORRECTED)
 # Validates Phase 3 Analytics weight boost: 75 → 87
 # Compares Jan 19 (baseline, weight=75) vs Jan 20 (test, weight=87)

@@ -2,7 +2,7 @@
 # bin/deploy_cloud_run.sh
 # Deploy scrapers to Cloud Run (integrates with existing Terraform)
 
-set -e
+set -euo pipefail
 
 PROJECT_ID=${1:-$(gcloud config get-value project)}
 REGION=${2:-"us-central1"}

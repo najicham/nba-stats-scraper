@@ -1,0 +1,59 @@
+{
+  "data": [
+    {
+      "team": {
+        "id": 2,
+        "abbreviation": "BOS",
+        "full_name": "Boston Celtics",
+        "conference": "East",
+        "division": "Atlantic"
+      },
+      "conference_rank": 1,
+      "division_rank": 1,
+      "wins": 35,
+      "losses": 10,
+      "win_pct": 0.778,
+      "home_record": "20-3",
+      "road_record": "15-7",
+      "streak": "W5",
+      "last_10": "8-2"
+    },
+    {
+      "team": {
+        "id": 6,
+        "abbreviation": "CLE",
+        "full_name": "Cleveland Cavaliers",
+        "conference": "East",
+        "division": "Central"
+      },
+      "conference_rank": 2,
+      "division_rank": 1,
+      "wins": 33,
+      "losses": 11,
+      "win_pct": 0.750,
+      "home_record": "19-4",
+      "road_record": "14-7",
+      "streak": "W3",
+      "last_10": "7-3"
+    },
+    {
+      "team": {
+        "id": 21,
+        "abbreviation": "OKC",
+        "full_name": "Oklahoma City Thunder",
+        "conference": "West",
+        "division": "Northwest"
+      },
+      "conference_rank": 1,
+      "division_rank": 1,
+      "wins": 34,
+      "losses": 9,
+      "win_pct": 0.791,
+      "home_record": "18-3",
+      "road_record": "16-6",
+      "streak": "W7",
+      "last_10": "9-1"
+    }
+  ],
+  "meta": {}
+}

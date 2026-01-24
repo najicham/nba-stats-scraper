@@ -2,7 +2,7 @@
 # bin/monitoring/scheduler_bulletproof.sh
 # Bulletproof version using simple if/then instead of loops
 
-set -e
+set -euo pipefail
 
 PROJECT_ID=$(gcloud config get-value project 2>/dev/null || echo "unknown")
 REGION=${REGION:-us-west2}

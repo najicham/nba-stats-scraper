@@ -825,8 +825,6 @@ _Check Cloud Logging for detailed error traces._"""
         Returns:
             Number of batches deleted
         """
-        from datetime import timedelta
-
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
         query = self.collection.where('start_time', '<', cutoff)
@@ -840,6 +838,376 @@ _Check Cloud Logging for detailed error traces._"""
 
         logger.info(f"Cleaned up {count} old batch records")
         return count
+
+    # ============================================================================
+    # Multi-Instance Coordination Methods
+    # ============================================================================
+
+    def create_batch_with_transaction(
+        self,
+        batch_id: str,
+        game_date: str,
+        expected_players: int,
+        correlation_id: Optional[str] = None,
+        dataset_prefix: str = "",
+        instance_id: Optional[str] = None
+    ) -> Optional[BatchState]:
+        """
+        Create a new batch using Firestore transaction to prevent duplicates.
+
+        This is safe for multi-instance deployment - only one instance can
+        create a batch for a given batch_id.
+
+        Args:
+            batch_id: Unique batch identifier
+            game_date: Game date (YYYY-MM-DD)
+            expected_players: Number of players expected
+            correlation_id: Optional correlation ID for tracing
+            dataset_prefix: Optional dataset prefix for testing
+            instance_id: Optional instance ID for tracking
+
+        Returns:
+            BatchState if created, None if already exists
+        """
+        firestore = _get_firestore()
+        _, _, SERVER_TIMESTAMP = _get_firestore_helpers()
+
+        doc_ref = self.collection.document(batch_id)
+
+        @firestore.transactional
+        def create_in_transaction(transaction):
+            snapshot = doc_ref.get(transaction=transaction)
+
+            if snapshot.exists:
+                existing = snapshot.to_dict()
+                # Check if it's the same game_date (idempotent retry)
+                if existing.get('game_date') == game_date:
+                    logger.info(f"Batch {batch_id} already exists for {game_date} (idempotent)")
+                    return None
+                else:
+                    logger.warning(
+                        f"Batch {batch_id} exists for different date: "
+                        f"{existing.get('game_date')} vs {game_date}"
+                    )
+                    return None
+
+            # Create new batch
+            state = BatchState(
+                batch_id=batch_id,
+                game_date=game_date,
+                expected_players=expected_players,
+                start_time=datetime.now(timezone.utc),
+                correlation_id=correlation_id,
+                dataset_prefix=dataset_prefix
+            )
+
+            data = state.to_firestore_dict()
+            if instance_id:
+                data['created_by_instance'] = instance_id
+
+            transaction.set(doc_ref, data)
+            return state
+
+        transaction = self.db.transaction()
+        try:
+            result = create_in_transaction(transaction)
+            if result:
+                logger.info(
+                    f"Created batch state with transaction: {batch_id} "
+                    f"(expected_players={expected_players}, game_date={game_date})"
+                )
+            return result
+        except Exception as e:
+            logger.error(f"Transaction error creating batch: {e}", exc_info=True)
+            raise
+
+    def claim_batch_for_processing(
+        self,
+        batch_id: str,
+        instance_id: str,
+        claim_timeout_seconds: int = 300
+    ) -> bool:
+        """
+        Claim a batch for processing by an instance.
+
+        Uses Firestore transaction to ensure only one instance can claim.
+        The claim has a timeout to handle crashed instances.
+
+        Args:
+            batch_id: Batch identifier
+            instance_id: Instance claiming the batch
+            claim_timeout_seconds: How long the claim is valid (default 5 min)
+
+        Returns:
+            True if claim successful, False if already claimed
+        """
+        firestore = _get_firestore()
+        _, _, SERVER_TIMESTAMP = _get_firestore_helpers()
+
+        doc_ref = self.collection.document(batch_id)
+
+        @firestore.transactional
+        def claim_in_transaction(transaction):
+            snapshot = doc_ref.get(transaction=transaction)
+
+            if not snapshot.exists:
+                logger.error(f"Cannot claim non-existent batch: {batch_id}")
+                return False
+
+            data = snapshot.to_dict()
+
+            # Check if already claimed
+            claimed_by = data.get('claimed_by_instance')
+            claim_expires = data.get('claim_expires_at')
+
+            if claimed_by and claimed_by != instance_id:
+                # Check if claim is still valid
+                if claim_expires:
+                    if hasattr(claim_expires, 'timestamp'):
+                        claim_expires_dt = datetime.fromtimestamp(
+                            claim_expires.timestamp(), tz=timezone.utc
+                        )
+                    else:
+                        claim_expires_dt = claim_expires
+
+                    if datetime.now(timezone.utc) < claim_expires_dt:
+                        logger.info(
+                            f"Batch {batch_id} already claimed by {claimed_by} "
+                            f"(expires {claim_expires_dt})"
+                        )
+                        return False
+
+                # Claim expired - can take over
+                logger.warning(
+                    f"Taking over expired claim on {batch_id} from {claimed_by}"
+                )
+
+            # Set claim
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=claim_timeout_seconds)
+            transaction.update(doc_ref, {
+                'claimed_by_instance': instance_id,
+                'claim_expires_at': expires_at,
+                'claimed_at': SERVER_TIMESTAMP
+            })
+
+            return True
+
+        transaction = self.db.transaction()
+        try:
+            result = claim_in_transaction(transaction)
+            if result:
+                logger.info(f"Claimed batch {batch_id} for instance {instance_id}")
+            return result
+        except Exception as e:
+            logger.error(f"Transaction error claiming batch: {e}")
+            return False
+
+    def release_batch_claim(self, batch_id: str, instance_id: str) -> bool:
+        """
+        Release a batch claim held by an instance.
+
+        Args:
+            batch_id: Batch identifier
+            instance_id: Instance releasing the claim
+
+        Returns:
+            True if released, False if not held by this instance
+        """
+        firestore = _get_firestore()
+        _, _, SERVER_TIMESTAMP = _get_firestore_helpers()
+
+        doc_ref = self.collection.document(batch_id)
+
+        @firestore.transactional
+        def release_in_transaction(transaction):
+            snapshot = doc_ref.get(transaction=transaction)
+
+            if not snapshot.exists:
+                return False
+
+            data = snapshot.to_dict()
+            claimed_by = data.get('claimed_by_instance')
+
+            if claimed_by != instance_id:
+                logger.warning(
+                    f"Cannot release claim on {batch_id}: held by {claimed_by}, "
+                    f"not {instance_id}"
+                )
+                return False
+
+            transaction.update(doc_ref, {
+                'claimed_by_instance': None,
+                'claim_expires_at': None,
+                'claimed_at': None
+            })
+            return True
+
+        transaction = self.db.transaction()
+        try:
+            result = release_in_transaction(transaction)
+            if result:
+                logger.info(f"Released claim on batch {batch_id} by instance {instance_id}")
+            return result
+        except Exception as e:
+            logger.error(f"Transaction error releasing claim: {e}")
+            return False
+
+    def refresh_batch_claim(
+        self,
+        batch_id: str,
+        instance_id: str,
+        claim_timeout_seconds: int = 300
+    ) -> bool:
+        """
+        Refresh an existing batch claim to prevent expiration.
+
+        Call periodically during long operations.
+
+        Args:
+            batch_id: Batch identifier
+            instance_id: Instance refreshing the claim
+            claim_timeout_seconds: New timeout duration
+
+        Returns:
+            True if refreshed, False if claim not held
+        """
+        doc_ref = self.collection.document(batch_id)
+
+        try:
+            doc = doc_ref.get()
+            if not doc.exists:
+                return False
+
+            data = doc.to_dict()
+            if data.get('claimed_by_instance') != instance_id:
+                logger.warning(f"Cannot refresh claim: not held by {instance_id}")
+                return False
+
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=claim_timeout_seconds)
+            doc_ref.update({'claim_expires_at': expires_at})
+
+            logger.debug(f"Refreshed claim on {batch_id} for {instance_id}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Error refreshing claim: {e}")
+            return False
+
+    def get_unclaimed_batches(self) -> List[BatchState]:
+        """
+        Get all active batches that are not claimed by any instance.
+
+        Useful for work distribution among instances.
+
+        Returns:
+            List of unclaimed BatchState objects
+        """
+        # Get all active batches
+        active_batches = self.get_active_batches()
+        unclaimed = []
+
+        for batch in active_batches:
+            # Check claim status
+            doc = self.collection.document(batch.batch_id).get()
+            if doc.exists:
+                data = doc.to_dict()
+                claimed_by = data.get('claimed_by_instance')
+                claim_expires = data.get('claim_expires_at')
+
+                if not claimed_by:
+                    unclaimed.append(batch)
+                elif claim_expires:
+                    # Check if expired
+                    if hasattr(claim_expires, 'timestamp'):
+                        claim_expires_dt = datetime.fromtimestamp(
+                            claim_expires.timestamp(), tz=timezone.utc
+                        )
+                    else:
+                        claim_expires_dt = claim_expires
+
+                    if datetime.now(timezone.utc) >= claim_expires_dt:
+                        unclaimed.append(batch)
+
+        logger.debug(f"Found {len(unclaimed)} unclaimed batches")
+        return unclaimed
+
+    def record_completion_safe(
+        self,
+        batch_id: str,
+        player_lookup: str,
+        predictions_count: int,
+        instance_id: Optional[str] = None
+    ) -> bool:
+        """
+        Record a player completion with retry logic for transient failures.
+
+        This is a safer version of record_completion that handles
+        transient Firestore errors with exponential backoff.
+
+        Args:
+            batch_id: Batch identifier
+            player_lookup: Player identifier
+            predictions_count: Number of predictions generated
+            instance_id: Optional instance ID for tracking
+
+        Returns:
+            True if batch is now complete, False otherwise
+        """
+        max_retries = 3
+        retry_delay = 1.0
+
+        for attempt in range(max_retries):
+            try:
+                return self.record_completion(batch_id, player_lookup, predictions_count)
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Completion recording attempt {attempt + 1} failed: {e}. "
+                        f"Retrying in {retry_delay}s..."
+                    )
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    logger.error(
+                        f"Failed to record completion after {max_retries} attempts: {e}"
+                    )
+                    raise
+
+        return False
+
+    def get_batch_processing_stats(self) -> Dict:
+        """
+        Get statistics about batch processing across all instances.
+
+        Returns:
+            Dictionary with processing statistics
+        """
+        active_batches = self.get_active_batches()
+
+        stats = {
+            'active_batches': len(active_batches),
+            'total_expected': sum(b.expected_players for b in active_batches),
+            'total_completed': sum(len(b.completed_players) for b in active_batches),
+            'total_predictions': sum(b.total_predictions for b in active_batches),
+            'batches': []
+        }
+
+        for batch in active_batches:
+            doc = self.collection.document(batch.batch_id).get()
+            data = doc.to_dict() if doc.exists else {}
+
+            batch_info = {
+                'batch_id': batch.batch_id,
+                'game_date': batch.game_date,
+                'expected': batch.expected_players,
+                'completed': len(batch.completed_players),
+                'completion_pct': batch.get_completion_percentage(),
+                'claimed_by': data.get('claimed_by_instance'),
+                'created_by': data.get('created_by_instance')
+            }
+            stats['batches'].append(batch_info)
+
+        return stats
 
 
 # Singleton instance

@@ -2,7 +2,7 @@
 # Run backfill jobs locally
 # Usage: ./bin/run_backfill.sh <phase/job_name> [args...]
 
-set -e
+set -euo pipefail
 
 # Colors for output
 RED='\033[0;31m'

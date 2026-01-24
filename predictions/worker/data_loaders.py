@@ -984,6 +984,29 @@ class PredictionDataLoader:
         self.client.close()
         logger.info("Closed BigQuery client connection")
 
+    def get_query_cache_stats(self) -> Dict:
+        """
+        Get query cache statistics for monitoring.
+
+        Returns cache hit/miss rates, size, and other metrics useful for
+        understanding cache effectiveness.
+
+        Returns:
+            Dict with cache statistics
+        """
+        return self._query_cache.get_stats()
+
+    def clear_query_cache(self) -> int:
+        """
+        Clear the query cache.
+
+        Useful when you want to force fresh data from BigQuery.
+
+        Returns:
+            Number of entries cleared
+        """
+        return self._query_cache.clear()
+
 
 # ============================================================================
 # FEATURE VALIDATION

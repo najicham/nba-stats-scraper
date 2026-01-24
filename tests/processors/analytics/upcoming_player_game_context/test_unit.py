@@ -1290,6 +1290,82 @@ class TestStarTierOut:
         assert result == 0
 
 
+class TestPublicBettingPercentages:
+    """Test public betting percentage extraction functions.
+
+    These functions are placeholder implementations that return None
+    until a public betting data source is integrated.
+    """
+
+    @pytest.fixture
+    def processor(self):
+        """Create processor instance with mocked BigQuery."""
+        proc = UpcomingPlayerGameContextProcessor()
+        proc.bq_client = Mock()
+        proc.project_id = 'test-project'
+        proc.target_date = date(2025, 1, 20)
+        proc.schedule_data = {}
+        return proc
+
+    def test_get_spread_public_betting_pct_returns_none(self, processor):
+        """Test spread public betting pct returns None (placeholder)."""
+        result = processor._get_spread_public_betting_pct('20250120_LAL_BOS')
+
+        # Currently returns None as data source is not yet available
+        assert result is None
+
+    def test_get_spread_public_betting_pct_with_schedule_data(self, processor):
+        """Test spread public betting pct with schedule data available."""
+        processor.schedule_data = {
+            '20250120_LAL_BOS': {
+                'home_team_abbr': 'BOS',
+                'away_team_abbr': 'LAL'
+            }
+        }
+
+        result = processor._get_spread_public_betting_pct('20250120_LAL_BOS')
+
+        # Still returns None until data source is integrated
+        assert result is None
+
+    def test_get_total_public_betting_pct_returns_none(self, processor):
+        """Test total public betting pct returns None (placeholder)."""
+        result = processor._get_total_public_betting_pct('20250120_LAL_BOS')
+
+        # Currently returns None as data source is not yet available
+        assert result is None
+
+    def test_get_total_public_betting_pct_with_schedule_data(self, processor):
+        """Test total public betting pct with schedule data available."""
+        processor.schedule_data = {
+            '20250120_LAL_BOS': {
+                'home_team_abbr': 'BOS',
+                'away_team_abbr': 'LAL'
+            }
+        }
+
+        result = processor._get_total_public_betting_pct('20250120_LAL_BOS')
+
+        # Still returns None until data source is integrated
+        assert result is None
+
+    def test_get_spread_public_betting_pct_invalid_game_id(self, processor):
+        """Test spread public betting pct handles invalid game_id format."""
+        # Invalid game_id format
+        result = processor._get_spread_public_betting_pct('invalid_game_id')
+
+        # Should still return None without error
+        assert result is None
+
+    def test_get_total_public_betting_pct_invalid_game_id(self, processor):
+        """Test total public betting pct handles invalid game_id format."""
+        # Invalid game_id format
+        result = processor._get_total_public_betting_pct('invalid')
+
+        # Should still return None without error
+        assert result is None
+
+
 # Run tests with: pytest test_unit.py -v
 # Run specific class: pytest test_unit.py::TestFatigueMetricsCalculation -v
 # Run with coverage: pytest test_unit.py --cov=data_processors.analytics.upcoming_player_game_context --cov-report=html

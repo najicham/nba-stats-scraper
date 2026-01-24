@@ -1,0 +1,78 @@
+{
+  "data": [
+    {
+      "id": 789001,
+      "player": {
+        "id": 2544,
+        "first_name": "LeBron",
+        "last_name": "James"
+      },
+      "team": {
+        "id": 14,
+        "abbreviation": "LAL"
+      },
+      "game": {
+        "id": 1087392,
+        "date": "2025-01-20"
+      },
+      "min": "35:22",
+      "pts": 28,
+      "reb": 8,
+      "ast": 12,
+      "stl": 2,
+      "blk": 1,
+      "turnover": 3,
+      "pf": 2,
+      "fgm": 10,
+      "fga": 18,
+      "fg_pct": 0.556,
+      "fg3m": 2,
+      "fg3a": 5,
+      "fg3_pct": 0.400,
+      "ftm": 6,
+      "fta": 7,
+      "ft_pct": 0.857,
+      "oreb": 1,
+      "dreb": 7
+    },
+    {
+      "id": 789002,
+      "player": {
+        "id": 3149673,
+        "first_name": "Anthony",
+        "last_name": "Davis"
+      },
+      "team": {
+        "id": 14,
+        "abbreviation": "LAL"
+      },
+      "game": {
+        "id": 1087392,
+        "date": "2025-01-20"
+      },
+      "min": "32:45",
+      "pts": 24,
+      "reb": 12,
+      "ast": 3,
+      "stl": 1,
+      "blk": 3,
+      "turnover": 2,
+      "pf": 3,
+      "fgm": 9,
+      "fga": 16,
+      "fg_pct": 0.563,
+      "fg3m": 0,
+      "fg3a": 1,
+      "fg3_pct": 0.000,
+      "ftm": 6,
+      "fta": 8,
+      "ft_pct": 0.750,
+      "oreb": 3,
+      "dreb": 9
+    }
+  ],
+  "meta": {
+    "next_cursor": null,
+    "per_page": 25
+  }
+}

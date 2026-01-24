@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Quick progress checker for Phase 4 backfill
 
 echo "============================================="

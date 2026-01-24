@@ -243,6 +243,14 @@ class ScraperBase:
         self.run_id = str(uuid.uuid4())[:8]
         self.stats["run_id"] = self.run_id
 
+        # Cost tracking integration
+        self._cost_tracker = None
+        self._bytes_downloaded = 0
+        self._bytes_exported = 0
+
+        # Rate limiter instance (lazily initialized)
+        self._rate_limiter = None
+
     ##########################################################################
     # Main Entrypoint for the Lifecycle (Enhanced with Sentry + Notifications)
     ##########################################################################
@@ -286,7 +294,10 @@ class ScraperBase:
                 self.mark_time("total")
                 # Track start time for orchestration logging
                 self.stats["start_time"] = datetime.now(timezone.utc)
-                
+
+                # Initialize cost tracking
+                self._init_cost_tracking()
+
                 self.step_info("start", "Scraper run starting", extra={"opts": opts})
 
                 self.set_opts(opts)
@@ -338,13 +349,16 @@ class ScraperBase:
                 # ✅ NEW: Log execution to Phase 1 orchestration
                 self._log_execution_to_bigquery()
 
+                # ✅ NEW: Finalize and save cost tracking metrics
+                self._finalize_cost_tracking(success=True)
+
                 # ✅ NEW: Publish Pub/Sub event for Phase 2 processors
                 # (unless skip_pubsub flag is set for batch processing)
                 if not self.opts.get('skip_pubsub', False):
                     self._publish_completion_event_to_pubsub()
                 else:
                     logger.info("Skipping Pub/Sub publish (skip_pubsub=True, batch mode)")
-                
+
                 if self.decode_download_data:
                     return self.get_return_value()
                 else:
@@ -1999,6 +2013,8 @@ class ScraperBase:
                         break  # Move to next proxy
 
             if proxy_success:
+                # Update rate limiter with response headers on success
+                self._update_rate_limit_from_response()
                 break  # Got a successful response, exit proxy loop
 
             # Add delay before trying next proxy to avoid hammering

@@ -28,6 +28,17 @@ from .env_validation import (
     MissingEnvironmentVariablesError
 )
 
+# Rate limiting utilities
+from .rate_limiter import (
+    RateLimiter,
+    RateLimitConfig,
+    get_rate_limiter,
+    get_rate_limiter_for_url,
+    get_all_rate_limiter_stats,
+    reset_all_rate_limiters,
+    rate_limited,
+)
+
 # Prometheus metrics utilities
 from .prometheus_metrics import (
     PrometheusMetrics,
@@ -61,6 +72,14 @@ __all__ = [
     "validate_required_env_vars",
     "get_required_env_var",
     "MissingEnvironmentVariablesError",
+    # Rate limiting
+    "RateLimiter",
+    "RateLimitConfig",
+    "get_rate_limiter",
+    "get_rate_limiter_for_url",
+    "get_all_rate_limiter_stats",
+    "reset_all_rate_limiters",
+    "rate_limited",
     # Prometheus metrics
     "PrometheusMetrics",
     "create_metrics_blueprint",

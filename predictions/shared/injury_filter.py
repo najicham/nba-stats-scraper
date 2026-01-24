@@ -300,6 +300,185 @@ class InjuryFilter:
             "ok_count": sum(1 for s in statuses if not s.should_skip and not s.has_warning),
         }
 
+    # =========================================================================
+    # V2.0: TEAMMATE IMPACT AND USAGE ADJUSTMENTS
+    # =========================================================================
+
+    def get_teammate_impact(
+        self,
+        player_lookup: str,
+        team_abbr: str,
+        game_date: date
+    ) -> 'TeammateImpact':
+        """
+        Calculate impact of injured teammates on player's projections (v2.0)
+
+        When key teammates are injured, remaining players typically see:
+        - Increased usage rate
+        - More minutes
+        - Different shot distribution
+
+        Args:
+            player_lookup: Player to calculate impact for
+            team_abbr: Player's team abbreviation
+            game_date: Date of the game
+
+        Returns:
+            TeammateImpact with boost factors and injured teammate lists
+        """
+        try:
+            from predictions.shared.injury_integration import get_injury_integration
+            return get_injury_integration().calculate_teammate_impact(
+                player_lookup, team_abbr, game_date
+            )
+        except ImportError:
+            logger.warning("injury_integration module not available, returning default impact")
+            return TeammateImpact(
+                player_lookup=player_lookup,
+                team_abbr=team_abbr,
+                game_date=game_date
+            )
+
+    def adjust_usage_for_injuries(
+        self,
+        player_lookup: str,
+        base_usage: float,
+        team_abbr: str,
+        game_date: date
+    ) -> Tuple[float, float, str]:
+        """
+        Adjust usage projection based on injured teammates (v2.0)
+
+        Args:
+            player_lookup: Player to adjust projection for
+            base_usage: Original usage projection (0.0-1.0)
+            team_abbr: Player's team
+            game_date: Date of the game
+
+        Returns:
+            Tuple of (adjusted_usage, confidence, reason)
+        """
+        try:
+            from predictions.shared.injury_integration import get_injury_integration
+            return get_injury_integration().adjust_usage_projection(
+                player_lookup, base_usage, team_abbr, game_date
+            )
+        except ImportError:
+            logger.warning("injury_integration module not available, returning base usage")
+            return base_usage, 0.9, "no_injury_integration"
+
+    def adjust_points_for_injuries(
+        self,
+        player_lookup: str,
+        base_projection: float,
+        team_abbr: str,
+        game_date: date
+    ) -> Tuple[float, float, str]:
+        """
+        Adjust points projection based on injured teammates (v2.0)
+
+        Uses a more conservative boost than pure usage rate changes,
+        since points depend on shot efficiency which may not improve.
+
+        Args:
+            player_lookup: Player to adjust projection for
+            base_projection: Original points projection
+            team_abbr: Player's team
+            game_date: Date of the game
+
+        Returns:
+            Tuple of (adjusted_projection, confidence, reason)
+        """
+        try:
+            from predictions.shared.injury_integration import get_injury_integration
+            return get_injury_integration().adjust_points_projection(
+                player_lookup, base_projection, team_abbr, game_date
+            )
+        except ImportError:
+            logger.warning("injury_integration module not available, returning base projection")
+            return base_projection, 0.9, "no_injury_integration"
+
+    def get_team_injury_summary(
+        self,
+        team_abbr: str,
+        game_date: date
+    ) -> Dict:
+        """
+        Get summary of all injuries for a team (v2.0)
+
+        Args:
+            team_abbr: Team abbreviation
+            game_date: Date of the game
+
+        Returns:
+            Dict with injury counts and lists by status
+        """
+        try:
+            from predictions.shared.injury_integration import get_injury_integration
+            integration = get_injury_integration()
+            injuries = integration.load_injuries_for_date(game_date)
+
+            team_injuries = {
+                p: info for p, info in injuries.items()
+                if info.team_abbr == team_abbr
+            }
+
+            return {
+                'team': team_abbr,
+                'game_date': game_date.isoformat(),
+                'total_injured': len(team_injuries),
+                'out': [p for p, i in team_injuries.items() if i.status == 'out'],
+                'doubtful': [p for p, i in team_injuries.items() if i.status == 'doubtful'],
+                'questionable': [p for p, i in team_injuries.items() if i.status == 'questionable'],
+                'probable': [p for p, i in team_injuries.items() if i.status == 'probable'],
+            }
+        except ImportError:
+            logger.warning("injury_integration module not available")
+            return {
+                'team': team_abbr,
+                'game_date': game_date.isoformat(),
+                'total_injured': 0,
+                'out': [],
+                'doubtful': [],
+                'questionable': [],
+                'probable': [],
+            }
+
+
+# =============================================================================
+# V2.0: TEAMMATE IMPACT DATA CLASS
+# =============================================================================
+
+@dataclass
+class TeammateImpact:
+    """
+    Impact of injured teammates on a player's projections
+
+    This is the fallback version used when injury_integration is not available.
+    The full version with calculation logic is in injury_integration.py
+    """
+    player_lookup: str
+    team_abbr: str
+    game_date: date
+    out_teammates: List[str] = field(default_factory=list)
+    doubtful_teammates: List[str] = field(default_factory=list)
+    questionable_teammates: List[str] = field(default_factory=list)
+    out_starters: List[str] = field(default_factory=list)
+    out_star_players: List[str] = field(default_factory=list)
+    usage_boost_factor: float = 1.0
+    minutes_boost_factor: float = 1.0
+    opportunity_score: float = 0.0
+    impact_confidence: float = 0.8
+
+    @property
+    def has_significant_impact(self) -> bool:
+        """Whether teammate injuries should significantly affect projections"""
+        return len(self.out_starters) > 0 or len(self.out_star_players) > 0
+
+    @property
+    def total_injured(self) -> int:
+        return len(self.out_teammates) + len(self.doubtful_teammates) + len(self.questionable_teammates)
+
 
 # Singleton instance for convenience
 _default_filter: Optional[InjuryFilter] = None

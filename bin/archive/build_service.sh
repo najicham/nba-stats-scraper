@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 PROJECT="nba-props-platform"
 REGION="us-west2" 

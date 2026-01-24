@@ -22,7 +22,7 @@
 # - quick-hits: Quick Hits (bite-sized insights)
 # - deep-dive: Deep Dive Promo (monthly featured content)
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="nba-props-platform"
 REGION="us-central1"

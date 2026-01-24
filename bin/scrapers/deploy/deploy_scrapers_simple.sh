@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # deploy_scrapers_simple.sh - Deploy NBA Scrapers with Phase 1 Orchestration support
 #
 # Version: 2.2 - Fixed SERVICE_URL configuration bug

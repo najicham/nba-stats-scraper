@@ -1,0 +1,44 @@
+{
+  "data": [
+    {
+      "id": 45678,
+      "player_id": 2544,
+      "team": {
+        "id": 14,
+        "abbreviation": "LAL",
+        "full_name": "Los Angeles Lakers"
+      },
+      "status": "Out",
+      "comment": "Right ankle sprain",
+      "date": "2025-01-18"
+    },
+    {
+      "id": 45679,
+      "player_id": 3149673,
+      "team": {
+        "id": 14,
+        "abbreviation": "LAL",
+        "full_name": "Los Angeles Lakers"
+      },
+      "status": "Questionable",
+      "comment": "Left knee soreness",
+      "date": "2025-01-19"
+    },
+    {
+      "id": 45680,
+      "player_id": 203507,
+      "team": {
+        "id": 2,
+        "abbreviation": "BOS",
+        "full_name": "Boston Celtics"
+      },
+      "status": "Doubtful",
+      "comment": "Illness",
+      "date": "2025-01-20"
+    }
+  ],
+  "meta": {
+    "next_cursor": null,
+    "per_page": 100
+  }
+}

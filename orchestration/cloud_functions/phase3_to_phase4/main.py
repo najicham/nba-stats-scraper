@@ -45,6 +45,14 @@ import requests
 from shared.clients.bigquery_pool import get_bigquery_client
 from shared.validation.phase_boundary_validator import PhaseBoundaryValidator, ValidationMode
 
+# Completion tracker for dual-write to Firestore and BigQuery
+try:
+    from shared.utils.completion_tracker import get_completion_tracker
+    COMPLETION_TRACKER_ENABLED = True
+except ImportError:
+    COMPLETION_TRACKER_ENABLED = False
+    get_completion_tracker = None
+
 # Pydantic validation for Pub/Sub messages
 try:
     from shared.validation.pubsub_models import Phase3CompletionMessage

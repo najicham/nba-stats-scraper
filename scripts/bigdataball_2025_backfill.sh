@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # BigDataBall 2025-26 Season Backfill Script - SIMPLIFIED
 # Downloads all play-by-play data from BigDataBall Google Drive
 

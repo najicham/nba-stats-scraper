@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Quick Win #1 Validation Script
 # Run at 11:00 AM PST (2:00 PM ET) after Phase 3 completes
 

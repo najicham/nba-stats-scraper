@@ -12,7 +12,7 @@
 # Created: Jan 23, 2026
 # ============================================================================
 
-set -e
+set -euo pipefail
 
 # Configuration
 PROJECT_ID="nba-props-platform"
