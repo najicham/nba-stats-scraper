@@ -288,13 +288,22 @@ class LiveGradingExporter(BaseExporter):
         Raises:
             requests.RequestException: After all retries exhausted
         """
-        response = requests.get(
-            BDL_API_URL,
-            headers=headers,
-            timeout=BDL_API_TIMEOUT
+        @retry_with_jitter(
+            max_attempts=5,
+            base_delay=2.0,
+            max_delay=60.0,
+            exceptions=(requests.exceptions.RequestException,)
         )
-        response.raise_for_status()
-        return response.json()
+        def _do_fetch():
+            response = requests.get(
+                BDL_API_URL,
+                headers=headers,
+                timeout=BDL_API_TIMEOUT
+            )
+            response.raise_for_status()
+            return response.json()
+
+        return _do_fetch()
 
     def _build_live_scores_map(self, live_data: List[Dict], target_date: str) -> Dict[str, Dict]:
         """

@@ -24,7 +24,11 @@ from datetime import datetime, date, timezone, timedelta
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 from google.cloud import pubsub_v1
+from google.api_core.exceptions import GoogleAPIError, NotFound, BadRequest, ServiceUnavailable, DeadlineExceeded
 import sentry_sdk
+
+# Import retry utilities for resilient BigQuery operations
+from shared.utils.retry_with_jitter import retry_with_jitter
 
 # Import BigQuery connection pooling
 from shared.clients.bigquery_pool import get_bigquery_client
@@ -296,6 +300,37 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
         """Get the output dataset name with any configured prefix."""
         return self.get_prefixed_dataset(self.dataset_id)
 
+    def _execute_query_with_retry(self, query: str, timeout: int = 60) -> List[Dict]:
+        """
+        Execute a BigQuery query with automatic retry on transient failures.
+
+        Uses exponential backoff with jitter for ServiceUnavailable and
+        DeadlineExceeded errors. This method should be used instead of
+        direct self.bq_client.query() calls for better resilience.
+
+        Args:
+            query: SQL query to execute
+            timeout: Query timeout in seconds (default: 60)
+
+        Returns:
+            List of result rows as dictionaries
+
+        Raises:
+            GoogleAPIError: If query fails after all retries
+        """
+        @retry_with_jitter(
+            max_attempts=3,
+            base_delay=1.0,
+            max_delay=15.0,
+            exceptions=(ServiceUnavailable, DeadlineExceeded)
+        )
+        def _run_query():
+            job = self.bq_client.query(query)
+            results = job.result(timeout=timeout)
+            return [dict(row) for row in results]
+
+        return _run_query()
+
     def _sanitize_row_for_json(self, row: Dict) -> Dict:
         """
         Sanitize a row dictionary for JSON serialization to BigQuery.
@@ -407,7 +442,7 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
                     )
                     self.heartbeat.start()
                     logger.debug(f"💓 Heartbeat started for {self.processor_name}")
-                except Exception as e:
+                except (RuntimeError, OSError, ValueError) as e:
                     logger.warning(f"Failed to start heartbeat: {e}")
                     self.heartbeat = None
 
@@ -1126,7 +1161,7 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
 
             return exists, details
 
-        except Exception as e:
+        except GoogleAPIError as e:
             error_msg = f"Error checking {table_name}: {str(e)}"
             logger.error(error_msg)
             return False, {
@@ -1289,7 +1324,7 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
             logger.debug(f"No previous data found for {game_date} {game_id or ''}")
             return {}
 
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.warning(f"Error querying previous hashes: {e}")
             return {}
 
@@ -1512,7 +1547,7 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
 
             return candidates
 
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.error(f"Error finding backfill candidates: {e}")
             return []
 
@@ -1564,7 +1599,7 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
         try:
             self.project_id = self.opts.get("project_id", "nba-props-platform")
             self.bq_client = get_bigquery_client(project_id=self.project_id)
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.error(f"Failed to initialize BigQuery client: {e}")
             try:
                 self._send_notification(
@@ -1691,7 +1726,7 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
             table = self.bq_client.get_table(table_id)
             table_schema = table.schema
             logger.info(f"Using schema with {len(table_schema)} fields")
-        except Exception as schema_e:
+        except (GoogleAPIError, NotFound) as schema_e:
             logger.warning(f"Could not get table schema: {schema_e}")
             table_schema = None
 
@@ -2413,7 +2448,7 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
                 job_config=job_config
             )
             load_job.result(timeout=60)  # Wait for completion
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.warning(f"Failed to log processing run: {e}")
     
     def post_process(self) -> None:
@@ -2533,7 +2568,7 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
             self.stats['registry_failures_count'] = len(failure_records)
             self.stats['registry_failures_players'] = len(set(f.get('player_lookup') for f in unique_failures))
 
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.warning(f"Failed to save registry failure records: {e}")
 
     def record_failure(
@@ -2721,7 +2756,7 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
             )
             return classified_count
 
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.warning(f"Error classifying failures: {e}")
             return 0
 
@@ -2826,7 +2861,7 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
             # Store in stats
             self.stats['failures_recorded'] = len(failure_records)
 
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.warning(f"Failed to save failure records to BQ: {e}")
 
     def _publish_completion_message(self, success: bool, error: str = None) -> None:
@@ -2906,7 +2941,7 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
             else:
                 logger.info("⏸️  Skipped publishing (backfill mode or skip_downstream_trigger=True)")
 
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.warning(f"Failed to publish completion message: {e}")
             # Don't fail the whole processor if Pub/Sub publishing fails
     
@@ -2969,5 +3004,5 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
             with open(debug_file, "w") as f:
                 json.dump(debug_data, f, indent=2)
             logger.info(f"Saved debug data to {debug_file}")
-        except Exception as save_exc:
+        except (IOError, OSError, json.JSONDecodeError) as save_exc:
             logger.warning(f"Failed to save debug data: {save_exc}")

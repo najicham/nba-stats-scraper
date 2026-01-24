@@ -17,12 +17,14 @@ Updated: 2026-01-19
 """
 
 import functions_framework
+import json
 import logging
 import os
 import requests
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Tuple
 from google.cloud import firestore, bigquery
+from google.api_core.exceptions import GoogleAPIError
 from shared.clients.bigquery_pool import get_bigquery_client
 from shared.utils.slack_retry import send_slack_webhook_with_retry
 
@@ -133,8 +135,8 @@ def check_service_health(service: str) -> Tuple[str, str]:
 
     except requests.exceptions.Timeout:
         return ('critical', 'Request timeout')
-    except Exception as e:
-        return ('critical', f'Error: {str(e)[:100]}')
+    except requests.exceptions.RequestException as e:
+        return ('critical', f'Request error: {str(e)[:100]}')
 
 
 def check_phase3_completion(game_date: str) -> Tuple[str, str]:
@@ -156,7 +158,8 @@ def check_phase3_completion(game_date: str) -> Tuple[str, str]:
         else:
             return ('fail', 'Phase 3 complete but Phase 4 never triggered')
 
-    except Exception as e:
+    except GoogleAPIError as e:
+        logger.warning(f"Firestore error checking Phase 3: {e}")
         return ('fail', f'Error checking Phase 3: {str(e)[:100]}')
 
 
@@ -178,7 +181,8 @@ def check_phase4_completion(game_date: str) -> Tuple[str, str]:
         else:
             return ('fail', 'Phase 4 complete but Phase 5 never triggered')
 
-    except Exception as e:
+    except GoogleAPIError as e:
+        logger.warning(f"Firestore error checking Phase 4: {e}")
         return ('fail', f'Error checking Phase 4: {str(e)[:100]}')
 
 
@@ -203,7 +207,8 @@ def check_predictions(game_date: str) -> Tuple[str, str]:
         else:
             return ('warn', 'Could not query predictions table')
 
-    except Exception as e:
+    except GoogleAPIError as e:
+        logger.warning(f"BigQuery error checking predictions: {e}")
         return ('warn', f'Error checking predictions: {str(e)[:100]}')
 
 
@@ -254,7 +259,8 @@ def check_game_completeness(game_date: str) -> Tuple[str, str]:
         else:
             return ('critical', f'{games_with_data}/{expected_games} games ({completeness_pct:.0f}% complete - CRITICAL FAILURE)')
 
-    except Exception as e:
+    except GoogleAPIError as e:
+        logger.warning(f"BigQuery error checking game completeness: {e}")
         return ('warn', f'Error checking game completeness: {str(e)[:100]}')
 
 
@@ -330,7 +336,7 @@ def send_slack_notification(results: HealthCheckResult):
         else:
             logger.error("Failed to send Slack notification after retries")
 
-    except Exception as e:
+    except (requests.exceptions.RequestException, ValueError, KeyError) as e:
         logger.error(f"Failed to send Slack notification: {e}")
 
 

@@ -16,6 +16,7 @@ from typing import Dict, Any
 from datetime import datetime
 
 import requests
+import time
 from google.cloud import secretmanager
 
 # Set up logging
@@ -184,25 +185,40 @@ def mlb_alert_forwarder(event: Dict[str, Any], context: Any) -> None:
         # Format message for Slack
         slack_payload = format_slack_message(alert)
 
-        # Send to Slack
-        response = requests.post(
-            webhook_url,
-            json=slack_payload,
-            timeout=10
-        )
+        # Send to Slack with retry logic for transient failures
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                response = requests.post(
+                    webhook_url,
+                    json=slack_payload,
+                    timeout=10
+                )
 
-        if response.status_code == 200:
-            logger.info(
-                f"Successfully sent alert to Slack: {alert.get('title')} "
-                f"(severity: {severity})"
-            )
-        else:
-            logger.error(
-                f"Failed to send alert to Slack: {response.status_code} - "
-                f"{response.text[:200]}"
-            )
+                if response.status_code == 200:
+                    logger.info(
+                        f"Successfully sent alert to Slack: {alert.get('title')} "
+                        f"(severity: {severity})"
+                    )
+                    break
+                elif response.status_code in (429, 500, 502, 503, 504) and attempt < max_retries:
+                    logger.warning(f"Slack returned {response.status_code}, retrying...")
+                    time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s
+                    continue
+                else:
+                    logger.error(
+                        f"Failed to send alert to Slack: {response.status_code} - "
+                        f"{response.text[:200]}"
+                    )
+                    break
+            except requests.exceptions.RequestException as e:
+                if attempt < max_retries:
+                    logger.warning(f"Request failed, retrying: {e}")
+                    time.sleep(2 ** attempt)
+                    continue
+                logger.error(f"Failed to send alert after retries: {e}")
 
-    except Exception as e:
+    except (requests.exceptions.RequestException, ValueError, KeyError) as e:
         logger.error(f"Error processing alert: {e}", exc_info=True)
 
 

@@ -24,7 +24,11 @@ import uuid
 from datetime import datetime, date, timezone, timedelta
 from typing import Dict, List, Optional
 from google.cloud import bigquery
+from google.api_core.exceptions import GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded
 import sentry_sdk
+
+# Import retry utilities for resilient BigQuery operations
+from shared.utils.retry_with_jitter import retry_with_jitter
 
 # Import BigQuery connection pooling
 from shared.clients.bigquery_pool import get_bigquery_client
@@ -348,7 +352,7 @@ class PrecomputeProcessorBase(SoftDependencyMixin, RunHistoryMixin):
                     )
                     self.heartbeat.start()
                     logger.debug(f"💓 Heartbeat started for {self.processor_name}")
-                except Exception as e:
+                except (RuntimeError, OSError, ValueError) as e:
                     logger.warning(f"Failed to start heartbeat: {e}")
                     self.heartbeat = None
 
@@ -861,8 +865,8 @@ class PrecomputeProcessorBase(SoftDependencyMixin, RunHistoryMixin):
             logger.debug(f"{table_name}: {details}")
             
             return exists, details
-            
-        except Exception as e:
+
+        except GoogleAPIError as e:
             error_msg = f"Error checking {table_name}: {str(e)}"
             logger.error(error_msg)
             return False, {
@@ -975,6 +979,37 @@ class PrecomputeProcessorBase(SoftDependencyMixin, RunHistoryMixin):
     def get_output_dataset(self) -> str:
         """Get the output dataset name with any configured prefix."""
         return self.get_prefixed_dataset(self.dataset_id)
+
+    def _execute_query_with_retry(self, query: str, timeout: int = 60) -> list:
+        """
+        Execute a BigQuery query with automatic retry on transient failures.
+
+        Uses exponential backoff with jitter for ServiceUnavailable and
+        DeadlineExceeded errors. This method should be used instead of
+        direct self.bq_client.query() calls for better resilience.
+
+        Args:
+            query: SQL query to execute
+            timeout: Query timeout in seconds (default: 60)
+
+        Returns:
+            List of result rows as dictionaries
+
+        Raises:
+            GoogleAPIError: If query fails after all retries
+        """
+        @retry_with_jitter(
+            max_attempts=3,
+            base_delay=1.0,
+            max_delay=15.0,
+            exceptions=(ServiceUnavailable, DeadlineExceeded)
+        )
+        def _run_query():
+            job = self.bq_client.query(query)
+            results = job.result(timeout=timeout)
+            return [dict(row) for row in results]
+
+        return _run_query()
 
     def _validate_and_normalize_backfill_flags(self) -> None:
         """
@@ -1248,7 +1283,7 @@ class PrecomputeProcessorBase(SoftDependencyMixin, RunHistoryMixin):
         try:
             self.project_id = self.opts.get("project_id", "nba-props-platform")
             self.bq_client = get_bigquery_client(project_id=self.project_id)
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.error(f"Failed to initialize BigQuery client: {e}")
             try:
                 notify_error(
@@ -1378,7 +1413,7 @@ class PrecomputeProcessorBase(SoftDependencyMixin, RunHistoryMixin):
             table = self.bq_client.get_table(table_id)
             table_schema = table.schema
             logger.info(f"Using schema with {len(table_schema)} fields")
-        except Exception as schema_e:
+        except (GoogleAPIError, NotFound) as schema_e:
             logger.warning(f"Could not get table schema: {schema_e}")
             table_schema = None
 
@@ -1896,7 +1931,7 @@ class PrecomputeProcessorBase(SoftDependencyMixin, RunHistoryMixin):
                 job_config=job_config
             )
             load_job.result(timeout=60)  # Wait for completion
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.warning(f"Failed to log processing run: {e}")
     
     def post_process(self) -> None:
@@ -2020,7 +2055,7 @@ class PrecomputeProcessorBase(SoftDependencyMixin, RunHistoryMixin):
             else:
                 logger.info("⏸️  Skipped publishing (backfill mode or skip_downstream_trigger=True)")
 
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.warning(f"Failed to publish completion message: {e}")
             # R-008: Add monitoring for Pub/Sub failures
             # Don't fail the whole processor, but send alert for visibility
@@ -2101,7 +2136,7 @@ class PrecomputeProcessorBase(SoftDependencyMixin, RunHistoryMixin):
             with open(debug_file, "w") as f:
                 json.dump(debug_data, f, indent=2)
             logger.info(f"Saved debug data to {debug_file}")
-        except Exception as save_exc:
+        except (IOError, OSError, json.JSONDecodeError) as save_exc:
             logger.warning(f"Failed to save debug data: {save_exc}")
 
     def classify_recorded_failures(self, analysis_date=None) -> int:
@@ -2231,7 +2266,7 @@ class PrecomputeProcessorBase(SoftDependencyMixin, RunHistoryMixin):
             )
             return classified_count
 
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.warning(f"Error classifying failures: {e}")
             return 0
 
@@ -2362,7 +2397,7 @@ class PrecomputeProcessorBase(SoftDependencyMixin, RunHistoryMixin):
 
             logger.info(f"Saved {len(failure_records)} failure records to precompute_failures")
 
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.warning(f"Failed to save failure records: {e}")
 
     def _quick_upstream_existence_check(self, analysis_date: date) -> List[str]:
@@ -2487,7 +2522,7 @@ class PrecomputeProcessorBase(SoftDependencyMixin, RunHistoryMixin):
             else:
                 logger.info(f"Recorded date-level failure: {category} - {reason[:50]}...")
 
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.warning(f"Failed to record date-level failure: {e}")
 
     def build_source_tracking_fields(self) -> dict:

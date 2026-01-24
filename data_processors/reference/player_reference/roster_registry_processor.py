@@ -18,6 +18,7 @@ from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Set, Tuple, Optional
 import pandas as pd
 from google.cloud import bigquery
+from google.api_core.exceptions import GoogleAPIError
 import uuid
 
 from data_processors.reference.base.registry_processor_base import RegistryProcessorBase, TemporalOrderingError
@@ -238,7 +239,7 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 logger.error(f"✗ ESPN: No fallback data available")
                 return set(), None, False
                 
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.error(f"Error querying ESPN roster data: {e}")
             return set(), None, False
 
@@ -316,7 +317,7 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 logger.error(f"✗ NBA.com: No fallback data available")
                 return set(), None, False
                 
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.error(f"Error querying NBA.com player list: {e}")
             return set(), None, False
 
@@ -391,7 +392,7 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                 logger.error(f"✗ BR: No fallback data available")
                 return set(), None, False
                 
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.error(f"Error querying BR roster data: {e}")
             return set(), None, False
     
@@ -412,7 +413,7 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
             existing_players = set(results['player_lookup'].unique()) if not results.empty else set()
             logger.info(f"Found {len(existing_players)} existing players in registry for {season}")
             return existing_players
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.warning(f"Error querying existing registry players: {e}")
             try:
                 notify_error(

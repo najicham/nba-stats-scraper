@@ -683,13 +683,27 @@ def send_duplicate_alert(target_date: str, duplicate_count: int):
                    f"*See:* SESSION-94-FIX-DESIGN.md"
         }
 
-        resp = requests.post(webhook_url, json=message, timeout=10)
-        if resp.status_code == 200:
-            logger.info(f"Sent duplicate alert for {target_date}")
-        else:
-            logger.warning(f"Slack alert failed: {resp.status_code} - {resp.text}")
+        # Retry logic for transient failures
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                resp = requests.post(webhook_url, json=message, timeout=10)
+                if resp.status_code == 200:
+                    logger.info(f"Sent duplicate alert for {target_date}")
+                    break
+                elif resp.status_code in (429, 500, 502, 503, 504) and attempt < max_retries:
+                    time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s
+                    continue
+                else:
+                    logger.warning(f"Slack alert failed: {resp.status_code} - {resp.text}")
+                    break
+            except requests.exceptions.RequestException as e:
+                if attempt < max_retries:
+                    time.sleep(2 ** attempt)
+                    continue
+                logger.warning(f"Slack alert request failed: {e}")
 
-    except Exception as e:
+    except (requests.exceptions.RequestException, ValueError) as e:
         logger.warning(f"Failed to send duplicate alert: {e}")
         # Don't fail grading if alert fails
 
@@ -733,13 +747,27 @@ def send_lock_failure_alert(target_date: str, lock_type: str, reason: str):
                    f"*Check for duplicates:* Run duplicate detection query immediately"
         }
 
-        resp = requests.post(webhook_url, json=message, timeout=10)
-        if resp.status_code == 200:
-            logger.info(f"Sent lock failure alert for {target_date}")
-        else:
-            logger.warning(f"Slack alert failed: {resp.status_code} - {resp.text}")
+        # Retry logic for transient failures
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                resp = requests.post(webhook_url, json=message, timeout=10)
+                if resp.status_code == 200:
+                    logger.info(f"Sent lock failure alert for {target_date}")
+                    break
+                elif resp.status_code in (429, 500, 502, 503, 504) and attempt < max_retries:
+                    time.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s
+                    continue
+                else:
+                    logger.warning(f"Slack alert failed: {resp.status_code} - {resp.text}")
+                    break
+            except requests.exceptions.RequestException as e:
+                if attempt < max_retries:
+                    time.sleep(2 ** attempt)
+                    continue
+                logger.warning(f"Slack alert request failed: {e}")
 
-    except Exception as e:
+    except (requests.exceptions.RequestException, ValueError) as e:
         logger.warning(f"Failed to send lock failure alert: {e}")
         # Don't fail grading if alert fails
 

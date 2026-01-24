@@ -27,6 +27,7 @@ from collections import defaultdict
 from google.cloud import bigquery
 from google.api_core import retry
 from google.api_core import exceptions as api_exceptions
+from google.api_core.exceptions import GoogleAPIError
 from shared.utils.bigquery_retry import (
     is_serialization_error,
     SERIALIZATION_RETRY,
@@ -149,7 +150,7 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
                     game_code = parts[-2]  # e.g., "20251231-MINATL"
                     self.opts['game_code'] = game_code
                     logger.debug(f"Extracted game_code from file path: {game_code}")
-            except Exception as e:
+            except (ValueError, KeyError, IndexError) as e:
                 logger.warning(f"Failed to extract game_code from file_path: {e}")
 
     def load_data(self) -> None:
@@ -326,7 +327,7 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
             
             logger.info(f"=== CACHE LOADING END ===")
             
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.error(f"CRITICAL ERROR loading BR rosters for {season_year}: {e}")
             logger.error(f"Query was: {query}")
             
