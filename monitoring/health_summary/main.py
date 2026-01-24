@@ -162,6 +162,9 @@ def gather_health_data(bq_client: bigquery.Client, date_str: str) -> Dict:
     # Check for gaps
     gaps_detected = query_gaps_count(bq_client, date_str)
 
+    # Check roster coverage (added after Jan 23 incident)
+    roster_coverage = query_roster_coverage(bq_client, date_str)
+
     # Determine overall quality
     data_quality = determine_overall_quality(phases)
 
@@ -171,7 +174,8 @@ def gather_health_data(bq_client: bigquery.Client, date_str: str) -> Dict:
         'total_duration_minutes': int(total_duration_seconds / 60),
         'data_quality': data_quality,
         'gaps_detected': gaps_detected,
-        'records_processed': total_records
+        'records_processed': total_records,
+        'roster_coverage': roster_coverage  # Added after Jan 23 incident
     }
 
 
@@ -242,6 +246,73 @@ def query_phase_status(
             'total': expected_count,
             'status': 'unknown',
             'records_processed': 0
+        }
+
+
+def query_roster_coverage(bq_client: bigquery.Client, date_str: str) -> Dict:
+    """
+    Query ESPN roster coverage to catch stale roster data.
+
+    This check was added after the Jan 23, 2026 incident where stale ESPN rosters
+    (last updated Jan 14) caused POR/SAC players to be missing from predictions.
+
+    Args:
+        bq_client: BigQuery client
+        date_str: Date to check
+
+    Returns:
+        Dictionary with roster coverage status
+    """
+    query = f"""
+    WITH roster_freshness AS (
+        SELECT
+            team_abbr,
+            MAX(roster_date) as latest_roster,
+            DATE_DIFF(DATE('{date_str}'), MAX(roster_date), DAY) as age_days
+        FROM `{PROJECT_ID}.nba_raw.espn_team_rosters`
+        WHERE roster_date >= DATE_SUB(DATE('{date_str}'), INTERVAL 90 DAY)
+        GROUP BY team_abbr
+    )
+    SELECT
+        COUNT(*) as total_teams,
+        COUNTIF(age_days <= 3) as teams_current,
+        COUNTIF(age_days > 3 AND age_days <= 5) as teams_stale,
+        COUNTIF(age_days > 5) as teams_critical,
+        MAX(age_days) as max_age_days
+    FROM roster_freshness
+    """
+
+    try:
+        result = bq_client.query(query).result(timeout=60)
+        row = list(result)[0]
+
+        # Determine status
+        if row.total_teams >= 30 and row.teams_critical == 0 and row.teams_stale == 0:
+            status = 'ok'
+        elif row.teams_critical > 0:
+            status = 'critical'
+        elif row.teams_stale > 0:
+            status = 'warning'
+        else:
+            status = 'unknown'
+
+        return {
+            'total_teams': row.total_teams or 0,
+            'teams_current': row.teams_current or 0,
+            'teams_stale': row.teams_stale or 0,
+            'teams_critical': row.teams_critical or 0,
+            'max_age_days': row.max_age_days or 0,
+            'status': status
+        }
+    except Exception as e:
+        logger.error(f"Error querying roster coverage: {e}")
+        return {
+            'total_teams': 0,
+            'teams_current': 0,
+            'teams_stale': 0,
+            'teams_critical': 0,
+            'max_age_days': 0,
+            'status': 'error'
         }
 
 
