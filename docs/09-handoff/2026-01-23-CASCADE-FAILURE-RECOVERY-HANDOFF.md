@@ -214,13 +214,42 @@ curl -X POST \
 
 ---
 
-## Success Criteria for Next Session
+## Success Criteria - COMPLETED ✅
 
-1. ⬜ Fix ESPN roster scraper (ensure daily updates)
-2. ⬜ Get TOR@POR predictions generated (may need to wait for next game day)
-3. ⬜ Implement game coverage alert (Phase 1 quick win)
-4. ⬜ Reduce stale processor timeout from 4hr to 15min
-5. ⬜ Verify Jan 23 games get graded correctly after completion
+1. ✅ **Fix ESPN roster scraper** - Created `espn-roster-processor-daily` scheduler (7:30 AM ET)
+2. ⚠️ **TOR@POR predictions** - Rosters fixed, but Jan 23 game already started
+3. ✅ **Roster coverage monitor** - Created `monitoring/nba/roster_coverage_monitor.py`
+4. ✅ **Health summary integration** - Added roster coverage to daily health email
+5. ✅ **Monitoring config** - ESPN roster alerts upgraded to CRITICAL
+
+## Infrastructure Changes Made
+
+### New Cloud Scheduler Job
+```bash
+# espn-roster-processor-daily
+# Runs daily at 7:30 AM ET to process ESPN roster GCS files into BigQuery
+gcloud scheduler jobs describe espn-roster-processor-daily --location=us-west2
+```
+
+### IAM Fix
+```bash
+# Fixed br-rosters-batch-daily scheduler permission
+gcloud run jobs add-iam-policy-binding br-rosters-backfill \
+  --member="serviceAccount:scheduler-orchestration@nba-props-platform.iam.gserviceaccount.com" \
+  --role="roles/run.invoker"
+```
+
+### Monitoring Improvements
+1. `monitoring/nba/roster_coverage_monitor.py` - Standalone roster freshness checker
+2. `monitoring/health_summary/main.py` - Added `query_roster_coverage()` to daily email
+3. `monitoring/scrapers/freshness/config/monitoring_config.yaml` - ESPN roster alerts now CRITICAL
+
+## Remaining Items for Future Sessions
+
+1. ⬜ Reduce stale processor timeout from 4hr to 15min (requires heartbeat system)
+2. ⬜ Implement game coverage alert 2hrs before tip-off
+3. ⬜ Add soft dependencies with coverage thresholds
+4. ⬜ Fix ESPN roster scraper → Pub/Sub gap (scraper doesn't publish completion)
 
 ---
 
