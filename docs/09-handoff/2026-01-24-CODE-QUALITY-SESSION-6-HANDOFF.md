@@ -3,6 +3,7 @@
 **Date:** 2026-01-24
 **Focus:** Test Suite Repair (Continuation from Session 5)
 **Status:** Significant progress - 66→37 failures (44% reduction)
+**Final Status:** 37 failures remaining - deeper mock issues require fixture rewrites
 
 ---
 
@@ -114,11 +115,20 @@ fc6180bd test: Fix fatigue calculation assertions and cleanup import
 | `team_defense_zone_analysis/` | 3 | API changes |
 | Various integration tests | 28 | Mixed issues |
 
+### Root Causes of Remaining 37 Failures
+| Issue | Count | Fix Needed |
+|-------|-------|------------|
+| Mock `project_id` returns Mock, not string | 5+ | Set `mock_client.project = 'test-project'` |
+| Mock `raw_data` returns Mock, not DataFrame | 3+ | Properly mock data extraction |
+| Early season placeholder logic changed | 2+ | Update test expectations |
+| Completeness checker needs real project_id | 3+ | Mock the project_id properly |
+| Missing processor attributes (run_id, etc) | 5+ | Add attributes to mock fixtures |
+
 ### Common Error Patterns (from analysis)
 | Error | Count | Fix Needed |
 |-------|-------|------------|
 | `job_config` unexpected kwarg | 144 | **FIXED** - mock_query signature |
-| `get_bigquery_client` attribute | 50+ | Publishing modules API changed |
+| `get_bigquery_client` attribute | 50+ | **FIXED** - Already updated to bigquery.Client |
 | `MLFeatureStoreProcessor` attributes | 12 | Missing run_id, completeness_checker |
 
 ---
