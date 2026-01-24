@@ -373,6 +373,259 @@ scrapers:
       BR rosters is the fallback source.
 
   # --------------------------------------------------------------------------
+  # NBA.COM SCHEDULE - Primary schedule source
+  # --------------------------------------------------------------------------
+  nbac_schedule:
+    enabled: true
+    priority: HIGH
+
+    comparison:
+      source_table: null  # No comparison - this IS the source of truth
+      target_table: "nba_raw.nbac_schedule"
+      freshness_check: true
+      max_staleness_hours: 6  # Schedule should update multiple times daily
+
+    retry_windows:
+      - time: "06:00"
+        name: "schedule_catchup_early"
+        description: "Early morning schedule refresh"
+      - time: "12:00"
+        name: "schedule_catchup_midday"
+        description: "Midday schedule check"
+      - time: "18:00"
+        name: "schedule_catchup_evening"
+        description: "Evening schedule refresh before games"
+
+    lookback_days: 7
+    lookahead_days: 7
+
+    alerts:
+      max_staleness_hours: 12
+      severity_by_hours:
+        - hours: 6
+          severity: WARNING
+        - hours: 12
+          severity: ERROR
+
+    notes: |
+      NBA.com schedule is the source of truth for game data.
+      Critical for all downstream processing.
+      Must stay fresh for accurate game targeting.
+
+  # --------------------------------------------------------------------------
+  # NBA.COM PLAY-BY-PLAY - Detailed game events
+  # --------------------------------------------------------------------------
+  nbac_play_by_play:
+    enabled: true
+    priority: MEDIUM
+
+    comparison:
+      source_table: "nba_raw.nbac_schedule"
+      target_table: "nba_raw.nbac_play_by_play"
+      join_keys:
+        - game_date
+        - game_id
+      min_rows_per_game: 200  # PBP has many events
+      filter: "game_status = 3"
+
+    retry_windows:
+      - time: "08:00"
+        name: "pbp_catchup_morning"
+        description: "Morning PBP collection"
+      - time: "12:00"
+        name: "pbp_catchup_midday"
+        description: "Midday PBP retry"
+
+    lookback_days: 2
+
+    alerts:
+      max_missing_games: 2
+      severity_by_hours:
+        - hours: 12
+          severity: WARNING
+        - hours: 24
+          severity: ERROR
+
+    notes: |
+      NBA.com play-by-play data for advanced analytics.
+      Used for shot zone analysis and player tracking.
+      BigDataBall PBP is the fallback source.
+
+  # --------------------------------------------------------------------------
+  # NBA.COM INJURY REPORT - Critical for predictions
+  # --------------------------------------------------------------------------
+  nbac_injury_report:
+    enabled: true
+    priority: HIGH
+
+    comparison:
+      source_table: null
+      target_table: "nba_raw.nbac_injury_report"
+      freshness_check: true
+      max_staleness_hours: 4  # Injuries can change rapidly
+
+    retry_windows:
+      - time: "10:00"
+        name: "injury_catchup_morning"
+        description: "Morning injury report"
+      - time: "14:00"
+        name: "injury_catchup_afternoon"
+        description: "Afternoon injury update"
+      - time: "17:00"
+        name: "injury_catchup_pregame"
+        description: "Pre-game injury check"
+
+    lookback_days: 0
+    lookahead_days: 1
+
+    alerts:
+      max_staleness_hours: 6
+      severity_by_hours:
+        - hours: 4
+          severity: WARNING
+        - hours: 6
+          severity: ERROR
+
+    notes: |
+      Official NBA injury report - critical for predictions.
+      Updates throughout the day, especially before games.
+      Must be fresh for accurate prediction inputs.
+
+  # --------------------------------------------------------------------------
+  # BDL STANDINGS - Team rankings and records
+  # --------------------------------------------------------------------------
+  bdl_standings:
+    enabled: true
+    priority: MEDIUM
+
+    comparison:
+      source_table: null
+      target_table: "nba_raw.bdl_standings"
+      freshness_check: true
+      max_staleness_hours: 24
+
+    retry_windows:
+      - time: "09:00"
+        name: "standings_catchup_morning"
+        description: "Morning standings refresh"
+
+    lookback_days: 1
+
+    alerts:
+      max_staleness_hours: 48
+      severity_by_hours:
+        - hours: 24
+          severity: INFO
+        - hours: 48
+          severity: WARNING
+
+    notes: |
+      BDL standings for team win/loss records.
+      Used for context features in predictions.
+      Updates after games complete.
+
+  # --------------------------------------------------------------------------
+  # BDL ACTIVE PLAYERS - Player availability
+  # --------------------------------------------------------------------------
+  bdl_active_players:
+    enabled: true
+    priority: MEDIUM
+
+    comparison:
+      source_table: null
+      target_table: "nba_raw.bdl_active_players"
+      freshness_check: true
+      max_staleness_hours: 24
+
+    retry_windows:
+      - time: "08:00"
+        name: "active_players_catchup"
+        description: "Morning active players refresh"
+
+    lookback_days: 1
+
+    alerts:
+      max_staleness_hours: 48
+      severity_by_hours:
+        - hours: 24
+          severity: INFO
+        - hours: 48
+          severity: WARNING
+
+    notes: |
+      BDL active players list.
+      Used for roster validation.
+      ESPN roster is the primary source.
+
+  # --------------------------------------------------------------------------
+  # BDL INJURIES - Supplementary injury data
+  # --------------------------------------------------------------------------
+  bdl_injuries:
+    enabled: true
+    priority: MEDIUM
+
+    comparison:
+      source_table: null
+      target_table: "nba_raw.bdl_injuries"
+      freshness_check: true
+      max_staleness_hours: 12
+
+    retry_windows:
+      - time: "09:00"
+        name: "bdl_injuries_catchup_morning"
+        description: "Morning BDL injuries"
+      - time: "15:00"
+        name: "bdl_injuries_catchup_afternoon"
+        description: "Afternoon BDL injuries"
+
+    lookback_days: 0
+
+    alerts:
+      max_staleness_hours: 24
+      severity_by_hours:
+        - hours: 12
+          severity: INFO
+        - hours: 24
+          severity: WARNING
+
+    notes: |
+      BDL injury data - supplements NBAC injury report.
+      Cross-validated with official NBA data.
+
+  # --------------------------------------------------------------------------
+  # BASKETBALL REFERENCE ROSTERS - Reference roster data
+  # --------------------------------------------------------------------------
+  br_roster:
+    enabled: true
+    priority: LOW
+
+    comparison:
+      source_table: null
+      target_table: "nba_raw.br_team_roster"
+      freshness_check: true
+      max_staleness_hours: 48
+
+    retry_windows:
+      - time: "07:30"
+        name: "br_roster_catchup"
+        description: "Morning BR roster refresh"
+
+    lookback_days: 1
+
+    alerts:
+      max_staleness_hours: 72
+      severity_by_hours:
+        - hours: 48
+          severity: INFO
+        - hours: 72
+          severity: WARNING
+
+    notes: |
+      Basketball Reference roster data.
+      Fallback for ESPN rosters.
+      Updated less frequently.
+
+  # --------------------------------------------------------------------------
   # PBPSTATS - Library-dependent, provider fallback sequence
   # --------------------------------------------------------------------------
   pbpstats_boxscore:
