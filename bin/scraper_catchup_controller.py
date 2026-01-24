@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
+from shared.clients.http_pool import get_http_session
 
 # Setup logging
 logging.basicConfig(
@@ -204,7 +205,9 @@ def invoke_scraper(
         if token:
             headers["Authorization"] = f"Bearer {token}"
 
-        response = requests.post(
+        # Use pooled HTTP session with automatic retry on transient errors
+        session = get_http_session()
+        response = session.post(
             url,
             json=payload,
             headers=headers,
