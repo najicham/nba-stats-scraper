@@ -401,32 +401,34 @@ scrapers:
   
   espn_team_roster:
     enabled: true
-    description: "ESPN team rosters"
-    
+    description: "ESPN team rosters - CRITICAL for prediction pipeline"
+
     gcs:
       bucket: "nba-raw-data"
       path_pattern: "espn/rosters/{date}/team_*/*.json"
-    
+
     schedule:
-      cron: "0 7 * * *"  # Daily at 7 AM ET
+      cron: "30 6 * * *"  # Daily at 6:30 AM ET (matches br-rosters-batch-daily)
       timezone: "America/New_York"
-    
+
     freshness:
       max_age_hours:
-        regular_season: 24
-        preseason: 48
-        playoffs: 24
-    
+        regular_season: 72  # CRITICAL: 3 days max - rosters stale beyond this break predictions
+        preseason: 72
+        playoffs: 48
+
     validation:
       min_file_size_mb: 0.01
-    
+      expected_teams_per_day: 30  # All 30 NBA teams should be scraped
+
     seasonality:
       active_during: ["regular_season", "preseason", "playoffs"]
       requires_games_today: false
-    
+
     alerting:
-      severity_missing: "warning"
-      severity_stale: "info"
+      severity_missing: "critical"  # UPGRADED: Missing rosters break predictions
+      severity_stale: "critical"    # UPGRADED: Stale rosters caused Jan 23 incident
+      severity_coverage: "critical" # NEW: Alert if < 30 teams scraped
   
   # ============================================================================
   # BIG DATA BALL
