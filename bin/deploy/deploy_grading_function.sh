@@ -2,7 +2,7 @@
 # Deploy Phase 5B Grading Cloud Function and Scheduler Job
 #
 # This function grades predictions against actual game results.
-# Runs daily at 6 AM ET (after overnight games complete and box scores are ingested).
+# Runs daily at 7:30 AM ET (after Phase 3 analytics complete - Phase 3 starts at 6:30 AM and takes 45+ min).
 #
 # Usage:
 #   ./bin/deploy/deploy_grading_function.sh
@@ -34,7 +34,7 @@ MIN_INSTANCES="0"
 
 # Scheduler configuration
 SCHEDULER_NAME="grading-daily"
-SCHEDULER_SCHEDULE="0 11 * * *"  # 6 AM ET = 11 AM UTC
+SCHEDULER_SCHEDULE="30 12 * * *"  # 7:30 AM ET = 12:30 PM UTC (after Phase 3 completes)
 SCHEDULER_TIMEZONE="America/New_York"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -256,7 +256,7 @@ fi
 
 echo ""
 echo -e "${YELLOW}Trigger Flow:${NC}"
-echo "  Cloud Scheduler (6 AM ET daily)"
+echo "  Cloud Scheduler (7:30 AM ET daily)"
 echo "       ↓"
 echo "  nba-grading-trigger (Pub/Sub)"
 echo "       ↓"

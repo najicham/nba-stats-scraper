@@ -14,8 +14,8 @@ This project consolidates all identified improvements from codebase analysis, ha
 
 | Priority | Total | Completed | In Progress | Remaining |
 |----------|-------|-----------|-------------|-----------|
-| P0 - Critical | 10 | 9 | 0 | 1 |
-| P1 - High | 25 | 7 | 0 | 18 |
+| P0 - Critical | 10 | 10 | 0 | 0 |
+| P1 - High | 25 | 8 | 0 | 17 |
 | P2 - Medium | 37 | 3 | 0 | 34 |
 | P3 - Low | 26 | 0 | 0 | 26 |
 | **Total** | **98** | **19** | **0** | **79** |
@@ -43,17 +43,15 @@ This project consolidates all identified improvements from codebase analysis, ha
 
 ### Orchestration
 
-- [ ] **P0-4: Fix grading timing issue**
-  - Status: Not Started
-  - Files: Cloud Scheduler config, `orchestration/cloud_functions/grading/`
-  - Issue: Grading runs 30min after Phase 3 starts but Phase 3 takes 45+ min
-  - Solution: Move grading to 7:30 AM OR add explicit completion check
+- [x] **P0-4: Fix grading timing issue** ✅ FIXED
+  - Status: Completed
+  - Files: `bin/deploy/deploy_grading_function.sh`
+  - Solution: Changed scheduler from 6 AM ET to 7:30 AM ET (after Phase 3 completes)
 
-- [ ] **P0-5: Add Phase 4→5 timeout**
-  - Status: Not Started
+- [x] **P0-5: Add Phase 4→5 timeout** ✅ ALREADY DONE
+  - Status: Completed (was already implemented)
   - Files: `orchestration/cloud_functions/phase4_to_phase5/main.py`
-  - Issue: Pipeline can freeze indefinitely waiting for Phase 4
-  - Solution: Add configurable timeout with alerting
+  - Notes: Configurable PHASE4_TIMEOUT_MINUTES with 80% warning and Slack alerts
 
 - [ ] **P0-6: Fix cleanup processor Pub/Sub**
   - Status: Not Started
@@ -128,10 +126,10 @@ This project consolidates all identified improvements from codebase analysis, ha
   - Issue: Self-heal at 2:15 PM, export at 1:00 PM
   - Solution: Move self-heal to 12:45 PM
 
-- [ ] **P1-7: Add DLQ monitoring alerts**
-  - Status: Not Started
-  - Issue: Pub/Sub dead letter queues accumulating silently
-  - Solution: Add Cloud Monitoring alert on DLQ message count
+- [x] **P1-7: Add DLQ monitoring alerts** ✅ ALREADY DONE
+  - Status: Completed (was already implemented)
+  - Files: `orchestration/cloud_functions/dlq_monitor/main.py`
+  - Notes: Comprehensive DLQ monitoring with AlertManager, Cloud Logging checks, cooldown logic
 
 - [ ] **P1-8: Add stuck processor visibility in dashboard**
   - Status: Not Started
