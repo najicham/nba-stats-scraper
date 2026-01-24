@@ -154,7 +154,13 @@ class TransformProcessorBase(ABC):
     @property
     def processor_name(self) -> str:
         """Get processor name for logging/monitoring."""
-        return self.__class__.__name__
+        # Allow child classes to set custom processor_name via instance attribute
+        return getattr(self, '_custom_processor_name', self.__class__.__name__)
+
+    @processor_name.setter
+    def processor_name(self, value: str) -> None:
+        """Allow setting a custom processor name."""
+        self._custom_processor_name = value
 
     # =========================================================================
     # Dataset Management

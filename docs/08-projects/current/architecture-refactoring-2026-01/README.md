@@ -93,45 +93,42 @@ orchestration/
 
 ### Target Files (>2000 lines)
 
-| File | Lines | Refactoring Strategy |
-|------|-------|---------------------|
-| `analytics_base.py` | 3,062 | Extract 4 mixins |
-| `scraper_base.py` | 2,900 | Extract 3 mixins |
-| `admin_dashboard/main.py` | 2,718 | Flask blueprints |
-| `precompute_base.py` | 2,665 | Unify with analytics_base |
-| `upcoming_player_game_context_processor.py` | 2,634 | Extract context classes |
-| `player_composite_factors_processor.py` | 2,611 | Extract calculators |
+| File | Lines | Status | Refactoring Strategy |
+|------|-------|--------|---------------------|
+| `analytics_base.py` | ~~3,062~~ 2,870 | ✅ Done | Inherit from TransformProcessorBase |
+| `scraper_base.py` | 2,900 | Pending | Extract 3 mixins |
+| `admin_dashboard/main.py` | 2,718 | Pending | Flask blueprints |
+| `precompute_base.py` | ~~2,665~~ 2,519 | ✅ Done | Inherit from TransformProcessorBase |
+| `upcoming_player_game_context_processor.py` | 2,634 | Pending | Extract context classes |
+| `player_composite_factors_processor.py` | 2,611 | Pending | Extract calculators |
 
 ### Detailed Refactoring Plans
 
-#### 1. analytics_base.py + precompute_base.py Unification
+#### 1. analytics_base.py + precompute_base.py Unification ✅ COMPLETED
+
+**Status:** Completed 2026-01-24
+
+**Implementation:**
+- Created `shared/processors/base/transform_processor_base.py` (500 lines)
+- Both `AnalyticsProcessorBase` and `PrecomputeProcessorBase` now inherit from `TransformProcessorBase`
+- Removed ~338 lines of duplicate code total
+- Added `processor_name` setter to support child class customization
 
 **Current State:**
-- `analytics_base.py` (3,062 lines)
-- `precompute_base.py` (2,665 lines)
-- ~60% code overlap (dependency checking, notifications, heartbeat)
+- `transform_processor_base.py` (500 lines) - shared base
+- `analytics_base.py` (2,870 lines, down from 3,062)
+- `precompute_base.py` (2,519 lines, down from 2,665)
 
-**Target Architecture:**
-```python
-# shared/processors/base/shared_processor_base.py (1,500 lines)
-class SharedProcessorBase:
-    """Common processor functionality"""
-    # Dependency checking
-    # Error categorization
-    # Notification system
-    # Heartbeat integration
-    # Soft dependencies
-
-# data_processors/analytics/analytics_base.py (800 lines)
-class AnalyticsProcessorBase(SharedProcessorBase):
-    """Analytics-specific logic only"""
-    # Analytics-specific methods
-
-# data_processors/precompute/precompute_base.py (600 lines)
-class PrecomputeProcessorBase(SharedProcessorBase):
-    """Precompute-specific logic only"""
-    # Feature calculation patterns
-```
+**Inherited Methods:**
+- `is_backfill_mode` (property)
+- `processor_name` (property with setter)
+- `get_prefixed_dataset()` / `get_output_dataset()`
+- `_execute_query_with_retry()`
+- `_sanitize_row_for_json()`
+- `_send_notification()`
+- `_get_current_step()`
+- `mark_time()` / `get_elapsed_seconds()`
+- `step_info()` / `report_error()` / `_save_partial_data()`
 
 #### 2. upcoming_player_game_context_processor.py
 
@@ -297,3 +294,44 @@ See detailed plan in P1 section above.
 ### In Progress
 - [ ] Full analytics_base.py + precompute_base.py unification (deferred - high risk)
 - [ ] Split upcoming_player_game_context_processor.py into modules
+
+---
+
+## Progress Update (Session 16 - 2026-01-24)
+
+### Completed
+
+#### Batch Staging/Distributed Lock Consolidation
+- [x] Created `predictions/shared/batch_staging_writer.py` (consolidated from worker + coordinator)
+- [x] Created `predictions/shared/distributed_lock.py` (consolidated from worker + coordinator)
+- [x] Updated `predictions/shared/__init__.py` with exports
+- [x] Created backward-compatibility shims in old locations
+- [x] Updated 4 importing files to use new shared location
+- **Impact:** ~825 lines of duplication removed
+
+#### Client Pool Creation
+- [x] Created `shared/clients/pubsub_pool.py` - Thread-safe PubSub publisher/subscriber pooling
+- [x] Created `shared/clients/firestore_pool.py` - Thread-safe Firestore client pooling
+- [x] Created `shared/clients/__init__.py` - Unified exports for all pools
+
+#### Exporter Factory Pattern (Partial)
+- [x] Created `data_processors/publishing/exporter_utils.py` with shared utilities:
+  - safe_float(), safe_int(), format_float_dict()
+  - format_percentage(), calculate_edge(), compute_win_rate()
+  - get_generated_at(), create_empty_response(), truncate_string()
+  - Common constants (CACHE_SHORT, CACHE_MEDIUM, CACHE_LONG, etc.)
+- [x] Updated 16 exporters to use shared safe_float utility
+- **Impact:** ~150 duplicate method definitions removed
+
+### Analyzed (Deferred)
+
+#### Cloud Function Shared Directory Consolidation
+- Analysis complete: 7 CFs have local shared/ directories (37-40 files each)
+- These shadow root imports during deployment
+- **Recommendation:** Requires deployment configuration changes, tackle in dedicated session
+
+### Remaining Work
+- [ ] Complete exporter migration (6 more files)
+- [ ] Create SimpleExporter/CompositeExporter template classes
+- [ ] Migrate files to use new client pools (88 direct instantiations remain)
+- [ ] Cloud function deployment consolidation

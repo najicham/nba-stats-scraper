@@ -43,6 +43,9 @@ from shared.utils.notification_system import (
 # Import run history mixin
 from shared.processors.mixins import RunHistoryMixin
 
+# Import shared transform processor base class
+from shared.processors.base import TransformProcessorBase
+
 # Import completeness checking for defensive checks
 from shared.utils.completeness_checker import CompletenessChecker, DependencyError
 
@@ -168,7 +171,7 @@ logging.basicConfig(
 logger = logging.getLogger("analytics_base")
 
 
-class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
+class AnalyticsProcessorBase(TransformProcessorBase, SoftDependencyMixin, RunHistoryMixin):
     """
     Base class for Phase 3 analytics processors with full dependency tracking.
 
@@ -209,33 +212,22 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
     table_name: str = ""  # Child classes must set
     processing_strategy: str = "MERGE_UPDATE"  # Default for analytics
 
-    # Time tracking
-    time_markers: Dict = {}
-
     # Run history settings (from RunHistoryMixin)
     PHASE: str = 'phase_3_analytics'
+    STEP_PREFIX: str = 'ANALYTICS_STEP'  # For structured logging
+    DEBUG_FILE_PREFIX: str = 'analytics_debug'  # For debug file naming
     OUTPUT_TABLE: str = ''  # Set to table_name in run()
     OUTPUT_DATASET: str = None  # Will be set from sport_config in __init__
     
     def __init__(self):
         """Initialize analytics processor."""
-        self.opts = {}
-        self.raw_data = None
-        self.validated_data = {}
-        self.transformed_data = {}
-        self.stats = {}
+        # Initialize base class (sets opts, raw_data, validated_data, transformed_data,
+        # stats, time_markers, source_metadata, quality_issues, failed_entities, run_id,
+        # correlation_id, parent_processor, trigger_message_id, entities_changed,
+        # is_incremental_run, heartbeat, and stubs for project_id/bq_client)
+        super().__init__()
 
-        # Source metadata tracking (populated by track_source_usage)
-        self.source_metadata = {}
-
-        # Quality issue tracking
-        self.quality_issues = []
-
-        # Generate run_id
-        self.run_id = str(uuid.uuid4())[:8]
-        self.stats["run_id"] = self.run_id
-
-        # GCP clients
+        # GCP clients - override parent stubs with actual clients
         self.project_id = os.environ.get('GCP_PROJECT_ID', get_project_id())
         self.bq_client = get_bigquery_client(project_id=self.project_id)
 
@@ -245,14 +237,7 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
         if self.OUTPUT_DATASET is None:
             self.OUTPUT_DATASET = get_analytics_dataset()
 
-        # Correlation tracking (for tracing through pipeline)
-        self.correlation_id = None
-        self.parent_processor = None
-        self.trigger_message_id = None
-
         # Change detection (v1.1 feature)
-        self.entities_changed = []  # List of entity IDs that changed
-        self.is_incremental_run = False  # True if processing only changed entities
         self.change_detector = None  # Initialized if child class provides get_change_detector()
 
         # Registry failure tracking (v3.0 feature - for name resolution reprocessing)
@@ -260,132 +245,22 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
         # Each entry: {player_lookup, game_date, team_abbr, season, game_id}
         self.registry_failures = []
 
-        # Entity failure tracking (v4.0 feature - for enhanced failure tracking)
-        # Similar to precompute_base.py but for Phase 3 processors
-        # Each entry: {entity_id, entity_type, category, reason, can_retry, ...}
-        self.failed_entities = []
-
         # Completeness checker for DNP classification
         self.completeness_checker = None
 
-        # Heartbeat system for stale processor detection (added after Jan 23 incident)
-        # Enables 15-minute detection vs 4-hour timeout
-        self.heartbeat = None
-
-    @property
-    def is_backfill_mode(self) -> bool:
-        """Check if running in backfill mode (alerts suppressed)."""
-        return self.opts.get('backfill_mode', False)
-
-    def get_prefixed_dataset(self, base_dataset: str) -> str:
-        """
-        Get dataset name with optional prefix for test isolation.
-
-        When running in test mode with dataset_prefix set in opts,
-        returns prefixed dataset name (e.g., 'test_nba_analytics').
-        Otherwise returns the base dataset name unchanged.
-
-        Args:
-            base_dataset: Base dataset name (e.g., 'nba_analytics')
-
-        Returns:
-            Prefixed dataset name if dataset_prefix is set, else base_dataset
-        """
-        prefix = self.opts.get('dataset_prefix', '')
-        if prefix:
-            return f"{prefix}_{base_dataset}"
-        return base_dataset
-
-    def get_output_dataset(self) -> str:
-        """Get the output dataset name with any configured prefix."""
-        return self.get_prefixed_dataset(self.dataset_id)
-
-    def _execute_query_with_retry(self, query: str, timeout: int = 60) -> List[Dict]:
-        """
-        Execute a BigQuery query with automatic retry on transient failures.
-
-        Uses exponential backoff with jitter for ServiceUnavailable and
-        DeadlineExceeded errors. This method should be used instead of
-        direct self.bq_client.query() calls for better resilience.
-
-        Args:
-            query: SQL query to execute
-            timeout: Query timeout in seconds (default: 60)
-
-        Returns:
-            List of result rows as dictionaries
-
-        Raises:
-            GoogleAPIError: If query fails after all retries
-        """
-        @retry_with_jitter(
-            max_attempts=3,
-            base_delay=1.0,
-            max_delay=15.0,
-            exceptions=(ServiceUnavailable, DeadlineExceeded)
-        )
-        def _run_query():
-            job = self.bq_client.query(query)
-            results = job.result(timeout=timeout)
-            return [dict(row) for row in results]
-
-        return _run_query()
-
-    def _sanitize_row_for_json(self, row: Dict) -> Dict:
-        """
-        Sanitize a row dictionary for JSON serialization to BigQuery.
-
-        Handles:
-        - NaN and Inf float values (replace with None)
-        - Control characters in strings (remove)
-        - datetime/date objects (convert to ISO string)
-        - Non-serializable types (convert to string)
-        """
-        import math
-        import re
-
-        sanitized = {}
-        for key, value in row.items():
-            if value is None:
-                sanitized[key] = None
-            elif isinstance(value, float):
-                if math.isnan(value) or math.isinf(value):
-                    sanitized[key] = None
-                else:
-                    sanitized[key] = value
-            elif isinstance(value, str):
-                # Remove control characters that break JSON
-                cleaned = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', value)
-                sanitized[key] = cleaned
-            elif isinstance(value, (datetime, date)):
-                sanitized[key] = value.isoformat()
-            elif isinstance(value, (int, bool)):
-                sanitized[key] = value
-            elif isinstance(value, (list, dict)):
-                # Recursively sanitize nested structures
-                try:
-                    json.dumps(value)  # Test if serializable
-                    sanitized[key] = value
-                except (TypeError, ValueError):
-                    sanitized[key] = str(value)
-            else:
-                # Convert other types to string
-                sanitized[key] = str(value)
-        return sanitized
-
-    def _send_notification(self, alert_func, *args, **kwargs):
-        """
-        Send notification alert unless in backfill mode.
-
-        In backfill mode, alerts are suppressed to avoid flooding
-        email/Slack when processing historical data.
-
-        Note: Named _send_notification to avoid collision with QualityMixin._send_alert
-        """
-        if self.is_backfill_mode:
-            logger.info(f"BACKFILL_MODE: Suppressing alert - {kwargs.get('title', args[0] if args else 'unknown')}")
-            return
-        return alert_func(*args, **kwargs)
+    # Note: The following methods are inherited from TransformProcessorBase:
+    # - is_backfill_mode (property)
+    # - get_prefixed_dataset()
+    # - get_output_dataset()
+    # - _execute_query_with_retry()
+    # - _sanitize_row_for_json()
+    # - _send_notification()
+    # - mark_time() / get_elapsed_seconds()
+    # - step_info()
+    # - report_error()
+    # - _save_partial_data()
+    # - _get_current_step()
+    # - processor_name (property)
 
     def run(self, opts: Optional[Dict] = None) -> bool:
         """
@@ -876,18 +751,9 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
                 self.save_failures_to_bq()
         except Exception as e:
             logger.warning(f"Error saving failures in finalize(): {e}")
-    
-    def _get_current_step(self) -> str:
-        """Helper to determine current processing step for error context."""
-        if not self.bq_client:
-            return "initialization"
-        elif self.raw_data is None or (hasattr(self.raw_data, 'empty') and self.raw_data.empty):
-            return "extract"
-        elif self.transformed_data is None or (hasattr(self.transformed_data, 'empty') and self.transformed_data.empty):
-            return "calculate"
-        else:
-            return "save"
-    
+
+    # Note: _get_current_step() is inherited from TransformProcessorBase
+
     # =========================================================================
     # Dependency Checking System (Phase 3 - Date Range Pattern)
     # =========================================================================
@@ -2999,65 +2865,7 @@ class AnalyticsProcessorBase(SoftDependencyMixin, RunHistoryMixin):
         except GoogleAPIError as e:
             logger.warning(f"Failed to publish completion message: {e}")
             # Don't fail the whole processor if Pub/Sub publishing fails
-    
-    # =========================================================================
-    # Time Tracking
-    # =========================================================================
-    
-    def mark_time(self, label: str) -> str:
-        """Mark time."""
-        now = datetime.now()
-        if label not in self.time_markers:
-            self.time_markers[label] = {
-                "start": now,
-                "last": now
-            }
-            return "0.0"
-        else:
-            last_time = self.time_markers[label]["last"]
-            delta = (now - last_time).total_seconds()
-            self.time_markers[label]["last"] = now
-            return f"{delta:.1f}"
-    
-    def get_elapsed_seconds(self, label: str) -> float:
-        """Get elapsed seconds."""
-        if label not in self.time_markers:
-            return 0.0
-        start_time = self.time_markers[label]["start"]
-        now_time = datetime.now()
-        return (now_time - start_time).total_seconds()
-    
-    def step_info(self, step_name: str, message: str, extra: Optional[Dict] = None) -> None:
-        """Log structured step."""
-        if extra is None:
-            extra = {}
-        extra.update({
-            "run_id": self.run_id,
-            "step": step_name,
-        })
-        logger.info(f"ANALYTICS_STEP {message}", extra=extra)
-    
-    # =========================================================================
-    # Error Handling
-    # =========================================================================
-    
-    def report_error(self, exc: Exception) -> None:
-        """Report error to Sentry."""
-        sentry_sdk.capture_exception(exc)
-    
-    def _save_partial_data(self, exc: Exception) -> None:
-        """Save partial data on error for debugging."""
-        try:
-            debug_file = f"/tmp/analytics_debug_{self.run_id}.json"
-            debug_data = {
-                "error": str(exc),
-                "opts": self.opts,
-                "raw_data_sample": str(self.raw_data)[:1000] if self.raw_data is not None else None,
-                "transformed_data_sample": str(self.transformed_data)[:1000] if self.transformed_data else None,
-                "source_metadata": getattr(self, 'source_metadata', {})
-            }
-            with open(debug_file, "w") as f:
-                json.dump(debug_data, f, indent=2)
-            logger.info(f"Saved debug data to {debug_file}")
-        except (IOError, OSError, json.JSONDecodeError) as save_exc:
-            logger.warning(f"Failed to save debug data: {save_exc}")
+
+    # Note: Time Tracking (mark_time, get_elapsed_seconds) and Error Handling
+    # (step_info, report_error, _save_partial_data) methods are inherited from
+    # TransformProcessorBase
