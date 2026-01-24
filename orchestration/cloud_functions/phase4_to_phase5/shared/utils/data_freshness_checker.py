@@ -41,16 +41,17 @@ class DataFreshnessChecker:
     and sends alerts when data is stale.
     """
 
-    def __init__(self, bq_client, project_id: str = 'nba-props-platform'):
+    def __init__(self, bq_client, project_id: str = None):
         """
         Initialize freshness checker.
 
         Args:
             bq_client: BigQuery client instance
-            project_id: GCP project ID
+            project_id: GCP project ID (defaults to centralized config)
         """
+        from shared.config.gcp_config import get_project_id
         self.bq_client = bq_client
-        self.project_id = project_id
+        self.project_id = project_id or get_project_id()
 
     def check_freshness(
         self,

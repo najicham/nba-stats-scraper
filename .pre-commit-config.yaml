@@ -1,0 +1,30 @@
+# Pre-commit hooks for NBA Stats Scraper
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+
+repos:
+  # Local hooks
+  - repo: local
+    hooks:
+      - id: check-shared-sync
+        name: Check shared files sync
+        description: Ensures shared/ files are in sync with cloud function copies
+        entry: python bin/maintenance/sync_shared_utils.py --all --diff
+        language: python
+        pass_filenames: false
+        always_run: true
+        verbose: true
+
+  # Standard pre-commit hooks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: ^tests/samples/
+      - id: end-of-file-fixer
+        exclude: ^tests/samples/
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-merge-conflict
+      - id: debug-statements

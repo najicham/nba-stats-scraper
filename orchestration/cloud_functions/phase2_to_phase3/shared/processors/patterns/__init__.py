@@ -8,6 +8,7 @@ Available Patterns:
 - Pattern #1: SmartSkipMixin - Skip processing based on source relevance
 - Pattern #3: EarlyExitMixin - Exit early based on conditions (no games, offseason, etc.)
 - Pattern #5: CircuitBreakerMixin - Prevent infinite retry loops
+- Pattern #6: TimeoutMixin - Processor-level timeout protection
 - QualityMixin - Source coverage quality assessment and event logging
 
 Usage:
@@ -28,5 +29,14 @@ from .smart_skip_mixin import SmartSkipMixin
 from .early_exit_mixin import EarlyExitMixin
 from .circuit_breaker_mixin import CircuitBreakerMixin
 from .quality_mixin import QualityMixin
+from .timeout_mixin import TimeoutMixin, ProcessorTimeoutError, processor_timeout
 
-__all__ = ['SmartSkipMixin', 'EarlyExitMixin', 'CircuitBreakerMixin', 'QualityMixin']
+__all__ = [
+    'SmartSkipMixin',
+    'EarlyExitMixin',
+    'CircuitBreakerMixin',
+    'QualityMixin',
+    'TimeoutMixin',
+    'ProcessorTimeoutError',
+    'processor_timeout',
+]

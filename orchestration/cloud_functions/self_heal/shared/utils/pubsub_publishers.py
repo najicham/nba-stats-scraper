@@ -53,9 +53,13 @@ class RawDataPubSubPublisher:
         Initialize Phase 2 completion event publisher.
 
         Args:
-            project_id: GCP project ID (defaults to GCP_PROJECT_ID env var)
+            project_id: GCP project ID (defaults to centralized config)
         """
-        self.project_id = project_id or os.getenv('GCP_PROJECT_ID', 'nba-props-platform')
+        if project_id:
+            self.project_id = project_id
+        else:
+            from shared.config.gcp_config import get_project_id
+            self.project_id = get_project_id()
 
         # Use centralized topic config
         self.topic_name = TOPICS.PHASE2_RAW_COMPLETE
@@ -192,9 +196,13 @@ class AnalyticsPubSubPublisher:
         Initialize Phase 3 completion event publisher.
 
         Args:
-            project_id: GCP project ID (defaults to GCP_PROJECT_ID env var)
+            project_id: GCP project ID (defaults to centralized config)
         """
-        self.project_id = project_id or os.getenv('GCP_PROJECT_ID', 'nba-props-platform')
+        if project_id:
+            self.project_id = project_id
+        else:
+            from shared.config.gcp_config import get_project_id
+            self.project_id = get_project_id()
 
         # Use centralized topic config
         self.topic_name = TOPICS.PHASE3_ANALYTICS_COMPLETE

@@ -691,6 +691,8 @@ class CompletenessChecker:
         Returns:
             True if in bootstrap mode, False otherwise
         """
+        if analysis_date is None or season_start_date is None:
+            return True  # Default to bootstrap mode if dates missing
         days_since_start = (analysis_date - season_start_date).days
         return days_since_start < bootstrap_days
 

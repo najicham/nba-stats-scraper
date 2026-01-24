@@ -17,18 +17,24 @@ Usage:
 Features:
 - Connection pooling with configurable pool size
 - Automatic retry with exponential backoff
+- Rate limit handling (429 errors with Retry-After header support)
 - Thread-safe session management
 - Keep-alive for persistent connections
 - Compatible with all existing requests code
 
+Configuration:
+- HTTP_POOL_BACKOFF_FACTOR: Default backoff factor (default: 0.5)
+
 Reference:
 - Design: docs/08-projects/current/pipeline-reliability-improvements/
          COMPREHENSIVE-ARCHITECTURAL-IMPROVEMENT-PLAN.md (lines 850-899)
+- Rate limiting: Robustness Improvements Implementation Plan (Jan 21, 2026)
 """
 
 import threading
 import atexit
 import logging
+import os
 from typing import Optional
 from requests import Session
 from requests.adapters import HTTPAdapter
@@ -45,7 +51,7 @@ def get_http_session(
     pool_connections: int = 10,
     pool_maxsize: int = 20,
     max_retries: int = 3,
-    backoff_factor: float = 0.5,
+    backoff_factor: Optional[float] = None,
     timeout: Optional[float] = None
 ) -> Session:
     """
@@ -58,8 +64,9 @@ def get_http_session(
         pool_connections: Number of connection pools to cache (default: 10)
         pool_maxsize: Maximum number of connections in each pool (default: 20)
         max_retries: Maximum number of retry attempts (default: 3)
-        backoff_factor: Backoff factor for retries (default: 0.5)
+        backoff_factor: Backoff factor for retries (default: from HTTP_POOL_BACKOFF_FACTOR env or 0.5)
                        Delays: 0.5s, 1.0s, 2.0s, 4.0s...
+                       Automatically respects Retry-After headers from 429/503 responses
         timeout: Default timeout for all requests (optional)
 
     Returns:
@@ -98,17 +105,23 @@ def get_http_session(
         f"Creating new HTTP session for thread {threading.current_thread().name}"
     )
 
+    # Get backoff_factor from env var if not provided
+    if backoff_factor is None:
+        backoff_factor = float(os.getenv('HTTP_POOL_BACKOFF_FACTOR', '0.5'))
+
     # Create new session with connection pooling
     session = Session()
 
     # Configure retry strategy
-    # Status codes to retry: 500, 502, 503, 504 (server errors)
+    # Status codes to retry: 429 (rate limit), 500, 502, 503, 504 (server errors)
     # Also retry on connection errors, timeouts, etc.
+    # respect_retry_after_header=True: Honor Retry-After headers from 429/503 responses
     retry_strategy = Retry(
         total=max_retries,
         backoff_factor=backoff_factor,
-        status_forcelist=[500, 502, 503, 504],
+        status_forcelist=[429, 500, 502, 503, 504],
         allowed_methods=["HEAD", "GET", "PUT", "DELETE", "OPTIONS", "TRACE", "POST"],
+        respect_retry_after_header=True,  # Honor Retry-After headers
         raise_on_status=False  # Don't raise on retry exhaustion
     )
 
@@ -127,9 +140,9 @@ def get_http_session(
     if timeout:
         session.timeout = timeout
 
-    # Set default headers
+    # Set default headers (avoid identifying as scraper to reduce WAF detection)
     session.headers.update({
-        'User-Agent': 'NBA-Stats-Scraper/1.0 (Connection Pooling Enabled)',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'application/json',
         'Accept-Encoding': 'gzip, deflate'
     })

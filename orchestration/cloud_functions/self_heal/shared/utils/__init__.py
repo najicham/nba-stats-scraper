@@ -28,6 +28,62 @@ from .env_validation import (
     MissingEnvironmentVariablesError
 )
 
+# Rate limiting utilities
+from .rate_limiter import (
+    RateLimiter,
+    RateLimitConfig,
+    get_rate_limiter,
+    get_rate_limiter_for_url,
+    get_all_rate_limiter_stats,
+    reset_all_rate_limiters,
+    rate_limited,
+)
+
+# Prometheus metrics utilities
+from .prometheus_metrics import (
+    PrometheusMetrics,
+    create_metrics_blueprint,
+    setup_prometheus_metrics,
+    MetricsMiddleware,
+    Counter,
+    Gauge,
+    Histogram
+)
+
+# Roster management utilities
+from .roster_manager import (
+    RosterManager,
+    RosterChangeTracker,
+    ActiveRosterCalculator,
+    RosterChange,
+    PlayerAvailability,
+    TeamRoster,
+    TransactionType,
+    AvailabilityStatus,
+    get_roster_manager,
+    get_active_roster,
+    check_player_availability,
+    get_roster_changes,
+)
+
+# Completion tracking with BigQuery backup
+from .completion_tracker import (
+    CompletionTracker,
+    get_completion_tracker,
+)
+
+# Proxy management with health tracking
+from .proxy_manager import (
+    ProxyManager,
+    ProxyHealth,
+    ProxyHealthMetrics,
+    ProxyStatus,
+    ProxyConfig,
+    get_proxy_manager,
+    get_healthy_proxy_urls,
+    record_proxy_result,
+)
+
 
 __all__ = [
     "BigQueryClient",
@@ -49,5 +105,46 @@ __all__ = [
     # Environment validation
     "validate_required_env_vars",
     "get_required_env_var",
-    "MissingEnvironmentVariablesError"
+    "MissingEnvironmentVariablesError",
+    # Rate limiting
+    "RateLimiter",
+    "RateLimitConfig",
+    "get_rate_limiter",
+    "get_rate_limiter_for_url",
+    "get_all_rate_limiter_stats",
+    "reset_all_rate_limiters",
+    "rate_limited",
+    # Prometheus metrics
+    "PrometheusMetrics",
+    "create_metrics_blueprint",
+    "setup_prometheus_metrics",
+    "MetricsMiddleware",
+    "Counter",
+    "Gauge",
+    "Histogram",
+    # Roster management
+    "RosterManager",
+    "RosterChangeTracker",
+    "ActiveRosterCalculator",
+    "RosterChange",
+    "PlayerAvailability",
+    "TeamRoster",
+    "TransactionType",
+    "AvailabilityStatus",
+    "get_roster_manager",
+    "get_active_roster",
+    "check_player_availability",
+    "get_roster_changes",
+    # Completion tracking
+    "CompletionTracker",
+    "get_completion_tracker",
+    # Proxy management
+    "ProxyManager",
+    "ProxyHealth",
+    "ProxyHealthMetrics",
+    "ProxyStatus",
+    "ProxyConfig",
+    "get_proxy_manager",
+    "get_healthy_proxy_urls",
+    "record_proxy_result",
 ]

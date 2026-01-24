@@ -35,15 +35,15 @@ class NBAScheduleService:
                  bucket_name: str = 'nba-scraped-data',
                  use_database: bool = True,  # DEFAULT: True for performance
                  database_table: str = 'nba_reference.nba_schedule',
-                 project_id: str = 'nba-props-platform'):
+                 project_id: str = None):
         """
         Initialize NBA Schedule Service.
-        
+
         Args:
             bucket_name: GCS bucket containing schedule files
             use_database: If True, check database first for fast queries (DEFAULT)
             database_table: BigQuery table with schedule data (dataset.table)
-            project_id: GCP project ID
+            project_id: GCP project ID (defaults to centralized config)
         """
         self.use_database = use_database
         
@@ -247,7 +247,7 @@ class NBAScheduleService:
                 logger.info("Season %d: %d game dates", season, len(date_game_map))
                 
             except Exception as e:
-                logger.error("Error processing season %d: %s", season, e)
+                logger.error("Error processing season %d: %s", season, e, exc_info=True)
                 continue
         
         # Sort by date
@@ -360,7 +360,7 @@ class NBAScheduleService:
             return None
 
         except Exception as e:
-            logger.error("Error getting season start for %d: %s", season_year, e)
+            logger.error("Error getting season start for %d: %s", season_year, e, exc_info=True)
             return None
 
     def clear_cache(self):

@@ -24,6 +24,12 @@ from shared.validation.validators.phase2_validator import validate_phase2
 from shared.validation.validators.phase3_validator import validate_phase3
 from shared.validation.validators.phase4_validator import validate_phase4
 from shared.validation.validators.phase5_validator import validate_phase5
+from shared.validation.validators.infrastructure_validator import (
+    validate_infrastructure,
+    InfrastructureValidation,
+    ProxyHealthStatus,
+    format_proxy_health,
+)
 
 __all__ = [
     'PhaseValidationResult',
@@ -39,4 +45,8 @@ __all__ = [
     'validate_phase3',
     'validate_phase4',
     'validate_phase5',
+    'validate_infrastructure',
+    'InfrastructureValidation',
+    'ProxyHealthStatus',
+    'format_proxy_health',
 ]

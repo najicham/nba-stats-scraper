@@ -5,6 +5,7 @@ Prevents infinite retry loops by tracking failures and opening circuit after thr
 
 Example:
     class PlayerGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase):
+        # Uses centralized defaults, or override:
         CIRCUIT_BREAKER_THRESHOLD = 5  # Open after 5 failures
         CIRCUIT_BREAKER_TIMEOUT = timedelta(minutes=30)  # Stay open 30 min
 
@@ -12,6 +13,13 @@ Circuit States:
 - CLOSED: Normal operation
 - OPEN: Too many failures, rejecting all requests
 - HALF_OPEN: Timeout expired, testing if issue resolved
+
+Configuration:
+    Defaults can be set via environment variables:
+    - CIRCUIT_BREAKER_THRESHOLD: Number of failures (default: 5)
+    - CIRCUIT_BREAKER_TIMEOUT_MINUTES: Timeout in minutes (default: 30)
+
+    See: shared/config/circuit_breaker_config.py
 """
 
 from typing import Dict, Optional
@@ -20,6 +28,17 @@ from collections import defaultdict
 import logging
 
 from google.cloud import bigquery
+
+# Import centralized config for defaults
+try:
+    from shared.config.circuit_breaker_config import (
+        CIRCUIT_BREAKER_THRESHOLD as DEFAULT_THRESHOLD,
+        CIRCUIT_BREAKER_TIMEOUT as DEFAULT_TIMEOUT,
+    )
+except ImportError:
+    # Fallback if config not available
+    DEFAULT_THRESHOLD = 5
+    DEFAULT_TIMEOUT = timedelta(minutes=30)
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +56,11 @@ class CircuitBreakerMixin:
     _circuit_breaker_opened_at = {}
     _circuit_breaker_alerts_sent = set()
 
-    # Configuration (override in subclass)
-    CIRCUIT_BREAKER_THRESHOLD = 5  # Open after N failures
-    CIRCUIT_BREAKER_TIMEOUT = timedelta(minutes=30)  # Stay open for this long
+    # Configuration (uses centralized defaults, override in subclass if needed)
+    # Defaults come from shared/config/circuit_breaker_config.py
+    # Can be set via env vars: CIRCUIT_BREAKER_THRESHOLD, CIRCUIT_BREAKER_TIMEOUT_MINUTES
+    CIRCUIT_BREAKER_THRESHOLD = DEFAULT_THRESHOLD  # Open after N failures
+    CIRCUIT_BREAKER_TIMEOUT = DEFAULT_TIMEOUT  # Stay open for this long
 
     def _get_circuit_key(self, start_date: str, end_date: str) -> str:
         """

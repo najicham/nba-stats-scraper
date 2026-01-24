@@ -20,7 +20,8 @@ class SecretManager:
     """Centralized secret management using GCP Secret Manager."""
 
     def __init__(self):
-        self.project_id = os.environ.get('PROJECT_ID', 'nba-props-platform')
+        from shared.config.gcp_config import get_project_id
+        self.project_id = get_project_id()
         self.client = secretmanager.SecretManagerServiceClient()
         logger.info(f"SecretManager initialized for project: {self.project_id}")
 

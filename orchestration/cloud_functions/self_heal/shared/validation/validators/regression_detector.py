@@ -12,6 +12,7 @@ import logging
 from datetime import date, timedelta
 from typing import List, Dict, Tuple, Optional
 from google.cloud import bigquery
+from shared.config.gcp_config import get_project_id
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ def detect_regression(
     baseline_start: Optional[date] = None,
     baseline_end: Optional[date] = None,
     features: Optional[List[str]] = None,
-    project_id: str = 'nba-props-platform',
+    project_id: str = None,
 ) -> Dict[str, dict]:
     """
     Detect if new backfilled data has worse coverage than historical baseline.
@@ -70,6 +71,10 @@ def detect_regression(
             }
         }
     """
+    # Use centralized project ID if not provided
+    if project_id is None:
+        project_id = get_project_id()
+
     # Auto-suggest baseline period if not provided
     if baseline_start is None or baseline_end is None:
         baseline_start, baseline_end = suggest_baseline_period(new_data_start)

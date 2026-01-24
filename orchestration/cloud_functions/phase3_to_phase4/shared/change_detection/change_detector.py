@@ -64,14 +64,15 @@ class ChangeDetector:
         # Returns: ['lebron-james'] if only LeBron changed
     """
 
-    def __init__(self, project_id: str = 'nba-props-platform'):
+    def __init__(self, project_id: str = None):
         """
         Initialize change detector.
 
         Args:
-            project_id: GCP project ID
+            project_id: GCP project ID (defaults to centralized config)
         """
-        self.project_id = project_id
+        from shared.config.gcp_config import get_project_id
+        self.project_id = project_id or get_project_id()
         self._client = None
 
     @property

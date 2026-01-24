@@ -24,6 +24,8 @@ import functools
 from typing import Callable
 import requests
 
+from shared.clients.http_pool import get_http_session
+
 logger = logging.getLogger(__name__)
 
 
@@ -85,7 +87,8 @@ def retry_slack_webhook(
                     if attempt >= max_attempts:
                         logger.error(
                             f"{func.__name__} failed after {max_attempts} attempts sending Slack webhook. "
-                            f"Last error: {type(e).__name__}: {str(e)}"
+                            f"Last error: {type(e).__name__}: {str(e)}",
+                            exc_info=True
                         )
                         raise
 
@@ -128,7 +131,9 @@ def send_slack_webhook_with_retry(webhook_url: str, payload: dict, timeout: int 
     """
     @retry_slack_webhook()
     def _send():
-        response = requests.post(webhook_url, json=payload, timeout=timeout)
+        # Use pooled HTTP session (already has retry logic for transient errors)
+        session = get_http_session()
+        response = session.post(webhook_url, json=payload, timeout=timeout)
         response.raise_for_status()
         return response
 

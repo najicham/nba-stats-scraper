@@ -12,8 +12,11 @@ Usage:
     # Dry run (show what would be synced)
     python bin/maintenance/sync_shared_utils.py --dry-run
 
-    # Sync all files
+    # Sync all files (default: only configured files)
     python bin/maintenance/sync_shared_utils.py
+
+    # Sync ALL files in shared/ (comprehensive)
+    python bin/maintenance/sync_shared_utils.py --all
 
     # Sync specific file
     python bin/maintenance/sync_shared_utils.py --file slack_channels.py
@@ -22,6 +25,7 @@ Usage:
     python bin/maintenance/sync_shared_utils.py --diff
 
 Created: 2026-01-24
+Updated: 2026-01-24 - Added --all flag for comprehensive sync
 """
 
 import argparse
@@ -30,12 +34,15 @@ import os
 import shutil
 import sys
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Tuple
 
 # Project root
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 
-# Canonical source directories
+# Canonical shared directory
+CANONICAL_SHARED = PROJECT_ROOT / 'shared'
+
+# Canonical source directories (for backwards compatibility)
 CANONICAL_SOURCES = {
     'utils': PROJECT_ROOT / 'shared' / 'utils',
     'alerts': PROJECT_ROOT / 'shared' / 'alerts',
@@ -43,9 +50,11 @@ CANONICAL_SOURCES = {
     'clients': PROJECT_ROOT / 'shared' / 'clients',
     'config': PROJECT_ROOT / 'shared' / 'config',
     'validation': PROJECT_ROOT / 'shared' / 'validation',
+    'processors': PROJECT_ROOT / 'shared' / 'processors',
+    'endpoints': PROJECT_ROOT / 'shared' / 'endpoints',
 }
 
-# Files to sync and their canonical locations
+# Core files to sync (original 18 files - for backwards compatibility)
 FILES_TO_SYNC = {
     # config/
     'sport_config.py': 'config',
@@ -76,16 +85,37 @@ FILES_TO_SYNC = {
     'schedule_utils.py': 'backfill',
 }
 
+
+def discover_all_shared_files() -> Dict[str, str]:
+    """
+    Discover all Python files in shared/ directory.
+
+    Returns dict mapping relative file path to parent directory name.
+    E.g., {'utils/slack_channels.py': 'shared'}
+    """
+    files = {}
+    for py_file in CANONICAL_SHARED.rglob('*.py'):
+        # Skip __pycache__ and test directories
+        if '__pycache__' in str(py_file) or '/tests/' in str(py_file):
+            continue
+
+        # Get path relative to shared/
+        rel_path = py_file.relative_to(CANONICAL_SHARED)
+        files[str(rel_path)] = 'shared'
+
+    return files
+
 # Target directories that contain shared/ subdirectories
 TARGET_PARENTS = [
     PROJECT_ROOT / 'predictions' / 'worker',
     PROJECT_ROOT / 'predictions' / 'coordinator',
+    PROJECT_ROOT / 'orchestration' / 'cloud_functions' / 'auto_backfill_orchestrator',
+    PROJECT_ROOT / 'orchestration' / 'cloud_functions' / 'daily_health_summary',
     PROJECT_ROOT / 'orchestration' / 'cloud_functions' / 'phase2_to_phase3',
     PROJECT_ROOT / 'orchestration' / 'cloud_functions' / 'phase3_to_phase4',
     PROJECT_ROOT / 'orchestration' / 'cloud_functions' / 'phase4_to_phase5',
     PROJECT_ROOT / 'orchestration' / 'cloud_functions' / 'phase5_to_phase6',
     PROJECT_ROOT / 'orchestration' / 'cloud_functions' / 'prediction_monitoring',
-    PROJECT_ROOT / 'orchestration' / 'cloud_functions' / 'daily_health_summary',
     PROJECT_ROOT / 'orchestration' / 'cloud_functions' / 'self_heal',
 ]
 
@@ -142,11 +172,70 @@ def sync_file(source: Path, target: Path, dry_run: bool = False) -> bool:
         return False
 
 
+def sync_all_files(target_parents: List[Path], dry_run: bool = False,
+                   diff_only: bool = False, verbose: bool = False) -> Tuple[int, int, int, int]:
+    """
+    Sync ALL files from canonical shared/ to target directories.
+
+    Returns tuple of (synced, skipped, errors, different).
+    """
+    all_files = discover_all_shared_files()
+    total_synced = 0
+    total_skipped = 0
+    total_errors = 0
+    total_different = 0
+
+    print(f"Discovered {len(all_files)} files in shared/")
+    print()
+
+    for rel_path in sorted(all_files.keys()):
+        source_path = CANONICAL_SHARED / rel_path
+
+        if not source_path.exists():
+            continue
+
+        # Print file being processed
+        if verbose:
+            print(f"\n{rel_path}:")
+
+        for target_parent in target_parents:
+            if not target_parent.exists():
+                continue
+
+            # Target path mirrors source structure
+            target_path = target_parent / 'shared' / rel_path
+
+            if not target_path.exists():
+                if verbose:
+                    print(f"  Not present in: {target_parent.name}")
+                continue
+
+            # Compare files
+            are_identical, diff_summary = compare_files(source_path, target_path)
+
+            if are_identical:
+                total_skipped += 1
+                if verbose:
+                    print(f"  IDENTICAL: {target_parent.name}")
+            else:
+                total_different += 1
+                print(f"  DIFFERENT: {rel_path} in {target_parent.name} - {diff_summary}")
+
+                if not diff_only:
+                    if sync_file(source_path, target_path, dry_run=dry_run):
+                        total_synced += 1
+                    else:
+                        total_errors += 1
+
+    return total_synced, total_skipped, total_errors, total_different
+
+
 def main():
     parser = argparse.ArgumentParser(description='Sync shared utils to cloud functions')
     parser.add_argument('--dry-run', action='store_true', help='Show what would be synced')
     parser.add_argument('--diff', action='store_true', help='Show differences only')
     parser.add_argument('--file', help='Sync only specific file')
+    parser.add_argument('--all', action='store_true', help='Sync ALL files in shared/ (comprehensive)')
     parser.add_argument('-v', '--verbose', action='store_true', help='Verbose output')
 
     args = parser.parse_args()
@@ -161,66 +250,81 @@ def main():
         print("Mode: DIFF ONLY (showing differences)")
     else:
         print("Mode: SYNC (files will be copied)")
+
+    if args.all:
+        print("Scope: ALL files in shared/")
+    else:
+        print("Scope: Core files only (use --all for comprehensive sync)")
     print()
 
-    # Filter files if specific file requested
-    files_to_process = FILES_TO_SYNC
-    if args.file:
-        if args.file in FILES_TO_SYNC:
-            files_to_process = {args.file: FILES_TO_SYNC[args.file]}
-        else:
-            print(f"ERROR: Unknown file '{args.file}'")
-            print(f"Available files: {', '.join(FILES_TO_SYNC.keys())}")
-            sys.exit(1)
-
-    # Process each file
-    total_synced = 0
-    total_skipped = 0
-    total_errors = 0
-    total_different = 0
-
-    for filename, subdir in files_to_process.items():
-        source_path = CANONICAL_SOURCES[subdir] / filename
-
-        if not source_path.exists():
-            print(f"\nWARNING: Canonical source not found: {source_path}")
-            continue
-
-        print(f"\n{filename} (from shared/{subdir}/):")
-
-        for target_parent in TARGET_PARENTS:
-            if not target_parent.exists():
-                continue
-
-            target_path = find_file_in_target(target_parent, filename, subdir)
-
-            if target_path is None:
-                if args.verbose:
-                    print(f"  Not present in: {target_parent.name}")
-                continue
-
-            # Compare files
-            are_identical, diff_summary = compare_files(source_path, target_path)
-
-            if are_identical:
-                total_skipped += 1
-                if args.verbose:
-                    print(f"  IDENTICAL: {target_parent.name}")
+    # Use comprehensive sync if --all specified
+    if args.all:
+        total_synced, total_skipped, total_errors, total_different = sync_all_files(
+            TARGET_PARENTS, dry_run=args.dry_run, diff_only=args.diff, verbose=args.verbose
+        )
+        all_files = discover_all_shared_files()
+        files_count = len(all_files)
+    else:
+        # Original behavior - sync only configured files
+        files_to_process = FILES_TO_SYNC
+        if args.file:
+            if args.file in FILES_TO_SYNC:
+                files_to_process = {args.file: FILES_TO_SYNC[args.file]}
             else:
-                total_different += 1
-                print(f"  DIFFERENT: {target_parent.name} - {diff_summary}")
+                print(f"ERROR: Unknown file '{args.file}'")
+                print(f"Available files: {', '.join(FILES_TO_SYNC.keys())}")
+                sys.exit(1)
 
-                if not args.diff:
-                    if sync_file(source_path, target_path, dry_run=args.dry_run):
-                        total_synced += 1
-                    else:
-                        total_errors += 1
+        # Process each file
+        total_synced = 0
+        total_skipped = 0
+        total_errors = 0
+        total_different = 0
+
+        for filename, subdir in files_to_process.items():
+            source_path = CANONICAL_SOURCES[subdir] / filename
+
+            if not source_path.exists():
+                print(f"\nWARNING: Canonical source not found: {source_path}")
+                continue
+
+            print(f"\n{filename} (from shared/{subdir}/):")
+
+            for target_parent in TARGET_PARENTS:
+                if not target_parent.exists():
+                    continue
+
+                target_path = find_file_in_target(target_parent, filename, subdir)
+
+                if target_path is None:
+                    if args.verbose:
+                        print(f"  Not present in: {target_parent.name}")
+                    continue
+
+                # Compare files
+                are_identical, diff_summary = compare_files(source_path, target_path)
+
+                if are_identical:
+                    total_skipped += 1
+                    if args.verbose:
+                        print(f"  IDENTICAL: {target_parent.name}")
+                else:
+                    total_different += 1
+                    print(f"  DIFFERENT: {target_parent.name} - {diff_summary}")
+
+                    if not args.diff:
+                        if sync_file(source_path, target_path, dry_run=args.dry_run):
+                            total_synced += 1
+                        else:
+                            total_errors += 1
+
+        files_count = len(files_to_process)
 
     # Summary
     print("\n" + "=" * 60)
     print("Summary")
     print("=" * 60)
-    print(f"Files checked: {len(files_to_process)}")
+    print(f"Files checked: {files_count}")
     print(f"Identical (skipped): {total_skipped}")
     print(f"Different: {total_different}")
     if not args.diff:

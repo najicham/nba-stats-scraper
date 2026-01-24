@@ -32,6 +32,21 @@ class PhaseTransitionConfig:
         'br_rosters_current',         # Basketball-ref rosters
     ])
 
+    # Phase 2: Required vs Optional Processors
+    # Required: MUST complete before Phase 3 can proceed (with deadline)
+    # Optional: Nice to have, but won't block Phase 3
+    phase2_required_processors: List[str] = field(default_factory=lambda: [
+        'bdl_player_boxscores',       # Critical for player predictions
+        'odds_api_game_lines',        # Critical for betting lines
+        'nbac_schedule',              # Critical for game schedule
+        'nbac_gamebook_player_stats', # Critical for post-game stats
+    ])
+
+    phase2_optional_processors: List[str] = field(default_factory=lambda: [
+        'bigdataball_play_by_play',   # External dependency, may fail
+        'br_rosters_current',         # Only runs on roster changes
+    ])
+
     # Phase 3 -> Phase 4: List of expected processors
     phase3_expected_processors: List[str] = field(default_factory=lambda: [
         'player_game_summary',
@@ -52,6 +67,11 @@ class PhaseTransitionConfig:
 
     # Trigger mode: 'all_complete' or 'majority' (>80%)
     trigger_mode: str = 'all_complete'
+
+    # Phase 2 completion deadline (Week 1 improvement)
+    # Enable timeout to prevent indefinite waits when processors fail
+    phase2_completion_deadline_enabled: bool = False
+    phase2_completion_timeout_minutes: int = 30
 
 
 @dataclass
@@ -103,6 +123,12 @@ class PredictionModeConfig:
 
     # Line increment for multiple lines
     line_increment: float = 1.0
+
+    # v3.10: Disable estimated lines - only use real betting lines from sportsbooks
+    # When True: Skip players without actual prop lines (no ESTIMATED_AVG)
+    # When False: Fall back to estimating line from season average (legacy behavior)
+    # Via env: DISABLE_ESTIMATED_LINES
+    disable_estimated_lines: bool = True  # Default True - no fake lines
 
 
 @dataclass
@@ -232,14 +258,41 @@ class NewPlayerConfig:
     # Bootstrap period (days) - matches BOOTSTRAP_DAYS
     bootstrap_days: int = 14
 
-    # Use default line for new players (False = skip prediction)
-    use_default_line: bool = False
+    # DEPRECATED: Never use default lines - always skip predictions for new players
+    # This was a source of 20.0 placeholder lines that corrupted grading
+    # Keeping field for backwards compatibility but MUST remain False
+    use_default_line: bool = False  # DO NOT CHANGE - causes placeholder lines
 
-    # Default line value if use_default_line is True
-    default_line_value: float = 15.5
+    # DEPRECATED: This value is never used (use_default_line=False)
+    default_line_value: float = 15.5  # Unused
 
     # Mark new players for later processing
     mark_needs_bootstrap: bool = True
+
+
+@dataclass
+class WorkflowExecutionConfig:
+    """
+    Week 1: Configuration for workflow execution behavior.
+
+    Makes parallel execution configurable per workflow instead of hardcoded.
+    """
+
+    # Workflows that should run in parallel
+    # Via env: PARALLEL_WORKFLOWS (comma-separated)
+    parallel_workflows: List[str] = field(default_factory=lambda: ['morning_operations'])
+
+    # Max workers for parallel execution
+    # Via env: WORKFLOW_MAX_WORKERS
+    max_workers: int = 10
+
+    # Execution timeout (seconds)
+    # Via env: WORKFLOW_EXECUTION_TIMEOUT
+    execution_timeout: int = 600  # 10 minutes
+
+    def is_parallel(self, workflow_name: str) -> bool:
+        """Check if workflow should run in parallel."""
+        return workflow_name in self.parallel_workflows
 
 
 @dataclass
@@ -254,6 +307,7 @@ class OrchestrationConfig:
     circuit_breaker: CircuitBreakerConfig = field(default_factory=CircuitBreakerConfig)
     worker_concurrency: WorkerConcurrencyConfig = field(default_factory=WorkerConcurrencyConfig)
     self_healing: SelfHealingConfig = field(default_factory=SelfHealingConfig)
+    workflow_execution: WorkflowExecutionConfig = field(default_factory=WorkflowExecutionConfig)
 
     @classmethod
     def from_environment(cls) -> 'OrchestrationConfig':
@@ -283,6 +337,11 @@ class OrchestrationConfig:
         use_multiple = os.environ.get('USE_MULTIPLE_LINES_DEFAULT')
         if use_multiple is not None:
             config.prediction_mode.use_multiple_lines_default = use_multiple.lower() == 'true'
+
+        # v3.10: Disable estimated lines
+        disable_estimated = os.environ.get('DISABLE_ESTIMATED_LINES')
+        if disable_estimated is not None:
+            config.prediction_mode.disable_estimated_lines = disable_estimated.lower() == 'true'
 
         # Circuit breaker config
         entity_lockout = os.environ.get('CIRCUIT_BREAKER_ENTITY_LOCKOUT_HOURS')
@@ -322,6 +381,28 @@ class OrchestrationConfig:
         auto_reduce = os.environ.get('SELF_HEALING_AUTO_REDUCE_CONCURRENCY')
         if auto_reduce is not None:
             config.self_healing.auto_reduce_concurrency = auto_reduce.lower() == 'true'
+
+        # Week 1: Workflow execution config
+        parallel_workflows = os.environ.get('PARALLEL_WORKFLOWS')
+        if parallel_workflows:
+            config.workflow_execution.parallel_workflows = [w.strip() for w in parallel_workflows.split(',')]
+
+        max_workers = os.environ.get('WORKFLOW_MAX_WORKERS')
+        if max_workers:
+            config.workflow_execution.max_workers = int(max_workers)
+
+        exec_timeout = os.environ.get('WORKFLOW_EXECUTION_TIMEOUT')
+        if exec_timeout:
+            config.workflow_execution.execution_timeout = int(exec_timeout)
+
+        # Week 1: Phase 2 completion deadline config
+        phase2_deadline_enabled = os.environ.get('ENABLE_PHASE2_COMPLETION_DEADLINE')
+        if phase2_deadline_enabled is not None:
+            config.phase_transitions.phase2_completion_deadline_enabled = phase2_deadline_enabled.lower() == 'true'
+
+        phase2_timeout = os.environ.get('PHASE2_COMPLETION_TIMEOUT_MINUTES')
+        if phase2_timeout:
+            config.phase_transitions.phase2_completion_timeout_minutes = int(phase2_timeout)
 
         return config
 

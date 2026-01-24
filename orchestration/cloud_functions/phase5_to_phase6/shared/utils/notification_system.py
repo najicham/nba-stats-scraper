@@ -8,10 +8,15 @@ Supports Email (Brevo), Slack (configurable multi-tier), Discord, and extensible
 Slack Configuration (Extensible):
 Configure webhook URLs via environment variables:
 - SLACK_WEBHOOK_URL_INFO - For INFO level
-- SLACK_WEBHOOK_URL_WARNING - For WARNING level  
+- SLACK_WEBHOOK_URL_WARNING - For WARNING level
 - SLACK_WEBHOOK_URL_ERROR - For ERROR level
 - SLACK_WEBHOOK_URL_CRITICAL - For CRITICAL level
 - SLACK_WEBHOOK_URL (fallback for all levels if specific ones not set)
+
+Circuit Breaker Protection (Added 2026-01-23):
+- Slack API calls are protected by circuit breaker
+- Prevents cascading failures when Slack is unavailable
+- Auto-recovers after timeout period
 """
 
 import os
@@ -23,7 +28,23 @@ from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from shared.clients.http_pool import get_http_session
+
 logger = logging.getLogger(__name__)
+
+# Import circuit breaker for external service protection
+try:
+    from shared.utils.external_service_circuit_breaker import (
+        get_service_circuit_breaker,
+        CircuitBreakerError,
+    )
+    CIRCUIT_BREAKER_AVAILABLE = True
+except ImportError:
+    logger.debug("Circuit breaker not available, Slack calls not protected")
+    CIRCUIT_BREAKER_AVAILABLE = False
+
+# Circuit breaker service name for Slack API
+SLACK_CIRCUIT_BREAKER_SERVICE = "slack_webhook_api"
 
 # Import AlertManager for rate-limited alerting
 try:
@@ -537,12 +558,36 @@ class SlackNotifier:
                     "short": True
                 })
         
+        # Use circuit breaker protection for Slack API calls
+        if CIRCUIT_BREAKER_AVAILABLE:
+            cb = get_service_circuit_breaker(SLACK_CIRCUIT_BREAKER_SERVICE)
+
+            # Check if circuit is available
+            if not cb.is_available():
+                status = cb.get_status()
+                logger.warning(
+                    f"Slack circuit breaker OPEN - skipping notification: {title}. "
+                    f"Timeout remaining: {status.get('timeout_remaining', 0):.1f}s"
+                )
+                return False
+
         try:
-            response = requests.post(webhook_url, json=payload, timeout=10)
+            # Use pooled HTTP session with automatic retry on transient errors
+            session = get_http_session()
+            response = session.post(webhook_url, json=payload, timeout=10)
             response.raise_for_status()
+
+            # Record success with circuit breaker
+            if CIRCUIT_BREAKER_AVAILABLE:
+                cb._record_success()
+
             logger.info(f"Slack notification sent successfully to {channel_name}: {title}")
             return True
         except requests.exceptions.RequestException as e:
+            # Record failure with circuit breaker
+            if CIRCUIT_BREAKER_AVAILABLE:
+                cb._record_failure(e)
+
             logger.error(f"Failed to send Slack notification: {e}", exc_info=True)
             return False
 
@@ -627,7 +672,9 @@ class DiscordNotifier:
         }
         
         try:
-            response = requests.post(webhook_url, json=payload, timeout=10)
+            # Use pooled HTTP session with automatic retry on transient errors
+            session = get_http_session()
+            response = session.post(webhook_url, json=payload, timeout=10)
             response.raise_for_status()
             logger.info(f"Discord notification sent successfully: {title}")
             return True

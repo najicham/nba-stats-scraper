@@ -19,13 +19,17 @@ import json
 import logging
 import os
 import smtplib
+import socket
 import time
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Dict, List, Optional, Any
 import requests
+from requests.exceptions import RequestException
 from shared.utils.auth_utils import get_api_key
+from shared.utils.slack_retry import send_slack_webhook_with_retry
+from shared.clients.http_pool import get_http_session
 
 # Import alert type system
 from shared.utils.alert_types import get_alert_html_heading, detect_alert_type, format_alert_heading
@@ -43,8 +47,10 @@ class ProcessorAlerting:
     
     def __init__(self):
         # Email configuration
+        from shared.config.gcp_config import get_project_id
+        project_id = get_project_id()
         self.sendgrid_api_key = os.environ.get('SENDGRID_API_KEY')
-        self.from_email = os.environ.get('ALERT_FROM_EMAIL', 'nba-processors@nba-props-platform.com')
+        self.from_email = os.environ.get('ALERT_FROM_EMAIL', f'nba-processors@{project_id}.com')
         self.default_recipients = self._parse_email_list(os.environ.get('ALERT_RECIPIENTS', ''))
         
         # Slack configuration  
@@ -197,27 +203,29 @@ class ProcessorAlerting:
             else:
                 return self._send_via_smtp(subject, body, recipients)
                 
-        except Exception as e:
+        except (RequestException, smtplib.SMTPException, socket.error) as e:
             logger.error(f"Failed to send email alert: {e}", exc_info=True)
             return False
     
     def _send_via_sendgrid(self, subject: str, body: str, recipients: List[str]) -> bool:
-        """Send email via SendGrid API."""
+        """Send email via SendGrid API with connection pooling and retry."""
         url = "https://api.sendgrid.com/v3/mail/send"
         headers = {
             "Authorization": f"Bearer {self.sendgrid_api_key}",
             "Content-Type": "application/json"
         }
-        
+
         data = {
             "personalizations": [{"to": [{"email": email} for email in recipients]}],
             "from": {"email": self.from_email},
             "subject": subject,
             "content": [{"type": "text/html", "value": body}]
         }
-        
-        response = requests.post(url, headers=headers, json=data)
-        
+
+        # Use pooled HTTP session with automatic retry on transient errors
+        session = get_http_session()
+        response = session.post(url, headers=headers, json=data, timeout=30)
+
         if response.status_code == 202:
             logger.info(f"Email alert sent successfully to {len(recipients)} recipients")
             return True
@@ -255,33 +263,39 @@ class ProcessorAlerting:
             logger.info(f"SMTP email sent successfully to {len(recipients)} recipients")
             return True
             
-        except Exception as e:
+        except (smtplib.SMTPException, socket.error, OSError) as e:
             logger.error(f"SMTP send error: {e}", exc_info=True)
             return False
     
     def _send_slack_alert(self, alert_data: Dict[str, Any]) -> bool:
-        """Send alert to Slack via webhook."""
+        """
+        Send alert to Slack via webhook with retry logic.
+
+        Uses send_slack_webhook_with_retry for automatic retries on transient failures.
+        This prevents silent alert failures when Slack API has temporary issues.
+        """
         if not self.slack_webhook_url:
             logger.warning("No Slack webhook URL configured - skipping Slack alert")
             return False
-        
+
         try:
             message = self._build_slack_message(alert_data)
-            
-            response = requests.post(
-                self.slack_webhook_url,
-                json=message,
+
+            # Use retry-enabled webhook sender (3 attempts with exponential backoff)
+            success = send_slack_webhook_with_retry(
+                webhook_url=self.slack_webhook_url,
+                payload=message,
                 timeout=10
             )
-            
-            if response.status_code == 200:
+
+            if success:
                 logger.info("Slack alert sent successfully")
                 return True
             else:
-                logger.error(f"Slack webhook error: {response.status_code} - {response.text}", exc_info=True)
+                logger.error("Slack webhook failed after retries", exc_info=True)
                 return False
-                
-        except Exception as e:
+
+        except RequestException as e:
             logger.error(f"Failed to send Slack alert: {e}", exc_info=True)
             return False
     
@@ -401,9 +415,11 @@ class ProcessorAlerting:
         }
         
         try:
-            response = requests.post(self.slack_webhook_url, json=payload, timeout=10)
+            # Use pooled HTTP session with automatic retry on transient errors
+            session = get_http_session()
+            response = session.post(self.slack_webhook_url, json=payload, timeout=10)
             return response.status_code == 200
-        except Exception as e:
+        except RequestException as e:
             logger.error(f"Failed to send Slack message: {e}", exc_info=True)
             return False
     

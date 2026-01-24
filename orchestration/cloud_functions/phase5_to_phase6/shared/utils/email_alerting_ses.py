@@ -762,6 +762,116 @@ class EmailAlerterSES:
 
         return self._send_email(subject, html_body, self.alert_recipients, "WARNING")
 
+    def send_scraper_gap_alert(self, gap_data: Dict) -> bool:
+        """
+        Send alert when scrapers have accumulated gaps (unbackfilled failures).
+
+        Args:
+            gap_data: Dictionary containing:
+                - scrapers: List of {scraper_name, gap_count, oldest_gap, recent_errors}
+                - total_gaps: Total number of gaps across all scrapers
+                - threshold: Gap count threshold that triggered alert
+        """
+        scrapers = gap_data.get('scrapers', [])
+        total_gaps = gap_data.get('total_gaps', 0)
+        threshold = gap_data.get('threshold', 3)
+
+        if not scrapers:
+            return False
+
+        subject = f"⚠️ Scraper Gaps Accumulating - {total_gaps} gaps across {len(scrapers)} scrapers"
+
+        # Build scraper rows
+        scraper_rows = ""
+        for scraper in scrapers:
+            name = html.escape(scraper.get('scraper_name', 'Unknown'))
+            gaps = scraper.get('gap_count', 0)
+            oldest = html.escape(str(scraper.get('oldest_gap', 'Unknown')))
+            recent_errors = scraper.get('recent_errors', [])
+
+            # Status color based on gap count
+            if gaps >= 5:
+                color = "#d32f2f"  # Red
+                icon = "🔴"
+            elif gaps >= 3:
+                color = "#ff9800"  # Orange
+                icon = "🟠"
+            else:
+                color = "#28a745"  # Green
+                icon = "🟢"
+
+            # Recent errors (first 2)
+            errors_html = ""
+            if recent_errors:
+                errors_html = "<br><small style='color: #666;'>"
+                for err in recent_errors[:2]:
+                    errors_html += f"• {html.escape(str(err)[:50])}...<br>"
+                errors_html += "</small>"
+
+            scraper_rows += f"""
+            <tr>
+                <td>{icon} {name}</td>
+                <td style="color: {color}; font-weight: bold;">{gaps} gaps</td>
+                <td>{oldest}</td>
+                <td>{errors_html or 'N/A'}</td>
+            </tr>
+            """
+
+        html_body = f"""
+        <html>
+        <body>
+            <h2 style="color: #ff9800;">⚠️ Scraper Gap Alert</h2>
+            <p><strong>Time:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+
+            <p style="font-size: 16px;">
+                <strong>{len(scrapers)} scraper(s)</strong> have accumulated
+                <strong style="color: #d32f2f;">{total_gaps} gaps</strong>
+                (threshold: {threshold}+ days).
+            </p>
+
+            <h3>Affected Scrapers</h3>
+            <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%;">
+                <tr style="background-color: #f5f5f5;">
+                    <th>Scraper</th>
+                    <th>Gap Count</th>
+                    <th>Oldest Gap</th>
+                    <th>Recent Errors</th>
+                </tr>
+                {scraper_rows}
+            </table>
+
+            <h3>Recommended Actions</h3>
+            <ul>
+                <li>Check proxy health - proxies may be blocked</li>
+                <li>Review scraper logs in Cloud Run</li>
+                <li>Verify source APIs are accessible</li>
+                <li>Manual backfill may be needed for older gaps</li>
+            </ul>
+
+            <h3>Quick Commands</h3>
+            <pre style="background-color: #f5f5f5; padding: 10px; font-size: 12px;">
+# View all gaps
+bq query --use_legacy_sql=false "
+SELECT scraper_name, game_date, error_type, retry_count
+FROM nba_orchestration.scraper_failures
+WHERE backfilled = FALSE
+ORDER BY game_date"
+
+# Trigger manual backfill
+curl "https://us-west2-nba-props-platform.cloudfunctions.net/scraper-gap-backfiller"
+            </pre>
+
+            <hr>
+            <p style="color: #666; font-size: 12px;">
+                This is an automated alert from the NBA Scraper Resilience System.
+                Auto-backfill runs every 4 hours when scrapers recover.
+            </p>
+        </body>
+        </html>
+        """
+
+        return self._send_email(subject, html_body, self.critical_recipients or self.alert_recipients, "WARNING")
+
     def should_send_unresolved_alert(self, unresolved_count: int, threshold: int = 50) -> bool:
         """Check if unresolved players alert should be sent."""
         return unresolved_count > threshold

@@ -8,7 +8,7 @@ Usage:
     from shared.clients.bigquery_pool import get_bigquery_client
 
     # Get cached client (or create if first time)
-    client = get_bigquery_client(project_id="nba-props-platform")
+    client = get_bigquery_client()  # Uses default from shared.config.gcp_config
 
     # Use client normally
     query = "SELECT * FROM dataset.table LIMIT 10"
@@ -32,6 +32,8 @@ import logging
 from typing import Dict, Optional
 from google.cloud import bigquery
 
+from shared.config.gcp_config import get_project_id as _get_default_project_id
+
 logger = logging.getLogger(__name__)
 
 # Global client cache (thread-safe)
@@ -39,7 +41,7 @@ _client_cache: Dict[str, bigquery.Client] = {}
 _cache_lock = threading.Lock()
 
 
-def get_bigquery_client(project_id: str, location: Optional[str] = None) -> bigquery.Client:
+def get_bigquery_client(project_id: str = None, location: Optional[str] = None) -> bigquery.Client:
     """
     Get a cached BigQuery client for the specified project.
 
@@ -47,7 +49,7 @@ def get_bigquery_client(project_id: str, location: Optional[str] = None) -> bigq
     for all subsequent calls. Thread-safe for concurrent access.
 
     Args:
-        project_id: GCP project ID
+        project_id: GCP project ID (defaults to value from shared.config.gcp_config)
         location: Optional default location for datasets/jobs (e.g., "US", "us-west2")
 
     Returns:
@@ -55,10 +57,10 @@ def get_bigquery_client(project_id: str, location: Optional[str] = None) -> bigq
 
     Example:
         # In any module:
-        client = get_bigquery_client("nba-props-platform")
+        client = get_bigquery_client()  # Uses default project
 
         # Same client instance will be returned on subsequent calls
-        same_client = get_bigquery_client("nba-props-platform")
+        same_client = get_bigquery_client()
         assert client is same_client  # True!
 
     Thread Safety:
@@ -70,6 +72,8 @@ def get_bigquery_client(project_id: str, location: Optional[str] = None) -> bigq
         - Subsequent calls: <1ms (returns cached client)
         - Reduces per-query overhead from ~100ms to ~0ms
     """
+    if project_id is None:
+        project_id = _get_default_project_id()
     cache_key = f"{project_id}:{location}" if location else project_id
 
     # Fast path: client already exists (no lock needed for read)
@@ -193,14 +197,14 @@ if __name__ == "__main__":
     # First call - creates client
     print("\nFirst call to get_bigquery_client()...")
     start = time.time()
-    client1 = get_bigquery_client("nba-props-platform")
+    client1 = get_bigquery_client()  # Uses default from shared.config
     elapsed1 = (time.time() - start) * 1000
     print(f"Created client in {elapsed1:.2f}ms")
 
     # Second call - returns cached client
     print("\nSecond call to get_bigquery_client()...")
     start = time.time()
-    client2 = get_bigquery_client("nba-props-platform")
+    client2 = get_bigquery_client()  # Uses default from shared.config
     elapsed2 = (time.time() - start) * 1000
     print(f"Retrieved cached client in {elapsed2:.2f}ms")
 

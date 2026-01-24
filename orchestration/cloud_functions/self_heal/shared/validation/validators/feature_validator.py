@@ -15,6 +15,7 @@ from shared.validation.feature_thresholds import (
     is_critical_feature,
     get_feature_description,
 )
+from shared.config.gcp_config import get_project_id
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ def validate_feature_coverage(
     start_date: date,
     end_date: date,
     features: List[str],
-    project_id: str = 'nba-props-platform',
+    project_id: str = None,
 ) -> Dict[str, dict]:
     """
     Validate feature coverage (NULL rate) for specified features.
@@ -51,6 +52,8 @@ def validate_feature_coverage(
             }
         }
     """
+    if project_id is None:
+        project_id = get_project_id()
     results = {}
 
     for feature in features:

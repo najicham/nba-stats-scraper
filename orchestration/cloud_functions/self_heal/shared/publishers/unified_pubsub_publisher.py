@@ -58,9 +58,13 @@ class UnifiedPubSubPublisher:
         Initialize publisher.
 
         Args:
-            project_id: GCP project ID (defaults to environment)
+            project_id: GCP project ID (defaults to environment via gcp_config)
         """
-        self.project_id = project_id or os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
+        if project_id:
+            self.project_id = project_id
+        else:
+            from shared.config.gcp_config import get_project_id
+            self.project_id = get_project_id()
         self._client = None
 
     @property
@@ -284,18 +288,80 @@ class UnifiedPubSubPublisher:
             return message_id
 
         except Exception as e:
-            # Log but don't raise - downstream has scheduler backup
+            # Log with full stack trace for debugging
+            # Structured logging includes all relevant context for troubleshooting
             logger.error(
-                f"Failed to publish to {topic} (non-fatal): {e}\n"
-                f"Processor: {message.get('processor_name')}, "
-                f"Date: {message.get('game_date')}"
+                "Pub/Sub publish failed (non-fatal)",
+                exc_info=True,
+                extra={
+                    'topic': topic,
+                    'processor_name': message.get('processor_name'),
+                    'execution_id': message.get('execution_id'),
+                    'correlation_id': message.get('correlation_id'),
+                    'game_date': message.get('game_date'),
+                    'phase': message.get('phase'),
+                    'error_type': type(e).__name__,
+                    'error_message': str(e)
+                }
             )
+
+            # Track publish failures via metrics for monitoring/alerting
+            self._record_publish_failure_metric(topic, message, e)
 
             # Send alert that event-driven trigger is broken
             # (AlertManager will handle this in production)
             self._alert_publish_failure(topic, message, e)
 
+            # NOTE: No local retry queue exists in the codebase.
+            # If a retry queue is added in the future, failed messages
+            # should be enqueued here for later retry.
+            # Example: self._retry_queue.enqueue(topic, message)
+
             return None
+
+    def _record_publish_failure_metric(self, topic: str, message: Dict, error: Exception) -> None:
+        """
+        Record publish failure metric for monitoring and alerting.
+
+        Uses the metrics_utils module to send failure counts to Cloud Monitoring.
+        This enables dashboards and alerts on publish failure rates.
+
+        Args:
+            topic: Topic that failed
+            message: Message that failed to publish
+            error: Exception that occurred
+        """
+        try:
+            from shared.utils.metrics_utils import send_metric, get_metrics_client
+
+            # Initialize metrics client with project_id if not already done
+            if get_metrics_client() is None:
+                get_metrics_client(self.project_id)
+
+            labels = {
+                'topic': topic,
+                'processor': message.get('processor_name', 'unknown'),
+                'phase': message.get('phase', 'unknown'),
+                'error_type': type(error).__name__
+            }
+
+            # Increment failure counter
+            send_metric(
+                metric_name='pubsub/publish_failures_total',
+                value=1,
+                labels=labels
+            )
+
+            logger.debug(
+                f"Recorded publish failure metric for topic={topic}, "
+                f"processor={message.get('processor_name')}"
+            )
+
+        except ImportError:
+            logger.debug("metrics_utils not available, skipping failure metric")
+        except Exception as metric_error:
+            # Don't let metrics failure affect the main flow
+            logger.debug(f"Failed to record publish failure metric: {metric_error}")
 
     def _alert_publish_failure(self, topic: str, message: Dict, error: Exception) -> None:
         """

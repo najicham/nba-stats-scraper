@@ -29,10 +29,12 @@ import pandas as pd
 from typing import Optional, List, Dict
 
 # Initialize BigQuery client
+from shared.config.gcp_config import get_project_id
+
 client = bigquery.Client()
 
 # Project and dataset
-PROJECT_ID = "nba-props-platform"
+PROJECT_ID = get_project_id()
 DATASET = "nba_raw"
 VIEW_NAME = "odds_api_game_lines_preferred"
 FULL_VIEW_PATH = f"{PROJECT_ID}.{DATASET}.{VIEW_NAME}"

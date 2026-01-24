@@ -13,7 +13,8 @@ from enum import Enum
 # PROJECT CONFIGURATION
 # =============================================================================
 
-PROJECT_ID = 'nba-props-platform'
+from shared.config.gcp_config import get_project_id
+PROJECT_ID = get_project_id()
 
 # =============================================================================
 # PREDICTION SYSTEMS
