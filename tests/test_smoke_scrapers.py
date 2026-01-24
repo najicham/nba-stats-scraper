@@ -7,7 +7,11 @@ import subprocess
 from dotenv import load_dotenv
 load_dotenv()  # ensures ODDS_API_KEY is loaded from your .env if present
 
-@pytest.mark.parametrize("module_name,cli_args,output_file,allow_empty", [
+# Get ODDS_API_KEY safely (None if not set)
+ODDS_API_KEY = os.environ.get("ODDS_API_KEY")
+
+# Build test cases, skipping OddsAPI tests if key not available
+_test_cases = [
     # 1) Example: nbac_game_score
     (
         "nbac_game_score",
@@ -15,31 +19,37 @@ load_dotenv()  # ensures ODDS_API_KEY is loaded from your .env if present
         "/tmp/getnbacomgamescore.json",
         False  # we typically expect some scoreboard data, but adjust as needed
     ),
+]
 
-    # 2) Example: oddsa_events
-    (
-        "oddsa_events",
-        [
-            "--sport", "basketball_nba",
-            "--api_key", os.environ["ODDS_API_KEY"],  # KeyError if not set
-            "--group", "test"
-        ],
-        "/tmp/oddsapi_events.json",
-        True  # allow_empty=True in case no upcoming events
-    ),
+# Only add OddsAPI tests if API key is available
+if ODDS_API_KEY:
+    _test_cases.extend([
+        # 2) Example: oddsa_events
+        (
+            "oddsa_events",
+            [
+                "--sport", "basketball_nba",
+                "--api_key", ODDS_API_KEY,
+                "--group", "test"
+            ],
+            "/tmp/oddsapi_events.json",
+            True  # allow_empty=True in case no upcoming events
+        ),
 
-    (
-        "oddsa_events_his",  # must match scrapers/odds_api_historical_events.py
-        [
-            "--api_key", os.environ["ODDS_API_KEY"],     # Use your real key
-            "--sport", "basketball_nba",
-            "--date", "2025-05-10T00:00:00Z",           # Something in the future
-            "--group", "test"
-        ],
-        "/tmp/oddsapi_historical_events.json",
-        True  # historical might return empty, so let's allow_empty
-    ),
-])
+        (
+            "oddsa_events_his",  # must match scrapers/odds_api_historical_events.py
+            [
+                "--api_key", ODDS_API_KEY,
+                "--sport", "basketball_nba",
+                "--date", "2025-05-10T00:00:00Z",           # Something in the future
+                "--group", "test"
+            ],
+            "/tmp/oddsapi_historical_events.json",
+            True  # historical might return empty, so let's allow_empty
+        ),
+    ])
+
+@pytest.mark.parametrize("module_name,cli_args,output_file,allow_empty", _test_cases)
 def test_scraper_smoke(module_name, cli_args, output_file, allow_empty):
     """
     Basic smoke test for scrapers using '-m' module execution:

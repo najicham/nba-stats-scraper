@@ -30,6 +30,15 @@ import json
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Pydantic validation for HTTP requests
+try:
+    from shared.validation.pubsub_models import ScraperAvailabilityRequest
+    from pydantic import ValidationError as PydanticValidationError
+    PYDANTIC_VALIDATION_ENABLED = True
+except ImportError:
+    PYDANTIC_VALIDATION_ENABLED = False
+    PydanticValidationError = Exception  # Fallback
+
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID") or os.environ.get("GCP_PROJECT", "nba-props-platform")
 
 # Slack webhook URLs
@@ -270,9 +279,22 @@ def check_scraper_availability_handler(request):
 
     Checks yesterday's scraper availability and sends alerts if issues found.
     """
-    # Get target date (default: yesterday)
+    # Get and validate request JSON
     request_json = request.get_json(silent=True) or {}
-    target_date = request_json.get('date') or get_yesterday_et()
+
+    # Pydantic validation if available
+    send_alert = True
+    if PYDANTIC_VALIDATION_ENABLED:
+        try:
+            validated = ScraperAvailabilityRequest.model_validate(request_json)
+            target_date = validated.date or get_yesterday_et()
+            send_alert = validated.send_alert
+            logger.debug(f"Pydantic validation passed for request")
+        except PydanticValidationError as e:
+            logger.warning(f"Pydantic validation failed: {e}. Using defaults.")
+            target_date = request_json.get('date') or get_yesterday_et()
+    else:
+        target_date = request_json.get('date') or get_yesterday_et()
 
     logger.info(f"Checking scraper availability for {target_date}")
 
@@ -295,10 +317,12 @@ def check_scraper_availability_handler(request):
 
         result['data'] = data
 
-        # Send alert if not OK
-        if data['alert_level'] != 'OK':
+        # Send alert if not OK and alerts are enabled
+        if data['alert_level'] != 'OK' and send_alert:
             alert_sent = send_slack_alert(data)
             result['alert_sent'] = alert_sent
+        elif data['alert_level'] != 'OK':
+            logger.info(f"Issues found for {target_date} but alerts disabled")
         else:
             logger.info(f"All scrapers OK for {target_date}, no alert needed")
 

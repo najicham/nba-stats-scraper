@@ -25,6 +25,15 @@ import os
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Pydantic validation for HTTP requests
+try:
+    from shared.validation.pubsub_models import SelfHealRequest
+    from pydantic import ValidationError as PydanticValidationError
+    PYDANTIC_VALIDATION_ENABLED = True
+except ImportError:
+    PYDANTIC_VALIDATION_ENABLED = False
+    PydanticValidationError = Exception  # Fallback
+
 # Simple retry decorator for HTTP calls (prevents self-heal failures on transient errors)
 import time
 import random
@@ -735,6 +744,7 @@ def self_heal_check(request):
     Main self-healing check function.
 
     UPDATED 2026-01-12: Now includes Phase 3 data validation.
+    UPDATED 2026-01-24: Added Pydantic validation for HTTP requests.
 
     Checks performed:
     1. Phase 3 data check: Verify player_game_summary exists for yesterday
@@ -743,10 +753,25 @@ def self_heal_check(request):
     3. Tomorrow prediction check: Verify predictions exist for tomorrow's games
     4. If predictions missing, trigger full healing pipeline (Phase 3→4→Predictions)
     """
+    # Parse and validate request JSON if present
+    request_json = request.get_json(silent=True) or {}
+    force_heal = False
+    skip_phase3 = False
+
+    if PYDANTIC_VALIDATION_ENABLED and request_json:
+        try:
+            validated = SelfHealRequest.model_validate(request_json)
+            force_heal = validated.force_heal
+            skip_phase3 = validated.skip_phase3
+            logger.debug("Pydantic validation passed for self-heal request")
+        except PydanticValidationError as e:
+            logger.warning(f"Pydantic validation failed: {e}. Using defaults.")
+
     today = get_today_date()
     tomorrow = get_tomorrow_date()
     yesterday = get_yesterday_date()
-    logger.info(f"Self-heal check: yesterday={yesterday}, today={today}, tomorrow={tomorrow}")
+    logger.info(f"Self-heal check: yesterday={yesterday}, today={today}, tomorrow={tomorrow}"
+                f" (force_heal={force_heal}, skip_phase3={skip_phase3})")
 
     result = {
         "timestamp": datetime.now(timezone.utc).isoformat(),

@@ -53,6 +53,15 @@ import requests
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Pydantic validation for HTTP requests
+try:
+    from shared.validation.pubsub_models import HealthSummaryRequest
+    from pydantic import ValidationError as PydanticValidationError
+    PYDANTIC_VALIDATION_ENABLED = True
+except ImportError:
+    PYDANTIC_VALIDATION_ENABLED = False
+    PydanticValidationError = Exception  # Fallback
+
 # Constants
 PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
 SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
@@ -514,14 +523,30 @@ def check_and_send_summary(request):
     try:
         logger.info("Starting daily health check")
 
+        # Parse and validate request JSON if present
+        request_json = request.get_json(silent=True) or {}
+        send_slack = True
+
+        if PYDANTIC_VALIDATION_ENABLED and request_json:
+            try:
+                validated = HealthSummaryRequest.model_validate(request_json)
+                send_slack = validated.send_slack
+                logger.debug("Pydantic validation passed for request")
+            except PydanticValidationError as e:
+                logger.warning(f"Pydantic validation failed: {e}. Using defaults.")
+
         checker = HealthChecker()
         results = checker.run_health_check()
 
         logger.info(f"Health check complete: {results['status']}")
 
-        # Send Slack summary
-        slack_sent = send_slack_summary(results)
-        results['slack_sent'] = slack_sent
+        # Send Slack summary if enabled
+        if send_slack:
+            slack_sent = send_slack_summary(results)
+            results['slack_sent'] = slack_sent
+        else:
+            results['slack_sent'] = False
+            logger.info("Slack summary disabled by request")
 
         return json.dumps(results, indent=2, default=str), 200, {'Content-Type': 'application/json'}
 

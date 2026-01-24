@@ -156,7 +156,7 @@ class ParameterResolver:
             if not in_yaml_not_code and not in_code_not_yaml:
                 logger.info("✅ Workflow date targeting config validated successfully")
 
-        except Exception as e:
+        except (FileNotFoundError, yaml.YAMLError, KeyError) as e:
             # Non-blocking - just log and continue
             logger.warning(f"Could not validate workflow date config: {e}")
     
@@ -171,7 +171,7 @@ class ParameterResolver:
                 config = yaml.safe_load(f)
             logger.info(f"✅ Loaded parameter config from {self.config_path}")
             return config
-        except Exception as e:
+        except (FileNotFoundError, yaml.YAMLError, PermissionError) as e:
             logger.error(f"Failed to load parameter config: {e}")
             return {'simple_scrapers': {}, 'complex_scrapers': []}
     
@@ -279,7 +279,7 @@ class ParameterResolver:
                 f"Schedule service timed out after {SCHEDULE_SERVICE_TIMEOUT_SECONDS}s "
                 f"for date {resolved_target_date}. Proceeding with empty games list."
             )
-        except Exception as e:
+        except (ConnectionError, TimeoutError, ValueError) as e:
             logger.warning(f"Failed to get games for {resolved_target_date}: {e}")
 
         # Extract 4-digit starting year from season (e.g., "2025-26" -> "2025")
@@ -774,6 +774,6 @@ class ParameterResolver:
         """
         try:
             return self.schedule_service.get_games_for_date(date_str)
-        except Exception as e:
+        except (ConnectionError, TimeoutError, ValueError) as e:
             logger.error(f"Failed to get games for {date_str}: {e}")
             return []

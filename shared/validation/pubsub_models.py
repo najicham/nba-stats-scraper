@@ -217,6 +217,62 @@ class GradingTriggerMessage(BaseModel):
     )
 
 
+# ============================================================================
+# HTTP REQUEST MODELS (for Cloud Functions with HTTP triggers)
+# ============================================================================
+
+
+class SelfHealRequest(BaseModel):
+    """
+    Request schema for self-heal HTTP endpoint.
+
+    The self-heal function can be triggered with optional parameters.
+    """
+    target_date: Optional[str] = Field(
+        default=None,
+        pattern=r'^\d{4}-\d{2}-\d{2}$',
+        description="Optional target date in YYYY-MM-DD format"
+    )
+    force_heal: bool = Field(
+        default=False,
+        description="Force healing even if data appears complete"
+    )
+    skip_phase3: bool = Field(
+        default=False,
+        description="Skip Phase 3 checks"
+    )
+
+
+class ScraperAvailabilityRequest(BaseModel):
+    """
+    Request schema for scraper availability monitor HTTP endpoint.
+    """
+    date: Optional[str] = Field(
+        default=None,
+        pattern=r'^\d{4}-\d{2}-\d{2}$',
+        description="Target date to check in YYYY-MM-DD format (defaults to yesterday)"
+    )
+    send_alert: bool = Field(
+        default=True,
+        description="Whether to send Slack alert if issues found"
+    )
+
+
+class HealthSummaryRequest(BaseModel):
+    """
+    Request schema for daily health summary HTTP endpoint.
+    """
+    target_date: Optional[str] = Field(
+        default=None,
+        pattern=r'^\d{4}-\d{2}-\d{2}$',
+        description="Target date for summary (defaults to today)"
+    )
+    send_slack: bool = Field(
+        default=True,
+        description="Whether to send Slack summary"
+    )
+
+
 # Helper function for parsing with validation
 def parse_with_validation(data: dict, model_class: type[BaseModel]) -> BaseModel:
     """

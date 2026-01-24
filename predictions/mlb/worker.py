@@ -62,15 +62,10 @@ PREDICTIONS_TABLE = os.environ.get(
 app = Flask(__name__)
 
 # Health check endpoints (Phase 1 - Task 1.1: Add Health Endpoints)
+# Updated to use new HealthChecker API (service_name, version only)
 health_checker = HealthChecker(
-    project_id=PROJECT_ID,
     service_name='mlb-prediction-worker',
-    check_bigquery=True,  # Worker writes predictions to BigQuery
-    check_firestore=False,  # Worker doesn't use Firestore
-    check_gcs=True,  # Worker loads models from GCS
-    gcs_buckets=['nba-scraped-data'],  # Model storage bucket
-    required_env_vars=['GCP_PROJECT_ID', 'MLB_MODEL_PATH', 'MLB_PREDICTIONS_TABLE'],
-    optional_env_vars=['BACKFILL_MODE', 'ENVIRONMENT']
+    version='1.0'
 )
 app.register_blueprint(create_health_blueprint(health_checker))
 logger.info("Health check endpoints registered: /health, /ready, /health/deep")

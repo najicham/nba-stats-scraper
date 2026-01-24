@@ -68,11 +68,12 @@ class FeatureExtractor:
             DataFrame with results, or empty DataFrame on error
 
         Raises:
-            Exception: Re-raises after logging if query fails
+            GoogleAPIError: Re-raises after logging if query fails
         """
+        from google.api_core.exceptions import GoogleAPIError
         try:
             return self.bq_client.query(query).to_dataframe()
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.error(f"BigQuery query failed [{query_name}]: {e}")
             logger.debug(f"Failed query:\n{query[:500]}...")
             raise
