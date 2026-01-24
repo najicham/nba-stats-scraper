@@ -1,0 +1,195 @@
+# File: validation/configs/raw/nbac_player_boxscore.yaml
+# Description: NBA.com Player Boxscore Validation Config - Official player stats
+
+name: "nbac_player_boxscore"
+description: "Validates NBA.com player boxscores - official stats for prop settlement"
+type: "raw"
+
+processor:
+  name: "nbac_player_boxscore"
+  description: "Processes NBA.com player boxscores into BigQuery"
+  table: "nba_raw.nbac_player_boxscore"
+  partition_required: true
+  partition_field: "game_date"
+  layers:
+    - bigquery
+    - schedule
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  # Per-game player count validation
+  players_per_game:
+    enabled: true
+    query: |
+      SELECT
+        game_id,
+        game_date,
+        COUNT(*) as player_count,
+        COUNT(DISTINCT team_tricode) as team_count,
+        SUM(CASE WHEN minutes > 0 THEN 1 ELSE 0 END) as players_with_minutes
+      FROM `{project_id}.nba_raw.nbac_player_boxscore`
+      WHERE game_date >= '{start_date}'
+        AND game_date <= '{end_date}'
+      GROUP BY game_id, game_date
+      HAVING player_count < 20 OR player_count > 40 OR team_count != 2
+    min_players_per_game: 20
+    max_players_per_game: 40
+    expected_teams_per_game: 2
+    severity: "warning"
+
+  # Points validation - critical for prop settlement
+  points_validation:
+    enabled: true
+    query: |
+      SELECT
+        game_id,
+        game_date,
+        player_lookup,
+        points,
+        minutes
+      FROM `{project_id}.nba_raw.nbac_player_boxscore`
+      WHERE game_date >= '{start_date}'
+        AND game_date <= '{end_date}'
+        AND (
+          (points IS NULL AND minutes > 0) OR
+          points < 0 OR
+          points > 80
+        )
+      LIMIT 50
+    severity: "error"
+    message: "Points validation - checking for nulls, negatives, and outliers"
+
+  # Stats consistency check
+  stats_consistency:
+    enabled: true
+    query: |
+      SELECT
+        game_id,
+        game_date,
+        player_lookup,
+        points,
+        fgm,
+        fga,
+        fg3m,
+        ftm,
+        fta,
+        -- Check: points = (fgm - fg3m) * 2 + fg3m * 3 + ftm
+        ABS(points - ((fgm - fg3m) * 2 + fg3m * 3 + ftm)) as points_calc_diff
+      FROM `{project_id}.nba_raw.nbac_player_boxscore`
+      WHERE game_date >= '{start_date}'
+        AND game_date <= '{end_date}'
+        AND minutes > 0
+        AND fgm IS NOT NULL
+        AND fg3m IS NOT NULL
+        AND ftm IS NOT NULL
+      HAVING points_calc_diff > 0
+      LIMIT 50
+    severity: "error"
+    message: "Points should equal (2P made * 2) + (3P made * 3) + FT made"
+
+  # Game completeness - all scheduled games have boxscores
+  game_completeness:
+    enabled: true
+    query: |
+      SELECT
+        s.game_id,
+        s.game_date,
+        s.home_team_tricode,
+        s.away_team_tricode,
+        s.game_status_text
+      FROM `{project_id}.nba_raw.nbac_schedule` s
+      LEFT JOIN (
+        SELECT DISTINCT game_id
+        FROM `{project_id}.nba_raw.nbac_player_boxscore`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+      ) b ON s.game_id = b.game_id
+      WHERE s.game_date >= '{start_date}'
+        AND s.game_date <= '{end_date}'
+        AND s.game_status_text = 'Final'
+        AND b.game_id IS NULL
+    severity: "error"
+    message: "Completed games should have player boxscore data"
+
+  # Data freshness
+  data_freshness:
+    enabled: true
+    query: |
+      SELECT
+        MAX(processed_at) as last_processed,
+        TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(processed_at), HOUR) as hours_old
+      FROM `{project_id}.nba_raw.nbac_player_boxscore`
+      WHERE game_date >= CURRENT_DATE() - 1
+    max_age_hours: 4
+    severity: "warning"
+
+# Cross-validation with other sources
+cross_validation:
+  enabled: true
+
+  # Compare with BDL boxscores
+  bdl_comparison:
+    enabled: true
+    query: |
+      SELECT
+        n.game_id,
+        n.player_lookup,
+        n.points as nbac_points,
+        b.pts as bdl_points,
+        ABS(n.points - b.pts) as points_diff
+      FROM `{project_id}.nba_raw.nbac_player_boxscore` n
+      JOIN `{project_id}.nba_raw.bdl_player_boxscores` b
+        ON n.player_lookup = b.player_lookup
+        AND n.game_date = b.game_date
+      WHERE n.game_date >= '{start_date}'
+        AND n.game_date <= '{end_date}'
+        AND ABS(n.points - b.pts) > 0
+      LIMIT 50
+    max_points_diff: 0
+    severity: "error"
+    message: "NBAC and BDL points should match exactly"
+
+# Data quality checks
+data_quality:
+  required_fields:
+    - player_lookup
+    - game_id
+    - game_date
+    - team_tricode
+    - points
+    - assists
+    - rebounds
+    - minutes
+
+  field_validations:
+    points:
+      not_null: true
+      min_value: 0
+      max_value: 100
+    assists:
+      not_null: true
+      min_value: 0
+      max_value: 30
+    rebounds:
+      not_null: true
+      min_value: 0
+      max_value: 40
+    minutes:
+      not_null: true
+      min_value: 0
+      max_value: 60
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute nbac-player-boxscore-processor-backfill \
+      --args=--start-date={start_date},--end-date={end_date} \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

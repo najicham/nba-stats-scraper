@@ -85,7 +85,12 @@ from .utils.exceptions import (
     InvalidRegionDecodeException
 )
 from .exporters import EXPORTER_REGISTRY
-from .utils.proxy_utils import get_proxy_urls
+from .utils.proxy_utils import (
+    get_proxy_urls,
+    get_proxy_urls_with_circuit_breaker,
+    ProxyCircuitBreaker,
+    extract_provider_from_url,
+)
 from shared.utils.proxy_health_logger import log_proxy_result, extract_host_from_url, classify_error
 from .utils.nba_header_utils import (
     stats_nba_headers,
@@ -1804,12 +1809,7 @@ class ScraperBase:
 
     def _get_proxy_provider(self, proxy_url: str) -> str:
         """Extract proxy provider name from proxy URL for logging."""
-        proxy_lower = proxy_url.lower()
-        if "decodo" in proxy_lower or "smartproxy" in proxy_lower:
-            return "decodo"
-        if "proxyfuel" in proxy_lower:
-            return "proxyfuel"
-        return "unknown"
+        return extract_provider_from_url(proxy_url)
 
     def download_data_with_proxy(self):
         """
@@ -1819,10 +1819,20 @@ class ScraperBase:
         Implements per-proxy retry with exponential backoff for retryable errors
         (429 rate limit, 503/504 gateway errors). Falls back to next proxy for
         permanent errors (403 forbidden, connection errors).
+
+        Uses circuit breaker pattern to skip proxies known to be blocked for the
+        target host.
         """
         import time as time_module
 
-        proxy_pool = get_proxy_urls()
+        # Extract target host for circuit breaker
+        target_host = extract_host_from_url(self.url)
+
+        # Initialize circuit breaker (uses BigQuery for persistent state)
+        circuit_breaker = ProxyCircuitBreaker(use_bigquery=True)
+
+        # Get proxy pool filtered by circuit breaker state
+        proxy_pool = get_proxy_urls_with_circuit_breaker(target_host, circuit_breaker)
         if not self.test_proxies:
             random.shuffle(proxy_pool)
 
@@ -1856,12 +1866,17 @@ class ScraperBase:
                         # Log successful proxy request
                         log_proxy_result(
                             scraper_name=self.__class__.__name__,
-                            target_host=extract_host_from_url(self.url),
+                            target_host=target_host,
                             http_status_code=200,
                             response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
                             success=True,
                             proxy_provider=provider
                         )
+                        # Record success to circuit breaker
+                        try:
+                            circuit_breaker.record_success(provider, target_host)
+                        except Exception as cb_ex:
+                            logger.debug(f"Circuit breaker record_success failed: {cb_ex}")
                         proxy_success = True
                         break  # Success, exit retry loop
 
@@ -1875,13 +1890,18 @@ class ScraperBase:
                         proxy_errors.append({'proxy': proxy, 'status': status_code, 'permanent': True})
                         log_proxy_result(
                             scraper_name=self.__class__.__name__,
-                            target_host=extract_host_from_url(self.url),
+                            target_host=target_host,
                             http_status_code=status_code,
                             response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
                             success=False,
                             error_type=classify_error(status_code=status_code),
                             proxy_provider=provider
                         )
+                        # Record failure to circuit breaker (403s often mean proxy is blocked)
+                        try:
+                            circuit_breaker.record_failure(provider, target_host)
+                        except Exception as cb_ex:
+                            logger.debug(f"Circuit breaker record_failure failed: {cb_ex}")
                         break  # Move to next proxy
 
                     elif status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES_PER_PROXY - 1:
@@ -1899,13 +1919,18 @@ class ScraperBase:
                         proxy_errors.append({'proxy': proxy, 'status': status_code})
                         log_proxy_result(
                             scraper_name=self.__class__.__name__,
-                            target_host=extract_host_from_url(self.url),
+                            target_host=target_host,
                             http_status_code=status_code,
                             response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
                             success=False,
                             error_type=classify_error(status_code=status_code),
                             proxy_provider=provider
                         )
+                        # Record failure to circuit breaker
+                        try:
+                            circuit_breaker.record_failure(provider, target_host)
+                        except Exception as cb_ex:
+                            logger.debug(f"Circuit breaker record_failure failed: {cb_ex}")
                         break  # Move to next proxy
 
                 except (ProxyError, ConnectTimeout, ConnectionError) as ex:

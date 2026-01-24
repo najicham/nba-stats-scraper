@@ -1,0 +1,130 @@
+# File: validation/configs/raw/nbac_injury_report.yaml
+# Description: NBA.com Injury Report Validation Config - Player availability data
+
+name: "nbac_injury_report"
+description: "Validates NBA.com injury reports - critical for player availability predictions"
+type: "raw"
+
+processor:
+  name: "nbac_injury_report"
+  description: "Processes NBA.com injury reports into BigQuery"
+  table: "nba_raw.nbac_injury_report"
+  partition_required: true
+  partition_field: "game_date"
+  layers:
+    - bigquery
+    - schedule
+
+# BigQuery Layer Validations
+bigquery_validations:
+  enabled: true
+
+  # Basic data presence check
+  data_presence:
+    enabled: true
+    query: |
+      SELECT
+        game_date,
+        COUNT(*) as report_count,
+        COUNT(DISTINCT player_lookup) as unique_players,
+        COUNT(DISTINCT team_tricode) as unique_teams
+      FROM `{project_id}.nba_raw.nbac_injury_report`
+      WHERE game_date >= '{start_date}'
+        AND game_date <= '{end_date}'
+      GROUP BY game_date
+      ORDER BY game_date
+    severity: "warning"
+    message: "Checking injury report data presence"
+
+  # Injury status distribution
+  status_distribution:
+    enabled: true
+    query: |
+      SELECT
+        injury_status,
+        COUNT(*) as count,
+        COUNT(DISTINCT player_lookup) as unique_players
+      FROM `{project_id}.nba_raw.nbac_injury_report`
+      WHERE game_date >= '{start_date}'
+        AND game_date <= '{end_date}'
+      GROUP BY injury_status
+      ORDER BY count DESC
+    expected_statuses:
+      - "Out"
+      - "Doubtful"
+      - "Questionable"
+      - "Probable"
+      - "Available"
+    severity: "info"
+
+  # Team coverage check
+  team_coverage:
+    enabled: true
+    query: |
+      SELECT
+        team_tricode,
+        COUNT(*) as report_count,
+        MAX(game_date) as last_report_date
+      FROM `{project_id}.nba_raw.nbac_injury_report`
+      WHERE game_date >= '{start_date}'
+        AND game_date <= '{end_date}'
+      GROUP BY team_tricode
+    expected_teams: 30
+    severity: "warning"
+
+  # Data freshness check
+  data_freshness:
+    enabled: true
+    query: |
+      SELECT
+        MAX(processed_at) as last_processed,
+        TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), MAX(processed_at), HOUR) as hours_old
+      FROM `{project_id}.nba_raw.nbac_injury_report`
+      WHERE game_date >= CURRENT_DATE() - 1
+    max_age_hours: 6
+    severity: "warning"
+    message: "Injury data should be updated within 6 hours"
+
+# Schedule-based validations
+schedule_validations:
+  enabled: true
+
+  # Check injury reports exist for scheduled games
+  game_coverage:
+    enabled: true
+    check_scheduled_games: true
+    target_table: "nba_raw.nbac_injury_report"
+    schedule_table: "nba_raw.nbac_schedule"
+    severity: "warning"
+    message: "Verifying injury reports exist for scheduled games"
+
+# Data quality checks
+data_quality:
+  required_fields:
+    - player_lookup
+    - team_tricode
+    - injury_status
+    - game_date
+
+  field_validations:
+    player_lookup:
+      not_null: true
+      pattern: "^[A-Za-z]+ [A-Za-z]+"
+    team_tricode:
+      not_null: true
+      valid_values_table: "nba_reference.teams"
+    injury_status:
+      not_null: true
+
+# Remediation
+remediation:
+  processor_backfill_template: |
+    gcloud run jobs execute nbac-injury-report-processor-backfill \
+      --args=--start-date={start_date},--end-date={end_date} \
+      --region=us-west2
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

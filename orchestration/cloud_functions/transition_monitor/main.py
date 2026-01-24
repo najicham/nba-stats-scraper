@@ -223,15 +223,41 @@ def monitor_transitions(request):
             timeout_hours=PHASE4_TIMEOUT_HOURS,
             phase_name='Phase 4 → Phase 5'
         ),
+        # Handoff verification: check if triggered phases actually started next phase
+        'handoff_phase2_to_phase3': check_transition_handoff(
+            source_collection='phase2_completion',
+            target_collection='phase3_completion',
+            source_phase_name='Phase 2',
+            target_phase_name='Phase 3'
+        ),
+        'handoff_phase3_to_phase4': check_transition_handoff(
+            source_collection='phase3_completion',
+            target_collection='phase4_completion',
+            source_phase_name='Phase 3',
+            target_phase_name='Phase 4'
+        ),
+        'handoff_phase4_to_phase5': check_transition_handoff(
+            source_collection='phase4_completion',
+            target_collection='phase5_completion',
+            source_phase_name='Phase 4',
+            target_phase_name='Phase 5'
+        ),
         # Critical check: player_game_summary for yesterday (grading dependency)
         'player_game_summary_check': check_player_game_summary_for_yesterday(),
     }
 
-    # Summarize
+    # Summarize stuck transitions
     stuck_count = sum(
         len(r.get('stuck_transitions', []))
         for r in results.values()
         if isinstance(r, dict) and 'stuck_transitions' in r
+    )
+
+    # Summarize failed handoffs
+    failed_handoff_count = sum(
+        len(r.get('failed_handoffs', []))
+        for r in results.values()
+        if isinstance(r, dict) and 'failed_handoffs' in r
     )
 
     # Check player_game_summary status
@@ -241,7 +267,7 @@ def monitor_transitions(request):
     # Determine overall status
     if pgs_status == 'critical':
         overall_status = 'critical'
-    elif stuck_count > 0:
+    elif stuck_count > 0 or failed_handoff_count > 0:
         overall_status = 'stuck_detected'
     elif pgs_status == 'warning':
         overall_status = 'warning'
@@ -250,6 +276,7 @@ def monitor_transitions(request):
 
     results['summary'] = {
         'total_stuck': stuck_count,
+        'total_failed_handoffs': failed_handoff_count,
         'player_game_summary_status': pgs_status,
         'status': overall_status
     }
@@ -258,8 +285,8 @@ def monitor_transitions(request):
     if overall_status == 'critical':
         logger.error(f"🚨 CRITICAL: {pgs_check.get('message', 'player_game_summary missing')}")
         send_alerts(results, include_pgs_alert=True)
-    elif stuck_count > 0:
-        logger.warning(f"⚠️  Found {stuck_count} stuck transition(s)")
+    elif stuck_count > 0 or failed_handoff_count > 0:
+        logger.warning(f"⚠️  Found {stuck_count} stuck transition(s), {failed_handoff_count} failed handoff(s)")
         send_alerts(results, include_pgs_alert=False)
     elif pgs_status == 'warning':
         logger.warning(f"⚠️  {pgs_check.get('message', 'Low player_game_summary coverage')}")
@@ -372,6 +399,154 @@ def check_phase_transition(
         'stuck_transitions': stuck_transitions,
         'status': 'stuck' if stuck_transitions else 'healthy'
     }
+
+
+def check_transition_handoff(
+    source_collection: str,
+    target_collection: str,
+    source_phase_name: str,
+    target_phase_name: str,
+    handoff_timeout_minutes: float = 10.0
+) -> Dict:
+    """
+    Check if Phase N+1 actually started after Phase N was triggered.
+
+    This catches cases where:
+    - Phase N completes and triggers Phase N+1
+    - But Phase N+1 never actually starts (Cloud Function failure, etc.)
+
+    Args:
+        source_collection: Phase N completion collection (e.g., 'phase2_completion')
+        target_collection: Phase N+1 completion collection (e.g., 'phase3_completion')
+        source_phase_name: Human-readable source phase name
+        target_phase_name: Human-readable target phase name
+        handoff_timeout_minutes: Minutes to wait for Phase N+1 to start after trigger
+
+    Returns:
+        Dict with handoff check results
+    """
+    logger.info(f"\n🔗 Checking Handoff: {source_phase_name} → {target_phase_name}")
+
+    db = firestore.Client(project=PROJECT_ID)
+
+    # Check last few days for triggered phases
+    today = datetime.now(timezone.utc).date()
+    check_dates = [today - timedelta(days=i) for i in range(3)]
+
+    failed_handoffs = []
+    successful_handoffs = []
+    latencies = []
+
+    for check_date in check_dates:
+        date_str = check_date.isoformat()
+
+        # Check source phase document
+        source_doc = db.collection(source_collection).document(date_str).get()
+        if not source_doc.exists:
+            continue
+
+        source_data = source_doc.to_dict()
+
+        # Only check triggered phases
+        if not source_data.get('_triggered'):
+            continue
+
+        triggered_at = source_data.get('_triggered_at')
+        if not triggered_at:
+            continue
+
+        # Convert to datetime if needed
+        if hasattr(triggered_at, 'timestamp'):
+            triggered_time = triggered_at
+        else:
+            continue
+
+        # Check if target phase has any activity
+        target_doc = db.collection(target_collection).document(date_str).get()
+
+        if not target_doc.exists:
+            # Target phase document doesn't exist - possible failure
+            age_minutes = (datetime.now(timezone.utc) - triggered_time.replace(tzinfo=timezone.utc)).total_seconds() / 60
+
+            if age_minutes > handoff_timeout_minutes:
+                failed_handoffs.append({
+                    'game_date': date_str,
+                    'triggered_at': triggered_time.isoformat() if hasattr(triggered_time, 'isoformat') else str(triggered_time),
+                    'minutes_since_trigger': round(age_minutes, 1),
+                    'target_phase_status': 'not_started'
+                })
+                logger.warning(
+                    f"   {date_str}: HANDOFF FAILED - {target_phase_name} not started "
+                    f"({age_minutes:.1f} min since trigger)"
+                )
+            continue
+
+        target_data = target_doc.to_dict()
+
+        # Find earliest processor start time in target phase
+        earliest_start = None
+        for proc_name, proc_data in target_data.items():
+            if proc_name.startswith('_'):
+                continue
+            if isinstance(proc_data, dict) and 'started_at' in proc_data:
+                start_time = proc_data['started_at']
+                if hasattr(start_time, 'timestamp'):
+                    if earliest_start is None or start_time < earliest_start:
+                        earliest_start = start_time
+
+        if earliest_start is None:
+            # No started_at timestamps found, check completed_at
+            for proc_name, proc_data in target_data.items():
+                if proc_name.startswith('_'):
+                    continue
+                if isinstance(proc_data, dict) and 'completed_at' in proc_data:
+                    comp_time = proc_data['completed_at']
+                    if hasattr(comp_time, 'timestamp'):
+                        if earliest_start is None or comp_time < earliest_start:
+                            earliest_start = comp_time
+
+        if earliest_start:
+            # Calculate handoff latency
+            latency_seconds = (earliest_start.replace(tzinfo=timezone.utc) - triggered_time.replace(tzinfo=timezone.utc)).total_seconds()
+            latencies.append(latency_seconds)
+
+            if latency_seconds < 0:
+                logger.warning(f"   {date_str}: Negative latency detected (clock skew?)")
+            else:
+                logger.debug(f"   {date_str}: Handoff latency = {latency_seconds:.1f}s")
+
+            successful_handoffs.append({
+                'game_date': date_str,
+                'latency_seconds': round(latency_seconds, 1)
+            })
+        else:
+            # Target phase exists but no timestamps - something is wrong
+            age_minutes = (datetime.now(timezone.utc) - triggered_time.replace(tzinfo=timezone.utc)).total_seconds() / 60
+            if age_minutes > handoff_timeout_minutes:
+                failed_handoffs.append({
+                    'game_date': date_str,
+                    'triggered_at': triggered_time.isoformat() if hasattr(triggered_time, 'isoformat') else str(triggered_time),
+                    'minutes_since_trigger': round(age_minutes, 1),
+                    'target_phase_status': 'no_processor_activity'
+                })
+
+    avg_latency = sum(latencies) / len(latencies) if latencies else None
+
+    result = {
+        'source_phase': source_phase_name,
+        'target_phase': target_phase_name,
+        'successful_handoffs': len(successful_handoffs),
+        'failed_handoffs': failed_handoffs,
+        'avg_latency_seconds': round(avg_latency, 1) if avg_latency else None,
+        'status': 'failed' if failed_handoffs else 'healthy'
+    }
+
+    if failed_handoffs:
+        logger.warning(f"   ⚠️ {len(failed_handoffs)} failed handoffs detected")
+    else:
+        logger.info(f"   ✅ All handoffs successful (avg latency: {avg_latency:.1f}s)" if avg_latency else "   ✅ No handoffs to check")
+
+    return result
 
 
 def send_alerts(results: Dict, include_pgs_alert: bool = False) -> None:
