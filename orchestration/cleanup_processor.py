@@ -196,29 +196,54 @@ class CleanupProcessor:
         Note: This assumes Phase 2 tables have source_file_path field
         Adjust query based on your actual Phase 2 schema
         """
+        # All Phase 2 raw tables that track source_file_path
+        phase2_tables = [
+            # NBAC (nba.com) tables
+            'nbac_schedule',
+            'nbac_team_boxscore',
+            'nbac_player_boxscore',
+            'nbac_play_by_play',
+            'nbac_injury_report',
+            'nbac_scoreboard_v2',
+            'nbac_gamebook_pdf',
+            'nbac_player_list',
+            'nbac_player_movement',
+            'nbac_referee',
+            # BallDontLie tables
+            'bdl_player_boxscores',
+            'bdl_box_scores',
+            'bdl_active_players',
+            'bdl_injuries',
+            'bdl_standings',
+            'bdl_live_boxscores',
+            # ESPN tables
+            'espn_scoreboard',
+            'espn_rosters',
+            'espn_box_scores',
+            # Basketball Reference tables
+            'br_rosters',
+            # BigDataBall tables
+            'bigdataball_pbp',
+            # Odds API tables
+            'odds_events',
+            'odds_player_props',
+            'odds_game_lines',
+            # BettingPros tables
+            'bp_player_props',
+        ]
+
+        # Build UNION ALL query for all tables
+        table_queries = []
+        for table in phase2_tables:
+            table_queries.append(f"""
+                SELECT source_file_path FROM `nba-props-platform.nba_raw.{table}`
+                WHERE processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {self.lookback_hours + 1} HOUR)
+            """)
+
         query = f"""
             SELECT DISTINCT source_file_path
             FROM (
-                -- Check all Phase 2 tables that track source files
-                SELECT source_file_path FROM `nba-props-platform.nba_raw.nbac_schedule`
-                WHERE processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {self.lookback_hours + 1} HOUR)
-
-                UNION ALL
-
-                SELECT source_file_path FROM `nba-props-platform.nba_raw.odds_events`
-                WHERE processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {self.lookback_hours + 1} HOUR)
-                
-                UNION ALL
-                
-                SELECT source_file_path FROM `nba-props-platform.nba_raw.odds_player_props`
-                WHERE processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {self.lookback_hours + 1} HOUR)
-                
-                UNION ALL
-
-                SELECT source_file_path FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
-                WHERE processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {self.lookback_hours + 1} HOUR)
-                
-                -- Add more Phase 2 tables as needed
+                {' UNION ALL '.join(table_queries)}
             )
             WHERE source_file_path IS NOT NULL
         """

@@ -43,7 +43,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
+PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
 SLOWDOWN_THRESHOLD = 2.0  # Alert if >2x baseline
 TIMEOUT_WARNING_THRESHOLD = 0.75  # Warn if using >75% of timeout
 DEFAULT_TIMEOUT_SECONDS = 540  # 9 minutes default Cloud Function timeout

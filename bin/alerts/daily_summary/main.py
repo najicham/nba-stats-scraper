@@ -209,16 +209,51 @@ def count_recent_alerts() -> int:
 
 
 def get_dlq_depth() -> int:
-    """Get Dead Letter Queue message count."""
+    """Get Dead Letter Queue message count using Cloud Monitoring API."""
     try:
-        subscriber = pubsub_v1.SubscriberClient()
-        subscription_path = subscriber.subscription_path(
-            PROJECT_ID, 'prediction-request-dlq-sub'
+        from google.cloud import monitoring_v3
+        from google.protobuf import timestamp_pb2
+        import time
+
+        client = monitoring_v3.MetricServiceClient()
+        project_name = f"projects/{PROJECT_ID}"
+
+        # Query the num_undelivered_messages metric for our DLQ subscription
+        now = time.time()
+        seconds = int(now)
+        nanos = int((now - seconds) * 10**9)
+
+        interval = monitoring_v3.TimeInterval(
+            {
+                "end_time": {"seconds": seconds, "nanos": nanos},
+                "start_time": {"seconds": seconds - 300, "nanos": nanos},  # Last 5 minutes
+            }
         )
 
-        # Note: num_undelivered_messages is not directly available via API
-        # This is a placeholder - actual implementation may need Monitoring API
-        # For now, return -1 to indicate not implemented
+        # Filter for the specific DLQ subscription
+        filter_str = (
+            'metric.type = "pubsub.googleapis.com/subscription/num_undelivered_messages" '
+            f'AND resource.labels.subscription_id = "prediction-request-dlq-sub"'
+        )
+
+        results = client.list_time_series(
+            request={
+                "name": project_name,
+                "filter": filter_str,
+                "interval": interval,
+                "view": monitoring_v3.ListTimeSeriesRequest.TimeSeriesView.FULL,
+            }
+        )
+
+        # Get the most recent value
+        for result in results:
+            if result.points:
+                return int(result.points[0].value.int64_value)
+
+        # No data found - subscription may be empty or not exist
+        return 0
+    except ImportError:
+        print("Warning: google-cloud-monitoring not installed, DLQ depth unavailable")
         return -1
     except Exception as e:
         print(f"Error getting DLQ depth: {e}")

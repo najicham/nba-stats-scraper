@@ -81,7 +81,7 @@ class RosterCoverageMonitor:
 
     def __init__(self, project_id: str = None):
         """Initialize monitor with BigQuery client."""
-        self.project_id = project_id or os.environ.get('GCP_PROJECT', 'nba-props-platform')
+        self.project_id = project_id or os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
         self.bq_client = bigquery.Client(project=self.project_id)
         logger.info(f"RosterCoverageMonitor initialized for project: {self.project_id}")
 

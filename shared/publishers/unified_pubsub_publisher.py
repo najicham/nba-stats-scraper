@@ -60,7 +60,7 @@ class UnifiedPubSubPublisher:
         Args:
             project_id: GCP project ID (defaults to environment)
         """
-        self.project_id = project_id or os.environ.get('GCP_PROJECT', 'nba-props-platform')
+        self.project_id = project_id or os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
         self._client = None
 
     @property

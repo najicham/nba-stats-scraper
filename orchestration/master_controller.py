@@ -114,7 +114,7 @@ class MasterWorkflowController:
         self.ET = pytz.timezone('America/New_York')
 
         # Distributed lock to prevent race conditions when multiple instances run
-        self.project_id = os.getenv("GCP_PROJECT", "nba-props-platform")
+        self.project_id = os.getenv("GCP_PROJECT_ID") or os.getenv("GCP_PROJECT", "nba-props-platform")
         self.use_distributed_lock = os.getenv("ENABLE_CONTROLLER_LOCK", "true").lower() == "true"
 
         if self.use_distributed_lock:
