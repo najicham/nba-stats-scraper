@@ -5,7 +5,7 @@
 #
 # Usage: ./bin/maintenance/check_schema_deployment.sh
 
-set -e
+set -euo pipefail
 
 echo "================================================================================"
 echo "SCHEMA DEPLOYMENT STATUS CHECK"

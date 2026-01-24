@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # SAVE TO: ~/code/nba-stats-scraper/bin/deployment/deploy_workflows.sh
 # Enhanced for organized directory structure with category support (macOS compatible)
 

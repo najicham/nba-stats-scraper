@@ -4,7 +4,7 @@
 # Usage: ./bin/backfill/br_rosters_monitor.sh [command] [options]
 # Updated: August 2025 - Performance optimized with caching and timeouts
 
-set -e
+set -euo pipefail
 
 PROJECT="nba-props-platform"
 REGION="us-west2"

@@ -9,7 +9,7 @@
 #     --phase1-dates "2021-10-19 2026-01-02" \
 #     --phase2-dates "2024-05-01 2026-01-02"
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/validation/common_validation.sh"

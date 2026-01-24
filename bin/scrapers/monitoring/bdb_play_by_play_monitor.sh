@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # FILE: bin/backfill/bdb_play_by_play_monitor.sh
 # BigDataBall 2024-25 Enhanced Play-by-Play Backfill Monitoring Script
 

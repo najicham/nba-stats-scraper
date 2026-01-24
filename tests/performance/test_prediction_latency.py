@@ -27,6 +27,17 @@ from typing import Dict, Any, List, Tuple
 import time
 
 
+
+
+def _get_stats(benchmark):
+    """Safely get benchmark stats, returns None if not available."""
+    try:
+        if hasattr(benchmark, 'stats') and hasattr(benchmark.stats, 'mean'):
+            return benchmark.stats
+    except Exception:
+        pass
+    return None
+
 # =============================================================================
 # Mock Predictor Classes for Benchmarking
 # =============================================================================
@@ -207,7 +218,7 @@ class TestSinglePredictionLatency:
         assert recommendation in ['OVER', 'UNDER', 'PASS']
 
         print(f"\nMoving Average single prediction: "
-              f"{benchmark.stats.mean * 1000000:.2f}us")
+              f"{(stats.mean if stats else 1) * 1000000:.2f}us")
 
     def test_benchmark_ensemble_prediction(self, benchmark, sample_features):
         """Benchmark single ensemble prediction."""
@@ -226,7 +237,7 @@ class TestSinglePredictionLatency:
         assert 10 <= prediction <= 50
 
         print(f"\nEnsemble single prediction: "
-              f"{benchmark.stats.mean * 1000000:.2f}us")
+              f"{(stats.mean if stats else 1) * 1000000:.2f}us")
 
     def test_benchmark_xgboost_prediction(self, benchmark, sample_features):
         """Benchmark single XGBoost prediction."""
@@ -245,7 +256,7 @@ class TestSinglePredictionLatency:
         assert prediction is not None
 
         print(f"\nXGBoost single prediction: "
-              f"{benchmark.stats.mean * 1000000:.2f}us")
+              f"{(stats.mean if stats else 1) * 1000000:.2f}us")
 
 
 # =============================================================================
@@ -279,8 +290,8 @@ class TestBatchPredictionThroughput:
 
         assert len(result) == batch_size
         print(f"\nMoving Average batch ({batch_size}): "
-              f"{benchmark.stats.mean * 1000:.2f}ms "
-              f"({batch_size / benchmark.stats.mean:.0f} predictions/sec)")
+              f"{(stats.mean if stats else 1) * 1000:.2f}ms "
+              f"({(batch_size / stats.mean if stats else 0):.0f} predictions/sec)")
 
     @pytest.mark.parametrize("batch_size", [50, 100, 200, 450])
     def test_benchmark_ensemble_batch(self, benchmark, sample_features,
@@ -306,8 +317,8 @@ class TestBatchPredictionThroughput:
 
         assert len(result) == batch_size
         print(f"\nEnsemble batch ({batch_size}): "
-              f"{benchmark.stats.mean * 1000:.2f}ms "
-              f"({batch_size / benchmark.stats.mean:.0f} predictions/sec)")
+              f"{(stats.mean if stats else 1) * 1000:.2f}ms "
+              f"({(batch_size / stats.mean if stats else 0):.0f} predictions/sec)")
 
 
 # =============================================================================
@@ -326,7 +337,7 @@ class TestFeatureValidationPerformance:
 
         assert result is True
         print(f"\nSingle feature validation: "
-              f"{benchmark.stats.mean * 1000000:.2f}us")
+              f"{(stats.mean if stats else 1) * 1000000:.2f}us")
 
     def test_benchmark_batch_feature_validation(self, benchmark, sample_features):
         """Benchmark batch feature validation."""
@@ -340,7 +351,7 @@ class TestFeatureValidationPerformance:
 
         assert all(result)
         print(f"\nBatch feature validation (450): "
-              f"{benchmark.stats.mean * 1000:.2f}ms")
+              f"{(stats.mean if stats else 1) * 1000:.2f}ms")
 
 
 # =============================================================================
@@ -363,7 +374,7 @@ class TestConfidenceCalculationPerformance:
 
         assert 0.2 <= result <= 0.8
         print(f"\nConfidence calculation: "
-              f"{benchmark.stats.mean * 1000000:.2f}us")
+              f"{(stats.mean if stats else 1) * 1000000:.2f}us")
 
     def test_benchmark_batch_confidence_calculation(self, benchmark):
         """Benchmark batch confidence calculation."""
@@ -385,7 +396,7 @@ class TestConfidenceCalculationPerformance:
 
         assert len(result) == 450
         print(f"\nBatch confidence calculation (450): "
-              f"{benchmark.stats.mean * 1000:.2f}ms")
+              f"{(stats.mean if stats else 1) * 1000:.2f}ms")
 
 
 # =============================================================================
@@ -409,7 +420,7 @@ class TestRecommendationLogicPerformance:
 
         assert result in ['OVER', 'UNDER', 'PASS']
         print(f"\nSingle recommendation: "
-              f"{benchmark.stats.mean * 1000000:.2f}us")
+              f"{(stats.mean if stats else 1) * 1000000:.2f}us")
 
     def test_benchmark_batch_recommendation(self, benchmark):
         """Benchmark batch recommendation determination."""
@@ -432,7 +443,7 @@ class TestRecommendationLogicPerformance:
         assert len(result) == 450
         assert all(r in ['OVER', 'UNDER', 'PASS'] for r in result)
         print(f"\nBatch recommendation (450): "
-              f"{benchmark.stats.mean * 1000:.2f}ms")
+              f"{(stats.mean if stats else 1) * 1000:.2f}ms")
 
 
 # =============================================================================
@@ -477,7 +488,7 @@ class TestEndToEndPipelinePerformance:
         assert 'confidence' in result
         assert 'recommendation' in result
         print(f"\nFull prediction pipeline: "
-              f"{benchmark.stats.mean * 1000000:.2f}us")
+              f"{(stats.mean if stats else 1) * 1000000:.2f}us")
 
     def test_benchmark_game_day_predictions(self, benchmark, sample_features):
         """Benchmark predictions for a full game day (~450 players)."""
@@ -505,8 +516,8 @@ class TestEndToEndPipelinePerformance:
 
         assert len(result) == 450
         print(f"\nGame day predictions (450 players): "
-              f"{benchmark.stats.mean * 1000:.2f}ms "
-              f"({450 / benchmark.stats.mean:.0f} predictions/sec)")
+              f"{(stats.mean if stats else 1) * 1000:.2f}ms "
+              f"({(450 / stats.mean if stats else 0):.0f} predictions/sec)")
 
 
 # =============================================================================

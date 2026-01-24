@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # deploy_processors_simple.sh - Deploy raw processor service to Cloud Run with Email Alerting
 #
 # Updated to include email alerting environment variables

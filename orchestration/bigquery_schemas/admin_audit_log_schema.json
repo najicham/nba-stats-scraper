@@ -1,0 +1,56 @@
+[
+  {
+    "name": "timestamp",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When the admin action occurred"
+  },
+  {
+    "name": "user_ip",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Client IP address of the admin user"
+  },
+  {
+    "name": "action_type",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Type of action (force_predictions, retry_phase, trigger_self_heal)"
+  },
+  {
+    "name": "endpoint",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "The API endpoint that was called"
+  },
+  {
+    "name": "parameters",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "JSON string of request parameters"
+  },
+  {
+    "name": "result",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Outcome of the action: success, failure, or error"
+  },
+  {
+    "name": "error_details",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Additional error information if action failed (max 1000 chars)"
+  },
+  {
+    "name": "api_key_hash",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Last 8 characters of SHA256 hash of API key for identification"
+  },
+  {
+    "name": "sport",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Sport context (nba or mlb)"
+  }
+]

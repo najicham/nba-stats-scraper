@@ -15,7 +15,7 @@
 #
 # See config/phase6_publishing.yaml for job definitions
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="nba-props-platform"
 REGION="us-west2"

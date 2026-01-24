@@ -12,7 +12,7 @@
 #   - AWS SES credentials set as secrets in Secret Manager
 #   - Cloud Scheduler API enabled
 
-set -e
+set -euo pipefail
 
 # Configuration
 PROJECT_ID="${GCP_PROJECT:-nba-props-platform}"

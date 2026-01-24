@@ -2,7 +2,7 @@
 # Monitor a running process and detect completion
 # Usage: monitor_process.sh <PID> <timeout_hours>
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../validation/common_validation.sh"

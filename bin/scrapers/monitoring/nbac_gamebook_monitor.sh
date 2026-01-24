@@ -4,7 +4,7 @@
 # Usage: ./bin/backfill/nbac_gamebook_monitor.sh [command] [options]
 # Updated: August 2025 - Added concurrent job support and improved detection
 
-set -e
+set -euo pipefail
 
 PROJECT="nba-props-platform"
 REGION="us-west2"

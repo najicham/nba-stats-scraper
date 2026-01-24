@@ -177,7 +177,7 @@ class AuditLogger:
     - api_key_hash: Last 8 characters of API key hash for identification
     """
 
-    TABLE_ID = 'nba-props-platform.nba_analytics.admin_audit_log'
+    TABLE_ID = 'nba-props-platform.nba_operations.admin_audit_log'
 
     def __init__(self):
         self._client = None
@@ -220,7 +220,9 @@ class AuditLogger:
         endpoint: str,
         parameters: dict,
         result: str,
-        user_ip: str = None
+        user_ip: str = None,
+        error_details: str = None,
+        sport: str = None
     ) -> bool:
         """
         Log an admin action to BigQuery.
@@ -231,6 +233,8 @@ class AuditLogger:
             parameters: Request parameters as dict
             result: Result of the action ('success', 'failure', 'error')
             user_ip: Client IP (optional, will be auto-detected if not provided)
+            error_details: Additional error information if action failed
+            sport: Sport context (nba/mlb, optional, will be auto-detected)
 
         Returns:
             True if logged successfully, False otherwise
@@ -243,6 +247,10 @@ class AuditLogger:
             # Build the audit record
             timestamp = datetime.now(ZoneInfo('UTC'))
 
+            # Auto-detect sport from request if not provided
+            if sport is None:
+                sport = request.args.get('sport', 'nba').lower()
+
             row = {
                 'timestamp': timestamp.isoformat(),
                 'user_ip': user_ip or get_client_ip(),
@@ -250,7 +258,9 @@ class AuditLogger:
                 'endpoint': endpoint,
                 'parameters': json.dumps(parameters) if parameters else '{}',
                 'result': result,
-                'api_key_hash': self._get_api_key_hash()
+                'error_details': error_details[:1000] if error_details else None,
+                'api_key_hash': self._get_api_key_hash(),
+                'sport': sport
             }
 
             # Insert the row using streaming insert
@@ -270,6 +280,180 @@ class AuditLogger:
             # Log the error but don't fail the main request
             logger.error(f"Error writing audit log to BigQuery: {e}")
             return False
+
+    def get_recent_logs(self, limit: int = 50, hours: int = 24) -> list:
+        """
+        Retrieve recent audit logs from BigQuery.
+
+        Args:
+            limit: Maximum number of records to return (default 50)
+            hours: How many hours back to look (default 24)
+
+        Returns:
+            List of audit log entries
+        """
+        if self.client is None:
+            logger.warning("Cannot retrieve audit logs: BigQuery client not available")
+            return []
+
+        try:
+            query = f"""
+            SELECT
+                timestamp,
+                user_ip,
+                action_type,
+                endpoint,
+                parameters,
+                result,
+                error_details,
+                api_key_hash,
+                sport
+            FROM `{self.TABLE_ID}`
+            WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {hours} HOUR)
+            ORDER BY timestamp DESC
+            LIMIT {limit}
+            """
+
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'timestamp': row.timestamp.isoformat() if row.timestamp else None,
+                    'user_ip': row.user_ip,
+                    'action_type': row.action_type,
+                    'endpoint': row.endpoint,
+                    'parameters': row.parameters,
+                    'result': row.result,
+                    'error_details': getattr(row, 'error_details', None),
+                    'api_key_hash': row.api_key_hash,
+                    'sport': getattr(row, 'sport', None)
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error retrieving audit logs from BigQuery: {e}")
+            return []
+
+    def get_logs_by_action_type(self, action_type: str, limit: int = 50) -> list:
+        """
+        Retrieve audit logs filtered by action type.
+
+        Args:
+            action_type: Type of action to filter by
+            limit: Maximum number of records to return
+
+        Returns:
+            List of audit log entries for the specified action type
+        """
+        if self.client is None:
+            logger.warning("Cannot retrieve audit logs: BigQuery client not available")
+            return []
+
+        try:
+            query = f"""
+            SELECT
+                timestamp,
+                user_ip,
+                action_type,
+                endpoint,
+                parameters,
+                result,
+                error_details,
+                api_key_hash,
+                sport
+            FROM `{self.TABLE_ID}`
+            WHERE action_type = @action_type
+            ORDER BY timestamp DESC
+            LIMIT {limit}
+            """
+
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("action_type", "STRING", action_type)
+                ]
+            )
+
+            result = list(self.client.query(query, job_config=job_config).result(timeout=60))
+            return [
+                {
+                    'timestamp': row.timestamp.isoformat() if row.timestamp else None,
+                    'user_ip': row.user_ip,
+                    'action_type': row.action_type,
+                    'endpoint': row.endpoint,
+                    'parameters': row.parameters,
+                    'result': row.result,
+                    'error_details': getattr(row, 'error_details', None),
+                    'api_key_hash': row.api_key_hash,
+                    'sport': getattr(row, 'sport', None)
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error retrieving audit logs by action type: {e}")
+            return []
+
+    def get_audit_summary(self, hours: int = 24) -> dict:
+        """
+        Get summary statistics of audit logs.
+
+        Args:
+            hours: How many hours back to look
+
+        Returns:
+            Dictionary with summary statistics
+        """
+        if self.client is None:
+            logger.warning("Cannot retrieve audit summary: BigQuery client not available")
+            return {}
+
+        try:
+            query = f"""
+            SELECT
+                action_type,
+                result,
+                COUNT(*) as count
+            FROM `{self.TABLE_ID}`
+            WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {hours} HOUR)
+            GROUP BY action_type, result
+            ORDER BY action_type, result
+            """
+
+            result = list(self.client.query(query).result(timeout=60))
+
+            summary = {
+                'total_actions': 0,
+                'successful': 0,
+                'failed': 0,
+                'errors': 0,
+                'by_action_type': {}
+            }
+
+            for row in result:
+                count = row.count
+                summary['total_actions'] += count
+
+                if row.result == 'success':
+                    summary['successful'] += count
+                elif row.result == 'failure':
+                    summary['failed'] += count
+                elif row.result == 'error':
+                    summary['errors'] += count
+
+                if row.action_type not in summary['by_action_type']:
+                    summary['by_action_type'][row.action_type] = {
+                        'total': 0,
+                        'success': 0,
+                        'failure': 0,
+                        'error': 0
+                    }
+
+                summary['by_action_type'][row.action_type]['total'] += count
+                summary['by_action_type'][row.action_type][row.result] = count
+
+            return summary
+
+        except Exception as e:
+            logger.error(f"Error retrieving audit summary: {e}")
+            return {}
 
 
 # Initialize audit logger
@@ -838,15 +1022,201 @@ def api_firestore_health():
 @app.route('/api/history')
 @rate_limit
 def api_history():
-    """Get historical pipeline status for the last 7 days."""
+    """
+    Get historical pipeline status.
+
+    Query params:
+        days: Number of days (7, 14, 30, 90). Default: 7
+    """
     if not check_auth():
         return jsonify({'error': 'Unauthorized'}), 401
 
     try:
-        history = bq_service.get_pipeline_history(days=7)
-        return jsonify({'history': history})
+        days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+        history = bq_service.get_pipeline_history_extended(days=days)
+        return jsonify({'history': history, 'days': days})
     except Exception as e:
         logger.error(f"Error in api_history: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# =============================================================================
+# EXTENDED HISTORY ENDPOINTS (7d, 14d, 30d, 90d support)
+# =============================================================================
+
+@app.route('/api/history/extended')
+@rate_limit
+def api_history_extended():
+    """
+    Get extended historical pipeline status with date range support.
+
+    Query params:
+        days: Number of days (7, 14, 30, 90). Default: 7
+        range: Preset range ('7d', '14d', '30d', '90d'). Overrides days param.
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        # Support both 'range' preset and 'days' param
+        range_preset = request.args.get('range', '').lower()
+        if range_preset in ('7d', '14d', '30d', '90d'):
+            days = int(range_preset.replace('d', ''))
+        else:
+            days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+
+        history = bq_service.get_pipeline_history_extended(days=days)
+        return jsonify({
+            'history': history,
+            'days': days,
+            'range': f'{days}d'
+        })
+    except Exception as e:
+        logger.error(f"Error in api_history_extended: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/history/weekly')
+@rate_limit
+def api_history_weekly():
+    """
+    Get weekly aggregated pipeline metrics.
+
+    Query params:
+        weeks: Number of weeks (1-13). Default: 4
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        weeks = request.args.get('weeks', type=int, default=4)
+        weeks = max(1, min(13, weeks))
+
+        weekly = bq_service.get_weekly_aggregates(weeks=weeks)
+        return jsonify({
+            'weekly_aggregates': weekly,
+            'weeks': weeks
+        })
+    except Exception as e:
+        logger.error(f"Error in api_history_weekly: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/history/monthly')
+@rate_limit
+def api_history_monthly():
+    """
+    Get monthly aggregated pipeline metrics.
+
+    Query params:
+        months: Number of months (1-6). Default: 3
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        months = request.args.get('months', type=int, default=3)
+        months = max(1, min(6, months))
+
+        monthly = bq_service.get_monthly_aggregates(months=months)
+        return jsonify({
+            'monthly_aggregates': monthly,
+            'months': months
+        })
+    except Exception as e:
+        logger.error(f"Error in api_history_monthly: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/history/comparison')
+@rate_limit
+def api_history_comparison():
+    """
+    Get historical comparison: current period vs previous period.
+
+    Query params:
+        days: Number of days for each period (7, 14, 30). Default: 7
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        days = clamp_param(request.args.get('days', type=int), 1, 45, 7)
+        comparison = bq_service.get_historical_comparison(days=days)
+        return jsonify(comparison)
+    except Exception as e:
+        logger.error(f"Error in api_history_comparison: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/grading/extended')
+@rate_limit
+def api_grading_extended():
+    """
+    Get extended grading history with date range support.
+
+    Query params:
+        days: Number of days (7, 14, 30, 90). Default: 7
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+        grading = bq_service.get_grading_history_extended(days=days)
+        return jsonify({
+            'grading_history': grading,
+            'days': days
+        })
+    except Exception as e:
+        logger.error(f"Error in api_grading_extended: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/grading/weekly')
+@rate_limit
+def api_grading_weekly():
+    """
+    Get weekly grading summary with accuracy trends.
+
+    Query params:
+        weeks: Number of weeks (1-13). Default: 4
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        weeks = request.args.get('weeks', type=int, default=4)
+        weeks = max(1, min(13, weeks))
+
+        weekly_grading = bq_service.get_weekly_grading_summary(weeks=weeks)
+        return jsonify({
+            'weekly_grading': weekly_grading,
+            'weeks': weeks
+        })
+    except Exception as e:
+        logger.error(f"Error in api_grading_weekly: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/grading/comparison')
+@rate_limit
+def api_grading_comparison():
+    """
+    Get accuracy comparison between current and previous periods.
+
+    Query params:
+        days: Number of days for each period (7, 14, 30). Default: 7
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        days = clamp_param(request.args.get('days', type=int), 1, 45, 7)
+        comparison = bq_service.get_accuracy_comparison(days=days)
+        return jsonify(comparison)
+    except Exception as e:
+        logger.error(f"Error in api_grading_comparison: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -1089,6 +1459,60 @@ def partial_system_performance():
     return render_template('components/system_performance.html')
 
 
+@app.route('/partials/extended-history')
+@rate_limit
+def partial_extended_history():
+    """
+    HTMX partial: Extended history display with date range selector.
+
+    Query params:
+        days: Number of days (7, 14, 30, 90). Default: 7
+        view: 'daily', 'weekly', or 'monthly'. Default: 'daily'
+    """
+    if not check_auth():
+        return '<div class="text-red-500">Unauthorized</div>', 401
+
+    days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+    view = request.args.get('view', 'daily').lower()
+
+    try:
+        # Get daily history
+        history = bq_service.get_pipeline_history_extended(days=days)
+
+        # Get comparison data
+        comparison = bq_service.get_historical_comparison(days=days)
+
+        # Get weekly/monthly based on view
+        weekly = None
+        monthly = None
+
+        if view == 'weekly' or days > 14:
+            weeks = max(1, days // 7)
+            weekly = bq_service.get_weekly_aggregates(weeks=weeks)
+
+        if view == 'monthly' or days > 60:
+            months = max(1, days // 30)
+            monthly = bq_service.get_monthly_aggregates(months=months)
+
+        # Get grading comparison
+        grading_comparison = bq_service.get_accuracy_comparison(days=days)
+
+    except Exception as e:
+        logger.error(f"Error in partial_extended_history: {e}")
+        return f'<div class="text-red-500">Error: {e}</div>', 500
+
+    return render_template(
+        'components/extended_history.html',
+        history=history,
+        comparison=comparison,
+        weekly=weekly,
+        monthly=monthly,
+        grading_comparison=grading_comparison,
+        days=days,
+        view=view
+    )
+
+
 @app.route('/api/grading-by-system')
 @rate_limit
 def api_grading_by_system():
@@ -1243,7 +1667,10 @@ def action_force_predictions():
     except Exception as e:
         logger.error(f"Error forcing predictions: {e}")
         # Log error action to BigQuery audit trail
-        audit_logger.log_action('force_predictions', endpoint, parameters, 'error')
+        audit_logger.log_action(
+            'force_predictions', endpoint, parameters, 'error',
+            error_details=str(e)
+        )
         # Track metrics
         dashboard_action_requests.inc(labels={'action_type': 'force_predictions', 'result': 'error'})
         return jsonify({'error': str(e)}), 500
@@ -1335,7 +1762,10 @@ def action_retry_phase():
     except Exception as e:
         logger.error(f"Error retrying phase: {e}")
         # Log error action to BigQuery audit trail
-        audit_logger.log_action('retry_phase', endpoint, parameters, 'error')
+        audit_logger.log_action(
+            'retry_phase', endpoint, parameters, 'error',
+            error_details=str(e)
+        )
         return jsonify({'error': str(e)}), 500
 
 
@@ -1379,8 +1809,123 @@ def action_trigger_self_heal():
     except Exception as e:
         logger.error(f"Error triggering self-heal: {e}")
         # Log error action to BigQuery audit trail
-        audit_logger.log_action('trigger_self_heal', endpoint, parameters, 'error')
+        audit_logger.log_action(
+            'trigger_self_heal', endpoint, parameters, 'error',
+            error_details=str(e)
+        )
         return jsonify({'error': str(e)}), 500
+
+
+# =============================================================================
+# AUDIT LOG ENDPOINTS
+# =============================================================================
+
+@app.route('/api/audit-logs')
+@rate_limit
+def api_audit_logs():
+    """
+    Get recent admin audit logs.
+
+    Query params:
+        limit: Maximum number of records to return (default: 50, max: 100)
+        hours: How many hours back to look (default: 24, max: 168)
+        action_type: Filter by specific action type (optional)
+
+    Returns:
+        JSON with list of audit log entries and summary
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        limit = clamp_param(request.args.get('limit', type=int), *PARAM_BOUNDS['limit'])
+        hours = clamp_param(request.args.get('hours', type=int), *PARAM_BOUNDS['hours'])
+        action_type = request.args.get('action_type')
+
+        if action_type:
+            logs = audit_logger.get_logs_by_action_type(action_type, limit=limit)
+        else:
+            logs = audit_logger.get_recent_logs(limit=limit, hours=hours)
+
+        # Get summary stats
+        summary = audit_logger.get_audit_summary(hours=hours)
+
+        return jsonify({
+            'logs': logs,
+            'count': len(logs),
+            'summary': summary,
+            'filters': {
+                'limit': limit,
+                'hours': hours,
+                'action_type': action_type
+            }
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_audit_logs: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/audit-logs/summary')
+@rate_limit
+def api_audit_logs_summary():
+    """
+    Get summary statistics for audit logs.
+
+    Query params:
+        hours: How many hours back to look (default: 24, max: 168)
+
+    Returns:
+        JSON with summary statistics by action type and result
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        hours = clamp_param(request.args.get('hours', type=int), *PARAM_BOUNDS['hours'])
+        summary = audit_logger.get_audit_summary(hours=hours)
+
+        return jsonify({
+            'summary': summary,
+            'hours': hours,
+            'retrieved_at': datetime.now(ZoneInfo('UTC')).isoformat()
+        })
+
+    except Exception as e:
+        logger.error(f"Error in api_audit_logs_summary: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/partials/audit-logs')
+@rate_limit
+def partial_audit_logs():
+    """HTMX partial: Audit logs display."""
+    if not check_auth():
+        return '<div class="text-red-500">Unauthorized</div>', 401
+
+    try:
+        limit = clamp_param(request.args.get('limit', type=int), 1, 50, 20)
+        hours = clamp_param(request.args.get('hours', type=int), *PARAM_BOUNDS['hours'])
+        action_type = request.args.get('action_type')
+
+        if action_type:
+            logs = audit_logger.get_logs_by_action_type(action_type, limit=limit)
+        else:
+            logs = audit_logger.get_recent_logs(limit=limit, hours=hours)
+
+        summary = audit_logger.get_audit_summary(hours=hours)
+
+        return render_template(
+            'components/audit_logs.html',
+            logs=logs,
+            summary=summary,
+            hours=hours,
+            action_type=action_type
+        )
+
+    except Exception as e:
+        logger.error(f"Error in partial_audit_logs: {e}")
+        return f'<div class="text-red-500">Error loading audit logs: {e}</div>', 500
 
 
 # =============================================================================
@@ -1781,6 +2326,390 @@ def partial_trends():
         'components/trends.html',
         days=days
     )
+
+
+# =============================================================================
+# SCRAPER COST TRACKING
+# =============================================================================
+
+@app.route('/api/scraper-costs')
+@rate_limit
+def api_scraper_costs():
+    """
+    Get scraper cost metrics for dashboard display.
+
+    Query params:
+        days: Number of days to look back (default: 7, max: 90)
+        view: Type of view - 'summary', 'by_scraper', 'by_day', 'errors', or 'all' (default: 'all')
+        scraper: Filter by specific scraper name (optional)
+
+    Returns:
+        JSON with scraper cost metrics
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+        view = request.args.get('view', 'all').lower()
+        scraper_filter = request.args.get('scraper')
+
+        from monitoring.scraper_cost_tracker import ScraperCostTracker
+        tracker = ScraperCostTracker()
+
+        if view == 'summary':
+            return jsonify({
+                'summary': tracker.get_cost_summary(days),
+                'period_days': days
+            })
+        elif view == 'by_scraper':
+            scrapers = tracker.get_scraper_costs(days)
+            if scraper_filter:
+                scrapers = [s for s in scrapers if scraper_filter.lower() in s['scraper_name'].lower()]
+            return jsonify({
+                'scrapers': scrapers,
+                'period_days': days
+            })
+        elif view == 'by_day':
+            return jsonify({
+                'daily_costs': tracker.get_daily_costs(days),
+                'period_days': days
+            })
+        elif view == 'errors':
+            return jsonify({
+                'errors': tracker.get_error_breakdown(days),
+                'period_days': days
+            })
+        else:
+            # Return all metrics
+            return jsonify(tracker.get_all_metrics(days))
+
+    except ImportError as e:
+        logger.error(f"Failed to import ScraperCostTracker: {e}")
+        return jsonify({
+            'error': 'Scraper cost tracking not available',
+            'details': str(e)
+        }), 503
+    except Exception as e:
+        logger.error(f"Error in api_scraper_costs: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/scraper-costs/leaderboard')
+@rate_limit
+def api_scraper_costs_leaderboard():
+    """
+    Get top scrapers by cost for the cost leaderboard.
+
+    Query params:
+        days: Number of days to look back (default: 7, max: 90)
+        limit: Number of scrapers to return (default: 10, max: 50)
+
+    Returns:
+        JSON with top scrapers by cost
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+        limit = clamp_param(request.args.get('limit', type=int), 1, 50, 10)
+
+        from monitoring.scraper_cost_tracker import ScraperCostTracker
+        tracker = ScraperCostTracker()
+
+        scrapers = tracker.get_scraper_costs(days)[:limit]
+
+        return jsonify({
+            'leaderboard': scrapers,
+            'period_days': days,
+            'total_scrapers': len(scrapers)
+        })
+
+    except ImportError as e:
+        return jsonify({
+            'error': 'Scraper cost tracking not available',
+            'details': str(e)
+        }), 503
+    except Exception as e:
+        logger.error(f"Error in api_scraper_costs_leaderboard: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/partials/scraper-costs')
+@rate_limit
+def partial_scraper_costs():
+    """HTMX partial: Scraper costs display."""
+    if not check_auth():
+        return '<div class="text-red-500">Unauthorized</div>', 401
+
+    days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+
+    try:
+        from monitoring.scraper_cost_tracker import ScraperCostTracker
+        tracker = ScraperCostTracker()
+
+        summary = tracker.get_cost_summary(days)
+        daily_costs = tracker.get_daily_costs(days)
+        by_scraper = tracker.get_scraper_costs(days)
+
+        return render_template(
+            'components/scraper_costs.html',
+            summary=summary,
+            daily_costs=daily_costs[:7],  # Last 7 days for display
+            by_scraper=by_scraper[:10],  # Top 10 scrapers
+            days=days
+        )
+    except ImportError:
+        return '<div class="text-yellow-500">Scraper cost tracking not available</div>', 503
+    except Exception as e:
+        return f'<div class="text-red-500">Error loading scraper costs: {e}</div>', 500
+
+
+# =============================================================================
+# PIPELINE LATENCY TRACKING (P2-MON-2)
+# =============================================================================
+
+@app.route('/api/latency/game/<game_id>')
+@rate_limit
+def api_game_latency(game_id):
+    """
+    Get pipeline latency metrics for a specific game.
+
+    Query params:
+        date: Game date (YYYY-MM-DD), defaults to today
+
+    Returns:
+        JSON with phase latencies and total pipeline latency
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        from monitoring.pipeline_execution_log import PipelineExecutionLogger
+
+        game_date = request.args.get('date') or datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d')
+        tracker = PipelineExecutionLogger()
+        result = tracker.get_game_latency(game_id, game_date)
+
+        return jsonify(result)
+
+    except ImportError as e:
+        logger.error(f"Failed to import PipelineExecutionLogger: {e}")
+        return jsonify({
+            'error': 'Pipeline latency tracking not available',
+            'details': str(e)
+        }), 503
+    except Exception as e:
+        logger.error(f"Error in api_game_latency: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/latency/date/<date_str>')
+@rate_limit
+def api_date_latency(date_str):
+    """
+    Get latency summary for all games on a specific date.
+
+    Args:
+        date_str: Date in YYYY-MM-DD format
+
+    Returns:
+        JSON with per-game latencies and aggregated stats
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        from monitoring.pipeline_execution_log import PipelineExecutionLogger
+
+        tracker = PipelineExecutionLogger()
+        result = tracker.get_date_latency_summary(date_str)
+
+        return jsonify(result)
+
+    except ImportError as e:
+        logger.error(f"Failed to import PipelineExecutionLogger: {e}")
+        return jsonify({
+            'error': 'Pipeline latency tracking not available',
+            'details': str(e)
+        }), 503
+    except Exception as e:
+        logger.error(f"Error in api_date_latency: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/latency/bottlenecks')
+@rate_limit
+def api_latency_bottlenecks():
+    """
+    Get phase bottleneck analysis.
+
+    Query params:
+        days: Number of days to analyze (default: 7, max: 90)
+
+    Returns:
+        JSON with phases sorted by average latency (slowest first)
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        from monitoring.pipeline_execution_log import PipelineExecutionLogger
+
+        days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+        tracker = PipelineExecutionLogger()
+        bottlenecks = tracker.get_phase_bottlenecks(days=days)
+
+        return jsonify({
+            'bottlenecks': bottlenecks,
+            'period_days': days,
+            'count': len(bottlenecks)
+        })
+
+    except ImportError as e:
+        logger.error(f"Failed to import PipelineExecutionLogger: {e}")
+        return jsonify({
+            'error': 'Pipeline latency tracking not available',
+            'details': str(e)
+        }), 503
+    except Exception as e:
+        logger.error(f"Error in api_latency_bottlenecks: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/latency/slow-executions')
+@rate_limit
+def api_slow_executions():
+    """
+    Get recent slow pipeline executions.
+
+    Query params:
+        hours: Hours to look back (default: 24, max: 168)
+        min_duration: Minimum duration in seconds to consider slow (default: 300)
+
+    Returns:
+        JSON with list of slow executions
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        from monitoring.pipeline_execution_log import PipelineExecutionLogger
+
+        hours = clamp_param(request.args.get('hours', type=int), *PARAM_BOUNDS['hours'])
+        min_duration = request.args.get('min_duration', type=int, default=300)
+        min_duration = max(60, min(3600, min_duration))  # Clamp between 1-60 minutes
+
+        tracker = PipelineExecutionLogger()
+        slow_execs = tracker.get_recent_slow_executions(
+            hours=hours,
+            min_duration_seconds=min_duration
+        )
+
+        return jsonify({
+            'slow_executions': slow_execs,
+            'period_hours': hours,
+            'min_duration_seconds': min_duration,
+            'count': len(slow_execs)
+        })
+
+    except ImportError as e:
+        logger.error(f"Failed to import PipelineExecutionLogger: {e}")
+        return jsonify({
+            'error': 'Pipeline latency tracking not available',
+            'details': str(e)
+        }), 503
+    except Exception as e:
+        logger.error(f"Error in api_slow_executions: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/latency/pipeline-metrics')
+@rate_limit
+def api_pipeline_latency_metrics():
+    """
+    Get pipeline-level latency metrics from the latency tracker.
+
+    Query params:
+        date: Date to query (YYYY-MM-DD), defaults to today
+        days: Days for historical stats (default: 7)
+
+    Returns:
+        JSON with current latency and historical stats
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        from monitoring.pipeline_latency_tracker import PipelineLatencyTracker
+
+        date_str = request.args.get('date') or datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d')
+        days = clamp_param(request.args.get('days', type=int), 1, 30, 7)
+
+        tracker = PipelineLatencyTracker()
+        current = tracker.track_latency_for_date(date_str, dry_run=True)
+        historical = tracker.get_historical_latency_stats(days=days)
+
+        return jsonify({
+            'current': current,
+            'historical': historical,
+            'date': date_str,
+            'period_days': days
+        })
+
+    except ImportError as e:
+        logger.error(f"Failed to import PipelineLatencyTracker: {e}")
+        return jsonify({
+            'error': 'Pipeline latency tracker not available',
+            'details': str(e)
+        }), 503
+    except Exception as e:
+        logger.error(f"Error in api_pipeline_latency_metrics: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/partials/latency-dashboard')
+@rate_limit
+def partial_latency_dashboard():
+    """HTMX partial: Pipeline latency dashboard display."""
+    if not check_auth():
+        return '<div class="text-red-500">Unauthorized</div>', 401
+
+    try:
+        from monitoring.pipeline_execution_log import PipelineExecutionLogger
+        from monitoring.pipeline_latency_tracker import PipelineLatencyTracker
+
+        # Get today's date
+        today = datetime.now(ZoneInfo('America/New_York')).strftime('%Y-%m-%d')
+
+        # Get execution log data
+        exec_logger = PipelineExecutionLogger()
+        date_summary = exec_logger.get_date_latency_summary(today)
+        bottlenecks = exec_logger.get_phase_bottlenecks(days=7)[:5]  # Top 5 bottlenecks
+        slow_execs = exec_logger.get_recent_slow_executions(hours=24)[:10]  # Last 10
+
+        # Get pipeline latency tracker data
+        latency_tracker = PipelineLatencyTracker()
+        pipeline_latency = latency_tracker.track_latency_for_date(today, dry_run=True)
+        historical_stats = latency_tracker.get_historical_latency_stats(days=7)
+
+        return render_template(
+            'components/latency_dashboard.html',
+            date=today,
+            date_summary=date_summary,
+            bottlenecks=bottlenecks,
+            slow_executions=slow_execs,
+            pipeline_latency=pipeline_latency,
+            historical_stats=historical_stats
+        )
+
+    except ImportError as e:
+        logger.error(f"Failed to import latency modules: {e}")
+        return '<div class="text-yellow-500">Pipeline latency tracking not available</div>', 503
+    except Exception as e:
+        logger.error(f"Error in partial_latency_dashboard: {e}")
+        return f'<div class="text-red-500">Error loading latency data: {e}</div>', 500
 
 
 if __name__ == '__main__':

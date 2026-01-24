@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Scraper Failure Investigation Script
 # Analyzes recent scraper failures and provides actionable insights
 

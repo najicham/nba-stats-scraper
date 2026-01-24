@@ -4,7 +4,7 @@
 # Fast status check showing key metrics at a glance
 # Target: < 5 seconds execution time
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="nba-props-platform"
 REGION="us-west2"

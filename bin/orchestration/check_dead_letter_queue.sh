@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Check Dead Letter Queue for failed messages
 # Path: bin/orchestration/check_dead_letter_queue.sh
 

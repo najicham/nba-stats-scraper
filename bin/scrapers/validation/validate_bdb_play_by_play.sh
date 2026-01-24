@@ -3,7 +3,7 @@
 # Purpose: Validate BigDataBall play-by-play data in GCS
 # Usage: ./bin/scrapers/validation/validate_bdb_play_by_play.sh [command] [options]
 
-set -e
+set -euo pipefail
 
 PROJECT_ID=${GCP_PROJECT_ID:-"nba-props-platform"}
 BUCKET="gs://nba-scraped-data"

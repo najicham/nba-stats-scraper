@@ -2,7 +2,7 @@
 # Creates Cloud Scheduler jobs for registry name resolution automation
 # Run after post-game collection to resolve any new unresolved names
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="nba-props-platform"
 REGION="us-west2"

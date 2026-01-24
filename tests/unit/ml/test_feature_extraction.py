@@ -454,20 +454,24 @@ class TestModelCaching:
         """
         from ml.model_loader import get_cached_model, _model_cache, clear_model_cache
 
+        # Clear cache first to ensure clean state
+        clear_model_cache()
+
         with patch('ml.model_loader.load_model') as mock_load:
             mock_wrapper = Mock()
             mock_load.return_value = mock_wrapper
 
-            # Load model
+            # Load model (first time, should call load_model)
             get_cached_model(sample_model_info)
-            assert mock_load.call_count == 1
+            first_call_count = mock_load.call_count
+            assert first_call_count == 1, "First call should load model"
 
             # Clear cache
             clear_model_cache()
 
-            # Load again - should call load_model again
+            # Load again - should call load_model again since cache was cleared
             get_cached_model(sample_model_info)
-            assert mock_load.call_count == 2
+            assert mock_load.call_count == 2, "After clear, should reload model"
 
     def test_cache_isolates_different_models(self):
         """

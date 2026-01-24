@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 export GCP_PROJECT_ID=nba-props-platform
 

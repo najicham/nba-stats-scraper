@@ -4,7 +4,7 @@
 # Usage: ./bin/validation/validate_br_rosters.sh [options]
 # Deploy with: backfill/br_rosters/deploy_br_rosters_backfill.sh
 
-set -e
+set -euo pipefail
 
 # Script directory and project root
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

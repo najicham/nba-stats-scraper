@@ -19,7 +19,7 @@
 #     - final_report.txt      (combined summary)
 #
 
-set -e
+set -euo pipefail
 set -u
 
 # Colors

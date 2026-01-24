@@ -1,0 +1,342 @@
+<!-- Extended History Component -->
+<div class="space-y-6" x-data="{ selectedRange: '{{ days }}d', activeView: '{{ view }}' }">
+    <!-- Date Range Selector -->
+    <div class="flex items-center justify-between">
+        <div class="flex items-center space-x-2">
+            <span class="text-sm font-medium text-gray-700">Date Range:</span>
+            <div class="flex rounded-md shadow-sm">
+                <button
+                    @click="selectedRange = '7d'; $el.closest('[hx-target]')?.setAttribute('hx-get', '/partials/extended-history?days=7&view=' + activeView)"
+                    hx-get="/partials/extended-history?days=7"
+                    hx-target="#extended-history-content"
+                    hx-swap="innerHTML"
+                    :class="selectedRange === '7d' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                    class="px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-l-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                    7 Days
+                </button>
+                <button
+                    @click="selectedRange = '14d'"
+                    hx-get="/partials/extended-history?days=14"
+                    hx-target="#extended-history-content"
+                    hx-swap="innerHTML"
+                    :class="selectedRange === '14d' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                    class="px-3 py-1.5 text-sm font-medium border-t border-b border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                    14 Days
+                </button>
+                <button
+                    @click="selectedRange = '30d'"
+                    hx-get="/partials/extended-history?days=30"
+                    hx-target="#extended-history-content"
+                    hx-swap="innerHTML"
+                    :class="selectedRange === '30d' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                    class="px-3 py-1.5 text-sm font-medium border-t border-b border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                    30 Days
+                </button>
+                <button
+                    @click="selectedRange = '90d'"
+                    hx-get="/partials/extended-history?days=90"
+                    hx-target="#extended-history-content"
+                    hx-swap="innerHTML"
+                    :class="selectedRange === '90d' ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                    class="px-3 py-1.5 text-sm font-medium border border-gray-300 rounded-r-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                    90 Days
+                </button>
+            </div>
+        </div>
+
+        <div class="flex items-center space-x-2">
+            <span class="text-sm font-medium text-gray-700">View:</span>
+            <select
+                x-model="activeView"
+                @change="htmx.ajax('GET', '/partials/extended-history?days={{ days }}&view=' + activeView, '#extended-history-content')"
+                class="block w-32 px-3 py-1.5 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+                <option value="daily">Daily</option>
+                <option value="weekly">Weekly</option>
+                <option value="monthly">Monthly</option>
+            </select>
+        </div>
+    </div>
+
+    <!-- Comparison Cards -->
+    {% if comparison and comparison.current_period and comparison.previous_period %}
+    <div class="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-lg p-4 border border-blue-200">
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">
+            Period Comparison: Last {{ days }} Days vs Previous {{ days }} Days
+        </h4>
+        <div class="grid grid-cols-4 gap-4">
+            <!-- Games -->
+            <div class="text-center">
+                <div class="text-lg font-bold text-gray-900">
+                    {{ comparison.current_period.total_games or 0 }}
+                </div>
+                <div class="text-xs text-gray-500">Total Games</div>
+                {% if comparison.comparison.total_games_change_pct is not none %}
+                <div class="text-xs mt-1 {% if comparison.comparison.total_games_change_pct >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                    {% if comparison.comparison.total_games_change_pct >= 0 %}+{% endif %}{{ comparison.comparison.total_games_change_pct }}%
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Predictions -->
+            <div class="text-center">
+                <div class="text-lg font-bold text-gray-900">
+                    {{ "{:,}".format(comparison.current_period.total_predictions or 0) }}
+                </div>
+                <div class="text-xs text-gray-500">Total Predictions</div>
+                {% if comparison.comparison.total_predictions_change_pct is not none %}
+                <div class="text-xs mt-1 {% if comparison.comparison.total_predictions_change_pct >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                    {% if comparison.comparison.total_predictions_change_pct >= 0 %}+{% endif %}{{ comparison.comparison.total_predictions_change_pct }}%
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Avg Predictions/Day -->
+            <div class="text-center">
+                <div class="text-lg font-bold text-gray-900">
+                    {{ comparison.current_period.avg_predictions_per_day or 0 }}
+                </div>
+                <div class="text-xs text-gray-500">Avg Predictions/Day</div>
+                {% if comparison.comparison.avg_predictions_change_pct is not none %}
+                <div class="text-xs mt-1 {% if comparison.comparison.avg_predictions_change_pct >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                    {% if comparison.comparison.avg_predictions_change_pct >= 0 %}+{% endif %}{{ comparison.comparison.avg_predictions_change_pct }}%
+                </div>
+                {% endif %}
+            </div>
+
+            <!-- Completion Rate -->
+            <div class="text-center">
+                <div class="text-lg font-bold {% if comparison.current_period.completion_rate_pct and comparison.current_period.completion_rate_pct >= 90 %}text-green-600{% elif comparison.current_period.completion_rate_pct and comparison.current_period.completion_rate_pct >= 70 %}text-yellow-600{% else %}text-red-600{% endif %}">
+                    {{ comparison.current_period.completion_rate_pct or 0 }}%
+                </div>
+                <div class="text-xs text-gray-500">Completion Rate</div>
+                {% if comparison.comparison.completion_rate_change is not none %}
+                <div class="text-xs mt-1 {% if comparison.comparison.completion_rate_change >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                    {% if comparison.comparison.completion_rate_change >= 0 %}+{% endif %}{{ comparison.comparison.completion_rate_change }} pts
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Accuracy Comparison -->
+    {% if grading_comparison and grading_comparison.current_period %}
+    <div class="bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg p-4 border border-green-200">
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">
+            Accuracy Comparison
+        </h4>
+        <div class="grid grid-cols-3 gap-4">
+            <div class="text-center">
+                <div class="text-lg font-bold {% if grading_comparison.current_period.accuracy_pct and grading_comparison.current_period.accuracy_pct >= 60 %}text-green-600{% elif grading_comparison.current_period.accuracy_pct and grading_comparison.current_period.accuracy_pct >= 50 %}text-yellow-600{% else %}text-red-600{% endif %}">
+                    {{ grading_comparison.current_period.accuracy_pct or 0 }}%
+                </div>
+                <div class="text-xs text-gray-500">Current Accuracy</div>
+                {% if grading_comparison.comparison.accuracy_change is not none %}
+                <div class="text-xs mt-1 {% if grading_comparison.comparison.accuracy_change >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                    {% if grading_comparison.comparison.accuracy_change >= 0 %}+{% endif %}{{ grading_comparison.comparison.accuracy_change }} pts vs prior
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="text-center">
+                <div class="text-lg font-bold text-gray-900">
+                    {{ grading_comparison.current_period.avg_mae or 0 }}
+                </div>
+                <div class="text-xs text-gray-500">Mean Abs Error</div>
+                {% if grading_comparison.comparison.mae_change is not none %}
+                <div class="text-xs mt-1 {% if grading_comparison.comparison.mae_change <= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                    {% if grading_comparison.comparison.mae_change > 0 %}+{% endif %}{{ grading_comparison.comparison.mae_change }} pts
+                </div>
+                {% endif %}
+            </div>
+
+            <div class="text-center">
+                <div class="text-lg font-bold text-gray-900">
+                    {{ "{:,}".format(grading_comparison.current_period.total_graded or 0) }}
+                </div>
+                <div class="text-xs text-gray-500">Predictions Graded</div>
+                {% if grading_comparison.comparison.volume_change_pct is not none %}
+                <div class="text-xs mt-1 {% if grading_comparison.comparison.volume_change_pct >= 0 %}text-green-600{% else %}text-red-600{% endif %}">
+                    {% if grading_comparison.comparison.volume_change_pct >= 0 %}+{% endif %}{{ grading_comparison.comparison.volume_change_pct }}%
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Weekly Aggregates View -->
+    {% if weekly and view == 'weekly' %}
+    <div>
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Weekly Summary</h4>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Week</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Days</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Games</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Predictions</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Avg/Day</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Complete</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Rate</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for week in weekly %}
+                    <tr class="{% if week.completion_rate_pct and week.completion_rate_pct < 80 %}bg-yellow-50{% endif %}">
+                        <td class="px-3 py-2 whitespace-nowrap text-gray-900">
+                            {{ week.week_start }} - {{ week.week_end }}
+                        </td>
+                        <td class="px-3 py-2 text-center text-gray-700">{{ week.days_with_data }}</td>
+                        <td class="px-3 py-2 text-center text-gray-700">{{ week.total_games }}</td>
+                        <td class="px-3 py-2 text-center text-gray-700">{{ "{:,}".format(week.total_predictions or 0) }}</td>
+                        <td class="px-3 py-2 text-center text-gray-700">{{ week.avg_predictions_per_day }}</td>
+                        <td class="px-3 py-2 text-center text-gray-700">{{ week.days_complete }}/{{ week.days_with_data }}</td>
+                        <td class="px-3 py-2 text-center">
+                            <span class="px-2 py-1 text-xs rounded-full {% if week.completion_rate_pct and week.completion_rate_pct >= 90 %}bg-green-100 text-green-800{% elif week.completion_rate_pct and week.completion_rate_pct >= 70 %}bg-yellow-100 text-yellow-800{% else %}bg-red-100 text-red-800{% endif %}">
+                                {{ week.completion_rate_pct or 0 }}%
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Monthly Aggregates View -->
+    {% if monthly and view == 'monthly' %}
+    <div>
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Monthly Summary</h4>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Month</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Days</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Games</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Predictions</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Avg/Day</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Completion</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for month in monthly %}
+                    <tr>
+                        <td class="px-3 py-2 whitespace-nowrap text-gray-900 font-medium">
+                            {{ month.month_start }}
+                        </td>
+                        <td class="px-3 py-2 text-center text-gray-700">{{ month.days_with_data }}</td>
+                        <td class="px-3 py-2 text-center text-gray-700">{{ month.total_games }}</td>
+                        <td class="px-3 py-2 text-center text-gray-700">{{ "{:,}".format(month.total_predictions or 0) }}</td>
+                        <td class="px-3 py-2 text-center text-gray-700">{{ month.avg_predictions_per_day }}</td>
+                        <td class="px-3 py-2 text-center">
+                            <span class="px-2 py-1 text-xs rounded-full {% if month.completion_rate_pct and month.completion_rate_pct >= 90 %}bg-green-100 text-green-800{% elif month.completion_rate_pct and month.completion_rate_pct >= 70 %}bg-yellow-100 text-yellow-800{% else %}bg-red-100 text-red-800{% endif %}">
+                                {{ month.completion_rate_pct or 0 }}%
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Daily History Table (default view) -->
+    {% if view == 'daily' or not (weekly or monthly) %}
+    <div>
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Daily Pipeline Status (Last {{ days }} Days)</h4>
+        <div class="overflow-x-auto max-h-96 overflow-y-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50 sticky top-0">
+                    <tr>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Games</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Context</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Features</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Predictions</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Coverage</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for row in history %}
+                    <tr class="{% if row.pipeline_status != 'COMPLETE' and row.games_scheduled > 0 %}bg-yellow-50{% endif %}">
+                        <td class="px-3 py-2 whitespace-nowrap font-medium text-gray-900">{{ row.game_date }}</td>
+                        <td class="px-3 py-2 text-center text-gray-700">{{ row.games_scheduled }}</td>
+                        <td class="px-3 py-2 text-center text-gray-700">{{ row.phase3_context }}</td>
+                        <td class="px-3 py-2 text-center text-gray-700">{{ row.phase4_features }}</td>
+                        <td class="px-3 py-2 text-center text-gray-700">{{ row.predictions }}</td>
+                        <td class="px-3 py-2 text-center">
+                            {% if row.prediction_coverage_pct %}
+                            <span class="{% if row.prediction_coverage_pct >= 80 %}text-green-600{% elif row.prediction_coverage_pct >= 50 %}text-yellow-600{% else %}text-red-600{% endif %}">
+                                {{ row.prediction_coverage_pct }}%
+                            </span>
+                            {% else %}
+                            <span class="text-gray-400">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-3 py-2 text-center">
+                            {% if row.pipeline_status == 'COMPLETE' %}
+                            <span class="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">Complete</span>
+                            {% elif row.pipeline_status == 'NO_DATA' or row.games_scheduled == 0 %}
+                            <span class="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-full">No Games</span>
+                            {% elif 'PENDING' in (row.pipeline_status or '') %}
+                            <span class="px-2 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full">{{ row.pipeline_status }}</span>
+                            {% else %}
+                            <span class="px-2 py-1 bg-gray-100 text-gray-600 text-xs rounded-full">{{ row.pipeline_status or 'Unknown' }}</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Summary Stats -->
+    <div class="grid grid-cols-4 gap-4 mt-4">
+        <div class="bg-gray-50 rounded-lg p-3 text-center">
+            {% set complete_days = history|selectattr('pipeline_status', 'equalto', 'COMPLETE')|list|length %}
+            {% set total_game_days = history|selectattr('games_scheduled', 'gt', 0)|list|length %}
+            <div class="text-2xl font-bold {% if total_game_days > 0 and complete_days / total_game_days >= 0.9 %}text-green-600{% elif total_game_days > 0 and complete_days / total_game_days >= 0.7 %}text-yellow-600{% else %}text-red-600{% endif %}">
+                {{ complete_days }}/{{ total_game_days }}
+            </div>
+            <div class="text-xs text-gray-500">Days Complete</div>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-3 text-center">
+            {% set total_games = history|sum(attribute='games_scheduled') %}
+            <div class="text-2xl font-bold text-blue-600">
+                {{ total_games }}
+            </div>
+            <div class="text-xs text-gray-500">Total Games</div>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-3 text-center">
+            {% set total_predictions = history|sum(attribute='predictions') %}
+            <div class="text-2xl font-bold text-purple-600">
+                {{ "{:,}".format(total_predictions) }}
+            </div>
+            <div class="text-xs text-gray-500">Total Predictions</div>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-3 text-center">
+            {% if total_game_days > 0 %}
+            {% set avg_predictions = (total_predictions / total_game_days)|round(0)|int %}
+            <div class="text-2xl font-bold text-indigo-600">
+                {{ avg_predictions }}
+            </div>
+            {% else %}
+            <div class="text-2xl font-bold text-gray-400">-</div>
+            {% endif %}
+            <div class="text-xs text-gray-500">Avg Predictions/Day</div>
+        </div>
+    </div>
+</div>

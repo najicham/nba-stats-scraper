@@ -8,7 +8,7 @@
 #
 # Usage: ./bin/orchestration/add_scheduler_jobs.sh
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="nba-props-platform"
 REGION="us-west2"

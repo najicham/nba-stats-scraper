@@ -86,6 +86,15 @@ class PredictionDataLoader:
         # This provides ~10x speedup (8-12s → <1s for 150 players)
         self._game_context_cache: Dict[date, Dict[str, Dict]] = {}
 
+        # Query-level cache for BigQuery results (shared across instances via singleton)
+        # Provides caching for expensive queries that don't change frequently
+        # Uses TTL based on data freshness (shorter for same-day, longer for historical)
+        self._query_cache = get_query_cache(
+            default_ttl_seconds=FEATURES_CACHE_TTL_HISTORICAL,
+            max_size=5000,  # Limit memory usage
+            name="prediction_data_loader"
+        )
+
         logger.info(f"Initialized PredictionDataLoader for project {project_id} in {location} (dataset_prefix: {dataset_prefix or 'production'})")
 
     def invalidate_features_cache(self, game_date: Optional[date] = None) -> int:

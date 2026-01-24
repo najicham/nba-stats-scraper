@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # christmas_day_check.sh - Quick pipeline health check for Christmas Day
 #
 # Run this to get a snapshot of pipeline status

@@ -4,7 +4,7 @@
 # Simplified deployment script using single parameterized Dockerfile
 # Auto-discovers config file from job name for cleaner usage
 
-set -e
+set -euo pipefail
 
 # Load environment variables from .env file
 if [ -f ".env" ]; then

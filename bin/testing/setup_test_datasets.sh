@@ -13,7 +13,7 @@
 # Created: 2025-12-31
 # Part of Pipeline Replay System
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="${GCP_PROJECT_ID:-nba-props-platform}"
 PREFIX="${1:-test_}"

@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # test_orchestration_endpoints.sh
 # Test all orchestration endpoints before Cloud Run deployment
 #

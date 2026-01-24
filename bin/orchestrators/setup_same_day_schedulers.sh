@@ -8,7 +8,7 @@
 #   11:30 AM - Phase 5: Prediction coordinator for TODAY
 #   1:00 PM  - Phase 6: phase6-tonight-picks (existing) exports predictions
 
-set -e
+set -euo pipefail
 
 PROJECT_ID=${PROJECT_ID:-nba-props-platform}
 REGION=${REGION:-us-west2}

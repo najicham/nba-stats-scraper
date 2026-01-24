@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Monitor Pub/Sub queues for stuck/failing messages
 # Path: bin/orchestration/monitor_pubsub.sh
 

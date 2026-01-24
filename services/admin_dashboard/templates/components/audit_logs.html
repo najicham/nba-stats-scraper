@@ -1,0 +1,163 @@
+<!-- Audit Logs Component -->
+<div class="space-y-4">
+    <!-- Summary Card -->
+    {% if summary %}
+    <div class="bg-white rounded-lg shadow p-4">
+        <h3 class="text-lg font-semibold text-gray-900 mb-3">Audit Summary (Last {{ hours }} hours)</h3>
+        <div class="grid grid-cols-4 gap-4">
+            <div class="text-center">
+                <div class="text-2xl font-bold text-gray-900">{{ summary.total_actions }}</div>
+                <div class="text-sm text-gray-500">Total Actions</div>
+            </div>
+            <div class="text-center">
+                <div class="text-2xl font-bold text-green-600">{{ summary.successful }}</div>
+                <div class="text-sm text-gray-500">Successful</div>
+            </div>
+            <div class="text-center">
+                <div class="text-2xl font-bold text-yellow-600">{{ summary.failed }}</div>
+                <div class="text-sm text-gray-500">Failed</div>
+            </div>
+            <div class="text-center">
+                <div class="text-2xl font-bold text-red-600">{{ summary.errors }}</div>
+                <div class="text-sm text-gray-500">Errors</div>
+            </div>
+        </div>
+
+        {% if summary.by_action_type %}
+        <div class="mt-4 pt-4 border-t border-gray-200">
+            <h4 class="text-sm font-medium text-gray-700 mb-2">By Action Type</h4>
+            <div class="flex flex-wrap gap-2">
+                {% for action, stats in summary.by_action_type.items() %}
+                <div class="bg-gray-100 rounded px-3 py-1">
+                    <span class="font-medium">{{ action }}</span>:
+                    <span class="text-green-600">{{ stats.success or 0 }}</span> /
+                    <span class="text-yellow-600">{{ stats.failure or 0 }}</span> /
+                    <span class="text-red-600">{{ stats.error or 0 }}</span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    <!-- Filter Buttons -->
+    <div class="flex gap-2 mb-4">
+        <button
+            hx-get="/partials/audit-logs?hours={{ hours }}"
+            hx-target="#audit-logs-container"
+            class="px-3 py-1 text-sm rounded {% if not action_type %}bg-blue-600 text-white{% else %}bg-gray-200 text-gray-700{% endif %}"
+        >
+            All Actions
+        </button>
+        <button
+            hx-get="/partials/audit-logs?hours={{ hours }}&action_type=force_predictions"
+            hx-target="#audit-logs-container"
+            class="px-3 py-1 text-sm rounded {% if action_type == 'force_predictions' %}bg-blue-600 text-white{% else %}bg-gray-200 text-gray-700{% endif %}"
+        >
+            Force Predictions
+        </button>
+        <button
+            hx-get="/partials/audit-logs?hours={{ hours }}&action_type=retry_phase"
+            hx-target="#audit-logs-container"
+            class="px-3 py-1 text-sm rounded {% if action_type == 'retry_phase' %}bg-blue-600 text-white{% else %}bg-gray-200 text-gray-700{% endif %}"
+        >
+            Retry Phase
+        </button>
+        <button
+            hx-get="/partials/audit-logs?hours={{ hours }}&action_type=trigger_self_heal"
+            hx-target="#audit-logs-container"
+            class="px-3 py-1 text-sm rounded {% if action_type == 'trigger_self_heal' %}bg-blue-600 text-white{% else %}bg-gray-200 text-gray-700{% endif %}"
+        >
+            Self Heal
+        </button>
+    </div>
+
+    <!-- Log Entries -->
+    {% if logs %}
+    <div class="space-y-3">
+        {% for log in logs %}
+        <div class="border rounded-lg p-4 {% if log.result == 'success' %}bg-green-50 border-green-200{% elif log.result == 'failure' %}bg-yellow-50 border-yellow-200{% else %}bg-red-50 border-red-200{% endif %}">
+            <div class="flex items-start justify-between">
+                <div class="flex-1">
+                    <div class="flex items-center space-x-2 mb-2">
+                        <!-- Result Badge -->
+                        <span class="px-2 py-0.5 text-xs font-medium rounded
+                            {% if log.result == 'success' %}bg-green-100 text-green-800
+                            {% elif log.result == 'failure' %}bg-yellow-100 text-yellow-800
+                            {% else %}bg-red-100 text-red-800{% endif %}">
+                            {{ log.result | upper }}
+                        </span>
+                        <!-- Action Type -->
+                        <span class="px-2 py-0.5 bg-blue-100 text-blue-800 text-xs font-medium rounded">
+                            {{ log.action_type }}
+                        </span>
+                        <!-- Sport -->
+                        {% if log.sport %}
+                        <span class="px-2 py-0.5 bg-purple-100 text-purple-800 text-xs font-medium rounded">
+                            {{ log.sport | upper }}
+                        </span>
+                        {% endif %}
+                        <!-- API Key Hash -->
+                        <span class="text-xs text-gray-500 font-mono">
+                            Key: ...{{ log.api_key_hash }}
+                        </span>
+                    </div>
+
+                    <!-- Endpoint -->
+                    <p class="text-sm text-gray-700 font-mono mb-1">
+                        {{ log.endpoint }}
+                    </p>
+
+                    <!-- Parameters -->
+                    {% if log.parameters and log.parameters != '{}' %}
+                    <div class="text-xs text-gray-600 bg-gray-100 rounded p-2 font-mono mb-1">
+                        {{ log.parameters }}
+                    </div>
+                    {% endif %}
+
+                    <!-- Error Details -->
+                    {% if log.error_details %}
+                    <div class="text-xs text-red-600 bg-red-100 rounded p-2 font-mono mt-2">
+                        {{ log.error_details }}
+                    </div>
+                    {% endif %}
+
+                    <!-- User IP -->
+                    <p class="text-xs text-gray-400 mt-2">
+                        IP: {{ log.user_ip }}
+                    </p>
+                </div>
+
+                <!-- Timestamp -->
+                <span class="text-xs text-gray-400 whitespace-nowrap ml-4">
+                    {% if log.timestamp %}
+                        {{ log.timestamp[:19].replace('T', ' ') }}
+                    {% endif %}
+                </span>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    <div class="mt-4 text-center">
+        <p class="text-sm text-gray-500">
+            Showing {{ logs|length }} audit log entries
+            {% if action_type %} for {{ action_type }}{% endif %}
+        </p>
+    </div>
+
+    {% else %}
+    <div class="text-center py-8">
+        <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-gray-100 mb-4">
+            <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+            </svg>
+        </div>
+        <p class="text-gray-500">No audit logs found in the last {{ hours }} hours</p>
+        {% if action_type %}
+        <p class="text-gray-400 text-sm mt-1">for action type: {{ action_type }}</p>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>

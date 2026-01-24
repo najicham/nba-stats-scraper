@@ -5,7 +5,7 @@
 # Quick validation for recent ESPN boxscore data
 # Usage: ./scripts/validate-espn-recent.sh
 
-set -e
+set -euo pipefail
 
 # Colors
 RED='\033[0;31m'

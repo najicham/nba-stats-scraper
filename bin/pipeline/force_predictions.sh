@@ -7,7 +7,7 @@
 #
 # dataset_prefix: Optional prefix for test datasets (e.g., "test" -> test_nba_analytics)
 
-set -e
+set -euo pipefail
 
 DATE=${1:-$(TZ=America/New_York date -d "tomorrow" +%Y-%m-%d)}
 DATASET_PREFIX=${2:-""}

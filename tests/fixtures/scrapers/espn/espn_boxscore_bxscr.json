@@ -1,0 +1,98 @@
+[
+  {
+    "tm": {
+      "id": "17",
+      "abbrev": "LAL",
+      "dspNm": "Los Angeles Lakers"
+    },
+    "stats": [
+      {
+        "type": "starters",
+        "athlts": [
+          {
+            "athlt": {
+              "id": "2544",
+              "dspNm": "LeBron James",
+              "shrtNm": "L. James",
+              "jersey": "23"
+            },
+            "stats": ["35:22", "10-18", "2-5", "6-7", "1", "7", "8", "12", "2", "1", "3", "2", "+15", "28"]
+          },
+          {
+            "athlt": {
+              "id": "3149673",
+              "dspNm": "Anthony Davis",
+              "shrtNm": "A. Davis",
+              "jersey": "3"
+            },
+            "stats": ["32:45", "9-16", "0-1", "6-8", "3", "9", "12", "3", "1", "3", "2", "3", "+12", "24"]
+          },
+          {
+            "athlt": {
+              "id": "4066259",
+              "dspNm": "Austin Reaves",
+              "shrtNm": "A. Reaves",
+              "jersey": "15"
+            },
+            "stats": ["28:30", "5-10", "2-4", "4-4", "0", "3", "3", "6", "2", "0", "1", "2", "+8", "16"]
+          }
+        ]
+      },
+      {
+        "type": "bench",
+        "athlts": [
+          {
+            "athlt": {
+              "id": "4433134",
+              "dspNm": "Rui Hachimura",
+              "shrtNm": "R. Hachimura",
+              "jersey": "28"
+            },
+            "stats": ["22:15", "4-8", "1-2", "2-2", "1", "4", "5", "1", "0", "0", "1", "2", "+5", "11"]
+          },
+          {
+            "athlt": {
+              "id": "3059318",
+              "dspNm": "D'Angelo Russell",
+              "shrtNm": "D. Russell",
+              "jersey": "1"
+            },
+            "dnpRsn": "DNP-REST"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "tm": {
+      "id": "2",
+      "abbrev": "BOS",
+      "dspNm": "Boston Celtics"
+    },
+    "stats": [
+      {
+        "type": "starters",
+        "athlts": [
+          {
+            "athlt": {
+              "id": "4065648",
+              "dspNm": "Jayson Tatum",
+              "shrtNm": "J. Tatum",
+              "jersey": "0"
+            },
+            "stats": ["36:10", "11-22", "3-8", "5-6", "0", "6", "6", "5", "1", "0", "3", "2", "-10", "30"]
+          },
+          {
+            "athlt": {
+              "id": "3917376",
+              "dspNm": "Jaylen Brown",
+              "shrtNm": "J. Brown",
+              "jersey": "7"
+            },
+            "stats": ["34:00", "8-18", "2-6", "4-5", "1", "5", "6", "3", "2", "1", "2", "3", "-8", "22"]
+          }
+        ]
+      }
+    ]
+  }
+]

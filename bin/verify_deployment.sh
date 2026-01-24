@@ -21,7 +21,7 @@
 #   bin/verify_deployment.sh && echo "Deployment verified!"
 #
 
-set -e
+set -euo pipefail
 
 # Colors for output
 RED='\033[0;31m'

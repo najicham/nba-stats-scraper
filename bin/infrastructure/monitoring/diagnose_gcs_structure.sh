@@ -2,7 +2,7 @@
 # File: bin/monitoring/diagnose_gcs_structure.sh
 # Purpose: Diagnose actual GCS structure for NBA gamebook data
 
-set -e
+set -euo pipefail
 
 PROJECT="nba-props-platform"
 BUCKET="gs://nba-scraped-data"

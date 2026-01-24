@@ -19,7 +19,7 @@
 #   ./bin/backfill/run_phase4_backfill.sh --start-date 2024-01-01 --end-date 2024-03-31 --start-from 3
 #
 
-set -e
+set -euo pipefail
 
 # v2.0: Timeout configuration (in seconds)
 # Per-processor timeout: 6 hours (allows for ~400 dates at 50s each + buffer)

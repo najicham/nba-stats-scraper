@@ -15,7 +15,7 @@
 #
 # Created: 2025-12-30 (after Dec 29 grading incident)
 
-set -e
+set -euo pipefail
 
 PROJECT_ID=${PROJECT_ID:-nba-props-platform}
 REGION=${REGION:-us-west2}

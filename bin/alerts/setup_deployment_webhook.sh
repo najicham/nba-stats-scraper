@@ -7,7 +7,7 @@
 # Example:
 #   ./setup_deployment_webhook.sh https://hooks.slack.com/services/YOUR/WEBHOOK/URL
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="nba-props-platform"
 SECRET_NAME="deployment-notifications-slack-webhook"

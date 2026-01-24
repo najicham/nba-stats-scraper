@@ -2,7 +2,7 @@
 # View all messages currently in the Dead Letter Queue
 # This helps you understand what processing failures occurred
 
-set -e
+set -euo pipefail
 
 DLQ_SUB="nba-phase1-scrapers-complete-dlq-sub"
 MAX_MESSAGES=${1:-50}

@@ -10,7 +10,7 @@
 #
 # Default duration: 30 minutes
 
-set -e
+set -euo pipefail
 
 # Configuration
 PROJECT_ID="nba-props-platform"

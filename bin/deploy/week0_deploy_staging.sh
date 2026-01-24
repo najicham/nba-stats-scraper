@@ -9,7 +9,7 @@
 # - On week-0-security-fixes branch or commit 50f3120a+
 # - gcloud authenticated with deploy permissions
 
-set -e
+set -euo pipefail
 
 DRY_RUN=false
 if [ "$1" == "--dry-run" ]; then

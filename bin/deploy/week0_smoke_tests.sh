@@ -8,7 +8,7 @@
 # - Services deployed to staging
 # - Valid API key available in ANALYTICS_API_KEY env var (or pass as arg)
 
-set -e
+set -euo pipefail
 
 REGION="us-west2"
 PROJECT_ID=$(gcloud config get-value project)

@@ -10,7 +10,7 @@
 #
 # USAGE: ./freshness_status.sh
 
-set -e
+set -euo pipefail
 
 SERVICE_NAME="freshness-monitor"
 SCHEDULER_NAME="freshness-monitor-hourly"

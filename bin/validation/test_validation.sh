@@ -3,7 +3,7 @@
 # Purpose: Test validation scripts and infrastructure locally
 # Usage: ./bin/validation/test_validation.sh [test_name]
 
-set -e
+set -euo pipefail
 
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

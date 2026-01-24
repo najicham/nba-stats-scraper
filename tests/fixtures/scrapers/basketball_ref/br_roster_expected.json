@@ -1,0 +1,84 @@
+{
+  "team": "Los Angeles Lakers",
+  "team_abbrev": "LAL",
+  "season": "2024-25",
+  "year": 2025,
+  "timestamp": "2025-01-20T15:30:00.000000+00:00",
+  "playerCount": 6,
+  "players": [
+    {
+      "jersey_number": "23",
+      "full_name": "LeBron James",
+      "full_name_ascii": "LeBron James",
+      "last_name": "James",
+      "normalized": "lebron james",
+      "suffix": "",
+      "position": "SF",
+      "height": "6-9",
+      "weight": "250"
+    },
+    {
+      "jersey_number": "3",
+      "full_name": "Anthony Davis",
+      "full_name_ascii": "Anthony Davis",
+      "last_name": "Davis",
+      "normalized": "anthony davis",
+      "suffix": "",
+      "position": "PF-C",
+      "height": "6-10",
+      "weight": "253"
+    },
+    {
+      "jersey_number": "15",
+      "full_name": "Austin Reaves",
+      "full_name_ascii": "Austin Reaves",
+      "last_name": "Reaves",
+      "normalized": "austin reaves",
+      "suffix": "",
+      "position": "SG",
+      "height": "6-5",
+      "weight": "206"
+    },
+    {
+      "jersey_number": "28",
+      "full_name": "Rui Hachimura",
+      "full_name_ascii": "Rui Hachimura",
+      "last_name": "Hachimura",
+      "normalized": "rui hachimura",
+      "suffix": "",
+      "position": "SF-PF",
+      "height": "6-8",
+      "weight": "230"
+    },
+    {
+      "jersey_number": "1",
+      "full_name": "D'Angelo Russell",
+      "full_name_ascii": "D'Angelo Russell",
+      "last_name": "Russell",
+      "normalized": "d'angelo russell",
+      "suffix": "",
+      "position": "PG",
+      "height": "6-4",
+      "weight": "193"
+    },
+    {
+      "jersey_number": "35",
+      "full_name": "Jaxson Hayes",
+      "full_name_ascii": "Jaxson Hayes",
+      "last_name": "Hayes",
+      "normalized": "jaxson hayes",
+      "suffix": "",
+      "position": "C",
+      "height": "6-11",
+      "weight": "220"
+    }
+  ],
+  "source_url": "https://www.basketball-reference.com/teams/LAL/2025.html",
+  "name_processing": {
+    "enhanced": true,
+    "suffix_handling": true,
+    "normalization": true,
+    "unicode_handling": true,
+    "version": "2.1"
+  }
+}

@@ -1,0 +1,296 @@
+<!-- Pipeline Latency Dashboard Component (P2-MON-2) -->
+<div class="space-y-6">
+    <!-- Pipeline Status Summary -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-gray-50 rounded-lg p-4 text-center">
+            <div class="text-2xl font-bold {% if pipeline_latency.pipeline_status == 'complete' %}text-green-600{% elif pipeline_latency.pipeline_status == 'in_progress' %}text-yellow-600{% else %}text-gray-400{% endif %}">
+                {{ pipeline_latency.pipeline_status|upper if pipeline_latency.pipeline_status else 'UNKNOWN' }}
+            </div>
+            <div class="text-xs text-gray-500">Pipeline Status</div>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-4 text-center">
+            <div class="text-2xl font-bold text-blue-600">
+                {% if pipeline_latency.total_latency_minutes %}
+                {{ "%.1f"|format(pipeline_latency.total_latency_minutes) }} min
+                {% else %}
+                --
+                {% endif %}
+            </div>
+            <div class="text-xs text-gray-500">Total Latency</div>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-4 text-center">
+            <div class="text-2xl font-bold text-purple-600">
+                {{ pipeline_latency.completed_phases|default(0) }}/6
+            </div>
+            <div class="text-xs text-gray-500">Phases Complete</div>
+        </div>
+        <div class="bg-gray-50 rounded-lg p-4 text-center">
+            <div class="text-2xl font-bold {% if date_summary.failed_count and date_summary.failed_count > 0 %}text-red-600{% else %}text-green-600{% endif %}">
+                {{ date_summary.completed_count|default(0) }}/{{ date_summary.game_count|default(0) }}
+            </div>
+            <div class="text-xs text-gray-500">Games Processed</div>
+        </div>
+    </div>
+
+    <!-- Historical Stats -->
+    {% if historical_stats and not historical_stats.error %}
+    <div class="bg-blue-50 rounded-lg p-4">
+        <h4 class="text-sm font-semibold text-blue-700 mb-3">7-Day Historical Latency</h4>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+            <div>
+                <div class="text-lg font-bold text-blue-600">
+                    {% if historical_stats.avg_latency_minutes %}
+                    {{ "%.1f"|format(historical_stats.avg_latency_minutes) }} min
+                    {% else %}--{% endif %}
+                </div>
+                <div class="text-xs text-gray-500">Avg Latency</div>
+            </div>
+            <div>
+                <div class="text-lg font-bold text-green-600">
+                    {% if historical_stats.p50_latency_minutes %}
+                    {{ "%.1f"|format(historical_stats.p50_latency_minutes) }} min
+                    {% else %}--{% endif %}
+                </div>
+                <div class="text-xs text-gray-500">P50 Latency</div>
+            </div>
+            <div>
+                <div class="text-lg font-bold text-yellow-600">
+                    {% if historical_stats.p95_latency_minutes %}
+                    {{ "%.1f"|format(historical_stats.p95_latency_minutes) }} min
+                    {% else %}--{% endif %}
+                </div>
+                <div class="text-xs text-gray-500">P95 Latency</div>
+            </div>
+            <div>
+                <div class="text-lg font-bold {% if historical_stats.warning_count and historical_stats.warning_count > 0 %}text-red-600{% else %}text-gray-600{% endif %}">
+                    {{ historical_stats.warning_count|default(0) }}
+                </div>
+                <div class="text-xs text-gray-500">Threshold Violations</div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Phase Latencies -->
+    {% if pipeline_latency.phase_latencies %}
+    <div>
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Phase Breakdown ({{ date }})</h4>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Phase</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Duration</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Completed</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for phase_name, ts in pipeline_latency.timestamps.items() %}
+                    {% if not phase_name.endswith('_started') and ts %}
+                    <tr>
+                        <td class="px-3 py-2 whitespace-nowrap font-medium">{{ phase_name }}</td>
+                        <td class="px-3 py-2 text-center">
+                            {% set latency_key = phase_name.replace('phase', 'phase') ~ '_to_' ~ phase_name.replace('phase', 'phase')[:-1] ~ (phase_name[-1]|int + 1)|string %}
+                            {% if pipeline_latency.phase_latencies.get(latency_key) %}
+                            {{ (pipeline_latency.phase_latencies[latency_key] / 60)|round(1) }} min
+                            {% else %}
+                            --
+                            {% endif %}
+                        </td>
+                        <td class="px-3 py-2 text-center">
+                            <span class="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">COMPLETE</span>
+                        </td>
+                        <td class="px-3 py-2 text-center text-gray-500 text-xs">{{ ts[:19] if ts else '--' }}</td>
+                    </tr>
+                    {% endif %}
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Bottleneck Analysis -->
+    {% if bottlenecks %}
+    <div>
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Top Bottlenecks (7 days)</h4>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Phase / Processor</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Avg Duration</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">P95</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Executions</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Failures</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for b in bottlenecks %}
+                    <tr class="{% if b.exceeds_threshold %}bg-red-50{% endif %}">
+                        <td class="px-3 py-2 whitespace-nowrap">
+                            <span class="font-medium">{{ b.phase }}</span>
+                            <span class="text-gray-500 text-xs block">{{ b.processor_name }}</span>
+                        </td>
+                        <td class="px-3 py-2 text-center font-semibold">{{ "%.1f"|format(b.avg_duration_seconds / 60) }} min</td>
+                        <td class="px-3 py-2 text-center">{{ "%.1f"|format(b.p95_duration / 60) if b.p95_duration else '--' }} min</td>
+                        <td class="px-3 py-2 text-center">{{ b.execution_count }}</td>
+                        <td class="px-3 py-2 text-center">
+                            {% if b.failure_rate_pct > 5 %}
+                            <span class="px-2 py-1 bg-red-100 text-red-800 text-xs rounded-full">{{ "%.1f"|format(b.failure_rate_pct) }}%</span>
+                            {% else %}
+                            <span class="text-gray-400">{{ "%.1f"|format(b.failure_rate_pct) }}%</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-3 py-2 text-center">
+                            {% if b.exceeds_threshold %}
+                            <span class="px-2 py-1 bg-red-100 text-red-800 text-xs rounded-full">SLOW</span>
+                            {% else %}
+                            <span class="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">OK</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="6" class="px-3 py-4 text-center text-gray-500">No bottleneck data available</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Recent Slow Executions -->
+    {% if slow_executions %}
+    <div>
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Recent Slow Executions (24h)</h4>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Phase</th>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Game</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Duration</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Error</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for s in slow_executions %}
+                    <tr class="{% if s.status == 'failed' %}bg-red-50{% endif %}">
+                        <td class="px-3 py-2 whitespace-nowrap">
+                            <span class="font-medium">{{ s.phase }}</span>
+                            <span class="text-gray-500 text-xs block">{{ s.processor_name }}</span>
+                        </td>
+                        <td class="px-3 py-2 whitespace-nowrap text-xs">
+                            {{ s.game_id or '--' }}
+                            <span class="text-gray-400 block">{{ s.game_date or '' }}</span>
+                        </td>
+                        <td class="px-3 py-2 text-center font-semibold text-red-600">{{ s.duration_minutes }} min</td>
+                        <td class="px-3 py-2 text-center">
+                            {% if s.status == 'success' %}
+                            <span class="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">SUCCESS</span>
+                            {% elif s.status == 'failed' %}
+                            <span class="px-2 py-1 bg-red-100 text-red-800 text-xs rounded-full">FAILED</span>
+                            {% else %}
+                            <span class="px-2 py-1 bg-gray-100 text-gray-800 text-xs rounded-full">{{ s.status|upper }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-3 py-2 text-xs text-red-600 max-w-xs truncate" title="{{ s.error_message }}">
+                            {{ s.error_message[:50] if s.error_message else '--' }}{% if s.error_message and s.error_message|length > 50 %}...{% endif %}
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr>
+                        <td colspan="5" class="px-3 py-4 text-center text-gray-500">No slow executions in the last 24 hours</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Per-Game Summary -->
+    {% if date_summary.games %}
+    <div>
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Game-Level Latency ({{ date }})</h4>
+        <div class="overflow-x-auto max-h-64 overflow-y-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50 sticky top-0">
+                    <tr>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Game ID</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Latency</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Phases</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for g in date_summary.games %}
+                    <tr class="{% if g.status == 'failed' %}bg-red-50{% endif %}">
+                        <td class="px-3 py-2 whitespace-nowrap font-mono text-xs">{{ g.game_id }}</td>
+                        <td class="px-3 py-2 text-center">
+                            {% if g.total_latency_seconds %}
+                            {{ (g.total_latency_seconds / 60)|round(1) }} min
+                            {% else %}
+                            --
+                            {% endif %}
+                        </td>
+                        <td class="px-3 py-2 text-center">{{ g.phases_completed }}/6</td>
+                        <td class="px-3 py-2 text-center">
+                            {% if g.status == 'success' %}
+                            <span class="px-2 py-1 bg-green-100 text-green-800 text-xs rounded-full">OK</span>
+                            {% else %}
+                            <span class="px-2 py-1 bg-red-100 text-red-800 text-xs rounded-full">FAIL</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Aggregate Stats -->
+    {% if date_summary.stats %}
+    <div class="bg-gray-50 rounded-lg p-4">
+        <h4 class="text-sm font-semibold text-gray-700 mb-3">Aggregate Statistics ({{ date }})</h4>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+            <div>
+                <div class="text-lg font-bold text-gray-800">
+                    {{ (date_summary.stats.avg_latency_seconds / 60)|round(1) if date_summary.stats.avg_latency_seconds else '--' }} min
+                </div>
+                <div class="text-xs text-gray-500">Avg Latency</div>
+            </div>
+            <div>
+                <div class="text-lg font-bold text-green-600">
+                    {{ (date_summary.stats.min_latency_seconds / 60)|round(1) if date_summary.stats.min_latency_seconds else '--' }} min
+                </div>
+                <div class="text-xs text-gray-500">Min Latency</div>
+            </div>
+            <div>
+                <div class="text-lg font-bold text-red-600">
+                    {{ (date_summary.stats.max_latency_seconds / 60)|round(1) if date_summary.stats.max_latency_seconds else '--' }} min
+                </div>
+                <div class="text-xs text-gray-500">Max Latency</div>
+            </div>
+            <div>
+                <div class="text-lg font-bold text-purple-600">
+                    {{ (date_summary.stats.p50_latency_seconds / 60)|round(1) if date_summary.stats.p50_latency_seconds else '--' }} min
+                </div>
+                <div class="text-xs text-gray-500">P50 (Median)</div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Info Note -->
+    <div class="text-xs text-gray-400 mt-4">
+        <p>* Latency tracking requires processors to log execution events via PipelineExecutionLogger.</p>
+        <p>* Thresholds: Phase 1-3: 5 min, Phase 4: 10 min, Phase 5-6: 5 min, Total: 30 min</p>
+    </div>
+</div>

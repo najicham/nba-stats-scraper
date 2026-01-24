@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # bin/monitoring/scraper_status.sh
 # Check health status of individual scrapers
 echo "🏥 Individual Scraper Health Check"

@@ -2,7 +2,7 @@
 # File: bin/scrapers/validation/validate_odds_api_lines.sh
 # Purpose: Validate NBA Game Lines data from Odds API - FIXED FOR NESTED STRUCTURE
 
-set -e
+set -euo pipefail
 
 PROJECT="nba-props-platform"
 BUCKET="gs://nba-scraped-data"

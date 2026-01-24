@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # File: bin/monitoring/test_single_game.sh
 # Purpose: Test single game download to validate entire pipeline before full backfill
 # Tests: Direct scraper service call, file creation, JSON data quality

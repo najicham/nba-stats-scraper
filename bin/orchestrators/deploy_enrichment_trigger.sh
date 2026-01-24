@@ -12,7 +12,7 @@
 # Manual trigger:
 #   curl "https://us-west2-nba-props-platform.cloudfunctions.net/enrichment-trigger?date=2026-01-14"
 
-set -e
+set -euo pipefail
 
 # Colors for output
 RED='\033[0;31m'

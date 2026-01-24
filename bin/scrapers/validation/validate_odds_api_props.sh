@@ -2,7 +2,7 @@
 # File: bin/validation/validate_odds_api_props.sh
 # Purpose: Validate NBA Player Props data from Odds API
 
-set -e
+set -euo pipefail
 
 PROJECT="nba-props-platform"
 BUCKET="gs://nba-scraped-data"

@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # File: bin/utilities/deployment_status.sh
 # Check status of all deployed Cloud Run jobs
 

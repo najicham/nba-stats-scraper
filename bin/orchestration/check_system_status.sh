@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Quick System Status Check
 # After processor deployment
 

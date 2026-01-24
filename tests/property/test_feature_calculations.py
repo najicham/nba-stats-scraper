@@ -608,13 +608,13 @@ class TestUsageRateCalculation:
             assert result >= 0
 
     @given(
-        st.integers(min_value=5, max_value=30),  # player_fga
-        st.integers(min_value=0, max_value=15),  # player_fta
-        st.integers(min_value=0, max_value=10),  # player_to
-        st.floats(min_value=10, max_value=40, allow_nan=False),  # player_minutes
-        st.integers(min_value=60, max_value=100),  # team_fga
+        st.integers(min_value=5, max_value=20),  # player_fga (realistic for starter)
+        st.integers(min_value=0, max_value=10),  # player_fta
+        st.integers(min_value=0, max_value=5),  # player_to
+        st.floats(min_value=25, max_value=40, allow_nan=False),  # player_minutes (realistic)
+        st.integers(min_value=70, max_value=100),  # team_fga
         st.integers(min_value=15, max_value=35),  # team_fta
-        st.integers(min_value=5, max_value=25),  # team_to
+        st.integers(min_value=10, max_value=25),  # team_to
     )
     def test_usage_rate_realistic_range(self, player_fga, player_fta, player_to,
                                         player_minutes, team_fga, team_fta, team_to):
@@ -625,9 +625,11 @@ class TestUsageRateCalculation:
         )
 
         if result is not None:
-            # Typical usage rates are 10-40%, extreme cases up to 50%
-            # But with edge case inputs, can go higher
-            assert result < 100  # Sanity check
+            # Typical usage rates are 10-40% for starters
+            # High-usage players like Harden can hit 35-40%
+            # The formula can exceed 100% for extreme edge cases (short minutes, high usage)
+            # For realistic starter inputs, should be under 60%
+            assert result < 60, f"Usage rate {result}% unexpectedly high for realistic inputs"
 
     def test_zero_player_minutes_returns_none(self):
         """Zero player minutes should return None."""

@@ -4,7 +4,7 @@
 # Usage: ./bin/backfill/nbac_injury_monitor.sh [command] [options]
 # Updated: August 2025 - Injury reports pattern discovery and validation
 
-set -e
+set -euo pipefail
 
 PROJECT="nba-props-platform"
 REGION="us-west2"

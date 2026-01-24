@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # bin/utilities/logs_scrapers.sh
 # View scraper logs
 echo "📋 NBA Scraper Logs"

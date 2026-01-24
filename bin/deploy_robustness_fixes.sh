@@ -6,7 +6,7 @@
 #   ./bin/deploy_robustness_fixes.sh           # Deploy all
 #   ./bin/deploy_robustness_fixes.sh --dry-run # Show what would be deployed
 
-set -e
+set -euo pipefail
 
 # Colors for output
 RED='\033[0;31m'

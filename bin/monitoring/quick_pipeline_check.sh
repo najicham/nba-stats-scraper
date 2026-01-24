@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Quick pipeline health check - run anytime to see status
 
 echo "🏀 NBA Pipeline Health Check"

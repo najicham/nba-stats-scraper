@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # bin/monitoring/nba_monitor_scheduler.sh - Clean version without syntax errors
 
 PROJECT_ID=$(gcloud config get-value project 2>/dev/null || echo "unknown")

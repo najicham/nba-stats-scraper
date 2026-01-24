@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # bin/monitoring/system_overview.sh
 # Complete system status dashboard
 echo "🎯 NBA Analytics System Overview"

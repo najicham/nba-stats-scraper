@@ -1,0 +1,91 @@
+{
+  "meta": {
+    "version": 1,
+    "request": "scheduleleaguev2int",
+    "time": "2025-01-20 10:30:00"
+  },
+  "leagueSchedule": {
+    "seasonYear": "2024",
+    "leagueId": "00",
+    "gameDates": [
+      {
+        "gameDate": "01/20/2025 12:00:00 AM",
+        "games": [
+          {
+            "gameId": "0022400612",
+            "gameCode": "20250120/BOSLAL",
+            "gameStatus": 3,
+            "gameStatusText": "Final",
+            "gameSequence": 1,
+            "gameDateEst": "2025-01-20",
+            "gameTimeEst": "2025-01-20T19:30:00",
+            "gameDateTimeEst": "2025-01-20T19:30:00",
+            "gameDateUTC": "2025-01-21T00:30:00",
+            "gameTimeUTC": "00:30:00",
+            "gameDateTimeUTC": "2025-01-21T00:30:00",
+            "arenaName": "Crypto.com Arena",
+            "arenaCity": "Los Angeles",
+            "arenaState": "CA",
+            "arenaCountry": "USA",
+            "gameLabel": "",
+            "gameSubLabel": "",
+            "weekNumber": 14,
+            "weekName": "Week 14",
+            "day": "Mon",
+            "seriesGameNumber": "",
+            "seriesText": "",
+            "homeTeam": {
+              "teamId": 1610612747,
+              "teamName": "Lakers",
+              "teamCity": "Los Angeles",
+              "teamTricode": "LAL",
+              "teamSlug": "lakers",
+              "wins": 28,
+              "losses": 17,
+              "score": 110,
+              "seed": null
+            },
+            "awayTeam": {
+              "teamId": 1610612738,
+              "teamName": "Celtics",
+              "teamCity": "Boston",
+              "teamTricode": "BOS",
+              "teamSlug": "celtics",
+              "wins": 35,
+              "losses": 10,
+              "score": 105,
+              "seed": null
+            },
+            "broadcasters": {
+              "nationalTvBroadcasters": [
+                {
+                  "broadcasterScope": "natl",
+                  "broadcasterMedia": "tv",
+                  "broadcasterDisplay": "ESPN",
+                  "broadcasterHomeAwayTeam": "N/A",
+                  "tntOvertimeFlag": "N"
+                }
+              ],
+              "homeTvBroadcasters": [
+                {
+                  "broadcasterScope": "local",
+                  "broadcasterMedia": "tv",
+                  "broadcasterDisplay": "SPECSN",
+                  "broadcasterHomeAwayTeam": "Home"
+                }
+              ],
+              "awayTvBroadcasters": [
+                {
+                  "broadcasterScope": "local",
+                  "broadcasterMedia": "tv",
+                  "broadcasterDisplay": "NBCSB",
+                  "broadcasterHomeAwayTeam": "Away"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

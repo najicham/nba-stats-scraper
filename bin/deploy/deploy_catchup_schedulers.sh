@@ -10,7 +10,7 @@
 # Created: January 22, 2026
 # ============================================================================
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="${GCP_PROJECT:-nba-props-platform}"
 REGION="${GCP_REGION:-us-west2}"

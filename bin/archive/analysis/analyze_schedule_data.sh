@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # SAVE TO: ~/code/nba-stats-scraper/bin/analysis/analyze_schedule_data.sh
 # NBA Schedule Data Analyzer - Comprehensive analysis of collected schedule data
 

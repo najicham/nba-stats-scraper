@@ -3,7 +3,7 @@
 # Clean NBA Odds API Backfill Monitor
 # Usage: ./bin/backfill/odds_api_props_monitor.sh [command] [options]
 
-set -e
+set -euo pipefail
 
 # Configuration
 PROJECT="nba-props-platform"

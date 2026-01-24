@@ -6,7 +6,7 @@
 #   ./bin/orchestration/test.sh              # Test Cloud Run
 #   ./bin/orchestration/test.sh --local      # Test local (localhost:8080)
 
-set -e
+set -euo pipefail
 
 # Determine target
 if [[ "$1" == "--local" ]]; then

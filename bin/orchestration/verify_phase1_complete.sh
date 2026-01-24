@@ -3,7 +3,7 @@
 # Comprehensive verification of Phase 1 orchestration system
 # Path: bin/orchestration/verify_phase1_complete.sh
 
-set -e
+set -euo pipefail
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "🔍 Phase 1 Orchestration - Complete System Verification"

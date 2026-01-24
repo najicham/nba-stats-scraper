@@ -3,7 +3,7 @@
 # Purpose: Monitoring for NBA Referee Assignments backfill process with concurrent job support
 # Usage: ./bin/scrapers/monitoring/nbac_referee_assignments_monitor.sh [command] [options]
 
-set -e
+set -euo pipefail
 
 PROJECT="nba-props-platform"
 REGION="us-west2"

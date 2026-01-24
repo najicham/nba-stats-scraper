@@ -2,7 +2,7 @@
 # File: bin/processor_validation/validate_nbac_gamebook.sh
 # Validate NBA.com Gamebook data quality in BigQuery
 
-set -e
+set -euo pipefail
 
 PROJECT_ID=${GCP_PROJECT_ID:-"nba-props-platform"}
 

@@ -2,7 +2,7 @@
 # File: bin/validation/validate_bdl_boxscore.sh  
 # Purpose: Season-targeted validator for Ball Don't Lie boxscore data
 
-set -e
+set -euo pipefail
 
 PROJECT="nba-props-platform"
 BUCKET="gs://nba-scraped-data"

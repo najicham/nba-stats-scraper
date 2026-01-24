@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # File: bin/monitoring/monitor_backfill.sh
 # Purpose: Comprehensive monitoring for NBA gamebook backfill process
 # Usage: ./monitor_backfill.sh [--continuous] [--interval=60]

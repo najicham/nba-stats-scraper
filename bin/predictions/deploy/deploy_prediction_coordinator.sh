@@ -11,7 +11,7 @@
 # 2. Deploy with --source=.
 # 3. Cleanup temp Dockerfile
 
-set -e
+set -euo pipefail
 
 # Configuration
 ENVIRONMENT="${1:-prod}"

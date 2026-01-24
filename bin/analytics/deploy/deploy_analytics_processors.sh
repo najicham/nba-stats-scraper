@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # File: bin/analytics/deploy/deploy_analytics_processors.sh
 # Deploy analytics processor service to Cloud Run (similar to regular processors)
 # Updated: Added commit SHA tracking for deployment verification

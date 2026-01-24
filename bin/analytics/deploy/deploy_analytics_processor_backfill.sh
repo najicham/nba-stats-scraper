@@ -2,7 +2,7 @@
 # File: bin/analytics/deploy/deploy_analytics_processor_backfill.sh
 # Deploy analytics processor backfill job
 
-set -e
+set -euo pipefail
 
 # Source shared deployment functions
 source "$(dirname "$0")/../../shared/deploy_common.sh"

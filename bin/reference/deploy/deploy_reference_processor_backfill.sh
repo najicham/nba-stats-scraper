@@ -2,7 +2,7 @@
 # File: bin/reference/deploy/deploy_reference_processor_backfill.sh
 # Deploy reference processor backfill job with email alerting support
 
-set -e
+set -euo pipefail
 
 # Source shared deployment functions
 source "$(dirname "$0")/../../shared/deploy_common.sh"

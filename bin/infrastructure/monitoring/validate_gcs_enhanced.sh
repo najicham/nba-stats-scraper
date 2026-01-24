@@ -2,7 +2,7 @@
 # File: bin/monitoring/validate_gcs_enhanced.sh  
 # Purpose: Enhanced validator for NBA gamebook files with better discovery and analysis
 
-set -e
+set -euo pipefail
 
 PROJECT="nba-props-platform"
 BUCKET="gs://nba-scraped-data"

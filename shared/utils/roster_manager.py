@@ -317,22 +317,28 @@ class RosterChangeTracker:
                 return tx_type
 
         # Fall back to description analysis
+        # NOTE: Order matters - check more specific patterns first
         description_lower = description.lower()
 
         if 'trade' in description_lower or 'acquired' in description_lower:
             return TransactionType.TRADE
         if 'waive' in description_lower:
             return TransactionType.WAIVER
-        if 'sign' in description_lower:
-            return TransactionType.SIGNING
-        if 'two-way' in description_lower or '2-way' in description_lower:
-            return TransactionType.TWO_WAY_CONTRACT
-        if '10-day' in description_lower or 'ten-day' in description_lower:
-            return TransactionType.TEN_DAY_CONTRACT
+        # Check G-League BEFORE signing (because "assigned" contains "sign")
         if 'g league' in description_lower or 'g-league' in description_lower:
             if 'recall' in description_lower:
                 return TransactionType.G_LEAGUE_RECALL
             return TransactionType.G_LEAGUE_ASSIGNMENT
+        if 'assigned' in description_lower:
+            # Typically G-League assignment
+            return TransactionType.G_LEAGUE_ASSIGNMENT
+        if 'two-way' in description_lower or '2-way' in description_lower:
+            return TransactionType.TWO_WAY_CONTRACT
+        if '10-day' in description_lower or 'ten-day' in description_lower:
+            return TransactionType.TEN_DAY_CONTRACT
+        # Check signing after G-League/assignment checks
+        if 'sign' in description_lower:
+            return TransactionType.SIGNING
         if 'release' in description_lower:
             return TransactionType.RELEASE
         if 'retire' in description_lower:

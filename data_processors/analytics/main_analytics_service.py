@@ -28,6 +28,12 @@ from data_processors.analytics.team_defense_game_summary.team_defense_game_summa
 from data_processors.analytics.upcoming_player_game_context.upcoming_player_game_context_processor import UpcomingPlayerGameContextProcessor
 from data_processors.analytics.upcoming_team_game_context.upcoming_team_game_context_processor import UpcomingTeamGameContextProcessor
 
+# Import async orchestration utilities for improved concurrency
+from data_processors.analytics.async_orchestration import (
+    run_processor_with_async_support,
+    run_processors_concurrently,
+)
+
 # Import BigQuery client for completeness checks
 from google.cloud import bigquery
 
@@ -283,17 +289,30 @@ def trigger_missing_boxscore_scrapes(missing_games: list, game_date: str) -> int
         logger.error(f"Failed to trigger missing boxscore scrapes: {e}", exc_info=True)
         return 0
 
-def run_single_analytics_processor(processor_class, opts):
+def run_single_analytics_processor(processor_class, opts, prefer_async=None):
     """
     Run a single analytics processor (for parallel execution).
+
+    Supports async processors for improved concurrency when enabled.
 
     Args:
         processor_class: Processor class to instantiate
         opts: Options dict for processor.run()
+        prefer_async: If True, use async version when available.
+                      Defaults to ENABLE_ASYNC_PROCESSORS env var.
 
     Returns:
         Dict with processor results
     """
+    # Check if async processors are enabled
+    if prefer_async is None:
+        prefer_async = os.environ.get('ENABLE_ASYNC_PROCESSORS', 'true').lower() == 'true'
+
+    if prefer_async:
+        # Use async orchestration which handles async/sync detection
+        return run_processor_with_async_support(processor_class, opts, prefer_async=True)
+
+    # Original sync implementation
     try:
         logger.info(f"Running {processor_class.__name__} for {opts.get('start_date')}")
 
@@ -302,20 +321,20 @@ def run_single_analytics_processor(processor_class, opts):
 
         if success:
             stats = processor.get_analytics_stats()
-            logger.info(f"✅ Successfully ran {processor_class.__name__}: {stats}")
+            logger.info(f"Successfully ran {processor_class.__name__}: {stats}")
             return {
                 "processor": processor_class.__name__,
                 "status": "success",
                 "stats": stats
             }
         else:
-            logger.error(f"❌ Failed to run {processor_class.__name__}")
+            logger.error(f"Failed to run {processor_class.__name__}")
             return {
                 "processor": processor_class.__name__,
                 "status": "error"
             }
     except Exception as e:
-        logger.error(f"❌ Analytics processor {processor_class.__name__} failed: {e}", exc_info=True)
+        logger.error(f"Analytics processor {processor_class.__name__} failed: {e}", exc_info=True)
         return {
             "processor": processor_class.__name__,
             "status": "exception",

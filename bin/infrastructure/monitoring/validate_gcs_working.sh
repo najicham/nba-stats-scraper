@@ -2,7 +2,7 @@
 # File: bin/monitoring/validate_gcs_working.sh  
 # Purpose: Working validator for actual NBA gamebook file structure
 
-set -e
+set -euo pipefail
 
 PROJECT="nba-props-platform"
 BUCKET="gs://nba-scraped-data"

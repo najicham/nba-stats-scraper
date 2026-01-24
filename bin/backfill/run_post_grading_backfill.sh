@@ -15,7 +15,7 @@
 #   - Phase 5B grading must be complete
 #   - Virtual environment must exist at .venv/
 
-set -e
+set -euo pipefail
 
 # Colors
 RED='\033[0;31m'

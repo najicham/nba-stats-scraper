@@ -7,7 +7,7 @@
 # Usage:
 #   ./bin/deploy/deploy_live_freshness_monitor.sh
 
-set -e
+set -euo pipefail
 
 # Configuration
 PROJECT_ID="${GCP_PROJECT:-nba-props-platform}"

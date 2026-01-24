@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # File: bin/utilities/list_deployable_jobs.sh
 # List all available deployment jobs across processor types
 

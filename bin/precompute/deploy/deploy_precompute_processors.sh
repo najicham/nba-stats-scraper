@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # File: bin/precompute/deploy/deploy_precompute_processors.sh
 # Deploy precompute processor service to Cloud Run (Phase 4)
 # Updated: Added commit SHA tracking for deployment verification

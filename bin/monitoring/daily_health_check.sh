@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Daily health check script - run each morning to verify pipeline status
 # Usage: ./bin/monitoring/daily_health_check.sh [DATE]
 

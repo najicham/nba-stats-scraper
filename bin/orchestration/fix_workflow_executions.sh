@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Fix workflow_executions.sql - Remove NOT NULL from ARRAY fields
 # Save this as: bin/orchestration/fix_workflow_executions.sh
 

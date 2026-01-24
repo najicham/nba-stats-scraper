@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # File: bin/reference/deploy/deploy_reference_processors.sh
 # Deploy reference processor service to Cloud Run (name resolution system)
 

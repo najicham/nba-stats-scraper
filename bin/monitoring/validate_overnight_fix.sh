@@ -3,7 +3,7 @@
 # Run this on Jan 1, 2026 after 8 AM ET to validate the fix worked
 # Created: Dec 31, 2025
 
-set -e
+set -euo pipefail
 
 echo "=================================================="
 echo "Overnight Orchestration Fix - Validation Report"

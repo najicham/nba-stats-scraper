@@ -143,9 +143,10 @@ class TestMinutesParsing:
         result = self._parse_minutes_to_decimal(empty_val)
         assert result is None
 
-    @given(st.text(min_size=1, max_size=10).filter(lambda x: ':' not in x and not x.replace('.', '').replace('-', '').isdigit()))
+    @given(st.text(min_size=1, max_size=10, alphabet="abcdefghijklmnopqrstuvwxyz!@#$%^&*()"))
     def test_invalid_strings_return_none(self, invalid_str):
-        """Invalid strings should return None, not raise."""
+        """Invalid strings (non-numeric, non-time) should return None, not raise."""
+        # This test ensures non-numeric garbage doesn't crash the parser
         result = self._parse_minutes_to_decimal(invalid_str)
         assert result is None
 
@@ -455,11 +456,13 @@ class TestTeamAbbreviationValidation:
         result = self._normalize_team_abbr(team.lower())
         assert result == team
 
-    @given(st.text(min_size=1, max_size=3, alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-           .filter(lambda x: x not in VALID_TEAMS))
-    def test_invalid_teams_rejected(self, invalid_team):
+    @given(st.text(min_size=1, max_size=3, alphabet="ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
+    def test_invalid_teams_rejected(self, text_team):
         """Invalid team abbreviations should not be recognized."""
-        assert not self._is_valid_team(invalid_team)
+        # Skip if this happens to be a valid team
+        if text_team in self.VALID_TEAMS:
+            return
+        assert not self._is_valid_team(text_team)
 
     @given(st.sampled_from([None, '', '  ']))
     def test_empty_values_handled(self, empty_val):

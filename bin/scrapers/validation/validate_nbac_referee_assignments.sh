@@ -3,7 +3,7 @@
 # Purpose: Validate NBA referee assignments data quality and completeness
 # Usage: ./bin/scrapers/validation/validate_nbac_referee_assignments.sh [command] [options]
 
-set -e
+set -euo pipefail
 
 # Configuration
 GCS_BUCKET="nba-scraped-data"

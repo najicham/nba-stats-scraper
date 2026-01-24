@@ -3,7 +3,7 @@
 # Purpose: Validate NBA gamebook data quality from GCS storage
 # Usage: ./validate_gcs_data.sh [command] [options]
 
-set -e
+set -euo pipefail
 
 PROJECT="nba-props-platform"
 BUCKET="gs://nba-scraped-data"

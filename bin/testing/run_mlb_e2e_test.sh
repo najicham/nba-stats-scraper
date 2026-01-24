@@ -10,7 +10,7 @@
 #
 # Created: 2026-01-07
 
-set -e
+set -euo pipefail
 
 # Configuration
 TEST_DATE="${1:-2025-06-15}"

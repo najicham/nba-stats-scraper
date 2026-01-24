@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # SAVE TO: ~/code/nba-stats-scraper/bin/scheduling/pause_all_schedulers.sh
 
 PROJECT_ID="nba-props-platform"

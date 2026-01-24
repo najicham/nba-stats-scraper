@@ -2,7 +2,7 @@
 # Check for workflow failure patterns
 # Run daily to detect systematic workflow issues
 
-set -e
+set -euo pipefail
 
 echo "=== Workflow Health Check ==="
 echo "Time: $(TZ=America/New_York date '+%Y-%m-%d %H:%M:%S %Z')"

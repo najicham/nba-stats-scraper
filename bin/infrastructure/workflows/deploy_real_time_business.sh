@@ -2,7 +2,7 @@
 # bin/deployment/deploy_real_time_business.sh
 # Deploy the CRITICAL real-time business workflow for NBA prop betting
 
-set -e
+set -euo pipefail
 
 PROJECT_ID=$(gcloud config get-value project 2>/dev/null || echo "unknown")
 REGION="us-west2"

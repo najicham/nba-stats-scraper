@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Show complete Pub/Sub architecture
 # Path: bin/orchestration/show_pubsub_architecture.sh
 

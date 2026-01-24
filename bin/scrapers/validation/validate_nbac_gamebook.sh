@@ -2,7 +2,7 @@
 # File: bin/validation/validate_nbac_gamebook.sh  
 # Purpose: Season-targeted validator that samples random dates for efficiency
 
-set -e
+set -euo pipefail
 
 PROJECT="nba-props-platform"
 BUCKET="gs://nba-scraped-data"

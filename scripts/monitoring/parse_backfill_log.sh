@@ -2,7 +2,7 @@
 # Parse backfill log file and extract metrics
 # Usage: parse_backfill_log.sh <log_file>
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/../validation/common_validation.sh"

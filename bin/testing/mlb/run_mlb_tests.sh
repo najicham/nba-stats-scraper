@@ -23,7 +23,7 @@
 # Created: 2026-01-15
 # Part of MLB E2E Test System
 
-set -e
+set -euo pipefail
 
 # Colors for output
 RED='\033[0;31m'

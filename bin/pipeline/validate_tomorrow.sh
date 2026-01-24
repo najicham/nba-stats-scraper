@@ -5,7 +5,7 @@
 # This script checks if the pipeline is healthy and predictions exist.
 # Run this in the morning or set up as a scheduler for early warning.
 
-set -e
+set -euo pipefail
 
 TOMORROW=$(TZ=America/New_York date -d "tomorrow" +%Y-%m-%d)
 TODAY=$(TZ=America/New_York date +%Y-%m-%d)

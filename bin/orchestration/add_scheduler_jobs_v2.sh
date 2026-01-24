@@ -2,7 +2,7 @@
 # Creates all 4 Cloud Scheduler jobs for Phase 1
 # Save this as: bin/orchestration/add_scheduler_jobs_v2.sh
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="nba-props-platform"
 REGION="us-west2"

@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # bin/utilities/api_status.sh
 # Check external API status
 echo "🔗 External API Status Check"

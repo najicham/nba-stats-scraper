@@ -12,7 +12,7 @@
 #
 # =============================================================================
 
-set -e
+set -euo pipefail
 
 # Configuration
 PROJECT_ID="${GCP_PROJECT_ID:-nba-props-platform}"

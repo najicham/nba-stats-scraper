@@ -3,7 +3,7 @@
 # Purpose: Run validation checks on data pipeline components
 # Usage: ./bin/validation/run_validation.sh [command] [options]
 
-set -e
+set -euo pipefail
 
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

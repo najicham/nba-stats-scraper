@@ -2,7 +2,7 @@
 # bin/deployment/fix_workflows_permissions.sh
 # Fix Cloud Workflows service agent and permissions issues
 
-set -e
+set -euo pipefail
 
 PROJECT_ID=$(gcloud config get-value project 2>/dev/null || echo "unknown")
 PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format="value(projectNumber)")

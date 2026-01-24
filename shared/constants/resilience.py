@@ -86,6 +86,22 @@ BDL_MAX_PAGES = 100
 
 
 # =============================================================================
+# EXTERNAL SERVICE CIRCUIT BREAKER CONFIGURATION
+# =============================================================================
+# Circuit breaker for external service calls (Slack, GCS, third-party APIs)
+# See: shared/utils/external_service_circuit_breaker.py
+
+# Number of consecutive failures before opening external service circuit
+EXTERNAL_CB_THRESHOLD = 5
+
+# How long external service circuit stays open (seconds)
+EXTERNAL_CB_TIMEOUT_SECONDS = 300
+
+# Number of successes needed in half-open state to close circuit
+EXTERNAL_CB_HALF_OPEN_MAX_CALLS = 3
+
+
+# =============================================================================
 # TIMEOUT CONFIGURATION
 # =============================================================================
 # Various timeout values in seconds

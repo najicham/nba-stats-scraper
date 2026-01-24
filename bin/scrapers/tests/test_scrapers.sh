@@ -2,7 +2,7 @@
 # NBA Scrapers script - requires bash for consistency across environments
 # Compatible with macOS zsh, Linux bash, and CI/CD systems
 
-set -e
+set -euo pipefail
 
 # Shell compatibility check
 if [[ -z "$BASH_VERSION" ]]; then
@@ -19,7 +19,7 @@ if [[ ${BASH_VERSION%%.*} -lt 3 ]]; then
     exit 1
 fi
 
-set -e
+set -euo pipefail
 
 SERVICE_URL=$(gcloud run services describe nba-scrapers --region us-west2 --format 'value(status.url)')
 echo "🧪 Testing NBA Scrapers at: $SERVICE_URL"

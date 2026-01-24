@@ -2,7 +2,7 @@
 # File: bin/monitoring/validate_gcs_data_fixed.sh
 # Purpose: Corrected validator - looks for files by game date, not creation date
 
-set -e
+set -euo pipefail
 
 PROJECT="nba-props-platform"
 BUCKET="gs://nba-scraped-data"

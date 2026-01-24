@@ -3,7 +3,7 @@
 # Purpose: Main script for NBA BettingPros data validation
 # Modular design - imports functionality from lib/ directory
 
-set -e
+set -euo pipefail
 
 # Get script directory for relative imports
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

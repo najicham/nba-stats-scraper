@@ -2,7 +2,7 @@
 # File: bin/raw/deploy/deploy_processor_backfill_job.sh
 # Deploy raw data processor backfill job
 
-set -e
+set -euo pipefail
 
 # Source shared deployment functions
 source "$(dirname "$0")/../../shared/deploy_common.sh"

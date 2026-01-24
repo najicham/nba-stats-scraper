@@ -12,7 +12,7 @@
 #   - gcloud CLI installed and authenticated
 #   - Appropriate IAM permissions for Cloud Monitoring
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="nba-props-platform"
 METRIC_NAME="cloud_run_auth_errors"

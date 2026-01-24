@@ -955,6 +955,22 @@ If circuit opens mid-processing, checkpoints allow resume from last good state.
 
 ---
 
+## Related Circuit Breaker Implementations
+
+The codebase has multiple circuit breaker implementations for different use cases:
+
+| Implementation | File | Use Case |
+|----------------|------|----------|
+| `CircuitBreakerMixin` | `shared/processors/patterns/circuit_breaker_mixin.py` | Phase 3/4/5 data processors |
+| `SystemCircuitBreaker` | `predictions/worker/system_circuit_breaker.py` | Phase 5 ML prediction systems |
+| `RateLimitHandler` | `shared/utils/rate_limit_handler.py` | API rate limiting with backoff |
+| `ExternalServiceCircuitBreaker` | `shared/utils/external_service_circuit_breaker.py` | External service calls (Slack, GCS, APIs) |
+| `ProxyCircuitBreaker` | `scrapers/utils/proxy_utils.py` | Proxy/scraper HTTP calls |
+
+See [External Service Circuit Breaker](./external-service-circuit-breaker.md) for protecting external API calls.
+
+---
+
 **Total Implementation Time:** 1 hour
 **Expected Impact:** Prevents cascade failures, 99.9% reduction in retry noise
 **Maintenance:** Monitor circuit opens, adjust thresholds as needed

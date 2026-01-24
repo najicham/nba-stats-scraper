@@ -2,7 +2,7 @@
 # File: bin/analytics/deploy/test_analytics_processors.sh
 # Test analytics processors with sample data
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="nba-props-platform"
 REGION="us-west2"

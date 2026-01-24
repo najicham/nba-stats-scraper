@@ -44,6 +44,14 @@ from shared.clients.bigquery_pool import get_bigquery_client
 from shared.validation.phase_boundary_validator import PhaseBoundaryValidator, ValidationMode
 from shared.utils.phase_execution_logger import log_phase_execution
 
+# Completion tracker for dual-write to Firestore and BigQuery
+try:
+    from shared.utils.completion_tracker import get_completion_tracker
+    COMPLETION_TRACKER_ENABLED = True
+except ImportError:
+    COMPLETION_TRACKER_ENABLED = False
+    get_completion_tracker = None
+
 # Pydantic validation for Pub/Sub messages (Week 2 addition)
 try:
     from shared.validation.pubsub_models import Phase2CompletionMessage
@@ -711,6 +719,26 @@ def orchestrate_phase2_to_phase3(cloud_event):
             f"(status={status}, correlation_id={correlation_id})"
         )
 
+        # Write to BigQuery backup (non-blocking, fire-and-forget)
+        # This provides backup tracking if Firestore becomes unavailable
+        if COMPLETION_TRACKER_ENABLED:
+            try:
+                tracker = get_completion_tracker()
+                tracker.record_completion(
+                    phase="phase2",
+                    game_date=game_date,
+                    processor_name=processor_name,
+                    completion_data={
+                        "status": status,
+                        "record_count": message_data.get('record_count', 0),
+                        "correlation_id": correlation_id,
+                        "execution_id": message_data.get('execution_id'),
+                    }
+                )
+            except Exception as tracker_error:
+                # Non-blocking - log but don't fail the orchestration
+                logger.warning(f"BigQuery backup write failed (non-blocking): {tracker_error}")
+
         # Update completion state with atomic transaction
         doc_ref = db.collection('phase2_completion').document(game_date)
 
@@ -798,6 +826,22 @@ def orchestrate_phase2_to_phase3(cloud_event):
                 f"✅ MONITORING: All {EXPECTED_PROCESSOR_COUNT} expected Phase 2 processors "
                 f"complete for {game_date} (correlation_id={correlation_id})"
             )
+
+            # Update BigQuery aggregate status (non-blocking)
+            if COMPLETION_TRACKER_ENABLED:
+                try:
+                    tracker = get_completion_tracker()
+                    tracker.update_aggregate_status(
+                        phase="phase2",
+                        game_date=game_date,
+                        completed_processors=list(EXPECTED_PROCESSOR_SET),
+                        expected_processors=EXPECTED_PROCESSORS,
+                        is_triggered=True,
+                        trigger_reason="all_complete",
+                        mode="monitoring_only"  # Phase 2 orchestrator is monitoring-only
+                    )
+                except Exception as tracker_error:
+                    logger.warning(f"BigQuery aggregate update failed (non-blocking): {tracker_error}")
 
             # Log execution metrics for latency tracking
             execution_duration = (datetime.now(timezone.utc) - execution_start_time).total_seconds()

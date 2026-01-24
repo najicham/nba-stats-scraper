@@ -1215,9 +1215,17 @@ class UpcomingPlayerGameContextProcessor(
                     self.historical_boxscores[player_lookup] = player_data
             
             logger.info(f"Extracted {len(df)} historical boxscore records for {len(player_lookups)} players")
-            
-            # TODO: Implement fallback to nbac_player_boxscores if BDL insufficient
-            # TODO: Implement last resort fallback to nbac_gamebook_player_stats
+
+            # Check for players with insufficient data and try fallback sources
+            players_needing_fallback = [
+                p for p in player_lookups
+                if self.historical_boxscores.get(p, pd.DataFrame()).empty
+                or len(self.historical_boxscores.get(p, pd.DataFrame())) < 5
+            ]
+
+            if players_needing_fallback:
+                logger.info(f"Attempting fallback for {len(players_needing_fallback)} players with insufficient BDL data")
+                self._extract_boxscores_fallback(players_needing_fallback, start_date)
 
         except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
             logger.error(f"BigQuery error extracting historical boxscores: {e}")
@@ -1227,7 +1235,97 @@ class UpcomingPlayerGameContextProcessor(
             logger.error(f"Data error extracting historical boxscores: {e}")
             self.source_tracking['boxscore']['rows_found'] = 0
             raise
-    
+
+    def _extract_boxscores_fallback(self, player_lookups: List[str], start_date: date) -> None:
+        """
+        Fallback boxscore extraction using nbac_gamebook_player_stats.
+
+        Called when BDL data is insufficient for some players (e.g., rookies,
+        recently traded players, or gaps in BDL coverage).
+
+        Args:
+            player_lookups: List of player lookups needing fallback data
+            start_date: Start date for lookback window
+        """
+        if not player_lookups:
+            return
+
+        # Query nbac_gamebook_player_stats as fallback
+        query = f"""
+        SELECT
+            player_lookup,
+            game_date,
+            team_abbr,
+            points,
+            minutes,
+            assists,
+            total_rebounds as rebounds,
+            field_goals_made,
+            field_goals_attempted,
+            three_pt_made as three_pointers_made,
+            three_pt_attempted as three_pointers_attempted,
+            ft_made as free_throws_made,
+            ft_attempted as free_throws_attempted
+        FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
+        WHERE player_lookup IN UNNEST(@player_lookups)
+          AND game_date >= @start_date
+          AND game_date < @target_date
+          AND player_status = 'active'
+        ORDER BY player_lookup, game_date DESC
+        """
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups),
+                bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+                bigquery.ScalarQueryParameter("target_date", "DATE", self.target_date),
+            ]
+        )
+
+        try:
+            df = self.bq_client.query(query, job_config=job_config).to_dataframe()
+
+            if df.empty:
+                logger.info("No fallback boxscore data found in nbac_gamebook_player_stats")
+                return
+
+            # Convert minutes string to decimal
+            if 'minutes' in df.columns:
+                df['minutes_decimal'] = df['minutes'].apply(self._parse_minutes)
+            else:
+                df['minutes_decimal'] = 0.0
+
+            # Merge with existing data or replace if empty
+            fallback_count = 0
+            for player_lookup in player_lookups:
+                existing_data = self.historical_boxscores.get(player_lookup, pd.DataFrame())
+                player_fallback = df[df['player_lookup'] == player_lookup].copy()
+
+                if player_fallback.empty:
+                    continue
+
+                if existing_data.empty:
+                    # No BDL data - use fallback entirely
+                    self.historical_boxscores[player_lookup] = player_fallback
+                    fallback_count += 1
+                else:
+                    # Merge: keep BDL data and add missing games from fallback
+                    existing_dates = set(existing_data['game_date'].tolist())
+                    new_games = player_fallback[~player_fallback['game_date'].isin(existing_dates)]
+                    if not new_games.empty:
+                        merged = pd.concat([existing_data, new_games]).sort_values(
+                            'game_date', ascending=False
+                        )
+                        self.historical_boxscores[player_lookup] = merged
+                        fallback_count += 1
+
+            if fallback_count > 0:
+                logger.info(f"Enhanced boxscore data for {fallback_count} players using nbac_gamebook_player_stats fallback")
+
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.warning(f"BigQuery error in boxscore fallback: {e}. Continuing with available data.")
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.warning(f"Data error in boxscore fallback: {e}. Continuing with available data.")
+
     def _extract_prop_lines(self) -> None:
         """
         Extract prop lines (opening and current) for each player.
@@ -1674,6 +1772,115 @@ class UpcomingPlayerGameContextProcessor(
                 f'{prefix}_source': None
             }
     
+
+    # ============================================================
+    # Public Betting Percentage Extraction (Analytics Features)
+    # ============================================================
+
+    def _get_spread_public_betting_pct(self, game_id: str) -> Optional[float]:
+        """
+        Get the percentage of public bets on the spread favorite.
+
+        This metric indicates where the public is betting on the spread,
+        which can be a valuable contrarian indicator when combined with
+        line movement data.
+
+        Args:
+            game_id: Game identifier (standard format: YYYYMMDD_AWAY_HOME)
+
+        Returns:
+            Percentage (0-100) of public bets on the spread favorite,
+            or None if data is not available.
+
+        TODO: Implement when public betting data source is available.
+        Potential data sources to integrate:
+        - ActionNetwork API (requires subscription)
+        - BettingPros consensus/public betting data
+        - Covers.com public betting percentages
+        - VSiN betting splits data
+
+        The implementation would query the data source for the game and
+        return the percentage of bets on the spread favorite (the team
+        that is favored to cover the spread).
+        """
+        # TODO: Implement when public betting data source is available
+        # Example implementation structure when data is available:
+        #
+        # if game_id in self.schedule_data:
+        #     home_team = self.schedule_data[game_id].get('home_team_abbr')
+        #     away_team = self.schedule_data[game_id].get('away_team_abbr')
+        # else:
+        #     parts = game_id.split('_')
+        #     if len(parts) != 3:
+        #         return None
+        #     away_team, home_team = parts[1], parts[2]
+        #
+        # query = f"""
+        # SELECT public_betting_pct_favorite
+        # FROM `{self.project_id}.nba_raw.public_betting_data`
+        # WHERE game_date = @game_date
+        #   AND home_team_abbr = @home_team
+        #   AND away_team_abbr = @away_team
+        #   AND market_type = 'spread'
+        # ORDER BY snapshot_timestamp DESC
+        # LIMIT 1
+        # """
+        # ... execute query and return result ...
+
+        return None
+
+    def _get_total_public_betting_pct(self, game_id: str) -> Optional[float]:
+        """
+        Get the percentage of public bets on the OVER for the game total.
+
+        This metric indicates where the public is betting on the over/under,
+        which can be a valuable contrarian indicator. High public betting
+        on OVER combined with line movement DOWN might indicate sharp action
+        on the UNDER.
+
+        Args:
+            game_id: Game identifier (standard format: YYYYMMDD_AWAY_HOME)
+
+        Returns:
+            Percentage (0-100) of public bets on the OVER,
+            or None if data is not available.
+
+        TODO: Implement when public betting data source is available.
+        Potential data sources to integrate:
+        - ActionNetwork API (requires subscription)
+        - BettingPros consensus/public betting data
+        - Covers.com public betting percentages
+        - VSiN betting splits data
+
+        The implementation would query the data source for the game and
+        return the percentage of bets on the OVER (as opposed to UNDER).
+        """
+        # TODO: Implement when public betting data source is available
+        # Example implementation structure when data is available:
+        #
+        # if game_id in self.schedule_data:
+        #     home_team = self.schedule_data[game_id].get('home_team_abbr')
+        #     away_team = self.schedule_data[game_id].get('away_team_abbr')
+        # else:
+        #     parts = game_id.split('_')
+        #     if len(parts) != 3:
+        #         return None
+        #     away_team, home_team = parts[1], parts[2]
+        #
+        # query = f"""
+        # SELECT public_betting_pct_over
+        # FROM `{self.project_id}.nba_raw.public_betting_data`
+        # WHERE game_date = @game_date
+        #   AND home_team_abbr = @home_team
+        #   AND away_team_abbr = @away_team
+        #   AND market_type = 'totals'
+        # ORDER BY snapshot_timestamp DESC
+        # LIMIT 1
+        # """
+        # ... execute query and return result ...
+
+        return None
+
     def _extract_rosters(self) -> None:
         """
         Extract current roster data including player age.
@@ -2613,6 +2820,12 @@ class UpcomingPlayerGameContextProcessor(
         # Calculate travel context (P1-20)
         travel_context = self._calculate_travel_context(team_abbr, game_info)
 
+        # Calculate forward-looking schedule features (Session 110 - implemented)
+        forward_schedule = self._calculate_forward_schedule_features(team_abbr, self.target_date)
+
+        # Calculate opponent rest/asymmetry features (Session 110 - implemented)
+        opponent_rest = self._calculate_opponent_rest_features(opponent_team_abbr, self.target_date)
+
         # Get has_prop_line from player_info (passed from extract)
         has_prop_line = player_info.get('has_prop_line', False)
 
@@ -2656,15 +2869,15 @@ class UpcomingPlayerGameContextProcessor(
             'opening_spread': game_lines_info.get('opening_spread'),
             'spread_movement': game_lines_info.get('spread_movement'),
             'game_spread_source': game_lines_info.get('spread_source'),
-            'spread_public_betting_pct': None,  # TODO: future
-            
+            'spread_public_betting_pct': self._get_spread_public_betting_pct(game_id),
+
             # Game total context
             'game_total': game_lines_info.get('game_total'),
             'opening_total': game_lines_info.get('opening_total'),
             'total_movement': game_lines_info.get('total_movement'),
             'game_total_source': game_lines_info.get('total_source'),
-            'total_public_betting_pct': None,  # TODO: future
-            
+            'total_public_betting_pct': self._get_total_public_betting_pct(game_id),
+
             # Pre-game context
             'pace_differential': pace_differential,
             'opponent_pace_last_10': opponent_pace_last_10,
@@ -2672,7 +2885,7 @@ class UpcomingPlayerGameContextProcessor(
             'opponent_ft_rate_allowed': opponent_ft_rate_allowed,
             'home_game': (team_abbr == game_info['home_team_abbr']),
             'back_to_back': fatigue_metrics['back_to_back'],
-            'season_phase': self._determine_season_phase(self.target_date),
+            'season_phase': self._determine_season_phase(self.target_date, team_abbr),
             'projected_usage_rate': projected_usage_rate,
 
             # Fatigue metrics
@@ -2701,24 +2914,24 @@ class UpcomingPlayerGameContextProcessor(
             'opponent_off_rating_variance': opponent_off_rating_variance,  # Session 107
             'opponent_rebounding_rate_variance': opponent_rebounding_rate_variance,  # Session 107
 
-            # Forward-looking schedule (TODO: future)
-            'next_game_days_rest': 0,
-            'games_in_next_7_days': 0,
-            'next_opponent_win_pct': None,
-            'next_game_is_primetime': False,
-            
-            # Opponent asymmetry (TODO: future)
-            'opponent_days_rest': 0,
-            'opponent_games_in_next_7_days': 0,
-            'opponent_next_game_days_rest': 0,
-            
+            # Forward-looking schedule (Session 110 - implemented)
+            'next_game_days_rest': forward_schedule['next_game_days_rest'],
+            'games_in_next_7_days': forward_schedule['games_in_next_7_days'],
+            'next_opponent_win_pct': forward_schedule['next_opponent_win_pct'],
+            'next_game_is_primetime': forward_schedule['next_game_is_primetime'],
+
+            # Opponent asymmetry (Session 110 - implemented)
+            'opponent_days_rest': opponent_rest['opponent_days_rest'],
+            'opponent_games_in_next_7_days': opponent_rest['opponent_games_in_next_7_days'],
+            'opponent_next_game_days_rest': opponent_rest['opponent_next_game_days_rest'],
+
             # Real-time updates
             'player_status': self.injuries.get(player_lookup, {}).get('status'),
             'injury_report': self.injuries.get(player_lookup, {}).get('report'),
             'star_teammates_out': star_teammates_out,  # Session 106
             'questionable_star_teammates': questionable_star_teammates,  # Session 107
             'star_tier_out': star_tier_out,  # Session 107
-            'probable_teammates': None,  # TODO: future
+            'probable_teammates': None,  # TODO: BLOCKED - needs injury report parsing with probability fields
             
             # Source tracking
             **self._build_source_tracking_fields(),
@@ -2914,11 +3127,160 @@ class UpcomingPlayerGameContextProcessor(
             'minutes_in_last_14_days': int(minutes_last_14),
             'avg_minutes_per_game_last_7': round(avg_minutes_last_7, 1) if avg_minutes_last_7 else None,
             'back_to_backs_last_14_days': back_to_backs_count,
-            'avg_usage_rate_last_7_games': None,  # TODO: future (needs play-by-play)
-            'fourth_quarter_minutes_last_7': None,  # TODO: future
-            'clutch_minutes_last_7_games': None,  # TODO: future
+            'avg_usage_rate_last_7_games': None,  # TODO: future (needs play-by-play data parsing)
+            'fourth_quarter_minutes_last_7': None,  # TODO: future (needs play-by-play data parsing)
+            'clutch_minutes_last_7_games': None,  # TODO: future (needs play-by-play data parsing)
             'back_to_back': back_to_back
         }
+
+    def _calculate_forward_schedule_features(self, team_abbr: str, game_date: date) -> Dict:
+        """
+        Calculate forward-looking schedule features.
+
+        Uses schedule_data (which includes +/- 5 days around target date) to determine:
+        - Days until next game
+        - Games in next 7 days
+        - Whether next game is primetime
+        - Next opponent's win percentage
+
+        Args:
+            team_abbr: Team abbreviation
+            game_date: Current game date
+
+        Returns:
+            Dict with forward schedule metrics
+        """
+        default_metrics = {
+            'next_game_days_rest': None,
+            'games_in_next_7_days': 0,
+            'next_opponent_win_pct': None,
+            'next_game_is_primetime': False,
+        }
+
+        if not self.schedule_data:
+            return default_metrics
+
+        try:
+            # Find all future games for this team (within our schedule window)
+            future_games = []
+            for game_id, game_info in self.schedule_data.items():
+                sched_date = game_info.get('game_date')
+                if isinstance(sched_date, str):
+                    sched_date = date.fromisoformat(sched_date)
+
+                if sched_date <= game_date:
+                    continue
+
+                # Check if team is playing in this game
+                home_team = game_info.get('home_team_abbr')
+                away_team = game_info.get('away_team_abbr')
+                if team_abbr in (home_team, away_team):
+                    future_games.append({
+                        'game_date': sched_date,
+                        'opponent': away_team if team_abbr == home_team else home_team,
+                        'is_primetime': game_info.get('is_primetime', False),
+                    })
+
+            if not future_games:
+                return default_metrics
+
+            # Sort by date
+            future_games.sort(key=lambda x: x['game_date'])
+
+            # Next game info
+            next_game = future_games[0]
+            days_until_next = (next_game['game_date'] - game_date).days
+
+            # Games in next 7 days (excluding current game)
+            next_7_days = game_date + timedelta(days=7)
+            games_in_next_7 = sum(1 for g in future_games if g['game_date'] <= next_7_days)
+
+            # Next opponent win percentage
+            next_opponent = next_game['opponent']
+            next_opponent_win_pct = self.standings_data.get(next_opponent)
+
+            return {
+                'next_game_days_rest': days_until_next,
+                'games_in_next_7_days': games_in_next_7,
+                'next_opponent_win_pct': round(next_opponent_win_pct, 3) if next_opponent_win_pct else None,
+                'next_game_is_primetime': bool(next_game['is_primetime']),
+            }
+
+        except (KeyError, AttributeError, TypeError, ValueError) as e:
+            logger.debug(f"Error calculating forward schedule for {team_abbr}: {e}")
+            return default_metrics
+
+    def _calculate_opponent_rest_features(self, opponent_team_abbr: str, game_date: date) -> Dict:
+        """
+        Calculate opponent rest and schedule asymmetry features.
+
+        Uses schedule_data to determine opponent's rest situation which can
+        indicate fatigue advantage/disadvantage.
+
+        Args:
+            opponent_team_abbr: Opponent team abbreviation
+            game_date: Current game date
+
+        Returns:
+            Dict with opponent rest metrics
+        """
+        default_metrics = {
+            'opponent_days_rest': None,
+            'opponent_games_in_next_7_days': 0,
+            'opponent_next_game_days_rest': None,
+        }
+
+        if not self.schedule_data:
+            return default_metrics
+
+        try:
+            # Find opponent's past and future games
+            past_games = []
+            future_games = []
+
+            for game_id, game_info in self.schedule_data.items():
+                sched_date = game_info.get('game_date')
+                if isinstance(sched_date, str):
+                    sched_date = date.fromisoformat(sched_date)
+
+                # Check if opponent is playing in this game
+                home_team = game_info.get('home_team_abbr')
+                away_team = game_info.get('away_team_abbr')
+                if opponent_team_abbr not in (home_team, away_team):
+                    continue
+
+                if sched_date < game_date:
+                    past_games.append(sched_date)
+                elif sched_date > game_date:
+                    future_games.append(sched_date)
+
+            # Sort
+            past_games.sort(reverse=True)  # Most recent first
+            future_games.sort()  # Earliest first
+
+            # Opponent days rest (days since last game)
+            opponent_days_rest = None
+            if past_games:
+                opponent_days_rest = (game_date - past_games[0]).days
+
+            # Opponent games in next 7 days
+            next_7_days = game_date + timedelta(days=7)
+            opponent_games_next_7 = sum(1 for g in future_games if g <= next_7_days)
+
+            # Opponent's next game rest (after current game)
+            opponent_next_game_rest = None
+            if future_games:
+                opponent_next_game_rest = (future_games[0] - game_date).days
+
+            return {
+                'opponent_days_rest': opponent_days_rest,
+                'opponent_games_in_next_7_days': opponent_games_next_7,
+                'opponent_next_game_days_rest': opponent_next_game_rest,
+            }
+
+        except (KeyError, AttributeError, TypeError, ValueError) as e:
+            logger.debug(f"Error calculating opponent rest for {opponent_team_abbr}: {e}")
+            return default_metrics
 
     def _calculate_travel_context(self, team_abbr: str, game_info: Dict) -> Dict:
         """
@@ -3204,28 +3566,47 @@ class UpcomingPlayerGameContextProcessor(
 
     def _get_opponent_ft_rate_allowed(self, opponent_abbr: str, game_date: date) -> float:
         """
-        Get opponent's defensive FT rate allowed (last 10 games).
+        Get opponent's defensive FT rate allowed per 100 possessions (last 10 games).
+
+        Calculates FTA allowed per 100 possessions, which normalizes for pace:
+        FT Rate = (opp_ft_attempts / opponent_pace) * 100
+
+        This is more meaningful than raw FTA because it accounts for game pace.
 
         Args:
             opponent_abbr: Opponent team abbreviation
             game_date: Game date to filter historical data
 
         Returns:
-            float: Average opponent FT attempts allowed per game (last 10), rounded to 2 decimals
+            float: Average FT attempts allowed per 100 possessions (last 10 games),
+                   rounded to 3 decimals. Returns 0.0 if no data available.
         """
         try:
             query = f"""
             WITH recent_games AS (
-                SELECT opp_ft_attempts
+                SELECT
+                    opp_ft_attempts,
+                    opponent_pace,
+                    CASE
+                        WHEN opponent_pace > 0 THEN
+                            ROUND((opp_ft_attempts / opponent_pace) * 100, 3)
+                        ELSE NULL
+                    END as ft_rate_per_100
                 FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
                 WHERE defending_team_abbr = @opponent_abbr
                   AND game_date < @game_date
                   AND game_date >= '2024-10-01'
+                  AND opp_ft_attempts IS NOT NULL
+                  AND opponent_pace IS NOT NULL
+                  AND opponent_pace > 0
                 ORDER BY game_date DESC
                 LIMIT 10
             )
-            SELECT ROUND(AVG(opp_ft_attempts), 2) as avg_opp_fta
+            SELECT
+                ROUND(AVG(ft_rate_per_100), 3) as avg_ft_rate_allowed,
+                COUNT(*) as games_count
             FROM recent_games
+            WHERE ft_rate_per_100 IS NOT NULL
             """
             job_config = bigquery.QueryJobConfig(
                 query_parameters=[
@@ -3236,7 +3617,13 @@ class UpcomingPlayerGameContextProcessor(
 
             result = self.bq_client.query(query, job_config=job_config).result()
             for row in result:
-                return row.avg_opp_fta if row.avg_opp_fta is not None else 0.0
+                if row.avg_ft_rate_allowed is not None and row.games_count >= 3:
+                    return float(row.avg_ft_rate_allowed)
+                elif row.avg_ft_rate_allowed is not None:
+                    logger.debug(
+                        f"FT rate for {opponent_abbr} based on only {row.games_count} games"
+                    )
+                    return float(row.avg_ft_rate_allowed)
 
             return 0.0
 
@@ -3432,26 +3819,46 @@ class UpcomingPlayerGameContextProcessor(
         """
         Get opponent's FT rate variance (consistency) over last 10 games.
 
+        Calculates the standard deviation of FT rate per 100 possessions,
+        which shows how consistent/variable the team is in allowing FTs.
+
+        High variance = unpredictable (some games allow many FTs, others few)
+        Low variance = consistent (similar FT rate every game)
+
         Args:
             opponent_abbr: Opponent team abbreviation
             game_date: Game date to filter historical data
 
         Returns:
-            float: Standard deviation of FT attempts allowed over last 10 games, rounded to 2 decimals
+            float: Standard deviation of FT rate per 100 possessions over last 10 games,
+                   rounded to 3 decimals. Returns 0.0 if insufficient data.
         """
         try:
             query = f"""
             WITH recent_games AS (
-                SELECT opp_ft_attempts
+                SELECT
+                    opp_ft_attempts,
+                    opponent_pace,
+                    CASE
+                        WHEN opponent_pace > 0 THEN
+                            ROUND((opp_ft_attempts / opponent_pace) * 100, 3)
+                        ELSE NULL
+                    END as ft_rate_per_100
                 FROM `{self.project_id}.nba_analytics.team_defense_game_summary`
                 WHERE defending_team_abbr = @opponent_abbr
                   AND game_date < @game_date
                   AND game_date >= '2024-10-01'
+                  AND opp_ft_attempts IS NOT NULL
+                  AND opponent_pace IS NOT NULL
+                  AND opponent_pace > 0
                 ORDER BY game_date DESC
                 LIMIT 10
             )
-            SELECT ROUND(STDDEV(opp_ft_attempts), 2) as ft_rate_stddev
+            SELECT
+                ROUND(STDDEV(ft_rate_per_100), 3) as ft_rate_stddev,
+                COUNT(*) as games_count
             FROM recent_games
+            WHERE ft_rate_per_100 IS NOT NULL
             """
             job_config = bigquery.QueryJobConfig(
                 query_parameters=[
@@ -3462,7 +3869,8 @@ class UpcomingPlayerGameContextProcessor(
 
             result = self.bq_client.query(query, job_config=job_config).result()
             for row in result:
-                return row.ft_rate_stddev if row.ft_rate_stddev is not None else 0.0
+                if row.ft_rate_stddev is not None and row.games_count >= 2:
+                    return float(row.ft_rate_stddev)
 
             return 0.0
 
@@ -4265,29 +4673,416 @@ class UpcomingPlayerGameContextProcessor(
             logger.debug(f"Could not extract game time: {e}")
             return None
 
-    def _determine_season_phase(self, game_date: date) -> str:
+    def _determine_season_phase(self, game_date: date, team_abbr: str = None) -> str:
         """
-        Determine season phase based on date.
-        
+        Determine the current NBA season phase based on game date and team game count.
+
+        Phase definitions:
+        - preseason: Before regular season starts (typically early-mid October)
+        - early_season: First 20 games per team (Oct-Nov typically)
+        - mid_season: Games 21-60 (Dec-Feb typically)
+        - all_star_break: All-Star Weekend period (mid-February)
+        - post_all_star: After All-Star break until game 67 (late Feb-Mar)
+        - playoff_push: Last 15 games of regular season (games 68-82, Mar-Apr)
+        - playoffs: Postseason games including play-in (Apr-Jun)
+        - offseason: July-September, no games scheduled
+
         Args:
             game_date: Date of game
-            
+            team_abbr: Optional team abbreviation for game-count based phases
+
         Returns:
-            'early', 'mid', 'late', or 'playoffs'
+            Season phase string: 'preseason', 'early_season', 'mid_season',
+            'all_star_break', 'post_all_star', 'playoff_push', 'playoffs', or 'offseason'
         """
-        # TODO: Implement proper season phase detection
-        # For now, use simple month-based logic
-        
-        month = game_date.month
-        
-        if month in [10, 11]:
-            return 'early'
-        elif month in [12, 1, 2]:
-            return 'mid'
-        elif month in [3, 4]:
-            return 'late'
+        # First check for offseason (no games typically Jul-Sep)
+        if game_date.month in [7, 8, 9]:
+            return 'offseason'
+
+        # Try to get detailed phase from schedule data
+        try:
+            phase = self._get_season_phase_from_schedule(game_date, team_abbr)
+            if phase:
+                return phase
+        except Exception as e:
+            logger.debug(f"Error getting phase from schedule: {e}, using fallback")
+
+        # Fallback: Use date-based heuristics
+        return self._get_season_phase_fallback(game_date)
+
+    def _get_season_phase_from_schedule(self, game_date: date, team_abbr: str = None) -> Optional[str]:
+        """
+        Query schedule to determine season phase with game type flags and team game counts.
+
+        Args:
+            game_date: Date of game
+            team_abbr: Team abbreviation for game-count based sub-phases
+
+        Returns:
+            Season phase string or None if unable to determine
+        """
+        # Query schedule for game type flags
+        query = f"""
+        SELECT
+            COALESCE(is_all_star, FALSE) as is_all_star,
+            COALESCE(is_playoffs, FALSE) as is_playoffs,
+            COALESCE(is_regular_season, FALSE) as is_regular_season,
+            playoff_round,
+            season_year
+        FROM `{self.project_id}.nba_raw.nbac_schedule`
+        WHERE game_date = @game_date
+        LIMIT 1
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date)
+            ]
+        )
+
+        try:
+            result = self.bq_client.query(query, job_config=job_config).result()
+            rows = list(result)
+
+            if not rows:
+                # No games on this date - could be offseason or gap
+                return self._check_if_all_star_break(game_date)
+
+            row = rows[0]
+
+            # Check for All-Star Weekend
+            if row.is_all_star:
+                return 'all_star_break'
+
+            # Check for playoffs (including play-in)
+            if row.is_playoffs:
+                return 'playoffs'
+
+            # Check for regular season - need to determine sub-phase
+            if row.is_regular_season:
+                return self._determine_regular_season_subphase(
+                    game_date, team_abbr, row.season_year
+                )
+
+            # If not regular season and not playoffs, likely preseason
+            return 'preseason'
+
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.debug(f"BigQuery error checking season phase: {e}")
+            return None
+
+    def _check_if_all_star_break(self, game_date: date) -> Optional[str]:
+        """
+        Check if a date with no games falls within All-Star break period.
+
+        All-Star break is typically mid-February, spanning about a week.
+
+        Args:
+            game_date: Date to check
+
+        Returns:
+            'all_star_break' if within break period, None otherwise
+        """
+        # All-Star break is typically the weekend around Presidents Day (third Monday of Feb)
+        # Usually spans Friday to Wednesday of that week
+        if game_date.month != 2:
+            return None
+
+        # Query for All-Star games in the same season to find break dates
+        season_year = game_date.year if game_date.month >= 10 else game_date.year - 1
+
+        query = f"""
+        SELECT
+            MIN(game_date) as all_star_start,
+            MAX(game_date) as all_star_end
+        FROM `{self.project_id}.nba_raw.nbac_schedule`
+        WHERE season_year = @season_year
+          AND is_all_star = TRUE
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("season_year", "INT64", season_year)
+            ]
+        )
+
+        try:
+            result = self.bq_client.query(query, job_config=job_config).result()
+            row = list(result)[0]
+
+            if row.all_star_start and row.all_star_end:
+                # Expand window to include days around All-Star games
+                break_start = row.all_star_start - timedelta(days=2)
+                break_end = row.all_star_end + timedelta(days=1)
+
+                if break_start <= game_date <= break_end:
+                    return 'all_star_break'
+
+        except Exception as e:
+            logger.debug(f"Error checking All-Star break: {e}")
+
+        return None
+
+    def _determine_regular_season_subphase(
+        self, game_date: date, team_abbr: str = None, season_year: int = None
+    ) -> str:
+        """
+        Determine the sub-phase within the regular season based on team game count.
+
+        Sub-phases:
+        - early_season: Games 1-20
+        - mid_season: Games 21-60
+        - post_all_star: Games 61-67 (after All-Star break)
+        - playoff_push: Games 68-82 (last 15 games)
+
+        Args:
+            game_date: Date of game
+            team_abbr: Team abbreviation to count games for
+            season_year: Season year (e.g., 2024 for 2024-25 season)
+
+        Returns:
+            Sub-phase string
+        """
+        # If no team specified, use first available team from players_to_process
+        if not team_abbr and self.players_to_process:
+            team_abbr = self.players_to_process[0].get('team_abbr')
+
+        if not team_abbr:
+            # No team info - use date-based fallback
+            return self._get_regular_season_subphase_by_date(game_date)
+
+        if not season_year:
+            season_year = game_date.year if game_date.month >= 10 else game_date.year - 1
+
+        # Count team's games played up to this date
+        team_game_count = self._get_team_game_count(team_abbr, game_date, season_year)
+
+        if team_game_count is None:
+            return self._get_regular_season_subphase_by_date(game_date)
+
+        # Check if we're past the All-Star break
+        is_post_all_star = self._is_after_all_star_break(game_date, season_year)
+
+        # Determine phase based on game count
+        if team_game_count <= 20:
+            return 'early_season'
+        elif team_game_count <= 60:
+            return 'mid_season'
+        elif team_game_count <= 67:
+            return 'post_all_star' if is_post_all_star else 'mid_season'
         else:
+            return 'playoff_push'
+
+    def _get_team_game_count(
+        self, team_abbr: str, game_date: date, season_year: int
+    ) -> Optional[int]:
+        """
+        Count how many regular season games a team has played up to (but not including) game_date.
+
+        Args:
+            team_abbr: Team abbreviation
+            game_date: Date of the upcoming game
+            season_year: Season year
+
+        Returns:
+            Number of games played, or None if query fails
+        """
+        # Use NBATeamMapper to get all abbreviation variants
+        try:
+            team_info = get_team_info(team_abbr)
+            abbr_variants = [team_abbr]
+            if team_info:
+                abbr_variants = list(set([
+                    team_info.nba_tricode,
+                    team_info.br_tricode,
+                    team_info.espn_tricode
+                ]))
+        except Exception:
+            abbr_variants = [team_abbr]
+
+        # Build IN clause for team variants
+        variants_str = "', '".join(abbr_variants)
+
+        query = f"""
+        SELECT COUNT(*) as games_played
+        FROM `{self.project_id}.nba_raw.nbac_schedule`
+        WHERE season_year = @season_year
+          AND is_regular_season = TRUE
+          AND game_date < @game_date
+          AND game_status = 3
+          AND (home_team_tricode IN ('{variants_str}')
+               OR away_team_tricode IN ('{variants_str}'))
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("season_year", "INT64", season_year),
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date)
+            ]
+        )
+
+        try:
+            result = self.bq_client.query(query, job_config=job_config).result()
+            row = list(result)[0]
+            return row.games_played
+        except Exception as e:
+            logger.debug(f"Error counting team games: {e}")
+            return None
+
+    def _is_after_all_star_break(self, game_date: date, season_year: int) -> bool:
+        """
+        Check if the game_date is after the All-Star break for the given season.
+
+        Args:
+            game_date: Date to check
+            season_year: Season year
+
+        Returns:
+            True if after All-Star break, False otherwise
+        """
+        query = f"""
+        SELECT MAX(game_date) as all_star_end
+        FROM `{self.project_id}.nba_raw.nbac_schedule`
+        WHERE season_year = @season_year
+          AND is_all_star = TRUE
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("season_year", "INT64", season_year)
+            ]
+        )
+
+        try:
+            result = self.bq_client.query(query, job_config=job_config).result()
+            row = list(result)[0]
+
+            if row.all_star_end:
+                return game_date > row.all_star_end
+
+        except Exception as e:
+            logger.debug(f"Error checking All-Star break timing: {e}")
+
+        # Fallback: use typical All-Star timing (mid-February)
+        return game_date.month >= 2 and game_date.day >= 20
+
+    def _get_regular_season_subphase_by_date(self, game_date: date) -> str:
+        """
+        Fallback: Determine regular season sub-phase using date-based heuristics.
+
+        Used when team game count is not available.
+
+        Args:
+            game_date: Date of game
+
+        Returns:
+            Sub-phase string based on typical season timing
+        """
+        month = game_date.month
+        day = game_date.day
+
+        # October-November: Early season
+        if month in [10, 11]:
+            return 'early_season'
+
+        # December-early February: Mid season
+        if month == 12:
+            return 'mid_season'
+
+        if month == 1:
+            return 'mid_season'
+
+        if month == 2:
+            # Around mid-February is All-Star break
+            if 12 <= day <= 20:
+                return 'all_star_break'
+            elif day > 20:
+                return 'post_all_star'
+            else:
+                return 'mid_season'
+
+        # March: Post All-Star / Playoff push
+        if month == 3:
+            if day <= 15:
+                return 'post_all_star'
+            else:
+                return 'playoff_push'
+
+        # April: Playoff push (early) or Playoffs (late)
+        if month == 4:
+            if day <= 12:
+                return 'playoff_push'
+            else:
+                return 'playoffs'
+
+        # May-June: Playoffs
+        if month in [5, 6]:
             return 'playoffs'
+
+        return 'offseason'
+
+    def _get_season_phase_fallback(self, game_date: date) -> str:
+        """
+        Simple date-based fallback for season phase detection.
+
+        Used when schedule data is not available.
+
+        Args:
+            game_date: Date of game
+
+        Returns:
+            Season phase string
+        """
+        month = game_date.month
+        day = game_date.day
+
+        # July-September: Offseason
+        if month in [7, 8, 9]:
+            return 'offseason'
+
+        # October: Could be preseason (first half) or early season (second half)
+        if month == 10:
+            if day <= 15:
+                return 'preseason'
+            else:
+                return 'early_season'
+
+        # November: Early season
+        if month == 11:
+            return 'early_season'
+
+        # December-January: Mid season
+        if month in [12, 1]:
+            return 'mid_season'
+
+        # February: Mid season / All-Star break
+        if month == 2:
+            if 12 <= day <= 20:
+                return 'all_star_break'
+            elif day > 20:
+                return 'post_all_star'
+            else:
+                return 'mid_season'
+
+        # March: Post All-Star / Playoff push
+        if month == 3:
+            if day <= 15:
+                return 'post_all_star'
+            else:
+                return 'playoff_push'
+
+        # April: Playoff push (early) or Playoffs (late)
+        if month == 4:
+            if day <= 12:
+                return 'playoff_push'
+            else:
+                return 'playoffs'
+
+        # May-June: Playoffs
+        if month in [5, 6]:
+            return 'playoffs'
+
+        return 'offseason'
 
     # ============================================================
     # TIMING ISSUE PREVENTION (2026-01-09)

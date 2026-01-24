@@ -4,7 +4,7 @@ pl#!/bin/bash
 # Monitor the Odds API Props Processor Backfill Job
 # Follows same pattern as br_roster_processor_monitor.sh
 
-set -e
+set -euo pipefail
 
 # Configuration
 PROJECT_ID=${GCP_PROJECT_ID:-"nba-props-platform"}

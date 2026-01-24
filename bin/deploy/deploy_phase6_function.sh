@@ -12,7 +12,7 @@
 #   - gcloud CLI authenticated
 #   - Pub/Sub topic nba-phase6-export-trigger exists
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="nba-props-platform"
 REGION="us-west2"

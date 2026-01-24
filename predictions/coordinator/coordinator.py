@@ -41,6 +41,11 @@ from predictions.coordinator.progress_tracker import ProgressTracker
 from predictions.coordinator.run_history import CoordinatorRunHistory
 from predictions.coordinator.coverage_monitor import PredictionCoverageMonitor
 from predictions.coordinator.batch_state_manager import get_batch_state_manager, BatchStateManager, BatchState
+from predictions.coordinator.instance_manager import (
+    CoordinatorInstanceManager,
+    get_instance_manager,
+    LockAcquisitionError
+)
 
 # Import batch consolidator for staging table merging
 from predictions.coordinator.batch_staging_writer import BatchConsolidator
@@ -209,6 +214,10 @@ _run_history: Optional[CoordinatorRunHistory] = None
 _bq_client: Optional['bigquery.Client'] = None
 _batch_consolidator: Optional[BatchConsolidator] = None
 _batch_state_manager: Optional[BatchStateManager] = None
+_instance_manager: Optional[CoordinatorInstanceManager] = None
+
+# Multi-instance mode feature flag
+ENABLE_MULTI_INSTANCE = os.environ.get('ENABLE_MULTI_INSTANCE', 'false').lower() == 'true'
 
 # Global state (DEPRECATED - use BatchStateManager for persistent state)
 # These remain for backwards compatibility but should not be used for new code
@@ -278,19 +287,144 @@ def get_state_manager() -> BatchStateManager:
     return _batch_state_manager
 
 
-logger.info("Coordinator initialized successfully (heavy clients will lazy-load on first request)")
+def get_coordinator_instance_manager() -> CoordinatorInstanceManager:
+    """
+    Lazy-load instance manager for multi-instance coordination.
+
+    Only used when ENABLE_MULTI_INSTANCE=true.
+    """
+    global _instance_manager
+    if _instance_manager is None:
+        logger.info("Initializing CoordinatorInstanceManager...")
+        _instance_manager = get_instance_manager(PROJECT_ID)
+        _instance_manager.start()  # Start heartbeat thread
+        logger.info(f"CoordinatorInstanceManager initialized: instance_id={_instance_manager.instance_id}")
+    return _instance_manager
+
+
+def cleanup_instance_manager():
+    """Clean up instance manager on shutdown."""
+    global _instance_manager
+    if _instance_manager is not None:
+        logger.info("Stopping CoordinatorInstanceManager...")
+        _instance_manager.stop()
+        _instance_manager = None
+        logger.info("CoordinatorInstanceManager stopped")
+
+
+# Register cleanup on app teardown
+import atexit
+atexit.register(cleanup_instance_manager)
+
+logger.info(
+    f"Coordinator initialized successfully "
+    f"(multi_instance={ENABLE_MULTI_INSTANCE}, heavy clients will lazy-load on first request)"
+)
 
 
 @app.route('/', methods=['GET'])
 def index():
     """Health check and info endpoint"""
-    return jsonify({
+    response = {
         'service': 'Phase 5 Prediction Coordinator',
         'status': 'healthy',
         'project_id': PROJECT_ID,
         'current_batch': current_batch_id,
-        'batch_active': current_tracker is not None and not current_tracker.is_complete
-    }), 200
+        'batch_active': current_tracker is not None and not current_tracker.is_complete,
+        'multi_instance_enabled': ENABLE_MULTI_INSTANCE
+    }
+
+    # Add instance info if multi-instance mode is enabled
+    if ENABLE_MULTI_INSTANCE and _instance_manager is not None:
+        response['instance_id'] = _instance_manager.instance_id
+
+    return jsonify(response), 200
+
+
+@app.route('/instances', methods=['GET'])
+@require_api_key
+def get_instances():
+    """
+    Get information about all coordinator instances.
+
+    Only available when ENABLE_MULTI_INSTANCE=true.
+
+    Returns:
+        JSON with instance information and statistics
+    """
+    if not ENABLE_MULTI_INSTANCE:
+        return jsonify({
+            'status': 'disabled',
+            'message': 'Multi-instance mode is not enabled. Set ENABLE_MULTI_INSTANCE=true.'
+        }), 200
+
+    try:
+        instance_manager = get_coordinator_instance_manager()
+
+        # Get active instances
+        active_instances = instance_manager.get_active_instances()
+
+        # Get batch processing stats
+        state_manager = get_state_manager()
+        batch_stats = state_manager.get_batch_processing_stats()
+
+        return jsonify({
+            'status': 'success',
+            'this_instance': instance_manager.instance_id,
+            'active_instances': [
+                {
+                    'instance_id': inst.instance_id,
+                    'hostname': inst.hostname,
+                    'pod_name': inst.pod_name,
+                    'status': inst.status,
+                    'last_heartbeat': inst.last_heartbeat.isoformat() if inst.last_heartbeat else None,
+                    'is_alive': inst.is_alive()
+                }
+                for inst in active_instances
+            ],
+            'batch_stats': batch_stats
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error getting instance info: {e}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+
+@app.route('/instances/cleanup', methods=['POST'])
+@require_api_key
+def cleanup_instances():
+    """
+    Clean up dead instances and release their locks.
+
+    Only available when ENABLE_MULTI_INSTANCE=true.
+
+    Returns:
+        JSON with cleanup results
+    """
+    if not ENABLE_MULTI_INSTANCE:
+        return jsonify({
+            'status': 'disabled',
+            'message': 'Multi-instance mode is not enabled.'
+        }), 200
+
+    try:
+        instance_manager = get_coordinator_instance_manager()
+        cleaned_count = instance_manager.cleanup_dead_instances()
+
+        return jsonify({
+            'status': 'success',
+            'instances_cleaned': cleaned_count
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error cleaning up instances: {e}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
 
 
 # Health check endpoint removed - now provided by shared health blueprint (see lines 161-173)
@@ -468,17 +602,58 @@ def start_prediction_batch():
         # Create batch state in Firestore (PERSISTENT - survives container restarts!)
         try:
             state_manager = get_state_manager()
-            batch_state = state_manager.create_batch(
-                batch_id=batch_id,
-                game_date=game_date.isoformat(),
-                expected_players=len(requests),
-                correlation_id=correlation_id,
-                dataset_prefix=dataset_prefix
-            )
-            logger.info(
-                f"✅ Batch state persisted to Firestore: {batch_id} "
-                f"(expected={len(requests)} players)"
-            )
+
+            # Multi-instance mode: Use transaction to prevent duplicate batch creation
+            if ENABLE_MULTI_INSTANCE:
+                instance_manager = get_coordinator_instance_manager()
+                instance_id = instance_manager.instance_id
+
+                # Use transaction-based creation for safety
+                batch_state = state_manager.create_batch_with_transaction(
+                    batch_id=batch_id,
+                    game_date=game_date.isoformat(),
+                    expected_players=len(requests),
+                    correlation_id=correlation_id,
+                    dataset_prefix=dataset_prefix,
+                    instance_id=instance_id
+                )
+
+                if batch_state is None:
+                    # Batch already exists - another instance created it
+                    logger.warning(
+                        f"Batch {batch_id} already exists (created by another instance)"
+                    )
+                    return jsonify({
+                        'status': 'already_exists',
+                        'batch_id': batch_id,
+                        'message': 'Batch was created by another coordinator instance'
+                    }), 409
+
+                # Claim the batch for this instance
+                claimed = state_manager.claim_batch_for_processing(
+                    batch_id=batch_id,
+                    instance_id=instance_id
+                )
+                if not claimed:
+                    logger.warning(f"Could not claim batch {batch_id} - may be processed by another instance")
+
+                logger.info(
+                    f"✅ Batch state persisted to Firestore: {batch_id} "
+                    f"(expected={len(requests)} players, instance={instance_id})"
+                )
+            else:
+                # Single-instance mode: Use simple create
+                batch_state = state_manager.create_batch(
+                    batch_id=batch_id,
+                    game_date=game_date.isoformat(),
+                    expected_players=len(requests),
+                    correlation_id=correlation_id,
+                    dataset_prefix=dataset_prefix
+                )
+                logger.info(
+                    f"✅ Batch state persisted to Firestore: {batch_id} "
+                    f"(expected={len(requests)} players)"
+                )
         except Exception as e:
             # This is critical - without persistent state, consolidation won't work after restart
             logger.error(f"❌ CRITICAL: Failed to persist batch state to Firestore: {e}", exc_info=True)
@@ -687,10 +862,13 @@ def handle_completion_event():
                 return ('Bad Request: batch_id required', 400)
 
             state_manager = get_state_manager()
-            batch_complete = state_manager.record_completion(
+
+            # Use safe completion with retries for reliability
+            batch_complete = state_manager.record_completion_safe(
                 batch_id=batch_id,
                 player_lookup=player_lookup,
-                predictions_count=predictions_count
+                predictions_count=predictions_count,
+                instance_id=_instance_manager.instance_id if _instance_manager else None
             )
             print(f"✅ Recorded: {player_lookup} → batch_complete={batch_complete}", flush=True)
 

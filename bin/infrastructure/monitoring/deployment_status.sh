@@ -2,7 +2,7 @@
 # NBA Scrapers script - requires bash for consistency across environments
 # Compatible with macOS zsh, Linux bash, and CI/CD systems
 
-set -e
+set -euo pipefail
 
 # Shell compatibility check
 if [[ -z "$BASH_VERSION" ]]; then

@@ -4,7 +4,7 @@
 # Monitor NBA Gamebook Reparse job progress and status
 # Based on existing monitor patterns for consistency
 
-set -e
+set -euo pipefail
 
 JOB_NAME="nbac-gamebook-reparse"
 REGION="${REGION:-us-west2}"

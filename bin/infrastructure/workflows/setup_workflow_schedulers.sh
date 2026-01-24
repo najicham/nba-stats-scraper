@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # SAVE TO: ~/code/nba-stats-scraper/bin/scheduling/setup_workflow_schedulers.sh
 # Updated for NEW 5-workflow system with 12 total daily executions
 

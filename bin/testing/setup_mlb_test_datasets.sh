@@ -12,7 +12,7 @@
 #
 # Created: 2026-01-07
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="${GCP_PROJECT_ID:-nba-props-platform}"
 PREFIX="${1:-test_}"

@@ -7,7 +7,7 @@
 # Usage: ./bin/monitoring/check_cascade_schedulers.sh
 # ============================================================================
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="nba-props-platform"
 LOCATION="us-west2"

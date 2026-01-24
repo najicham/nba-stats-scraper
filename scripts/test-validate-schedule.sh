@@ -5,7 +5,7 @@
 # Usage: ./scripts/test-validate-schedule.sh
 # =============================================================================
 
-set -e
+set -euo pipefail
 
 # Colors
 GREEN='\033[0;32m'

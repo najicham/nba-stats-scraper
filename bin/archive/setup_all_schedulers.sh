@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # bin/scheduling/setup_all_schedulers.sh
 # Set up comprehensive scheduling for all 23 scrapers
 echo "⏰ Setting up comprehensive scheduler jobs"

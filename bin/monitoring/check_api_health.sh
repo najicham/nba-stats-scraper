@@ -2,7 +2,7 @@
 # Check critical API endpoints health
 # Run daily to detect API outages early
 
-set -e
+set -euo pipefail
 
 echo "=== NBA Pipeline API Health Check ==="
 echo "Time: $(TZ=America/New_York date '+%Y-%m-%d %H:%M:%S %Z')"

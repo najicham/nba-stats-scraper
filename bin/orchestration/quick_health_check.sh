@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # quick_health_check.sh
 # Fast health check for Phase 1 orchestration (30 seconds)
 # Path: bin/orchestration/quick_health_check.sh

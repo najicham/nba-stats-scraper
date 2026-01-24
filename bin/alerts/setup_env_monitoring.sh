@@ -15,7 +15,7 @@
 #   ENVIRONMENT: dev|staging|prod (default: prod)
 #
 
-set -e
+set -euo pipefail
 
 # Configuration
 PROJECT_ID="${1:-nba-props-platform}"

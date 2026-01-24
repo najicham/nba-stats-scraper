@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # File: bin/analytics/validation/validate_analytics_data.sh  
 # Validate analytics data quality and cross-source consistency
 

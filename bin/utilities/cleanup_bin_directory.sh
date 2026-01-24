@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # File Organization Cleanup Script
 # SAVE TO: ~/code/nba-stats-scraper/bin/utilities/cleanup_bin_directory.sh
 

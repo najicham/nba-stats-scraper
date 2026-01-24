@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # bin/testing/test_workflow.sh
 # Test workflow execution
 echo "🔄 Testing NBA Scraper Workflow"

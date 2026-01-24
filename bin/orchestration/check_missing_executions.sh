@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # check_missing_executions.sh
 # Identifies RUN decisions that haven't been executed
 # Path: bin/orchestration/check_missing_executions.sh

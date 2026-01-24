@@ -483,7 +483,10 @@ def handle_prediction_request():
             'sportsbook': request_data.get('sportsbook'),  # 'DRAFTKINGS', 'FANDUEL', etc.
             'was_line_fallback': request_data.get('was_line_fallback', False),  # True if not primary
             # v3.6: Line timing tracking (how close to closing line was the captured line)
-            'line_minutes_before_game': request_data.get('line_minutes_before_game')  # Minutes before tipoff
+            'line_minutes_before_game': request_data.get('line_minutes_before_game'),  # Minutes before tipoff
+            # v4.0: Team context for teammate injury impact
+            'team_abbr': request_data.get('team_abbr'),
+            'opponent_team_abbr': request_data.get('opponent_team_abbr')
         }
 
         # Convert date string to date object
@@ -806,6 +809,42 @@ def process_player_predictions(
                 f"⚠️ Injury flag for {player_lookup}: {injury_status.injury_status} - "
                 f"{injury_status.reason or 'no reason'}"
             )
+
+        # v4.0: Calculate teammate injury impact for usage/points adjustments
+        team_abbr = line_source_info.get('team_abbr')
+        if team_abbr:
+            teammate_impact = injury_filter.get_teammate_impact(player_lookup, team_abbr, game_date)
+
+            # Inject teammate impact into features
+            features['teammate_injury_impact'] = {
+                'usage_boost_factor': teammate_impact.usage_boost_factor,
+                'minutes_boost_factor': teammate_impact.minutes_boost_factor,
+                'opportunity_score': teammate_impact.opportunity_score,
+                'out_starters': teammate_impact.out_starters,
+                'out_star_players': teammate_impact.out_star_players,
+                'total_out': len(teammate_impact.out_teammates),
+                'total_questionable': len(teammate_impact.questionable_teammates),
+                'has_significant_impact': teammate_impact.has_significant_impact
+            }
+
+            # Track in metadata for logging/analysis
+            metadata['teammate_impact'] = {
+                'usage_boost': teammate_impact.usage_boost_factor,
+                'opportunity_score': teammate_impact.opportunity_score,
+                'out_starters': teammate_impact.out_starters,
+                'has_significant': teammate_impact.has_significant_impact
+            }
+
+            if teammate_impact.has_significant_impact:
+                logger.info(
+                    f"📊 Teammate impact for {player_lookup}: "
+                    f"usage_boost={teammate_impact.usage_boost_factor:.2f}, "
+                    f"out_starters={teammate_impact.out_starters}"
+                )
+        else:
+            features['teammate_injury_impact'] = None
+            metadata['teammate_impact'] = None
+
     except Exception as e:
         # Non-fatal: continue prediction without injury info (fail-open)
         logger.warning(f"Failed to check injury status for {player_lookup}: {e}")
@@ -813,6 +852,8 @@ def process_player_predictions(
         features['injury_flag_at_prediction'] = None
         features['injury_reason_at_prediction'] = None
         features['injury_checked_at'] = None
+        features['teammate_injury_impact'] = None
+        metadata['teammate_impact'] = None
 
     # Step 2.5: Check feature completeness (Phase 5)
     # SELF-HEALING: Made more lenient - proceed with warnings instead of blocking
@@ -1381,6 +1422,20 @@ def format_prediction_for_bigquery(
         'injury_status_at_prediction': features.get('injury_status_at_prediction'),
         'injury_flag_at_prediction': features.get('injury_flag_at_prediction'),
         'injury_reason_at_prediction': features.get('injury_reason_at_prediction'),
+
+        # v4.0: Teammate injury impact tracking (enables usage boost analysis)
+        'teammate_usage_boost': (
+            features.get('teammate_injury_impact', {}).get('usage_boost_factor')
+            if features.get('teammate_injury_impact') else None
+        ),
+        'teammate_opportunity_score': (
+            features.get('teammate_injury_impact', {}).get('opportunity_score')
+            if features.get('teammate_injury_impact') else None
+        ),
+        'teammate_out_starters': (
+            json.dumps(features.get('teammate_injury_impact', {}).get('out_starters'))
+            if features.get('teammate_injury_impact', {}).get('out_starters') else None
+        ),
         'injury_checked_at': features.get('injury_checked_at')
     }
 

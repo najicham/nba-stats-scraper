@@ -10,7 +10,7 @@
 #   ./bin/deploy/deploy_news_fetcher.sh --function-only
 #   ./bin/deploy/deploy_news_fetcher.sh --scheduler-only
 
-set -e
+set -euo pipefail
 
 # Configuration
 PROJECT_ID="${GCP_PROJECT:-nba-props-platform}"

@@ -9,7 +9,7 @@
 #   ./bin/backfill/run_mlb_full_backfill.sh                    # Full 2024-2025 backfill
 #   ./bin/backfill/run_mlb_full_backfill.sh 2024-08-01 2024-08-31  # Specific date range
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"

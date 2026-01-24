@@ -62,14 +62,17 @@ logger = logging.getLogger(__name__)
 # Import centralized resilience constants
 try:
     from shared.constants.resilience import (
-        CIRCUIT_BREAKER_THRESHOLD,
-        CIRCUIT_BREAKER_TIMEOUT_MINUTES,
+        EXTERNAL_CB_THRESHOLD,
+        EXTERNAL_CB_TIMEOUT_SECONDS,
+        EXTERNAL_CB_HALF_OPEN_MAX_CALLS,
     )
-    DEFAULT_THRESHOLD = CIRCUIT_BREAKER_THRESHOLD
-    DEFAULT_TIMEOUT_SECONDS = CIRCUIT_BREAKER_TIMEOUT_MINUTES * 60
+    DEFAULT_THRESHOLD = EXTERNAL_CB_THRESHOLD
+    DEFAULT_TIMEOUT_SECONDS = EXTERNAL_CB_TIMEOUT_SECONDS
+    DEFAULT_HALF_OPEN_MAX_CALLS = EXTERNAL_CB_HALF_OPEN_MAX_CALLS
 except ImportError:
     DEFAULT_THRESHOLD = 5
     DEFAULT_TIMEOUT_SECONDS = 300
+    DEFAULT_HALF_OPEN_MAX_CALLS = 3
 
 
 # Type variable for generic return type
@@ -107,7 +110,7 @@ class CircuitBreakerConfig:
         default_factory=lambda: float(os.getenv('EXTERNAL_CB_TIMEOUT_SECONDS', str(DEFAULT_TIMEOUT_SECONDS)))
     )
     half_open_max_calls: int = field(
-        default_factory=lambda: int(os.getenv('EXTERNAL_CB_HALF_OPEN_MAX_CALLS', '3'))
+        default_factory=lambda: int(os.getenv('EXTERNAL_CB_HALF_OPEN_MAX_CALLS', str(DEFAULT_HALF_OPEN_MAX_CALLS)))
     )
     # Exception types that should trigger circuit breaker
     # Default: connection errors, timeouts, server errors

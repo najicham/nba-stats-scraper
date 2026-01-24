@@ -26,6 +26,16 @@ from typing import Dict, Any, List
 import hashlib
 
 
+def _get_stats(benchmark):
+    """Safely get benchmark stats, returns None if not available."""
+    try:
+        if hasattr(benchmark, 'stats') and hasattr(benchmark.stats, 'mean'):
+            return benchmark.stats
+    except Exception:
+        pass
+    return None
+
+
 # =============================================================================
 # Mock Processor Classes for Benchmarking
 # =============================================================================
@@ -180,9 +190,11 @@ class TestBatchSizePerformance:
 
         assert len(result) == batch_size
         assert 'data_hash' in result[0]
-        print(f"\nRaw processor batch size {batch_size}: "
-              f"{benchmark.stats.mean * 1000:.2f}ms "
-              f"({batch_size / benchmark.stats.mean:.0f} records/sec)")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nRaw processor batch size {batch_size}: "
+                  f"{stats.mean * 1000:.2f}ms "
+                  f"({batch_size / stats.mean:.0f} records/sec)")
 
     @pytest.mark.parametrize("batch_size", [100, 500, 1000, 2000])
     def test_benchmark_dataframe_aggregation_batch_sizes(self, benchmark, sample_player_rows, batch_size):
@@ -194,8 +206,10 @@ class TestBatchSizePerformance:
         result = benchmark(processor.aggregate_player_stats, df)
 
         assert len(result) > 0
-        print(f"\nDataFrame aggregation batch size {batch_size}: "
-              f"{benchmark.stats.mean * 1000:.2f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nDataFrame aggregation batch size {batch_size}: "
+                  f"{stats.mean * 1000:.2f}ms")
 
     @pytest.mark.parametrize("batch_size", [100, 500, 1000])
     def test_benchmark_rolling_average_batch_sizes(self, benchmark, sample_player_rows, batch_size):
@@ -208,8 +222,10 @@ class TestBatchSizePerformance:
         result = benchmark(processor.calculate_rolling_averages, df)
 
         assert 'points_avg_last_5' in result.columns
-        print(f"\nRolling averages batch size {batch_size}: "
-              f"{benchmark.stats.mean * 1000:.2f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nRolling averages batch size {batch_size}: "
+                  f"{stats.mean * 1000:.2f}ms")
 
 
 # =============================================================================
@@ -232,7 +248,9 @@ class TestFeatureExtractionPerformance:
         result = benchmark(calculator.calculate_rest_advantage, data)
 
         assert -2.0 <= result <= 2.0
-        print(f"\nSingle feature calculation: {benchmark.stats.mean * 1000000:.2f}us")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nSingle feature calculation: {stats.mean * 1000000:.2f}us")
 
     def test_benchmark_full_feature_extraction(self, benchmark, sample_features):
         """Benchmark full 25-feature extraction."""
@@ -269,8 +287,10 @@ class TestFeatureExtractionPerformance:
         result = benchmark(calculator.extract_all_features, data)
 
         assert len(result) == 25
-        print(f"\nFull feature extraction (25 features): "
-              f"{benchmark.stats.mean * 1000:.3f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nFull feature extraction (25 features): "
+                  f"{stats.mean * 1000:.3f}ms")
 
     @pytest.mark.parametrize("player_count", [50, 200, 450])
     def test_benchmark_batch_feature_extraction(self, benchmark, sample_features, player_count):
@@ -299,9 +319,11 @@ class TestFeatureExtractionPerformance:
         result = benchmark(extract_batch_features)
 
         assert len(result) == player_count
-        print(f"\nBatch feature extraction ({player_count} players): "
-              f"{benchmark.stats.mean * 1000:.2f}ms "
-              f"({player_count / benchmark.stats.mean:.0f} players/sec)")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nBatch feature extraction ({player_count} players): "
+                  f"{stats.mean * 1000:.2f}ms "
+                  f"({player_count / stats.mean:.0f} players/sec)")
 
 
 # =============================================================================
@@ -318,8 +340,10 @@ class TestDataFrameOperationsPerformance:
         result = benchmark(pd.DataFrame, rows)
 
         assert len(result) == 500
-        print(f"\nDataFrame creation (500 records): "
-              f"{benchmark.stats.mean * 1000:.2f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nDataFrame creation (500 records): "
+                  f"{stats.mean * 1000:.2f}ms")
 
     def test_benchmark_dataframe_to_dict(self, benchmark, sample_player_rows):
         """Benchmark DataFrame to dict conversion."""
@@ -329,8 +353,10 @@ class TestDataFrameOperationsPerformance:
         result = benchmark(df.to_dict, 'records')
 
         assert len(result) == 500
-        print(f"\nDataFrame to dict (500 records): "
-              f"{benchmark.stats.mean * 1000:.2f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nDataFrame to dict (500 records): "
+                  f"{stats.mean * 1000:.2f}ms")
 
     def test_benchmark_dataframe_merge(self, benchmark, sample_player_rows):
         """Benchmark DataFrame merge operation."""
@@ -344,8 +370,10 @@ class TestDataFrameOperationsPerformance:
         result = benchmark(pd.merge, df1, df2, on='player_lookup')
 
         assert len(result) == 500
-        print(f"\nDataFrame merge (500 records): "
-              f"{benchmark.stats.mean * 1000:.2f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nDataFrame merge (500 records): "
+                  f"{stats.mean * 1000:.2f}ms")
 
     def test_benchmark_dataframe_groupby(self, benchmark, sample_player_rows):
         """Benchmark DataFrame groupby operation."""
@@ -362,8 +390,10 @@ class TestDataFrameOperationsPerformance:
         result = benchmark(groupby_operation)
 
         assert len(result) > 0
-        print(f"\nDataFrame groupby (1000 records): "
-              f"{benchmark.stats.mean * 1000:.2f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nDataFrame groupby (1000 records): "
+                  f"{stats.mean * 1000:.2f}ms")
 
 
 # =============================================================================
@@ -390,8 +420,10 @@ class TestMemoryEfficiency:
         result = benchmark(process_with_list)
 
         assert len(result) == 1000
-        print(f"\nList processing (1000 records): "
-              f"{benchmark.stats.mean * 1000:.2f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nList processing (1000 records): "
+                  f"{stats.mean * 1000:.2f}ms")
 
     def test_benchmark_chunked_processing(self, benchmark, sample_player_rows):
         """Benchmark chunked processing for large datasets."""
@@ -415,8 +447,10 @@ class TestMemoryEfficiency:
         result = benchmark(process_in_chunks)
 
         assert len(result) == 1000
-        print(f"\nChunked processing (1000 records, 100/chunk): "
-              f"{benchmark.stats.mean * 1000:.2f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nChunked processing (1000 records, 100/chunk): "
+                  f"{stats.mean * 1000:.2f}ms")
 
 
 # =============================================================================

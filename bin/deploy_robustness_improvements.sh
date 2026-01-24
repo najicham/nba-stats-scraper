@@ -8,7 +8,7 @@
 # Created: 2026-01-20
 # Version: 1.0
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="nba-props-platform"
 REGION_WEST="us-west1"

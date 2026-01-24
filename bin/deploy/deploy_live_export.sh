@@ -10,7 +10,7 @@
 #   ./bin/deploy/deploy_live_export.sh --function-only
 #   ./bin/deploy/deploy_live_export.sh --schedulers-only
 
-set -e
+set -euo pipefail
 
 # Configuration
 PROJECT_ID="${GCP_PROJECT:-nba-props-platform}"

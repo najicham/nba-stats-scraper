@@ -1,7 +1,7 @@
 #!/bin/bash
 # File: bin/processor_backfill/nbac_gamebook_backfill_monitor.sh
 
-set -e
+set -euo pipefail
 
 PROJECT_ID=${GCP_PROJECT_ID:-"nba-props-platform"}
 REGION=${REGION:-"us-west2"}

@@ -2,7 +2,7 @@
 # Deploy Phase 1 (Scrapers) and Phase 2 (Raw Processors) to Cloud Run
 # Usage: ./bin/deploy_phase1_phase2.sh [--phase1-only | --phase2-only]
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="nba-props-platform"
 REGION="us-west2"

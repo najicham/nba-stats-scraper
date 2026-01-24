@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Verify Pub/Sub Integration - Simple Check
 
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

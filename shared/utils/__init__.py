@@ -66,6 +66,24 @@ from .roster_manager import (
     get_roster_changes,
 )
 
+# Completion tracking with BigQuery backup
+from .completion_tracker import (
+    CompletionTracker,
+    get_completion_tracker,
+)
+
+# Proxy management with health tracking
+from .proxy_manager import (
+    ProxyManager,
+    ProxyHealth,
+    ProxyHealthMetrics,
+    ProxyStatus,
+    ProxyConfig,
+    get_proxy_manager,
+    get_healthy_proxy_urls,
+    record_proxy_result,
+)
+
 
 __all__ = [
     "BigQueryClient",
@@ -117,4 +135,16 @@ __all__ = [
     "get_active_roster",
     "check_player_availability",
     "get_roster_changes",
+    # Completion tracking
+    "CompletionTracker",
+    "get_completion_tracker",
+    # Proxy management
+    "ProxyManager",
+    "ProxyHealth",
+    "ProxyHealthMetrics",
+    "ProxyStatus",
+    "ProxyConfig",
+    "get_proxy_manager",
+    "get_healthy_proxy_urls",
+    "record_proxy_result",
 ]

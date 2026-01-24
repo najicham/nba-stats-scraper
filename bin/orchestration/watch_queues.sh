@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Continuously monitor Pub/Sub queues
 # Path: bin/orchestration/watch_queues.sh
 

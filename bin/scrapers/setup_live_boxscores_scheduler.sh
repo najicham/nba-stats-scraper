@@ -6,7 +6,7 @@
 #
 # Usage: ./bin/scrapers/setup_live_boxscores_scheduler.sh
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="nba-props-platform"
 REGION="us-west2"

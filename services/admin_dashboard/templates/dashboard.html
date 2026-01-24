@@ -49,10 +49,10 @@
             </button>
             <button
                 @click="activeTab = 'history'"
-                :class="activeTab === 'history' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                :class="activeTab === 'history' ? 'border-indigo-500 text-indigo-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
                 class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
             >
-                7-Day History
+                Extended History
             </button>
             <button
                 @click="activeTab = 'failures'"
@@ -234,15 +234,24 @@
             </div>
         </div>
 
-        <!-- History Tab -->
+        <!-- Extended History Tab -->
         <div x-show="activeTab === 'history'" x-cloak>
             <div class="bg-white rounded-lg shadow p-6">
-                <h3 class="text-lg font-medium text-gray-900 mb-4">7-Day Pipeline History</h3>
-                <div id="history-table"
-                     hx-get="/api/history?sport={{ sport or 'nba' }}"
-                     hx-trigger="load"
-                     hx-swap="innerHTML">
-                    <div class="text-gray-500 text-center py-8">Loading history...</div>
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-medium text-gray-900">Extended Pipeline History</h3>
+                    <button
+                        hx-get="/partials/extended-history?sport={{ sport or 'nba' }}&days=7"
+                        hx-target="#extended-history-content"
+                        hx-swap="innerHTML"
+                        class="text-sm text-blue-600 hover:text-blue-800"
+                    >
+                        Refresh
+                    </button>
+                </div>
+                <div id="extended-history-content"
+                     hx-get="/partials/extended-history?sport={{ sport or 'nba' }}&days=7"
+                     hx-trigger="load">
+                    <div class="text-gray-500 text-center py-8">Loading extended history...</div>
                 </div>
             </div>
         </div>
@@ -496,6 +505,409 @@
 
         html += '</tbody></table>';
         container.innerHTML = html;
+    }
+
+    // =========================================================================
+    // Trend Charts Functionality
+    // =========================================================================
+
+    // Store chart instances for cleanup
+    let trendCharts = {
+        accuracy: null,
+        latency: null,
+        errors: null,
+        volume: null
+    };
+
+    // Initialize trends tab when shown
+    document.addEventListener('alpine:init', () => {
+        Alpine.effect(() => {
+            const activeTab = Alpine.store('activeTab');
+            // This will be called when activeTab changes
+        });
+    });
+
+    // Listen for tab changes via Alpine.js
+    document.addEventListener('DOMContentLoaded', function() {
+        // Watch for trends tab activation
+        const trendsObserver = new MutationObserver(function(mutations) {
+            mutations.forEach(function(mutation) {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
+                    const trendsTab = document.querySelector('[x-show="activeTab === \'trends\'"]');
+                    if (trendsTab && trendsTab.style.display !== 'none') {
+                        loadTrendCharts();
+                    }
+                }
+            });
+        });
+
+        const trendsTabDiv = document.querySelector('[x-show="activeTab === \'trends\'"]');
+        if (trendsTabDiv) {
+            trendsObserver.observe(trendsTabDiv, { attributes: true });
+        }
+
+        // Refresh button handler
+        document.getElementById('refresh-trends-btn')?.addEventListener('click', function() {
+            loadTrendCharts();
+        });
+
+        // Days select handler
+        document.getElementById('trends-days-select')?.addEventListener('change', function() {
+            loadTrendCharts();
+        });
+    });
+
+    async function loadTrendCharts() {
+        const container = document.getElementById('trends-content');
+        const daysSelect = document.getElementById('trends-days-select');
+        const days = daysSelect ? daysSelect.value : 30;
+
+        container.innerHTML = '<div class="text-gray-500 text-center py-8">Loading trend data...</div>';
+
+        try {
+            const response = await fetch(`/api/trends/all?days=${days}`);
+            if (!response.ok) throw new Error('Failed to fetch trend data');
+
+            const data = await response.json();
+            renderTrendCharts(data, container);
+        } catch (error) {
+            console.error('Error loading trends:', error);
+            container.innerHTML = `<div class="text-red-500 text-center py-8">Error loading trend data: ${error.message}</div>`;
+        }
+    }
+
+    function renderTrendCharts(data, container) {
+        // Create chart container layout
+        container.innerHTML = `
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <!-- Prediction Accuracy Chart -->
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <h4 class="text-sm font-medium text-gray-700 mb-3">Prediction Accuracy Over Time</h4>
+                    <div style="height: 300px;">
+                        <canvas id="accuracy-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Data Volume Chart -->
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <h4 class="text-sm font-medium text-gray-700 mb-3">Data Volume Over Time</h4>
+                    <div style="height: 300px;">
+                        <canvas id="volume-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Error Rate Chart -->
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <h4 class="text-sm font-medium text-gray-700 mb-3">Pipeline Error Rate</h4>
+                    <div style="height: 300px;">
+                        <canvas id="errors-chart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Pipeline Latency Chart -->
+                <div class="bg-gray-50 rounded-lg p-4">
+                    <h4 class="text-sm font-medium text-gray-700 mb-3">Pipeline Latency (avg seconds)</h4>
+                    <div style="height: 300px;">
+                        <canvas id="latency-chart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Summary Stats -->
+            <div class="mt-6 grid grid-cols-2 md:grid-cols-4 gap-4" id="trend-summary-stats"></div>
+        `;
+
+        // Destroy existing charts
+        Object.keys(trendCharts).forEach(key => {
+            if (trendCharts[key]) {
+                trendCharts[key].destroy();
+                trendCharts[key] = null;
+            }
+        });
+
+        // Create charts
+        createAccuracyChart(data.accuracy);
+        createVolumeChart(data.volume);
+        createErrorsChart(data.errors);
+        createLatencyChart(data.latency);
+        renderTrendSummary(data);
+    }
+
+    function createAccuracyChart(accuracyData) {
+        const ctx = document.getElementById('accuracy-chart');
+        if (!ctx || !accuracyData || !accuracyData.length) return;
+
+        const labels = accuracyData.map(d => d.date);
+        const accuracyValues = accuracyData.map(d => d.accuracy_pct);
+        const highConfValues = accuracyData.map(d => d.high_conf_accuracy_pct);
+
+        trendCharts.accuracy = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Overall Accuracy %',
+                        data: accuracyValues,
+                        borderColor: 'rgb(59, 130, 246)',
+                        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+                        fill: true,
+                        tension: 0.3
+                    },
+                    {
+                        label: 'High Confidence Accuracy %',
+                        data: highConfValues,
+                        borderColor: 'rgb(16, 185, 129)',
+                        backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                        fill: false,
+                        tension: 0.3
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { boxWidth: 12, padding: 15 }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: false,
+                        min: 30,
+                        max: 100,
+                        title: { display: true, text: 'Accuracy %' }
+                    },
+                    x: {
+                        title: { display: true, text: 'Date' }
+                    }
+                }
+            }
+        });
+    }
+
+    function createVolumeChart(volumeData) {
+        const ctx = document.getElementById('volume-chart');
+        if (!ctx || !volumeData || !volumeData.length) return;
+
+        const labels = volumeData.map(d => d.date);
+        const games = volumeData.map(d => d.games);
+        const predictions = volumeData.map(d => d.predictions);
+        const graded = volumeData.map(d => d.graded);
+
+        trendCharts.volume = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Games',
+                        data: games,
+                        backgroundColor: 'rgba(59, 130, 246, 0.7)',
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Predictions',
+                        data: predictions,
+                        backgroundColor: 'rgba(16, 185, 129, 0.7)',
+                        yAxisID: 'y1'
+                    },
+                    {
+                        label: 'Graded',
+                        data: graded,
+                        backgroundColor: 'rgba(249, 115, 22, 0.7)',
+                        yAxisID: 'y1'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { boxWidth: 12, padding: 15 }
+                    }
+                },
+                scales: {
+                    y: {
+                        type: 'linear',
+                        position: 'left',
+                        title: { display: true, text: 'Games' },
+                        beginAtZero: true
+                    },
+                    y1: {
+                        type: 'linear',
+                        position: 'right',
+                        title: { display: true, text: 'Predictions' },
+                        beginAtZero: true,
+                        grid: { drawOnChartArea: false }
+                    }
+                }
+            }
+        });
+    }
+
+    function createErrorsChart(errorsData) {
+        const ctx = document.getElementById('errors-chart');
+        if (!ctx || !errorsData || !errorsData.length) return;
+
+        const labels = errorsData.map(d => d.date);
+        const errorRates = errorsData.map(d => d.error_rate_pct);
+        const failedRuns = errorsData.map(d => d.failed_runs);
+
+        trendCharts.errors = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: 'Error Rate %',
+                        data: errorRates,
+                        borderColor: 'rgb(239, 68, 68)',
+                        backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                        fill: true,
+                        tension: 0.3,
+                        yAxisID: 'y'
+                    },
+                    {
+                        label: 'Failed Runs',
+                        data: failedRuns,
+                        borderColor: 'rgb(249, 115, 22)',
+                        backgroundColor: 'rgba(249, 115, 22, 0.5)',
+                        type: 'bar',
+                        yAxisID: 'y1'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { boxWidth: 12, padding: 15 }
+                    }
+                },
+                scales: {
+                    y: {
+                        type: 'linear',
+                        position: 'left',
+                        title: { display: true, text: 'Error Rate %' },
+                        beginAtZero: true,
+                        max: 100
+                    },
+                    y1: {
+                        type: 'linear',
+                        position: 'right',
+                        title: { display: true, text: 'Failed Runs' },
+                        beginAtZero: true,
+                        grid: { drawOnChartArea: false }
+                    }
+                }
+            }
+        });
+    }
+
+    function createLatencyChart(latencyData) {
+        const ctx = document.getElementById('latency-chart');
+        if (!ctx || !latencyData || !latencyData.length) return;
+
+        // Group by date and phase
+        const phases = [...new Set(latencyData.map(d => d.phase))].filter(p => p);
+        const dates = [...new Set(latencyData.map(d => d.date))].sort();
+
+        // Create datasets per phase
+        const colors = {
+            'phase3': 'rgb(59, 130, 246)',
+            'phase4': 'rgb(16, 185, 129)',
+            'phase5': 'rgb(249, 115, 22)',
+            'raw': 'rgb(139, 92, 246)',
+            'analytics': 'rgb(236, 72, 153)'
+        };
+
+        const datasets = phases.slice(0, 5).map(phase => {
+            const phaseData = latencyData.filter(d => d.phase === phase);
+            const dataByDate = {};
+            phaseData.forEach(d => { dataByDate[d.date] = d.avg_duration_sec; });
+
+            return {
+                label: phase || 'Unknown',
+                data: dates.map(date => dataByDate[date] || null),
+                borderColor: colors[phase] || 'rgb(107, 114, 128)',
+                backgroundColor: 'transparent',
+                tension: 0.3
+            };
+        });
+
+        trendCharts.latency = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: dates,
+                datasets: datasets
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { boxWidth: 12, padding: 15 }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Avg Duration (s)' }
+                    },
+                    x: {
+                        title: { display: true, text: 'Date' }
+                    }
+                }
+            }
+        });
+    }
+
+    function renderTrendSummary(data) {
+        const container = document.getElementById('trend-summary-stats');
+        if (!container) return;
+
+        // Calculate summary stats
+        const accuracy = data.accuracy || [];
+        const volume = data.volume || [];
+        const errors = data.errors || [];
+
+        const avgAccuracy = accuracy.length > 0
+            ? (accuracy.reduce((sum, d) => sum + (d.accuracy_pct || 0), 0) / accuracy.length).toFixed(1)
+            : 'N/A';
+
+        const totalPredictions = volume.reduce((sum, d) => sum + (d.predictions || 0), 0);
+        const totalGraded = volume.reduce((sum, d) => sum + (d.graded || 0), 0);
+
+        const avgErrorRate = errors.length > 0
+            ? (errors.reduce((sum, d) => sum + (d.error_rate_pct || 0), 0) / errors.length).toFixed(2)
+            : 'N/A';
+
+        container.innerHTML = `
+            <div class="bg-blue-50 rounded-lg p-4 text-center">
+                <div class="text-2xl font-bold text-blue-600">${avgAccuracy}%</div>
+                <div class="text-sm text-gray-600">Avg Accuracy</div>
+            </div>
+            <div class="bg-green-50 rounded-lg p-4 text-center">
+                <div class="text-2xl font-bold text-green-600">${totalPredictions.toLocaleString()}</div>
+                <div class="text-sm text-gray-600">Total Predictions</div>
+            </div>
+            <div class="bg-orange-50 rounded-lg p-4 text-center">
+                <div class="text-2xl font-bold text-orange-600">${totalGraded.toLocaleString()}</div>
+                <div class="text-sm text-gray-600">Total Graded</div>
+            </div>
+            <div class="bg-red-50 rounded-lg p-4 text-center">
+                <div class="text-2xl font-bold text-red-600">${avgErrorRate}%</div>
+                <div class="text-sm text-gray-600">Avg Error Rate</div>
+            </div>
+        `;
     }
 </script>
 {% endblock %}

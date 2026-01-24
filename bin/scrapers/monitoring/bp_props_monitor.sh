@@ -3,7 +3,7 @@
 # Clean BettingPros Historical Backfill Monitor
 # Usage: ./bin/backfill/bp_props_monitor.sh [command] [options]
 
-set -e
+set -euo pipefail
 
 # Configuration
 PROJECT="nba-props-platform"

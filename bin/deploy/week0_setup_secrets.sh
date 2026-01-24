@@ -9,7 +9,7 @@
 # - Project ID set (gcloud config set project <PROJECT_ID>)
 # - Proper permissions to create secrets
 
-set -e
+set -euo pipefail
 
 PROJECT_ID=$(gcloud config get-value project)
 if [ -z "$PROJECT_ID" ]; then

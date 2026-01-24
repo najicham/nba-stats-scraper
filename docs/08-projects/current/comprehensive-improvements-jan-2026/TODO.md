@@ -320,9 +320,10 @@ This project consolidates all identified improvements from codebase analysis, ha
   - Files: `monitoring/pipeline_latency_tracker.py`
   - Solution: Added P50/P95/P99 using APPROX_QUANTILES in get_historical_latency_stats()
 
-- [ ] **P2-14: Add BigQuery cost tracking**
-  - Issue: Budget overruns possible
-  - Solution: Export cost metrics to dashboard
+- [x] **P2-14: Add BigQuery cost tracking** ✅ ALREADY DONE
+  - Status: Completed (was already implemented)
+  - Files: `monitoring/bigquery_cost_tracker.py`, `services/admin_dashboard/main.py`
+  - Notes: Full implementation with `/api/bigquery-costs` endpoint supporting daily/user/dataset/expensive views
 
 - [ ] **P2-15: Add end-to-end latency tracking**
   - Issue: Can't measure "game ends" to "predictions available"
@@ -340,17 +341,20 @@ This project consolidates all identified improvements from codebase analysis, ha
   - Files: `docs/08-projects/current/comprehensive-improvements-jan-2026/VALIDATION-FRAMEWORK-GUIDE.md`
   - Solution: Created comprehensive guide documenting all 38 YAML configs with schema and usage examples
 
-- [ ] **P2-18: Update README with recent changes**
-  - Issue: Phase 2 resilience, XGBoost status outdated
-  - Solution: Update main README
+- [x] **P2-18: Update README with recent changes** ✅ FIXED (Session 9)
+  - Status: Completed
+  - Files: `README.md`
+  - Solution: Updated system status, CatBoost V8 as primary, MLB platform, comprehensive improvements project
 
-- [ ] **P2-19: Document MLB platform**
-  - Issue: MLB exists but completely undocumented
-  - Solution: Add MLB section to docs
+- [x] **P2-19: Document MLB platform** ✅ FIXED (Session 9)
+  - Status: Completed
+  - Files: `docs/06-reference/MLB-PLATFORM.md`
+  - Solution: Created comprehensive MLB documentation covering 31 scrapers, prediction systems, processors, configuration
 
-- [ ] **P2-20: Create BigQuery schema reference**
-  - Issue: Schemas scattered across troubleshooting docs
-  - Solution: Centralize schema documentation
+- [x] **P2-20: Create BigQuery schema reference** ✅ FIXED (Session 9)
+  - Status: Completed
+  - Files: `docs/06-reference/BIGQUERY-SCHEMA-REFERENCE.md`
+  - Solution: Created comprehensive schema reference covering all 8 datasets, tables, partitioning, retention
 
 ### Analytics Features
 
@@ -366,13 +370,23 @@ This project consolidates all identified improvements from codebase analysis, ha
 ### Data Quality
 
 - [ ] **P2-29: Add data validation schemas per scraper**
-- [ ] **P2-30: Add dependency row count validation**
+- [x] **P2-30: Add dependency row count validation** ✅ ALREADY DONE
+  - Status: Completed (was already implemented)
+  - Files: `data_processors/analytics/analytics_base.py` (lines 1225-1391)
+  - Notes: `validate_dependency_row_counts()` method with strict mode, used in `calculate_analytics()`
 - [x] **P2-31: Update circuit breaker hardcodes** ✅ FIXED
   - Status: Completed
   - Files: `shared/constants/resilience.py`, `shared/config/circuit_breaker_config.py`
   - Solution: Created centralized resilience constants, updated circuit breaker config to use them
-- [ ] **P2-32: Add Firestore document cleanup**
-- [ ] **P2-33: Per-system prediction success rates**
+- [x] **P2-32: Add Firestore document cleanup** ✅ ALREADY DONE
+  - Status: Completed (was already implemented)
+  - Files: `orchestration/cloud_functions/firestore_cleanup/main.py`
+  - Notes: Full cleanup function with 30-day retention, phase completion + run history cleanup, Slack notifications
+
+- [x] **P2-33: Per-system prediction success rates** ✅ ALREADY DONE
+  - Status: Completed (was already implemented)
+  - Files: `services/admin_dashboard/main.py` (/api/grading-by-system), `data_processors/grading/system_daily_performance/`
+  - Notes: Full per-system tracking with accuracy, MAE, RMSE, displayed in dashboard
 - [ ] **P2-34: Rate limiting implementation**
 
 - [x] **P2-35: Add logging to MLB processor handlers** ✅ FIXED
@@ -404,7 +418,10 @@ This project consolidates all identified improvements from codebase analysis, ha
 - [ ] **P3-7: Implement circuit breaker pattern consistently**
 - [ ] **P3-8: Add Prometheus/metrics endpoint**
 - [ ] **P3-9: Add admin audit trail**
-- [ ] **P3-10: Create centralized env var documentation**
+- [x] **P3-10: Create centralized env var documentation** ✅ FIXED (Session 9)
+  - Status: Completed
+  - Files: `docs/06-reference/ENVIRONMENT-VARIABLES.md`
+  - Solution: Created comprehensive env var reference covering GCP, alerting, timeouts, proxies
 - [ ] **P3-11: Add ML feedback pipeline tests**
 - [ ] **P3-12: Migrate to async/await for Phase 3**
 - [ ] **P3-13: Implement property-based testing**
@@ -413,7 +430,10 @@ This project consolidates all identified improvements from codebase analysis, ha
 - [ ] **P3-16: Consolidate duplicate sport_config.py** (8+ copies)
 - [ ] **P3-17: Archive old docs_backup folder**
 - [ ] **P3-18: Consolidate operations directories** (4 folders)
-- [ ] **P3-19: Create test writing guide**
+- [x] **P3-19: Create test writing guide** ✅ FIXED (Session 9)
+  - Status: Completed
+  - Files: `docs/05-development/TEST-WRITING-GUIDE.md`
+  - Solution: Created comprehensive guide with fixtures, mocking patterns, test examples
 - [ ] **P3-20: Create XGBoost model training runbook**
 - [ ] **P3-21: Create scraper fixture catalog**
 - [ ] **P3-22: Create cost optimization guide**

@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # bin/testing/validate_data.sh
 # Validate scraped data quality
 echo "✅ Data Quality Validation"

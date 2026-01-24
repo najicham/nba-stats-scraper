@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # view_today_timeline.sh
 # Shows complete timeline of today's orchestration activities
 # Path: bin/orchestration/view_today_timeline.sh

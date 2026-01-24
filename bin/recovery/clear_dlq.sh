@@ -2,7 +2,7 @@
 # Clear all messages from the Dead Letter Queue
 # Use this AFTER verifying data coverage is complete
 
-set -e
+set -euo pipefail
 
 DLQ_SUB="nba-phase1-scrapers-complete-dlq-sub"
 

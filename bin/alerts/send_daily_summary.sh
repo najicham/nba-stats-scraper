@@ -4,7 +4,7 @@
 # Runs daily at 9 AM via Cloud Scheduler
 # Queries BigQuery and sends formatted summary to Slack
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="nba-props-platform"
 DATASET="nba_predictions"

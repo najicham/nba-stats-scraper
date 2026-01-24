@@ -499,3 +499,157 @@ def get_proxyfuel_proxy_url() -> Optional[str]:
 def get_configured_providers() -> List[str]:
     """Get list of configured provider names."""
     return [p.name for p in PROXY_PROVIDERS if p.is_configured()]
+
+
+# ============================================================================
+# Health-Based Proxy Selection (New API)
+# ============================================================================
+
+def get_healthy_proxy_urls_for_target(
+    target_host: str,
+    circuit_breaker: Optional[ProxyCircuitBreaker] = None,
+    shuffle: bool = True
+) -> List[str]:
+    """
+    Get proxy URLs ordered by health and filtered by circuit breaker.
+
+    Combines:
+    - ProxyManager health scoring (in-memory, per-instance)
+    - Circuit breaker filtering (BigQuery-backed, cross-instance)
+
+    Args:
+        target_host: Target hostname for health-specific ordering
+        circuit_breaker: Optional circuit breaker instance
+        shuffle: If True, apply weighted random ordering; if False, strict health ordering
+
+    Returns:
+        List of proxy URLs ordered by health with blocked proxies filtered out
+    """
+    try:
+        from shared.utils.proxy_manager import get_proxy_manager
+        proxy_manager = get_proxy_manager()
+
+        # Get health-ordered proxies from ProxyManager
+        all_proxies = proxy_manager.get_all_proxies_for_target(target_host, shuffle=shuffle)
+
+        # Apply circuit breaker filtering
+        if circuit_breaker is None:
+            circuit_breaker = ProxyCircuitBreaker()
+
+        filtered = []
+        for proxy_url in all_proxies:
+            provider = extract_provider_from_url(proxy_url)
+
+            # Check circuit breaker (persistent state)
+            if circuit_breaker.should_skip_proxy(provider, target_host):
+                logger.debug(f"Skipping {provider} for {target_host} (circuit OPEN)")
+                continue
+
+            # Check health manager cooldown (in-memory state)
+            proxy_health = proxy_manager.get_proxy_health(proxy_url)
+            if proxy_health and not proxy_health.is_available():
+                logger.debug(f"Skipping {provider} for {target_host} (in cooldown)")
+                continue
+
+            filtered.append(proxy_url)
+
+        if not filtered:
+            logger.warning(f"All proxies blocked for {target_host}, returning all as fallback")
+            return all_proxies
+
+        return filtered
+
+    except ImportError:
+        # Fall back to circuit breaker-only filtering
+        logger.debug("ProxyManager not available, using circuit breaker only")
+        return get_proxy_urls_with_circuit_breaker(target_host, circuit_breaker)
+
+
+def record_proxy_success(
+    proxy_url: str,
+    target_host: str,
+    response_time_ms: Optional[int] = None,
+    circuit_breaker: Optional[ProxyCircuitBreaker] = None
+):
+    """
+    Record a successful proxy request to both health manager and circuit breaker.
+
+    Args:
+        proxy_url: The proxy URL that was used
+        target_host: Target hostname
+        response_time_ms: Response time in milliseconds
+        circuit_breaker: Optional circuit breaker instance
+    """
+    provider = extract_provider_from_url(proxy_url)
+
+    # Record to health manager
+    try:
+        from shared.utils.proxy_manager import get_proxy_manager
+        proxy_manager = get_proxy_manager()
+        proxy_manager.record_success(proxy_url, target_host, response_time_ms)
+    except ImportError:
+        pass
+
+    # Record to circuit breaker
+    if circuit_breaker:
+        try:
+            circuit_breaker.record_success(provider, target_host)
+        except Exception as e:
+            logger.debug(f"Circuit breaker record_success failed: {e}")
+
+
+def record_proxy_failure(
+    proxy_url: str,
+    target_host: str,
+    error_type: Optional[str] = None,
+    error_message: Optional[str] = None,
+    http_status_code: Optional[int] = None,
+    circuit_breaker: Optional[ProxyCircuitBreaker] = None
+):
+    """
+    Record a failed proxy request to both health manager and circuit breaker.
+
+    Args:
+        proxy_url: The proxy URL that was used
+        target_host: Target hostname
+        error_type: Type of error (e.g., "timeout", "forbidden")
+        error_message: Detailed error message
+        http_status_code: HTTP status code if available
+        circuit_breaker: Optional circuit breaker instance
+    """
+    provider = extract_provider_from_url(proxy_url)
+
+    # Record to health manager
+    try:
+        from shared.utils.proxy_manager import get_proxy_manager
+        proxy_manager = get_proxy_manager()
+        proxy_manager.record_failure(
+            proxy_url, target_host,
+            error_type=error_type,
+            error_message=error_message,
+            http_status_code=http_status_code
+        )
+    except ImportError:
+        pass
+
+    # Record to circuit breaker
+    if circuit_breaker:
+        try:
+            circuit_breaker.record_failure(provider, target_host)
+        except Exception as e:
+            logger.debug(f"Circuit breaker record_failure failed: {e}")
+
+
+def get_proxy_health_summary() -> Dict:
+    """
+    Get a summary of proxy health status for monitoring.
+
+    Returns:
+        Dictionary with health metrics, or empty dict if ProxyManager unavailable
+    """
+    try:
+        from shared.utils.proxy_manager import get_proxy_manager
+        proxy_manager = get_proxy_manager()
+        return proxy_manager.get_status_summary()
+    except ImportError:
+        return {}

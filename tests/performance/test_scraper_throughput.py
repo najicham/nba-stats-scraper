@@ -29,6 +29,16 @@ from typing import Dict, Any, List
 from scrapers.scraper_base import ScraperBase, DownloadType, ExportMode
 
 
+def _get_stats(benchmark):
+    """Safely get benchmark stats, returns None if not available."""
+    try:
+        if hasattr(benchmark, 'stats') and hasattr(benchmark.stats, 'mean'):
+            return benchmark.stats
+    except Exception:
+        pass
+    return None
+
+
 # =============================================================================
 # Mock Scraper for Testing
 # =============================================================================
@@ -141,9 +151,10 @@ class TestJSONDecodingPerformance:
         assert 'players' in result
         assert len(result['players']) == 10
 
-        # Print metrics
-        print(f"\nSmall JSON ({len(small_json_payload)} bytes): "
-              f"{benchmark.stats.mean * 1000:.3f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nSmall JSON ({len(small_json_payload)} bytes): "
+                  f"{stats.mean * 1000:.3f}ms")
 
     def test_benchmark_medium_json_decode(self, benchmark, medium_json_payload):
         """Benchmark decoding medium JSON payload."""
@@ -152,9 +163,10 @@ class TestJSONDecodingPerformance:
         assert 'players' in result
         assert len(result['players']) == 500
 
-        # Print metrics
-        print(f"\nMedium JSON ({len(medium_json_payload)} bytes): "
-              f"{benchmark.stats.mean * 1000:.3f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nMedium JSON ({len(medium_json_payload)} bytes): "
+                  f"{stats.mean * 1000:.3f}ms")
 
     def test_benchmark_large_json_decode(self, benchmark, large_json_payload):
         """Benchmark decoding large JSON payload."""
@@ -163,9 +175,10 @@ class TestJSONDecodingPerformance:
         assert 'resultSets' in result
         assert len(result['resultSets']) == 10
 
-        # Print metrics
-        print(f"\nLarge JSON ({len(large_json_payload)} bytes): "
-              f"{benchmark.stats.mean * 1000:.3f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nLarge JSON ({len(large_json_payload)} bytes): "
+                  f"{stats.mean * 1000:.3f}ms")
 
 
 # =============================================================================
@@ -187,7 +200,9 @@ class TestOptionValidationPerformance:
         result = benchmark(parse_opts)
 
         assert 'gamedate' in result
-        print(f"\nOption parsing: {benchmark.stats.mean * 1000:.3f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nOption parsing: {stats.mean * 1000:.3f}ms")
 
     def test_benchmark_option_validation(self, benchmark, sample_scraper_opts):
         """Benchmark option validation overhead."""
@@ -196,8 +211,9 @@ class TestOptionValidationPerformance:
 
         result = benchmark(scraper.validate_opts)
 
-        # validate_opts returns None on success
-        print(f"\nOption validation: {benchmark.stats.mean * 1000:.3f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nOption validation: {stats.mean * 1000:.3f}ms")
 
     def test_benchmark_url_generation(self, benchmark, sample_scraper_opts):
         """Benchmark URL generation."""
@@ -207,7 +223,9 @@ class TestOptionValidationPerformance:
         result = benchmark(scraper.set_url)
 
         assert 'gamedate' in scraper.url
-        print(f"\nURL generation: {benchmark.stats.mean * 1000:.3f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nURL generation: {stats.mean * 1000:.3f}ms")
 
     def test_benchmark_header_generation(self, benchmark, sample_scraper_opts):
         """Benchmark header generation."""
@@ -217,7 +235,9 @@ class TestOptionValidationPerformance:
         result = benchmark(scraper.set_headers)
 
         assert 'Accept' in scraper.headers
-        print(f"\nHeader generation: {benchmark.stats.mean * 1000:.3f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nHeader generation: {stats.mean * 1000:.3f}ms")
 
 
 # =============================================================================
@@ -280,8 +300,9 @@ class TestDataTransformationPerformance:
 
         assert len(result) == 450
         assert 'fg_pct_decimal' in result[0]
-        print(f"\nBoxscore transformation (450 players): "
-              f"{benchmark.stats.mean * 1000:.2f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nBoxscore transformation (450 players): {stats.mean * 1000:.2f}ms")
 
     def test_benchmark_bulk_record_creation(self, benchmark, sample_player_rows, benchmark_config):
         """Benchmark bulk record creation."""
@@ -305,8 +326,10 @@ class TestDataTransformationPerformance:
         result = benchmark(create_records)
 
         assert len(result) == benchmark_config['medium_batch']
-        print(f"\nBulk record creation ({benchmark_config['medium_batch']} records): "
-              f"{benchmark.stats.mean * 1000:.2f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nBulk record creation ({benchmark_config['medium_batch']} records): "
+                  f"{stats.mean * 1000:.2f}ms")
 
 
 # =============================================================================
@@ -337,7 +360,9 @@ class TestHashComputationPerformance:
         result = benchmark(compute_hash)
 
         assert len(result) == 16
-        print(f"\nSingle record hash: {benchmark.stats.mean * 1000000:.2f}us")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nSingle record hash: {stats.mean * 1000000:.2f}us")
 
     def test_benchmark_batch_hash_computation(self, benchmark, sample_player_rows, benchmark_config):
         """Benchmark hashing a batch of records."""
@@ -356,8 +381,10 @@ class TestHashComputationPerformance:
         result = benchmark(compute_batch_hashes)
 
         assert len(result) == benchmark_config['medium_batch']
-        print(f"\nBatch hash ({benchmark_config['medium_batch']} records): "
-              f"{benchmark.stats.mean * 1000:.2f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nBatch hash ({benchmark_config['medium_batch']} records): "
+                  f"{stats.mean * 1000:.2f}ms")
 
 
 # =============================================================================
@@ -372,7 +399,9 @@ class TestScraperLifecyclePerformance:
         result = benchmark(MockScraper)
 
         assert result.run_id is not None
-        print(f"\nScraper initialization: {benchmark.stats.mean * 1000:.3f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nScraper initialization: {stats.mean * 1000:.3f}ms")
 
     def test_benchmark_scraper_setup_phase(self, benchmark, sample_scraper_opts):
         """Benchmark scraper setup phase (opts, url, headers)."""
@@ -388,7 +417,9 @@ class TestScraperLifecyclePerformance:
 
         assert result.url is not None
         assert result.headers is not None
-        print(f"\nScraper setup phase: {benchmark.stats.mean * 1000:.3f}ms")
+        stats = _get_stats(benchmark)
+        if stats:
+            print(f"\nScraper setup phase: {stats.mean * 1000:.3f}ms")
 
 
 # =============================================================================

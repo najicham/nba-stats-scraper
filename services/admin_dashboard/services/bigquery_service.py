@@ -1468,3 +1468,257 @@ class BigQueryService:
                 'comparison': {},
                 'period_days': days
             }
+
+    # =========================================================================
+    # Trend Chart Data Methods
+    # =========================================================================
+
+    def get_prediction_accuracy_trend(self, days: int = 30) -> List[Dict]:
+        """
+        Get daily prediction accuracy trend across all systems.
+
+        Returns time-series data suitable for charting:
+        - date, overall accuracy, high-conf accuracy, predictions count
+        """
+        days = max(1, min(90, days))
+
+        query = f"""
+        SELECT
+            game_date,
+            COUNT(*) as total_predictions,
+            COUNTIF(prediction_correct = TRUE) as correct,
+            COUNTIF(prediction_correct = FALSE) as incorrect,
+            ROUND(SAFE_DIVIDE(
+                COUNTIF(prediction_correct = TRUE),
+                COUNTIF(recommendation IN ('OVER', 'UNDER'))
+            ) * 100, 2) as accuracy_pct,
+            COUNTIF(confidence_score >= 0.70) as high_conf_total,
+            COUNTIF(confidence_score >= 0.70 AND prediction_correct = TRUE) as high_conf_correct,
+            ROUND(SAFE_DIVIDE(
+                COUNTIF(confidence_score >= 0.70 AND prediction_correct = TRUE),
+                COUNTIF(confidence_score >= 0.70 AND recommendation IN ('OVER', 'UNDER'))
+            ) * 100, 2) as high_conf_accuracy_pct,
+            ROUND(AVG(absolute_error), 2) as mae
+        FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_accuracy`
+        WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+          AND game_date < CURRENT_DATE()
+          AND is_voided = FALSE
+        GROUP BY game_date
+        ORDER BY game_date ASC
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'date': str(row.game_date),
+                    'total_predictions': row.total_predictions,
+                    'correct': row.correct,
+                    'incorrect': row.incorrect,
+                    'accuracy_pct': float(row.accuracy_pct) if row.accuracy_pct else 0,
+                    'high_conf_total': row.high_conf_total,
+                    'high_conf_correct': row.high_conf_correct,
+                    'high_conf_accuracy_pct': float(row.high_conf_accuracy_pct) if row.high_conf_accuracy_pct else 0,
+                    'mae': float(row.mae) if row.mae else 0
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying prediction accuracy trend: {e}")
+            return []
+
+    def get_pipeline_latency_trend(self, days: int = 30) -> List[Dict]:
+        """
+        Get daily pipeline processing latency trends.
+
+        Returns average processor durations by phase over time.
+        """
+        days = max(1, min(90, days))
+
+        query = f"""
+        SELECT
+            DATE(started_at) as run_date,
+            phase,
+            COUNT(*) as processor_runs,
+            ROUND(AVG(duration_seconds), 1) as avg_duration_sec,
+            ROUND(MAX(duration_seconds), 1) as max_duration_sec,
+            SUM(records_processed) as total_records
+        FROM `{PROJECT_ID}.nba_reference.processor_run_history`
+        WHERE started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {days} DAY)
+          AND status = 'completed'
+          AND duration_seconds IS NOT NULL
+        GROUP BY run_date, phase
+        ORDER BY run_date ASC, phase
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'date': str(row.run_date),
+                    'phase': row.phase,
+                    'processor_runs': row.processor_runs,
+                    'avg_duration_sec': float(row.avg_duration_sec) if row.avg_duration_sec else 0,
+                    'max_duration_sec': float(row.max_duration_sec) if row.max_duration_sec else 0,
+                    'total_records': row.total_records or 0
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying pipeline latency trend: {e}")
+            return []
+
+    def get_error_rate_trend(self, days: int = 30) -> List[Dict]:
+        """
+        Get daily error rate trends from processor run history.
+
+        Returns daily counts of successful vs failed processor runs.
+        """
+        days = max(1, min(90, days))
+
+        query = f"""
+        SELECT
+            DATE(started_at) as run_date,
+            COUNT(*) as total_runs,
+            COUNTIF(status = 'completed') as successful_runs,
+            COUNTIF(status IN ('failed', 'error')) as failed_runs,
+            COUNTIF(status = 'timeout') as timeout_runs,
+            ROUND(SAFE_DIVIDE(COUNTIF(status IN ('failed', 'error', 'timeout')), COUNT(*)) * 100, 2) as error_rate_pct,
+            COUNT(DISTINCT processor_name) as unique_processors
+        FROM `{PROJECT_ID}.nba_reference.processor_run_history`
+        WHERE started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {days} DAY)
+        GROUP BY run_date
+        ORDER BY run_date ASC
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'date': str(row.run_date),
+                    'total_runs': row.total_runs,
+                    'successful_runs': row.successful_runs,
+                    'failed_runs': row.failed_runs,
+                    'timeout_runs': row.timeout_runs,
+                    'error_rate_pct': float(row.error_rate_pct) if row.error_rate_pct else 0,
+                    'unique_processors': row.unique_processors
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying error rate trend: {e}")
+            return []
+
+    def get_data_volume_trend(self, days: int = 30) -> List[Dict]:
+        """
+        Get daily data volume trends.
+
+        Returns counts of games, predictions, and graded predictions over time.
+        """
+        days = max(1, min(90, days))
+
+        query = f"""
+        WITH daily_games AS (
+            SELECT
+                game_date,
+                COUNT(DISTINCT game_id) as games_count
+            FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+              AND game_date < CURRENT_DATE()
+            GROUP BY game_date
+        ),
+        daily_predictions AS (
+            SELECT
+                game_date,
+                COUNT(*) as predictions_count,
+                COUNT(DISTINCT player_lookup) as players_count,
+                COUNT(DISTINCT system_id) as systems_count
+            FROM `{PROJECT_ID}.{self.datasets['predictions']}.player_prop_predictions`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+              AND game_date < CURRENT_DATE()
+              AND is_active = TRUE
+            GROUP BY game_date
+        ),
+        daily_graded AS (
+            SELECT
+                game_date,
+                COUNT(*) as graded_count,
+                COUNTIF(prediction_correct = TRUE) as correct_count
+            FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_grades`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+              AND game_date < CURRENT_DATE()
+            GROUP BY game_date
+        )
+        SELECT
+            g.game_date as date,
+            COALESCE(g.games_count, 0) as games,
+            COALESCE(p.predictions_count, 0) as predictions,
+            COALESCE(p.players_count, 0) as players,
+            COALESCE(p.systems_count, 0) as systems,
+            COALESCE(gr.graded_count, 0) as graded,
+            COALESCE(gr.correct_count, 0) as correct
+        FROM daily_games g
+        LEFT JOIN daily_predictions p ON g.game_date = p.game_date
+        LEFT JOIN daily_graded gr ON g.game_date = gr.game_date
+        ORDER BY g.game_date ASC
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'date': str(row.date),
+                    'games': row.games,
+                    'predictions': row.predictions,
+                    'players': row.players,
+                    'systems': row.systems,
+                    'graded': row.graded,
+                    'correct': row.correct
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying data volume trend: {e}")
+            return []
+
+    def get_accuracy_by_system_trend(self, days: int = 30) -> List[Dict]:
+        """
+        Get daily accuracy trend broken down by prediction system.
+
+        Returns time-series data for each system separately.
+        """
+        days = max(1, min(90, days))
+
+        query = f"""
+        SELECT
+            game_date,
+            system_id,
+            COUNT(*) as total_predictions,
+            COUNTIF(prediction_correct = TRUE) as correct,
+            ROUND(SAFE_DIVIDE(
+                COUNTIF(prediction_correct = TRUE),
+                COUNTIF(recommendation IN ('OVER', 'UNDER'))
+            ) * 100, 2) as accuracy_pct
+        FROM `{PROJECT_ID}.{self.datasets['predictions']}.prediction_accuracy`
+        WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+          AND game_date < CURRENT_DATE()
+          AND is_voided = FALSE
+        GROUP BY game_date, system_id
+        ORDER BY game_date ASC, system_id
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'date': str(row.game_date),
+                    'system_id': row.system_id,
+                    'total_predictions': row.total_predictions,
+                    'correct': row.correct,
+                    'accuracy_pct': float(row.accuracy_pct) if row.accuracy_pct else 0
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying accuracy by system trend: {e}")
+            return []

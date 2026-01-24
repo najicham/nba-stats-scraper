@@ -3,7 +3,7 @@
 # Purpose: Monitor Basketball Reference roster processor job executions
 # Usage: ./bin/raw/monitoring/br_roster_processor_monitor.sh [--logs N]
 
-set -e
+set -euo pipefail
 
 PROJECT_ID=${GCP_PROJECT_ID:-"nba-props-platform"}
 REGION=${REGION:-"us-west2"}

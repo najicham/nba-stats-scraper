@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # SAVE TO: ~/code/nba-stats-scraper/bin/monitoring/monitor_workflows.sh
 # Updated for NEW 5-workflow system with 12 daily executions
 

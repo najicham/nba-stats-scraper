@@ -12,7 +12,7 @@
 #   watch -n 60 ./bin/backfill/monitor_backfill.sh 2021-11-01 2021-12-31  # Auto-refresh
 #
 
-set -e
+set -euo pipefail
 
 # Colors
 RED='\033[0;31m'

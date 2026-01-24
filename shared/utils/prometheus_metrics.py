@@ -156,10 +156,12 @@ class Histogram:
             entry['sum'] += value
             entry['count'] += 1
 
-            # Update bucket counts
+            # Update the appropriate bucket count (non-cumulative storage)
+            # Find the first bucket where value <= bucket_bound
             for i, bucket_bound in enumerate(self.buckets):
                 if value <= bucket_bound:
                     entry['bucket_counts'][i] += 1
+                    break  # Only count in one bucket
 
     def get_samples(self) -> List[tuple]:
         """

@@ -2,7 +2,7 @@
 # Validate player_game_summary backfill results
 # Usage: validate_player_summary.sh <start_date> <end_date> [config_file]
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/common_validation.sh"

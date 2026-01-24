@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # bin/utilities/clear_old_data.sh
 # Clean up old GCS data
 echo "🗑️  GCS Data Cleanup"

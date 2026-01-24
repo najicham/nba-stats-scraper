@@ -4,7 +4,7 @@
 # Validate NBA Gamebook Reparse job data quality and completeness
 # Based on existing validation patterns
 
-set -e
+set -euo pipefail
 
 BUCKET="nba-scraped-data"
 PDF_PREFIX="nba-com/gamebooks-pdf"

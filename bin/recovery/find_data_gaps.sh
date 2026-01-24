@@ -2,7 +2,7 @@
 # Find data gaps and optionally trigger recovery
 # Checks BigQuery for missing data and can create recovery messages
 
-set -e
+set -euo pipefail
 
 # Default parameters
 DAYS_TO_CHECK=${1:-7}

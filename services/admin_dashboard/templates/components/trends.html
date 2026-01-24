@@ -1,0 +1,74 @@
+<!-- Trends Charts Component -->
+<!-- This component provides trend visualizations for the admin dashboard -->
+
+<div class="space-y-6">
+    <p class="text-sm text-gray-600">
+        Viewing {{ days }} days of historical data. Use the dropdown above to change the time range.
+    </p>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Prediction Accuracy Chart -->
+        <div class="bg-gray-50 rounded-lg p-4">
+            <h4 class="text-sm font-medium text-gray-700 mb-3">Prediction Accuracy Over Time</h4>
+            <div style="height: 300px;">
+                <canvas id="accuracy-chart"></canvas>
+            </div>
+            <p class="text-xs text-gray-500 mt-2">
+                Shows overall and high-confidence prediction accuracy trends
+            </p>
+        </div>
+
+        <!-- Data Volume Chart -->
+        <div class="bg-gray-50 rounded-lg p-4">
+            <h4 class="text-sm font-medium text-gray-700 mb-3">Data Volume Over Time</h4>
+            <div style="height: 300px;">
+                <canvas id="volume-chart"></canvas>
+            </div>
+            <p class="text-xs text-gray-500 mt-2">
+                Games scheduled vs predictions generated vs graded predictions
+            </p>
+        </div>
+
+        <!-- Error Rate Chart -->
+        <div class="bg-gray-50 rounded-lg p-4">
+            <h4 class="text-sm font-medium text-gray-700 mb-3">Pipeline Error Rate</h4>
+            <div style="height: 300px;">
+                <canvas id="errors-chart"></canvas>
+            </div>
+            <p class="text-xs text-gray-500 mt-2">
+                Error rate percentage and failed processor runs over time
+            </p>
+        </div>
+
+        <!-- Pipeline Latency Chart -->
+        <div class="bg-gray-50 rounded-lg p-4">
+            <h4 class="text-sm font-medium text-gray-700 mb-3">Pipeline Latency (avg seconds)</h4>
+            <div style="height: 300px;">
+                <canvas id="latency-chart"></canvas>
+            </div>
+            <p class="text-xs text-gray-500 mt-2">
+                Average processor duration by pipeline phase
+            </p>
+        </div>
+    </div>
+
+    <!-- Summary Stats -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4" id="trend-summary-stats">
+        <div class="bg-blue-50 rounded-lg p-4 text-center animate-pulse">
+            <div class="h-8 bg-blue-200 rounded w-16 mx-auto mb-2"></div>
+            <div class="text-sm text-gray-600">Loading...</div>
+        </div>
+        <div class="bg-green-50 rounded-lg p-4 text-center animate-pulse">
+            <div class="h-8 bg-green-200 rounded w-20 mx-auto mb-2"></div>
+            <div class="text-sm text-gray-600">Loading...</div>
+        </div>
+        <div class="bg-orange-50 rounded-lg p-4 text-center animate-pulse">
+            <div class="h-8 bg-orange-200 rounded w-20 mx-auto mb-2"></div>
+            <div class="text-sm text-gray-600">Loading...</div>
+        </div>
+        <div class="bg-red-50 rounded-lg p-4 text-center animate-pulse">
+            <div class="h-8 bg-red-200 rounded w-16 mx-auto mb-2"></div>
+            <div class="text-sm text-gray-600">Loading...</div>
+        </div>
+    </div>
+</div>

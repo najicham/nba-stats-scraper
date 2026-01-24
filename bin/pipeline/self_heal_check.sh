@@ -9,7 +9,7 @@
 #
 # Set up as scheduler: 15 14 * * * (2:15 PM ET = 30 min after same-day-predictions)
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(dirname "$0")"
 TOMORROW=$(TZ=America/New_York date -d "tomorrow" +%Y-%m-%d)

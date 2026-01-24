@@ -797,6 +797,26 @@ def orchestrate_phase4_to_phase5(cloud_event):
             f"(status={status}, correlation_id={correlation_id})"
         )
 
+        # Write to BigQuery backup (non-blocking, fire-and-forget)
+        # This provides backup tracking if Firestore becomes unavailable
+        if COMPLETION_TRACKER_ENABLED:
+            try:
+                tracker = get_completion_tracker()
+                tracker.record_completion(
+                    phase="phase4",
+                    game_date=game_date,
+                    processor_name=processor_name,
+                    completion_data={
+                        "status": status,
+                        "record_count": message_data.get('record_count', 0),
+                        "correlation_id": correlation_id,
+                        "execution_id": message_data.get('execution_id'),
+                    }
+                )
+            except Exception as tracker_error:
+                # Non-blocking - log but don't fail the orchestration
+                logger.warning(f"BigQuery backup write failed (non-blocking): {tracker_error}")
+
         # Check execution timeout before proceeding with Firestore operations
         is_timed_out, is_warning, elapsed_minutes = check_execution_timeout()
 
@@ -848,6 +868,25 @@ def orchestrate_phase4_to_phase5(cloud_event):
                 raise ExecutionTimeoutError(
                     f"Phase 4→5 execution timed out after {elapsed_minutes:.1f} minutes before triggering Phase 5"
                 )
+
+            # Update BigQuery aggregate status (non-blocking)
+            if COMPLETION_TRACKER_ENABLED:
+                try:
+                    tracker = get_completion_tracker()
+                    # Calculate completed processors
+                    completed_processors = list(set(EXPECTED_PROCESSORS) - set(missing))
+
+                    tracker.update_aggregate_status(
+                        phase="phase4",
+                        game_date=game_date,
+                        completed_processors=completed_processors,
+                        expected_processors=EXPECTED_PROCESSORS,
+                        is_triggered=True,
+                        trigger_reason=trigger_reason,
+                        mode=None  # Phase 4 doesn't have mode-aware orchestration
+                    )
+                except Exception as tracker_error:
+                    logger.warning(f"BigQuery aggregate update failed (non-blocking): {tracker_error}")
 
             # All tier-based triggers should activate Phase 5
             if trigger_reason == 'all_complete':

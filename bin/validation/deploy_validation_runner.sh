@@ -3,7 +3,7 @@
 # Purpose: Deploy the validation runner as a Cloud Run Job
 # Usage: ./bin/validation/deploy_validation_runner.sh [--dry-run]
 
-set -e
+set -euo pipefail
 
 # Configuration
 SERVICE_NAME="validation-runner"

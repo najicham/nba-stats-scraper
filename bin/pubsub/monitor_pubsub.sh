@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # monitor_pubsub.sh
 #
 # File Path: bin/pubsub/monitor_pubsub.sh

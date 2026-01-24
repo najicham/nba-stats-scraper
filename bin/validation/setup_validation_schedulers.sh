@@ -3,7 +3,7 @@
 # Purpose: Set up Cloud Scheduler jobs for automated validation
 # Usage: ./bin/validation/setup_validation_schedulers.sh [--delete] [--list]
 
-set -e
+set -euo pipefail
 
 # Configuration
 PROJECT_ID="${GCP_PROJECT_ID:-nba-props-platform}"

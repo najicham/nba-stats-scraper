@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 # Setup script for NBA Analytics infrastructure
 # Run this once per GCP project

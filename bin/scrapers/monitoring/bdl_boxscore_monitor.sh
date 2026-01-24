@@ -3,7 +3,7 @@
 # Purpose: OPTIMIZED monitoring for Ball Don't Lie Boxscore backfill process  
 # Usage: ./bin/backfill/bdl_boxscore_monitor.sh [command] [options]
 
-set -e
+set -euo pipefail
 
 PROJECT="nba-props-platform"
 REGION="us-west2"

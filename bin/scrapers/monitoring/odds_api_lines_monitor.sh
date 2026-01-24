@@ -3,7 +3,7 @@
 # NBA Odds API Game Lines Backfill Monitor
 # Usage: ./bin/scrapers/monitoring/odds_api_lines_monitor.sh [command] [options]
 
-set -e
+set -euo pipefail
 
 # Configuration
 PROJECT="nba-props-platform"

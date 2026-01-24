@@ -20,7 +20,7 @@
 #
 # ============================================================================
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="nba-props-platform"
 TARGET_LOCATION="us-west2"

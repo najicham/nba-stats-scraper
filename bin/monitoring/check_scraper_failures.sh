@@ -2,7 +2,7 @@
 # Alert on sustained scraper failures
 # Run daily to catch scraper issues within 24h
 
-set -e
+set -euo pipefail
 
 echo "=== Scraper Failure Detection ==="
 echo "Time: $(TZ=America/New_York date '+%Y-%m-%d %H:%M:%S %Z')"

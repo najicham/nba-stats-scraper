@@ -3,7 +3,7 @@
 # Purpose: Validate Basketball Reference roster processor data quality in BigQuery
 # Usage: ./bin/raw/validation/validate_br_roster_processor.sh [--season YEAR] [--team ABBREV]
 
-set -e
+set -euo pipefail
 
 PROJECT_ID=${GCP_PROJECT_ID:-"nba-props-platform"}
 

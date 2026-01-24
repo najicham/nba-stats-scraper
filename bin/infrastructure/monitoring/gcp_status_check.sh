@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # File: bin/monitoring/gcp_status_check.sh
 # Purpose: Quick status check of GCP infrastructure for NBA gamebook backfill
 

@@ -90,6 +90,10 @@ from .utils.proxy_utils import (
     get_proxy_urls_with_circuit_breaker,
     ProxyCircuitBreaker,
     extract_provider_from_url,
+    get_healthy_proxy_urls_for_target,
+    record_proxy_success,
+    record_proxy_failure,
+    get_proxy_health_summary,
 )
 from shared.utils.proxy_health_logger import log_proxy_result, extract_host_from_url, classify_error
 from .utils.nba_header_utils import (
@@ -987,6 +991,7 @@ class ScraperBase:
         - File size is reasonable (not 0 bytes)
         - Row count matches expectations
         - Data structure is valid
+        - Schema validation (if YAML config exists)
 
         Logs all validations to BigQuery and sends alerts for critical issues.
         """
@@ -1029,6 +1034,22 @@ class ScraperBase:
                 issues.append('file_size_zero')
                 reason = f"File exported {actual_rows} rows but size is 0 bytes"
 
+            # Check 3: Schema-based validation (if config exists)
+            schema_result = self._validate_with_schema()
+            if schema_result:
+                if not schema_result.passed:
+                    if schema_result.errors > 0:
+                        validation_status = 'ERROR'
+                    elif schema_result.warnings > 0 and validation_status == 'OK':
+                        validation_status = 'WARNING'
+
+                    # Add schema issues to the list
+                    for issue in schema_result.issues:
+                        issues.append(f"schema:{issue.check_name}")
+
+                    if not reason and schema_result.issues:
+                        reason = schema_result.issues[0].message
+
             # Create validation result
             validation_result = {
                 'timestamp': datetime.now(timezone.utc).isoformat(),
@@ -1041,20 +1062,97 @@ class ScraperBase:
                 'validation_status': validation_status,
                 'issues': ','.join(issues) if issues else None,
                 'reason': reason,
-                'is_acceptable': is_acceptable
+                'is_acceptable': is_acceptable,
+                'schema_validated': schema_result is not None,
+                'schema_errors': schema_result.errors if schema_result else 0,
+                'schema_warnings': schema_result.warnings if schema_result else 0,
             }
 
             # Log to BigQuery monitoring table
             self._log_scraper_validation(validation_result)
 
-            # Send alert if critical
-            if validation_status == 'CRITICAL':
+            # Send alert if critical or error
+            if validation_status in ('CRITICAL', 'ERROR'):
                 self._send_scraper_alert(validation_result)
 
         except Exception as e:
             # Don't fail scraper if validation fails
             # FIX #3: Change to ERROR level with stack trace for visibility
             logger.error(f"LAYER1_VALIDATION: Validation failed - {e}", exc_info=True)
+
+    def _validate_with_schema(self):
+        """
+        Validate scraper output using YAML schema configuration.
+
+        Returns:
+            ValidationResult or None if no schema config exists
+        """
+        try:
+            from validation.validators.scrapers import ScraperOutputValidator
+        except ImportError:
+            logger.debug("Schema validation module not available")
+            return None
+
+        # Derive scraper name from class name for schema lookup
+        scraper_name = self._get_schema_name()
+
+        try:
+            validator = ScraperOutputValidator(scraper_name)
+
+            # If no config was loaded, skip validation
+            if not validator.config:
+                logger.debug(f"No schema config for {scraper_name}")
+                return None
+
+            # Run validation
+            result = validator.validate(self.data, self.opts)
+
+            # Log results
+            if result.passed:
+                logger.info(f"SCHEMA_VALIDATION: Passed for {scraper_name} ({result.row_count} rows)")
+            else:
+                logger.warning(
+                    f"SCHEMA_VALIDATION: Issues for {scraper_name} - "
+                    f"{result.errors} errors, {result.warnings} warnings"
+                )
+                for issue in result.issues[:5]:  # Log first 5 issues
+                    logger.warning(f"  - {issue.check_name}: {issue.message}")
+
+            return result
+
+        except Exception as e:
+            logger.debug(f"Schema validation skipped for {scraper_name}: {e}")
+            return None
+
+    def _get_schema_name(self) -> str:
+        """
+        Get the schema name for this scraper.
+
+        Converts class name to schema config name:
+        - GetEspnBoxscore -> espn_boxscore
+        - GetNbaComScoreboardV2 -> nbac_scoreboard_v2
+        - BettingProsPlayerProps -> bettingpros_player_props
+        """
+        import re
+
+        class_name = self.__class__.__name__
+
+        # Remove 'Get' prefix if present
+        if class_name.startswith('Get'):
+            class_name = class_name[3:]
+
+        # Convert CamelCase to snake_case
+        name = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', class_name)
+        name = re.sub('([a-z0-9])([A-Z])', r'\1_\2', name).lower()
+
+        # Apply standard source prefixes
+        name = name.replace('nba_com_', 'nbac_')
+        name = name.replace('odds_api_', 'oddsa_')
+        name = name.replace('ball_dont_lie_', 'bdl_')
+        name = name.replace('big_data_ball_', 'bdb_')
+        name = name.replace('betting_pros_', 'bettingpros_')
+
+        return name
 
     def _count_scraper_rows(self) -> int:
         """Count rows in scraper output data."""
@@ -1410,7 +1508,23 @@ class ScraperBase:
     # Option & Exporter Group Management
     ##########################################################################
     def set_opts(self, opts: Dict[str, Any]) -> None:
-        """Set and process scraper options."""
+        """
+        Set and process scraper options from the provided configuration.
+
+        Copies options to self.opts, extracts proxy URL if provided, and
+        optionally locks the run_id if specified in opts.
+
+        Args:
+            opts: Configuration dictionary containing scraper options.
+                  Common keys include:
+                  - gamedate: Date for game-specific scrapers (YYYYMMDD format)
+                  - group: Export group ('dev' or 'prod')
+                  - proxyUrl: Optional proxy URL for requests
+                  - run_id: Optional run ID to lock for correlation
+
+        Example:
+            scraper.set_opts({'gamedate': '20260115', 'group': 'prod'})
+        """
         self.opts = opts
         self.proxy_url = opts.get("proxyUrl") or os.getenv("NBA_SCRAPER_PROXY")
 
@@ -1418,12 +1532,25 @@ class ScraperBase:
         if opts.get("run_id"):
             self.run_id = str(opts["run_id"])
 
-        self.opts["run_id"] = self.run_id 
+        self.opts["run_id"] = self.run_id
 
     def validate_opts(self) -> None:
         """
-        Ensure all required_opts are present.
-        Raise if missing.
+        Validate that all required options are present in self.opts.
+
+        Checks self.required_opts (defined by subclasses) and raises
+        DownloadDataException if any required option is missing.
+        Also sends an error notification for monitoring.
+
+        Raises:
+            DownloadDataException: If any required option is missing.
+
+        Example:
+            # Subclass defines required options
+            class GameScraper(ScraperBase):
+                required_opts = ['gamedate', 'season']
+
+            # Validation happens automatically in run()
         """
         for required_opt in self.required_opts:
             if required_opt not in self.opts:
@@ -1457,8 +1584,25 @@ class ScraperBase:
 
     def set_additional_opts(self):
         """
-        Add standard variables needed for GCS export paths.
-        Child scrapers override this and call super().set_additional_opts() first.
+        Add standard variables needed for GCS export paths and derived options.
+
+        This method adds computed options that scrapers commonly need:
+        - timestamp: UTC timestamp for unique filenames (YYYYMMDD_HHMMSS)
+        - date: Game date in YYYY-MM-DD format (derived from gamedate if present)
+
+        Subclasses should override and call super().set_additional_opts() first,
+        then add their own derived options (e.g., season year from date).
+
+        Example:
+            class SeasonScraper(ScraperBase):
+                def set_additional_opts(self):
+                    super().set_additional_opts()
+                    # Add season year: 2025-10-15 -> 2025
+                    date = self.opts.get('date')
+                    if date:
+                        month = int(date[5:7])
+                        year = int(date[:4])
+                        self.opts['season'] = year if month >= 10 else year - 1
         """
         # Add UTC timestamp for unique filenames
         if "timestamp" not in self.opts:
@@ -1509,14 +1653,32 @@ class ScraperBase:
     ##########################################################################
     def set_url(self):
         """
-        Child classes override. E.g. self.url = f"https://x.com?date={self.opts['date']}"
+        Build the target URL for this scraper using self.opts.
+
+        Subclasses must override this method to set self.url.
+        Use options from self.opts to construct the URL.
+
+        Example:
+            def set_url(self):
+                date = self.opts['date']
+                self.url = f"https://stats.nba.com/stats/scoreboard?GameDate={date}"
         """
         pass
 
     def set_headers(self):
         """
-        Provide sensible defaults or map well‑known header profiles to helpers.
-        Added support for ``header_profile = "espn"`` (UA only).
+        Set HTTP headers for API requests based on header_profile.
+
+        Uses self.header_profile to select pre-configured header sets:
+        - 'stats': stats.nba.com headers
+        - 'data': data.nba.com headers
+        - 'core': NBA Core API headers
+        - 'espn': ESPN user-agent only
+        - 'nbacdn': NBA CDN headers
+        - 'statsapi': Stats API headers
+        - 'bettingpros': BettingPros headers
+
+        Falls back to a simple user-agent if profile not found.
         """
         profile_map = {
             "stats": stats_nba_headers,
@@ -1538,8 +1700,22 @@ class ScraperBase:
     ##########################################################################
     def download_and_decode(self):
         """
-        Download with loop-based retry (avoids recursive stack growth).
-        Enhanced with Sentry span tracking and "no data success" support.
+        Download data from self.url and decode the response.
+
+        Implements a loop-based retry strategy with exponential backoff for
+        transient failures. Automatically retries on network errors, rate
+        limiting (429), and server errors (5xx).
+
+        The method handles several scenarios:
+        - Success: Sets self.raw_response and self.decoded_data
+        - Max retries with treat_max_retries_as_success: Returns empty data
+        - Max retries without success flag: Raises DownloadDecodeMaxRetryException
+
+        Tracked with Sentry spans for performance monitoring.
+
+        Raises:
+            DownloadDecodeMaxRetryException: When max retries exceeded
+            InvalidHttpStatusCodeException: For non-retryable HTTP errors
         """
         with sentry_sdk.start_span(op="http.request", description="Scraper API call") as span:
             span.set_tag("http.url", getattr(self, 'url', 'unknown'))
@@ -1990,28 +2166,38 @@ class ScraperBase:
 
     def download_data_with_proxy(self):
         """
-        Shuffle or iterate proxies from get_proxy_urls(),
-        attempt each until success or exhausted.
+        Download data using proxies with intelligent health-based rotation.
 
-        Implements per-proxy retry with exponential backoff for retryable errors
-        (429 rate limit, 503/504 gateway errors). Falls back to next proxy for
-        permanent errors (403 forbidden, connection errors).
+        Implements:
+        - Health-based proxy selection (preferring healthy proxies)
+        - Per-proxy retry with exponential backoff for retryable errors
+        - Cooldown periods for failing proxies
+        - Circuit breaker pattern for persistent state across instances
 
-        Uses circuit breaker pattern to skip proxies known to be blocked for the
-        target host.
+        Uses:
+        - ProxyManager for health-based rotation (in-memory health tracking)
+        - Circuit breaker pattern for persistent state (BigQuery-backed)
         """
         import time as time_module
 
-        # Extract target host for circuit breaker
+        # Extract target host for health tracking
         target_host = extract_host_from_url(self.url)
 
         # Initialize circuit breaker (uses BigQuery for persistent state)
         circuit_breaker = ProxyCircuitBreaker(use_bigquery=True)
 
-        # Get proxy pool filtered by circuit breaker state
-        proxy_pool = get_proxy_urls_with_circuit_breaker(target_host, circuit_breaker)
-        if not self.test_proxies:
-            random.shuffle(proxy_pool)
+        # Get proxy pool ordered by health and filtered by circuit breaker
+        # This uses ProxyManager for health scoring + circuit breaker for persistent state
+        proxy_pool = get_healthy_proxy_urls_for_target(
+            target_host,
+            circuit_breaker=circuit_breaker,
+            shuffle=not self.test_proxies
+        )
+
+        # Log proxy health status at start
+        health_status = get_proxy_health_summary()
+        if health_status:
+            logger.info(f"Proxy pool status: {health_status}")
 
         self.mark_time("proxy")
         proxy_errors = []
@@ -2039,21 +2225,25 @@ class ScraperBase:
                     elapsed = self.mark_time("proxy")
 
                     if self.raw_response.status_code == 200 and not self.test_proxies:
-                        logger.info("Proxy success: %s, took=%ss, attempt=%d", proxy, elapsed, attempt + 1)
-                        # Log successful proxy request
+                        response_time_ms = int(float(elapsed) * 1000) if elapsed else None
+                        logger.info("Proxy success: %s, took=%ss, attempt=%d", provider, elapsed, attempt + 1)
+
+                        # Record success to health manager and circuit breaker
+                        record_proxy_success(
+                            proxy, target_host,
+                            response_time_ms=response_time_ms,
+                            circuit_breaker=circuit_breaker
+                        )
+
+                        # Also log to BigQuery for monitoring
                         log_proxy_result(
                             scraper_name=self.__class__.__name__,
                             target_host=target_host,
                             http_status_code=200,
-                            response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
+                            response_time_ms=response_time_ms,
                             success=True,
                             proxy_provider=provider
                         )
-                        # Record success to circuit breaker
-                        try:
-                            circuit_breaker.record_success(provider, target_host)
-                        except Exception as cb_ex:
-                            logger.debug(f"Circuit breaker record_success failed: {cb_ex}")
                         proxy_success = True
                         break  # Success, exit retry loop
 
@@ -2062,52 +2252,66 @@ class ScraperBase:
 
                     if status_code in PERMANENT_FAILURE_CODES:
                         # Permanent failure - don't retry this proxy
+                        error_type = classify_error(status_code=status_code)
+                        response_time_ms = int(float(elapsed) * 1000) if elapsed else None
                         logger.warning("Proxy permanent failure: %s, status=%s (not retrying)",
-                                       proxy, status_code)
-                        proxy_errors.append({'proxy': proxy, 'status': status_code, 'permanent': True})
+                                       provider, status_code)
+                        proxy_errors.append({'proxy': provider, 'status': status_code, 'permanent': True})
+
+                        # Record failure to health manager and circuit breaker
+                        record_proxy_failure(
+                            proxy, target_host,
+                            error_type=error_type,
+                            http_status_code=status_code,
+                            circuit_breaker=circuit_breaker
+                        )
+
+                        # Also log to BigQuery for monitoring
                         log_proxy_result(
                             scraper_name=self.__class__.__name__,
                             target_host=target_host,
                             http_status_code=status_code,
-                            response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
+                            response_time_ms=response_time_ms,
                             success=False,
-                            error_type=classify_error(status_code=status_code),
+                            error_type=error_type,
                             proxy_provider=provider
                         )
-                        # Record failure to circuit breaker (403s often mean proxy is blocked)
-                        try:
-                            circuit_breaker.record_failure(provider, target_host)
-                        except Exception as cb_ex:
-                            logger.debug(f"Circuit breaker record_failure failed: {cb_ex}")
                         break  # Move to next proxy
 
                     elif status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES_PER_PROXY - 1:
                         # Retryable error - backoff and retry same proxy
                         delay = min(BASE_DELAY * (2 ** attempt) + random.uniform(0, 1), MAX_DELAY)
                         logger.warning("Proxy retryable error: %s, status=%s, retrying in %.1fs (attempt %d/%d)",
-                                       proxy, status_code, delay, attempt + 1, MAX_RETRIES_PER_PROXY)
+                                       provider, status_code, delay, attempt + 1, MAX_RETRIES_PER_PROXY)
                         time_module.sleep(delay)
                         continue  # Retry same proxy
 
                     else:
                         # Non-retryable or final attempt - move to next proxy
+                        error_type = classify_error(status_code=status_code)
+                        response_time_ms = int(float(elapsed) * 1000) if elapsed else None
                         logger.warning("Proxy failed: %s, status=%s, took=%ss",
-                                       proxy, status_code, elapsed)
-                        proxy_errors.append({'proxy': proxy, 'status': status_code})
+                                       provider, status_code, elapsed)
+                        proxy_errors.append({'proxy': provider, 'status': status_code})
+
+                        # Record failure to health manager and circuit breaker
+                        record_proxy_failure(
+                            proxy, target_host,
+                            error_type=error_type,
+                            http_status_code=status_code,
+                            circuit_breaker=circuit_breaker
+                        )
+
+                        # Also log to BigQuery for monitoring
                         log_proxy_result(
                             scraper_name=self.__class__.__name__,
                             target_host=target_host,
                             http_status_code=status_code,
-                            response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
+                            response_time_ms=response_time_ms,
                             success=False,
-                            error_type=classify_error(status_code=status_code),
+                            error_type=error_type,
                             proxy_provider=provider
                         )
-                        # Record failure to circuit breaker
-                        try:
-                            circuit_breaker.record_failure(provider, target_host)
-                        except Exception as cb_ex:
-                            logger.debug(f"Circuit breaker record_failure failed: {cb_ex}")
                         break  # Move to next proxy
 
                 except (ProxyError, ConnectTimeout, ConnectionError) as ex:
@@ -2117,27 +2321,34 @@ class ScraperBase:
                     if attempt < MAX_RETRIES_PER_PROXY - 1:
                         delay = min(BASE_DELAY * (2 ** attempt) + random.uniform(0, 1), MAX_DELAY)
                         logger.warning("Proxy connection error: %s, %s, retrying in %.1fs (attempt %d/%d)",
-                                       proxy, type(ex).__name__, delay, attempt + 1, MAX_RETRIES_PER_PROXY)
+                                       provider, type(ex).__name__, delay, attempt + 1, MAX_RETRIES_PER_PROXY)
                         time_module.sleep(delay)
                         continue  # Retry same proxy
                     else:
+                        error_type = classify_error(exception=ex)
+                        response_time_ms = int(float(elapsed) * 1000) if elapsed else None
                         logger.warning("Proxy error with %s, %s, took=%ss (exhausted retries)",
-                                       proxy, type(ex).__name__, elapsed)
-                        proxy_errors.append({'proxy': proxy, 'error': type(ex).__name__})
+                                       provider, type(ex).__name__, elapsed)
+                        proxy_errors.append({'proxy': provider, 'error': type(ex).__name__})
+
+                        # Record failure to health manager and circuit breaker
+                        record_proxy_failure(
+                            proxy, target_host,
+                            error_type=error_type,
+                            error_message=str(ex),
+                            circuit_breaker=circuit_breaker
+                        )
+
+                        # Also log to BigQuery for monitoring
                         log_proxy_result(
                             scraper_name=self.__class__.__name__,
                             target_host=target_host,
-                            response_time_ms=int(float(elapsed) * 1000) if elapsed else None,
+                            response_time_ms=response_time_ms,
                             success=False,
-                            error_type=classify_error(exception=ex),
+                            error_type=error_type,
                             error_message=str(ex),
                             proxy_provider=provider
                         )
-                        # Record failure to circuit breaker
-                        try:
-                            circuit_breaker.record_failure(provider, target_host)
-                        except Exception as cb_ex:
-                            logger.debug(f"Circuit breaker record_failure failed: {cb_ex}")
                         break  # Move to next proxy
 
             if proxy_success:
@@ -2151,8 +2362,9 @@ class ScraperBase:
                 logger.debug("Waiting %.1fs before trying next proxy", inter_proxy_delay)
                 time_module.sleep(inter_proxy_delay)
 
-        # If all proxies failed, send notification
+        # If all proxies failed, send notification with health info
         if proxy_errors and len(proxy_errors) >= len(proxy_pool):
+            health_summary = get_proxy_health_summary()
             try:
                 notify_warning(
                     title=f"Scraper Proxy Exhaustion: {self.__class__.__name__}",
@@ -2163,7 +2375,8 @@ class ScraperBase:
                         'url': getattr(self, 'url', 'unknown'),
                         'proxy_count': len(proxy_pool),
                         'max_retries_per_proxy': MAX_RETRIES_PER_PROXY,
-                        'failures': proxy_errors
+                        'failures': proxy_errors,
+                        'proxy_health': health_summary
                     }
                 )
             except Exception as notify_ex:
@@ -2404,8 +2617,23 @@ class ScraperBase:
     ##########################################################################
     def validate_download_data(self):
         """
-        Enhanced to skip validation for "no data" success cases.
-        Child classes override. E.g., check if 'scoreboard' in self.decoded_data, etc.
+        Validate the downloaded and decoded data before transformation.
+
+        Subclasses should override this method to add custom validation logic
+        specific to their data format (e.g., check required fields, verify
+        data structure, validate date ranges).
+
+        Skips validation for "no data" success cases (when API returns 403
+        but scraper is configured to treat this as valid).
+
+        Raises:
+            DownloadDataException: If validation fails (empty data, etc.)
+
+        Example:
+            def validate_download_data(self):
+                super().validate_download_data()
+                if 'scoreboard' not in self.decoded_data:
+                    raise DownloadDataException("Missing 'scoreboard' key")
         """
         # NEW: Skip validation if this is a "no data" success case
         if hasattr(self, '_no_data_success') and self._no_data_success:

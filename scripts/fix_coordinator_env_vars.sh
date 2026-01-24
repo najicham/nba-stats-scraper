@@ -3,7 +3,7 @@
 # Created: Jan 20, 2026
 # Issue: Health check requires PREDICTION_REQUEST_TOPIC and PREDICTION_READY_TOPIC but they're not set
 
-set -e
+set -euo pipefail
 
 echo "=== Fixing Prediction Coordinator Environment Variables ==="
 echo ""

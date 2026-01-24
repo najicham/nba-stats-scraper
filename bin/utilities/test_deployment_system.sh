@@ -2,7 +2,7 @@
 # File: bin/utilities/test_deployment_system.sh
 # Test the deployment system infrastructure
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:-nba-props-platform}"
 REGION="${REGION:-us-west2}"

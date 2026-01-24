@@ -1,0 +1,113 @@
+{
+  "id": "a1b2c3d4e5f6g7h8i9j0",
+  "sport_key": "basketball_nba",
+  "sport_title": "NBA",
+  "commence_time": "2025-01-21T00:30:00Z",
+  "home_team": "Los Angeles Lakers",
+  "away_team": "Boston Celtics",
+  "bookmakers": [
+    {
+      "key": "draftkings",
+      "title": "DraftKings",
+      "last_update": "2025-01-20T18:00:00Z",
+      "markets": [
+        {
+          "key": "spreads",
+          "last_update": "2025-01-20T18:00:00Z",
+          "outcomes": [
+            {
+              "name": "Los Angeles Lakers",
+              "price": -110,
+              "point": -4.5
+            },
+            {
+              "name": "Boston Celtics",
+              "price": -110,
+              "point": 4.5
+            }
+          ]
+        },
+        {
+          "key": "totals",
+          "last_update": "2025-01-20T18:00:00Z",
+          "outcomes": [
+            {
+              "name": "Over",
+              "price": -110,
+              "point": 224.5
+            },
+            {
+              "name": "Under",
+              "price": -110,
+              "point": 224.5
+            }
+          ]
+        },
+        {
+          "key": "h2h",
+          "last_update": "2025-01-20T18:00:00Z",
+          "outcomes": [
+            {
+              "name": "Los Angeles Lakers",
+              "price": -180
+            },
+            {
+              "name": "Boston Celtics",
+              "price": 155
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "fanduel",
+      "title": "FanDuel",
+      "last_update": "2025-01-20T17:55:00Z",
+      "markets": [
+        {
+          "key": "spreads",
+          "outcomes": [
+            {
+              "name": "Los Angeles Lakers",
+              "price": -108,
+              "point": -4.5
+            },
+            {
+              "name": "Boston Celtics",
+              "price": -112,
+              "point": 4.5
+            }
+          ]
+        },
+        {
+          "key": "totals",
+          "outcomes": [
+            {
+              "name": "Over",
+              "price": -112,
+              "point": 224.5
+            },
+            {
+              "name": "Under",
+              "price": -108,
+              "point": 224.5
+            }
+          ]
+        },
+        {
+          "key": "h2h",
+          "outcomes": [
+            {
+              "name": "Los Angeles Lakers",
+              "price": -175
+            },
+            {
+              "name": "Boston Celtics",
+              "price": 150
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

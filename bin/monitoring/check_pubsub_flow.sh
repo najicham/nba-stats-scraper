@@ -7,7 +7,7 @@
 # Usage: ./bin/monitoring/check_pubsub_flow.sh
 # ============================================================================
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="nba-props-platform"
 
