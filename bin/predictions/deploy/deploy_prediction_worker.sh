@@ -55,11 +55,11 @@ case "$ENVIRONMENT" in
         SERVICE_NAME="prediction-worker"
         MIN_INSTANCES=0  # Scale to zero - predictions run via local backfill scripts, not Cloud Run
         # Concurrency settings - configurable via environment variables
-        # Default: 10 instances × 5 concurrent = 50 concurrent (optimized Dec 31, 2025)
-        #   Reduced from 100 workers - sufficient for ~450 players/day
-        #   40% cost reduction while maintaining 2-3 min completion time
+        # Default: 50 instances × 5 concurrent = 250 concurrent (Jan 24, 2026)
+        #   Increased from 10 to handle 220 concurrent requests (was failing 32%)
+        #   Provides ~15% buffer for peak load
         # Emergency: 4 instances × 3 concurrent = 12 concurrent (safe mode)
-        MAX_INSTANCES="${WORKER_MAX_INSTANCES:-10}"
+        MAX_INSTANCES="${WORKER_MAX_INSTANCES:-50}"
         CONCURRENCY="${WORKER_CONCURRENCY:-5}"
         MEMORY="2Gi"
         CPU=2
@@ -157,16 +157,15 @@ deploy_cloud_run() {
     # Build environment variables string
     ENV_VARS="GCP_PROJECT_ID=${PROJECT_ID},PREDICTIONS_TABLE=nba_predictions.player_prop_predictions,PUBSUB_READY_TOPIC=${PUBSUB_READY_TOPIC}"
 
-    # Add CATBOOST_V8_MODEL_PATH if it exists
+    # Add CATBOOST_V8_MODEL_PATH (preserve if exists, use default otherwise)
+    # Default model: v8 trained on 76,863 games, MAE 3.40, 33 features
+    DEFAULT_CATBOOST_MODEL="gs://nba-props-platform-models/catboost/v8/catboost_v8_33features_20260108_211817.cbm"
     if [ -n "$CATBOOST_MODEL_PATH" ]; then
         log "Preserving CATBOOST_V8_MODEL_PATH: $CATBOOST_MODEL_PATH"
         ENV_VARS="${ENV_VARS},CATBOOST_V8_MODEL_PATH=${CATBOOST_MODEL_PATH}"
     else
-        log "WARNING: CATBOOST_V8_MODEL_PATH not found in current service"
-        log "WARNING: Predictions will use FALLBACK mode (50% confidence)"
-        log "Set CATBOOST_V8_MODEL_PATH after deployment using:"
-        log "  gcloud run services update $SERVICE_NAME --region $REGION --project $PROJECT_ID \\"
-        log "    --update-env-vars CATBOOST_V8_MODEL_PATH=gs://nba-props-platform-models/catboost/v8/[MODEL_FILE]"
+        log "Setting CATBOOST_V8_MODEL_PATH to default: $DEFAULT_CATBOOST_MODEL"
+        ENV_VARS="${ENV_VARS},CATBOOST_V8_MODEL_PATH=${DEFAULT_CATBOOST_MODEL}"
     fi
 
     # Add XGBOOST_V1_MODEL_PATH (Session 93 - Updated with real trained model)

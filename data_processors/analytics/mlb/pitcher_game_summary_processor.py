@@ -31,13 +31,14 @@ from google.cloud import bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
 
 from data_processors.analytics.analytics_base import AnalyticsProcessorBase
+from shared.processors.patterns import CircuitBreakerMixin
 from shared.utils.notification_system import notify_error, notify_warning, notify_info
 from shared.config.sport_config import get_analytics_dataset, get_raw_dataset
 
 logger = logging.getLogger(__name__)
 
 
-class MlbPitcherGameSummaryProcessor(AnalyticsProcessorBase):
+class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase):
     """
     MLB Pitcher Game Summary Analytics Processor
 
@@ -60,6 +61,26 @@ class MlbPitcherGameSummaryProcessor(AnalyticsProcessorBase):
         self.processing_strategy = 'MERGE_UPDATE'
         self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
         self.bq_client = get_bigquery_client(project_id=self.project_id)
+
+    def get_upstream_data_check_query(self, start_date: str, end_date: str) -> Optional[str]:
+        """
+        Check if upstream data is available for circuit breaker auto-reset.
+
+        Prevents retry storms by checking if MLB pitcher stats exist for the date range.
+
+        Args:
+            start_date: Start of date range (YYYY-MM-DD)
+            end_date: End of date range (YYYY-MM-DD)
+
+        Returns:
+            SQL query that returns {data_available: boolean}
+        """
+        return f"""
+        SELECT
+            COUNT(*) > 0 AS data_available
+        FROM `{self.project_id}.{self.raw_dataset}.mlb_pitcher_stats`
+        WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+        """
 
     def process_date(self, target_date: date) -> Dict:
         """Process pitcher game summary for a specific date."""

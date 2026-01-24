@@ -2050,12 +2050,12 @@ def api_reliability_summary():
                 ])
             },
             'r006': {
-                'warnings_24h': 0,  # TODO: Query Cloud Logging
-                'note': 'Cloud Logging query not yet implemented'
+                'warnings_24h': logging_service.get_validation_warnings_count(hours=24),
+                'note': 'Validation warnings from Cloud Logging'
             },
             'r008': {
-                'failures_24h': 0,  # TODO: Query Cloud Logging
-                'note': 'Cloud Logging query not yet implemented'
+                'failures_24h': logging_service.get_processor_failures_count(hours=24),
+                'note': 'Processor failures from Cloud Logging'
             },
             'last_updated': datetime.now(et_tz).isoformat()
         })

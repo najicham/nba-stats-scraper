@@ -77,16 +77,26 @@ orchestration/workflow_executor.py
 
 ---
 
-## Remaining P2/P3 Work (Deferred)
+### 3. Add exc_info=True to shared/ Directory (~160 locations)
+**Status:** [x] COMPLETED
+**Commit:** `5e7ec984`
 
-### P2 - shared/ Directory (145 locations)
-Add `exc_info=True` to error logs in shared/ directory. Lower priority as these are library functions.
+Added `exc_info=True` to error logs in 65 files across shared/ directory.
+
+---
+
+### 4. Add exc_info=True to predictions/ Directory (~190 locations)
+**Status:** [x] COMPLETED
+**Commit:** `920d31da`
+
+Added `exc_info=True` to error logs in 38 files across predictions/ directory.
+
+---
+
+## Remaining P3 Work (Deferred)
 
 ### P3 - BigQuery Table Checks (8 locations)
 Fix silent returns in BigQuery table existence checks across cloud functions.
-
-### P3 - predictions/ Directory (412 locations)
-Add `exc_info=True` to error logs in predictions/ directory.
 
 ---
 
@@ -97,7 +107,7 @@ Add `exc_info=True` to error logs in predictions/ directory.
 | 10 | 2026-01-23 | Exploration & Planning | 0 |
 | 11 | 2026-01-23 | P0/P1 Resilience Fixes | 6 |
 | 12 (AM) | 2026-01-24 | HTTP pool migration, silent exception fixes | 2 |
-| 12 (PM) | 2026-01-24 | P2 Error Logging & Silent Returns | TBD |
+| 12 (PM) | 2026-01-24 | P2/P3 Error Logging & Silent Returns | 4 |
 
 ---
 

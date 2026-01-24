@@ -171,3 +171,66 @@ class LoggingService:
         except Exception as e:
             logger.error(f"Error querying function errors: {e}")
             return []
+
+    def get_validation_warnings_count(self, hours: int = 24) -> int:
+        """
+        Get count of validation warnings (R-006) from Cloud Logging.
+
+        Searches for validation warning messages in processor logs.
+        """
+        try:
+            start_time = datetime.utcnow() - timedelta(hours=hours)
+            time_filter = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+            # Filter for validation warnings across Cloud Run and Cloud Functions
+            log_filter = (
+                f'(resource.type="cloud_run_revision" OR resource.type="cloud_function") '
+                f'AND severity=WARNING '
+                f'AND (textPayload=~"validation" OR jsonPayload.message=~"validation") '
+                f'AND timestamp>="{time_filter}"'
+            )
+
+            count = 0
+            for _ in self.client.list_entries(
+                filter_=log_filter,
+                max_results=1000
+            ):
+                count += 1
+
+            return count
+
+        except Exception as e:
+            logger.error(f"Error querying validation warnings: {e}")
+            return 0
+
+    def get_processor_failures_count(self, hours: int = 24) -> int:
+        """
+        Get count of processor failures (R-008) from Cloud Logging.
+
+        Searches for processor failure messages in Cloud Run/Function logs.
+        """
+        try:
+            start_time = datetime.utcnow() - timedelta(hours=hours)
+            time_filter = start_time.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+            # Filter for processor failures and errors
+            log_filter = (
+                f'(resource.type="cloud_run_revision" OR resource.type="cloud_function") '
+                f'AND severity>=ERROR '
+                f'AND (textPayload=~"processor" OR textPayload=~"failed" '
+                f'OR jsonPayload.message=~"processor" OR jsonPayload.message=~"failed") '
+                f'AND timestamp>="{time_filter}"'
+            )
+
+            count = 0
+            for _ in self.client.list_entries(
+                filter_=log_filter,
+                max_results=1000
+            ):
+                count += 1
+
+            return count
+
+        except Exception as e:
+            logger.error(f"Error querying processor failures: {e}")
+            return 0

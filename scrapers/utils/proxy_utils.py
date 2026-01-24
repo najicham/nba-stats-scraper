@@ -108,13 +108,13 @@ class ProxyFuelProvider(ProxyProvider):
         return 1  # Primary - cheapest
 
     def get_proxy_urls(self) -> List[str]:
-        creds = os.getenv("PROXYFUEL_CREDENTIALS", "nchammas.gmail.com:bbuyfd")
+        creds = os.getenv("PROXYFUEL_CREDENTIALS")
         if creds:
             return [f"http://{creds}@gate2.proxyfuel.com:2000"]
         return []
 
     def is_configured(self) -> bool:
-        return bool(os.getenv("PROXYFUEL_CREDENTIALS", "nchammas.gmail.com:bbuyfd"))
+        return bool(os.getenv("PROXYFUEL_CREDENTIALS"))
 
 
 class DecodoProvider(ProxyProvider):
