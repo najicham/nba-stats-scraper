@@ -32,7 +32,7 @@ import sys
 import os
 import unittest
 from unittest.mock import Mock, patch, MagicMock, call
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 from typing import Dict, List, Any
 
@@ -53,11 +53,17 @@ sys.modules['predictions.coordinator.distributed_lock'] = distributed_lock
 spec_lock.loader.exec_module(distributed_lock)
 
 # Create parent module structure if needed
-if 'predictions' not in sys.modules:
-    predictions = type(sys)('predictions')
-    sys.modules['predictions'] = predictions
-else:
-    predictions = sys.modules['predictions']
+# First, try to import the real predictions package to avoid shadowing
+try:
+    import predictions as real_predictions
+    predictions = real_predictions
+except ImportError:
+    if 'predictions' not in sys.modules:
+        predictions = type(sys)('predictions')
+        sys.modules['predictions'] = predictions
+    else:
+        predictions = sys.modules['predictions']
+
 if 'predictions.coordinator' not in sys.modules:
     coordinator = type(sys)('predictions.coordinator')
     sys.modules['predictions.coordinator'] = coordinator
@@ -108,7 +114,7 @@ class TestDistributedLock(unittest.TestCase):
         self.mock_get_firestore = self.firestore_patcher.start()
         self.mock_get_firestore.return_value = self.mock_firestore
         self.mock_firestore.Client.return_value = self.mock_db
-        self.mock_firestore.SERVER_TIMESTAMP = datetime.utcnow()
+        self.mock_firestore.SERVER_TIMESTAMP = datetime.now(timezone.utc)
 
         # Setup collection/document chain
         self.mock_db.collection.return_value = self.mock_collection
@@ -168,7 +174,7 @@ class TestDistributedLock(unittest.TestCase):
         # Mock Firestore transaction: lock exists and not expired
         mock_snapshot = MagicMock()
         mock_snapshot.exists = True
-        future_time = datetime.utcnow() + timedelta(seconds=200)
+        future_time = datetime.now(timezone.utc) + timedelta(seconds=200)
         mock_snapshot.to_dict.return_value = {
             'operation_id': 'other_batch',
             'expires_at': future_time

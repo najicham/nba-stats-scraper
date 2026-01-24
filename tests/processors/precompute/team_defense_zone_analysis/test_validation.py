@@ -11,7 +11,7 @@ Run with: pytest tests/precompute/test_team_defense_validation.py -v --bigquery
 
 import pytest
 import pandas as pd
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from google.cloud import bigquery
 from typing import Dict, List
 
@@ -241,7 +241,7 @@ class TestSourceTrackingFields:
     
     def test_source_data_is_fresh(self, latest_data):
         """Verify source data is recent (processed within 24 hours)."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         for idx, row in latest_data.iterrows():
             last_updated = pd.to_datetime(row['source_team_defense_last_updated'])

@@ -9,9 +9,10 @@ Tests the Phase 1 to Phase 2 handoff self-healing functionality including:
 """
 
 import pytest
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, MagicMock, patch, call
 import pytz
+from google.api_core import exceptions as gcp_exceptions
 
 from orchestration.cleanup_processor import CleanupProcessor
 
@@ -38,14 +39,14 @@ class TestCleanupProcessor:
                 'execution_id': 'exec-001',
                 'scraper_name': 'bdl_box_scores',
                 'gcs_path': 'gs://bucket/bdl_box_scores/2026-01-21/file1.json',
-                'triggered_at': datetime.utcnow() - timedelta(minutes=45),
+                'triggered_at': datetime.now(timezone.utc) - timedelta(minutes=45),
                 'age_minutes': 45
             },
             {
                 'execution_id': 'exec-002',
                 'scraper_name': 'nbac_schedule',
                 'gcs_path': 'gs://bucket/nbac_schedule/2026-01-21/file2.json',
-                'triggered_at': datetime.utcnow() - timedelta(minutes=40),
+                'triggered_at': datetime.now(timezone.utc) - timedelta(minutes=40),
                 'age_minutes': 40
             }
         ]
@@ -108,7 +109,7 @@ class TestCleanupProcessor:
                     'execution_id': 'exec-001',
                     'scraper_name': 'bdl_box_scores',
                     'gcs_path': 'gs://bucket/file1.json',
-                    'triggered_at': datetime.utcnow() - timedelta(minutes=45),
+                    'triggered_at': datetime.now(timezone.utc) - timedelta(minutes=45),
                     'age_minutes': 45
                 }
             ],
@@ -179,7 +180,7 @@ class TestCleanupProcessor:
     @patch('orchestration.cleanup_processor.execute_bigquery')
     def test_get_processed_files_handles_query_failure(self, mock_execute_bq, processor):
         """Test that _get_processed_files handles query failures gracefully"""
-        mock_execute_bq.side_effect = Exception("BigQuery error")
+        mock_execute_bq.side_effect = gcp_exceptions.GoogleAPIError("BigQuery error")
 
         result = processor._get_processed_files()
 
@@ -238,7 +239,7 @@ class TestCleanupProcessor:
                 'execution_id': 'exec-001',
                 'scraper_name': 'bdl_box_scores',
                 'gcs_path': 'gs://bucket/file1.json',
-                'triggered_at': datetime.utcnow() - timedelta(minutes=45)
+                'triggered_at': datetime.now(timezone.utc) - timedelta(minutes=45)
             }
         ]
 
@@ -269,7 +270,7 @@ class TestCleanupProcessor:
                 'execution_id': 'exec-001',
                 'scraper_name': 'bdl_box_scores',
                 'gcs_path': 'gs://bucket/file1.json',
-                'triggered_at': datetime.utcnow()
+                'triggered_at': datetime.now(timezone.utc)
             }
         ]
 
@@ -295,7 +296,7 @@ class TestCleanupProcessor:
         """Test that _republish_messages handles publish failures gracefully"""
         mock_publisher = Mock()
         mock_publisher_class.return_value = mock_publisher
-        mock_publisher.publish.side_effect = Exception("Pub/Sub error")
+        mock_publisher.publish.side_effect = gcp_exceptions.GoogleAPIError("Pub/Sub error")
 
         processor = CleanupProcessor(project_id="test-project")
         processor.publisher = mock_publisher
@@ -305,7 +306,7 @@ class TestCleanupProcessor:
                 'execution_id': 'exec-001',
                 'scraper_name': 'bdl_box_scores',
                 'gcs_path': 'gs://bucket/file1.json',
-                'triggered_at': datetime.utcnow()
+                'triggered_at': datetime.now(timezone.utc)
             }
         ]
 
@@ -332,7 +333,7 @@ class TestCleanupProcessor:
                     'execution_id': 'exec-001',
                     'scraper_name': 'bdl_box_scores',
                     'gcs_path': 'gs://bucket/file1.json',
-                    'triggered_at': datetime.utcnow() - timedelta(minutes=45),
+                    'triggered_at': datetime.now(timezone.utc) - timedelta(minutes=45),
                     'age_minutes': 45
                 }
             ],
@@ -370,7 +371,7 @@ class TestCleanupProcessor:
                     'execution_id': 'exec-001',
                     'scraper_name': 'bdl_box_scores',
                     'gcs_path': 'gs://bucket/file1.json',
-                    'triggered_at': datetime.utcnow() - timedelta(minutes=45),
+                    'triggered_at': datetime.now(timezone.utc) - timedelta(minutes=45),
                     'age_minutes': 45
                 }
             ],
@@ -414,14 +415,14 @@ class TestCleanupProcessor:
                 'execution_id': 'exec-001',
                 'scraper_name': 'bdl_box_scores',
                 'gcs_path': 'gs://bucket/file1.json',
-                'triggered_at': datetime.utcnow(),
+                'triggered_at': datetime.now(timezone.utc),
                 'age_minutes': 45
             }
         ]
 
         result = processor._log_cleanup(
             cleanup_id="cleanup-123",
-            start_time=datetime.utcnow() - timedelta(seconds=30),
+            start_time=datetime.now(timezone.utc) - timedelta(seconds=30),
             missing_files=missing_files,
             files_checked=5,
             republished_count=1

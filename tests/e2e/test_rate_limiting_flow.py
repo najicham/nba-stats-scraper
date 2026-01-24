@@ -17,7 +17,7 @@ import pytest
 # Skip all tests - API changed, tests need rewrite
 pytestmark = pytest.mark.skip(reason="RateLimitHandler API changed: handle_rate_limit -> record_rate_limit with different signature")
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch, MagicMock
 from requests.exceptions import HTTPError
 import requests
@@ -138,7 +138,7 @@ class TestRetryAfterParsing:
         domain = "api.test.com"
 
         # Create HTTP-date 30 seconds in the future
-        future_time = datetime.utcnow() + timedelta(seconds=30)
+        future_time = datetime.now(timezone.utc) + timedelta(seconds=30)
         http_date = future_time.strftime('%a, %d %b %Y %H:%M:%S GMT')
 
         # Act

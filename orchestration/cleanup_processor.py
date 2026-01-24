@@ -16,7 +16,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 import pytz
 
@@ -104,7 +104,7 @@ class CleanupProcessor:
             Dict with cleanup summary
         """
         cleanup_id = str(uuid.uuid4())
-        start_time = datetime.utcnow()
+        start_time = datetime.now(timezone.utc)
         
         logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         logger.info("🔧 Cleanup Processor: Starting self-healing check")
@@ -246,7 +246,6 @@ class CleanupProcessor:
             'nbac_referee',
             # BallDontLie tables
             'bdl_player_boxscores',
-            'bdl_box_scores',
             'bdl_active_players',
             'bdl_injuries',
             'bdl_standings',
@@ -348,7 +347,7 @@ class CleanupProcessor:
                         'original_triggered_at': file_info['triggered_at'].isoformat() if hasattr(file_info.get('triggered_at'), 'isoformat') else str(file_info.get('triggered_at')),
                         'recovery': True,
                         'recovery_reason': 'cleanup_processor',
-                        'recovery_timestamp': datetime.utcnow().isoformat(),
+                        'recovery_timestamp': datetime.now(timezone.utc).isoformat(),
                         'recovery_attempt': attempt + 1,
                         'status': 'success',  # Mimics scraper success message
                     }
@@ -426,7 +425,7 @@ class CleanupProcessor:
         errors: List[str] = None
     ) -> Dict[str, Any]:
         """Log cleanup operation to BigQuery."""
-        duration = (datetime.utcnow() - start_time).total_seconds()
+        duration = (datetime.now(timezone.utc) - start_time).total_seconds()
         
         # Prepare missing files details
         missing_files_records = []
@@ -448,7 +447,7 @@ class CleanupProcessor:
         
         record = {
             'cleanup_id': cleanup_id,
-            'cleanup_time': datetime.utcnow().isoformat(),
+            'cleanup_time': datetime.now(timezone.utc).isoformat(),
             'files_checked': files_checked,
             'missing_files_found': len(missing_files),
             'republished_count': republished_count,
