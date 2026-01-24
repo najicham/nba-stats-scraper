@@ -12,14 +12,13 @@ import sys
 import os
 from datetime import date
 
-# Add predictions to path
+# Add project root to path
 project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-predictions_path = os.path.join(project_root, 'predictions')
-if predictions_path not in sys.path:
-    sys.path.insert(0, predictions_path)
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
-from worker.data_loaders import validate_features
-from shared.mock_data_generator import MockDataGenerator
+from predictions.worker.data_loaders import validate_features
+from predictions.shared.mock_data_generator import MockDataGenerator
 
 
 @pytest.fixture

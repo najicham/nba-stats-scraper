@@ -19,6 +19,51 @@ import json
 
 
 # ============================================================================
+# FIXTURES
+# ============================================================================
+
+@pytest.fixture
+def mock_bq_client():
+    """Mock BigQuery client."""
+    return Mock()
+
+
+@pytest.fixture
+def sample_model_info():
+    """Sample ModelInfo for testing."""
+    from ml.model_loader import ModelInfo
+    return ModelInfo(
+        model_id='test_model_v1',
+        model_type='catboost',
+        model_path='/path/to/model.cbm',
+        model_format='cbm',
+        feature_count=50
+    )
+
+
+@pytest.fixture
+def sample_features():
+    """Sample feature array for testing."""
+    return np.random.randn(3, 50)
+
+
+@pytest.fixture
+def sample_feature_names():
+    """Sample feature names for testing."""
+    return [f'feature_{i}' for i in range(50)]
+
+
+@pytest.fixture
+def sample_predictions():
+    """Sample prediction data for testing."""
+    return [
+        {'player_id': 'player_1', 'prop_type': 'points', 'prediction': 28.5, 'line': 27.5},
+        {'player_id': 'player_2', 'prop_type': 'points', 'prediction': 22.0, 'line': 24.5},
+        {'player_id': 'player_3', 'prop_type': 'points', 'prediction': 35.0, 'line': 32.5},
+    ]
+
+
+# ============================================================================
 # TEST MODEL PREDICTION DATACLASS
 # ============================================================================
 
@@ -362,7 +407,7 @@ class TestExperimentRunnerIntegration:
 
         assert len(records) == 3
         assert records[0]['predicted_points'] == 25.5
-        assert records[1]['edge_vs_line'] == 5.2  # 30.2 - 25.0
+        assert records[1]['edge_vs_line'] == pytest.approx(5.2)  # 30.2 - 25.0
 
     def test_multiple_models_comparison(self, sample_features):
         """Should run multiple models for comparison."""

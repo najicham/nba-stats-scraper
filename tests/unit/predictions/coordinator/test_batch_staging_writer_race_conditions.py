@@ -56,6 +56,8 @@ spec_lock.loader.exec_module(distributed_lock)
 if 'predictions' not in sys.modules:
     predictions = type(sys)('predictions')
     sys.modules['predictions'] = predictions
+else:
+    predictions = sys.modules['predictions']
 if 'predictions.coordinator' not in sys.modules:
     coordinator = type(sys)('predictions.coordinator')
     sys.modules['predictions.coordinator'] = coordinator

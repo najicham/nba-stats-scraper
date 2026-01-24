@@ -44,7 +44,8 @@ class GCSPathBuilder:
         "bdl_live_box_scores": "ball-dont-lie/live-boxscores/%(date)s/%(timestamp)s.json",
         "bdl_active_players": "ball-dont-lie/active-players/%(date)s/%(timestamp)s.json",
         "bdl_injuries": "ball-dont-lie/injuries/%(date)s/%(timestamp)s.json",
-        
+        "bdl_odds": "ball-dont-lie/odds/%(date)s/%(timestamp)s.json",
+
         # Odds API Scrapers
         "odds_api_events": "odds-api/events/%(date)s/%(timestamp)s.json",
         "odds_api_events_history": "odds-api/events-history/%(date)s/%(timestamp)s.json", 

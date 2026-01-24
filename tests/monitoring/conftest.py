@@ -11,6 +11,14 @@ Path: tests/monitoring/conftest.py
 Created: 2026-01-24
 """
 
+import sys
+import os
+
+# Add project root to path for imports
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 import pytest
 from unittest.mock import Mock, MagicMock
 from datetime import datetime, timezone, timedelta

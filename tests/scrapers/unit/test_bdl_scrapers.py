@@ -27,8 +27,7 @@ class TestBdlGamesScraper:
     @pytest.fixture
     def mock_dependencies(self):
         """Mock all external dependencies."""
-        with patch('scrapers.balldontlie.bdl_games.ScraperBase.__init__', return_value=None), \
-             patch('scrapers.scraper_base.get_bigquery_client'):
+        with patch('scrapers.balldontlie.bdl_games.ScraperBase.__init__', return_value=None):
             yield
 
     def test_scraper_name(self, mock_dependencies):
@@ -115,8 +114,7 @@ class TestBdlBoxScoresScraper:
     @pytest.fixture
     def mock_dependencies(self):
         """Mock all external dependencies."""
-        with patch('scrapers.balldontlie.bdl_box_scores.ScraperBase.__init__', return_value=None), \
-             patch('scrapers.scraper_base.get_bigquery_client'):
+        with patch('scrapers.balldontlie.bdl_box_scores.ScraperBase.__init__', return_value=None):
             yield
 
     def test_scraper_name(self, mock_dependencies):
@@ -143,8 +141,7 @@ class TestBdlInjuriesScraper:
     @pytest.fixture
     def mock_dependencies(self):
         """Mock all external dependencies."""
-        with patch('scrapers.balldontlie.bdl_injuries.ScraperBase.__init__', return_value=None), \
-             patch('scrapers.scraper_base.get_bigquery_client'):
+        with patch('scrapers.balldontlie.bdl_injuries.ScraperBase.__init__', return_value=None):
             yield
 
     def test_scraper_name(self, mock_dependencies):
@@ -164,8 +161,7 @@ class TestBdlOddsScraper:
     @pytest.fixture
     def mock_dependencies(self):
         """Mock all external dependencies."""
-        with patch('scrapers.balldontlie.bdl_odds.ScraperBase.__init__', return_value=None), \
-             patch('scrapers.scraper_base.get_bigquery_client'):
+        with patch('scrapers.balldontlie.bdl_odds.ScraperBase.__init__', return_value=None):
             yield
 
     def test_scraper_name(self, mock_dependencies):

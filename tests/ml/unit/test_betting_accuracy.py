@@ -17,6 +17,21 @@ from unittest.mock import Mock, patch
 
 
 # ============================================================================
+# FIXTURES
+# ============================================================================
+
+@pytest.fixture
+def sample_betting_results():
+    """Sample betting results for testing."""
+    return [
+        {'prediction': 'over', 'actual': 'over', 'stake': 100, 'payout': 190.91},   # Win
+        {'prediction': 'over', 'actual': 'under', 'stake': 100, 'payout': 0},       # Loss
+        {'prediction': 'under', 'actual': 'under', 'stake': 100, 'payout': 190.91}, # Win
+        {'prediction': 'under', 'actual': 'over', 'stake': 100, 'payout': 0},       # Loss
+    ]
+
+
+# ============================================================================
 # TEST HIT RATE CALCULATION
 # ============================================================================
 
@@ -248,10 +263,11 @@ class TestErrorMetrics:
         """Should calculate Root Mean Squared Error."""
         predictions = np.array([25, 30, 20])
         actuals = np.array([28, 28, 22])
+        # errors = [-3, 2, -2], squared = [9, 4, 4], mean = 17/3, sqrt = 2.38
 
         rmse = np.sqrt(np.mean((predictions - actuals) ** 2))
 
-        assert rmse == pytest.approx(2.52, rel=0.01)
+        assert rmse == pytest.approx(2.38, rel=0.01)
 
     def test_rmse_penalizes_outliers(self):
         """RMSE should penalize large errors more than MAE."""
@@ -350,4 +366,5 @@ class TestBettingAccuracyIntegration:
         mae = np.mean(errors)
 
         assert hit_rate == pytest.approx(0.667, rel=0.01)
-        assert mae == pytest.approx(3.67, rel=0.1)
+        # errors = [|28-30|, |22-20|, |30-25|] = [2, 2, 5], mae = 9/3 = 3.0
+        assert mae == pytest.approx(3.0, rel=0.1)

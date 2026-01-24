@@ -17,8 +17,25 @@ from typing import Dict, List
 
 # These tests require actual BigQuery access
 # Skip if --bigquery flag not provided
+# Note: We use a fixture-based approach since pytest.config was removed in pytest 5.0
+
+
+def pytest_configure(config):
+    """Register custom markers."""
+    config.addinivalue_line(
+        "markers", "bigquery: mark test as requiring BigQuery access"
+    )
+
+
+@pytest.fixture(scope='session')
+def bigquery_enabled(request):
+    """Check if --bigquery flag was provided."""
+    return request.config.getoption("--bigquery", default=False)
+
+
+# Custom skip decorator that works with the fixture
 bigquery_available = pytest.mark.skipif(
-    not pytest.config.getoption("--bigquery", default=False),
+    "not config.getoption('--bigquery', default=False)",
     reason="Requires --bigquery flag and GCP credentials"
 )
 

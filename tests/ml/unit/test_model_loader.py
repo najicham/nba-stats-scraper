@@ -19,6 +19,37 @@ import os
 
 
 # ============================================================================
+# FIXTURES
+# ============================================================================
+
+@pytest.fixture
+def sample_model_info():
+    """Sample ModelInfo for testing."""
+    from ml.model_loader import ModelInfo
+    return ModelInfo(
+        model_id='test_model_v1',
+        model_type='catboost',
+        model_path='/path/to/model.cbm',
+        model_format='cbm',
+        feature_count=50
+    )
+
+
+@pytest.fixture
+def mock_catboost_model():
+    """Mock CatBoost model."""
+    model = Mock()
+    model.predict.return_value = np.array([25.5, 30.2, 18.7])
+    return model
+
+
+@pytest.fixture
+def sample_features():
+    """Sample feature array for testing."""
+    return np.random.randn(3, 50)
+
+
+# ============================================================================
 # TEST MODEL INFO
 # ============================================================================
 

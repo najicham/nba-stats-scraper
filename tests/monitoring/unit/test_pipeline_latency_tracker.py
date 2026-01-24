@@ -24,6 +24,52 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 
 
 # ============================================================================
+# FIXTURES
+# ============================================================================
+
+@pytest.fixture
+def sample_phase_timestamps():
+    """Sample phase timestamps for testing latency calculations."""
+    base_time = datetime(2026, 1, 20, 10, 0, 0, tzinfo=timezone.utc)
+    return {
+        'phase1_start': base_time,
+        'phase2_complete': base_time + timedelta(minutes=5),
+        'phase3_complete': base_time + timedelta(minutes=15),
+        'phase4_complete': base_time + timedelta(minutes=20),
+        'phase5_complete': base_time + timedelta(minutes=30),
+        'phase6_complete': base_time + timedelta(minutes=35),
+    }
+
+
+@pytest.fixture
+def sample_latency_metrics():
+    """Sample latency metrics that pass thresholds."""
+    return {
+        'date': '2026-01-20',
+        'phase1_to_phase2': 240,      # 4 minutes - under 5 min threshold
+        'phase2_to_phase3': 480,      # 8 minutes - under 10 min threshold
+        'phase3_to_phase4': 240,      # 4 minutes
+        'phase4_to_phase5': 480,      # 8 minutes
+        'phase5_to_phase6': 240,      # 4 minutes
+        'total_latency_seconds': 1680, # 28 minutes - under 30 min threshold
+    }
+
+
+@pytest.fixture
+def sample_slow_latency_metrics():
+    """Sample latency metrics that breach thresholds."""
+    return {
+        'date': '2026-01-20',
+        'phase1_to_phase2': 600,      # 10 minutes - exceeds 5 min threshold
+        'phase2_to_phase3': 900,      # 15 minutes - exceeds 10 min threshold
+        'phase3_to_phase4': 400,      # 6.7 minutes
+        'phase4_to_phase5': 800,      # 13.3 minutes
+        'phase5_to_phase6': 500,      # 8.3 minutes
+        'total_latency_seconds': 4200, # 70 minutes - exceeds critical 60 min threshold
+    }
+
+
+# ============================================================================
 # TEST CONSTANTS
 # ============================================================================
 
