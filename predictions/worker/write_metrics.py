@@ -96,17 +96,17 @@ class PredictionWriteMetrics:
         try:
             # Track write attempt count
             if not send_metric('prediction_write_attempts_total', 1, labels):
-                logger.error(f"Failed to send prediction_write_attempts_total metric for {player_lookup}")
+                logger.error(f"Failed to send prediction_write_attempts_total metric for {player_lookup}", exc_info=True)
                 all_success = False
 
             # Track records count
             if not send_metric('prediction_write_records_count', records_count, labels):
-                logger.error(f"Failed to send prediction_write_records_count metric for {player_lookup}")
+                logger.error(f"Failed to send prediction_write_records_count metric for {player_lookup}", exc_info=True)
                 all_success = False
 
             # Track duration
             if not send_metric('prediction_write_duration_seconds', duration_seconds, labels):
-                logger.error(f"Failed to send prediction_write_duration_seconds metric for {player_lookup}")
+                logger.error(f"Failed to send prediction_write_duration_seconds metric for {player_lookup}", exc_info=True)
                 all_success = False
 
             # Track errors if write failed
@@ -116,7 +116,7 @@ class PredictionWriteMetrics:
                     'error_type': error_type or 'UnknownError'
                 }
                 if not send_metric('prediction_write_errors_total', 1, error_labels):
-                    logger.error(f"Failed to send prediction_write_errors_total metric for {player_lookup}")
+                    logger.error(f"Failed to send prediction_write_errors_total metric for {player_lookup}", exc_info=True)
                     all_success = False
 
                 logger.warning(
@@ -130,7 +130,7 @@ class PredictionWriteMetrics:
                 )
 
         except Exception as e:
-            logger.error(f"Error sending write attempt metrics for {player_lookup}: {e}")
+            logger.error(f"Error sending write attempt metrics for {player_lookup}: {e}", exc_info=True)
             return False
 
         return all_success
@@ -172,7 +172,7 @@ class PredictionWriteMetrics:
             success = send_metric('prediction_dml_rate_limit_total', 1, labels)
 
             if not success:
-                logger.error("Failed to send prediction_dml_rate_limit_total metric")
+                logger.error("Failed to send prediction_dml_rate_limit_total metric", exc_info=True)
             else:
                 logger.warning(
                     "🚨 BigQuery DML rate limit hit - "
@@ -186,7 +186,7 @@ class PredictionWriteMetrics:
             return success
 
         except Exception as e:
-            logger.error(f"Error sending DML rate limit metric: {e}")
+            logger.error(f"Error sending DML rate limit metric: {e}", exc_info=True)
             return False
 
     @staticmethod
@@ -237,7 +237,7 @@ class PredictionWriteMetrics:
                 return True
 
         except Exception as e:
-            logger.error(f"Error checking DML alert threshold: {e}")
+            logger.error(f"Error checking DML alert threshold: {e}", exc_info=True)
 
         return False
 
@@ -257,7 +257,7 @@ class PredictionWriteMetrics:
         except ImportError:
             logger.debug("Slack notification skipped - module not available")
         except Exception as e:
-            logger.error(f"Failed to send DML alert notification: {e}")
+            logger.error(f"Failed to send DML alert notification: {e}", exc_info=True)
 
     @staticmethod
     def with_exponential_backoff(
@@ -365,17 +365,17 @@ class PredictionWriteMetrics:
         try:
             # Track batch consolidation count
             if not send_metric('prediction_batch_consolidation_total', 1, labels):
-                logger.error(f"Failed to send prediction_batch_consolidation_total metric for batch {batch_id}")
+                logger.error(f"Failed to send prediction_batch_consolidation_total metric for batch {batch_id}", exc_info=True)
                 all_success = False
 
             # Track rows affected
             if not send_metric('prediction_batch_rows_affected', rows_affected, labels):
-                logger.error(f"Failed to send prediction_batch_rows_affected metric for batch {batch_id}")
+                logger.error(f"Failed to send prediction_batch_rows_affected metric for batch {batch_id}", exc_info=True)
                 all_success = False
 
             # Track duration
             if not send_metric('prediction_batch_duration_seconds', duration_seconds, labels):
-                logger.error(f"Failed to send prediction_batch_duration_seconds metric for batch {batch_id}")
+                logger.error(f"Failed to send prediction_batch_duration_seconds metric for batch {batch_id}", exc_info=True)
                 all_success = False
 
             logger.info(
@@ -384,7 +384,7 @@ class PredictionWriteMetrics:
             )
 
         except Exception as e:
-            logger.error(f"Error sending batch consolidation metrics for batch {batch_id}: {e}")
+            logger.error(f"Error sending batch consolidation metrics for batch {batch_id}: {e}", exc_info=True)
             return False
 
         return all_success

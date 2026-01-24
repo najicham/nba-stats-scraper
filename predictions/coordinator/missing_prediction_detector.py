@@ -118,7 +118,7 @@ class MissingPredictionDetector:
             return missing_players, summary
 
         except Exception as e:
-            logger.error(f"Error detecting missing predictions: {e}")
+            logger.error(f"Error detecting missing predictions: {e}", exc_info=True)
             return [], {'error': str(e)}
 
     def _calculate_summary_stats(self, game_date: date, missing_players: List[Dict]) -> Dict:
@@ -179,7 +179,7 @@ class MissingPredictionDetector:
             }
 
         except Exception as e:
-            logger.error(f"Error calculating summary stats: {e}")
+            logger.error(f"Error calculating summary stats: {e}", exc_info=True)
             return {}
 
     def send_slack_alert(self, missing_players: List[Dict], summary: Dict) -> bool:
@@ -201,7 +201,7 @@ class MissingPredictionDetector:
         try:
             from shared.utils.slack_channels import send_to_slack
         except ImportError:
-            logger.error("Cannot import slack_channels, skipping alert")
+            logger.error("Cannot import slack_channels, skipping alert", exc_info=True)
             return False
 
         webhook_url = os.environ.get('SLACK_WEBHOOK_URL_ERROR')  # Critical alerts
@@ -272,12 +272,12 @@ class MissingPredictionDetector:
             if success:
                 logger.info(f"Sent missing prediction alert to Slack ({missing_count} missing)")
             else:
-                logger.error("Failed to send Slack alert")
+                logger.error("Failed to send Slack alert", exc_info=True)
 
             return success
 
         except Exception as e:
-            logger.error(f"Error sending Slack alert: {e}")
+            logger.error(f"Error sending Slack alert: {e}", exc_info=True)
             return False
 
     def check_and_alert(self, game_date: date) -> Dict:

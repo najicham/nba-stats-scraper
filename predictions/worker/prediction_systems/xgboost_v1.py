@@ -277,7 +277,8 @@ class XGBoostV1:
             except CircuitBreakerError as e:
                 logger.error(
                     f"Circuit breaker OPEN for GCS model loading: {e}. "
-                    f"XGBoost v1 falling back to mock model."
+                    f"XGBoost v1 falling back to mock model.",
+                    exc_info=True
                 )
                 from predictions.shared.mock_xgboost_model import load_mock_model
                 return load_mock_model(seed=42)

@@ -92,7 +92,7 @@ def send_mlb_alert(severity: str, title: str, message: str, context: dict = None
                 context=context or {}
             )
         except Exception as e:
-            logger.error(f"Failed to send alert: {e}")
+            logger.error(f"Failed to send alert: {e}", exc_info=True)
 
 
 # Lazy-loaded components
@@ -149,7 +149,7 @@ def get_prediction_systems() -> Dict:
         # Ensemble V1 (requires V1 and V1.6 to be initialized)
         if 'ensemble_v1' in active_systems:
             if v1_baseline is None or v1_6_rolling is None:
-                logger.error("Ensemble requires both V1 and V1.6 predictors")
+                logger.error("Ensemble requires both V1 and V1.6 predictors", exc_info=True)
             else:
                 ensemble = MLBEnsembleV1(
                     v1_predictor=v1_baseline,
@@ -336,7 +336,7 @@ def run_multi_system_batch_predictions(game_date: date, pitcher_lookups: Optiona
     systems = get_prediction_systems()
 
     if not systems:
-        logger.error("No prediction systems available")
+        logger.error("No prediction systems available", exc_info=True)
         return []
 
     # OPTIMIZATION: Load features ONCE using shared feature loader
@@ -382,7 +382,7 @@ def run_multi_system_batch_predictions(game_date: date, pitcher_lookups: Optiona
                 all_predictions.append(prediction)
 
             except Exception as e:
-                logger.error(f"Prediction failed for {pitcher_lookup} using {system_id}: {e}")
+                logger.error(f"Prediction failed for {pitcher_lookup} using {system_id}: {e}", exc_info=True)
                 # Circuit breaker: Continue with other systems even if one fails
                 continue
 
@@ -556,7 +556,7 @@ def handle_pubsub():
         write_to_bigquery = data.get('write_to_bigquery', True)
 
         if not game_date_str:
-            logger.error("game_date is required")
+            logger.error("game_date is required", exc_info=True)
             return ('game_date is required', 400)
 
         game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
@@ -662,14 +662,14 @@ def write_predictions_to_bigquery(predictions: List[Dict], game_date: date) -> i
         errors = client.insert_rows_json(table_ref, rows)
 
         if errors:
-            logger.error(f"BigQuery insert errors: {errors}")
+            logger.error(f"BigQuery insert errors: {errors}", exc_info=True)
             return 0
 
         logger.info(f"Inserted {len(rows)} rows to {table_ref}")
         return len(rows)
 
     except Exception as e:
-        logger.error(f"BigQuery write error: {e}")
+        logger.error(f"BigQuery write error: {e}", exc_info=True)
         return 0
 
 
@@ -699,7 +699,7 @@ def publish_completion_event(game_date: str, prediction_count: int):
         logger.info(f"Published completion event for {game_date}")
 
     except Exception as e:
-        logger.error(f"Failed to publish completion event: {e}")
+        logger.error(f"Failed to publish completion event: {e}", exc_info=True)
 
 
 if __name__ == '__main__':

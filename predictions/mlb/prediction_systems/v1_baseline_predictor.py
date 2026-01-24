@@ -198,7 +198,7 @@ class V1BaselinePredictor(BaseMLBPredictor):
             return True
 
         except Exception as e:
-            logger.error(f"[{self.system_id}] Failed to load model: {e}")
+            logger.error(f"[{self.system_id}] Failed to load model: {e}", exc_info=True)
             return False
 
     def prepare_features(self, raw_features: Dict) -> Optional[np.ndarray]:
@@ -212,7 +212,7 @@ class V1BaselinePredictor(BaseMLBPredictor):
             np.ndarray: Feature vector or None if invalid
         """
         if not self.feature_order:
-            logger.error(f"[{self.system_id}] Model not loaded - no feature_order available")
+            logger.error(f"[{self.system_id}] Model not loaded - no feature_order available", exc_info=True)
             return None
 
         try:
@@ -274,7 +274,7 @@ class V1BaselinePredictor(BaseMLBPredictor):
             return result
 
         except Exception as e:
-            logger.error(f"[{self.system_id}] Error preparing features: {e}")
+            logger.error(f"[{self.system_id}] Error preparing features: {e}", exc_info=True)
             return None
 
     def predict(
@@ -354,7 +354,7 @@ class V1BaselinePredictor(BaseMLBPredictor):
             )
 
         except Exception as e:
-            logger.error(f"[{self.system_id}] Prediction failed: {e}")
+            logger.error(f"[{self.system_id}] Prediction failed: {e}", exc_info=True)
             return {
                 'pitcher_lookup': pitcher_lookup,
                 'predicted_strikeouts': None,

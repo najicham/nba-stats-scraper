@@ -280,7 +280,7 @@ class PredictionCoverageMonitor:
             f"Immediate investigation required."
         )
 
-        logger.error(f"{title}: {message}")
+        logger.error(f"{title}: {message}", exc_info=True)
 
         # Add error_type for rate limiting in notification system
         details["error_type"] = "prediction_coverage_critical"
@@ -296,7 +296,7 @@ class PredictionCoverageMonitor:
                 )
                 logger.info("Critical coverage alert sent via notification system")
             except Exception as e:
-                logger.error(f"Failed to send critical alert via notification system: {e}")
+                logger.error(f"Failed to send critical alert via notification system: {e}", exc_info=True)
         else:
             logger.warning("Notification system unavailable - critical alert logged only")
 
@@ -327,7 +327,7 @@ class PredictionCoverageMonitor:
                 )
                 logger.info("Warning coverage alert sent via notification system")
             except Exception as e:
-                logger.error(f"Failed to send warning alert via notification system: {e}")
+                logger.error(f"Failed to send warning alert via notification system: {e}", exc_info=True)
         else:
             logger.warning("Notification system unavailable - warning alert logged only")
 
@@ -383,7 +383,7 @@ class PredictionCoverageMonitor:
             return success
 
         except Exception as e:
-            logger.error(f"Error sending metric {metric_name}: {e}")
+            logger.error(f"Error sending metric {metric_name}: {e}", exc_info=True)
             return False
 
     def generate_coverage_report(

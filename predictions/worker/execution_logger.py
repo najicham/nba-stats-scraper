@@ -216,7 +216,7 @@ class ExecutionLogger:
             logger.debug(f"Logged execution for {player_lookup} (request_id={request_id})")
 
         except Exception as e:
-            logger.error(f"Error logging execution: {e}")
+            logger.error(f"Error logging execution: {e}", exc_info=True)
             # Don't fail the request on logging errors
 
     def log_success(

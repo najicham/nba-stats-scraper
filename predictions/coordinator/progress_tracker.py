@@ -198,7 +198,7 @@ class ProgressTracker:
         with self._lock:
             if player_lookup not in self.failed_players:
                 self.failed_players.add(player_lookup)
-                logger.error(f"Player {player_lookup} failed: {error}")
+                logger.error(f"Player {player_lookup} failed: {error}", exc_info=True)
     
     def _mark_complete(self):
         """

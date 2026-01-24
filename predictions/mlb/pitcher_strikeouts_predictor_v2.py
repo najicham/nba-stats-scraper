@@ -221,7 +221,7 @@ class PitcherStrikeoutsPredictorV2:
             return True
 
         except Exception as e:
-            logger.error(f"[V2] Failed to load model: {e}")
+            logger.error(f"[V2] Failed to load model: {e}", exc_info=True)
             return False
 
     def prepare_features(self, raw_features: Dict) -> Optional[np.ndarray]:
@@ -302,7 +302,7 @@ class PitcherStrikeoutsPredictorV2:
             return result
 
         except Exception as e:
-            logger.error(f"[V2] Error preparing features: {e}")
+            logger.error(f"[V2] Error preparing features: {e}", exc_info=True)
             return None
 
     def predict(
@@ -340,7 +340,7 @@ class PitcherStrikeoutsPredictorV2:
             predicted_strikeouts = max(0, min(20, predicted_strikeouts))
 
         except Exception as e:
-            logger.error(f"[V2] Prediction failed: {e}")
+            logger.error(f"[V2] Prediction failed: {e}", exc_info=True)
             return self._fallback_prediction(pitcher_lookup, features, strikeouts_line)
 
         # Calculate confidence
@@ -598,7 +598,7 @@ class PitcherStrikeoutsPredictorV2:
             return dict(rows[0])
 
         except Exception as e:
-            logger.error(f"[V2] Error loading features: {e}")
+            logger.error(f"[V2] Error loading features: {e}", exc_info=True)
             return None
 
 

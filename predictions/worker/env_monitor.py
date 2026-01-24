@@ -102,7 +102,7 @@ class EnvVarMonitor:
             return baseline
 
         except Exception as e:
-            logger.error(f"Failed to load baseline snapshot: {e}")
+            logger.error(f"Failed to load baseline snapshot: {e}", exc_info=True)
             return None
 
     def save_baseline(self, env_vars: Dict[str, Optional[str]], deployment_started_at: Optional[str] = None):
@@ -131,7 +131,7 @@ class EnvVarMonitor:
             logger.info(f"✓ Saved new baseline snapshot to gs://{self.BASELINE_BUCKET}/{self.BASELINE_PATH}")
 
         except Exception as e:
-            logger.error(f"Failed to save baseline snapshot: {e}")
+            logger.error(f"Failed to save baseline snapshot: {e}", exc_info=True)
             raise
 
     def is_in_deployment_window(self, baseline: Dict[str, Any]) -> bool:
@@ -254,13 +254,13 @@ class EnvVarMonitor:
             errors = self.bigquery_client.insert_rows_json(table_id, [row])
 
             if errors:
-                logger.error(f"❌ Failed to log to BigQuery: {errors}")
+                logger.error(f"❌ Failed to log to BigQuery: {errors}", exc_info=True)
             else:
                 logger.info(f"✓ Logged change to BigQuery audit table: {change_type}")
 
         except Exception as e:
             # Don't fail the whole check if BigQuery logging fails
-            logger.error(f"Error logging to BigQuery: {e}")
+            logger.error(f"Error logging to BigQuery: {e}", exc_info=True)
 
     def check_for_changes(self) -> Dict[str, Any]:
         """

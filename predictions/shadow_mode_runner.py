@@ -321,7 +321,7 @@ def write_to_bigquery(
     errors = client.insert_rows_json(table_id, rows)
 
     if errors:
-        logger.error(f"BigQuery insert errors: {errors}")
+        logger.error(f"BigQuery insert errors: {errors}", exc_info=True)
         return 0
 
     logger.info(f"Wrote {len(rows)} predictions to {table_id}")

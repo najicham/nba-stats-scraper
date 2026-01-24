@@ -206,16 +206,16 @@ class PredictionDataLoader:
                 logger.warning(f"No players found for {game_date}")
                 return None
         except gcp_exceptions.BadRequest as e:
-            logger.error(f"BigQuery syntax error in batch features load for {game_date}: {e}")
+            logger.error(f"BigQuery syntax error in batch features load for {game_date}: {e}", exc_info=True)
             return None
         except gcp_exceptions.NotFound as e:
-            logger.error(f"BigQuery table not found in batch features load for {game_date}: {e}")
+            logger.error(f"BigQuery table not found in batch features load for {game_date}: {e}", exc_info=True)
             return None
         except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
-            logger.error(f"BigQuery timeout/unavailable in batch features load for {game_date}: {e}")
+            logger.error(f"BigQuery timeout/unavailable in batch features load for {game_date}: {e}", exc_info=True)
             return None
         except GoogleCloudError as e:
-            logger.error(f"GCP error in batch features load for {game_date}: {e}")
+            logger.error(f"GCP error in batch features load for {game_date}: {e}", exc_info=True)
             return None
         except Exception as e:
             logger.error(f"Unexpected error in batch features load for {game_date}: {type(e).__name__}: {e}", exc_info=True)
@@ -384,16 +384,16 @@ class PredictionDataLoader:
             return historical_games
 
         except gcp_exceptions.BadRequest as e:
-            logger.error(f"BigQuery syntax error loading historical games for {player_lookup}: {e}")
+            logger.error(f"BigQuery syntax error loading historical games for {player_lookup}: {e}", exc_info=True)
             return []
         except gcp_exceptions.NotFound as e:
-            logger.error(f"BigQuery table not found loading historical games for {player_lookup}: {e}")
+            logger.error(f"BigQuery table not found loading historical games for {player_lookup}: {e}", exc_info=True)
             return []
         except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
-            logger.error(f"BigQuery timeout/unavailable loading historical games for {player_lookup}: {e}")
+            logger.error(f"BigQuery timeout/unavailable loading historical games for {player_lookup}: {e}", exc_info=True)
             return []
         except GoogleCloudError as e:
-            logger.error(f"GCP error loading historical games for {player_lookup}: {e}")
+            logger.error(f"GCP error loading historical games for {player_lookup}: {e}", exc_info=True)
             return []
         except Exception as e:
             logger.error(f"Unexpected error loading historical games for {player_lookup}: {type(e).__name__}: {e}", exc_info=True)
@@ -560,16 +560,16 @@ class PredictionDataLoader:
             return player_contexts
 
         except gcp_exceptions.BadRequest as e:
-            logger.error(f"BigQuery syntax error in batch game context load: {e}")
+            logger.error(f"BigQuery syntax error in batch game context load: {e}", exc_info=True)
             return {}
         except gcp_exceptions.NotFound as e:
-            logger.error(f"BigQuery table not found in batch game context load: {e}")
+            logger.error(f"BigQuery table not found in batch game context load: {e}", exc_info=True)
             return {}
         except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
-            logger.error(f"BigQuery timeout/unavailable in batch game context load: {e}")
+            logger.error(f"BigQuery timeout/unavailable in batch game context load: {e}", exc_info=True)
             return {}
         except GoogleCloudError as e:
-            logger.error(f"GCP error in batch game context load: {e}")
+            logger.error(f"GCP error in batch game context load: {e}", exc_info=True)
             return {}
         except Exception as e:
             logger.error(f"Unexpected error in batch game context load: {type(e).__name__}: {e}", exc_info=True)
@@ -739,16 +739,16 @@ class PredictionDataLoader:
             return player_games
 
         except gcp_exceptions.BadRequest as e:
-            logger.error(f"BigQuery syntax error in batch historical games load: {e}")
+            logger.error(f"BigQuery syntax error in batch historical games load: {e}", exc_info=True)
             return {p: [] for p in player_lookups}
         except gcp_exceptions.NotFound as e:
-            logger.error(f"BigQuery table not found in batch historical games load: {e}")
+            logger.error(f"BigQuery table not found in batch historical games load: {e}", exc_info=True)
             return {p: [] for p in player_lookups}
         except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
-            logger.error(f"BigQuery timeout/unavailable in batch historical games load: {e}")
+            logger.error(f"BigQuery timeout/unavailable in batch historical games load: {e}", exc_info=True)
             return {p: [] for p in player_lookups}
         except GoogleCloudError as e:
-            logger.error(f"GCP error in batch historical games load: {e}")
+            logger.error(f"GCP error in batch historical games load: {e}", exc_info=True)
             return {p: [] for p in player_lookups}
         except Exception as e:
             logger.error(f"Unexpected error in batch historical games load: {type(e).__name__}: {e}", exc_info=True)
@@ -906,16 +906,16 @@ class PredictionDataLoader:
             return player_features
 
         except gcp_exceptions.BadRequest as e:
-            logger.error(f"BigQuery syntax error in batch features load: {e}")
+            logger.error(f"BigQuery syntax error in batch features load: {e}", exc_info=True)
             return {}
         except gcp_exceptions.NotFound as e:
-            logger.error(f"BigQuery table not found in batch features load: {e}")
+            logger.error(f"BigQuery table not found in batch features load: {e}", exc_info=True)
             return {}
         except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
-            logger.error(f"BigQuery timeout/unavailable in batch features load: {e}")
+            logger.error(f"BigQuery timeout/unavailable in batch features load: {e}", exc_info=True)
             return {}
         except GoogleCloudError as e:
-            logger.error(f"GCP error in batch features load: {e}")
+            logger.error(f"GCP error in batch features load: {e}", exc_info=True)
             return {}
         except Exception as e:
             logger.error(f"Unexpected error in batch features load: {type(e).__name__}: {e}", exc_info=True)
@@ -1065,7 +1065,7 @@ def validate_features(features: Dict, min_quality_score: float = None) -> tuple:
     Example:
         is_valid, errors = validate_features(features)
         if not is_valid:
-            logger.error(f"Invalid features: {errors}")
+            logger.error(f"Invalid features: {errors}", exc_info=True)
             return []
     """
     # Apply default if not specified

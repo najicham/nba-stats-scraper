@@ -172,7 +172,7 @@ class InjuryFilter:
             return status
 
         except Exception as e:
-            logger.error(f"Error checking injury status for {player_lookup}: {e}")
+            logger.error(f"Error checking injury status for {player_lookup}: {e}", exc_info=True)
             # Fail-open: if we can't check, allow prediction
             return InjuryStatus(
                 player_lookup=player_lookup,
@@ -269,7 +269,7 @@ class InjuryFilter:
                         )
 
             except Exception as e:
-                logger.error(f"Error batch checking injury status: {e}")
+                logger.error(f"Error batch checking injury status: {e}", exc_info=True)
                 # Fail-open for all uncached players
                 for player in uncached:
                     self._cache[f"{player}_{game_date}"] = InjuryStatus(

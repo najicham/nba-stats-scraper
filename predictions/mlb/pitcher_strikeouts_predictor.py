@@ -258,7 +258,7 @@ class PitcherStrikeoutsPredictor:
             return il_pitchers
 
         except Exception as e:
-            logger.error(f"Failed to load IL status from BigQuery: {e}")
+            logger.error(f"Failed to load IL status from BigQuery: {e}", exc_info=True)
             # Return stale cache if available (fail-safe)
             if PitcherStrikeoutsPredictor._il_cache is not None:
                 logger.warning("Returning stale IL cache after error")
@@ -323,7 +323,7 @@ class PitcherStrikeoutsPredictor:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to load model: {e}")
+            logger.error(f"Failed to load model: {e}", exc_info=True)
             return False
 
     def prepare_features(self, raw_features: Dict) -> Optional[np.ndarray]:
@@ -340,7 +340,7 @@ class PitcherStrikeoutsPredictor:
             np.ndarray: Feature vector or None if invalid
         """
         if not self.feature_order:
-            logger.error("Model not loaded - no feature_order available")
+            logger.error("Model not loaded - no feature_order available", exc_info=True)
             return None
 
         try:
@@ -404,7 +404,7 @@ class PitcherStrikeoutsPredictor:
             return result
 
         except Exception as e:
-            logger.error(f"Error preparing features: {e}")
+            logger.error(f"Error preparing features: {e}", exc_info=True)
             return None
 
     def predict(
@@ -504,7 +504,7 @@ class PitcherStrikeoutsPredictor:
                 )
 
         except Exception as e:
-            logger.error(f"Prediction failed: {e}")
+            logger.error(f"Prediction failed: {e}", exc_info=True)
             return {
                 'pitcher_lookup': pitcher_lookup,
                 'predicted_strikeouts': None,
@@ -948,7 +948,7 @@ class PitcherStrikeoutsPredictor:
             return dict(row)
 
         except Exception as e:
-            logger.error(f"Error loading features: {e}")
+            logger.error(f"Error loading features: {e}", exc_info=True)
             return None
 
     def batch_predict(
@@ -1097,5 +1097,5 @@ class PitcherStrikeoutsPredictor:
             return predictions
 
         except Exception as e:
-            logger.error(f"Batch prediction failed: {e}")
+            logger.error(f"Batch prediction failed: {e}", exc_info=True)
             return []

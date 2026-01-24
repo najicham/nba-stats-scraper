@@ -93,7 +93,7 @@ class MLBEnsembleV1(BaseMLBPredictor):
             v1_pred = self.v1_predictor.predict(pitcher_lookup, features, strikeouts_line)
             v1_6_pred = self.v1_6_predictor.predict(pitcher_lookup, features, strikeouts_line)
         except Exception as e:
-            logger.error(f"[{self.system_id}] Failed to get component predictions: {e}")
+            logger.error(f"[{self.system_id}] Failed to get component predictions: {e}", exc_info=True)
             return {
                 'pitcher_lookup': pitcher_lookup,
                 'predicted_strikeouts': None,

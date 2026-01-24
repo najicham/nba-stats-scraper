@@ -410,7 +410,7 @@ class BatchStateManager:
             snapshot = doc_ref.get(transaction=transaction)
 
             if not snapshot.exists:
-                logger.error(f"Batch not found: {batch_id}")
+                logger.error(f"Batch not found: {batch_id}", exc_info=True)
                 return
 
             data = snapshot.to_dict()
@@ -571,13 +571,13 @@ _Check Cloud Logging for detailed error traces._"""
                         if sent:
                             logger.info(f"Sent consistency mismatch alert to Slack for batch {batch_id}")
                         else:
-                            logger.error(f"Failed to send Slack alert for batch {batch_id}")
+                            logger.error(f"Failed to send Slack alert for batch {batch_id}", exc_info=True)
                     else:
                         logger.warning("SLACK_WEBHOOK_URL_WARNING not configured, skipping alert")
                 except Exception as slack_error:
                     logger.error(f"Error sending Slack alert: {slack_error}", exc_info=True)
         except Exception as e:
-            logger.error(f"Failed to validate dual-write consistency: {e}")
+            logger.error(f"Failed to validate dual-write consistency: {e}", exc_info=True)
 
     def get_completed_players(self, batch_id: str) -> List[str]:
         """
@@ -684,7 +684,7 @@ _Check Cloud Logging for detailed error traces._"""
                 )
 
         if mismatches:
-            logger.error(f"Found {len(mismatches)} consistency mismatches in active batches")
+            logger.error(f"Found {len(mismatches)} consistency mismatches in active batches", exc_info=True)
         else:
             logger.info("✅ All active batches consistent between array and subcollection")
 
@@ -951,7 +951,7 @@ _Check Cloud Logging for detailed error traces._"""
             snapshot = doc_ref.get(transaction=transaction)
 
             if not snapshot.exists:
-                logger.error(f"Cannot claim non-existent batch: {batch_id}")
+                logger.error(f"Cannot claim non-existent batch: {batch_id}", exc_info=True)
                 return False
 
             data = snapshot.to_dict()
@@ -999,7 +999,7 @@ _Check Cloud Logging for detailed error traces._"""
                 logger.info(f"Claimed batch {batch_id} for instance {instance_id}")
             return result
         except Exception as e:
-            logger.error(f"Transaction error claiming batch: {e}")
+            logger.error(f"Transaction error claiming batch: {e}", exc_info=True)
             return False
 
     def release_batch_claim(self, batch_id: str, instance_id: str) -> bool:
@@ -1049,7 +1049,7 @@ _Check Cloud Logging for detailed error traces._"""
                 logger.info(f"Released claim on batch {batch_id} by instance {instance_id}")
             return result
         except Exception as e:
-            logger.error(f"Transaction error releasing claim: {e}")
+            logger.error(f"Transaction error releasing claim: {e}", exc_info=True)
             return False
 
     def refresh_batch_claim(
@@ -1090,7 +1090,7 @@ _Check Cloud Logging for detailed error traces._"""
             return True
 
         except Exception as e:
-            logger.error(f"Error refreshing claim: {e}")
+            logger.error(f"Error refreshing claim: {e}", exc_info=True)
             return False
 
     def get_unclaimed_batches(self) -> List[BatchState]:
@@ -1169,7 +1169,8 @@ _Check Cloud Logging for detailed error traces._"""
                     retry_delay *= 2  # Exponential backoff
                 else:
                     logger.error(
-                        f"Failed to record completion after {max_retries} attempts: {e}"
+                        f"Failed to record completion after {max_retries} attempts: {e}",
+                        exc_info=True
                     )
                     raise
 

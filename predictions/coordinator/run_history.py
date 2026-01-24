@@ -314,7 +314,7 @@ class CoordinatorRunHistory:
 
         except Exception as e:
             # Don't fail the batch if logging fails
-            logger.error(f"Failed to insert run history (non-fatal): {e}")
+            logger.error(f"Failed to insert run history (non-fatal): {e}", exc_info=True)
 
     def check_already_running(self, game_date: date, stale_threshold_hours: int = 2) -> bool:
         """

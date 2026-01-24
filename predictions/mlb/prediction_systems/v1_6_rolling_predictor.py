@@ -222,7 +222,7 @@ class V1_6RollingPredictor(BaseMLBPredictor):
             # Extract feature order from metadata
             self.feature_order = self.model_metadata.get('features') or self.model_metadata.get('feature_names')
             if not self.feature_order:
-                logger.error(f"[{self.system_id}] No feature order in metadata")
+                logger.error(f"[{self.system_id}] No feature order in metadata", exc_info=True)
                 return False
 
             logger.info(f"[{self.system_id}] Model loaded successfully. MAE: {self.model_metadata.get('test_mae', 'N/A')}")
@@ -230,7 +230,7 @@ class V1_6RollingPredictor(BaseMLBPredictor):
             return True
 
         except Exception as e:
-            logger.error(f"[{self.system_id}] Failed to load model: {e}")
+            logger.error(f"[{self.system_id}] Failed to load model: {e}", exc_info=True)
             return False
 
     def prepare_features(self, raw_features: Dict) -> Optional[np.ndarray]:
@@ -244,7 +244,7 @@ class V1_6RollingPredictor(BaseMLBPredictor):
             np.ndarray: Feature vector or None if invalid
         """
         if not self.feature_order:
-            logger.error(f"[{self.system_id}] Model not loaded - no feature_order available")
+            logger.error(f"[{self.system_id}] Model not loaded - no feature_order available", exc_info=True)
             return None
 
         try:
@@ -303,7 +303,7 @@ class V1_6RollingPredictor(BaseMLBPredictor):
             return result
 
         except Exception as e:
-            logger.error(f"[{self.system_id}] Error preparing features: {e}")
+            logger.error(f"[{self.system_id}] Error preparing features: {e}", exc_info=True)
             return None
 
     def predict(
@@ -383,7 +383,7 @@ class V1_6RollingPredictor(BaseMLBPredictor):
             )
 
         except Exception as e:
-            logger.error(f"[{self.system_id}] Prediction failed: {e}")
+            logger.error(f"[{self.system_id}] Prediction failed: {e}", exc_info=True)
             return {
                 'pitcher_lookup': pitcher_lookup,
                 'predicted_strikeouts': None,

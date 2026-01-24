@@ -155,7 +155,8 @@ class BaseMLBPredictor(ABC):
                             "error_type": type(e).__name__,
                             "cache_age_hours": cache_age_hours,
                             "fallback_action": "return_empty_set"
-                        }
+                        },
+                        exc_info=True
                     )
 
                     # FAIL SAFE: Return empty set (no IL skips) rather than stale cache

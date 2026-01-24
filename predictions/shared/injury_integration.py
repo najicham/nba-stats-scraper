@@ -304,7 +304,7 @@ class InjuryIntegration:
                 )
 
         except Exception as e:
-            logger.error(f"Error loading NBA.com injuries for {game_date}: {e}")
+            logger.error(f"Error loading NBA.com injuries for {game_date}: {e}", exc_info=True)
 
         return injuries
 
@@ -352,7 +352,7 @@ class InjuryIntegration:
                 )
 
         except Exception as e:
-            logger.error(f"Error loading BDL injuries for {game_date}: {e}")
+            logger.error(f"Error loading BDL injuries for {game_date}: {e}", exc_info=True)
 
         return injuries
 

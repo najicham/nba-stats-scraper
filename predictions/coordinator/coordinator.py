@@ -110,7 +110,7 @@ class HeartbeatLogger:
         elapsed_min = elapsed / 60
 
         if exc_type:
-            logger.error(f"HEARTBEAT END (ERROR): {self.operation_name} failed after {elapsed_min:.1f} min")
+            logger.error(f"HEARTBEAT END (ERROR): {self.operation_name} failed after {elapsed_min:.1f} min", exc_info=True)
             print(f"❌ HEARTBEAT END (ERROR): {self.operation_name} failed after {elapsed_min:.1f} min", flush=True)
         else:
             logger.info(f"HEARTBEAT END: {self.operation_name} completed in {elapsed_min:.1f} min")
@@ -196,7 +196,7 @@ def require_api_key(f):
 
         # Check API key
         if not COORDINATOR_API_KEY:
-            logger.error("COORDINATOR_API_KEY not configured - rejecting request")
+            logger.error("COORDINATOR_API_KEY not configured - rejecting request", exc_info=True)
             return jsonify({'error': 'Server misconfigured'}), 500
 
         provided_key = request.headers.get('X-API-Key') or request.args.get('key')
@@ -531,7 +531,7 @@ def start_prediction_batch():
         )
 
         if not requests:
-            logger.error(f"No prediction requests created for {game_date}")
+            logger.error(f"No prediction requests created for {game_date}", exc_info=True)
             return jsonify({
                 'status': 'error',
                 'message': f'No players found for {game_date}',
@@ -798,7 +798,7 @@ def check_and_mark_message_processed(message_id: str) -> bool:
         return check_and_mark(transaction)
 
     except Exception as e:
-        logger.error(f"Idempotency check failed for {message_id}: {e}")
+        logger.error(f"Idempotency check failed for {message_id}: {e}", exc_info=True)
         # On error, treat as new to avoid blocking legitimate messages
         return False
 
@@ -828,12 +828,12 @@ def handle_completion_event():
         # Parse Pub/Sub message
         envelope = request.get_json()
         if not envelope:
-            logger.error("No Pub/Sub message received")
+            logger.error("No Pub/Sub message received", exc_info=True)
             return ('Bad Request: no Pub/Sub message received', 400)
 
         pubsub_message = envelope.get('message', {})
         if not pubsub_message:
-            logger.error("No message field in envelope")
+            logger.error("No message field in envelope", exc_info=True)
             return ('Bad Request: invalid Pub/Sub message format', 400)
 
         # Week 1: Extract message ID for idempotency
@@ -858,7 +858,7 @@ def handle_completion_event():
         # Process completion event using Firestore (PERSISTENT - survives restarts!)
         try:
             if not batch_id:
-                logger.error("Completion event missing batch_id - cannot process")
+                logger.error("Completion event missing batch_id - cannot process", exc_info=True)
                 return ('Bad Request: batch_id required', 400)
 
             state_manager = get_state_manager()
@@ -1067,7 +1067,8 @@ def publish_with_retry(publisher, topic_path: str, message_bytes: bytes,
             else:
                 logger.error(
                     f"Pub/Sub publish failed after {max_retries} attempts for "
-                    f"{player_lookup}: {e}"
+                    f"{player_lookup}: {e}",
+                    exc_info=True
                 )
 
     return False
@@ -1217,7 +1218,7 @@ def send_prediction_completion_email(summary: Dict, game_date: str, batch_id: st
     except ImportError as e:
         logger.warning(f"Email alerter not available (non-fatal): {e}")
     except Exception as e:
-        logger.error(f"Error sending prediction completion email (non-fatal): {e}")
+        logger.error(f"Error sending prediction completion email (non-fatal): {e}", exc_info=True)
 
 
 def publish_batch_summary_from_firestore(batch_id: str):
@@ -1238,7 +1239,7 @@ def publish_batch_summary_from_firestore(batch_id: str):
 
         if not batch_state:
             print(f"❌ Batch state not found: {batch_id}", flush=True)
-            logger.error(f"Cannot publish summary - batch state not found: {batch_id}")
+            logger.error(f"Cannot publish summary - batch state not found: {batch_id}", exc_info=True)
             return
 
         # Extract game_date and build summary
@@ -1276,7 +1277,7 @@ def publish_batch_summary_from_firestore(batch_id: str):
                 )
             else:
                 print(f"❌ Consolidation FAILED: {consolidation_result.error_message}", flush=True)
-                logger.error(f"❌ Consolidation failed: {consolidation_result.error_message}")
+                logger.error(f"❌ Consolidation failed: {consolidation_result.error_message}", exc_info=True)
         except Exception as e:
             print(f"❌ Consolidation EXCEPTION: {e}", flush=True)
             logger.error(f"Consolidation failed: {e}", exc_info=True)
@@ -1417,7 +1418,7 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
                     'success': True
                 }
             else:
-                logger.error(f"❌ Consolidation failed: {consolidation_result.error_message}")
+                logger.error(f"❌ Consolidation failed: {consolidation_result.error_message}", exc_info=True)
                 summary['consolidation'] = {
                     'success': False,
                     'error': consolidation_result.error_message

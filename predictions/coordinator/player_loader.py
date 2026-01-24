@@ -101,7 +101,7 @@ class PlayerLoader:
 
         # Validate date before querying
         if not validate_game_date(game_date):
-            logger.error(f"Invalid game date: {game_date}")
+            logger.error(f"Invalid game date: {game_date}", exc_info=True)
             return []
 
         # Get all players with games on this date
@@ -239,7 +239,7 @@ class PlayerLoader:
             return summary
             
         except Exception as e:
-            logger.error(f"Error getting summary stats for {game_date}: {e}")
+            logger.error(f"Error getting summary stats for {game_date}: {e}", exc_info=True)
             return {
                 'game_date': game_date.isoformat(),
                 'total_games': 0,
@@ -342,7 +342,7 @@ class PlayerLoader:
             return players
             
         except Exception as e:
-            logger.error(f"Error querying players for {game_date}: {e}")
+            logger.error(f"Error querying players for {game_date}: {e}", exc_info=True)
             return []
     
     def _create_request_for_player(
@@ -601,7 +601,7 @@ class PlayerLoader:
 
         # Neither source had data
         self._track_line_source('no_line_data', player_lookup)
-        logger.error(f"NO_LINE_DATA: No betting lines found for {player_lookup} on {game_date}")
+        logger.error(f"NO_LINE_DATA: No betting lines found for {player_lookup} on {game_date}", exc_info=True)
         return None
 
     def _query_odds_api_betting_line_for_book(
@@ -1067,7 +1067,7 @@ class PlayerLoader:
             return None, 'needs_bootstrap'
 
         except Exception as e:
-            logger.error(f"Error estimating line for {player_lookup}: {e}")
+            logger.error(f"Error estimating line for {player_lookup}: {e}", exc_info=True)
             if config.new_player.use_default_line:
                 return config.new_player.default_line_value, 'config_default'
             return None, 'needs_bootstrap'
@@ -1149,7 +1149,7 @@ class PlayerLoader:
             row = next(results, None)
             return row.count > 0 if row else False
         except Exception as e:
-            logger.error(f"Error validating player {player_lookup}: {e}")
+            logger.error(f"Error validating player {player_lookup}: {e}", exc_info=True)
             return False
     
     def get_players_for_game(self, game_id: str) -> List[Dict]:
@@ -1199,7 +1199,7 @@ class PlayerLoader:
             return players
             
         except Exception as e:
-            logger.error(f"Error getting players for game {game_id}: {e}")
+            logger.error(f"Error getting players for game {game_id}: {e}", exc_info=True)
             return []
     
     # ========================================================================

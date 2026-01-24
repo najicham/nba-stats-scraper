@@ -94,19 +94,19 @@ def validate_ml_model_availability():
         if not model_files:
             # CRITICAL: No model available - log prominent warning about fallback mode
             logger.error("=" * 80)
-            logger.error("❌ CRITICAL: Missing CATBOOST_V8_MODEL_PATH environment variable!")
+            logger.error("❌ CRITICAL: Missing CATBOOST_V8_MODEL_PATH environment variable!", exc_info=True)
             logger.error("=" * 80)
-            logger.error(f"   Searched for local models: {models_dir}/catboost_v8_33features_*.cbm")
-            logger.error("   No local models found.")
+            logger.error(f"   Searched for local models: {models_dir}/catboost_v8_33features_*.cbm", exc_info=True)
+            logger.error("   No local models found.", exc_info=True)
             logger.error("=" * 80)
-            logger.error("⚠️  Service will start but predictions will use FALLBACK mode")
-            logger.error("⚠️  This means:")
-            logger.error("     - Confidence scores will be 50% (not actual model predictions)")
-            logger.error("     - Recommendations will be 'PASS' (conservative)")
-            logger.error("     - Prediction quality will be degraded")
+            logger.error("⚠️  Service will start but predictions will use FALLBACK mode", exc_info=True)
+            logger.error("⚠️  This means:", exc_info=True)
+            logger.error("     - Confidence scores will be 50% (not actual model predictions)", exc_info=True)
+            logger.error("     - Recommendations will be 'PASS' (conservative)", exc_info=True)
+            logger.error("     - Prediction quality will be degraded", exc_info=True)
             logger.error("=" * 80)
-            logger.error("🔧 TO FIX: Set CATBOOST_V8_MODEL_PATH to:")
-            logger.error("     gs://nba-props-platform-models/catboost/v8/catboost_v8_33features_YYYYMMDD_HHMMSS.cbm")
+            logger.error("🔧 TO FIX: Set CATBOOST_V8_MODEL_PATH to:", exc_info=True)
+            logger.error("     gs://nba-props-platform-models/catboost/v8/catboost_v8_33features_YYYYMMDD_HHMMSS.cbm", exc_info=True)
             logger.error("=" * 80)
         else:
             logger.info(f"✓ Found {len(model_files)} local CatBoost v8 model(s): {[f.name for f in model_files]}")
@@ -431,13 +431,13 @@ def handle_prediction_request():
         # Parse Pub/Sub message
         envelope = request.get_json()
         if not envelope:
-            logger.error("No Pub/Sub message received")
+            logger.error("No Pub/Sub message received", exc_info=True)
             return ('Bad Request: no Pub/Sub message received', 400)
 
         # Decode message
         pubsub_message = envelope.get('message', {})
         if not pubsub_message:
-            logger.error("No message field in envelope")
+            logger.error("No message field in envelope", exc_info=True)
             return ('Bad Request: invalid Pub/Sub message format', 400)
 
         # Get message data
@@ -521,7 +521,7 @@ def handle_prediction_request():
         if predictions:
             validation_passed, validation_error = validate_line_quality(predictions, player_lookup, game_date_str)
             if not validation_passed:
-                logger.error(f"LINE QUALITY VALIDATION FAILED: {validation_error}")
+                logger.error(f"LINE QUALITY VALIDATION FAILED: {validation_error}", exc_info=True)
                 # Return 500 to trigger Pub/Sub retry - this prevents data corruption
                 return ('Line quality validation failed - triggering retry', 500)
 
@@ -617,7 +617,7 @@ def handle_prediction_request():
 
     except KeyError as e:
         duration = time.time() - start_time
-        logger.error(f"Missing required field: {e}")
+        logger.error(f"Missing required field: {e}", exc_info=True)
 
         # Log failure if we have player info
         if player_lookup:
@@ -725,7 +725,7 @@ def process_player_predictions(
     feature_load_duration = time.time() - feature_load_start
 
     if features is None:
-        logger.error(f"No features available for {player_lookup} on {game_date}")
+        logger.error(f"No features available for {player_lookup} on {game_date}", exc_info=True)
         metadata['error_message'] = f'No features available for {player_lookup}'
         metadata['error_type'] = 'FeatureLoadError'
         metadata['skip_reason'] = 'no_features'
@@ -961,7 +961,7 @@ def process_player_predictions(
             error_msg = str(e)
             circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
 
-            logger.error(f"Moving Average failed for {player_lookup}: {e}")
+            logger.error(f"Moving Average failed for {player_lookup}: {e}", exc_info=True)
             metadata['systems_failed'].append(system_id)
             metadata['system_errors'][system_id] = error_msg
             system_predictions['moving_average'] = None
@@ -1001,7 +1001,7 @@ def process_player_predictions(
             error_msg = str(e)
             circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
 
-            logger.error(f"Zone Matchup failed for {player_lookup}: {e}")
+            logger.error(f"Zone Matchup failed for {player_lookup}: {e}", exc_info=True)
             metadata['systems_failed'].append(system_id)
             metadata['system_errors'][system_id] = error_msg
             system_predictions['zone_matchup_v1'] = None
@@ -1055,7 +1055,7 @@ def process_player_predictions(
             error_msg = str(e)
             circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
 
-            logger.error(f"Similarity failed for {player_lookup}: {e}")
+            logger.error(f"Similarity failed for {player_lookup}: {e}", exc_info=True)
             metadata['systems_failed'].append(system_id)
             metadata['system_errors'][system_id] = error_msg
             system_predictions['similarity_balanced_v1'] = None
@@ -1102,7 +1102,7 @@ def process_player_predictions(
             error_msg = str(e)
             circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
 
-            logger.error(f"XGBoost V1 failed for {player_lookup}: {e}")
+            logger.error(f"XGBoost V1 failed for {player_lookup}: {e}", exc_info=True)
             metadata['systems_failed'].append(system_id)
             metadata['system_errors'][system_id] = error_msg
             system_predictions['xgboost_v1'] = None
@@ -1149,7 +1149,7 @@ def process_player_predictions(
             error_msg = str(e)
             circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
 
-            logger.error(f"CatBoost v8 failed for {player_lookup}: {e}")
+            logger.error(f"CatBoost v8 failed for {player_lookup}: {e}", exc_info=True)
             metadata['systems_failed'].append(system_id)
             metadata['system_errors'][system_id] = error_msg
             system_predictions['catboost_v8'] = None
@@ -1191,7 +1191,7 @@ def process_player_predictions(
             error_msg = str(e)
             circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
 
-            logger.error(f"Ensemble failed for {player_lookup}: {e}")
+            logger.error(f"Ensemble failed for {player_lookup}: {e}", exc_info=True)
             metadata['systems_failed'].append(system_id)
             metadata['system_errors'][system_id] = error_msg
             system_predictions['ensemble_v1'] = None
@@ -1233,7 +1233,7 @@ def process_player_predictions(
             error_msg = str(e)
             circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
 
-            logger.error(f"Ensemble V1.1 failed for {player_lookup}: {e}")
+            logger.error(f"Ensemble V1.1 failed for {player_lookup}: {e}", exc_info=True)
             metadata['systems_failed'].append(system_id)
             metadata['system_errors'][system_id] = error_msg
             system_predictions['ensemble_v1_1'] = None
@@ -1311,7 +1311,7 @@ def format_prediction_for_bigquery(
             logger.warning(f"No universal_player_id found for {player_lookup}")
             # Still proceed - universal_player_id is optional
     except Exception as e:
-        logger.error(f"Error looking up universal_player_id for {player_lookup}: {e}")
+        logger.error(f"Error looking up universal_player_id for {player_lookup}: {e}", exc_info=True)
         # Still proceed with None value
 
     # Check if player has a prop line (v3.2 - All-Player Predictions)
@@ -1683,7 +1683,7 @@ def publish_completion_event(player_lookup: str, game_date: str, prediction_coun
         future.result()  # Wait for publish to complete
         logger.debug(f"Published completion event for {player_lookup}")
     except Exception as e:
-        logger.error(f"Error publishing completion event: {e}")
+        logger.error(f"Error publishing completion event: {e}", exc_info=True)
         # Don't raise - log and continue
 
 
@@ -1718,7 +1718,7 @@ def deep_health_check():
         return jsonify(result), status_code
 
     except Exception as e:
-        logger.error(f"Deep health check failed: {e}")
+        logger.error(f"Deep health check failed: {e}", exc_info=True)
         return jsonify({
             'status': 'unhealthy',
             'error': str(e),
@@ -1746,7 +1746,7 @@ def check_env_vars():
         return jsonify(result), 200
 
     except Exception as e:
-        logger.error(f"Environment check failed: {e}")
+        logger.error(f"Environment check failed: {e}", exc_info=True)
         return jsonify({
             'status': 'ERROR',
             'message': str(e)
@@ -1774,7 +1774,7 @@ def mark_deployment_started():
         return jsonify(result), 200
 
     except Exception as e:
-        logger.error(f"Failed to mark deployment started: {e}")
+        logger.error(f"Failed to mark deployment started: {e}", exc_info=True)
         return jsonify({
             'status': 'ERROR',
             'message': str(e)

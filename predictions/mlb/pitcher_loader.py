@@ -454,7 +454,7 @@ def load_batch_features(
         return features_by_pitcher
 
     except Exception as e:
-        logger.error(f"Failed to load batch features: {e}")
+        logger.error(f"Failed to load batch features: {e}", exc_info=True)
         return {}
 
 

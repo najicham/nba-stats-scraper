@@ -137,7 +137,7 @@ class HealthChecker:
             }
 
         except Exception as e:
-            logger.error(f"GCS health check failed: {e}")
+            logger.error(f"GCS health check failed: {e}", exc_info=True)
             return {
                 'check': check_name,
                 'status': 'fail',
@@ -188,7 +188,7 @@ class HealthChecker:
             }
 
         except Exception as e:
-            logger.error(f"BigQuery health check failed: {e}")
+            logger.error(f"BigQuery health check failed: {e}", exc_info=True)
             return {
                 'check': check_name,
                 'status': 'fail',
@@ -281,7 +281,7 @@ class HealthChecker:
             }
 
         except Exception as e:
-            logger.error(f"Model loading health check failed: {e}")
+            logger.error(f"Model loading health check failed: {e}", exc_info=True)
             return {
                 'check': check_name,
                 'status': 'fail',
@@ -344,7 +344,7 @@ class HealthChecker:
             }
 
         except Exception as e:
-            logger.error(f"Configuration health check failed: {e}")
+            logger.error(f"Configuration health check failed: {e}", exc_info=True)
             return {
                 'check': check_name,
                 'status': 'fail',
@@ -387,7 +387,7 @@ class HealthChecker:
                         checks.append(result)
                     except Exception as e:
                         check_name = futures[future]
-                        logger.error(f"Health check {check_name} failed with exception: {e}")
+                        logger.error(f"Health check {check_name} failed with exception: {e}", exc_info=True)
                         checks.append({
                             'check': check_name,
                             'status': 'fail',

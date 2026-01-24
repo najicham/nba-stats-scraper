@@ -115,7 +115,7 @@ class SystemCircuitBreaker:
                 return ('CLOSED', None)
 
         except Exception as e:
-            logger.error(f"Error checking circuit for {system_id}: {e}")
+            logger.error(f"Error checking circuit for {system_id}: {e}", exc_info=True)
             # Fail open - don't block on circuit breaker errors
             return ('CLOSED', None)
 
@@ -156,7 +156,7 @@ class SystemCircuitBreaker:
                     logger.info(f"Circuit breaker HALF_OPEN for {system_id}: {success_count}/{self.RECOVERY_THRESHOLD} successes")
 
         except Exception as e:
-            logger.error(f"Error recording success for {system_id}: {e}")
+            logger.error(f"Error recording success for {system_id}: {e}", exc_info=True)
 
     def record_failure(self, system_id: str, error_message: str, error_type: str) -> bool:
         """
@@ -194,7 +194,7 @@ class SystemCircuitBreaker:
                 if failure_count >= self.FAILURE_THRESHOLD:
                     # Threshold reached, open circuit
                     self._open_circuit(system_id, failure_count, error_message, error_type)
-                    logger.error(f"Circuit breaker OPENED for {system_id} after {failure_count} failures")
+                    logger.error(f"Circuit breaker OPENED for {system_id} after {failure_count} failures", exc_info=True)
                     return True
                 else:
                     # Update failure count
@@ -205,7 +205,7 @@ class SystemCircuitBreaker:
             return False
 
         except Exception as e:
-            logger.error(f"Error recording failure for {system_id}: {e}")
+            logger.error(f"Error recording failure for {system_id}: {e}", exc_info=True)
             return False
 
     # ========================================================================
@@ -261,7 +261,7 @@ class SystemCircuitBreaker:
             logger.debug(f"Refreshed circuit breaker cache: {len(self._state_cache)} entries")
 
         except Exception as e:
-            logger.error(f"Error refreshing circuit breaker cache: {e}")
+            logger.error(f"Error refreshing circuit breaker cache: {e}", exc_info=True)
             # Keep stale cache on error
 
     # ========================================================================

@@ -288,7 +288,7 @@ class AvailabilityFilter:
             }
 
         except Exception as e:
-            logger.error(f"Error checking roster status for {player_lookup}: {e}")
+            logger.error(f"Error checking roster status for {player_lookup}: {e}", exc_info=True)
             return {
                 'is_on_roster': True,  # Fail-open
                 'team_abbr': team_abbr,
@@ -370,7 +370,7 @@ class AvailabilityFilter:
             return roster_infos
 
         except Exception as e:
-            logger.error(f"Error batch checking roster status: {e}")
+            logger.error(f"Error batch checking roster status: {e}", exc_info=True)
             # Fail-open for all players
             return {
                 p: {'is_on_roster': True, 'team_abbr': team_abbr, 'roster_status': None}

@@ -210,7 +210,7 @@ class BatchStagingWriter:
 
         except gcp_exceptions.BadRequest as e:
             error_msg = f"Invalid request writing to staging: {e}"
-            logger.error(error_msg)
+            logger.error(error_msg, exc_info=True)
             return StagingWriteResult(
                 staging_table_name=staging_table_id,
                 rows_written=0,
@@ -220,7 +220,7 @@ class BatchStagingWriter:
 
         except gcp_exceptions.NotFound as e:
             error_msg = f"Table or dataset not found: {e}"
-            logger.error(error_msg)
+            logger.error(error_msg, exc_info=True)
             return StagingWriteResult(
                 staging_table_name=staging_table_id,
                 rows_written=0,
@@ -471,7 +471,7 @@ class BatchConsolidator:
                 details_job = self.bq_client.query(details_query)
                 details_result = details_job.result(timeout=30)
 
-                logger.error("First 10 duplicate business keys:")
+                logger.error("First 10 duplicate business keys:", exc_info=True)
                 for row in details_result:
                     logger.error(
                         f"  - {row.player_lookup} / {row.system_id} / line={row.current_points_line}: "
@@ -481,7 +481,7 @@ class BatchConsolidator:
             return duplicate_count
 
         except Exception as e:
-            logger.error(f"Error checking for duplicates: {e}")
+            logger.error(f"Error checking for duplicates: {e}", exc_info=True)
             # Return -1 to indicate validation error (not the same as 0 duplicates)
             return -1
 
@@ -562,7 +562,7 @@ class BatchConsolidator:
             except LockAcquisitionError as e:
                 # Failed to acquire lock after max retries
                 error_msg = f"Cannot acquire consolidation lock: {e}"
-                logger.error(f"❌ Lock acquisition failed: {error_msg}")
+                logger.error(f"❌ Lock acquisition failed: {error_msg}", exc_info=True)
                 return ConsolidationResult(
                     rows_affected=0,
                     staging_tables_merged=0,
@@ -692,7 +692,7 @@ class BatchConsolidator:
 
         except gcp_exceptions.BadRequest as e:
             error_msg = f"Invalid MERGE query: {e}"
-            logger.error(f"❌ BadRequest error in MERGE: {error_msg}")
+            logger.error(f"❌ BadRequest error in MERGE: {error_msg}", exc_info=True)
             return ConsolidationResult(
                 rows_affected=0,
                 staging_tables_merged=0,
@@ -703,7 +703,7 @@ class BatchConsolidator:
 
         except gcp_exceptions.Conflict as e:
             error_msg = f"DML conflict during consolidation: {e}"
-            logger.error(f"❌ Conflict error in MERGE: {error_msg}")
+            logger.error(f"❌ Conflict error in MERGE: {error_msg}", exc_info=True)
             return ConsolidationResult(
                 rows_affected=0,
                 staging_tables_merged=0,

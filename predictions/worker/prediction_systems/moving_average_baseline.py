@@ -309,12 +309,12 @@ class MovingAverageBaseline:
         
         # Validate feature count if provided (accepts 25 or 33 features)
         if feature_count not in (25, 33):
-            logger.error(f"Invalid feature count: {feature_count}")
+            logger.error(f"Invalid feature count: {feature_count}", exc_info=True)
             return False
 
         # Only validate array length if array exists and is non-empty
         if features_array and len(features_array) not in (25, 33):
-            logger.error(f"Invalid array length: {len(features_array)}")
+            logger.error(f"Invalid array length: {len(features_array)}", exc_info=True)
             return False
         
         return True

@@ -163,9 +163,9 @@ class CatBoostV8:
             logger.info(f"Loaded CatBoost v8 model successfully")
 
         except ImportError:
-            logger.error("CatBoost not installed. Run: pip install catboost")
+            logger.error("CatBoost not installed. Run: pip install catboost", exc_info=True)
         except Exception as e:
-            logger.error(f"Error loading CatBoost v8 model: {e}")
+            logger.error(f"Error loading CatBoost v8 model: {e}", exc_info=True)
 
     def _load_model_from_path(self, model_path: str):
         """Load model from specified path (local or GCS)"""
@@ -198,7 +198,8 @@ class CatBoostV8:
                 except CircuitBreakerError as e:
                     logger.error(
                         f"Circuit breaker OPEN for GCS model loading: {e}. "
-                        f"CatBoost v8 will use fallback predictions."
+                        f"CatBoost v8 will use fallback predictions.",
+                        exc_info=True
                     )
                     return  # Model stays None, fallback will be used
 
@@ -207,7 +208,7 @@ class CatBoostV8:
             logger.info(f"Loaded CatBoost v8 model from {model_path}")
 
         except Exception as e:
-            logger.error(f"Error loading model from {model_path}: {e}")
+            logger.error(f"Error loading model from {model_path}: {e}", exc_info=True)
 
     def predict(
         self,
@@ -279,7 +280,7 @@ class CatBoostV8:
         try:
             predicted_points = float(self.model.predict(feature_vector)[0])
         except Exception as e:
-            logger.error(f"CatBoost prediction failed: {e}")
+            logger.error(f"CatBoost prediction failed: {e}", exc_info=True)
             return self._fallback_prediction(player_lookup, features, betting_line)
 
         # Clamp to reasonable range
@@ -387,7 +388,7 @@ class CatBoostV8:
             return vector
 
         except Exception as e:
-            logger.error(f"Error preparing v8 feature vector: {e}")
+            logger.error(f"Error preparing v8 feature vector: {e}", exc_info=True)
             return None
 
     def _calculate_confidence(

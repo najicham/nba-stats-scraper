@@ -271,13 +271,13 @@ class CoordinatorInstanceManager:
             try:
                 self._release_lock(batch_id)
             except Exception as e:
-                logger.error(f"Error releasing lock for {batch_id}: {e}")
+                logger.error(f"Error releasing lock for {batch_id}: {e}", exc_info=True)
 
         # Mark instance as stopped
         try:
             self._update_instance_status("stopped")
         except Exception as e:
-            logger.error(f"Error updating instance status: {e}")
+            logger.error(f"Error updating instance status: {e}", exc_info=True)
 
         # Wait for heartbeat thread
         if self._heartbeat_thread and self._heartbeat_thread.is_alive():
@@ -308,7 +308,7 @@ class CoordinatorInstanceManager:
             try:
                 self._send_heartbeat()
             except Exception as e:
-                logger.error(f"Heartbeat error: {e}")
+                logger.error(f"Heartbeat error: {e}", exc_info=True)
 
             # Wait for next heartbeat or stop signal
             self._stop_event.wait(timeout=HEARTBEAT_INTERVAL_SECONDS)
@@ -431,7 +431,7 @@ class CoordinatorInstanceManager:
             try:
                 acquired = self._try_acquire_lock(batch_id, operation)
             except Exception as e:
-                logger.error(f"Error acquiring lock: {e}")
+                logger.error(f"Error acquiring lock: {e}", exc_info=True)
 
             if not acquired:
                 elapsed = int(time.time() - start_time)
@@ -524,7 +524,7 @@ class CoordinatorInstanceManager:
                 )
             return acquired
         except Exception as e:
-            logger.error(f"Transaction error acquiring lock: {e}")
+            logger.error(f"Transaction error acquiring lock: {e}", exc_info=True)
             return False
 
     def _release_lock(self, batch_id: str):
@@ -556,7 +556,7 @@ class CoordinatorInstanceManager:
             self._active_locks.pop(batch_id, None)
 
         except Exception as e:
-            logger.error(f"Error releasing lock {batch_id}: {e}")
+            logger.error(f"Error releasing lock {batch_id}: {e}", exc_info=True)
 
     def _get_instance_info(self, instance_id: str) -> Optional[InstanceInfo]:
         """Get info for a specific instance."""
@@ -611,7 +611,7 @@ class CoordinatorInstanceManager:
             return True
 
         except Exception as e:
-            logger.error(f"Error refreshing lock {batch_id}: {e}")
+            logger.error(f"Error refreshing lock {batch_id}: {e}", exc_info=True)
             return False
 
     def get_lock_holder(self, batch_id: str) -> Optional[str]:
@@ -670,7 +670,7 @@ class CoordinatorInstanceManager:
                 logger.info(f"Lock {batch_id} not found (already released)")
 
         except Exception as e:
-            logger.error(f"Error force releasing lock {batch_id}: {e}")
+            logger.error(f"Error force releasing lock {batch_id}: {e}", exc_info=True)
             raise
 
 

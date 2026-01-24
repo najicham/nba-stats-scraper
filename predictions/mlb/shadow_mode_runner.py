@@ -496,7 +496,7 @@ def write_to_bigquery(
     load_job.result(timeout=60)
 
     if load_job.errors:
-        logger.error(f"BigQuery load errors: {load_job.errors}")
+        logger.error(f"BigQuery load errors: {load_job.errors}", exc_info=True)
         return 0
 
     logger.info(f"Wrote {len(rows)} predictions to {table_id}")
