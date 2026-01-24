@@ -46,7 +46,10 @@ def main():
         result = subprocess.run(['gcloud', 'config', 'get-value', 'project'],
                               capture_output=True, text=True, check=True)
         project_id = result.stdout.strip()
-    except:
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        # CalledProcessError: gcloud command failed
+        # FileNotFoundError: gcloud not installed
+        # OSError: other OS-level errors
         project_id = os.getenv('GCP_PROJECT_ID', 'nba-props-platform')
 
     client = bigquery.Client(project=project_id)

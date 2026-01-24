@@ -5,11 +5,14 @@ NBA Travel Distance Utilities
 Simple interface for processors to get travel distances and time zone information
 """
 
+import logging
 from google.cloud import bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
 from typing import Optional, Dict, List, Tuple
 import pandas as pd
 from datetime import datetime, timedelta
+
+logger = logging.getLogger(__name__)
 
 class NBATravel:
     def __init__(self, project_id: str = "nba-props-platform"):
@@ -75,8 +78,8 @@ class NBATravel:
                 self._distance_cache[cache_key] = travel_info
                 return travel_info
         except Exception as e:
-            print(f"Error getting travel distance: {e}")
-        
+            logger.warning(f"Error getting travel distance {from_team} -> {to_team}: {e}")
+
         return None
     
     def get_team_location(self, team_abbr: str) -> Optional[Dict]:
@@ -113,7 +116,7 @@ class NBATravel:
             df = self.client.query(query).to_dataframe()
             self._team_locations_cache = df.set_index('team_abbr').to_dict('index')
         except Exception as e:
-            print(f"Error loading team locations: {e}")
+            logger.warning(f"Error loading team locations cache: {e}")
             self._team_locations_cache = {}
     
     def calculate_road_trip_travel(self, team_schedule: List[Tuple[str, str]]) -> Dict:

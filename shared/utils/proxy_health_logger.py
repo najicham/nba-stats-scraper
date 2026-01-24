@@ -105,7 +105,9 @@ def extract_host_from_url(url: str) -> str:
     try:
         parsed = urlparse(url)
         return parsed.netloc or "unknown"
-    except:
+    except (ValueError, AttributeError) as e:
+        # ValueError: invalid URL format
+        # AttributeError: url is not a string
         return "unknown"
 
 
