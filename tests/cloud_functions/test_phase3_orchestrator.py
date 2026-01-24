@@ -222,10 +222,14 @@ def test_update_completion_duplicate_message(mock_db_instance):
 # TEST: Entity Change Aggregation
 # ============================================================================
 
+@patch('orchestration.cloud_functions.phase3_to_phase4.main.verify_phase3_data_ready')
 @patch('orchestration.cloud_functions.phase3_to_phase4.main.publisher')
 @patch('orchestration.cloud_functions.phase3_to_phase4.main.db')
-def test_trigger_phase4_aggregates_entities(mock_db, mock_publisher):
+def test_trigger_phase4_aggregates_entities(mock_db, mock_publisher, mock_verify_data):
     """Test that Phase 4 trigger aggregates entities_changed from all processors."""
+    # Mock R-008 data freshness check to pass
+    mock_verify_data.return_value = (True, [], {'player_game_summary': 450})
+
     # Setup Firestore data with multiple processors and their entities
     doc_ref = Mock()
     doc_snapshot = Mock()
