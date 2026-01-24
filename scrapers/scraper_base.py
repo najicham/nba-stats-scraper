@@ -385,6 +385,12 @@ class ScraperBase:
                 except Exception as log_ex:
                     logger.warning(f"Failed to log failed execution: {log_ex}")
 
+                # ✅ NEW: Log failure for automatic backfill recovery
+                try:
+                    self._log_scraper_failure_for_backfill(e)
+                except Exception as backfill_log_ex:
+                    logger.warning(f"Failed to log failure for backfill: {backfill_log_ex}")
+
                 # ✅ NEW: Publish failed event to Pub/Sub
                 try:
                     self._publish_failed_event_to_pubsub(e)
@@ -762,6 +768,56 @@ class ScraperBase:
                 logger.debug("Sentry SDK not installed, skipping exception capture")
             except Exception as sentry_error:
                 logger.debug(f"Sentry capture failed (non-critical): {sentry_error}")
+
+    def _log_scraper_failure_for_backfill(self, error: Exception):
+        """
+        Log scraper failure to nba_orchestration.scraper_failures for automatic backfill.
+
+        When a scraper fails for a specific date, this logs it so the recovery system
+        can automatically backfill when the scraper starts working again.
+
+        Uses MERGE to upsert: if already failed for this date, increment retry_count.
+        """
+        try:
+            game_date = self._extract_game_date()
+            if not game_date:
+                logger.debug("No game_date in opts - skipping backfill failure logging")
+                return
+
+            from google.cloud import bigquery
+            client = bigquery.Client()
+
+            # Use MERGE to upsert - increment retry_count if already exists
+            query = """
+            MERGE INTO `nba-props-platform.nba_orchestration.scraper_failures` AS target
+            USING (SELECT @game_date as game_date, @scraper_name as scraper_name) AS source
+            ON target.game_date = source.game_date AND target.scraper_name = source.scraper_name
+            WHEN MATCHED AND target.backfilled = FALSE THEN
+                UPDATE SET
+                    last_failed_at = CURRENT_TIMESTAMP(),
+                    retry_count = target.retry_count + 1,
+                    error_type = @error_type,
+                    error_message = @error_message
+            WHEN NOT MATCHED THEN
+                INSERT (game_date, scraper_name, error_type, error_message, first_failed_at, last_failed_at, retry_count, backfilled)
+                VALUES (@game_date, @scraper_name, @error_type, @error_message, CURRENT_TIMESTAMP(), CURRENT_TIMESTAMP(), 1, FALSE)
+            """
+
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                    bigquery.ScalarQueryParameter("scraper_name", "STRING", self._get_scraper_name()),
+                    bigquery.ScalarQueryParameter("error_type", "STRING", error.__class__.__name__),
+                    bigquery.ScalarQueryParameter("error_message", "STRING", str(error)[:500]),
+                ]
+            )
+
+            client.query(query, job_config=job_config).result()
+            logger.info(f"📋 Logged failure for backfill: {self._get_scraper_name()} / {game_date}")
+
+        except Exception as e:
+            # Don't fail the scraper if logging fails
+            logger.warning(f"Failed to log scraper failure for backfill: {e}")
 
     ##########################################################################
     # Layer 1: Scraper Output Validation (NEW)
