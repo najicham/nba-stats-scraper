@@ -62,18 +62,18 @@ FILES_TO_SYNC = {
     'travel_team_info.py': 'utils',
     'sentry_config.py': 'utils',
 
+    # These are in shared/utils/ but were incorrectly mapped before
+    'alert_types.py': 'utils',
+    'email_alerting.py': 'utils',
+    'bigquery_retry.py': 'utils',
+
     # alerts/
     'rate_limiter.py': 'alerts',
-    'alert_types.py': 'alerts',
-    'email_alerting.py': 'alerts',
     'backfill_progress_tracker.py': 'alerts',
 
     # backfill/
     'checkpoint.py': 'backfill',
     'schedule_utils.py': 'backfill',
-
-    # clients/
-    'bigquery_retry.py': 'clients',
 }
 
 # Target directories that contain shared/ subdirectories
