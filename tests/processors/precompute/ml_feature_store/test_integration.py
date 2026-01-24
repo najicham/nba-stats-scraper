@@ -78,14 +78,28 @@ def mock_processor():
     processor.feature_calculator = Mock()
     processor.quality_scorer = Mock()
     processor.batch_writer = Mock()
-    
+    processor.completeness_checker = Mock()
+
     # Initialize tracking vars
     processor.players_with_games = None
     processor.early_season_flag = False
     processor.insufficient_data_reason = None
     processor.failed_entities = []
     processor.transformed_data = []
-    
+    processor.missing_dependencies_list = []
+
+    # Timing instrumentation
+    processor._timing = {}
+
+    # Source hash cache
+    processor.source_daily_cache_hash = None
+    processor.source_composite_hash = None
+    processor.source_shot_zones_hash = None
+    processor.source_team_defense_hash = None
+
+    # Season start date
+    processor.season_start_date = None
+
     return processor
 
 
@@ -193,7 +207,7 @@ class TestEarlySeasonDetection:
         
         mock_processor.bq_client.query.return_value.to_dataframe.return_value = mock_result
         
-        result = mock_processor._is_early_season(date(2024, 10, 25))
+        result = mock_processor._is_early_season(date(2024, 10, 25), 2024)
         
         # Assertions
         assert result is False, "Exactly 50% should NOT trigger early season (requires >50%)"
@@ -227,7 +241,7 @@ class TestEarlySeasonDetection:
         
         mock_processor.bq_client.query.return_value.to_dataframe.return_value = mock_result
         
-        result = mock_processor._is_early_season(date(2024, 10, 25))
+        result = mock_processor._is_early_season(date(2024, 10, 25), 2024)
         
         # Assertions
         assert result is True, "51% should trigger early season"
@@ -253,7 +267,7 @@ class TestEarlySeasonDetection:
         
         mock_processor.bq_client.query.return_value.to_dataframe.return_value = mock_result
         
-        result = mock_processor._is_early_season(date(2024, 10, 22))
+        result = mock_processor._is_early_season(date(2024, 10, 22), 2024)
         
         # Assertions
         assert result is True, "100% early season should trigger"
@@ -273,7 +287,7 @@ class TestEarlySeasonDetection:
         """
         mock_processor.bq_client.query.side_effect = Exception("BigQuery connection timeout")
         
-        result = mock_processor._is_early_season(date(2024, 10, 25))
+        result = mock_processor._is_early_season(date(2024, 10, 25), 2024)
         
         # Assertions
         assert result is False, "Query failure should default to False (proceed normally)"
@@ -295,7 +309,7 @@ class TestEarlySeasonDetection:
         mock_result = pd.DataFrame()
         mock_processor.bq_client.query.return_value.to_dataframe.return_value = mock_result
         
-        result = mock_processor._is_early_season(date(2025, 1, 15))
+        result = mock_processor._is_early_season(date(2025, 1, 15), 2024)
         
         # Assertions
         assert result is False, "Empty result should not trigger early season"
