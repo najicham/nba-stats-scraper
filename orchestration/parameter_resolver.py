@@ -44,7 +44,9 @@ logger = logging.getLogger(__name__)
 YESTERDAY_TARGET_WORKFLOWS = [
     'post_game_window_1',    # 10 PM ET - first collection attempt
     'post_game_window_2',    # 1 AM ET - second collection attempt
+    'post_game_window_2b',   # Additional post-game window (added Jan 23, 2026)
     'post_game_window_3',    # 4 AM ET - final collection (gamebooks, etc.)
+    'morning_recovery',      # Morning recovery workflow (added Jan 23, 2026)
     'late_games',            # Late night game collection
 ]
 
@@ -89,6 +91,7 @@ class ParameterResolver:
             'espn_roster': self._resolve_espn_roster,              # Per-team (returns list)
             'nbac_gamebook_pdf': self._resolve_nbac_gamebook_pdf,  # Per-game (returns list)
             'nbac_injury_report': self._resolve_nbac_injury_report,
+            'oddsa_events': self._resolve_odds_events,             # Date-based (returns dict) - added Jan 23, 2026
             'oddsa_player_props': self._resolve_odds_props,
             'oddsa_game_lines': self._resolve_odds_game_lines,
         }
@@ -635,6 +638,24 @@ class ParameterResolver:
 
         logger.info(f"Resolved nbac_gamebook_pdf for {len(params_list)} games")
         return params_list
+
+    def _resolve_odds_events(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Resolver for Odds API events scraper.
+
+        This scraper DISCOVERS events for a given date and sport.
+        It does NOT need event_ids - it finds them.
+
+        The event_ids returned by this scraper are then used by:
+        - oddsa_player_props
+        - oddsa_game_lines
+
+        Added: Jan 23, 2026 - Fix for "Missing required option [sport]" errors
+        """
+        return {
+            'sport': 'basketball_nba',
+            'game_date': context['execution_date']
+        }
 
     def _resolve_odds_props(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
         """

@@ -1,5 +1,5 @@
 # Master Project Tracker - January 23, 2026
-**Last Updated:** 2026-01-23 8:30 PM UTC
+**Last Updated:** 2026-01-23 4:25 PM PST
 **Status:** 🟢 Major Issues Resolved
 **Owner:** Data Engineering Team
 
@@ -44,6 +44,9 @@
 | **Auto-Update Predictions** | ✅ | Jan 23 | ✅ Deployed |
 | **Historical Odds Backfill** | ✅ | Jan 23 | Jan 19-22 complete |
 | **Multi-Snapshot Lines** | ✅ | Jan 23 | Opening + Closing lines |
+| **Orchestration Fixes** | ✅ | Jan 23 | YESTERDAY_TARGET_WORKFLOWS, oddsa_events resolver |
+| **Feature Store 60-Day Bug** | ✅ | Jan 23 | Fixed historical completeness calculation |
+| **Stale Schedule Fix Script** | ✅ | Jan 23 | Fixed column names, partition filter |
 
 ### 🔄 Active Monitoring
 

@@ -26,20 +26,21 @@ PROJECT_ID = "nba-props-platform"
 def find_stale_games(client: bigquery.Client) -> list:
     """Find games that are likely finished but still show as in-progress."""
     query = """
-    SELECT 
+    SELECT
         game_id,
         game_date,
         game_status,
-        start_time_et,
-        home_team_abbr,
-        away_team_abbr,
-        TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), 
-            TIMESTAMP(CONCAT(game_date, ' ', start_time_et), 'America/New_York'),
+        time_slot,
+        home_team_tricode as home_team_abbr,
+        away_team_tricode as away_team_abbr,
+        -- Calculate hours since game date (conservative: assume 7 PM start if no time)
+        TIMESTAMP_DIFF(CURRENT_TIMESTAMP(),
+            TIMESTAMP(CONCAT(CAST(game_date AS STRING), ' 19:00:00'), 'America/New_York'),
             HOUR) as hours_since_start
     FROM `nba_raw.nbac_schedule`
     WHERE game_status IN (1, 2)  -- Scheduled or In Progress
       AND game_date < CURRENT_DATE('America/New_York')  -- Past dates only
-    ORDER BY game_date DESC, start_time_et
+    ORDER BY game_date DESC, time_slot
     """
     
     results = list(client.query(query).result())
@@ -52,7 +53,7 @@ def find_stale_games(client: bigquery.Client) -> list:
                 'game_id': row.game_id,
                 'game_date': str(row.game_date),
                 'current_status': row.game_status,
-                'start_time_et': row.start_time_et,
+                'time_slot': row.time_slot,
                 'matchup': f"{row.away_team_abbr}@{row.home_team_abbr}",
                 'hours_since_start': row.hours_since_start
             })
@@ -71,20 +72,34 @@ def fix_stale_games(client: bigquery.Client, stale_games: list, dry_run: bool = 
     if dry_run:
         logger.info(f"[DRY RUN] Would update {len(game_ids)} games to Final status")
         for game in stale_games:
-            logger.info(f"  - {game['game_date']} {game['matchup']} (status={game['current_status']}, {game['hours_since_start']:.1f}h old)")
+            hours = game['hours_since_start'] if game['hours_since_start'] else 0
+            logger.info(f"  - {game['game_date']} {game['matchup']} (status={game['current_status']}, {hours:.1f}h old)")
         return 0
     
-    # Build update query
-    game_ids_str = "', '".join(game_ids)
-    update_query = f"""
-    UPDATE `nba_raw.nbac_schedule`
-    SET game_status = 3
-    WHERE game_id IN ('{game_ids_str}')
-    """
-    
-    result = client.query(update_query).result()
-    logger.info(f"✅ Updated {len(game_ids)} games to Final status")
-    
+    # Build update query - must include partition filter on game_date
+    # Group games by date for partition-safe updates
+    games_by_date = {}
+    for game in stale_games:
+        gdate = game['game_date']
+        if gdate not in games_by_date:
+            games_by_date[gdate] = []
+        games_by_date[gdate].append(game['game_id'])
+
+    total_updated = 0
+    for gdate, gids in games_by_date.items():
+        game_ids_str = "', '".join(gids)
+        update_query = f"""
+        UPDATE `nba_raw.nbac_schedule`
+        SET game_status = 3, game_status_text = 'Final'
+        WHERE game_date = '{gdate}'
+          AND game_id IN ('{game_ids_str}')
+        """
+        client.query(update_query).result()
+        total_updated += len(gids)
+        logger.info(f"  Updated {len(gids)} games for {gdate}")
+
+    logger.info(f"✅ Updated {total_updated} games to Final status")
+
     for game in stale_games:
         logger.info(f"  - {game['game_date']} {game['matchup']}")
     

@@ -422,6 +422,11 @@ class FeatureExtractor:
         v1.5 (Jan 2026): Added total_games_available tracking for historical completeness.
         This enables bootstrap detection (player has fewer games than window size).
 
+        v1.6 (Jan 23, 2026): BUGFIX - total_games_available now counts ALL historical games,
+        not just games within the 60-day window. This fixes incorrect bootstrap detection
+        for players with games older than 60 days. Uses CTE to separate the efficient
+        last-10 retrieval (60-day window) from the total game count (no date limit).
+
         Performance: 300-450s → 30-60s (5-10x faster)
         """
         if not player_lookups:
@@ -432,26 +437,51 @@ class FeatureExtractor:
         lookback_days = 60
         lookback_date = game_date - timedelta(days=lookback_days)
 
-        # Query includes total_games_available for bootstrap detection
-        # Uses QUALIFY for efficient window function filtering (no CTE overhead)
+        # v1.6 FIX: Use CTE to get true total_games_available (no date limit)
+        # while still using 60-day window for efficient last-10 retrieval.
+        # This prevents incorrect bootstrap detection for players with older games.
         query = f"""
+        WITH total_games_per_player AS (
+            -- Count ALL historical games (no date limit) for accurate bootstrap detection
+            SELECT
+                player_lookup,
+                COUNT(*) as total_games_available
+            FROM `{self.project_id}.nba_analytics.player_game_summary`
+            WHERE game_date < '{game_date}'
+            GROUP BY player_lookup
+        ),
+        last_10_games AS (
+            -- Use 60-day window for efficient retrieval of recent games
+            SELECT
+                player_lookup,
+                game_date,
+                points,
+                minutes_played,
+                ft_makes,
+                fg_attempts,
+                paint_attempts,
+                mid_range_attempts,
+                three_pt_attempts,
+                ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as rn
+            FROM `{self.project_id}.nba_analytics.player_game_summary`
+            WHERE game_date < '{game_date}'
+              AND game_date >= '{lookback_date}'
+        )
         SELECT
-            player_lookup,
-            game_date,
-            points,
-            minutes_played,
-            ft_makes,
-            fg_attempts,
-            paint_attempts,
-            mid_range_attempts,
-            three_pt_attempts,
-            -- Total games available for this player (for bootstrap detection)
-            COUNT(*) OVER (PARTITION BY player_lookup) as total_games_available
-        FROM `{self.project_id}.nba_analytics.player_game_summary`
-        WHERE game_date < '{game_date}'
-          AND game_date >= '{lookback_date}'
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) <= 10
-        ORDER BY player_lookup, game_date DESC
+            l.player_lookup,
+            l.game_date,
+            l.points,
+            l.minutes_played,
+            l.ft_makes,
+            l.fg_attempts,
+            l.paint_attempts,
+            l.mid_range_attempts,
+            l.three_pt_attempts,
+            t.total_games_available
+        FROM last_10_games l
+        JOIN total_games_per_player t ON l.player_lookup = t.player_lookup
+        WHERE l.rn <= 10
+        ORDER BY l.player_lookup, l.game_date DESC
         """
         result = self.bq_client.query(query).to_dataframe()
 
@@ -464,7 +494,7 @@ class FeatureExtractor:
                 if games:
                     self._total_games_available_lookup[player_lookup] = int(games[0].get('total_games_available', len(games)))
 
-        logger.debug(f"Batch last_10_games: {len(self._last_10_games_lookup)} players (60-day window)")
+        logger.debug(f"Batch last_10_games: {len(self._last_10_games_lookup)} players (60-day window, full history for totals)")
 
     def _batch_extract_season_stats(self, game_date: date, player_lookups: List[str]) -> None:
         """
