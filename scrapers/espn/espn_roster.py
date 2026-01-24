@@ -71,6 +71,15 @@ except ImportError:
     def notify_info(*args, **kwargs):
         pass
 
+# Pub/Sub imports for publishing completion messages (added after Jan 23 incident)
+try:
+    from google.cloud import pubsub_v1
+    import json
+    PUBSUB_AVAILABLE = True
+except ImportError:
+    PUBSUB_AVAILABLE = False
+    pubsub_v1 = None
+
 logger = logging.getLogger("scraper_base")
 
 # ------------------------------------------------------------------ #
@@ -327,6 +336,58 @@ class GetEspnTeamRoster(ScraperBase, ScraperFlaskMixin):
             "teamAbbr": self.opts["teamAbbr"],
             "playerCount": self.data.get("playerCount", 0),
         }
+
+    # ------------------------------------------------------------------ #
+    # Post-Export Hook - Publish to Pub/Sub (added after Jan 23 incident)
+    # ------------------------------------------------------------------ #
+    def post_export(self) -> None:
+        """
+        Called after successful export. Publishes completion message to Pub/Sub
+        so Phase 2 processor can be triggered automatically.
+
+        This was added after the Jan 23, 2026 incident where ESPN rosters were
+        being scraped to GCS but the Phase 2 processor wasn't triggered,
+        causing stale roster data in BigQuery.
+        """
+        # Call parent's post_export first
+        super().post_export()
+
+        # Publish completion message to Pub/Sub
+        if not PUBSUB_AVAILABLE:
+            logger.warning("Pub/Sub not available - skipping completion message")
+            return
+
+        try:
+            project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+            topic_name = 'nba-phase1-scrapers-complete'
+
+            publisher = pubsub_v1.PublisherClient()
+            topic_path = publisher.topic_path(project_id, topic_name)
+
+            message_data = {
+                'scraper': 'espn_roster',
+                'scraper_type': 'espn_team_roster',
+                'team_abbr': self.opts.get('teamAbbr'),
+                'team_slug': self.opts.get('teamSlug'),
+                'date': self.opts.get('date'),
+                'player_count': self.data.get('playerCount', 0),
+                'gcs_path': f"espn/rosters/{self.opts.get('date')}/team_{self.opts.get('teamAbbr')}/",
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'run_id': self.run_id
+            }
+
+            future = publisher.publish(
+                topic_path,
+                json.dumps(message_data).encode('utf-8'),
+                scraper='espn_roster',
+                team_abbr=self.opts.get('teamAbbr', 'unknown')
+            )
+            message_id = future.result(timeout=10)
+            logger.info(f"📤 Published completion message to {topic_name}: {message_id}")
+
+        except Exception as e:
+            # Log but don't fail the scraper - completion message is nice-to-have
+            logger.warning(f"Failed to publish completion message: {e}")
 
 
 # --------------------------------------------------------------------------- #
