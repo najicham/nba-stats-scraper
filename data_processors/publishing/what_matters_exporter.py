@@ -15,6 +15,7 @@ from datetime import date
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from .exporter_utils import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -270,7 +271,7 @@ class WhatMattersExporter(BaseExporter):
             arch = r['archetype']
             if arch in archetypes:
                 archetypes[arch]['player_count'] = r['player_count']
-                archetypes[arch]['overall_over_pct'] = self._safe_float(r['overall_over_pct'])
+                archetypes[arch]['overall_over_pct'] = safe_float(r['overall_over_pct'])
 
         # Populate rest factors
         for r in rest_results:
@@ -278,7 +279,7 @@ class WhatMattersExporter(BaseExporter):
             if arch in archetypes and r['rest_category']:
                 archetypes[arch]['factors']['rest'][r['rest_category']] = {
                     'games': r['games'],
-                    'over_pct': self._safe_float(r['over_pct'])
+                    'over_pct': safe_float(r['over_pct'])
                 }
 
         # Populate home/away factors
@@ -287,7 +288,7 @@ class WhatMattersExporter(BaseExporter):
             if arch in archetypes:
                 archetypes[arch]['factors']['home_away'][r['location']] = {
                     'games': r['games'],
-                    'over_pct': self._safe_float(r['over_pct'])
+                    'over_pct': safe_float(r['over_pct'])
                 }
 
         return archetypes
@@ -338,18 +339,6 @@ class WhatMattersExporter(BaseExporter):
             insights.append("No significant factor differences detected in current sample")
 
         return insights[:5]  # Limit to 5 insights
-
-    def _safe_float(self, value) -> Optional[float]:
-        """Convert to float, handling None and special values."""
-        if value is None:
-            return None
-        try:
-            f = float(value)
-            if f != f:  # NaN check
-                return None
-            return round(f, 1)
-        except (TypeError, ValueError):
-            return None
 
     def export(self, as_of_date: str = None) -> str:
         """

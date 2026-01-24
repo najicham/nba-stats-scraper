@@ -13,6 +13,7 @@ from collections import defaultdict
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from .exporter_utils import safe_float, calculate_edge, get_generated_at
 
 logger = logging.getLogger(__name__)
 
@@ -140,14 +141,14 @@ class PredictionsExporter(BaseExporter):
                     'team': player_team,
                     'is_home': is_home,
                     'prediction': {
-                        'points': self._safe_float(pred['predicted_points']),
-                        'confidence': self._safe_float(pred['confidence_score']),
+                        'points': safe_float(pred['predicted_points']),
+                        'confidence': safe_float(pred['confidence_score']),
                         'recommendation': pred['recommendation'],
-                        'line': self._safe_float(pred['line_value']),
-                        'edge': self._calc_edge(pred)
+                        'line': safe_float(pred['line_value']),
+                        'edge': calculate_edge(pred.get('predicted_points'), pred.get('line_value'))
                     },
                     'context': {
-                        'pace_adjustment': self._safe_float(pred['pace_adjustment']),
+                        'pace_adjustment': safe_float(pred['pace_adjustment']),
                         'similar_games': pred.get('similar_games_count')
                     }
                 })
@@ -177,26 +178,6 @@ class PredictionsExporter(BaseExporter):
         games.sort(key=lambda g: g['game_id'])
 
         return games
-
-    def _calc_edge(self, pred: Dict) -> Optional[float]:
-        """Calculate edge (predicted - line)."""
-        predicted = pred.get('predicted_points')
-        line = pred.get('line_value')
-        if predicted is not None and line is not None:
-            return round(float(predicted) - float(line), 1)
-        return None
-
-    def _safe_float(self, value) -> Optional[float]:
-        """Convert to float, handling None and special values."""
-        if value is None:
-            return None
-        try:
-            f = float(value)
-            if f != f:  # NaN check
-                return None
-            return round(f, 2)
-        except (TypeError, ValueError):
-            return None
 
     def _empty_response(self, target_date: str) -> Dict[str, Any]:
         """Return empty response when no data available."""

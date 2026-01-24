@@ -158,7 +158,7 @@ class LiveScoresExporter(BaseExporter):
             return live_boxes
 
         except requests.RequestException as e:
-            logger.error(f"Failed to fetch live box scores after retries: {e}")
+            logger.error(f"Failed to fetch live box scores after retries: {e}", exc_info=True)
             return []
 
     @retry_with_jitter(
@@ -227,7 +227,7 @@ class LiveScoresExporter(BaseExporter):
 
             logger.info(f"Built player lookup cache with {len(self._player_lookup_cache)} players")
         except Exception as e:
-            logger.error(f"Failed to build player lookup cache: {e}")
+            logger.error(f"Failed to build player lookup cache: {e}", exc_info=True)
 
     def _transform_games(self, live_data: List[Dict], target_date: str) -> List[Dict]:
         """

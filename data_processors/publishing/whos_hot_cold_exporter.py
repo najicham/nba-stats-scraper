@@ -24,6 +24,7 @@ from datetime import date, datetime
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from .exporter_utils import safe_float
 from shared.utils.schedule import NBAScheduleService
 
 logger = logging.getLogger(__name__)
@@ -260,12 +261,12 @@ class WhosHotColdExporter(BaseExporter):
                 'player_full_name': r['player_name'],
                 'team_abbr': r['team_abbr'],
                 'position': r.get('position'),
-                'heat_score': self._safe_float(r['heat_score']),
-                'hit_rate': self._safe_float(r['hit_rate']),
+                'heat_score': safe_float(r['heat_score']),
+                'hit_rate': safe_float(r['hit_rate']),
                 'hit_rate_games': r['games_played'],
                 'current_streak': r['current_streak'],
                 'streak_direction': r['streak_type'].lower() if r['streak_type'] != 'NONE' else None,
-                'avg_margin': self._safe_float(r['avg_margin']),
+                'avg_margin': safe_float(r['avg_margin']),
             }
             for r in results
         ]
@@ -356,18 +357,6 @@ class WhosHotColdExporter(BaseExporter):
                 'avg_margin': None
             }
         }
-
-    def _safe_float(self, value) -> Optional[float]:
-        """Convert to float, handling None and special values."""
-        if value is None:
-            return None
-        try:
-            f = float(value)
-            if f != f:  # NaN check
-                return None
-            return round(f, 3)
-        except (TypeError, ValueError):
-            return None
 
     def export(self, as_of_date: str = None, **kwargs) -> str:
         """

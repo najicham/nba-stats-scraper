@@ -14,6 +14,7 @@ from datetime import date
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from .exporter_utils import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -210,12 +211,12 @@ class StreaksExporter(BaseExporter):
                 'player_full_name': r['player_full_name'],
                 'team': r['team'],
                 'streak_length': r['streak_length'],
-                'avg_margin': self._safe_float(r['avg_margin']),
+                'avg_margin': safe_float(r['avg_margin']),
                 'games': [
                     {
                         'game_date': str(g['game_date']),
                         'points': g['points'],
-                        'line': self._safe_float(g['points_line']),
+                        'line': safe_float(g['points_line']),
                         'opponent': g['opponent_team_abbr']
                     }
                     for g in games[:5]  # Only include last 5 games in output
@@ -314,18 +315,6 @@ class StreaksExporter(BaseExporter):
             }
             for r in results
         ]
-
-    def _safe_float(self, value) -> Optional[float]:
-        """Convert to float, handling None and special values."""
-        if value is None:
-            return None
-        try:
-            f = float(value)
-            if f != f:  # NaN check
-                return None
-            return round(f, 2)
-        except (TypeError, ValueError):
-            return None
 
     def export(self, as_of_date: str = None) -> str:
         """

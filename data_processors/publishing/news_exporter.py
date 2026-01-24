@@ -17,6 +17,7 @@ from typing import Dict, List, Any, Optional
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from .exporter_utils import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,7 @@ class NewsExporter(BaseExporter):
                 if (i + 1) % 50 == 0:
                     logger.info(f"Exported {i + 1}/{len(players)} players")
             except Exception as e:
-                logger.error(f"Failed to export {player['player_lookup']}: {e}")
+                logger.error(f"Failed to export {player['player_lookup']}: {e}", exc_info=True)
 
         logger.info(f"Exported news for {len(paths)} players")
         return paths
@@ -149,7 +150,7 @@ class NewsExporter(BaseExporter):
             paths.append(path)
             logger.info(f"Exported tonight-summary.json")
         except Exception as e:
-            logger.error(f"Failed to export tonight summary: {e}")
+            logger.error(f"Failed to export tonight summary: {e}", exc_info=True)
 
         # Get players with recently created links
         players = self._get_players_with_recent_news(minutes_back=minutes_back)
@@ -165,7 +166,7 @@ class NewsExporter(BaseExporter):
                 path = self.export_player(player['player_lookup'])
                 paths.append(path)
             except Exception as e:
-                logger.error(f"Failed to export {player['player_lookup']}: {e}")
+                logger.error(f"Failed to export {player['player_lookup']}: {e}", exc_info=True)
 
         logger.info(f"Incremental export complete: {len(paths)} files")
         return paths
@@ -384,16 +385,6 @@ class NewsExporter(BaseExporter):
         if hasattr(ts, 'isoformat'):
             return ts.isoformat()
         return str(ts)
-
-    def _safe_float(self, val, default: float = 0.0) -> float:
-        """Safely convert value to float."""
-        if val is None:
-            return default
-        try:
-            return float(val)
-        except (ValueError, TypeError):
-            return default
-
 
 def test_news_exporter():
     """Test the news exporter locally."""

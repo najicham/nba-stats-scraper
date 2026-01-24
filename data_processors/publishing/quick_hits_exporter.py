@@ -16,6 +16,7 @@ import random
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from .exporter_utils import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -335,18 +336,6 @@ class QuickHitsExporter(BaseExporter):
                 })
 
         return stats
-
-    def _safe_float(self, value) -> Optional[float]:
-        """Convert to float, handling None and special values."""
-        if value is None:
-            return None
-        try:
-            f = float(value)
-            if f != f:  # NaN check
-                return None
-            return round(f, 2)
-        except (TypeError, ValueError):
-            return None
 
     def export(self, as_of_date: str = None) -> str:
         """

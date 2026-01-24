@@ -29,6 +29,7 @@ from datetime import date
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from .exporter_utils import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -335,19 +336,19 @@ class BestBetsExporter(BaseExporter):
                 'team': pick['team_abbr'],
                 'opponent': pick['opponent_team_abbr'],
                 'recommendation': pick['recommendation'],
-                'line': self._safe_float(pick['line_value']),
-                'predicted': self._safe_float(pick['predicted_points']),
-                'edge': self._safe_float(pick['edge']),
-                'confidence': self._safe_float(pick['confidence_score']),
-                'composite_score': round(self._safe_float(pick['composite_score']) or 0, 3),
-                'player_historical_accuracy': self._safe_float(pick['player_historical_accuracy']),
+                'line': safe_float(pick['line_value']),
+                'predicted': safe_float(pick['predicted_points']),
+                'edge': safe_float(pick['edge']),
+                'confidence': safe_float(pick['confidence_score']),
+                'composite_score': round(safe_float(pick['composite_score']) or 0, 3),
+                'player_historical_accuracy': safe_float(pick['player_historical_accuracy']),
                 'player_sample_size': pick['player_sample_size'],
-                'fatigue_score': self._safe_float(fatigue_score),
+                'fatigue_score': safe_float(fatigue_score),
                 'fatigue_level': fatigue_level,
                 'rationale': rationale,
                 'result': result,
                 'actual': pick['actual_points'],
-                'error': self._safe_float(pick['absolute_error'])
+                'error': safe_float(pick['absolute_error'])
             })
 
         return formatted
@@ -410,18 +411,6 @@ class BestBetsExporter(BaseExporter):
             rationale.append("Meets selection criteria")
 
         return rationale
-
-    def _safe_float(self, value) -> Optional[float]:
-        """Convert to float, handling None and special values."""
-        if value is None:
-            return None
-        try:
-            f = float(value)
-            if f != f:  # NaN check
-                return None
-            return round(f, 3)
-        except (TypeError, ValueError):
-            return None
 
     def _empty_response(self, target_date: str) -> Dict[str, Any]:
         """Return empty response when no data available."""

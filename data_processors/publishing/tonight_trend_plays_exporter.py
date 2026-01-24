@@ -25,6 +25,7 @@ from datetime import date, datetime
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from .exporter_utils import safe_float
 from shared.utils.schedule import NBAScheduleService
 
 logger = logging.getLogger(__name__)
@@ -235,8 +236,8 @@ class TonightTrendPlaysExporter(BaseExporter):
                 'trend_direction': r['streak_direction'].lower(),
                 'trend_details': {
                     'streak_length': r['streak_length'],
-                    'avg_margin': self._safe_float(r['avg_margin']),
-                    'hit_rate_l10': self._safe_float(r['hit_rate_l10'])
+                    'avg_margin': safe_float(r['avg_margin']),
+                    'hit_rate_l10': safe_float(r['hit_rate_l10'])
                 },
                 'confidence': 'high' if r['streak_length'] >= 5 else 'medium'
             }
@@ -325,10 +326,10 @@ class TonightTrendPlaysExporter(BaseExporter):
                 'trend_direction': 'over' if r['momentum_type'] == 'surging' else 'under',
                 'trend_details': {
                     'momentum_type': r['momentum_type'],
-                    'l5_avg': self._safe_float(r['l5_avg']),
-                    'l15_avg': self._safe_float(r['l15_avg']),
-                    'pct_change': self._safe_float(r['pct_change']),
-                    'ppg_change': self._safe_float(r['ppg_change'])
+                    'l5_avg': safe_float(r['l5_avg']),
+                    'l15_avg': safe_float(r['l15_avg']),
+                    'pct_change': safe_float(r['pct_change']),
+                    'ppg_change': safe_float(r['ppg_change'])
                 },
                 'confidence': 'high' if abs(r['pct_change']) >= 25 else 'medium'
             }
@@ -438,7 +439,7 @@ class TonightTrendPlaysExporter(BaseExporter):
             if r['rest_status'] is None:
                 continue
 
-            rest_impact = self._safe_float(r.get('rest_impact')) or 0
+            rest_impact = safe_float(r.get('rest_impact')) or 0
             is_fresh = r['rest_status'] == 'fresh'
 
             # Fresh players lean OVER, tired players lean UNDER
@@ -460,9 +461,9 @@ class TonightTrendPlaysExporter(BaseExporter):
                 'trend_details': {
                     'rest_status': r['rest_status'],
                     'days_rest': r['days_rest'],
-                    'rested_avg': self._safe_float(r.get('rested_avg')),
-                    'b2b_avg': self._safe_float(r.get('b2b_avg')),
-                    'overall_avg': self._safe_float(r.get('overall_avg')),
+                    'rested_avg': safe_float(r.get('rested_avg')),
+                    'b2b_avg': safe_float(r.get('b2b_avg')),
+                    'overall_avg': safe_float(r.get('overall_avg')),
                     'rest_impact': rest_impact,
                     'sample_games': sample_games
                 },
@@ -540,18 +541,6 @@ class TonightTrendPlaysExporter(BaseExporter):
                 'rest': 0
             }
         }
-
-    def _safe_float(self, value) -> Optional[float]:
-        """Convert to float, handling None and special values."""
-        if value is None:
-            return None
-        try:
-            f = float(value)
-            if f != f:  # NaN check
-                return None
-            return round(f, 2)
-        except (TypeError, ValueError):
-            return None
 
     def export(self, game_date: str = None) -> str:
         """

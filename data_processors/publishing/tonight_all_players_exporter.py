@@ -13,6 +13,7 @@ from collections import defaultdict
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from .exporter_utils import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -367,7 +368,7 @@ class TonightAllPlayersExporter(BaseExporter):
 
                     # Fatigue and rest
                     'fatigue_level': p.get('fatigue_level', 'normal'),
-                    'fatigue_score': self._safe_float(p.get('fatigue_score')),
+                    'fatigue_score': safe_float(p.get('fatigue_score')),
                     'days_rest': p.get('days_rest'),
 
                     # Injury
@@ -375,9 +376,9 @@ class TonightAllPlayersExporter(BaseExporter):
                     'injury_reason': p.get('injury_reason'),
 
                     # Season stats
-                    'season_ppg': self._safe_float(p.get('season_ppg')),
-                    'season_mpg': self._safe_float(p.get('season_mpg')),
-                    'last_5_ppg': self._safe_float(p.get('last_5_ppg')),
+                    'season_ppg': safe_float(p.get('season_ppg')),
+                    'season_mpg': safe_float(p.get('season_mpg')),
+                    'last_5_ppg': safe_float(p.get('last_5_ppg')),
                     'games_played': games_played,
 
                     # Edge case flags
@@ -389,7 +390,7 @@ class TonightAllPlayersExporter(BaseExporter):
                 player_data['last_10_points'] = last_10.get('points', [])
 
                 if p.get('has_line'):
-                    line_value = self._safe_float(p.get('current_points_line'))
+                    line_value = safe_float(p.get('current_points_line'))
                     player_data['props'] = [{
                         'stat_type': 'points',
                         'line': line_value,
@@ -398,8 +399,8 @@ class TonightAllPlayersExporter(BaseExporter):
                     }]
                     # Keep prediction data for our analytics (not in frontend spec but useful)
                     player_data['prediction'] = {
-                        'predicted': self._safe_float(p.get('predicted_points')),
-                        'confidence': self._safe_float(p.get('confidence_score')),
+                        'predicted': safe_float(p.get('predicted_points')),
+                        'confidence': safe_float(p.get('confidence_score')),
                         'recommendation': p.get('recommendation'),
                     }
                     player_data['last_10_results'] = last_10.get('results', [])
@@ -432,18 +433,6 @@ class TonightAllPlayersExporter(BaseExporter):
             })
 
         return games_data
-
-    def _safe_float(self, value) -> Optional[float]:
-        """Convert to float, handling None and special values."""
-        if value is None:
-            return None
-        try:
-            f = float(value)
-            if f != f:  # NaN check
-                return None
-            return round(f, 2)
-        except (TypeError, ValueError):
-            return None
 
     def _empty_response(self, target_date: str) -> Dict[str, Any]:
         """Return empty response for dates with no games."""

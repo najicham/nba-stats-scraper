@@ -23,6 +23,7 @@ from datetime import date, datetime
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from .exporter_utils import safe_float
 from shared.utils.schedule import NBAScheduleService
 
 logger = logging.getLogger(__name__)
@@ -235,11 +236,11 @@ class BounceBackExporter(BaseExporter):
                     'date': str(r['last_game_date']),
                     'result': r['last_game_points'],
                     'opponent': r['last_game_opponent'],
-                    'margin': -self._safe_float(r['shortfall']),  # Negative since below average
+                    'margin': -safe_float(r['shortfall']),  # Negative since below average
                 },
-                'season_average': self._safe_float(r['season_average']),
-                'shortfall': self._safe_float(r['shortfall']),
-                'bounce_back_rate': self._safe_float(r['bounce_back_rate']),
+                'season_average': safe_float(r['season_average']),
+                'shortfall': safe_float(r['shortfall']),
+                'bounce_back_rate': safe_float(r['bounce_back_rate']),
                 'bounce_back_sample': r['bounce_back_sample'],
                 'significance': r['significance']
             }
@@ -286,25 +287,13 @@ class BounceBackExporter(BaseExporter):
 
         if results:
             return {
-                'avg_bounce_back_rate': self._safe_float(results[0]['avg_bounce_back_rate']),
+                'avg_bounce_back_rate': safe_float(results[0]['avg_bounce_back_rate']),
                 'sample_size': results[0]['total_bad_games']
             }
         return {
             'avg_bounce_back_rate': None,
             'sample_size': 0
         }
-
-    def _safe_float(self, value) -> Optional[float]:
-        """Convert to float, handling None and special values."""
-        if value is None:
-            return None
-        try:
-            f = float(value)
-            if f != f:  # NaN check
-                return None
-            return round(f, 3)
-        except (TypeError, ValueError):
-            return None
 
     def _query_tonight_games(self, as_of_date: str) -> Dict[str, Dict]:
         """Query games scheduled for today/tonight.

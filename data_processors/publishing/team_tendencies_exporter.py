@@ -18,6 +18,7 @@ from datetime import date
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from .exporter_utils import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -126,10 +127,10 @@ class TeamTendenciesExporter(BaseExporter):
         """Format pace team entry."""
         return {
             'team': row['team_abbr'],
-            'pace': self._safe_float(row['avg_pace']),
+            'pace': safe_float(row['avg_pace']),
             'games': row['games'],
-            'avg_points': self._safe_float(row['avg_points']),
-            'vs_league': self._safe_float(row['vs_league']),
+            'avg_points': safe_float(row['avg_points']),
+            'vs_league': safe_float(row['vs_league']),
             'insight': f"{'High-scoring environment' if pace_type == 'fast' else 'Slower, grind-it-out games'}"
         }
 
@@ -189,7 +190,7 @@ class TeamTendenciesExporter(BaseExporter):
         return {
             'team': row['team_abbr'],
             'dfg_pct': round(dfg_pct * 100, 1) if dfg_pct else None,
-            'opp_ppg': self._safe_float(row['opp_ppg']),
+            'opp_ppg': safe_float(row['opp_ppg']),
             'games': row['games'],
             'insight': insight
         }
@@ -231,9 +232,9 @@ class TeamTendenciesExporter(BaseExporter):
         home_dominant = [
             {
                 'team': r['team_abbr'],
-                'home_ppg': self._safe_float(r['home_ppg']),
-                'away_ppg': self._safe_float(r['away_ppg']),
-                'differential': self._safe_float(r['home_diff']),
+                'home_ppg': safe_float(r['home_ppg']),
+                'away_ppg': safe_float(r['away_ppg']),
+                'differential': safe_float(r['home_diff']),
                 'insight': 'Much better at home - boost home player props'
             }
             for r in results[:5]
@@ -243,9 +244,9 @@ class TeamTendenciesExporter(BaseExporter):
         road_warriors = [
             {
                 'team': r['team_abbr'],
-                'home_ppg': self._safe_float(r['home_ppg']),
-                'away_ppg': self._safe_float(r['away_ppg']),
-                'differential': self._safe_float(r['home_diff']),
+                'home_ppg': safe_float(r['home_ppg']),
+                'away_ppg': safe_float(r['away_ppg']),
+                'differential': safe_float(r['home_diff']),
                 'insight': 'Consistent on the road - props less venue-dependent'
             }
             for r in results[-5:][::-1]
@@ -302,9 +303,9 @@ class TeamTendenciesExporter(BaseExporter):
         vulnerable = [
             {
                 'team': r['team_abbr'],
-                'b2b_ppg': self._safe_float(r['b2b_ppg']),
-                'rested_ppg': self._safe_float(r['rested_ppg']),
-                'impact': self._safe_float(r['b2b_impact']),
+                'b2b_ppg': safe_float(r['b2b_ppg']),
+                'rested_ppg': safe_float(r['rested_ppg']),
+                'impact': safe_float(r['b2b_impact']),
                 'b2b_games': r['b2b_games'],
                 'insight': 'Struggles on back-to-backs - fade player props'
             }
@@ -315,9 +316,9 @@ class TeamTendenciesExporter(BaseExporter):
         resilient = [
             {
                 'team': r['team_abbr'],
-                'b2b_ppg': self._safe_float(r['b2b_ppg']),
-                'rested_ppg': self._safe_float(r['rested_ppg']),
-                'impact': self._safe_float(r['b2b_impact']),
+                'b2b_ppg': safe_float(r['b2b_ppg']),
+                'rested_ppg': safe_float(r['rested_ppg']),
+                'impact': safe_float(r['b2b_impact']),
                 'b2b_games': r['b2b_games'],
                 'insight': 'Handles B2B well - props less affected by schedule'
             }
@@ -328,18 +329,6 @@ class TeamTendenciesExporter(BaseExporter):
             'vulnerable': vulnerable,
             'resilient': resilient
         }
-
-    def _safe_float(self, value) -> Optional[float]:
-        """Convert to float, handling None and special values."""
-        if value is None:
-            return None
-        try:
-            f = float(value)
-            if f != f:  # NaN check
-                return None
-            return round(f, 2)
-        except (TypeError, ValueError):
-            return None
 
     def export(self, as_of_date: str = None) -> str:
         """

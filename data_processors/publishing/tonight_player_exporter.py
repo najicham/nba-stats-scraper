@@ -12,6 +12,7 @@ from datetime import date
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from .exporter_utils import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +96,7 @@ class TonightPlayerExporter(BaseExporter):
                 'opponent': context.get('opponent_team_abbr'),
                 'home_game': context.get('home_game'),
                 'team_abbr': context.get('team_abbr'),
-                'line': self._safe_float(prediction.get('current_points_line') if prediction else None),
+                'line': safe_float(prediction.get('current_points_line') if prediction else None),
                 'days_rest': context.get('days_rest'),
                 'is_back_to_back': context.get('back_to_back'),
                 'injury_status': context.get('injury_status', 'available'),
@@ -211,7 +212,7 @@ class TonightPlayerExporter(BaseExporter):
                 score = None
 
             return {
-                'score': self._safe_float(score),
+                'score': safe_float(score),
                 'level': level,
                 'context': r.get('fatigue_context_json')  # JSON with factor breakdown
             }
@@ -260,12 +261,12 @@ class TonightPlayerExporter(BaseExporter):
                 'opponent': r['opponent_team_abbr'],
                 'home_game': is_home,
                 'points': r['points'],
-                'minutes': self._safe_float(r['minutes_played']),
+                'minutes': safe_float(r['minutes_played']),
                 'fg': f"{r['fg_makes']}/{r['fg_attempts']}" if r['fg_attempts'] else None,
                 'three': f"{r['three_pt_makes']}/{r['three_pt_attempts']}" if r['three_pt_attempts'] else None,
                 'ft': f"{r['ft_makes']}/{r['ft_attempts']}" if r['ft_attempts'] else None,
                 'over_under': r['over_under_result'],
-                'line': self._safe_float(r['points_line']),
+                'line': safe_float(r['points_line']),
                 'margin': int(r['points'] - r['points_line']) if r['points_line'] else None
             })
 
@@ -332,13 +333,13 @@ class TonightPlayerExporter(BaseExporter):
         if results:
             r = results[0]
             return {
-                'season_ppg': self._safe_float(r.get('season_ppg')),
-                'season_mpg': self._safe_float(r.get('season_mpg')),
+                'season_ppg': safe_float(r.get('season_ppg')),
+                'season_mpg': safe_float(r.get('season_mpg')),
                 'games_played': r.get('games_played'),
-                'last_10_ppg': self._safe_float(r.get('last_10_ppg')),
-                'last_10_mpg': self._safe_float(r.get('last_10_mpg')),
-                'last_5_ppg': self._safe_float(r.get('last_5_ppg')),
-                'last_5_mpg': self._safe_float(r.get('last_5_mpg')),
+                'last_10_ppg': safe_float(r.get('last_10_ppg')),
+                'last_10_mpg': safe_float(r.get('last_10_mpg')),
+                'last_5_ppg': safe_float(r.get('last_5_ppg')),
+                'last_5_mpg': safe_float(r.get('last_5_mpg')),
             }
 
         return {}
@@ -495,8 +496,8 @@ class TonightPlayerExporter(BaseExporter):
             return {
                 'rank': r.get('rank_ppg'),
                 'tier_label': r.get('tier_label'),
-                'ppg_allowed': self._safe_float(r.get('opponent_points_per_game')),
-                'def_rating': self._safe_float(r.get('defensive_rating_last_15'))
+                'ppg_allowed': safe_float(r.get('opponent_points_per_game')),
+                'def_rating': safe_float(r.get('defensive_rating_last_15'))
             }
 
         return None
@@ -633,26 +634,14 @@ class TonightPlayerExporter(BaseExporter):
     def _format_prediction(self, prediction: Dict) -> Dict[str, Any]:
         """Format prediction data for output."""
         return {
-            'predicted_points': self._safe_float(prediction.get('predicted_points')),
-            'confidence_score': self._safe_float(prediction.get('confidence_score')),
+            'predicted_points': safe_float(prediction.get('predicted_points')),
+            'confidence_score': safe_float(prediction.get('confidence_score')),
             'recommendation': prediction.get('recommendation'),
-            'line': self._safe_float(prediction.get('current_points_line')),
-            'edge': self._safe_float(prediction.get('line_margin')),
-            'pace_adjustment': self._safe_float(prediction.get('pace_adjustment')),
+            'line': safe_float(prediction.get('current_points_line')),
+            'edge': safe_float(prediction.get('line_margin')),
+            'pace_adjustment': safe_float(prediction.get('pace_adjustment')),
             'similar_games': prediction.get('similar_games_count')
         }
-
-    def _safe_float(self, value) -> Optional[float]:
-        """Convert to float, handling None and special values."""
-        if value is None:
-            return None
-        try:
-            f = float(value)
-            if f != f:  # NaN check
-                return None
-            return round(f, 2)
-        except (TypeError, ValueError):
-            return None
 
     def _empty_response(self, player_lookup: str, target_date: str) -> Dict[str, Any]:
         """Return empty response when player has no game."""

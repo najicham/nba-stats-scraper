@@ -211,7 +211,7 @@ class LiveGradingExporter(BaseExporter):
             logger.info(f"Found {len(results)} predictions for {target_date}")
             return results
         except Exception as e:
-            logger.error(f"Failed to query predictions: {e}")
+            logger.error(f"Failed to query predictions: {e}", exc_info=True)
             return []
 
     def _build_player_lookup_cache(self) -> None:
@@ -236,7 +236,7 @@ class LiveGradingExporter(BaseExporter):
                     self._player_lookup_cache[bdl_id] = row.get('player_lookup')
             logger.info(f"Built player lookup cache with {len(self._player_lookup_cache)} players")
         except Exception as e:
-            logger.error(f"Failed to build player lookup cache: {e}")
+            logger.error(f"Failed to build player lookup cache: {e}", exc_info=True)
 
     def _fetch_live_box_scores(self) -> List[Dict]:
         """Fetch live box scores from BallDontLie API with retry logic."""
@@ -258,7 +258,7 @@ class LiveGradingExporter(BaseExporter):
             return live_boxes
 
         except requests.RequestException as e:
-            logger.error(f"Failed to fetch live box scores after retries: {e}")
+            logger.error(f"Failed to fetch live box scores after retries: {e}", exc_info=True)
             return []
 
     @retry_with_jitter(

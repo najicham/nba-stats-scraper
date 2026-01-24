@@ -24,6 +24,7 @@ from datetime import date
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from .exporter_utils import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -217,9 +218,9 @@ class PlayerSeasonExporter(BaseExporter):
 
         # Classify shot profile
         shot_profile = 'balanced'
-        paint = self._safe_float(r.get('pct_paint'))
-        three = self._safe_float(r.get('pct_three'))
-        mid = self._safe_float(r.get('pct_mid_range'))
+        paint = safe_float(r.get('pct_paint'))
+        three = safe_float(r.get('pct_three'))
+        mid = safe_float(r.get('pct_mid_range'))
 
         if paint and paint >= 0.50:
             shot_profile = 'interior'
@@ -269,16 +270,16 @@ class PlayerSeasonExporter(BaseExporter):
         r = results[0]
         return {
             'games': r['games'],
-            'ppg': self._safe_float(r.get('ppg')),
-            'rpg': self._safe_float(r.get('rpg')),
-            'apg': self._safe_float(r.get('apg')),
-            'spg': self._safe_float(r.get('spg')),
-            'bpg': self._safe_float(r.get('bpg')),
-            'topg': self._safe_float(r.get('topg')),
-            'fg_pct': self._safe_float(r.get('fg_pct')),
-            'three_pct': self._safe_float(r.get('three_pct')),
-            'ft_pct': self._safe_float(r.get('ft_pct')),
-            'minutes': self._safe_float(r.get('minutes')),
+            'ppg': safe_float(r.get('ppg')),
+            'rpg': safe_float(r.get('rpg')),
+            'apg': safe_float(r.get('apg')),
+            'spg': safe_float(r.get('spg')),
+            'bpg': safe_float(r.get('bpg')),
+            'topg': safe_float(r.get('topg')),
+            'fg_pct': safe_float(r.get('fg_pct')),
+            'three_pct': safe_float(r.get('three_pct')),
+            'ft_pct': safe_float(r.get('ft_pct')),
+            'minutes': safe_float(r.get('minutes')),
         }
 
     def _query_current_form(self, player_lookup: str, season_year: int) -> Dict[str, Any]:
@@ -339,8 +340,8 @@ class PlayerSeasonExporter(BaseExporter):
         # 50% hit rate + 25% streak + 25% margin
         hit_rate = r['overs_l10'] / r['games_l10'] if r.get('games_l10', 0) > 0 else 0.5
         streak_factor = min(r.get('streak_length', 0) / 10, 1.0)
-        l5 = self._safe_float(r.get('l5_avg')) or 0
-        season = self._safe_float(r.get('season_avg')) or 1
+        l5 = safe_float(r.get('l5_avg')) or 0
+        season = safe_float(r.get('season_avg')) or 1
         margin_factor = min(max((l5 - season + 10) / 20, 0), 1) if season > 0 else 0.5
 
         heat_score = round(10 * (0.5 * hit_rate + 0.25 * streak_factor + 0.25 * margin_factor), 1)
@@ -362,8 +363,8 @@ class PlayerSeasonExporter(BaseExporter):
             'temperature': temperature,
             'current_streak': r.get('streak_length', 0),
             'streak_direction': r.get('first_result', '').lower() if r.get('first_result') else None,
-            'l5_avg': self._safe_float(r.get('l5_avg')),
-            'l10_avg': self._safe_float(r.get('l10_avg')),
+            'l5_avg': safe_float(r.get('l5_avg')),
+            'l10_avg': safe_float(r.get('l10_avg')),
             'hit_rate_l10': round(hit_rate, 2) if r.get('games_l10', 0) > 0 else None,
         }
 
@@ -407,11 +408,11 @@ class PlayerSeasonExporter(BaseExporter):
 
         r = results[0]
         patterns = []
-        overall = self._safe_float(r.get('overall_avg')) or 0
+        overall = safe_float(r.get('overall_avg')) or 0
 
         # Rest sensitivity (threshold: 2.5+ PPG diff, strong if 4+)
-        rested = self._safe_float(r.get('rested_avg'))
-        b2b = self._safe_float(r.get('b2b_avg'))
+        rested = safe_float(r.get('rested_avg'))
+        b2b = safe_float(r.get('b2b_avg'))
         if rested and b2b and overall > 0:
             rest_diff = rested - b2b
             if rest_diff >= 2.5:
@@ -429,8 +430,8 @@ class PlayerSeasonExporter(BaseExporter):
                 })
 
         # Home performer (threshold: 2.5+ PPG diff, strong if 4+)
-        home = self._safe_float(r.get('home_avg'))
-        away = self._safe_float(r.get('away_avg'))
+        home = safe_float(r.get('home_avg'))
+        away = safe_float(r.get('away_avg'))
         if home and away and overall > 0:
             home_diff = home - away
             if home_diff >= 2.5:
@@ -523,8 +524,8 @@ class PlayerSeasonExporter(BaseExporter):
                 'points': r['points'],
                 'rebounds': r['rebounds'],
                 'assists': r['assists'],
-                'minutes': self._safe_float(r.get('minutes_played')),
-                'line': self._safe_float(r.get('line')),
+                'minutes': safe_float(r.get('minutes_played')),
+                'line': safe_float(r.get('line')),
                 'result': r.get('result'),
                 'team_won': r.get('team_won'),
             }
@@ -588,8 +589,8 @@ class PlayerSeasonExporter(BaseExporter):
         for r in results:
             splits[r['split_type']] = {
                 'games': r['games'],
-                'ppg': self._safe_float(r.get('ppg')),
-                'over_rate': self._safe_float(r.get('over_rate')),
+                'ppg': safe_float(r.get('ppg')),
+                'over_rate': safe_float(r.get('over_rate')),
             }
 
         return splits
@@ -622,23 +623,11 @@ class PlayerSeasonExporter(BaseExporter):
             {
                 'month': r['month'],
                 'games': r['games'],
-                'ppg': self._safe_float(r.get('ppg')),
-                'over_rate': self._safe_float(r.get('over_rate')),
+                'ppg': safe_float(r.get('ppg')),
+                'over_rate': safe_float(r.get('over_rate')),
             }
             for r in results
         ]
-
-    def _safe_float(self, value) -> Optional[float]:
-        """Convert to float, handling None and special values."""
-        if value is None:
-            return None
-        try:
-            f = float(value)
-            if f != f:  # NaN check
-                return None
-            return round(f, 2) if abs(f) < 1 else round(f, 1)
-        except (TypeError, ValueError):
-            return None
 
     def _empty_response(self, player_lookup: str, season: str, reason: str) -> Dict[str, Any]:
         """Return empty response when no data available."""

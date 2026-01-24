@@ -12,6 +12,7 @@ from datetime import date, timedelta
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from .exporter_utils import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -225,33 +226,33 @@ class SystemPerformanceExporter(BaseExporter):
                         'predictions': metrics.get('last_7_predictions'),
                         'recommendations': metrics.get('last_7_recommendations'),
                         'correct': metrics.get('last_7_correct'),
-                        'win_rate': self._safe_float(metrics.get('last_7_win_rate')),
-                        'mae': self._safe_float(metrics.get('last_7_mae')),
-                        'bias': self._safe_float(metrics.get('last_7_bias'))
+                        'win_rate': safe_float(metrics.get('last_7_win_rate')),
+                        'mae': safe_float(metrics.get('last_7_mae')),
+                        'bias': safe_float(metrics.get('last_7_bias'))
                     },
                     'last_30_days': {
                         'predictions': metrics.get('last_30_predictions'),
                         'recommendations': metrics.get('last_30_recommendations'),
                         'correct': metrics.get('last_30_correct'),
-                        'win_rate': self._safe_float(metrics.get('last_30_win_rate')),
-                        'mae': self._safe_float(metrics.get('last_30_mae')),
-                        'bias': self._safe_float(metrics.get('last_30_bias'))
+                        'win_rate': safe_float(metrics.get('last_30_win_rate')),
+                        'mae': safe_float(metrics.get('last_30_mae')),
+                        'bias': safe_float(metrics.get('last_30_bias'))
                     },
                     'season': {
                         'predictions': metrics.get('season_predictions'),
                         'recommendations': metrics.get('season_recommendations'),
                         'correct': metrics.get('season_correct'),
-                        'win_rate': self._safe_float(metrics.get('season_win_rate')),
-                        'mae': self._safe_float(metrics.get('season_mae')),
-                        'bias': self._safe_float(metrics.get('season_bias'))
+                        'win_rate': safe_float(metrics.get('season_win_rate')),
+                        'mae': safe_float(metrics.get('season_mae')),
+                        'bias': safe_float(metrics.get('season_bias'))
                     }
                 },
                 'breakdown': {
-                    'over_win_rate': self._safe_float(metrics.get('over_win_rate')),
-                    'under_win_rate': self._safe_float(metrics.get('under_win_rate')),
-                    'within_3_pct': self._safe_float(metrics.get('within_3_pct')),
-                    'within_5_pct': self._safe_float(metrics.get('within_5_pct')),
-                    'high_confidence_win_rate': self._safe_float(metrics.get('high_conf_win_rate'))
+                    'over_win_rate': safe_float(metrics.get('over_win_rate')),
+                    'under_win_rate': safe_float(metrics.get('under_win_rate')),
+                    'within_3_pct': safe_float(metrics.get('within_3_pct')),
+                    'within_5_pct': safe_float(metrics.get('within_5_pct')),
+                    'high_confidence_win_rate': safe_float(metrics.get('high_conf_win_rate'))
                 }
             }
 
@@ -278,29 +279,17 @@ class SystemPerformanceExporter(BaseExporter):
         return {
             'best_mae': {
                 'system_id': best_mae[0],
-                'value': self._safe_float(best_mae[1].get('season_mae'))
+                'value': safe_float(best_mae[1].get('season_mae'))
             },
             'best_win_rate': {
                 'system_id': best_win_rate[0],
-                'value': self._safe_float(best_win_rate[1].get('season_win_rate'))
+                'value': safe_float(best_win_rate[1].get('season_win_rate'))
             },
             'lowest_bias': {
                 'system_id': lowest_bias[0],
-                'value': self._safe_float(lowest_bias[1].get('season_bias'))
+                'value': safe_float(lowest_bias[1].get('season_bias'))
             }
         }
-
-    def _safe_float(self, value) -> Optional[float]:
-        """Convert to float, handling None and special values."""
-        if value is None:
-            return None
-        try:
-            f = float(value)
-            if f != f:  # NaN check
-                return None
-            return f
-        except (TypeError, ValueError):
-            return None
 
     def _empty_response(self, as_of_date: str) -> Dict[str, Any]:
         """Return empty response when no data available."""

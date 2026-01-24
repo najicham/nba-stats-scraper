@@ -11,6 +11,7 @@ from typing import Dict, List, Any, Optional
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from .exporter_utils import safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -86,10 +87,10 @@ class PlayerProfileExporter(BaseExporter):
                 'team': p.get('team_abbr'),
                 'games_predicted': p['games_predicted'],
                 'recommendations': p['recommendations'],
-                'mae': self._safe_float(p['mae']),
-                'win_rate': self._safe_float(p['win_rate']),
-                'bias': self._safe_float(p['bias']),
-                'within_5_pct': self._safe_float(p['within_5_pct'])
+                'mae': safe_float(p['mae']),
+                'win_rate': safe_float(p['win_rate']),
+                'bias': safe_float(p['bias']),
+                'within_5_pct': safe_float(p['within_5_pct'])
             })
 
         # Sort by games predicted descending
@@ -142,12 +143,12 @@ class PlayerProfileExporter(BaseExporter):
                 'games_predicted': summary['games_predicted'],
                 'total_recommendations': summary['recommendations'],
                 'correct': summary['correct'],
-                'mae': self._safe_float(summary['mae']),
-                'win_rate': self._safe_float(summary['win_rate']),
-                'bias': self._safe_float(summary['bias']),
-                'avg_confidence': self._safe_float(summary['avg_confidence']),
-                'within_3_pct': self._safe_float(summary['within_3_pct']),
-                'within_5_pct': self._safe_float(summary['within_5_pct']),
+                'mae': safe_float(summary['mae']),
+                'win_rate': safe_float(summary['win_rate']),
+                'bias': safe_float(summary['bias']),
+                'avg_confidence': safe_float(summary['avg_confidence']),
+                'within_3_pct': safe_float(summary['within_3_pct']),
+                'within_5_pct': safe_float(summary['within_5_pct']),
                 'date_range': {
                     'first': str(summary['first_date']) if summary.get('first_date') else None,
                     'last': str(summary['last_date']) if summary.get('last_date') else None
@@ -284,8 +285,8 @@ class PlayerProfileExporter(BaseExporter):
             breakdown[rec.lower()] = {
                 'count': r['count'],
                 'correct': r['correct'],
-                'win_rate': self._safe_float(r['win_rate']),
-                'mae': self._safe_float(r['mae'])
+                'win_rate': safe_float(r['win_rate']),
+                'mae': safe_float(r['mae'])
             }
         return breakdown
 
@@ -340,7 +341,7 @@ class PlayerProfileExporter(BaseExporter):
                 'home_game': r.get('home_game'),
                 'team_result': 'W' if r.get('team_win') else 'L',
                 'points': r['points'],
-                'minutes': self._safe_float(r.get('minutes_played')),
+                'minutes': safe_float(r.get('minutes_played')),
                 'fg': f"{r['fg_makes']}/{r['fg_attempts']}" if r.get('fg_attempts') else None,
                 'three': f"{r['three_pt_makes']}/{r['three_pt_attempts']}" if r.get('three_pt_attempts') else None,
                 'ft': f"{r['ft_makes']}/{r['ft_attempts']}" if r.get('ft_attempts') else None,
@@ -349,9 +350,9 @@ class PlayerProfileExporter(BaseExporter):
                 'steals': r.get('steals'),
                 'blocks': r.get('blocks'),
                 'turnovers': r.get('turnovers'),
-                'line': self._safe_float(r.get('points_line')),
+                'line': safe_float(r.get('points_line')),
                 'over_under': r.get('over_under_result'),
-                'margin': self._safe_float(r.get('margin'))
+                'margin': safe_float(r.get('margin'))
             })
         return formatted
 
@@ -428,36 +429,36 @@ class PlayerProfileExporter(BaseExporter):
         return {
             'rest': {
                 'b2b': {
-                    'avg': self._safe_float(r.get('b2b_avg')),
+                    'avg': safe_float(r.get('b2b_avg')),
                     'games': r.get('b2b_games', 0),
-                    'vs_line_pct': self._safe_float(r.get('b2b_vs_line_pct'))
+                    'vs_line_pct': safe_float(r.get('b2b_vs_line_pct'))
                 },
                 'one_day': {
-                    'avg': self._safe_float(r.get('one_day_avg')),
+                    'avg': safe_float(r.get('one_day_avg')),
                     'games': r.get('one_day_games', 0),
-                    'vs_line_pct': self._safe_float(r.get('one_day_vs_line_pct'))
+                    'vs_line_pct': safe_float(r.get('one_day_vs_line_pct'))
                 },
                 'two_day': {
-                    'avg': self._safe_float(r.get('two_day_avg')),
+                    'avg': safe_float(r.get('two_day_avg')),
                     'games': r.get('two_day_games', 0),
-                    'vs_line_pct': self._safe_float(r.get('two_day_vs_line_pct'))
+                    'vs_line_pct': safe_float(r.get('two_day_vs_line_pct'))
                 },
                 'three_plus': {
-                    'avg': self._safe_float(r.get('three_plus_avg')),
+                    'avg': safe_float(r.get('three_plus_avg')),
                     'games': r.get('three_plus_games', 0),
-                    'vs_line_pct': self._safe_float(r.get('three_plus_vs_line_pct'))
+                    'vs_line_pct': safe_float(r.get('three_plus_vs_line_pct'))
                 }
             },
             'location': {
                 'home': {
-                    'avg': self._safe_float(r.get('home_avg')),
+                    'avg': safe_float(r.get('home_avg')),
                     'games': r.get('home_games', 0),
-                    'vs_line_pct': self._safe_float(r.get('home_vs_line_pct'))
+                    'vs_line_pct': safe_float(r.get('home_vs_line_pct'))
                 },
                 'away': {
-                    'avg': self._safe_float(r.get('away_avg')),
+                    'avg': safe_float(r.get('away_avg')),
                     'games': r.get('away_games', 0),
-                    'vs_line_pct': self._safe_float(r.get('away_vs_line_pct'))
+                    'vs_line_pct': safe_float(r.get('away_vs_line_pct'))
                 }
             },
             'opponents': self._query_opponent_splits(player_lookup)
@@ -486,9 +487,9 @@ class PlayerProfileExporter(BaseExporter):
         return [
             {
                 'team': r['opponent_team_abbr'],
-                'avg': self._safe_float(r['avg']),
+                'avg': safe_float(r['avg']),
                 'games': r['games'],
-                'vs_line_pct': self._safe_float(r['vs_line_pct'])
+                'vs_line_pct': safe_float(r['vs_line_pct'])
             }
             for r in results
         ]
@@ -539,24 +540,24 @@ class PlayerProfileExporter(BaseExporter):
             'overall': {
                 'wins': r.get('wins', 0),
                 'losses': r.get('losses', 0),
-                'pct': self._safe_float(r.get('overall_pct'))
+                'pct': safe_float(r.get('overall_pct'))
             },
             'over_calls': {
                 'total': r.get('over_calls', 0),
                 'wins': r.get('over_wins', 0),
                 'losses': r.get('over_losses', 0),
-                'pct': self._safe_float(r.get('over_pct'))
+                'pct': safe_float(r.get('over_pct'))
             },
             'under_calls': {
                 'total': r.get('under_calls', 0),
                 'wins': r.get('under_wins', 0),
                 'losses': r.get('under_losses', 0),
-                'pct': self._safe_float(r.get('under_pct'))
+                'pct': safe_float(r.get('under_pct'))
             },
-            'avg_error': self._safe_float(r.get('avg_error')),
-            'bias': self._safe_float(r.get('bias')),
-            'within_3_pts': self._safe_float(r.get('within_3_pts')),
-            'within_5_pts': self._safe_float(r.get('within_5_pts'))
+            'avg_error': safe_float(r.get('avg_error')),
+            'bias': safe_float(r.get('bias')),
+            'within_3_pts': safe_float(r.get('within_3_pts')),
+            'within_5_pts': safe_float(r.get('within_5_pts'))
         }
 
     def _query_recent_news(self, player_lookup: str, limit: int = 5) -> List[Dict]:
@@ -674,13 +675,13 @@ class PlayerProfileExporter(BaseExporter):
                 'game_date': str(r['game_date']),
                 'game_id': r['game_id'],
                 'opponent': r['opponent_team_abbr'],
-                'predicted': self._safe_float(r['predicted_points']),
+                'predicted': safe_float(r['predicted_points']),
                 'actual': r['actual_points'],
-                'line': self._safe_float(r['line_value']),
+                'line': safe_float(r['line_value']),
                 'recommendation': r['recommendation'],
                 'result': result,
-                'error': self._safe_float(r['absolute_error']),
-                'confidence': self._safe_float(r['confidence_score'])
+                'error': safe_float(r['absolute_error']),
+                'confidence': safe_float(r['confidence_score'])
             })
         return formatted
 
@@ -725,18 +726,6 @@ class PlayerProfileExporter(BaseExporter):
             interp['sample_size'] = "Large sample size"
 
         return interp
-
-    def _safe_float(self, value) -> Optional[float]:
-        """Convert to float, handling None and special values."""
-        if value is None:
-            return None
-        try:
-            f = float(value)
-            if f != f:  # NaN check
-                return None
-            return round(f, 3)
-        except (TypeError, ValueError):
-            return None
 
     def _empty_player_response(self, player_lookup: str) -> Dict[str, Any]:
         """Return empty response for unknown player."""
