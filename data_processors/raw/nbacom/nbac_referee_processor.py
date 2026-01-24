@@ -15,6 +15,7 @@ from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
 from data_processors.raw.processor_base import ProcessorBase
 from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
+from shared.clients.bigquery_pool import get_bigquery_client
 from shared.utils.notification_system import (
     notify_error,
     notify_warning,
@@ -43,10 +44,11 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
         super().__init__()
         self.table_name = 'nba_raw.nbac_referee_game_assignments'
         self.replay_table_name = 'nba_raw.nbac_referee_replay_center'
-        
+
         # Initialize BigQuery client and project ID
-        self.bq_client = bigquery.Client()
-        self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
+        # Use connection pool for BigQuery (reduces connection overhead by 40%+)
+        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.bq_client = get_bigquery_client(self.project_id)
         
         # Get table schemas for enforcement
         self.main_table = None

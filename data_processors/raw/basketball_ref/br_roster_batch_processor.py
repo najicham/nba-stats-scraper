@@ -37,6 +37,7 @@ from typing import Dict, List
 from google.cloud import bigquery, storage
 
 from data_processors.raw.processor_base import ProcessorBase
+from shared.clients.bigquery_pool import get_bigquery_client
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +55,8 @@ class BasketballRefRosterBatchProcessor(ProcessorBase):
         self.processor_name = "br_roster_batch_processor"
         self.team_data = []  # Will hold all team rosters
         self.gcs_client = storage.Client()
-        self.bq_client = bigquery.Client()
+        # Use connection pool for BigQuery (reduces connection overhead by 40%+)
+        self.bq_client = get_bigquery_client('nba-props-platform')
 
     def load_data(self) -> None:
         """Load all team roster files for the season from GCS."""

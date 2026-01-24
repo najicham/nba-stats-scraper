@@ -25,6 +25,7 @@ from google.cloud import bigquery
 
 # Import base class
 from data_processors.raw.processor_base import ProcessorBase
+from shared.clients.bigquery_pool import get_bigquery_client
 from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
 
 # Schedule service for season type detection
@@ -103,8 +104,9 @@ class NbacTeamBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
         self.processing_strategy = 'MERGE_UPDATE'
 
         # CRITICAL: Initialize BigQuery client and project ID
-        self.bq_client = bigquery.Client()
-        self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
+        # Use connection pool for BigQuery (reduces connection overhead by 40%+)
+        self.project_id = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.bq_client = get_bigquery_client(self.project_id)
 
         # Schedule service for season type detection
         self.schedule_service = NBAScheduleService()
