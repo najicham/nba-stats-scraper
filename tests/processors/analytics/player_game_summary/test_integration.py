@@ -253,21 +253,32 @@ class TestValidationMethods:
 
 class TestDataExtraction:
     """Test extract_raw_data() and related methods."""  # FIXED: correct method name
-    
+
     @pytest.fixture
     def processor(self):
         """Create processor with mocked BigQuery client."""
         proc = PlayerGameSummaryProcessor()
         proc.bq_client = Mock()
+        proc.bq_client.project = 'test-project'
         proc.project_id = 'test-project'
         proc.opts = {
             'start_date': '2025-01-15',
             'end_date': '2025-01-15'
         }
-        
+
+        # Make query().result() return an empty iterable by default
+        mock_query_result = Mock()
+        mock_query_result.result.return_value = []  # Return empty iterable
+        mock_query_result.to_dataframe.return_value = pd.DataFrame()
+        proc.bq_client.query.return_value = mock_query_result
+
         # Mock source tracking
         proc.build_source_tracking_fields = Mock(return_value={})
-        
+
+        # Mock methods that use BQ client with iterables
+        proc.should_skip_processing = Mock(return_value=(False, None))
+        proc.get_previous_source_hashes = Mock(return_value={})
+
         return proc
     
     @pytest.fixture
@@ -358,18 +369,30 @@ class TestDataExtraction:
 
 class TestFullETLPipeline:
     """Test complete ETL workflow end-to-end."""
-    
+
     @pytest.fixture
     def processor(self):
         """Create processor with full mock setup."""
         proc = PlayerGameSummaryProcessor()
         proc.bq_client = Mock()
+        proc.bq_client.project = 'test-project'
         proc.project_id = 'test-project'
         proc.opts = {
             'start_date': '2025-01-15',
             'end_date': '2025-01-15'
         }
-        
+
+        # Mock BQ client methods with proper return values
+        mock_query_result = Mock()
+        mock_query_result.result.return_value = []
+        mock_query_result.to_dataframe.return_value = pd.DataFrame()
+        proc.bq_client.query.return_value = mock_query_result
+
+        # Mock load_table_from_json for save_registry_failures
+        mock_load_job = Mock()
+        mock_load_job.errors = None  # No errors
+        proc.bq_client.load_table_from_json.return_value = mock_load_job
+
         # Mock registry
         proc.registry = Mock()
         proc.registry.get_universal_ids_batch = Mock(return_value={

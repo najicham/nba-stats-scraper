@@ -57,12 +57,35 @@ for module_name in google_modules:
     sys.modules[module_name] = MagicMock()
 
 # Create mock exception classes that can be raised/caught
+# These must inherit from BaseException to work in except clauses
+class MockNotFound(Exception):
+    """Mock NotFound exception."""
+    pass
+
+class MockBadRequest(Exception):
+    """Mock BadRequest exception."""
+    pass
+
+class MockGoogleAPIError(Exception):
+    """Mock GoogleAPIError exception."""
+    pass
+
+class MockConflict(Exception):
+    """Mock Conflict exception."""
+    pass
+
 mock_exceptions = MagicMock()
-mock_exceptions.NotFound = type('NotFound', (Exception,), {})
-mock_exceptions.BadRequest = type('BadRequest', (Exception,), {})
-mock_exceptions.GoogleAPIError = type('GoogleAPIError', (Exception,), {})
-mock_exceptions.Conflict = type('Conflict', (Exception,), {})
+mock_exceptions.NotFound = MockNotFound
+mock_exceptions.BadRequest = MockBadRequest
+mock_exceptions.GoogleAPIError = MockGoogleAPIError
+mock_exceptions.Conflict = MockConflict
 sys.modules['google.cloud.exceptions'] = mock_exceptions
+
+# Also add to google.api_core.exceptions for analytics_base.py compatibility
+mock_api_core_exceptions = MagicMock()
+mock_api_core_exceptions.GoogleAPIError = MockGoogleAPIError
+mock_api_core_exceptions.NotFound = MockNotFound
+sys.modules['google.api_core.exceptions'] = mock_api_core_exceptions
 
 # Mock google.auth.default to return mock credentials
 mock_auth = MagicMock()
@@ -123,19 +146,26 @@ def test_date_range():
 def mock_processor():
     """
     Create a mock processor instance for integration tests.
-    
+
     Returns processor with mocked BigQuery client and pre-configured options.
     """
     from data_processors.analytics.team_defense_game_summary.team_defense_game_summary_processor import (
         TeamDefenseGameSummaryProcessor
     )
-    
+
     processor = TeamDefenseGameSummaryProcessor()
-    
-    # Mock BigQuery client
+
+    # Mock BigQuery client with proper iterable returns
     processor.bq_client = Mock()
+    processor.bq_client.project = 'test-project'
     processor.project_id = 'test-project'
-    
+
+    # Make query().result() return an empty iterable by default
+    mock_query_result = Mock()
+    mock_query_result.result.return_value = []  # Return empty iterable
+    mock_query_result.to_dataframe.return_value = pd.DataFrame()
+    processor.bq_client.query.return_value = mock_query_result
+
     # Create proper dependency check result (must be a dict with specific keys)
     dependency_check_success = {
         'all_critical_present': True,
@@ -162,7 +192,7 @@ def mock_processor():
             }
         }
     }
-    
+
     # Mock base class methods
     processor.log_quality_issue = Mock()
     processor.save_analytics = Mock()
@@ -170,20 +200,30 @@ def mock_processor():
     processor.validate_extracted_data = Mock()
     processor.check_dependencies = Mock(return_value=dependency_check_success)
     processor.track_source_usage = Mock()  # ADD: Mock this to avoid KeyError
-    
+
+    # Mock early exit mixin methods to avoid BQ calls and date checks
+    processor._has_games_scheduled = Mock(return_value=True)
+    processor._get_existing_data_count = Mock(return_value=0)
+    processor._is_too_historical = Mock(return_value=False)  # Don't skip historical dates
+    processor._is_offseason = Mock(return_value=False)  # Not offseason
+
+    # Add required processor attributes
+    # Note: processor_name is a read-only property returning __class__.__name__
+    processor.run_id = 'test-run-id'
+
     # Set default options
     processor.opts = {
         'start_date': '2024-10-21',
         'end_date': '2024-10-21'
     }
-    
+
     # Initialize stats dict
     processor.stats = {
         'extract_time': 0.5,
         'transform_time': 0.3,
         'total_runtime': 1.0
     }
-    
+
     return processor
 
 

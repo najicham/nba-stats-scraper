@@ -50,12 +50,35 @@ for module_name in google_modules:
     sys.modules[module_name] = MagicMock()
 
 # Create mock exception classes that can be raised/caught
+# These must inherit from BaseException to work in except clauses
+class MockNotFound(Exception):
+    """Mock NotFound exception."""
+    pass
+
+class MockBadRequest(Exception):
+    """Mock BadRequest exception."""
+    pass
+
+class MockGoogleAPIError(Exception):
+    """Mock GoogleAPIError exception."""
+    pass
+
+class MockConflict(Exception):
+    """Mock Conflict exception."""
+    pass
+
 mock_exceptions = MagicMock()
-mock_exceptions.NotFound = type('NotFound', (Exception,), {})
-mock_exceptions.BadRequest = type('BadRequest', (Exception,), {})
-mock_exceptions.GoogleAPIError = type('GoogleAPIError', (Exception,), {})
-mock_exceptions.Conflict = type('Conflict', (Exception,), {})
+mock_exceptions.NotFound = MockNotFound
+mock_exceptions.BadRequest = MockBadRequest
+mock_exceptions.GoogleAPIError = MockGoogleAPIError
+mock_exceptions.Conflict = MockConflict
 sys.modules['google.cloud.exceptions'] = mock_exceptions
+
+# Also add to google.api_core.exceptions for analytics_base.py compatibility
+mock_api_core_exceptions = MagicMock()
+mock_api_core_exceptions.GoogleAPIError = MockGoogleAPIError
+mock_api_core_exceptions.NotFound = MockNotFound
+sys.modules['google.api_core.exceptions'] = mock_api_core_exceptions
 
 # Mock google.auth.default to return mock credentials
 mock_auth = MagicMock()

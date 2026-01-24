@@ -166,6 +166,9 @@ def sample_shot_zone_data():
             'opp_three_pt_makes_pbp': 12,
             'points_in_paint_allowed': 56,  # 28 * 2
             'mid_range_points_allowed': 14,  # 7 * 2
+            'blocks_paint': 3,
+            'blocks_mid_range': 1,
+            'blocks_three_pt': 0,
             'shot_zone_source': 'bigdataball_play_by_play'
         },
         {
@@ -180,6 +183,9 @@ def sample_shot_zone_data():
             'opp_three_pt_makes_pbp': 9,
             'points_in_paint_allowed': 44,  # 22 * 2
             'mid_range_points_allowed': 18,  # 9 * 2
+            'blocks_paint': 4,
+            'blocks_mid_range': 2,
+            'blocks_three_pt': 0,
             'shot_zone_source': 'bigdataball_play_by_play'
         }
     ])
@@ -198,11 +204,12 @@ class TestDependencyConfiguration:
         assert isinstance(deps, dict)
         assert len(deps) >= 2  # At least team boxscore + player source
     
-    def test_team_boxscore_dependency_critical(self, processor):
-        """Test that nbac_team_boxscore is marked as critical."""
+    def test_team_boxscore_dependency_non_critical(self, processor):
+        """Test that nbac_team_boxscore is non-critical (can reconstruct from player boxscores)."""
         deps = processor.get_dependencies()
         assert 'nba_raw.nbac_team_boxscore' in deps
-        assert deps['nba_raw.nbac_team_boxscore']['critical'] is True
+        # Note: critical is False because we can reconstruct from player boxscores
+        assert deps['nba_raw.nbac_team_boxscore']['critical'] is False
     
     def test_gamebook_dependency_non_critical(self, processor):
         """Test that gamebook is non-critical (has fallback)."""
@@ -965,6 +972,9 @@ class TestMergeDefenseData:
                 'opp_mid_range_makes': 7,
                 'points_in_paint_allowed': 56,
                 'mid_range_points_allowed': 14,
+                'blocks_paint': 3,
+                'blocks_mid_range': 1,
+                'blocks_three_pt': 0,
                 'shot_zone_source': 'bigdataball_play_by_play'
             }
         ])

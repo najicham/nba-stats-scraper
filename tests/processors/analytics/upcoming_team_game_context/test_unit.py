@@ -836,11 +836,23 @@ class TestSourceTracking:
         processor.schedule_data = sample_schedule_data
         processor.betting_lines = pd.DataFrame()
         processor.injury_data = pd.DataFrame()
-        
+
         game = sample_schedule_data[sample_schedule_data['game_date'] == '2025-01-15'].iloc[0]
-        
-        record = processor._calculate_team_game_context(game, 'LAL', 'GSW', home_game=True)
-        
+
+        # Mock completeness data with proper structure
+        default_comp = {
+            'expected_count': 10, 'actual_count': 10, 'completeness_pct': 100.0,
+            'missing_count': 0, 'is_complete': True, 'is_production_ready': True
+        }
+        comp_l7d = {'LAL': default_comp.copy(), 'GSW': default_comp.copy()}
+        comp_l14d = {'LAL': default_comp.copy(), 'GSW': default_comp.copy()}
+
+        record = processor._calculate_team_game_context(
+            game, 'LAL', 'GSW', home_game=True,
+            comp_l7d=comp_l7d, comp_l14d=comp_l14d,
+            is_bootstrap=False, is_season_boundary=False
+        )
+
         # Verify source tracking fields present
         assert 'source_nbac_schedule_last_updated' in record
         assert 'source_nbac_schedule_rows_found' in record
@@ -922,16 +934,33 @@ class TestQualityTracking:
 
 class TestTeamGameContextCalculation:
     """Test _calculate_team_game_context() integration."""
-    
-    def test_complete_record_structure(self, processor, sample_schedule_data):
+
+    @pytest.fixture
+    def completeness_data(self):
+        """Default completeness data for tests."""
+        default_comp = {
+            'expected_count': 10, 'actual_count': 10, 'completeness_pct': 100.0,
+            'missing_count': 0, 'is_complete': True, 'is_production_ready': True
+        }
+        return {
+            'comp_l7d': {'LAL': default_comp.copy(), 'GSW': default_comp.copy(), 'BOS': default_comp.copy()},
+            'comp_l14d': {'LAL': default_comp.copy(), 'GSW': default_comp.copy(), 'BOS': default_comp.copy()}
+        }
+
+    def test_complete_record_structure(self, processor, sample_schedule_data, completeness_data):
         """Test that complete record has all required fields."""
         processor.schedule_data = sample_schedule_data
         processor.betting_lines = pd.DataFrame()
         processor.injury_data = pd.DataFrame()
-        
+
         game = sample_schedule_data[sample_schedule_data['game_date'] == '2025-01-15'].iloc[0]
-        
-        record = processor._calculate_team_game_context(game, 'LAL', 'GSW', home_game=True)
+
+        record = processor._calculate_team_game_context(
+            game, 'LAL', 'GSW', home_game=True,
+            comp_l7d=completeness_data['comp_l7d'],
+            comp_l14d=completeness_data['comp_l14d'],
+            is_bootstrap=False, is_season_boundary=False
+        )
         
         # Business keys
         assert 'team_abbr' in record
@@ -972,41 +1001,56 @@ class TestTeamGameContextCalculation:
         assert 'processed_at' in record
         assert 'created_at' in record
     
-    def test_home_vs_away_perspective(self, processor, sample_schedule_data):
+    def test_home_vs_away_perspective(self, processor, sample_schedule_data, completeness_data):
         """Test that home and away records have correct perspectives."""
         processor.schedule_data = sample_schedule_data
         processor.betting_lines = pd.DataFrame()
         processor.injury_data = pd.DataFrame()
-        
+
         game = sample_schedule_data[sample_schedule_data['game_date'] == '2025-01-15'].iloc[0]
-        
+
         # Home team record
-        home_record = processor._calculate_team_game_context(game, 'LAL', 'GSW', home_game=True)
-        
+        home_record = processor._calculate_team_game_context(
+            game, 'LAL', 'GSW', home_game=True,
+            comp_l7d=completeness_data['comp_l7d'],
+            comp_l14d=completeness_data['comp_l14d'],
+            is_bootstrap=False, is_season_boundary=False
+        )
+
         # Away team record
-        away_record = processor._calculate_team_game_context(game, 'GSW', 'LAL', home_game=False)
-        
+        away_record = processor._calculate_team_game_context(
+            game, 'GSW', 'LAL', home_game=False,
+            comp_l7d=completeness_data['comp_l7d'],
+            comp_l14d=completeness_data['comp_l14d'],
+            is_bootstrap=False, is_season_boundary=False
+        )
+
         # Verify perspectives
         assert home_record['team_abbr'] == 'LAL'
         assert home_record['opponent_team_abbr'] == 'GSW'
         assert home_record['home_game'] is True
         assert home_record['travel_miles'] == 0  # Home team doesn't travel
-        
+
         assert away_record['team_abbr'] == 'GSW'
         assert away_record['opponent_team_abbr'] == 'LAL'
         assert away_record['home_game'] is False
-    
-    def test_calculation_error_handling(self, processor, sample_schedule_data):
+
+    def test_calculation_error_handling(self, processor, sample_schedule_data, completeness_data):
         """Test that errors in sub-calculations are handled gracefully."""
         processor.schedule_data = sample_schedule_data
         processor.betting_lines = None  # Invalid data type
         processor.injury_data = pd.DataFrame()
-        
+
         game = sample_schedule_data[sample_schedule_data['game_date'] == '2025-01-15'].iloc[0]
-        
+
         # Should handle invalid betting_lines gracefully
-        record = processor._calculate_team_game_context(game, 'LAL', 'GSW', home_game=True)
-        
+        record = processor._calculate_team_game_context(
+            game, 'LAL', 'GSW', home_game=True,
+            comp_l7d=completeness_data['comp_l7d'],
+            comp_l14d=completeness_data['comp_l14d'],
+            is_bootstrap=False, is_season_boundary=False
+        )
+
         # Record should still be created (betting fields will be NULL)
         assert record is not None
         assert record['team_abbr'] == 'LAL'

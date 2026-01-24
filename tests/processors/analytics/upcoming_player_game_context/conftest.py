@@ -6,9 +6,68 @@ Mocks Google Cloud dependencies that aren't needed for unit tests.
 import sys
 from unittest.mock import MagicMock, Mock
 
-# Mock Google Cloud packages before any imports
-sys.modules['google.cloud.pubsub_v1'] = MagicMock()
-sys.modules['google.cloud.logging'] = MagicMock()
+# =============================================================================
+# COMPREHENSIVE GOOGLE CLOUD MOCKING (MUST BE FIRST!)
+# =============================================================================
+
+class MockGoogleModule(MagicMock):
+    """Mock Google module that allows submodule imports dynamically."""
+    def __getattr__(self, name):
+        return MagicMock()
+
+# Create base mock for 'google' package
+mock_google = MockGoogleModule()
+sys.modules['google'] = mock_google
+
+# Mock all google.* submodules
+google_modules = [
+    'google.auth',
+    'google.auth.credentials',
+    'google.auth.transport',
+    'google.auth.transport.requests',
+    'google.oauth2',
+    'google.oauth2.service_account',
+    'google.cloud',
+    'google.cloud.bigquery',
+    'google.cloud.exceptions',
+    'google.cloud.pubsub_v1',
+    'google.cloud.logging',
+    'google.cloud.storage',
+    'google.api_core',
+    'google.api_core.exceptions',
+]
+
+for module_name in google_modules:
+    sys.modules[module_name] = MagicMock()
+
+# Create mock exception classes
+class MockNotFound(Exception):
+    pass
+
+class MockBadRequest(Exception):
+    pass
+
+class MockGoogleAPIError(Exception):
+    pass
+
+mock_exceptions = MagicMock()
+mock_exceptions.NotFound = MockNotFound
+mock_exceptions.BadRequest = MockBadRequest
+mock_exceptions.GoogleAPIError = MockGoogleAPIError
+sys.modules['google.cloud.exceptions'] = mock_exceptions
+
+mock_api_core_exceptions = MagicMock()
+mock_api_core_exceptions.GoogleAPIError = MockGoogleAPIError
+mock_api_core_exceptions.NotFound = MockNotFound
+mock_api_core_exceptions.BadRequest = MockBadRequest
+sys.modules['google.api_core.exceptions'] = mock_api_core_exceptions
+
+# Mock google.auth.default
+mock_auth = MagicMock()
+mock_auth.default = MagicMock(return_value=(MagicMock(), 'test-project'))
+sys.modules['google.auth'] = mock_auth
+
+sys.modules['sentry_sdk'] = MagicMock()
 
 import pytest
 

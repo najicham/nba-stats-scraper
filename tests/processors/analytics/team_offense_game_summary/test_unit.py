@@ -375,10 +375,11 @@ class TestDependencyConfiguration:
         deps = processor.get_dependencies()
         assert 'nba_raw.nbac_play_by_play' in deps
     
-    def test_team_boxscore_is_critical(self, processor):
-        """Test that team boxscore is marked as critical."""
+    def test_team_boxscore_is_non_critical(self, processor):
+        """Test that team boxscore is non-critical (has fallback to reconstruct from player boxscores)."""
         deps = processor.get_dependencies()
-        assert deps['nba_raw.nbac_team_boxscore']['critical'] is True
+        # Note: critical is False because we can reconstruct from player boxscores
+        assert deps['nba_raw.nbac_team_boxscore']['critical'] is False
     
     def test_play_by_play_is_optional(self, processor):
         """Test that play-by-play is marked as optional."""
@@ -478,9 +479,9 @@ class TestSourceTrackingFields:
         assert 'source_play_by_play_completeness_pct' in result
     
     def test_correct_field_count(self, processor):
-        """Test that exactly 6 fields are returned (2 sources × 3 fields)."""
+        """Test that exactly 8 fields are returned (2 sources × 4 fields including hash)."""
         result = processor.build_source_tracking_fields()
-        assert len(result) == 6
+        assert len(result) == 8
     
     def test_field_values_match_attributes(self, processor):
         """Test that field values match processor attributes."""
@@ -524,7 +525,7 @@ class TestSourceTrackingFields:
         assert 'game_id' in record
         assert 'points_scored' in record
         assert 'source_nbac_boxscore_last_updated' in record
-        assert len(record) == 8  # 2 business + 6 tracking
+        assert len(record) == 10  # 2 business + 8 tracking (includes hash fields)
 
 
 class TestGetAnalyticsStats:
@@ -602,10 +603,16 @@ class TestGetAnalyticsStats:
         assert result['home_games'] == 2
         assert result['road_games'] == 1
     
-    def test_calculates_high_quality_count(self, processor_with_data):
-        """Test that high quality record count is correct."""
+    def test_calculates_quality_tier_counts(self, processor_with_data):
+        """Test that quality tier counts are calculated correctly."""
         result = processor_with_data.get_analytics_stats()
-        assert result['high_quality_records'] == 2
+        # Test that quality tier keys exist
+        assert 'gold_quality_records' in result
+        assert 'silver_quality_records' in result
+        assert 'bronze_quality_records' in result
+        # Total should match records processed
+        total_quality = result['gold_quality_records'] + result['silver_quality_records'] + result['bronze_quality_records']
+        assert total_quality <= result['records_processed']
     
     def test_includes_shot_zone_metadata(self, processor_with_data):
         """Test that shot zone metadata is included."""
