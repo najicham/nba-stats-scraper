@@ -39,6 +39,9 @@ venv.bak/
 # pytest cache
 .pytest_cache/
 
+# Hypothesis test database
+.hypothesis/
+
 # MyPy cache
 .mypy_cache/
 
