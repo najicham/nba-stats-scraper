@@ -4,6 +4,8 @@
 Shared utilities for NBA Props Platform prediction systems
 
 This module contains shared code used by multiple prediction components:
+- Batch staging writer for BigQuery DML operations
+- Distributed lock for preventing race conditions
 - Mock XGBoost model for testing
 - Injury filter and integration for predictions
 - Teammate impact calculations
@@ -11,7 +13,24 @@ This module contains shared code used by multiple prediction components:
 - Common validation logic (future)
 """
 
-__version__ = '2.0.0'
+__version__ = '2.1.0'
+
+# Batch staging exports (consolidated from worker/coordinator)
+from predictions.shared.batch_staging_writer import (
+    BatchStagingWriter,
+    BatchConsolidator,
+    StagingWriteResult,
+    ConsolidationResult,
+    create_batch_id,
+    get_worker_id,
+)
+
+# Distributed lock exports (consolidated from worker/coordinator)
+from predictions.shared.distributed_lock import (
+    DistributedLock,
+    LockAcquisitionError,
+    ConsolidationLock,  # Backward compatibility alias
+)
 
 # Injury handling exports
 from predictions.shared.injury_filter import (
@@ -33,6 +52,19 @@ from predictions.shared.injury_integration import (
 )
 
 __all__ = [
+    # Batch Staging Writer
+    'BatchStagingWriter',
+    'BatchConsolidator',
+    'StagingWriteResult',
+    'ConsolidationResult',
+    'create_batch_id',
+    'get_worker_id',
+
+    # Distributed Lock
+    'DistributedLock',
+    'LockAcquisitionError',
+    'ConsolidationLock',
+
     # Injury Filter (v1.0 - basic filtering)
     'InjuryFilter',
     'InjuryStatus',
