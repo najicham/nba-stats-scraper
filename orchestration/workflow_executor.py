@@ -740,6 +740,9 @@ class WorkflowExecutor:
 
         last_error_msg = None
 
+        # Get configurable timeout for this scraper (before loop so it's available in except blocks)
+        scraper_timeout = self._get_scraper_timeout(scraper_name)
+
         for attempt in range(1, max_retries + 1):
             try:
                 # Call scraper service via POST /scrape
@@ -751,8 +754,8 @@ class WorkflowExecutor:
                 logger.debug(f"Calling scraper service: POST {url}")
                 logger.debug(f"Payload: {json.dumps(parameters, indent=2)}")
 
-                # Use pooled HTTP session for connection reuse
-                session = get_http_session(timeout=self.SCRAPER_TIMEOUT)
+                # Use pooled HTTP session with per-scraper configurable timeout
+                session = get_http_session(timeout=scraper_timeout)
                 response = session.post(url, json=parameters)
 
                 duration = (datetime.now(timezone.utc) - start_time).total_seconds()
@@ -823,7 +826,7 @@ class WorkflowExecutor:
 
             except requests.Timeout:
                 duration = (datetime.now(timezone.utc) - start_time).total_seconds()
-                error_msg = f"Timeout after {self.SCRAPER_TIMEOUT}s"
+                error_msg = f"Timeout after {scraper_timeout}s"
                 last_error_msg = error_msg
                 logger.warning(f"Timeout: {error_msg}")
 
