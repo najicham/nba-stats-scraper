@@ -15,10 +15,10 @@ This project consolidates all identified improvements from codebase analysis, ha
 | Priority | Total | Completed | In Progress | Remaining |
 |----------|-------|-----------|-------------|-----------|
 | P0 - Critical | 10 | 10 | 0 | 0 |
-| P1 - High | 25 | 23 | 1 | 1 |
-| P2 - Medium | 37 | 3 | 0 | 34 |
+| P1 - High | 25 | 23 | 0 | 2 |
+| P2 - Medium | 37 | 6 | 0 | 31 |
 | P3 - Low | 26 | 0 | 0 | 26 |
-| **Total** | **98** | **36** | **1** | **61** |
+| **Total** | **98** | **39** | **0** | **59** |
 
 ---
 
@@ -306,9 +306,10 @@ This project consolidates all identified improvements from codebase analysis, ha
 
 ### Monitoring
 
-- [ ] **P2-13: Add percentile latency tracking**
-  - Issue: Only threshold-based tracking
-  - Solution: Track P50, P95, P99 latencies
+- [x] **P2-13: Add percentile latency tracking** ✅ FIXED
+  - Status: Completed
+  - Files: `monitoring/pipeline_latency_tracker.py`
+  - Solution: Added P50/P95/P99 using APPROX_QUANTILES in get_historical_latency_stats()
 
 - [ ] **P2-14: Add BigQuery cost tracking**
   - Issue: Budget overruns possible
@@ -355,8 +356,10 @@ This project consolidates all identified improvements from codebase analysis, ha
 
 - [ ] **P2-29: Add data validation schemas per scraper**
 - [ ] **P2-30: Add dependency row count validation**
-- [ ] **P2-31: Update circuit breaker hardcodes**
-  - Issue: 5 processor files with inconsistent values
+- [x] **P2-31: Update circuit breaker hardcodes** ✅ FIXED
+  - Status: Completed
+  - Files: `shared/constants/resilience.py`, `shared/config/circuit_breaker_config.py`
+  - Solution: Created centralized resilience constants, updated circuit breaker config to use them
 - [ ] **P2-32: Add Firestore document cleanup**
 - [ ] **P2-33: Per-system prediction success rates**
 - [ ] **P2-34: Rate limiting implementation**
@@ -371,11 +374,11 @@ This project consolidates all identified improvements from codebase analysis, ha
   - Files: `br_roster_processor.py`, `nbac_scoreboard_v2_processor.py`
   - Solution: Added `logger.debug()` to temp table cleanup handlers
 
-- [ ] **P2-37: Add infinite loop timeout guards**
-  - Status: Not Started
-  - Issue: 19 files use `while True:` without max iteration limits
-  - Files: `bdl_utils.py`, `scraper_base.py`, others
-  - Solution: Add configurable max iterations + timeout safeguards
+- [x] **P2-37: Add infinite loop timeout guards** ✅ FIXED
+  - Status: Completed
+  - Files: `bigdataball_discovery.py`, `bdl_teams.py` (others already had guards)
+  - Solution: Added MAX_PAGES guards using centralized constants from shared/constants/resilience.py
+  - Note: bp_player_props.py, bp_mlb_props_historical.py, bdl_utils.py already had proper guards
 
 ---
 
@@ -446,6 +449,9 @@ This project consolidates all identified improvements from codebase analysis, ha
 | 2026-01-23 | P1-18 | Pagination cursor validation | Added max_pages guard to cursor_paginate() in bdl_utils.py |
 | 2026-01-24 | NEW | Grading layer validators | Created all 5 validators (62 checks total): prediction_accuracy (15), system_daily_performance (12), performance_summary (14), mlb_prediction_grading (10), mlb_shadow_mode (11) |
 | 2026-01-24 | NEW | Retry config expansion | Added 4 HIGH priority scrapers: oddsa_events, bp_events, nbac_player_movement, espn_scoreboard_api (now 28 total) |
+| 2026-01-24 | P2-31 | Centralize resilience constants | Created shared/constants/resilience.py with circuit breaker, retry, pagination constants |
+| 2026-01-24 | P2-37 | Add infinite loop guards | Added MAX_PAGES guards to bigdataball_discovery.py, bdl_teams.py |
+| 2026-01-24 | P2-13 | Add percentile latency tracking | Added P50/P95/P99 to pipeline_latency_tracker.py using APPROX_QUANTILES |
 
 ---
 

@@ -577,20 +577,29 @@ class PipelineLatencyTracker:
             days: Number of days to look back
 
         Returns:
-            Dict with historical latency statistics
+            Dict with historical latency statistics including P50/P95/P99 percentiles
         """
         query = f"""
+        WITH base_stats AS (
+            SELECT
+                total_latency_seconds
+            FROM `{self.project_id}.{LATENCY_METRICS_TABLE}`
+            WHERE date > DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+              AND total_latency_seconds IS NOT NULL
+        )
         SELECT
             AVG(total_latency_seconds) as avg_latency_seconds,
             MIN(total_latency_seconds) as min_latency_seconds,
             MAX(total_latency_seconds) as max_latency_seconds,
             STDDEV(total_latency_seconds) as stddev_latency_seconds,
+            -- Percentile tracking for better anomaly detection
+            APPROX_QUANTILES(total_latency_seconds, 100)[OFFSET(50)] as p50_latency_seconds,
+            APPROX_QUANTILES(total_latency_seconds, 100)[OFFSET(95)] as p95_latency_seconds,
+            APPROX_QUANTILES(total_latency_seconds, 100)[OFFSET(99)] as p99_latency_seconds,
             COUNT(*) as sample_count,
             COUNTIF(total_latency_seconds > {THRESHOLDS['total_pipeline']}) as warning_count,
             COUNTIF(total_latency_seconds > {THRESHOLDS['critical_total']}) as critical_count
-        FROM `{self.project_id}.{LATENCY_METRICS_TABLE}`
-        WHERE date > DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
-          AND total_latency_seconds IS NOT NULL
+        FROM base_stats
         """
 
         try:
@@ -608,6 +617,13 @@ class PipelineLatencyTracker:
                 'min_latency_seconds': int(row['min_latency_seconds']) if row['min_latency_seconds'] else None,
                 'max_latency_seconds': int(row['max_latency_seconds']) if row['max_latency_seconds'] else None,
                 'stddev_seconds': round(float(row['stddev_latency_seconds']), 1) if row['stddev_latency_seconds'] else None,
+                # Percentile metrics for anomaly detection
+                'p50_latency_seconds': int(row['p50_latency_seconds']) if row['p50_latency_seconds'] else None,
+                'p50_latency_minutes': round(float(row['p50_latency_seconds']) / 60, 1) if row['p50_latency_seconds'] else None,
+                'p95_latency_seconds': int(row['p95_latency_seconds']) if row['p95_latency_seconds'] else None,
+                'p95_latency_minutes': round(float(row['p95_latency_seconds']) / 60, 1) if row['p95_latency_seconds'] else None,
+                'p99_latency_seconds': int(row['p99_latency_seconds']) if row['p99_latency_seconds'] else None,
+                'p99_latency_minutes': round(float(row['p99_latency_seconds']) / 60, 1) if row['p99_latency_seconds'] else None,
                 'warning_count': int(row['warning_count']),
                 'critical_count': int(row['critical_count']),
             }

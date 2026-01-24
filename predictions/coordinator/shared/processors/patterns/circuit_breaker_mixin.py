@@ -5,8 +5,8 @@ Prevents infinite retry loops by tracking failures and opening circuit after thr
 
 Example:
     class PlayerGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase):
-        CIRCUIT_BREAKER_THRESHOLD = 5  # Open after 5 failures
-        CIRCUIT_BREAKER_TIMEOUT = timedelta(minutes=30)  # Stay open 30 min
+        # Uses defaults from shared.constants.resilience
+        pass
 
 Circuit States:
 - CLOSED: Normal operation
@@ -20,6 +20,11 @@ from collections import defaultdict
 import logging
 
 from google.cloud import bigquery
+
+from shared.constants.resilience import (
+    CIRCUIT_BREAKER_THRESHOLD as DEFAULT_CIRCUIT_BREAKER_THRESHOLD,
+    CIRCUIT_BREAKER_TIMEOUT as DEFAULT_CIRCUIT_BREAKER_TIMEOUT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +42,9 @@ class CircuitBreakerMixin:
     _circuit_breaker_opened_at = {}
     _circuit_breaker_alerts_sent = set()
 
-    # Configuration (override in subclass)
-    CIRCUIT_BREAKER_THRESHOLD = 5  # Open after N failures
-    CIRCUIT_BREAKER_TIMEOUT = timedelta(minutes=30)  # Stay open for this long
+    # Configuration (override in subclass or use defaults from shared.constants.resilience)
+    CIRCUIT_BREAKER_THRESHOLD = DEFAULT_CIRCUIT_BREAKER_THRESHOLD
+    CIRCUIT_BREAKER_TIMEOUT = DEFAULT_CIRCUIT_BREAKER_TIMEOUT
 
     def _get_circuit_key(self, start_date: str, end_date: str) -> str:
         """

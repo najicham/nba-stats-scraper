@@ -164,12 +164,23 @@ class BdlTeams(ScraperBase, ScraperFlaskMixin):
     # Transform (handles future pagination)
     # ------------------------------------------------------------------ #
     def transform_data(self) -> None:
+        # Import max pages from centralized constants
+        from shared.constants.resilience import BDL_MAX_PAGES
+
         try:
             teams: List[Dict[str, Any]] = []
             page_json: Dict[str, Any] = self.decoded_data
             pages_fetched = 1
 
             while True:
+                # Safety guard: prevent infinite loops
+                if pages_fetched > BDL_MAX_PAGES:
+                    logger.warning(
+                        f"Reached maximum page limit ({BDL_MAX_PAGES}), "
+                        f"stopping pagination with {len(teams)} teams"
+                    )
+                    break
+
                 teams.extend(page_json.get("data", []))
 
                 # BDL v1 paginates with meta.next_page (int) or next_page_url (str)

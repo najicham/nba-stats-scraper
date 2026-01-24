@@ -282,11 +282,22 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
         all_files = []
         page_token = None
         page_num = 0
-        
+
+        # Import max pages from centralized constants
+        from shared.constants.resilience import BIGDATABALL_MAX_PAGES
+
         try:
             while True:
                 page_num += 1
-                
+
+                # Safety guard: prevent infinite loops
+                if page_num > BIGDATABALL_MAX_PAGES:
+                    logger.warning(
+                        f"Reached maximum page limit ({BIGDATABALL_MAX_PAGES}), "
+                        f"stopping pagination with {len(all_files)} files"
+                    )
+                    break
+
                 # Build request parameters
                 request_params = {
                     'q': query,

@@ -17,12 +17,19 @@ Usage in processors:
         CIRCUIT_BREAKER_THRESHOLD = CIRCUIT_BREAKER_THRESHOLD
         CIRCUIT_BREAKER_TIMEOUT = CIRCUIT_BREAKER_TIMEOUT
 
-Version: 1.0
+Version: 1.1
 Created: 2026-01-24
+Updated: 2026-01-24 - Import defaults from shared.constants.resilience
 """
 
 import os
 from datetime import timedelta
+
+# Import centralized defaults from resilience constants
+from shared.constants.resilience import (
+    CIRCUIT_BREAKER_THRESHOLD as BASE_THRESHOLD,
+    CIRCUIT_BREAKER_TIMEOUT_MINUTES as BASE_TIMEOUT_MINUTES,
+)
 
 
 def _get_env_int(key: str, default: int) -> int:
@@ -48,18 +55,20 @@ def _get_env_float(key: str, default: float) -> float:
 
 
 # ============================================================
-# CIRCUIT BREAKER DEFAULTS
+# CIRCUIT BREAKER DEFAULTS (with env var override support)
 # ============================================================
 
 # Number of consecutive failures before opening circuit
 # Higher = more tolerant of transient failures
 # Lower = faster failure detection
-CIRCUIT_BREAKER_THRESHOLD = _get_env_int('CIRCUIT_BREAKER_THRESHOLD', 5)
+# Base default from: shared.constants.resilience
+CIRCUIT_BREAKER_THRESHOLD = _get_env_int('CIRCUIT_BREAKER_THRESHOLD', BASE_THRESHOLD)
 
 # Minutes to keep circuit open before trying half-open state
 # Higher = longer recovery time, less load on failing systems
 # Lower = faster recovery attempts
-CIRCUIT_BREAKER_TIMEOUT_MINUTES = _get_env_int('CIRCUIT_BREAKER_TIMEOUT_MINUTES', 30)
+# Base default from: shared.constants.resilience
+CIRCUIT_BREAKER_TIMEOUT_MINUTES = _get_env_int('CIRCUIT_BREAKER_TIMEOUT_MINUTES', BASE_TIMEOUT_MINUTES)
 CIRCUIT_BREAKER_TIMEOUT = timedelta(minutes=CIRCUIT_BREAKER_TIMEOUT_MINUTES)
 
 
