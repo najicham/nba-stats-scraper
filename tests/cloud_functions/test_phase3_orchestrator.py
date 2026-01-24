@@ -99,7 +99,7 @@ def test_parse_pubsub_message_invalid():
 # TEST: Atomic Transaction Logic
 # ============================================================================
 
-@patch('orchestrators.phase3_to_phase4.main.db')
+@patch('orchestration.cloud_functions.phase3_to_phase4.main.db')
 def test_update_completion_first_processor(mock_db_instance):
     """Test registering first processor (1/5 complete)."""
     doc_ref = Mock()
@@ -137,7 +137,7 @@ def test_update_completion_first_processor(mock_db_instance):
         assert written_data['_completed_count'] == 1
 
 
-@patch('orchestrators.phase3_to_phase4.main.db')
+@patch('orchestration.cloud_functions.phase3_to_phase4.main.db')
 def test_update_completion_last_processor_triggers(mock_db_instance):
     """Test registering 5th processor triggers Phase 4."""
     doc_ref = Mock()
@@ -182,7 +182,7 @@ def test_update_completion_last_processor_triggers(mock_db_instance):
         assert written_data['_completed_count'] == 5
 
 
-@patch('orchestrators.phase3_to_phase4.main.db')
+@patch('orchestration.cloud_functions.phase3_to_phase4.main.db')
 def test_update_completion_duplicate_message(mock_db_instance):
     """Test idempotency - duplicate message doesn't re-add processor."""
     doc_ref = Mock()
@@ -215,8 +215,8 @@ def test_update_completion_duplicate_message(mock_db_instance):
 # TEST: Entity Change Aggregation
 # ============================================================================
 
-@patch('orchestrators.phase3_to_phase4.main.publisher')
-@patch('orchestrators.phase3_to_phase4.main.db')
+@patch('orchestration.cloud_functions.phase3_to_phase4.main.publisher')
+@patch('orchestration.cloud_functions.phase3_to_phase4.main.db')
 def test_trigger_phase4_aggregates_entities(mock_db, mock_publisher):
     """Test that Phase 4 trigger aggregates entities_changed from all processors."""
     # Setup Firestore data with multiple processors and their entities
@@ -284,7 +284,7 @@ def test_trigger_phase4_aggregates_entities(mock_db, mock_publisher):
 # TEST: Helper Functions
 # ============================================================================
 
-@patch('orchestrators.phase3_to_phase4.main.db')
+@patch('orchestration.cloud_functions.phase3_to_phase4.main.db')
 def test_get_completion_status_not_started(mock_db):
     """Test status when no processors have run."""
     doc_ref = Mock()
@@ -304,7 +304,7 @@ def test_get_completion_status_not_started(mock_db):
     assert status['expected_count'] == EXPECTED_PROCESSORS
 
 
-@patch('orchestrators.phase3_to_phase4.main.db')
+@patch('orchestration.cloud_functions.phase3_to_phase4.main.db')
 def test_get_completion_status_in_progress(mock_db):
     """Test status when some processors complete."""
     doc_ref = Mock()
@@ -329,7 +329,7 @@ def test_get_completion_status_in_progress(mock_db):
     assert status['expected_count'] == EXPECTED_PROCESSORS
 
 
-@patch('orchestrators.phase3_to_phase4.main.db')
+@patch('orchestration.cloud_functions.phase3_to_phase4.main.db')
 def test_get_completion_status_triggered(mock_db):
     """Test status when all complete and triggered."""
     doc_ref = Mock()
