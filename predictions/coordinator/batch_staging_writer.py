@@ -480,8 +480,17 @@ class BatchConsolidator:
 
             return duplicate_count
 
+        except gcp_exceptions.BadRequest as e:
+            logger.error(f"BigQuery syntax error checking for duplicates: {e}")
+            return -1
+        except gcp_exceptions.NotFound as e:
+            logger.error(f"BigQuery table not found checking for duplicates: {e}")
+            return -1
+        except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
+            logger.error(f"BigQuery timeout/unavailable checking for duplicates: {e}")
+            return -1
         except Exception as e:
-            logger.error(f"Error checking for duplicates: {e}")
+            logger.error(f"Unexpected error checking for duplicates ({type(e).__name__}): {e}")
             # Return -1 to indicate validation error (not the same as 0 duplicates)
             return -1
 
@@ -503,8 +512,12 @@ class BatchConsolidator:
                 self.bq_client.delete_table(table_id, not_found_ok=True)
                 deleted_count += 1
                 logger.debug(f"Deleted staging table: {table_id}")
+            except gcp_exceptions.Forbidden as e:
+                logger.warning(f"Permission denied deleting staging table {table_id}: {e}")
+            except gcp_exceptions.ServiceUnavailable as e:
+                logger.warning(f"Service unavailable deleting staging table {table_id}: {e}")
             except Exception as e:
-                logger.warning(f"Failed to delete staging table {table_id}: {e}")
+                logger.warning(f"Unexpected error deleting staging table {table_id} ({type(e).__name__}): {e}")
 
         logger.info(f"Cleaned up {deleted_count}/{len(staging_tables)} staging tables for batch={batch_id}")
         return deleted_count
@@ -759,8 +772,14 @@ class BatchConsolidator:
                             f"(created: {full_table.created})"
                         )
 
+                except gcp_exceptions.NotFound as e:
+                    logger.debug(f"Staging table already deleted: {table.table_id}")
+                except gcp_exceptions.Forbidden as e:
+                    logger.warning(f"Permission denied checking/deleting table {table.table_id}: {e}")
+                except gcp_exceptions.ServiceUnavailable as e:
+                    logger.warning(f"Service unavailable checking/deleting table {table.table_id}: {e}")
                 except Exception as e:
-                    logger.warning(f"Error checking/deleting table {table.table_id}: {e}")
+                    logger.warning(f"Unexpected error checking/deleting table {table.table_id} ({type(e).__name__}): {e}")
 
         logger.info(f"Cleaned up {deleted_count} orphaned staging tables")
         return deleted_count

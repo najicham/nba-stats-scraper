@@ -33,7 +33,8 @@ from predictions.worker.distributed_lock import DistributedLock, LockAcquisition
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ID = 'nba-props-platform'
+from shared.config.gcp_config import get_project_id
+PROJECT_ID = get_project_id()
 ACCURACY_TABLE = f'{PROJECT_ID}.nba_predictions.prediction_accuracy'
 ARCHETYPES_TABLE = f'{PROJECT_ID}.nba_analytics.player_archetypes'
 SUMMARY_TABLE = f'{PROJECT_ID}.nba_predictions.prediction_performance_summary'

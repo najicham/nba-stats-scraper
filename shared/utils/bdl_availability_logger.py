@@ -266,9 +266,10 @@ class BdlAvailabilityLogger:
         """Write availability records to BigQuery."""
         try:
             from google.cloud import bigquery
+            from shared.config.gcp_config import get_table_id
             client = bigquery.Client()
 
-            table_id = "nba-props-platform.nba_orchestration.bdl_game_scrape_attempts"
+            table_id = get_table_id("nba_orchestration", "bdl_game_scrape_attempts")
 
             rows = []
             for r in records:

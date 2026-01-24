@@ -86,7 +86,8 @@ def log_proxy_result(
         }
 
         # Insert to BigQuery (streaming insert)
-        table_ref = "nba-props-platform.nba_orchestration.proxy_health_metrics"
+        from shared.config.gcp_config import get_table_id
+        table_ref = get_table_id("nba_orchestration", "proxy_health_metrics")
         errors = client.insert_rows_json(table_ref, [row])
 
         if errors:

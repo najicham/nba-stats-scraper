@@ -55,7 +55,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Constants
-PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
+from shared.config.gcp_config import get_project_id
+PROJECT_ID = get_project_id()
 LATENCY_METRICS_TABLE = 'nba_analytics.pipeline_latency_metrics'
 
 # Latency thresholds (in seconds)

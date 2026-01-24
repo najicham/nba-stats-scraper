@@ -40,7 +40,7 @@ else:
     logger.info("Sentry DSN not configured - error monitoring disabled")
 
 import enum
-from typing import Callable
+from typing import Callable, Dict, Any, Optional, List
 import requests
 from shared.clients.http_pool import get_http_session
 
@@ -246,10 +246,16 @@ class ScraperBase:
     ##########################################################################
     # Main Entrypoint for the Lifecycle (Enhanced with Sentry + Notifications)
     ##########################################################################
-    def run(self, opts=None):
+    def run(self, opts: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Enhanced run method with comprehensive Sentry tracking, error handling,
         multi-channel notifications, and Phase 1 orchestration logging.
+
+        Args:
+            opts: Configuration options for the scraper run
+
+        Returns:
+            Dictionary containing run statistics and status
         """
         if opts is None:
             opts = {}
@@ -1261,7 +1267,8 @@ class ScraperBase:
     ##########################################################################
     # Option & Exporter Group Management
     ##########################################################################
-    def set_opts(self, opts):
+    def set_opts(self, opts: Dict[str, Any]) -> None:
+        """Set and process scraper options."""
         self.opts = opts
         self.proxy_url = opts.get("proxyUrl") or os.getenv("NBA_SCRAPER_PROXY")
 
@@ -1271,9 +1278,9 @@ class ScraperBase:
 
         self.opts["run_id"] = self.run_id 
 
-    def validate_opts(self):
+    def validate_opts(self) -> None:
         """
-        Ensure all required_opts are present. 
+        Ensure all required_opts are present.
         Raise if missing.
         """
         for required_opt in self.required_opts:
@@ -1395,11 +1402,22 @@ class ScraperBase:
         with sentry_sdk.start_span(op="http.request", description="Scraper API call") as span:
             span.set_tag("http.url", getattr(self, 'url', 'unknown'))
             span.set_tag("scraper.retry_count", self.download_retry_count)
-            
+
             try:
                 # Wrap the retry loop to catch max retries exception
                 try:
+                    # Safety guard: prevent infinite retry loops
+                    max_loop_iterations = 100  # Should never need more than max_retries_decode
+                    loop_iteration = 0
                     while True:
+                        loop_iteration += 1
+                        if loop_iteration > max_loop_iterations:
+                            logger.warning(
+                                f"download_and_decode exceeded {max_loop_iterations} iterations, breaking to prevent infinite loop"
+                            )
+                            raise DownloadDecodeMaxRetryException(
+                                f"Loop guard triggered after {max_loop_iterations} iterations"
+                            )
                         try:
                             self.set_http_downloader()
                             self.start_download()

@@ -87,7 +87,8 @@ class MLBRegistryReader:
         """
         self.source_name = source_name
         self.cache_ttl_seconds = cache_ttl_seconds
-        self.project_id = project_id or os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        from shared.config.gcp_config import get_project_id
+        self.project_id = project_id or get_project_id()
 
         # Table names
         if test_mode:

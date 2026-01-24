@@ -24,7 +24,8 @@ from google.cloud import bigquery
 logger = logging.getLogger(__name__)
 
 # MLB Season Configuration
-PROJECT_ID = "nba-props-platform"
+from shared.config.gcp_config import get_project_id
+PROJECT_ID = get_project_id()
 MLB_BOOTSTRAP_DAYS = 14  # Days for rolling window calculations to stabilize
 
 # MLB Season date ranges (approximate - actual dates vary slightly each year)

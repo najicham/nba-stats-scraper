@@ -23,8 +23,8 @@ from google.cloud import secretmanager
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# GCP project
-PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
+# Standardized GCP project ID - uses GCP_PROJECT_ID with fallback to GCP_PROJECT
+PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
 
 # Secret Manager client (initialized once)
 secret_client = secretmanager.SecretManagerServiceClient()

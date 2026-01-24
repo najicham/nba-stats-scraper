@@ -1,0 +1,137 @@
+# File: validation/configs/grading/performance_summary.yaml
+# Description: Validation config for multi-dimensional performance summaries
+# Created: 2026-01-24
+
+name: "performance_summary"
+description: "Validates performance summaries sliced by player, archetype, confidence, and situation"
+type: "grading"
+
+processor:
+  name: "performance_summary"
+  description: "Multi-dimensional performance slices for analysis"
+  table: "nba_predictions.performance_summary"
+  partition_required: true
+  partition_field: "summary_date"
+
+bigquery_validations:
+  enabled: true
+
+  # No duplicate summary keys
+  no_duplicates:
+    enabled: true
+    severity: "critical"
+    message: "Duplicate summary entries"
+    threshold: 0
+
+  # Player-level summaries
+  player_summaries:
+    enabled: true
+    severity: "warning"
+    min_players: 100  # Expect at least 100 players
+
+  # Archetype coverage (all player archetypes)
+  archetype_coverage:
+    enabled: true
+    severity: "warning"
+    expected_archetypes:
+      - star
+      - starter
+      - rotation
+      - bench
+      - two_way
+
+  # Confidence tier coverage (1-10 deciles)
+  confidence_tier_coverage:
+    enabled: true
+    severity: "warning"
+    expected_tiers: 10
+
+  # Situation coverage
+  situation_coverage:
+    enabled: true
+    severity: "info"
+    expected_situations:
+      - home
+      - away
+      - back_to_back
+      - rest_advantage
+
+  # Sample size validation (min records per slice)
+  sample_size:
+    enabled: true
+    severity: "warning"
+    min_sample: 10
+
+  # Rate bounds (0-1 for all rates)
+  rate_bounds:
+    enabled: true
+    severity: "warning"
+    fields:
+      - accuracy_rate
+      - within_3_rate
+      - within_5_rate
+    min: 0
+    max: 1
+
+  # MAE bounds
+  mae_bounds:
+    enabled: true
+    severity: "warning"
+    max: 50
+
+  # System coverage in summaries
+  system_coverage:
+    enabled: true
+    severity: "warning"
+    expected_systems: 5
+
+  # Consistency: archetype hierarchy
+  archetype_hierarchy:
+    enabled: true
+    severity: "info"
+    message: "Star players should have more predictions than two_way"
+
+  # Time range coverage
+  date_range_coverage:
+    enabled: true
+    severity: "warning"
+    min_days: 7
+
+  # Completeness of summary dimensions
+  dimension_completeness:
+    enabled: true
+    severity: "warning"
+
+  # Data freshness
+  freshness:
+    enabled: true
+    severity: "error"
+    max_days_stale: 3
+
+data_quality:
+  required_fields:
+    - summary_date
+    - dimension_type
+    - dimension_value
+    - total_predictions
+    - accuracy_rate
+
+  optional_fields:
+    - system_id
+    - player_lookup
+    - archetype
+    - confidence_tier
+    - situation
+    - mean_absolute_error
+    - within_3_rate
+    - within_5_rate
+    - within_10_rate
+    - sample_start_date
+    - sample_end_date
+    - processed_at
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

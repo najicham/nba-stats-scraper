@@ -26,13 +26,19 @@ Version: 1.0
 """
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 import importlib
 
 
 # Get current sport from environment (default to NBA for backward compatibility)
 CURRENT_SPORT = os.environ.get('SPORT', 'nba').lower()
+
+
+def _get_default_project_id() -> str:
+    """Get default project ID from centralized config."""
+    from shared.config.gcp_config import get_project_id
+    return get_project_id()
 
 
 @dataclass
@@ -42,8 +48,8 @@ class SportConfig:
     # Sport identifier
     sport: str
 
-    # GCP Project
-    project_id: str = 'nba-props-platform'  # TODO: Consider sport-specific projects
+    # GCP Project - uses factory default to get from gcp_config
+    project_id: str = field(default_factory=_get_default_project_id)
 
     # GCS Bucket
     bucket: str = ''

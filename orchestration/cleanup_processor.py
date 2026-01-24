@@ -25,6 +25,7 @@ from google.api_core.exceptions import GoogleAPIError
 from shared.utils.bigquery_utils import execute_bigquery, insert_bigquery_rows
 from shared.utils.notification_system import notify_warning, notify_error
 from shared.config.pubsub_topics import TOPICS
+from shared.config.gcp_config import get_project_id
 from orchestration.config_loader import WorkflowConfig
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,7 @@ class CleanupProcessor:
         )
 
         # Initialize Pub/Sub publisher for republishing missed files
-        self.project_id = project_id or os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        self.project_id = project_id or get_project_id()
         self.publisher = pubsub_v1.PublisherClient()
         self.topic_path = self.publisher.topic_path(
             self.project_id,

@@ -16,8 +16,9 @@ from shared.clients.bigquery_pool import get_bigquery_client
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ID = 'nba-props-platform'
-BUCKET_NAME = 'nba-props-platform-api'
+from shared.config.gcp_config import get_project_id, Buckets
+PROJECT_ID = get_project_id()
+BUCKET_NAME = Buckets.API
 API_VERSION = 'v1'
 
 

@@ -27,6 +27,8 @@ from datetime import datetime, date, timezone
 from typing import Dict, List, Optional
 
 from google.cloud import bigquery
+from google.api_core import exceptions as gcp_exceptions
+from google.cloud.exceptions import GoogleCloudError
 from shared.clients.bigquery_pool import get_bigquery_client
 
 # SESSION 94 FIX: Import distributed lock to prevent race conditions
@@ -37,7 +39,8 @@ from predictions.worker.distributed_lock import DistributedLock, LockAcquisition
 
 logger = logging.getLogger(__name__)
 
-PROJECT_ID = 'nba-props-platform'
+from shared.config.gcp_config import get_project_id
+PROJECT_ID = get_project_id()
 
 
 class PredictionAccuracyProcessor:
@@ -176,8 +179,20 @@ class PredictionAccuracyProcessor:
                 }
             logger.info(f"  Loaded {len(injury_map)} injury reports for {game_date}")
             return injury_map
+        except gcp_exceptions.BadRequest as e:
+            logger.warning(f"BigQuery syntax error loading injury status for {game_date}: {e}")
+            return {}
+        except gcp_exceptions.NotFound as e:
+            logger.warning(f"BigQuery table not found loading injury status for {game_date}: {e}")
+            return {}
+        except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
+            logger.warning(f"BigQuery timeout/unavailable loading injury status for {game_date}: {e}")
+            return {}
+        except GoogleCloudError as e:
+            logger.warning(f"GCP error loading injury status for {game_date}: {e}")
+            return {}
         except Exception as e:
-            logger.warning(f"Error loading injury status for {game_date}: {e}")
+            logger.warning(f"Unexpected error loading injury status for {game_date}: {type(e).__name__}: {e}")
             return {}
 
     def get_injury_status(self, player_lookup: str, game_date: date) -> Optional[Dict]:
@@ -350,8 +365,20 @@ class PredictionAccuracyProcessor:
         try:
             result = self.bq_client.query(query).to_dataframe()
             return result.to_dict('records')
+        except gcp_exceptions.BadRequest as e:
+            logger.error(f"BigQuery syntax error loading predictions for {game_date}: {e}")
+            return []
+        except gcp_exceptions.NotFound as e:
+            logger.error(f"BigQuery table not found loading predictions for {game_date}: {e}")
+            return []
+        except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
+            logger.error(f"BigQuery timeout/unavailable loading predictions for {game_date}: {e}")
+            return []
+        except GoogleCloudError as e:
+            logger.error(f"GCP error loading predictions for {game_date}: {e}")
+            return []
         except Exception as e:
-            logger.error(f"Error loading predictions for {game_date}: {e}")
+            logger.error(f"Unexpected error loading predictions for {game_date}: {type(e).__name__}: {e}", exc_info=True)
             return []
 
     def get_actuals_for_date(self, game_date: date) -> Dict[str, Dict]:
@@ -383,8 +410,23 @@ class PredictionAccuracyProcessor:
                 }
                 for _, row in result.iterrows()
             }
+        except gcp_exceptions.BadRequest as e:
+            logger.error(f"BigQuery syntax error loading actuals for {game_date}: {e}")
+            return {}
+        except gcp_exceptions.NotFound as e:
+            logger.error(f"BigQuery table not found loading actuals for {game_date}: {e}")
+            return {}
+        except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
+            logger.error(f"BigQuery timeout/unavailable loading actuals for {game_date}: {e}")
+            return {}
+        except GoogleCloudError as e:
+            logger.error(f"GCP error loading actuals for {game_date}: {e}")
+            return {}
+        except (KeyError, TypeError, ValueError) as e:
+            logger.error(f"Data parsing error loading actuals for {game_date}: {e}")
+            return {}
         except Exception as e:
-            logger.error(f"Error loading actuals for {game_date}: {e}")
+            logger.error(f"Unexpected error loading actuals for {game_date}: {type(e).__name__}: {e}", exc_info=True)
             return {}
 
     def compute_prediction_correct(
@@ -677,8 +719,20 @@ class PredictionAccuracyProcessor:
 
             return duplicate_count
 
+        except gcp_exceptions.BadRequest as e:
+            logger.error(f"BigQuery syntax error checking for duplicates: {e}")
+            return -1  # -1 = validation error
+        except gcp_exceptions.NotFound as e:
+            logger.error(f"BigQuery table not found checking for duplicates: {e}")
+            return -1
+        except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
+            logger.error(f"BigQuery timeout/unavailable checking for duplicates: {e}")
+            return -1
+        except GoogleCloudError as e:
+            logger.error(f"GCP error checking for duplicates: {e}")
+            return -1
         except Exception as e:
-            logger.error(f"Error checking for duplicates: {e}")
+            logger.error(f"Unexpected error checking for duplicates: {type(e).__name__}: {e}")
             # Don't fail grading if validation fails
             return -1  # -1 = validation error
 
@@ -771,8 +825,26 @@ class PredictionAccuracyProcessor:
 
             return rows_written
 
+        except gcp_exceptions.BadRequest as e:
+            logger.error(f"BigQuery bad request writing graded results for {game_date}: {e}")
+            return 0
+        except gcp_exceptions.NotFound as e:
+            logger.error(f"BigQuery table not found writing graded results for {game_date}: {e}")
+            return 0
+        except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
+            logger.error(f"BigQuery timeout/unavailable writing graded results for {game_date}: {e}")
+            return 0
+        except gcp_exceptions.Conflict as e:
+            logger.error(f"BigQuery DML conflict writing graded results for {game_date}: {e}")
+            return 0
+        except GoogleCloudError as e:
+            logger.error(f"GCP error writing graded results for {game_date}: {e}")
+            return 0
+        except (TypeError, ValueError) as e:
+            logger.error(f"Data serialization error writing graded results for {game_date}: {e}")
+            return 0
         except Exception as e:
-            logger.error(f"Error writing graded results for {game_date}: {e}")
+            logger.error(f"Unexpected error writing graded results for {game_date}: {type(e).__name__}: {e}", exc_info=True)
             return 0
 
     def write_graded_results(
@@ -972,8 +1044,20 @@ class PredictionAccuracyProcessor:
                 'unique_players': int(row['players']),
                 'systems': int(row['systems'])
             }
+        except gcp_exceptions.BadRequest as e:
+            logger.error(f"BigQuery syntax error checking predictions: {e}")
+            return {'exists': False, 'error': str(e)}
+        except gcp_exceptions.NotFound as e:
+            logger.error(f"BigQuery table not found checking predictions: {e}")
+            return {'exists': False, 'error': str(e)}
+        except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
+            logger.error(f"BigQuery timeout/unavailable checking predictions: {e}")
+            return {'exists': False, 'error': str(e)}
+        except GoogleCloudError as e:
+            logger.error(f"GCP error checking predictions: {e}")
+            return {'exists': False, 'error': str(e)}
         except Exception as e:
-            logger.error(f"Error checking predictions: {e}")
+            logger.error(f"Unexpected error checking predictions: {type(e).__name__}: {e}", exc_info=True)
             return {'exists': False, 'error': str(e)}
 
     def check_actuals_exist(self, game_date: date) -> Dict:
@@ -991,6 +1075,18 @@ class PredictionAccuracyProcessor:
                 'exists': count > 0,
                 'players': count
             }
+        except gcp_exceptions.BadRequest as e:
+            logger.error(f"BigQuery syntax error checking actuals: {e}")
+            return {'exists': False, 'error': str(e)}
+        except gcp_exceptions.NotFound as e:
+            logger.error(f"BigQuery table not found checking actuals: {e}")
+            return {'exists': False, 'error': str(e)}
+        except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
+            logger.error(f"BigQuery timeout/unavailable checking actuals: {e}")
+            return {'exists': False, 'error': str(e)}
+        except GoogleCloudError as e:
+            logger.error(f"GCP error checking actuals: {e}")
+            return {'exists': False, 'error': str(e)}
         except Exception as e:
-            logger.error(f"Error checking actuals: {e}")
+            logger.error(f"Unexpected error checking actuals: {type(e).__name__}: {e}", exc_info=True)
             return {'exists': False, 'error': str(e)}

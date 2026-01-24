@@ -7,13 +7,19 @@ Provides consistent access to project IDs, dataset names, and other
 GCP-specific configuration across the platform.
 
 Usage:
-    from shared.config.gcp_config import get_project_id, get_dataset_id
+    # Option 1: Import the constant directly (recommended for module-level)
+    from shared.config.gcp_config import GCP_PROJECT_ID
 
+    # Option 2: Use the function (recommended when late evaluation needed)
+    from shared.config.gcp_config import get_project_id
     project = get_project_id()
-    dataset = get_dataset_id('nba_raw')
 
-Version: 1.0
+    # Option 3: Import from shared.config package
+    from shared.config import GCP_PROJECT_ID
+
+Version: 1.1
 Created: 2026-01-24
+Updated: 2026-01-23 - Added GCP_PROJECT_ID constant for direct import
 """
 
 import os
@@ -29,8 +35,8 @@ def get_project_id() -> str:
     Get the GCP project ID.
 
     Checks environment variables in order:
-    1. GCP_PROJECT_ID (preferred)
-    2. GCP_PROJECT (legacy)
+    1. GCP_PROJECT_ID (preferred/canonical)
+    2. GCP_PROJECT (legacy, for backwards compatibility)
     3. Falls back to DEFAULT_PROJECT_ID
 
     Returns:
@@ -41,6 +47,12 @@ def get_project_id() -> str:
         os.environ.get('GCP_PROJECT') or
         DEFAULT_PROJECT_ID
     )
+
+
+# Canonical project ID constant - use this for direct imports
+# This evaluates once at module load time.
+# For dynamic evaluation (e.g., in tests that modify env vars), use get_project_id()
+GCP_PROJECT_ID = get_project_id()
 
 
 def get_dataset_id(dataset_name: str, project_id: Optional[str] = None) -> str:

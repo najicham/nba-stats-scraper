@@ -11,7 +11,8 @@ Path: shared/utils/bigquery_utils.py
 import logging
 from typing import List, Dict, Any, Optional
 from google.cloud import bigquery
-from google.cloud.exceptions import NotFound
+from google.cloud.exceptions import NotFound, GoogleCloudError
+from google.api_core import exceptions as gcp_exceptions
 
 logger = logging.getLogger(__name__)
 
@@ -55,9 +56,29 @@ def execute_bigquery(
             return [dict(row) for row in results]
         else:
             return list(results)
-            
+
+    except gcp_exceptions.BadRequest as e:
+        logger.error(f"BigQuery query syntax error: {e}")
+        logger.debug(f"Failed query: {query}")
+        return []
+    except gcp_exceptions.NotFound as e:
+        logger.error(f"BigQuery table or dataset not found: {e}")
+        logger.debug(f"Failed query: {query}")
+        return []
+    except gcp_exceptions.Forbidden as e:
+        logger.error(f"BigQuery permission denied: {e}")
+        logger.debug(f"Failed query: {query}")
+        return []
+    except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
+        logger.error(f"BigQuery service unavailable or timeout: {e}")
+        logger.debug(f"Failed query: {query}")
+        return []
+    except GoogleCloudError as e:
+        logger.error(f"BigQuery GCP error: {e}")
+        logger.debug(f"Failed query: {query}")
+        return []
     except Exception as e:
-        logger.error(f"BigQuery query failed: {e}")
+        logger.error(f"BigQuery query unexpected error: {type(e).__name__}: {e}", exc_info=True)
         logger.debug(f"Failed query: {query}")
         return []
 
@@ -125,8 +146,23 @@ def insert_bigquery_rows(
         logger.debug(f"Successfully inserted {len(rows)} rows into {table_id}")
         return True
 
+    except gcp_exceptions.BadRequest as e:
+        logger.error(f"BigQuery insert bad request (schema mismatch?): {e}")
+        return False
+    except gcp_exceptions.NotFound as e:
+        logger.error(f"BigQuery table not found for insert: {table_id}: {e}")
+        return False
+    except gcp_exceptions.Forbidden as e:
+        logger.error(f"BigQuery insert permission denied: {e}")
+        return False
+    except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
+        logger.error(f"BigQuery service unavailable or timeout during insert: {e}")
+        return False
+    except GoogleCloudError as e:
+        logger.error(f"BigQuery GCP error during insert: {e}")
+        return False
     except Exception as e:
-        logger.error(f"Failed to insert rows into {table_id}: {e}")
+        logger.error(f"Failed to insert rows into {table_id}: {type(e).__name__}: {e}", exc_info=True)
         return False
 
 
@@ -160,8 +196,14 @@ def table_exists(
         
     except NotFound:
         return False
+    except gcp_exceptions.Forbidden as e:
+        logger.error(f"Permission denied checking if table exists: {e}")
+        return False
+    except GoogleCloudError as e:
+        logger.error(f"GCP error checking if table exists: {e}")
+        return False
     except Exception as e:
-        logger.error(f"Error checking if table exists: {e}")
+        logger.error(f"Unexpected error checking if table exists: {type(e).__name__}: {e}", exc_info=True)
         return False
 
 
@@ -196,8 +238,14 @@ def get_table_row_count(
     except NotFound:
         logger.warning(f"Table not found: {table_id}")
         return 0
+    except gcp_exceptions.Forbidden as e:
+        logger.error(f"Permission denied getting row count: {e}")
+        return 0
+    except GoogleCloudError as e:
+        logger.error(f"GCP error getting row count: {e}")
+        return 0
     except Exception as e:
-        logger.error(f"Error getting row count: {e}")
+        logger.error(f"Unexpected error getting row count: {type(e).__name__}: {e}", exc_info=True)
         return 0
 
 
@@ -251,9 +299,29 @@ def execute_bigquery_with_params(
         results = query_job.result(timeout=60)
 
         return [dict(row) for row in results]
-        
+
+    except gcp_exceptions.BadRequest as e:
+        logger.error(f"BigQuery parameterized query syntax error: {e}")
+        logger.debug(f"Failed query: {query}, params: {params}")
+        return []
+    except gcp_exceptions.NotFound as e:
+        logger.error(f"BigQuery table or dataset not found: {e}")
+        logger.debug(f"Failed query: {query}, params: {params}")
+        return []
+    except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
+        logger.error(f"BigQuery service unavailable or timeout: {e}")
+        logger.debug(f"Failed query: {query}, params: {params}")
+        return []
+    except GoogleCloudError as e:
+        logger.error(f"BigQuery GCP error: {e}")
+        logger.debug(f"Failed query: {query}, params: {params}")
+        return []
+    except (TypeError, ValueError) as e:
+        logger.error(f"BigQuery parameter type error: {e}")
+        logger.debug(f"Failed query: {query}, params: {params}")
+        return []
     except Exception as e:
-        logger.error(f"Parameterized query failed: {e}")
+        logger.error(f"Parameterized query unexpected error: {type(e).__name__}: {e}", exc_info=True)
         logger.debug(f"Failed query: {query}, params: {params}")
         return []
 
@@ -289,11 +357,31 @@ def update_bigquery_rows(
         # For DML statements, get number of affected rows
         if hasattr(result, 'num_dml_affected_rows'):
             return result.num_dml_affected_rows
-        
+
         return 0
-        
+
+    except gcp_exceptions.BadRequest as e:
+        logger.error(f"DML query syntax error: {e}")
+        logger.debug(f"Failed query: {query}")
+        return 0
+    except gcp_exceptions.NotFound as e:
+        logger.error(f"DML query table or dataset not found: {e}")
+        logger.debug(f"Failed query: {query}")
+        return 0
+    except gcp_exceptions.Conflict as e:
+        logger.error(f"DML query conflict (concurrent modification?): {e}")
+        logger.debug(f"Failed query: {query}")
+        return 0
+    except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
+        logger.error(f"DML query service unavailable or timeout: {e}")
+        logger.debug(f"Failed query: {query}")
+        return 0
+    except GoogleCloudError as e:
+        logger.error(f"DML query GCP error: {e}")
+        logger.debug(f"Failed query: {query}")
+        return 0
     except Exception as e:
-        logger.error(f"DML query failed: {e}")
+        logger.error(f"DML query unexpected error: {type(e).__name__}: {e}", exc_info=True)
         logger.debug(f"Failed query: {query}")
         return 0
 

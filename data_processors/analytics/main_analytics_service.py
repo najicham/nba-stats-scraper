@@ -16,6 +16,7 @@ from flask import Flask, request, jsonify
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from shared.endpoints.health import create_health_blueprint, HealthChecker
 from shared.utils.validation import validate_game_date, validate_project_id, ValidationError
+from shared.config.gcp_config import get_project_id
 from datetime import datetime, timezone, date, timedelta
 import base64
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -252,8 +253,9 @@ def trigger_missing_boxscore_scrapes(missing_games: list, game_date: str) -> int
     try:
         from google.cloud import pubsub_v1
 
+        from shared.config.gcp_config import get_project_id
         publisher = pubsub_v1.PublisherClient()
-        topic_path = publisher.topic_path('nba-props-platform', 'nba-scraper-trigger')
+        topic_path = publisher.topic_path(get_project_id(), 'nba-scraper-trigger')
 
         # Trigger BDL box scores scraper for the entire date
         message_data = {
@@ -417,7 +419,7 @@ def process_analytics():
         opts = {
             'start_date': start_date,
             'end_date': end_date,
-            'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+            'project_id': get_project_id(),
             'triggered_by': source_table,
             'backfill_mode': message.get('backfill_mode', False)  # Support backfill mode from Pub/Sub
         }
@@ -633,7 +635,7 @@ def process_date_range():
         opts = {
             'start_date': start_date,
             'end_date': end_date,
-            'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+            'project_id': get_project_id(),
             'triggered_by': 'manual',
             'backfill_mode': backfill_mode,
             'dataset_prefix': dataset_prefix

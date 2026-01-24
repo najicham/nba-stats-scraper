@@ -30,6 +30,9 @@ import requests.exceptions
 # This prevents runaway batch jobs from exceeding the Firestore lock TTL (2 hours)
 BATCH_PROCESSOR_TIMEOUT_SECONDS = 600
 
+# Import GCP config
+from shared.config.gcp_config import get_project_id
+
 # Import notification system
 from shared.utils.notification_system import (
     notify_error,
@@ -697,7 +700,7 @@ def process_pubsub():
 
                 opts = {
                     'bucket': normalized_message.get('bucket', 'nba-scraped-data'),
-                    'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+                    'project_id': get_project_id(),
                     'metadata': metadata,
                     'execution_id': normalized_message.get('_execution_id'),
                     'workflow': normalized_message.get('_workflow', 'backfill')
@@ -771,7 +774,7 @@ def process_pubsub():
                         batch_processor = EspnRosterBatchProcessor()
                         success = batch_processor.run({
                             'bucket': bucket,
-                            'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+                            'project_id': get_project_id(),
                             'metadata': {'date': roster_date}
                         })
 
@@ -840,7 +843,7 @@ def process_pubsub():
                     batch_processor = EspnRosterBatchProcessor()
                     success = batch_processor.run({
                         'bucket': bucket,
-                        'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+                        'project_id': get_project_id(),
                         'metadata': {'date': roster_date}
                     })
 
@@ -908,7 +911,7 @@ def process_pubsub():
                         batch_processor = BasketballRefRosterBatchProcessor()
                         success = batch_processor.run({
                             'bucket': bucket,
-                            'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+                            'project_id': get_project_id(),
                             'metadata': {'season': season}
                         })
 
@@ -1008,7 +1011,7 @@ def process_pubsub():
                             # If processing exceeds timeout, we fail gracefully and update the lock
                             batch_opts = {
                                 'bucket': bucket,
-                                'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+                                'project_id': get_project_id(),
                                 'game_date': game_date
                             }
 

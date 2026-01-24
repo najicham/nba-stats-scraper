@@ -1,0 +1,132 @@
+# File: validation/configs/grading/system_daily_performance.yaml
+# Description: Validation config for system daily performance aggregates
+# Created: 2026-01-24
+
+name: "system_daily_performance"
+description: "Validates daily performance aggregates per prediction system"
+type: "grading"
+
+processor:
+  name: "system_daily_performance"
+  description: "Aggregates prediction accuracy by system and date"
+  table: "nba_predictions.system_daily_performance"
+  partition_required: true
+  partition_field: "game_date"
+
+  # Business key for this table
+  business_key:
+    - game_date
+    - system_id
+
+# Expected prediction systems
+expected_systems:
+  - moving_average_baseline_v1
+  - zone_matchup_v1
+  - similarity_balanced_v1
+  - xgboost_v1
+  - meta_ensemble_v1
+
+bigquery_validations:
+  enabled: true
+
+  # CRITICAL: No duplicate system-date combinations
+  no_duplicates:
+    enabled: true
+    severity: "critical"
+    message: "Duplicate system-date combinations indicate processing error"
+    threshold: 0
+
+  # All 5 systems present per date
+  system_coverage:
+    enabled: true
+    severity: "warning"
+    expected_systems: 5
+
+  # Minimum predictions per system per date
+  minimum_volume:
+    enabled: true
+    severity: "warning"
+    min_predictions: 20
+
+  # Accuracy rate bounds (0-1)
+  accuracy_bounds:
+    enabled: true
+    severity: "warning"
+    min: 0
+    max: 1
+
+  # MAE bounds (0-50 typical)
+  mae_bounds:
+    enabled: true
+    severity: "warning"
+    max: 50
+
+  # RMSE bounds (0-60 typical)
+  rmse_bounds:
+    enabled: true
+    severity: "warning"
+    max: 60
+
+  # Total predictions consistency
+  prediction_count_consistency:
+    enabled: true
+    severity: "warning"
+    message: "Prediction counts should be consistent across systems"
+
+  # Within-N coverage consistency
+  within_n_consistency:
+    enabled: true
+    severity: "info"
+    message: "within_3 <= within_5 <= within_10"
+
+  # Voided count bounds
+  voided_bounds:
+    enabled: true
+    severity: "info"
+    max_voided_pct: 30  # Max 30% voided per system
+
+  # Data freshness
+  freshness:
+    enabled: true
+    severity: "error"
+    max_days_stale: 2
+
+  # Cross-system comparison (no single system should dominate)
+  system_balance:
+    enabled: true
+    severity: "info"
+
+  # ROI tracking (if present)
+  roi_bounds:
+    enabled: true
+    severity: "info"
+    min: -100
+    max: 200
+
+data_quality:
+  required_fields:
+    - game_date
+    - system_id
+    - total_predictions
+    - accuracy_rate
+    - mean_absolute_error
+    - root_mean_squared_error
+
+  optional_fields:
+    - total_voided
+    - voided_pct
+    - within_3_count
+    - within_5_count
+    - within_10_count
+    - within_3_pct
+    - within_5_pct
+    - within_10_pct
+    - avg_confidence
+    - roi_pct
+    - processed_at
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

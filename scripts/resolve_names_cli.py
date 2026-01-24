@@ -122,9 +122,17 @@ class NameResolutionReviewer:
                 print(f"\nNo roster matches found for '{case['player_name_original']}'")
             
             # Get user input
+            # Safety guard: prevent infinite input loops
+            max_input_attempts = 100
+            input_attempt = 0
             while True:
+                input_attempt += 1
+                if input_attempt > max_input_attempts:
+                    print(f"Too many invalid inputs ({max_input_attempts}), skipping this case")
+                    break
+
                 action = input(f"\nAction for '{case['player_name_original']}': ").strip().lower()
-                
+
                 if action == 's':
                     print("Skipped.")
                     break

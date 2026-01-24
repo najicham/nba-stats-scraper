@@ -560,8 +560,22 @@ def create_app():
                 missing_dates = sorted(missing_dates)
                 app.logger.info(f"Found {len(missing_dates)} dates with missing {scraper_name} data")
 
+            except FileNotFoundError as e:
+                app.logger.error(f"Completeness config not found: {e}")
+                return jsonify({
+                    "status": "error",
+                    "message": f"Config file not found: {e}",
+                    "scraper_name": scraper_name
+                }), 500
+            except (KeyError, TypeError) as e:
+                app.logger.error(f"Completeness config parse error: {e}")
+                return jsonify({
+                    "status": "error",
+                    "message": f"Config parse error: {e}",
+                    "scraper_name": scraper_name
+                }), 500
             except Exception as e:
-                app.logger.error(f"Completeness check failed: {e}")
+                app.logger.error(f"Completeness check failed ({type(e).__name__}): {e}", exc_info=True)
                 return jsonify({
                     "status": "error",
                     "message": f"Completeness check failed: {e}",
@@ -621,8 +635,24 @@ def create_app():
                         })
                         failures += 1
 
+                except (ImportError, AttributeError) as e:
+                    app.logger.error(f"  Failed to load scraper for {date}: {e}")
+                    results.append({
+                        "date": date,
+                        "status": "error",
+                        "message": f"Scraper load error: {e}"
+                    })
+                    failures += 1
+                except (ValueError, KeyError, TypeError) as e:
+                    app.logger.error(f"  Data error retrying {date}: {e}")
+                    results.append({
+                        "date": date,
+                        "status": "error",
+                        "message": f"Data error: {e}"
+                    })
+                    failures += 1
                 except Exception as e:
-                    app.logger.error(f"  Failed to retry {date}: {e}")
+                    app.logger.error(f"  Failed to retry {date} ({type(e).__name__}): {e}", exc_info=True)
                     results.append({
                         "date": date,
                         "status": "error",
@@ -737,7 +767,8 @@ def create_app():
 
             app.logger.info("🔧 Running stale schedule fix...")
 
-            client = bigquery.Client(project="nba-props-platform")
+            from shared.config.gcp_config import get_project_id
+            client = bigquery.Client(project=get_project_id())
 
             # Find stale games
             query = """

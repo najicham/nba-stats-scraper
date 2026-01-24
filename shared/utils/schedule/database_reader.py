@@ -23,16 +23,17 @@ class ScheduleDatabaseReader:
     Returns None when database unavailable (signals fallback to GCS).
     """
     
-    def __init__(self, project_id: str = 'nba-props-platform', 
+    def __init__(self, project_id: str = None,
                  table_name: str = 'nba_reference.nba_schedule'):
         """
         Initialize database reader.
-        
+
         Args:
-            project_id: GCP project ID
+            project_id: GCP project ID (defaults to centralized config)
             table_name: BigQuery table with schedule data (format: dataset.table)
         """
-        self.project_id = project_id
+        from shared.config.gcp_config import get_project_id
+        self.project_id = project_id or get_project_id()
         self.table_name = table_name
         self.bq_client = bigquery.Client(project=project_id)
         

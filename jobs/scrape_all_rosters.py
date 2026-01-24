@@ -1,6 +1,17 @@
+"""
+Job script to scrape all NBA team rosters.
+
+Usage: python jobs/scrape_all_rosters.py
+"""
+import logging
 import time
+
 from config.nba_teams import NBA_TEAMS
 from scrapers.nbacom.nbac_roster import GetNbaTeamRoster
+
+# Configure logging for this job
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 for team in NBA_TEAMS:
     opts = {
@@ -8,14 +19,14 @@ for team in NBA_TEAMS:
         "group": "prod"  # or "test" if running locally
     }
 
-    print(f"Scraping roster for {team['abbr']}...")
+    logger.info(f"Scraping roster for {team['abbr']}...")
     try:
         scraper = GetNbaTeamRoster()
         result = scraper.run(opts)
-        print(f"✅ Completed {team['abbr']}, result: {result}")
+        logger.info(f"Completed {team['abbr']}, result: {result}")
     except Exception as e:
-        print(f"❌ Error scraping {team['abbr']}: {e}")
+        logger.error(f"Error scraping {team['abbr']}: {e}")
 
     time.sleep(1)  # polite delay between requests to avoid hammering NBA.com
 
-print("✅ All rosters scraped.")
+logger.info("All rosters scraped.")

@@ -1,0 +1,160 @@
+# File: validation/configs/grading/prediction_accuracy.yaml
+# Description: Validation config for NBA prediction accuracy grading
+# Created: 2026-01-24
+
+name: "prediction_accuracy"
+description: "Validates graded predictions with accuracy metrics and betting evaluation"
+type: "grading"
+
+processor:
+  name: "prediction_accuracy"
+  description: "Foundation grading table - grades predictions against actual results"
+  table: "nba_predictions.prediction_accuracy"
+  partition_required: true
+  partition_field: "game_date"
+
+  # Business key for this table (used for duplicate detection)
+  business_key:
+    - player_lookup
+    - game_id
+    - system_id
+    - line_value
+
+# Expected prediction systems (all 5 should be present)
+expected_systems:
+  - moving_average_baseline_v1
+  - zone_matchup_v1
+  - similarity_balanced_v1
+  - xgboost_v1
+  - meta_ensemble_v1
+
+bigquery_validations:
+  enabled: true
+
+  # CRITICAL: No duplicate business keys
+  no_duplicates:
+    enabled: true
+    severity: "critical"
+    message: "Duplicate business keys indicate race condition"
+    threshold: 0
+
+  # Core metrics must be populated for non-voided predictions
+  core_metrics_populated:
+    enabled: true
+    severity: "error"
+    message: "Non-voided predictions must have error metrics"
+
+  # Error bounds: absolute 0-80, signed -80 to +80
+  error_bounds:
+    enabled: true
+    severity: "error"
+    absolute_error:
+      min: 0
+      max: 80
+    signed_error:
+      min: -80
+      max: 80
+
+  # Confidence score normalization (0-1)
+  confidence_score:
+    enabled: true
+    severity: "warning"
+    min: 0
+    max: 1
+
+  # Confidence decile range (1-10)
+  confidence_decile:
+    enabled: true
+    severity: "warning"
+    min: 1
+    max: 10
+
+  # Voiding logic: is_voided=TRUE requires void_reason
+  voiding_consistency:
+    enabled: true
+    severity: "warning"
+
+  # DNP detection: 0 pts + 0 min should be voided
+  dnp_detection:
+    enabled: true
+    severity: "warning"
+
+  # Margin calculations: predicted_margin = predicted_points - line_value
+  margin_calculations:
+    enabled: true
+    severity: "warning"
+    tolerance: 0.1
+
+  # PASS/HOLD/NO_LINE should have NULL prediction_correct
+  recommendation_logic:
+    enabled: true
+    severity: "warning"
+
+  # Line coverage: >50% should have line values
+  line_coverage:
+    enabled: true
+    severity: "info"
+    min_coverage_pct: 50
+
+  # Volume per system: minimum 30 predictions per system per date
+  volume_per_system:
+    enabled: true
+    severity: "warning"
+    min_predictions: 30
+
+  # within_3_points implies within_5_points
+  within_points_consistency:
+    enabled: true
+    severity: "info"
+
+  # All 5 systems present per date
+  system_coverage:
+    enabled: true
+    severity: "warning"
+    expected_systems: 5
+
+  # Missing actuals: <5% per date
+  missing_actuals:
+    enabled: true
+    severity: "warning"
+    max_missing_pct: 5
+
+  # Data freshness: within 3 days
+  freshness:
+    enabled: true
+    severity: "error"
+    max_days_stale: 3
+
+data_quality:
+  required_fields:
+    - player_lookup
+    - game_id
+    - game_date
+    - system_id
+    - predicted_points
+    - actual_points
+
+  optional_fields:
+    - line_value
+    - line_source
+    - confidence_score
+    - confidence_decile
+    - recommendation
+    - prediction_correct
+    - absolute_error
+    - signed_error
+    - predicted_margin
+    - actual_margin
+    - is_voided
+    - void_reason
+    - within_3_points
+    - within_5_points
+    - minutes_played
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false
+  # Alert on critical issues immediately
+  critical_alert_channels: ["slack", "email"]

@@ -88,8 +88,8 @@ def log_phase_execution(
         )
     """
     try:
-        # Get environment config
-        project_id = os.environ.get('GCP_PROJECT', 'nba-props-platform')
+        # Get environment config - uses GCP_PROJECT_ID with fallback to GCP_PROJECT
+        project_id = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
         dataset = os.environ.get('ORCHESTRATION_DATASET', 'nba_orchestration')
         table = os.environ.get('PHASE_EXECUTION_LOG_TABLE', 'phase_execution_log')
 

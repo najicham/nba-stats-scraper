@@ -479,8 +479,17 @@ Examples:
         print(f"Starting continuous monitoring (refresh every {args.interval}s)")
         print("Press Ctrl+C to stop\n")
 
+        # Safety guard: max runtime of 24 hours for continuous mode
+        max_iterations = (24 * 60 * 60) // args.interval  # 24 hours worth of iterations
+        iteration = 0
+
         try:
             while True:
+                iteration += 1
+                if iteration > max_iterations:
+                    print(f"\n\nReached maximum runtime ({max_iterations} iterations), stopping")
+                    break
+
                 # Clear screen (cross-platform)
                 os.system('clear' if os.name == 'posix' else 'cls')
                 monitor.print_summary(detailed=args.detailed, failures_only=args.failures_only)

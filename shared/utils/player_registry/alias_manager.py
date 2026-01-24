@@ -60,7 +60,8 @@ class AliasManager:
         Args:
             project_id: GCP project ID (defaults to GCP_PROJECT_ID env var)
         """
-        self.project_id = project_id or os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        from shared.config.gcp_config import get_project_id
+        self.project_id = project_id or get_project_id()
         self.client = bigquery.Client(project=self.project_id)
         self.table_id = f"{self.project_id}.nba_reference.player_aliases"
 

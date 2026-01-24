@@ -25,7 +25,9 @@ import functions_framework
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
+# Standardized GCP project ID - uses centralized config
+from shared.config.gcp_config import get_project_id
+PROJECT_ID = get_project_id()
 
 # Rate limiting
 MAX_BACKFILLS_PER_RUN = 5  # Don't trigger more than 5 backfills per invocation

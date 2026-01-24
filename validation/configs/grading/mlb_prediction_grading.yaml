@@ -1,0 +1,122 @@
+# File: validation/configs/grading/mlb_prediction_grading.yaml
+# Description: Validation config for MLB pitcher strikeout prediction grading
+# Created: 2026-01-24
+
+name: "mlb_prediction_grading"
+description: "Validates MLB pitcher strikeout predictions grading"
+type: "grading"
+
+processor:
+  name: "mlb_prediction_grading"
+  description: "Grades MLB pitcher strikeout predictions against actual results"
+  table: "mlb_predictions.prediction_accuracy"
+  partition_required: true
+  partition_field: "game_date"
+
+  # Business key
+  business_key:
+    - pitcher_id
+    - game_id
+    - system_id
+    - line_value
+
+# MLB prediction systems
+expected_systems:
+  - mlb_pitcher_strikeouts_v1_4
+  - mlb_pitcher_strikeouts_v1_6
+
+bigquery_validations:
+  enabled: true
+
+  # No duplicate predictions
+  no_duplicates:
+    enabled: true
+    severity: "critical"
+    message: "Duplicate MLB prediction business keys"
+    threshold: 0
+
+  # Core grading metrics populated
+  core_metrics:
+    enabled: true
+    severity: "error"
+    required:
+      - predicted_strikeouts
+      - actual_strikeouts
+      - absolute_error
+      - signed_error
+
+  # Error bounds (0-25 for strikeouts - realistic max)
+  error_bounds:
+    enabled: true
+    severity: "warning"
+    absolute_error:
+      min: 0
+      max: 25
+    signed_error:
+      min: -25
+      max: 25
+
+  # Strikeout value bounds (0-25 typical max)
+  strikeout_bounds:
+    enabled: true
+    severity: "warning"
+    predicted:
+      min: 0
+      max: 25
+    actual:
+      min: 0
+      max: 25
+
+  # Line coverage
+  line_coverage:
+    enabled: true
+    severity: "warning"
+    min_coverage_pct: 40
+
+  # Volume per date (MLB has fewer games than NBA)
+  volume_per_date:
+    enabled: true
+    severity: "warning"
+    min_predictions: 5  # At least 5 starting pitchers
+
+  # System coverage
+  system_coverage:
+    enabled: true
+    severity: "warning"
+    expected_systems: 2
+
+  # Voiding for scratched starters
+  voiding_consistency:
+    enabled: true
+    severity: "info"
+
+  # Data freshness (MLB off-season acceptable)
+  freshness:
+    enabled: true
+    severity: "info"
+    max_days_stale: 7  # More lenient for MLB off-season
+
+data_quality:
+  required_fields:
+    - pitcher_id
+    - game_id
+    - game_date
+    - system_id
+    - predicted_strikeouts
+    - actual_strikeouts
+
+  optional_fields:
+    - line_value
+    - line_source
+    - absolute_error
+    - signed_error
+    - prediction_correct
+    - confidence_score
+    - is_voided
+    - void_reason
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false

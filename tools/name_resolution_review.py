@@ -165,10 +165,18 @@ class NameResolutionReviewCLI:
             # Auto-research
             research = self.research_player(row['original_name'], row['team_abbr'], row['season'])
             
+            # Safety guard: prevent infinite input loops (100 invalid commands max)
+            max_input_attempts = 100
+            input_attempt = 0
             while True:
+                input_attempt += 1
+                if input_attempt > max_input_attempts:
+                    print(f"Too many invalid inputs ({max_input_attempts}), skipping this name")
+                    break
+
                 try:
                     cmd = input(f"\n➤ Action for '{row['original_name']}': ").lower().strip()
-                    
+
                     if cmd in ['q', 'quit']:
                         print("Exiting review session...")
                         return

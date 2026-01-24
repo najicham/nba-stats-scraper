@@ -17,7 +17,10 @@ Version: 1.0
 """
 
 from typing import Dict, Optional
+import logging
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 class XGBoostV1:
@@ -83,6 +86,24 @@ class XGBoostV1:
         # Step 3: Make prediction
         try:
             predicted_points = float(self.model.predict(feature_vector)[0])
+        except (ValueError, TypeError) as e:
+            return {
+                'system_id': self.system_id,
+                'model_version': self.model_version,
+                'predicted_points': None,
+                'confidence_score': 0.0,
+                'recommendation': 'PASS',
+                'error': f'Model prediction value error: {str(e)}'
+            }
+        except AttributeError as e:
+            return {
+                'system_id': self.system_id,
+                'model_version': self.model_version,
+                'predicted_points': None,
+                'confidence_score': 0.0,
+                'recommendation': 'PASS',
+                'error': f'Model not loaded or invalid: {str(e)}'
+            }
         except Exception as e:
             return {
                 'system_id': self.system_id,
@@ -90,7 +111,7 @@ class XGBoostV1:
                 'predicted_points': None,
                 'confidence_score': 0.0,
                 'recommendation': 'PASS',
-                'error': f'Model prediction failed: {str(e)}'
+                'error': f'Model prediction unexpected error ({type(e).__name__}): {str(e)}'
             }
         
         # Clamp to reasonable range
@@ -193,8 +214,14 @@ class XGBoostV1:
             
             return feature_vector
             
+        except (KeyError, TypeError) as e:
+            logger.warning(f"Missing or invalid feature value: {e}")
+            return None
+        except ValueError as e:
+            logger.warning(f"Invalid feature array conversion: {e}")
+            return None
         except Exception as e:
-            logger.error(f"Error preparing feature vector: {e}", exc_info=True)
+            logger.error(f"Unexpected error preparing feature vector ({type(e).__name__}): {e}", exc_info=True)
             return None
     
     # ========================================================================
@@ -241,10 +268,24 @@ class XGBoostV1:
             
             return model
             
-        except Exception as e:
-            logger.warning(f"Could not load model from GCS: {e}")
+        except ImportError as e:
+            logger.warning(f"XGBoost or GCS library not available: {e}")
             logger.info("Falling back to mock model for testing")
-            
+            from predictions.shared.mock_xgboost_model import load_mock_model
+            return load_mock_model(seed=42)
+        except ValueError as e:
+            logger.warning(f"Invalid GCS path format: {e}")
+            logger.info("Falling back to mock model for testing")
+            from predictions.shared.mock_xgboost_model import load_mock_model
+            return load_mock_model(seed=42)
+        except FileNotFoundError as e:
+            logger.warning(f"Model file not found in GCS: {e}")
+            logger.info("Falling back to mock model for testing")
+            from predictions.shared.mock_xgboost_model import load_mock_model
+            return load_mock_model(seed=42)
+        except Exception as e:
+            logger.warning(f"Unexpected error loading model from GCS ({type(e).__name__}): {e}")
+            logger.info("Falling back to mock model for testing")
             from predictions.shared.mock_xgboost_model import load_mock_model
             return load_mock_model(seed=42)
     

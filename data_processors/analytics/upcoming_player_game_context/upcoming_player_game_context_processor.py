@@ -2430,13 +2430,21 @@ class UpcomingPlayerGameContextProcessor(
                         'category': 'CALCULATION_ERROR'
                     })
 
-            except Exception as e:
-                logger.error(f"Error calculating context for {player_lookup}: {e}")
+            except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+                logger.error(f"BigQuery error calculating context for {player_lookup}: {e}")
                 self.failed_entities.append({
                     'player_lookup': player_lookup,
                     'game_id': game_id,
                     'reason': str(e),
-                    'category': 'PROCESSING_ERROR'
+                    'category': 'BIGQUERY_ERROR'
+                })
+            except (KeyError, AttributeError, TypeError, ValueError) as e:
+                logger.error(f"Data error calculating context for {player_lookup}: {e}")
+                self.failed_entities.append({
+                    'player_lookup': player_lookup,
+                    'game_id': game_id,
+                    'reason': str(e),
+                    'category': 'DATA_ERROR'
                 })
 
         # Track registry failures for observability (v2.1 feature)
@@ -2894,8 +2902,11 @@ class UpcomingPlayerGameContextProcessor(
             self._team_travel_cache[cache_key] = metrics
             return metrics
 
-        except Exception as e:
-            logger.debug(f"Could not calculate travel context for {team_abbr}: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.debug(f"BigQuery error calculating travel context for {team_abbr}: {e}")
+            return default_metrics
+        except (KeyError, AttributeError, TypeError, ValueError) as e:
+            logger.debug(f"Data error calculating travel context for {team_abbr}: {e}")
             return default_metrics
 
     def _calculate_performance_metrics(self, historical_data: pd.DataFrame, current_points_line: Optional[float] = None) -> Dict:
@@ -3068,8 +3079,11 @@ class UpcomingPlayerGameContextProcessor(
             logger.warning(f"No pace data found for {team_abbr} vs {opponent_abbr}")
             return 0.0
 
-        except Exception as e:
-            logger.error(f"Error calculating pace differential for {team_abbr} vs {opponent_abbr}: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error calculating pace differential for {team_abbr} vs {opponent_abbr}: {e}")
+            return 0.0
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error calculating pace differential for {team_abbr} vs {opponent_abbr}: {e}")
             return 0.0
 
     def _get_opponent_pace_last_10(self, opponent_abbr: str, game_date: date) -> float:
@@ -3110,8 +3124,11 @@ class UpcomingPlayerGameContextProcessor(
 
             return 0.0
 
-        except Exception as e:
-            logger.error(f"Error getting opponent pace for {opponent_abbr}: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error getting opponent pace for {opponent_abbr}: {e}")
+            return 0.0
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error getting opponent pace for {opponent_abbr}: {e}")
             return 0.0
 
     def _get_opponent_ft_rate_allowed(self, opponent_abbr: str, game_date: date) -> float:
@@ -3152,8 +3169,11 @@ class UpcomingPlayerGameContextProcessor(
 
             return 0.0
 
-        except Exception as e:
-            logger.error(f"Error getting FT rate allowed for {opponent_abbr}: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error getting FT rate allowed for {opponent_abbr}: {e}")
+            return 0.0
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error getting FT rate allowed for {opponent_abbr}: {e}")
             return 0.0
 
     def _get_opponent_def_rating_last_10(self, opponent_abbr: str, game_date: date) -> float:
@@ -3194,8 +3214,11 @@ class UpcomingPlayerGameContextProcessor(
 
             return 0.0
 
-        except Exception as e:
-            logger.error(f"Error getting opponent def rating for {opponent_abbr}: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error getting opponent def rating for {opponent_abbr}: {e}")
+            return 0.0
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error getting opponent def rating for {opponent_abbr}: {e}")
             return 0.0
 
     def _get_opponent_off_rating_last_10(self, opponent_abbr: str, game_date: date) -> float:
@@ -3236,8 +3259,11 @@ class UpcomingPlayerGameContextProcessor(
 
             return 0.0
 
-        except Exception as e:
-            logger.error(f"Error getting opponent off rating for {opponent_abbr}: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error getting opponent off rating for {opponent_abbr}: {e}")
+            return 0.0
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error getting opponent off rating for {opponent_abbr}: {e}")
             return 0.0
 
     def _get_opponent_rebounding_rate(self, opponent_abbr: str, game_date: date) -> float:
@@ -3279,8 +3305,11 @@ class UpcomingPlayerGameContextProcessor(
 
             return 0.0
 
-        except Exception as e:
-            logger.error(f"Error getting opponent rebounding rate for {opponent_abbr}: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error getting opponent rebounding rate for {opponent_abbr}: {e}")
+            return 0.0
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error getting opponent rebounding rate for {opponent_abbr}: {e}")
             return 0.0
 
     def _get_opponent_pace_variance(self, opponent_abbr: str, game_date: date) -> float:
@@ -3321,8 +3350,11 @@ class UpcomingPlayerGameContextProcessor(
 
             return 0.0
 
-        except Exception as e:
-            logger.error(f"Error getting opponent pace variance for {opponent_abbr}: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error getting opponent pace variance for {opponent_abbr}: {e}")
+            return 0.0
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error getting opponent pace variance for {opponent_abbr}: {e}")
             return 0.0
 
     def _get_opponent_ft_rate_variance(self, opponent_abbr: str, game_date: date) -> float:
@@ -3363,8 +3395,11 @@ class UpcomingPlayerGameContextProcessor(
 
             return 0.0
 
-        except Exception as e:
-            logger.error(f"Error getting opponent FT rate variance for {opponent_abbr}: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error getting opponent FT rate variance for {opponent_abbr}: {e}")
+            return 0.0
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error getting opponent FT rate variance for {opponent_abbr}: {e}")
             return 0.0
 
     def _get_opponent_def_rating_variance(self, opponent_abbr: str, game_date: date) -> float:
@@ -3405,8 +3440,11 @@ class UpcomingPlayerGameContextProcessor(
 
             return 0.0
 
-        except Exception as e:
-            logger.error(f"Error getting opponent def rating variance for {opponent_abbr}: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error getting opponent def rating variance for {opponent_abbr}: {e}")
+            return 0.0
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error getting opponent def rating variance for {opponent_abbr}: {e}")
             return 0.0
 
     def _get_opponent_off_rating_variance(self, opponent_abbr: str, game_date: date) -> float:
@@ -3447,8 +3485,11 @@ class UpcomingPlayerGameContextProcessor(
 
             return 0.0
 
-        except Exception as e:
-            logger.error(f"Error getting opponent off rating variance for {opponent_abbr}: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error getting opponent off rating variance for {opponent_abbr}: {e}")
+            return 0.0
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error getting opponent off rating variance for {opponent_abbr}: {e}")
             return 0.0
 
     def _get_opponent_rebounding_rate_variance(self, opponent_abbr: str, game_date: date) -> float:
@@ -3491,8 +3532,11 @@ class UpcomingPlayerGameContextProcessor(
 
             return 0.0
 
-        except Exception as e:
-            logger.error(f"Error getting opponent rebounding rate variance for {opponent_abbr}: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error getting opponent rebounding rate variance for {opponent_abbr}: {e}")
+            return 0.0
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error getting opponent rebounding rate variance for {opponent_abbr}: {e}")
             return 0.0
 
     def _get_star_teammates_out(self, team_abbr: str, game_date: date) -> int:
@@ -3575,8 +3619,11 @@ class UpcomingPlayerGameContextProcessor(
 
             return 0
 
-        except Exception as e:
-            logger.error(f"Error getting star teammates out for {team_abbr}: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error getting star teammates out for {team_abbr}: {e}")
+            return 0
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error getting star teammates out for {team_abbr}: {e}")
             return 0
 
     def _get_questionable_star_teammates(self, team_abbr: str, game_date: date) -> int:
@@ -3659,8 +3706,11 @@ class UpcomingPlayerGameContextProcessor(
 
             return 0
 
-        except Exception as e:
-            logger.error(f"Error getting questionable star teammates for {team_abbr}: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error getting questionable star teammates for {team_abbr}: {e}")
+            return 0
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error getting questionable star teammates for {team_abbr}: {e}")
             return 0
 
     def _get_star_tier_out(self, team_abbr: str, game_date: date) -> int:
@@ -3749,8 +3799,11 @@ class UpcomingPlayerGameContextProcessor(
 
             return 0
 
-        except Exception as e:
-            logger.error(f"Error getting star tier out for {team_abbr}: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error getting star tier out for {team_abbr}: {e}")
+            return 0
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error getting star tier out for {team_abbr}: {e}")
             return 0
 
     def _calculate_data_quality(self, historical_data: pd.DataFrame,
@@ -4025,7 +4078,7 @@ class UpcomingPlayerGameContextProcessor(
 
             return True
 
-        except Exception as e:
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
             error_msg = str(e).lower()
 
             # Handle streaming buffer gracefully
@@ -4036,7 +4089,10 @@ class UpcomingPlayerGameContextProcessor(
                 )
                 return False
 
-            logger.error(f"Error saving to BigQuery: {e}")
+            logger.error(f"BigQuery error saving to BigQuery: {e}")
+            return False
+        except (KeyError, AttributeError, TypeError, ValueError, json.JSONDecodeError) as e:
+            logger.error(f"Data error saving to BigQuery: {e}")
             return False
 
         finally:
@@ -4045,7 +4101,7 @@ class UpcomingPlayerGameContextProcessor(
                 try:
                     self.bq_client.delete_table(temp_table_id, not_found_ok=True)
                     logger.debug(f"Cleaned up temp table {temp_table_id}")
-                except Exception as cleanup_e:
+                except (GoogleAPIError, NotFound) as cleanup_e:
                     logger.warning(f"Failed to cleanup temp table: {cleanup_e}")
     
     # ========================================================================
@@ -4111,7 +4167,7 @@ class UpcomingPlayerGameContextProcessor(
             # Convert to arena local time
             try:
                 arena_tz = ZoneInfo(arena_tz_str)
-            except Exception:
+            except (KeyError, ValueError):
                 arena_tz = ZoneInfo('America/New_York')
 
             # If datetime is naive, assume it's Eastern time
@@ -4134,10 +4190,10 @@ class UpcomingPlayerGameContextProcessor(
             # Format as "7:30 PM ET"
             return f"{local_dt.strftime('%I:%M %p').lstrip('0')} {tz_abbr}"
 
-        except Exception as e:
+        except (ValueError, TypeError, AttributeError, KeyError) as e:
             logger.debug(f"Could not extract game time: {e}")
             return None
-    
+
     def _determine_season_phase(self, game_date: date) -> str:
         """
         Determine season phase based on date.
@@ -4210,8 +4266,15 @@ class UpcomingPlayerGameContextProcessor(
                     'player_count': player_count,
                     'message': f'Props NOT ready: only {player_count}/{min_players} players have props'
                 }
-        except Exception as e:
-            logger.warning(f"Props readiness check failed: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.warning(f"BigQuery error in props readiness check: {e}")
+            return {
+                'ready': True,  # Don't block on check failure
+                'player_count': 0,
+                'message': f'Props check failed (proceeding anyway): {e}'
+            }
+        except (KeyError, AttributeError, TypeError, IndexError) as e:
+            logger.warning(f"Data error in props readiness check: {e}")
             return {
                 'ready': True,  # Don't block on check failure
                 'player_count': 0,
@@ -4257,7 +4320,7 @@ class UpcomingPlayerGameContextProcessor(
                 f"🚨 ALERT SENT: {prop_pct:.1f}% prop coverage for {target_date} "
                 f"({players_with_props}/{total_players})"
             )
-        except Exception as e:
+        except (ImportError, AttributeError, TypeError, ValueError) as e:
             # Don't fail processing if alert fails
             logger.error(f"Failed to send prop coverage alert: {e}")
 
@@ -4299,7 +4362,7 @@ class UpcomingPlayerGameContextProcessor(
             logger.warning(
                 f"🚨 ALERT SENT: Low roster coverage - only {teams_count} teams for {target_date}"
             )
-        except Exception as e:
+        except (ImportError, AttributeError, TypeError, ValueError) as e:
             # Don't fail processing if alert fails
             logger.error(f"Failed to send roster coverage alert: {e}")
 

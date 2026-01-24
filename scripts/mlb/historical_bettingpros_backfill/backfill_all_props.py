@@ -284,7 +284,17 @@ class MLBBettingProsBackfill:
         max_retries = 3
         failure_reason = None
 
+        # Safety guard: prevent infinite pagination loops
+        max_pages = 200  # Reasonable limit for MLB props per market/date
+
         while True:
+            if page > max_pages:
+                logger.warning(
+                    f"fetch_props exceeded {max_pages} pages for {market_id}/{date}, breaking"
+                )
+                failure_reason = f"Exceeded max pages ({max_pages})"
+                break
+
             url = f"{API_BASE_URL}?sport=MLB&market_id={market_id}&date={date}&limit=50&page={page}"
 
             for attempt in range(max_retries):

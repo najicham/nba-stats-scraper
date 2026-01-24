@@ -266,8 +266,15 @@ def main():
     total_skipped = 0
     batch_num = 0
 
+    # Safety guard: prevent infinite batch processing loops
+    max_batches = 1000  # Should be plenty for any reasonable reclassification
+
     while True:
         batch_num += 1
+        if batch_num > max_batches:
+            logger.warning(f"Reached maximum batch limit ({max_batches}), stopping")
+            break
+
         logger.info(f"\n--- Batch {batch_num} ---")
 
         # Get unclassified failures

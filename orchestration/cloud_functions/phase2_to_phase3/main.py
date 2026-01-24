@@ -64,8 +64,8 @@ except Exception as e:
 logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(name)s:%(message)s')
 logger = logging.getLogger(__name__)
 
-# Debug: print to stdout/stderr to ensure visibility
-print("Phase2-to-Phase3 Orchestrator module loaded")
+# Log module load for visibility
+logger.info("Phase2-to-Phase3 Orchestrator module loaded")
 
 # Constants
 from shared.config.gcp_config import get_project_id

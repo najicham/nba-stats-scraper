@@ -14,6 +14,7 @@ import sys
 # Add project root to path for shared imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from shared.endpoints.health import create_health_blueprint, HealthChecker
+from shared.config.gcp_config import get_project_id
 
 # Import precompute processors
 from data_processors.precompute.team_defense_zone_analysis.team_defense_zone_analysis_processor import TeamDefenseZoneAnalysisProcessor
@@ -117,7 +118,7 @@ def process():
                 processor = processor_class()
                 opts = {
                     'analysis_date': analysis_date_obj,
-                    'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+                    'project_id': get_project_id(),
                     'triggered_by': source_table
                 }
 
@@ -255,7 +256,7 @@ def process_date():
                 processor = processor_class()
                 opts = {
                     'analysis_date': analysis_date,
-                    'project_id': os.environ.get('GCP_PROJECT_ID', 'nba-props-platform'),
+                    'project_id': get_project_id(),
                     'triggered_by': 'manual',
                     'backfill_mode': backfill_mode,
                     'strict_mode': strict_mode,

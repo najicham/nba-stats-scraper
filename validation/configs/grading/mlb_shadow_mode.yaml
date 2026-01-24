@@ -1,0 +1,121 @@
+# File: validation/configs/grading/mlb_shadow_mode.yaml
+# Description: Validation config for MLB V1.4 vs V1.6 shadow mode comparison
+# Created: 2026-01-24
+
+name: "mlb_shadow_mode"
+description: "Validates MLB shadow mode A/B comparison between V1.4 and V1.6 models"
+type: "grading"
+
+processor:
+  name: "mlb_shadow_mode"
+  description: "Compares V1.4 (production) vs V1.6 (shadow) model performance"
+  table: "mlb_predictions.shadow_mode_results"
+  partition_required: true
+  partition_field: "game_date"
+
+  # Systems being compared
+  production_system: "mlb_pitcher_strikeouts_v1_4"
+  shadow_system: "mlb_pitcher_strikeouts_v1_6"
+
+bigquery_validations:
+  enabled: true
+
+  # Both systems have matching predictions
+  system_parity:
+    enabled: true
+    severity: "critical"
+    message: "V1.4 and V1.6 should have same prediction coverage"
+
+  # No duplicate comparisons
+  no_duplicates:
+    enabled: true
+    severity: "critical"
+    message: "Duplicate shadow mode comparison entries"
+    threshold: 0
+
+  # Prediction count match between systems
+  prediction_alignment:
+    enabled: true
+    severity: "warning"
+    max_mismatch_pct: 5  # Allow 5% mismatch
+
+  # Both systems graded
+  grading_completeness:
+    enabled: true
+    severity: "error"
+
+  # Performance metrics comparison
+  performance_comparison:
+    enabled: true
+    severity: "info"
+    metrics:
+      - mae
+      - accuracy_rate
+      - within_2_rate
+
+  # Statistical significance tracking
+  significance_tracking:
+    enabled: true
+    severity: "info"
+    min_sample_for_comparison: 50
+
+  # Winner determination logic
+  winner_logic:
+    enabled: true
+    severity: "warning"
+    message: "Winner should be determined by MAE"
+
+  # Date range coverage
+  date_coverage:
+    enabled: true
+    severity: "warning"
+    min_days: 7
+
+  # Volume tracking
+  volume_tracking:
+    enabled: true
+    severity: "info"
+    min_comparisons_per_day: 3
+
+  # Confidence interval tracking
+  confidence_intervals:
+    enabled: true
+    severity: "info"
+
+  # Data freshness
+  freshness:
+    enabled: true
+    severity: "info"
+    max_days_stale: 7
+
+data_quality:
+  required_fields:
+    - game_date
+    - pitcher_id
+    - game_id
+    - v1_4_prediction
+    - v1_6_prediction
+    - actual_strikeouts
+
+  optional_fields:
+    - v1_4_error
+    - v1_6_error
+    - v1_4_correct
+    - v1_6_correct
+    - winner
+    - comparison_date
+    - sample_size
+    - mae_v1_4
+    - mae_v1_6
+    - accuracy_v1_4
+    - accuracy_v1_6
+
+notifications:
+  enabled: true
+  channels: ["slack"]
+  on_failure: true
+  on_success: false
+  # Special notifications for model comparison results
+  model_comparison_alerts:
+    enabled: true
+    threshold_pct_difference: 5  # Alert if models differ by >5%

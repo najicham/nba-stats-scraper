@@ -92,10 +92,11 @@ class ProcessorHeartbeat:
             project_id: GCP project ID
         """
         self.processor_name = processor_name
+        from shared.config.gcp_config import get_project_id as _get_project_id
         self.run_id = run_id
         self.data_date = data_date
         self.config = config or HeartbeatConfig()
-        self.project_id = project_id or os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
+        self.project_id = project_id or _get_project_id()
 
         self._firestore = None
         self._running = False
@@ -227,8 +228,9 @@ class HeartbeatMonitor:
             config: Heartbeat configuration
             project_id: GCP project ID
         """
+        from shared.config.gcp_config import get_project_id as _get_project_id
         self.config = config or HeartbeatConfig()
-        self.project_id = project_id or os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
+        self.project_id = project_id or _get_project_id()
         self._firestore = None
         self._bigquery = None
 

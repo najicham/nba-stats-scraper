@@ -115,7 +115,17 @@ def get_json(
     attempt = 0
     consecutive_429s = 0
 
+    # Safety guard: prevent infinite loops (max_retries * 2 to account for 429 retries)
+    max_loop_iterations = max(max_retries * 10, 50)
+    loop_iteration = 0
+
     while True:
+        loop_iteration += 1
+        if loop_iteration > max_loop_iterations:
+            error_msg = f"get_json loop exceeded {max_loop_iterations} iterations for {url}"
+            logger.warning(error_msg)
+            raise RuntimeError(error_msg)
+
         try:
             resp = _request("GET", url, params=params)
 

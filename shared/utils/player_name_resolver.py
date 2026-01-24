@@ -52,7 +52,8 @@ class PlayerNameResolver:
     
     def __init__(self, project_id: str = None):
         """Initialize the name resolver with BigQuery client."""
-        self.project_id = project_id or os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+        from shared.config.gcp_config import get_project_id
+        self.project_id = project_id or get_project_id()
         
         try:
             self.bq_client = bigquery.Client(project=self.project_id)

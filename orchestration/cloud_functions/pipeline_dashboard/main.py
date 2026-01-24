@@ -25,7 +25,8 @@ import functions_framework
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
+# Standardized GCP project ID - uses GCP_PROJECT_ID with fallback to GCP_PROJECT
+PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
 
 
 @functions_framework.http
