@@ -424,6 +424,9 @@ This project consolidates all identified improvements from codebase analysis, ha
 | 2026-01-24 | P2-36 | NBA processor logging | Added debug logging to 2 NBA processors |
 | 2026-01-24 | P1-13 | Add cloud function health checks | Added health endpoints to 16 cloud functions |
 | 2026-01-24 | P1-25 | Fix hardcoded project IDs | Fixed 9 bin/ scripts to use GCP_PROJECT_ID env var |
+| 2026-01-24 | NEW | team_offense_game_summary validator | Created validator matching defense validator pattern |
+| 2026-01-24 | NEW | Schedule service timeout | Added 30s timeout to parameter_resolver.py |
+| 2026-01-24 | NEW | Retry config expansion | Added 7 scrapers (now 24 total): nbac_scoreboard_v2, nbac_player_boxscore, nbac_team_boxscore, nbac_roster, nbac_referee_assignments, bdl_live_box_scores, bdl_odds |
 
 ---
 

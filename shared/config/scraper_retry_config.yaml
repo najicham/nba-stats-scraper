@@ -660,6 +660,274 @@ scrapers:
       Uses provider fallback: ["live", "stats_nba", "data_nba"]
       Enable catch-up if monitoring shows provider failures.
 
+  # --------------------------------------------------------------------------
+  # NBA.COM SCOREBOARD V2 - Live game scores and status
+  # --------------------------------------------------------------------------
+  nbac_scoreboard_v2:
+    enabled: true
+    priority: HIGH
+
+    comparison:
+      source_table: null
+      target_table: "nba_raw.nbac_scoreboard_v2"
+      freshness_check: true
+      max_staleness_hours: 2  # Should update frequently on game days
+
+    retry_windows:
+      - time: "11:00"
+        name: "scoreboard_catchup_morning"
+        description: "Morning scoreboard refresh"
+      - time: "15:00"
+        name: "scoreboard_catchup_afternoon"
+        description: "Afternoon scoreboard check"
+      - time: "19:00"
+        name: "scoreboard_catchup_evening"
+        description: "Pre-game scoreboard refresh"
+
+    lookback_days: 1
+    lookahead_days: 1
+
+    alerts:
+      max_staleness_hours: 4
+      severity_by_hours:
+        - hours: 2
+          severity: WARNING
+        - hours: 4
+          severity: ERROR
+
+    notes: |
+      NBA.com scoreboard V2 API - live scores and game status.
+      Critical for tracking game completion.
+      Used by analytics to determine when to process.
+
+  # --------------------------------------------------------------------------
+  # NBA.COM PLAYER BOXSCORE - Individual player stats per game
+  # --------------------------------------------------------------------------
+  nbac_player_boxscore:
+    enabled: true
+    priority: HIGH
+
+    comparison:
+      source_table: "nba_raw.nbac_schedule"
+      target_table: "nba_raw.nbac_player_boxscore"
+      join_keys:
+        - game_date
+        - game_id
+      min_rows_per_game: 20  # At least 20 players per game
+      filter: "game_status = 3"
+
+    retry_windows:
+      - time: "08:00"
+        name: "player_box_catchup_morning"
+        description: "Morning player boxscore collection"
+      - time: "12:00"
+        name: "player_box_catchup_midday"
+        description: "Midday player boxscore retry"
+
+    lookback_days: 2
+
+    alerts:
+      max_missing_games: 1
+      severity_by_hours:
+        - hours: 8
+          severity: WARNING
+        - hours: 16
+          severity: ERROR
+        - hours: 24
+          severity: CRITICAL
+
+    notes: |
+      NBA.com player boxscore - official individual stats.
+      Primary source for player analytics.
+      Must be complete for prediction features.
+
+  # --------------------------------------------------------------------------
+  # NBA.COM TEAM BOXSCORE - Team aggregate stats per game
+  # --------------------------------------------------------------------------
+  nbac_team_boxscore:
+    enabled: true
+    priority: HIGH
+
+    comparison:
+      source_table: "nba_raw.nbac_schedule"
+      target_table: "nba_raw.nbac_team_boxscore"
+      join_keys:
+        - game_date
+        - game_id
+      min_rows_per_game: 2  # Exactly 2 teams per game
+      filter: "game_status = 3"
+
+    retry_windows:
+      - time: "08:00"
+        name: "team_box_catchup_morning"
+        description: "Morning team boxscore collection"
+      - time: "12:00"
+        name: "team_box_catchup_midday"
+        description: "Midday team boxscore retry"
+
+    lookback_days: 2
+
+    alerts:
+      max_missing_games: 1
+      severity_by_hours:
+        - hours: 8
+          severity: WARNING
+        - hours: 16
+          severity: ERROR
+        - hours: 24
+          severity: CRITICAL
+
+    notes: |
+      NBA.com team boxscore - official team aggregate stats.
+      Primary source for team analytics.
+      Must be complete for team offense/defense summaries.
+
+  # --------------------------------------------------------------------------
+  # NBA.COM ROSTER - Team roster information
+  # --------------------------------------------------------------------------
+  nbac_roster:
+    enabled: true
+    priority: MEDIUM
+
+    comparison:
+      source_table: null
+      target_table: "nba_raw.nbac_roster"
+      freshness_check: true
+      max_staleness_hours: 24
+
+    retry_windows:
+      - time: "07:00"
+        name: "nbac_roster_catchup"
+        description: "Morning roster refresh"
+
+    lookback_days: 1
+
+    alerts:
+      max_staleness_hours: 48
+      severity_by_hours:
+        - hours: 24
+          severity: INFO
+        - hours: 48
+          severity: WARNING
+
+    notes: |
+      NBA.com official roster data.
+      Primary source for player-team associations.
+      Important for trade deadline updates.
+
+  # --------------------------------------------------------------------------
+  # NBA.COM REFEREE ASSIGNMENTS - Referee game assignments
+  # --------------------------------------------------------------------------
+  nbac_referee_assignments:
+    enabled: true
+    priority: MEDIUM
+
+    comparison:
+      source_table: "nba_raw.nbac_schedule"
+      target_table: "nba_raw.nbac_referee_assignments"
+      join_keys:
+        - game_date
+      min_rows_per_game: 1  # At least one referee assignment per game
+      filter: "game_status != 3"  # Pre-game only
+
+    retry_windows:
+      - time: "11:00"
+        name: "referee_catchup_morning"
+        description: "Morning referee assignments"
+      - time: "16:00"
+        name: "referee_catchup_afternoon"
+        description: "Afternoon referee check"
+
+    lookback_days: 0
+    lookahead_days: 1
+
+    alerts:
+      max_missing_games: 3
+      severity_by_hours:
+        - hours: 4
+          severity: INFO
+        - hours: 8
+          severity: WARNING
+
+    notes: |
+      NBA.com referee assignments for upcoming games.
+      Used for referee bias analysis in predictions.
+      Assignments typically released 9AM ET day of game.
+
+  # --------------------------------------------------------------------------
+  # BDL LIVE BOX SCORES - Real-time boxscore updates
+  # --------------------------------------------------------------------------
+  bdl_live_box_scores:
+    enabled: false  # Enable during games
+    priority: MEDIUM
+
+    comparison:
+      source_table: "nba_raw.nbac_schedule"
+      target_table: "nba_raw.bdl_live_box_scores"
+      join_keys:
+        - game_date
+      min_rows_per_game: 20
+      filter: "game_status = 2"  # In-progress games
+
+    retry_windows:
+      - time: "19:30"
+        name: "live_box_start"
+        description: "Start of game window"
+      - time: "21:00"
+        name: "live_box_mid"
+        description: "Mid-game check"
+      - time: "23:00"
+        name: "live_box_late"
+        description: "Late game check"
+
+    lookback_days: 0
+
+    alerts:
+      max_missing_games: 2
+      severity_by_hours:
+        - hours: 2
+          severity: WARNING
+
+    notes: |
+      BDL live box scores for in-progress games.
+      Used for real-time player tracking.
+      Enable during game windows.
+
+  # --------------------------------------------------------------------------
+  # BDL ODDS - Historical odds data
+  # --------------------------------------------------------------------------
+  bdl_odds:
+    enabled: true
+    priority: MEDIUM
+
+    comparison:
+      source_table: "nba_raw.nbac_schedule"
+      target_table: "nba_raw.bdl_odds"
+      join_keys:
+        - game_date
+      min_rows_per_game: 1
+      filter: "game_status = 3"
+
+    retry_windows:
+      - time: "09:00"
+        name: "bdl_odds_catchup_morning"
+        description: "Morning BDL odds collection"
+
+    lookback_days: 3
+
+    alerts:
+      max_missing_games: 5
+      severity_by_hours:
+        - hours: 24
+          severity: INFO
+        - hours: 48
+          severity: WARNING
+
+    notes: |
+      BDL historical odds data.
+      Supplements Odds API data.
+      Used for odds model training.
+
 # ============================================================================
 # COMPLETENESS CHECK QUERIES
 # ============================================================================

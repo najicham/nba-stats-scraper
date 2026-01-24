@@ -24,9 +24,14 @@ import yaml
 import os
 from typing import Dict, Any, List, Optional
 from datetime import datetime, date, timedelta
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 import pytz
 
 from shared.utils.schedule import NBAScheduleService
+
+# Timeout for schedule service calls (seconds)
+# Prevents workflows from hanging indefinitely on GCS/BigQuery issues
+SCHEDULE_SERVICE_TIMEOUT_SECONDS = 30
 
 logger = logging.getLogger(__name__)
 
@@ -257,11 +262,22 @@ class ParameterResolver:
         season = self.get_current_season(current_time)
 
         # Get games for TARGET date (not necessarily today!)
+        # Use timeout to prevent indefinite hangs on GCS/BigQuery issues
         games_for_target_date = []
         try:
-            games_for_target_date = self.schedule_service.get_games_for_date(resolved_target_date)
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    self.schedule_service.get_games_for_date,
+                    resolved_target_date
+                )
+                games_for_target_date = future.result(timeout=SCHEDULE_SERVICE_TIMEOUT_SECONDS)
             logger.info(
                 f"Fetched {len(games_for_target_date)} games for target date {resolved_target_date}"
+            )
+        except FuturesTimeoutError:
+            logger.error(
+                f"Schedule service timed out after {SCHEDULE_SERVICE_TIMEOUT_SECONDS}s "
+                f"for date {resolved_target_date}. Proceeding with empty games list."
             )
         except Exception as e:
             logger.warning(f"Failed to get games for {resolved_target_date}: {e}")
