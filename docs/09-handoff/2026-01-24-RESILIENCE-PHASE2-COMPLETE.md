@@ -119,3 +119,88 @@ curl -X POST "https://nba-scrapers-756957797294.us-west2.run.app/scrape" \
   -H "Content-Type: application/json" \
   -d '{"scraper": "bp_events", "date": "2026-01-24"}'
 ```
+
+---
+
+## Remaining Opportunities
+
+### Tier 1: Quick Wins (1-2 hours each)
+
+1. **Bare Exception Handlers (15 files)**
+   - Files: `orchestration/master_controller.py`, `orchestration/cleanup_processor.py`, `data_processors/grading/mlb/main_mlb_grading_service.py`
+   - Issue: `except Exception as e:` catches everything, masking specific failures
+   - Fix: Replace with specific exceptions (HTTPError, TimeoutError, ConnectionError)
+
+2. **Missing Retry Decorators in Data Processors**
+   - Path: `data_processors/` (287 BigQuery `.query()` calls)
+   - Issue: Direct `client.query()` without retry_with_jitter decorator
+   - Fix: Apply `@retry_with_jitter` from `shared/utils/retry_with_jitter.py`
+
+3. **Unresolved Player Tracking (MLB)**
+   - File: `shared/utils/mlb_player_registry/reader.py` line 330
+   - Issue: Unresolved player IDs logged to memory only, lost on restart
+   - Fix: Add BigQuery insert for audit trail
+
+### Tier 2: Code Quality (4-8 hours each)
+
+4. **Duplicated Config Management (8 locations)**
+   - Files: `shared/config/sport_config.py` duplicated in 8+ cloud functions
+   - Issue: Changes don't propagate, configs drift
+   - Fix: Consolidate to single source, update all imports
+
+5. **Missing Unit Tests for Critical Processors**
+   - Gap: Zero tests for data_processors, cloud function orchestrators
+   - Priority: `phase2_to_phase3`, `upcoming_player_game_context_processor`, `cleanup_processor`
+   - Fix: Add 80% coverage for these 3 (4-6 hours)
+
+6. **Missing Input Validation in Cloud Functions**
+   - Issue: JSON payloads parsed without schema validation
+   - Fix: Add Pydantic models for request validation
+
+### Tier 3: Performance (2-4 hours)
+
+7. **DLQ Monitoring Gaps**
+   - File: `orchestration/cloud_functions/dlq_monitor/main.py`
+   - Issue: Only monitors Pub/Sub DLQs, misses BigQuery/Firestore/GCS failures
+   - Fix: Create unified DLQ aggregator from Cloud Logging
+
+8. **Processor Queries Without Limits**
+   - Issue: Queries scanning entire tables (100M+ rows) without filters
+   - Fix: Add WHERE filters on game_date before massive joins
+
+---
+
+## Documentation to Study
+
+For context on the codebase architecture and patterns, study these directories:
+
+### Essential Reading
+```
+docs/01-architecture/          # System architecture, data flow diagrams
+docs/02-pipelines/             # Pipeline phase descriptions (Phase 1-6)
+docs/05-development/patterns/  # Coding patterns (circuit breaker, retry, etc.)
+docs/08-projects/current/      # Active project documentation
+  └── scraper-resilience/      # This project's detailed docs
+  └── pipeline-reliability-improvements/  # Related reliability work
+```
+
+### For Specific Areas
+```
+docs/03-data-models/           # BigQuery schemas, table relationships
+docs/04-scrapers/              # Scraper-specific documentation
+docs/06-infrastructure/        # GCP deployment, Cloud Run, Cloud Functions
+docs/07-monitoring/            # Alerting, dashboards, observability
+```
+
+### Recent Context
+```
+docs/09-handoff/               # Session handoffs (start with most recent)
+  └── 2026-01-24-BETTINGPROS-RECOVERY-AND-RESILIENCE.md  # Previous session
+  └── 2026-01-24-RESILIENCE-PHASE2-COMPLETE.md           # This session
+```
+
+### Key Config Files
+```
+config/workflows.yaml          # Orchestration workflow definitions
+schemas/bigquery/              # All BigQuery table schemas
+```
