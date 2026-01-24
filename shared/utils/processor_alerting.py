@@ -29,6 +29,7 @@ import requests
 from requests.exceptions import RequestException
 from shared.utils.auth_utils import get_api_key
 from shared.utils.slack_retry import send_slack_webhook_with_retry
+from shared.clients.http_pool import get_http_session
 
 # Import alert type system
 from shared.utils.alert_types import get_alert_html_heading, detect_alert_type, format_alert_heading
@@ -207,22 +208,24 @@ class ProcessorAlerting:
             return False
     
     def _send_via_sendgrid(self, subject: str, body: str, recipients: List[str]) -> bool:
-        """Send email via SendGrid API."""
+        """Send email via SendGrid API with connection pooling and retry."""
         url = "https://api.sendgrid.com/v3/mail/send"
         headers = {
             "Authorization": f"Bearer {self.sendgrid_api_key}",
             "Content-Type": "application/json"
         }
-        
+
         data = {
             "personalizations": [{"to": [{"email": email} for email in recipients]}],
             "from": {"email": self.from_email},
             "subject": subject,
             "content": [{"type": "text/html", "value": body}]
         }
-        
-        response = requests.post(url, headers=headers, json=data)
-        
+
+        # Use pooled HTTP session with automatic retry on transient errors
+        session = get_http_session()
+        response = session.post(url, headers=headers, json=data, timeout=30)
+
         if response.status_code == 202:
             logger.info(f"Email alert sent successfully to {len(recipients)} recipients")
             return True
