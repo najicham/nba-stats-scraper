@@ -24,11 +24,21 @@ Created: 2025-12-02
 import json
 import logging
 import os
+import html
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional, Set
 
 from google.cloud import firestore
+from google.cloud import secretmanager
 import functions_framework
+
+# AWS SES for alerts
+try:
+    import boto3
+    from botocore.exceptions import ClientError
+    BOTO3_AVAILABLE = True
+except ImportError:
+    BOTO3_AVAILABLE = False
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -91,6 +101,120 @@ except ImportError:
 
 # Initialize Firestore client
 db = firestore.Client()
+
+
+# ============================================================================
+# Alert Functions (inline for cloud function deployment)
+# ============================================================================
+
+def _get_secret(secret_id: str) -> Optional[str]:
+    """Get secret from Google Secret Manager."""
+    try:
+        client = secretmanager.SecretManagerServiceClient()
+        name = f"projects/{PROJECT_ID}/secrets/{secret_id}/versions/latest"
+        response = client.access_secret_version(request={"name": name})
+        return response.payload.data.decode("UTF-8")
+    except Exception as e:
+        logger.warning(f"Failed to get secret {secret_id}: {e}")
+        return None
+
+
+def send_stuck_transition_alert(stuck_transitions: List[Dict]) -> bool:
+    """Send alert for stuck phase transitions via AWS SES."""
+    if not BOTO3_AVAILABLE:
+        logger.warning("boto3 not available, cannot send email alert")
+        return False
+
+    if not stuck_transitions:
+        return True
+
+    try:
+        aws_access_key = _get_secret("aws-ses-access-key-id")
+        aws_secret_key = _get_secret("aws-ses-secret-access-key")
+
+        if not aws_access_key or not aws_secret_key:
+            logger.error("AWS SES credentials not available")
+            return False
+
+        ses_client = boto3.client(
+            'ses',
+            region_name='us-west-2',
+            aws_access_key_id=aws_access_key,
+            aws_secret_access_key=aws_secret_key
+        )
+
+        # Build HTML content
+        rows_html = ""
+        for stuck in stuck_transitions:
+            phase = html.escape(stuck.get('phase', 'Unknown'))
+            game_date = html.escape(stuck.get('game_date', 'Unknown'))
+            progress = f"{stuck.get('completed_count', 0)}/{stuck.get('expected_count', 0)}"
+            age = stuck.get('age_hours', 0)
+            missing = ", ".join(stuck.get('missing_processors', [])[:5])
+
+            rows_html += f"""
+            <tr>
+                <td>{phase}</td>
+                <td>{game_date}</td>
+                <td>{progress}</td>
+                <td style="color: #d32f2f;">{age:.1f}h</td>
+                <td style="font-size: 11px;">{html.escape(missing)}</td>
+            </tr>
+            """
+
+        html_body = f"""
+        <html>
+        <body>
+            <h2 style="color: #d32f2f;">🚨 Stuck Phase Transitions Detected</h2>
+            <p><strong>Time:</strong> {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}</p>
+            <p><strong>Count:</strong> {len(stuck_transitions)} stuck transition(s)</p>
+
+            <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse;">
+                <tr style="background-color: #f5f5f5;">
+                    <th>Phase</th>
+                    <th>Game Date</th>
+                    <th>Progress</th>
+                    <th>Age</th>
+                    <th>Missing Processors</th>
+                </tr>
+                {rows_html}
+            </table>
+
+            <h3>Recommended Actions</h3>
+            <ul>
+                <li>Check Cloud Run logs for failed processors</li>
+                <li>Verify upstream data availability</li>
+                <li>Consider manual retry via orchestration endpoint</li>
+            </ul>
+
+            <hr>
+            <p style="color: #666; font-size: 12px;">
+                This is an automated alert from the NBA Phase Transition Monitor.
+            </p>
+        </body>
+        </html>
+        """
+
+        subject = f"[NBA Registry WARNING] 🚨 {len(stuck_transitions)} Stuck Phase Transitions"
+
+        response = ses_client.send_email(
+            Source="NBA Registry System <alert@989.ninja>",
+            Destination={'ToAddresses': ['nchammas@gmail.com']},
+            Message={
+                'Subject': {'Data': subject, 'Charset': 'UTF-8'},
+                'Body': {'Html': {'Data': html_body, 'Charset': 'UTF-8'}}
+            }
+        )
+
+        logger.info(f"Stuck transition alert sent. MessageId: {response['MessageId']}")
+        return True
+
+    except ClientError as e:
+        logger.error(f"AWS SES error: {e.response['Error']['Message']}")
+        return False
+    except Exception as e:
+        logger.error(f"Failed to send stuck transition alert: {e}")
+        return False
 
 
 def check_player_game_summary_for_yesterday() -> Dict:
@@ -623,25 +747,8 @@ def send_alerts(results: Dict, include_pgs_alert: bool = False) -> None:
     alert_message = "\n".join(alert_lines)
     logger.warning(alert_message)
 
-    # TODO: Add actual alert sending
-    # - Email via shared/alerts/email_alerter.py
-    # - Slack via webhook
-    # For now, just log (Cloud Logging will capture this)
-
-    try:
-        # Try to send via existing alert system
-        from shared.alerts.email_alerter import send_alert_email
-
-        send_alert_email(
-            subject="🚨 NBA Pipeline: Stuck Phase Transitions Detected",
-            body=alert_message,
-            level='warning'
-        )
-        logger.info("Alert email sent successfully")
-    except ImportError:
-        logger.debug("Email alerter not available, skipping email")
-    except Exception as e:
-        logger.error(f"Failed to send alert email: {e}")
+    # Send alert via AWS SES
+    send_stuck_transition_alert(stuck_transitions)
 
 
 def get_all_transition_status() -> Dict:

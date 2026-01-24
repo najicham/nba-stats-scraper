@@ -72,15 +72,27 @@ class NBATravel:
                     'distance_miles': int(result.iloc[0]['distance_miles']),
                     'time_zones_crossed': int(result.iloc[0]['time_zones_crossed']),
                     'travel_direction': result.iloc[0]['travel_direction'],
-                    'jet_lag_factor': float(result.iloc[0]['jet_lag_factor'])
+                    'jet_lag_factor': float(result.iloc[0]['jet_lag_factor']),
+                    'query_status': 'success'
                 }
                 # Cache the result
                 self._distance_cache[cache_key] = travel_info
                 return travel_info
+            else:
+                # No data in database - return None with clear indication
+                logger.debug(f"No travel distance data found for {from_team} -> {to_team}")
+                return None
         except Exception as e:
-            logger.warning(f"Error getting travel distance {from_team} -> {to_team}: {e}")
-
-        return None
+            logger.error(f"Query failed getting travel distance {from_team} -> {to_team}: {e}")
+            # Return error info so caller can distinguish from missing data
+            return {
+                'distance_miles': 0,
+                'time_zones_crossed': 0,
+                'travel_direction': 'unknown',
+                'jet_lag_factor': 0.0,
+                'query_status': 'error',
+                'error': str(e)
+            }
     
     def get_team_location(self, team_abbr: str) -> Optional[Dict]:
         """
@@ -115,9 +127,13 @@ class NBATravel:
         try:
             df = self.client.query(query).to_dataframe()
             self._team_locations_cache = df.set_index('team_abbr').to_dict('index')
+            logger.info(f"Loaded {len(self._team_locations_cache)} team locations into cache")
         except Exception as e:
-            logger.warning(f"Error loading team locations cache: {e}")
+            logger.error(f"Failed to load team locations cache: {e}")
+            # Initialize empty cache to prevent repeated failed queries
             self._team_locations_cache = {}
+            # Store error for callers to check
+            self._team_locations_cache['_error'] = str(e)
     
     def calculate_road_trip_travel(self, team_schedule: List[Tuple[str, str]]) -> Dict:
         """

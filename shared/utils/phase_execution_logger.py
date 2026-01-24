@@ -19,8 +19,8 @@ Usage in orchestrators:
         metadata={"completed_processors": completed_processors}
     )
 
-BigQuery Schema:
-    TODO: Create table `nba_orchestration.phase_execution_log` with schema:
+BigQuery Schema (table: `nba_orchestration.phase_execution_log`):
+    See: schemas/bigquery/nba_orchestration/phase_execution_log.sql
     - execution_timestamp TIMESTAMP NOT NULL (when orchestrator ran)
     - phase_name STRING NOT NULL (e.g., "phase2_to_phase3")
     - game_date DATE NOT NULL (date being processed)

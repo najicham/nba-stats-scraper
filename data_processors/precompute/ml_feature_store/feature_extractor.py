@@ -55,6 +55,27 @@ class FeatureExtractor:
         # Historical Completeness Tracking (Data Cascade Architecture - Jan 2026)
         # Tracks total games available per player for bootstrap detection
         self._total_games_available_lookup: Dict[str, int] = {}
+
+    def _safe_query(self, query: str, query_name: str = "query") -> pd.DataFrame:
+        """
+        Execute BigQuery query with error handling.
+
+        Args:
+            query: SQL query to execute
+            query_name: Descriptive name for logging
+
+        Returns:
+            DataFrame with results, or empty DataFrame on error
+
+        Raises:
+            Exception: Re-raises after logging if query fails
+        """
+        try:
+            return self.bq_client.query(query).to_dataframe()
+        except Exception as e:
+            logger.error(f"BigQuery query failed [{query_name}]: {e}")
+            logger.debug(f"Failed query:\n{query[:500]}...")
+            raise
     
     # ========================================================================
     # PLAYER LIST
@@ -159,7 +180,7 @@ class FeatureExtractor:
             """
             logger.debug(f"Querying expected players with games on {game_date}")
 
-        result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
+        result: pd.DataFrame = self._safe_query(query, f"get_players_with_games({game_date})")
 
         if result.empty:
             logger.warning(f"No players found with games on {game_date}")
@@ -323,7 +344,7 @@ class FeatureExtractor:
         FROM `{self.project_id}.nba_precompute.player_daily_cache`
         WHERE cache_date = '{game_date}'
         """
-        result = self.bq_client.query(query).to_dataframe()
+        result = self._safe_query(query, "batch_extract")
         # Use efficient to_dict instead of iterrows (3x faster)
         if not result.empty:
             for record in result.to_dict('records'):
@@ -342,7 +363,7 @@ class FeatureExtractor:
         FROM `{self.project_id}.nba_precompute.player_composite_factors`
         WHERE game_date = '{game_date}'
         """
-        result = self.bq_client.query(query).to_dataframe()
+        result = self._safe_query(query, "batch_extract")
         # Use efficient to_dict instead of iterrows (3x faster)
         if not result.empty:
             for record in result.to_dict('records'):
@@ -360,7 +381,7 @@ class FeatureExtractor:
         FROM `{self.project_id}.nba_precompute.player_shot_zone_analysis`
         WHERE analysis_date = '{game_date}'
         """
-        result = self.bq_client.query(query).to_dataframe()
+        result = self._safe_query(query, "batch_extract")
         # Use efficient to_dict instead of iterrows (3x faster)
         if not result.empty:
             for record in result.to_dict('records'):
@@ -379,7 +400,7 @@ class FeatureExtractor:
         FROM `{self.project_id}.nba_precompute.team_defense_zone_analysis`
         WHERE analysis_date = '{game_date}'
         """
-        result = self.bq_client.query(query).to_dataframe()
+        result = self._safe_query(query, "batch_extract")
         # Use efficient to_dict instead of iterrows (3x faster)
         if not result.empty:
             for record in result.to_dict('records'):
@@ -404,7 +425,7 @@ class FeatureExtractor:
         FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
         WHERE game_date = '{game_date}'
         """
-        result = self.bq_client.query(query).to_dataframe()
+        result = self._safe_query(query, "batch_extract")
         # Use efficient to_dict instead of iterrows (3x faster)
         if not result.empty:
             for record in result.to_dict('records'):
@@ -483,7 +504,7 @@ class FeatureExtractor:
         WHERE l.rn <= 10
         ORDER BY l.player_lookup, l.game_date DESC
         """
-        result = self.bq_client.query(query).to_dataframe()
+        result = self._safe_query(query, "batch_extract")
 
         # Group by player using efficient groupby
         if not result.empty:
@@ -526,7 +547,7 @@ class FeatureExtractor:
           AND game_date >= '{season_start}'
         GROUP BY player_lookup
         """
-        result = self.bq_client.query(query).to_dataframe()
+        result = self._safe_query(query, "batch_extract")
 
         # Use efficient to_dict instead of iterrows
         if not result.empty:
@@ -560,7 +581,7 @@ class FeatureExtractor:
           AND game_date >= '{season_start}'
         ORDER BY team_abbr, game_date
         """
-        result = self.bq_client.query(query).to_dataframe()
+        result = self._safe_query(query, "batch_extract")
 
         # Group by team using efficient groupby
         if not result.empty:
@@ -601,7 +622,7 @@ class FeatureExtractor:
           AND is_active = TRUE
         GROUP BY player_lookup
         """
-        result = self.bq_client.query(query).to_dataframe()
+        result = self._safe_query(query, "batch_extract")
 
         if not result.empty:
             for record in result.to_dict('records'):
@@ -659,7 +680,7 @@ class FeatureExtractor:
             AND g.game_date >= DATE_SUB('{game_date}', INTERVAL 3 YEAR)
         GROUP BY p.player_lookup, p.opponent
         """
-        result = self.bq_client.query(query).to_dataframe()
+        result = self._safe_query(query, "batch_extract")
 
         if not result.empty:
             for record in result.to_dict('records'):
@@ -697,7 +718,7 @@ class FeatureExtractor:
           AND minutes_played > 0
         GROUP BY player_lookup
         """
-        result = self.bq_client.query(query).to_dataframe()
+        result = self._safe_query(query, "batch_extract")
 
         if not result.empty:
             for record in result.to_dict('records'):
@@ -857,7 +878,7 @@ class FeatureExtractor:
           AND cache_date = '{game_date}'
         """
         
-        result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
+        result: pd.DataFrame = self._safe_query(query, "feature_extract")
         
         if result.empty:
             logger.debug(f"No player_daily_cache data for {player_lookup} on {game_date}")
@@ -881,7 +902,7 @@ class FeatureExtractor:
           AND game_date = '{game_date}'
         """
         
-        result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
+        result: pd.DataFrame = self._safe_query(query, "feature_extract")
         
         if result.empty:
             logger.debug(f"No composite_factors data for {player_lookup} on {game_date}")
@@ -904,7 +925,7 @@ class FeatureExtractor:
           AND analysis_date = '{game_date}'
         """
         
-        result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
+        result: pd.DataFrame = self._safe_query(query, "feature_extract")
         
         if result.empty:
             logger.debug(f"No shot_zone_analysis data for {player_lookup} on {game_date}")
@@ -926,7 +947,7 @@ class FeatureExtractor:
           AND analysis_date = '{game_date}'
         """
         
-        result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
+        result: pd.DataFrame = self._safe_query(query, "feature_extract")
         
         if result.empty:
             logger.debug(f"No team_defense data for {team_abbr} on {game_date}")
@@ -1037,7 +1058,7 @@ class FeatureExtractor:
           AND game_date = '{game_date}'
         """
         
-        result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
+        result: pd.DataFrame = self._safe_query(query, "feature_extract")
         
         if result.empty:
             logger.warning(f"No upcoming_player_game_context for {player_lookup} on {game_date}")
@@ -1066,7 +1087,7 @@ class FeatureExtractor:
         LIMIT {n}
         """
         
-        result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
+        result: pd.DataFrame = self._safe_query(query, "feature_extract")
         
         if result.empty:
             logger.debug(f"No historical games for {player_lookup} before {game_date}")
@@ -1091,7 +1112,7 @@ class FeatureExtractor:
           AND game_date < '{game_date}'
         """
         
-        result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
+        result: pd.DataFrame = self._safe_query(query, "feature_extract")
         
         if result.empty:
             logger.debug(f"No season stats for {player_lookup} in {season_year}")
@@ -1115,7 +1136,7 @@ class FeatureExtractor:
         ORDER BY game_date
         """
         
-        result: pd.DataFrame = self.bq_client.query(query).to_dataframe()
+        result: pd.DataFrame = self._safe_query(query, "feature_extract")
         
         if result.empty:
             logger.debug(f"No team games for {team_abbr} in {season_year}")
