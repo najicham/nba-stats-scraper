@@ -42,6 +42,14 @@ from shared.processors.mixins import RunHistoryMixin
 # Import completeness checker and DependencyError for defensive checks
 from shared.utils.completeness_checker import CompletenessChecker, DependencyError
 
+# Import heartbeat system for stale processor detection (added after Jan 23 incident)
+try:
+    from shared.monitoring.processor_heartbeat import ProcessorHeartbeat
+    HEARTBEAT_AVAILABLE = True
+except ImportError:
+    HEARTBEAT_AVAILABLE = False
+    ProcessorHeartbeat = None
+
 # Failure categorization (inlined to avoid cross-package dependency issues in Cloud Run)
 def _categorize_failure(error: Exception, step: str, stats: dict = None) -> str:
     """
@@ -251,6 +259,10 @@ class PrecomputeProcessorBase(RunHistoryMixin):
         # Cached dependency check result (set in run(), used by extract_raw_data())
         self.dep_check = None
 
+        # Heartbeat system for stale processor detection (added after Jan 23 incident)
+        # Enables 15-minute detection vs 4-hour timeout
+        self.heartbeat = None
+
     def run(self, opts: Optional[Dict] = None) -> bool:
         """
         Main entry point - matches AnalyticsProcessorBase.run() pattern.
@@ -307,6 +319,21 @@ class PrecomputeProcessorBase(RunHistoryMixin):
                 trigger_message_id=self.trigger_message_id,
                 parent_processor=self.parent_processor
             )
+
+            # Start heartbeat for stale processor detection (added after Jan 23 incident)
+            # This enables 15-minute detection of stuck processors vs 4-hour timeout
+            if HEARTBEAT_AVAILABLE:
+                try:
+                    self.heartbeat = ProcessorHeartbeat(
+                        processor_name=self.processor_name,
+                        run_id=self.run_id,
+                        data_date=str(data_date) if data_date else None
+                    )
+                    self.heartbeat.start()
+                    logger.debug(f"💓 Heartbeat started for {self.processor_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to start heartbeat: {e}")
+                    self.heartbeat = None
 
             # ═══════════════════════════════════════════════════════════════
             # DEFENSIVE CHECKS: Upstream Status + Gap Detection
@@ -555,6 +582,14 @@ class PrecomputeProcessorBase(RunHistoryMixin):
             return False
 
         finally:
+            # Stop heartbeat regardless of success/failure
+            if self.heartbeat:
+                try:
+                    self.heartbeat.stop()
+                    logger.debug(f"💓 Heartbeat stopped for {self.processor_name}")
+                except Exception as hb_ex:
+                    logger.warning(f"Error stopping heartbeat: {hb_ex}")
+
             # Always run finalize, even on error
             try:
                 self.finalize()
