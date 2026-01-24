@@ -15,10 +15,10 @@ This project consolidates all identified improvements from codebase analysis, ha
 | Priority | Total | Completed | In Progress | Remaining |
 |----------|-------|-----------|-------------|-----------|
 | P0 - Critical | 10 | 10 | 0 | 0 |
-| P1 - High | 25 | 21 | 0 | 4 |
+| P1 - High | 25 | 23 | 1 | 1 |
 | P2 - Medium | 37 | 3 | 0 | 34 |
 | P3 - Low | 26 | 0 | 0 | 26 |
-| **Total** | **98** | **34** | **0** | **64** |
+| **Total** | **98** | **36** | **1** | **61** |
 
 ---
 
@@ -173,17 +173,19 @@ This project consolidates all identified improvements from codebase analysis, ha
   - Files: `orchestration/cloud_functions/*/main.py`
   - Solution: Added health endpoints to all 16 functions that were missing them
 
-- [ ] **P1-14: Create CatBoost V8 tests**
-  - Status: Not Started
-  - Issue: Model failure went undetected for 3 days
-  - Solution: Add model validation tests
+- [x] **P1-14: Create CatBoost V8 tests** ✅ ALREADY DONE
+  - Status: Completed (was already implemented)
+  - Files: `tests/predictions/test_catboost_v8.py`
+  - Notes: Comprehensive test suite with 9 test classes, 30+ tests covering:
+    model loading, feature preparation, validation, predictions, confidence, recommendations
 
 ### Infrastructure
 
-- [ ] **P1-15: Add infrastructure monitoring**
-  - Status: Not Started
-  - Issue: No CPU/memory tracking
-  - Solution: Add Cloud Monitoring dashboards
+- [x] **P1-15: Add infrastructure monitoring** ✅ FIXED
+  - Status: Completed
+  - Files: `monitoring/scripts/setup_monitoring.sh`
+  - Solution: Added CPU utilization alert (80% threshold) and instance count alert
+  - Memory monitoring was already present
 
 - [x] **P1-16: Add Pub/Sub publish retries** ✅ ALREADY DONE
   - Status: Completed (was already implemented)

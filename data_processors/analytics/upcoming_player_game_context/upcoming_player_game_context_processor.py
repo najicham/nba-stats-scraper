@@ -84,6 +84,9 @@ from shared.config.orchestration_config import get_orchestration_config
 # Player registry for universal player ID lookup
 from shared.utils.player_registry import RegistryReader
 
+# Travel utilities for distance and timezone calculations
+from data_processors.analytics.utils.travel_utils import NBATravel
+
 logger = logging.getLogger(__name__)
 
 
@@ -148,6 +151,10 @@ class UpcomingPlayerGameContextProcessor(
         self.rosters = {}  # player_lookup -> roster info
         self.injuries = {}  # player_lookup -> injury info
         self.registry = {}  # player_lookup -> universal_player_id
+
+        # Travel utilities for distance/timezone calculations (P1-20)
+        self._travel_utils = None  # Lazy-loaded
+        self._team_travel_cache = {}  # team_abbr -> travel metrics
 
         # Season start date (for completeness checking - Week 5)
         self.season_start_date = None
@@ -1589,10 +1596,74 @@ class UpcomingPlayerGameContextProcessor(
             }
     
     def _extract_rosters(self) -> None:
-        """Extract current roster data (optional enhancement)."""
-        # TODO: Implement roster extraction from nba_raw.espn_team_rosters
-        # For now, we'll determine team from recent boxscores
-        pass
+        """
+        Extract current roster data including player age.
+
+        Loads the latest roster data from espn_team_rosters for player demographics.
+        Stores in self.roster_ages as {player_lookup: age}.
+        """
+        if not hasattr(self, 'roster_ages'):
+            self.roster_ages = {}
+
+        if not self.players_to_process:
+            logger.info("No players to lookup roster data for")
+            return
+
+        unique_players = list(set(p['player_lookup'] for p in self.players_to_process))
+        logger.info(f"Extracting roster data for {len(unique_players)} players")
+
+        # Query for latest roster entry per player with age
+        query = f"""
+            WITH latest_roster AS (
+                SELECT
+                    player_lookup,
+                    age,
+                    birth_date,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY player_lookup
+                        ORDER BY roster_date DESC, scrape_hour DESC
+                    ) as rn
+                FROM `{self.project_id}.nba_raw.espn_team_rosters`
+                WHERE roster_date <= @target_date
+                  AND player_lookup IN UNNEST(@player_lookups)
+            )
+            SELECT player_lookup, age, birth_date
+            FROM latest_roster
+            WHERE rn = 1
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("target_date", "DATE", self.target_date),
+                bigquery.ArrayQueryParameter("player_lookups", "STRING", unique_players),
+            ]
+        )
+
+        try:
+            results = self.bq_client.query(query, job_config=job_config).result()
+
+            for row in results:
+                player_lookup = row.player_lookup
+                age = row.age
+
+                # If age is None but birth_date exists, calculate age
+                if age is None and row.birth_date:
+                    try:
+                        from datetime import date
+                        birth = row.birth_date
+                        if isinstance(birth, str):
+                            birth = date.fromisoformat(birth)
+                        age = (self.target_date - birth).days // 365
+                    except Exception:
+                        pass
+
+                if age is not None:
+                    self.roster_ages[player_lookup] = age
+
+            logger.info(f"Loaded roster ages for {len(self.roster_ages)} players")
+
+        except Exception as e:
+            logger.warning(f"Failed to load roster data: {e}")
     
     def _extract_injuries(self) -> None:
         """
@@ -2341,6 +2412,9 @@ class UpcomingPlayerGameContextProcessor(
         questionable_star_teammates = self._get_questionable_star_teammates(team_abbr, self.target_date)
         star_tier_out = self._get_star_tier_out(team_abbr, self.target_date)
 
+        # Calculate travel context (P1-20)
+        travel_context = self._calculate_travel_context(team_abbr, game_info)
+
         # Get has_prop_line from player_info (passed from extract)
         has_prop_line = player_info.get('has_prop_line', False)
 
@@ -2406,15 +2480,15 @@ class UpcomingPlayerGameContextProcessor(
             # Fatigue metrics
             **fatigue_metrics,
             
-            # Travel context (all TODO: future)
-            'travel_miles': None,
-            'time_zone_changes': None,
-            'consecutive_road_games': None,
-            'miles_traveled_last_14_days': None,
-            'time_zones_crossed_last_14_days': None,
+            # Travel context (P1-20: implemented)
+            'travel_miles': travel_context.get('travel_miles'),
+            'time_zone_changes': travel_context.get('time_zone_changes'),
+            'consecutive_road_games': travel_context.get('consecutive_road_games'),
+            'miles_traveled_last_14_days': travel_context.get('miles_traveled_last_14_days'),
+            'time_zones_crossed_last_14_days': travel_context.get('time_zones_crossed_last_14_days'),
             
             # Player characteristics
-            'player_age': None,  # TODO: from roster
+            'player_age': self.roster_ages.get(player_lookup) if hasattr(self, 'roster_ages') else None,
             
             # Performance metrics
             **performance_metrics,
@@ -2647,7 +2721,64 @@ class UpcomingPlayerGameContextProcessor(
             'clutch_minutes_last_7_games': None,  # TODO: future
             'back_to_back': back_to_back
         }
-    
+
+    def _calculate_travel_context(self, team_abbr: str, game_info: Dict) -> Dict:
+        """
+        Calculate travel-related context metrics for the team.
+
+        Uses NBATravel utility to get distance and timezone data.
+
+        Args:
+            team_abbr: Team abbreviation
+            game_info: Dict with game info including home/away status
+
+        Returns:
+            Dict with travel metrics
+        """
+        default_metrics = {
+            'travel_miles': None,
+            'time_zone_changes': None,
+            'consecutive_road_games': None,
+            'miles_traveled_last_14_days': None,
+            'time_zones_crossed_last_14_days': None,
+        }
+
+        try:
+            # Check cache first
+            cache_key = f"{team_abbr}_{self.target_date}"
+            if cache_key in self._team_travel_cache:
+                return self._team_travel_cache[cache_key]
+
+            # Lazy-load travel utils
+            if self._travel_utils is None:
+                self._travel_utils = NBATravel(self.project_id)
+
+            # Get 14-day travel metrics
+            travel_14d = self._travel_utils.get_travel_last_n_days(
+                team_abbr=team_abbr,
+                current_date=datetime.combine(self.target_date, datetime.min.time()),
+                days=14
+            )
+
+            if travel_14d:
+                metrics = {
+                    'travel_miles': None,  # Single game travel TBD
+                    'time_zone_changes': None,  # Single game TZ TBD
+                    'consecutive_road_games': travel_14d.get('consecutive_away_games', 0),
+                    'miles_traveled_last_14_days': travel_14d.get('miles_traveled', 0),
+                    'time_zones_crossed_last_14_days': travel_14d.get('time_zones_crossed', 0),
+                }
+            else:
+                metrics = default_metrics
+
+            # Cache result
+            self._team_travel_cache[cache_key] = metrics
+            return metrics
+
+        except Exception as e:
+            logger.debug(f"Could not calculate travel context for {team_abbr}: {e}")
+            return default_metrics
+
     def _calculate_performance_metrics(self, historical_data: pd.DataFrame, current_points_line: Optional[float] = None) -> Dict:
         """
         Calculate recent performance metrics.
@@ -3828,10 +3959,65 @@ class UpcomingPlayerGameContextProcessor(
             return 0.0
     
     def _extract_game_time(self, game_info: Dict) -> Optional[str]:
-        """Extract game time in local timezone."""
-        # TODO: Implement timezone conversion
-        # For now, just return None
-        return None
+        """
+        Extract game time in local arena timezone.
+
+        Args:
+            game_info: Dict containing game_date_est and arena_timezone
+
+        Returns:
+            Formatted time string like "7:30 PM ET" or None if unavailable
+        """
+        try:
+            from zoneinfo import ZoneInfo
+            from datetime import datetime
+
+            # Get the game timestamp (stored as EST/ET in nbac_schedule)
+            game_dt = game_info.get('game_date_est')
+            if not game_dt:
+                return None
+
+            # Handle different input types
+            if isinstance(game_dt, str):
+                # Parse ISO format string
+                game_dt = datetime.fromisoformat(game_dt.replace('Z', '+00:00'))
+            elif not isinstance(game_dt, datetime):
+                return None
+
+            # Get arena timezone (default to Eastern if not specified)
+            arena_tz_str = game_info.get('arena_timezone', 'America/New_York')
+            if not arena_tz_str:
+                arena_tz_str = 'America/New_York'
+
+            # Convert to arena local time
+            try:
+                arena_tz = ZoneInfo(arena_tz_str)
+            except Exception:
+                arena_tz = ZoneInfo('America/New_York')
+
+            # If datetime is naive, assume it's Eastern time
+            if game_dt.tzinfo is None:
+                eastern = ZoneInfo('America/New_York')
+                game_dt = game_dt.replace(tzinfo=eastern)
+
+            local_dt = game_dt.astimezone(arena_tz)
+
+            # Get timezone abbreviation
+            tz_abbrev_map = {
+                'America/New_York': 'ET',
+                'America/Chicago': 'CT',
+                'America/Denver': 'MT',
+                'America/Los_Angeles': 'PT',
+                'America/Phoenix': 'MST',
+            }
+            tz_abbr = tz_abbrev_map.get(arena_tz_str, local_dt.strftime('%Z'))
+
+            # Format as "7:30 PM ET"
+            return f"{local_dt.strftime('%I:%M %p').lstrip('0')} {tz_abbr}"
+
+        except Exception as e:
+            logger.debug(f"Could not extract game time: {e}")
+            return None
     
     def _determine_season_phase(self, game_date: date) -> str:
         """

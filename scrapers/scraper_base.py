@@ -1543,11 +1543,23 @@ class ScraperBase:
             respect_retry_after_header=True  # Honor Retry-After headers from APIs
         )
 
-    def get_http_adapter(self, retry_strategy):
+    def get_http_adapter(self, retry_strategy, pool_connections: int = 10, pool_maxsize: int = 20):
         """
-        Return an HTTPAdapter with the given retry_strategy.
+        Return an HTTPAdapter with the given retry_strategy and connection pooling.
+
+        Args:
+            retry_strategy: urllib3 Retry object
+            pool_connections: Number of connection pools to cache (default 10)
+            pool_maxsize: Max connections per pool (default 20)
+
+        Returns:
+            HTTPAdapter configured with retries and connection pooling
         """
-        return HTTPAdapter(max_retries=retry_strategy)
+        return HTTPAdapter(
+            max_retries=retry_strategy,
+            pool_connections=pool_connections,
+            pool_maxsize=pool_maxsize
+        )
 
     def start_download(self):
         """
@@ -1992,7 +2004,7 @@ class ScraperBase:
 
     def check_download_status(self):
         """
-        Ensure we got a valid status_code == 200, else raise an exception 
+        Ensure we got a valid status_code == 200, else raise an exception
         to trigger retry or error out.
         """
         if not hasattr(self.raw_response, "status_code"):
@@ -2006,6 +2018,72 @@ class ScraperBase:
             else:
                 raise InvalidHttpStatusCodeException(
                     f"Invalid HTTP status code (no retry): {self.raw_response.status_code}"
+                )
+
+        # Check for WAF/Cloudflare blocks that return 200 with challenge page
+        self._check_for_waf_block()
+
+    def _check_for_waf_block(self):
+        """
+        Detect Cloudflare/WAF challenge pages that return HTTP 200.
+
+        Challenge pages return 200 status but contain HTML with JavaScript
+        challenges instead of the expected JSON/data content.
+        """
+        if not hasattr(self.raw_response, 'headers'):
+            return
+
+        headers = self.raw_response.headers
+
+        # Check for Cloudflare-specific headers
+        is_cloudflare = (
+            headers.get('Server', '').lower() in ('cloudflare', 'cloudflare-nginx') or
+            'cf-ray' in headers
+        )
+
+        # Check Content-Type mismatch (expecting JSON but got HTML)
+        content_type = headers.get('Content-Type', '').lower()
+        expecting_json = self.download_type == DownloadType.JSON
+        got_html = 'text/html' in content_type
+
+        if expecting_json and got_html:
+            # Peek at response content for challenge patterns
+            try:
+                content_preview = self.raw_response.content[:2000].decode('utf-8', errors='ignore').lower()
+            except Exception:
+                content_preview = ''
+
+            # Common WAF/challenge page indicators
+            waf_patterns = [
+                'checking your browser',
+                'please enable javascript',
+                'please enable cookies',
+                'access denied',
+                'ray id:',
+                '__cf_chl',
+                'challenge-form',
+                'captcha',
+                'security check',
+                'blocked',
+                'ddos protection',
+            ]
+
+            detected_patterns = [p for p in waf_patterns if p in content_preview]
+
+            if detected_patterns:
+                waf_source = 'Cloudflare' if is_cloudflare else 'WAF'
+                cf_ray = headers.get('cf-ray', 'none')
+
+                logger.warning(
+                    f"{waf_source} challenge/block detected! "
+                    f"Patterns: {detected_patterns[:3]}, cf-ray: {cf_ray}, "
+                    f"URL: {getattr(self.raw_response, 'url', 'unknown')}"
+                )
+
+                # Raise retryable exception - might work with different proxy/timing
+                raise RetryInvalidHttpStatusCodeException(
+                    f"{waf_source} challenge page detected (patterns: {detected_patterns[:2]}). "
+                    f"Consider using browser mode or different proxy."
                 )
 
     def decode_download_content(self):

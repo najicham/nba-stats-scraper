@@ -132,6 +132,54 @@ EOF
 
 gcloud alpha monitoring policies create --policy-from-file=/tmp/high_memory_policy.yaml
 
+# High CPU usage alert (P1-15: Added infrastructure monitoring)
+cat << EOF > /tmp/high_cpu_policy.yaml
+displayName: "NBA Platform - High CPU Usage"
+documentation:
+  content: "CPU usage is above 80% for NBA services"
+conditions:
+  - displayName: "High CPU condition"
+    conditionThreshold:
+      filter: 'resource.type="cloud_run_revision" AND resource.labels.service_name=~"nba-.*" AND metric.type="run.googleapis.com/container/cpu/utilizations"'
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_MEAN
+          crossSeriesReducer: REDUCE_MEAN
+          groupByFields:
+            - resource.labels.service_name
+      comparison: COMPARISON_GREATER_THAN
+      thresholdValue: 0.8
+      duration: 600s
+notificationChannels:
+  - $NOTIFICATION_CHANNEL
+EOF
+
+gcloud alpha monitoring policies create --policy-from-file=/tmp/high_cpu_policy.yaml
+
+# Instance count alert (track scaling issues)
+cat << EOF > /tmp/instance_count_policy.yaml
+displayName: "NBA Platform - High Instance Count"
+documentation:
+  content: "Instance count is unusually high, may indicate scaling issues or stuck requests"
+conditions:
+  - displayName: "High instance count condition"
+    conditionThreshold:
+      filter: 'resource.type="cloud_run_revision" AND resource.labels.service_name=~"nba-.*" AND metric.type="run.googleapis.com/container/instance_count"'
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_MAX
+          crossSeriesReducer: REDUCE_SUM
+          groupByFields:
+            - resource.labels.service_name
+      comparison: COMPARISON_GREATER_THAN
+      thresholdValue: 20
+      duration: 300s
+notificationChannels:
+  - $NOTIFICATION_CHANNEL
+EOF
+
+gcloud alpha monitoring policies create --policy-from-file=/tmp/instance_count_policy.yaml
+
 echo "✅ Alert policies created"
 
 # Import dashboard
