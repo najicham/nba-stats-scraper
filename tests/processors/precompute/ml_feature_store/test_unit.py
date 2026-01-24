@@ -641,34 +641,34 @@ class TestBatchWriter:
     # DELETE EXISTING DATA (3 tests)
     # ========================================================================
     
-    def test_delete_existing_data_success(self, writer, mock_bq_client):
+    def test_delete_existing_data_legacy_success(self, writer, mock_bq_client):
         """Test successful delete operation."""
         mock_job = Mock()
         mock_job.result.return_value = None
         mock_job.num_dml_affected_rows = 150
         mock_bq_client.query.return_value = mock_job
         
-        result = writer._delete_existing_data('project.dataset.table', date(2025, 1, 15))
+        result = writer._delete_existing_data_legacy('project.dataset.table', date(2025, 1, 15))
         
         assert result is True, "Successful delete should return True"
         mock_bq_client.query.assert_called_once()
         assert "DELETE FROM" in mock_bq_client.query.call_args[0][0]
         assert "2025-01-15" in mock_bq_client.query.call_args[0][0]
     
-    def test_delete_existing_data_streaming_buffer(self, writer, mock_bq_client):
+    def test_delete_existing_data_legacy_streaming_buffer(self, writer, mock_bq_client):
         """Test delete blocked by streaming buffer."""
         mock_bq_client.query.side_effect = Exception("streaming buffer conflict")
         
-        result = writer._delete_existing_data('project.dataset.table', date(2025, 1, 15))
+        result = writer._delete_existing_data_legacy('project.dataset.table', date(2025, 1, 15))
         
         assert result is False, "Streaming buffer conflict should return False"
     
-    def test_delete_existing_data_other_error(self, writer, mock_bq_client):
+    def test_delete_existing_data_legacy_other_error(self, writer, mock_bq_client):
         """Test delete with unexpected error raises exception."""
         mock_bq_client.query.side_effect = Exception("unexpected error")
         
         with pytest.raises(Exception, match="unexpected error"):
-            writer._delete_existing_data('project.dataset.table', date(2025, 1, 15))
+            writer._delete_existing_data_legacy('project.dataset.table', date(2025, 1, 15))
     
     # ========================================================================
     # WRITE SINGLE BATCH (3 tests)

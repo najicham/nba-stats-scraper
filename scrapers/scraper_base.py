@@ -793,8 +793,10 @@ class ScraperBase:
             client = bigquery.Client()
 
             # Use MERGE to upsert - increment retry_count if already exists
-            query = """
-            MERGE INTO `nba-props-platform.nba_orchestration.scraper_failures` AS target
+            from shared.config.gcp_config import get_project_id
+            project_id = get_project_id()
+            query = f"""
+            MERGE INTO `{project_id}.nba_orchestration.scraper_failures` AS target
             USING (SELECT @game_date as game_date, @scraper_name as scraper_name) AS source
             ON target.game_date = source.game_date AND target.scraper_name = source.scraper_name
             WHEN MATCHED AND target.backfilled = FALSE THEN

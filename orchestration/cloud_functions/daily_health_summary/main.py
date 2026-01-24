@@ -63,7 +63,8 @@ except ImportError:
     PydanticValidationError = Exception  # Fallback
 
 # Constants
-PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
+from shared.config.gcp_config import get_project_id
+PROJECT_ID = get_project_id()
 SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
 
 # Timezone

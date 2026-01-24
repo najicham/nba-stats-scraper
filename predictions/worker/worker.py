@@ -144,7 +144,8 @@ app = Flask(__name__)
 logger.info("✓ Flask app created")
 
 # Environment configuration
-PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+from shared.config.gcp_config import get_project_id
+PROJECT_ID = get_project_id()
 PREDICTIONS_TABLE = os.environ.get('PREDICTIONS_TABLE', 'nba_predictions.player_prop_predictions')
 PUBSUB_READY_TOPIC = os.environ.get('PUBSUB_READY_TOPIC', 'prediction-ready')
 logger.info("✓ Environment configuration loaded")

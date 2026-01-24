@@ -1281,18 +1281,20 @@ class PrecomputeProcessorBase(SoftDependencyMixin, RunHistoryMixin):
     def init_clients(self) -> None:
         """Initialize GCP clients with error notification."""
         try:
-            self.project_id = self.opts.get("project_id", "nba-props-platform")
+            from shared.config.gcp_config import get_project_id
+            self.project_id = self.opts.get("project_id") or get_project_id()
             self.bq_client = get_bigquery_client(project_id=self.project_id)
         except GoogleAPIError as e:
             logger.error(f"Failed to initialize BigQuery client: {e}")
             try:
+                from shared.config.gcp_config import get_project_id as get_proj
                 notify_error(
                     title=f"Precompute Processor Client Initialization Failed: {self.__class__.__name__}",
                     message="Unable to initialize BigQuery client",
                     details={
                         'processor': self.__class__.__name__,
                         'run_id': self.run_id,
-                        'project_id': self.opts.get('project_id', 'nba-props-platform'),
+                        'project_id': self.opts.get('project_id') or get_proj(),
                         'error_type': type(e).__name__,
                         'error': str(e)
                     },

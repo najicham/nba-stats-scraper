@@ -69,9 +69,9 @@ class TestWorkflowConfigInit:
         """Should successfully initialize with valid config file."""
         config = WorkflowConfig(config_path='config/workflows.yaml')
         
-        assert config.config is not None
-        assert 'workflows' in config.config
-        assert 'settings' in config.config
+        assert config._config is not None
+        assert 'workflows' in config._config
+        assert 'settings' in config._config
     
     @patch('os.path.exists', return_value=False)
     def test_missing_config_file(self, mock_exists):
@@ -275,7 +275,7 @@ class TestHotReload:
         # First load - time = 1000
         mock_getmtime.return_value = 1000
         config = WorkflowConfig(config_path='config/workflows.yaml')
-        original_config = config.config
+        original_config = config._config
         
         # Simulate file modification - time = 2000
         mock_getmtime.return_value = 2000
@@ -284,7 +284,7 @@ class TestHotReload:
         workflow = config.get_workflow('test_workflow')
         
         # Config should be reloaded (new object)
-        assert config.config is not original_config
+        assert config._config is not original_config
     
     @patch('builtins.open', mock_open(read_data=SAMPLE_CONFIG_YAML))
     @patch('os.path.exists', return_value=True)
@@ -295,14 +295,14 @@ class TestHotReload:
         mock_getmtime.return_value = 1000
         
         config = WorkflowConfig(config_path='config/workflows.yaml')
-        original_config = config.config
+        original_config = config._config
         
         # Get workflow multiple times
         config.get_workflow('test_workflow')
         config.get_workflow('test_workflow')
         
         # Config should be same object (not reloaded)
-        assert config.config is original_config
+        assert config._config is original_config
 
 
 class TestGetConfig:

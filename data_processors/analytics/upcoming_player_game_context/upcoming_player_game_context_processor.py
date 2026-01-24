@@ -63,6 +63,7 @@ from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from google.cloud import bigquery
+from google.api_core.exceptions import GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded
 import pandas as pd
 import numpy as np
 
@@ -469,8 +470,17 @@ class UpcomingPlayerGameContextProcessor(
                 'errors': [e['reason'] for e in self.failed_entities]
             }
             
-        except Exception as e:
-            logger.error(f"Error processing date {target_date}: {e}", exc_info=True)
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error processing date {target_date}: {e}", exc_info=True)
+            return {
+                'status': 'error',
+                'date': target_date.isoformat(),
+                'error': str(e),
+                'players_processed': 0,
+                'players_failed': 0  # FIX: Include this field for consistency
+            }
+        except (KeyError, AttributeError, TypeError, ValueError) as e:
+            logger.error(f"Data error processing date {target_date}: {e}", exc_info=True)
             return {
                 'status': 'error',
                 'date': target_date.isoformat(),
@@ -626,8 +636,11 @@ class UpcomingPlayerGameContextProcessor(
                 logger.warning(f"No gamebook data for historical date {self.target_date} - trying DAILY mode")
                 return 'daily'
 
-        except Exception as e:
-            logger.warning(f"Error checking gamebook availability: {e} - defaulting to DAILY mode")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.warning(f"BigQuery error checking gamebook availability: {e} - defaulting to DAILY mode")
+            return 'daily'
+        except (KeyError, AttributeError) as e:
+            logger.warning(f"Data error checking gamebook availability: {e} - defaulting to DAILY mode")
             return 'daily'
 
     def _extract_players_with_props(self) -> None:
@@ -835,8 +848,12 @@ class UpcomingPlayerGameContextProcessor(
                 )
                 self._send_roster_coverage_alert(self.target_date, teams_count, len(self.players_to_process))
 
-        except Exception as e:
-            logger.error(f"Error extracting players (daily mode): {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error extracting players (daily mode): {e}")
+            self.source_tracking['props']['rows_found'] = 0
+            raise
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error extracting players (daily mode): {e}")
             self.source_tracking['props']['rows_found'] = 0
             raise
 
@@ -954,8 +971,12 @@ class UpcomingPlayerGameContextProcessor(
                 f"({players_with_props} with prop lines, {len(self.players_to_process) - players_with_props} without)"
             )
 
-        except Exception as e:
-            logger.error(f"Error extracting players (backfill mode): {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error extracting players (backfill mode): {e}")
+            self.source_tracking['props']['rows_found'] = 0
+            raise
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error extracting players (backfill mode): {e}")
             self.source_tracking['props']['rows_found'] = 0
             raise
 
@@ -1017,8 +1038,11 @@ class UpcomingPlayerGameContextProcessor(
             df = self.bq_client.query(bettingpros_query, job_config=job_config).to_dataframe()
             logger.info(f"BettingPros fallback: Found {len(df)} players for {self.target_date}")
             return df
-        except Exception as e:
-            logger.error(f"Error extracting from BettingPros: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error extracting from BettingPros: {e}")
+            return pd.DataFrame()
+        except (KeyError, AttributeError) as e:
+            logger.error(f"Data error extracting from BettingPros: {e}")
             return pd.DataFrame()
     
     def _extract_schedule_data(self) -> None:
@@ -1110,9 +1134,13 @@ class UpcomingPlayerGameContextProcessor(
                         self.schedule_data[date_based_id] = row_dict
 
             logger.info(f"Extracted schedule for {len(target_games)} games on {self.target_date}")
-            
-        except Exception as e:
-            logger.error(f"Error extracting schedule data: {e}")
+
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error extracting schedule data: {e}")
+            self.source_tracking['schedule']['rows_found'] = 0
+            raise
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error extracting schedule data: {e}")
             self.source_tracking['schedule']['rows_found'] = 0
             raise
     
@@ -1186,9 +1214,13 @@ class UpcomingPlayerGameContextProcessor(
             
             # TODO: Implement fallback to nbac_player_boxscores if BDL insufficient
             # TODO: Implement last resort fallback to nbac_gamebook_player_stats
-            
-        except Exception as e:
-            logger.error(f"Error extracting historical boxscores: {e}")
+
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error extracting historical boxscores: {e}")
+            self.source_tracking['boxscore']['rows_found'] = 0
+            raise
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error extracting historical boxscores: {e}")
             self.source_tracking['boxscore']['rows_found'] = 0
             raise
     
@@ -1301,8 +1333,19 @@ class UpcomingPlayerGameContextProcessor(
 
                 self.prop_lines[(player_lookup, game_id)] = prop_info
 
-        except Exception as e:
-            logger.error(f"Error in batch prop lines query: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error in batch prop lines query: {e}")
+            # Fallback: set empty prop info for all players
+            for player_lookup, game_id in player_game_pairs:
+                self.prop_lines[(player_lookup, game_id)] = {
+                    'opening_line': None,
+                    'opening_source': None,
+                    'current_line': None,
+                    'current_source': None,
+                    'line_movement': None
+                }
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error in batch prop lines query: {e}")
             # Fallback: set empty prop info for all players
             for player_lookup, game_id in player_game_pairs:
                 self.prop_lines[(player_lookup, game_id)] = {
@@ -1394,8 +1437,19 @@ class UpcomingPlayerGameContextProcessor(
 
             logger.info(f"BettingPros: Extracted prop lines for {len(bp_props)} players")
 
-        except Exception as e:
-            logger.error(f"Error extracting prop lines from BettingPros: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.error(f"BigQuery error extracting prop lines from BettingPros: {e}")
+            # Fallback: set empty prop info for all players
+            for player_lookup, game_id in player_game_pairs:
+                self.prop_lines[(player_lookup, game_id)] = {
+                    'opening_line': None,
+                    'opening_source': None,
+                    'current_line': None,
+                    'current_source': None,
+                    'line_movement': None
+                }
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.error(f"Data error extracting prop lines from BettingPros: {e}")
             # Fallback: set empty prop info for all players
             for player_lookup, game_id in player_game_pairs:
                 self.prop_lines[(player_lookup, game_id)] = {
@@ -1432,8 +1486,20 @@ class UpcomingPlayerGameContextProcessor(
                 # Track source usage
                 self.source_tracking['game_lines']['rows_found'] += 1
                 
-            except Exception as e:
-                logger.warning(f"Error extracting game lines for {game_id}: {e}")
+            except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+                logger.warning(f"BigQuery error extracting game lines for {game_id}: {e}")
+                self.game_lines[game_id] = {
+                    'game_spread': None,
+                    'opening_spread': None,
+                    'spread_movement': None,
+                    'spread_source': None,
+                    'game_total': None,
+                    'opening_total': None,
+                    'total_movement': None,
+                    'total_source': None
+                }
+            except (KeyError, AttributeError, TypeError) as e:
+                logger.warning(f"Data error extracting game lines for {game_id}: {e}")
                 self.game_lines[game_id] = {
                     'game_spread': None,
                     'opening_spread': None,
@@ -1584,9 +1650,18 @@ class UpcomingPlayerGameContextProcessor(
             }
             
             return result
-            
-        except Exception as e:
-            logger.warning(f"Error getting {market_key} consensus for {game_id}: {e}")
+
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.warning(f"BigQuery error getting {market_key} consensus for {game_id}: {e}")
+            prefix = 'spread' if market_key == 'spreads' else 'total'
+            return {
+                f'opening_{prefix}': None,
+                f'game_{prefix}': None,
+                f'{prefix}_movement': None,
+                f'{prefix}_source': None
+            }
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.warning(f"Data error getting {market_key} consensus for {game_id}: {e}")
             prefix = 'spread' if market_key == 'spreads' else 'total'
             return {
                 f'opening_{prefix}': None,
@@ -1654,7 +1729,7 @@ class UpcomingPlayerGameContextProcessor(
                         if isinstance(birth, str):
                             birth = date.fromisoformat(birth)
                         age = (self.target_date - birth).days // 365
-                    except Exception:
+                    except (ValueError, TypeError, AttributeError):
                         pass
 
                 if age is not None:
@@ -1662,8 +1737,10 @@ class UpcomingPlayerGameContextProcessor(
 
             logger.info(f"Loaded roster ages for {len(self.roster_ages)} players")
 
-        except Exception as e:
-            logger.warning(f"Failed to load roster data: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.warning(f"BigQuery error loading roster data: {e}")
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.warning(f"Data error loading roster data: {e}")
     
     def _extract_injuries(self) -> None:
         """
@@ -1785,8 +1862,16 @@ class UpcomingPlayerGameContextProcessor(
                 'status_breakdown': status_counts
             }
 
-        except Exception as e:
-            logger.warning(f"Error extracting injury data: {e}. Continuing without injury info.")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.warning(f"BigQuery error extracting injury data: {e}. Continuing without injury info.")
+            self.source_tracking['injuries'] = {
+                'last_updated': None,
+                'rows_found': 0,
+                'players_with_status': 0,
+                'error': str(e)
+            }
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.warning(f"Data error extracting injury data: {e}. Continuing without injury info.")
             self.source_tracking['injuries'] = {
                 'last_updated': None,
                 'rows_found': 0,
@@ -1830,8 +1915,11 @@ class UpcomingPlayerGameContextProcessor(
                 f"{self.registry_stats['players_not_found']} not found"
             )
 
-        except Exception as e:
-            logger.warning(f"Registry lookup failed: {e}. Continuing without universal IDs.")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.warning(f"BigQuery error in registry lookup: {e}. Continuing without universal IDs.")
+            self.registry = {}
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.warning(f"Data error in registry lookup: {e}. Continuing without universal IDs.")
             self.registry = {}
 
     # ========================================================================
@@ -1864,8 +1952,11 @@ class UpcomingPlayerGameContextProcessor(
                 if row.circuit_breaker_until and datetime.now(timezone.utc) < row.circuit_breaker_until:
                     return {'active': True, 'attempts': row.attempt_number, 'until': row.circuit_breaker_until}
             return {'active': False, 'attempts': row.attempt_number, 'until': None}
-        except Exception as e:
-            logger.warning(f"Error checking circuit breaker for {entity_id}: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.warning(f"BigQuery error checking circuit breaker for {entity_id}: {e}")
+            return {'active': False, 'attempts': 0, 'until': None}
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.warning(f"Data error checking circuit breaker for {entity_id}: {e}")
             return {'active': False, 'attempts': 0, 'until': None}
 
     def _increment_reprocess_count(self, entity_id: str, analysis_date: date, completeness_pct: float, skip_reason: str) -> None:
@@ -1906,8 +1997,10 @@ class UpcomingPlayerGameContextProcessor(
         )
         try:
             self.bq_client.query(insert_query, job_config=job_config).result(timeout=60)
-        except Exception as e:
-            logger.warning(f"Failed to record reprocess attempt for {entity_id}: {e}")
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.warning(f"BigQuery error recording reprocess attempt for {entity_id}: {e}")
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.warning(f"Data error recording reprocess attempt for {entity_id}: {e}")
 
     # ========================================================================
     # CALCULATION - MAIN FLOW
@@ -1978,8 +2071,11 @@ class UpcomingPlayerGameContextProcessor(
                     try:
                         name, result = future.result()
                         completeness_results[name] = result
-                    except Exception as e:
-                        logger.warning(f"Completeness check for {window_name} failed: {e}")
+                    except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+                        logger.warning(f"BigQuery error in completeness check for {window_name}: {e}")
+                        completeness_results[window_name] = {}
+                    except (KeyError, AttributeError, TypeError, ValueError) as e:
+                        logger.warning(f"Data error in completeness check for {window_name}: {e}")
                         completeness_results[window_name] = {}
 
             # Extract results with defaults
@@ -2000,10 +2096,18 @@ class UpcomingPlayerGameContextProcessor(
                 f"Completeness check complete in {completeness_elapsed:.1f}s (5 windows, parallel). "
                 f"Bootstrap mode: {is_bootstrap}, Season boundary: {is_season_boundary}"
             )
-        except Exception as e:
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
             # Issue #3: Fail-closed - raise exception instead of returning fake data
             logger.error(
-                f"Completeness checking FAILED ({type(e).__name__}: {e}). "
+                f"Completeness checking FAILED (BigQuery error: {e}). "
+                f"Cannot proceed with unreliable data.",
+                exc_info=True
+            )
+            raise
+        except (KeyError, AttributeError, TypeError, ValueError) as e:
+            # Issue #3: Fail-closed - raise exception instead of returning fake data
+            logger.error(
+                f"Completeness checking FAILED (Data error: {e}). "
                 f"Cannot proceed with unreliable data.",
                 exc_info=True
             )
@@ -2086,13 +2190,21 @@ class UpcomingPlayerGameContextProcessor(
                             f"Player processing progress: {processed_count}/{len(self.players_to_process)} "
                             f"| Rate: {rate:.1f} players/sec | ETA: {eta/60:.1f}min"
                         )
-                except Exception as e:
-                    logger.error(f"Error processing {player_info['player_lookup']}: {e}")
+                except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+                    logger.error(f"BigQuery error processing {player_info['player_lookup']}: {e}")
                     failures.append({
                         'player_lookup': player_info['player_lookup'],
                         'game_id': player_info['game_id'],
                         'reason': str(e),
-                        'category': 'PROCESSING_ERROR'
+                        'category': 'BIGQUERY_ERROR'
+                    })
+                except (KeyError, AttributeError, TypeError, ValueError) as e:
+                    logger.error(f"Data error processing {player_info['player_lookup']}: {e}")
+                    failures.append({
+                        'player_lookup': player_info['player_lookup'],
+                        'game_id': player_info['game_id'],
+                        'reason': str(e),
+                        'category': 'DATA_ERROR'
                     })
 
         # Store results (main thread only - thread-safe)
@@ -2205,12 +2317,19 @@ class UpcomingPlayerGameContextProcessor(
                     'category': 'CALCULATION_ERROR'
                 })
 
-        except Exception as e:
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
             return (False, {
                 'player_lookup': player_lookup,
                 'game_id': game_id,
                 'reason': str(e),
-                'category': 'PROCESSING_ERROR'
+                'category': 'BIGQUERY_ERROR'
+            })
+        except (KeyError, AttributeError, TypeError, ValueError) as e:
+            return (False, {
+                'player_lookup': player_lookup,
+                'game_id': game_id,
+                'reason': str(e),
+                'category': 'DATA_ERROR'
             })
 
     def _process_players_serial(self, comp_l5: Dict, comp_l10: Dict, comp_l7d: Dict,

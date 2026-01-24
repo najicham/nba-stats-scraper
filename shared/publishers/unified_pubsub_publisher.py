@@ -58,9 +58,13 @@ class UnifiedPubSubPublisher:
         Initialize publisher.
 
         Args:
-            project_id: GCP project ID (defaults to environment)
+            project_id: GCP project ID (defaults to environment via gcp_config)
         """
-        self.project_id = project_id or os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
+        if project_id:
+            self.project_id = project_id
+        else:
+            from shared.config.gcp_config import get_project_id
+            self.project_id = get_project_id()
         self._client = None
 
     @property

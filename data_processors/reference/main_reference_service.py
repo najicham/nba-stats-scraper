@@ -7,6 +7,10 @@ from datetime import datetime, date
 from typing import Dict, Any, List, Optional
 from flask import Flask, request, jsonify
 
+# Import specific exceptions for better error handling
+from google.api_core.exceptions import GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded
+from requests.exceptions import RequestException, Timeout, ConnectionError as RequestsConnectionError
+
 # Import notification system
 from shared.utils.notification_system import (
     notify_error,
@@ -63,10 +67,10 @@ def update_registry_from_gamebook(game_date: str, season: str) -> Dict[str, Any]
             'processing_run_id': result['processing_run_id']
         }
         
-    except Exception as e:
+    except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded, KeyError, AttributeError, TypeError, ValueError) as e:
         error_msg = f"Error updating registry from gamebook: {str(e)}"
         logger.error(error_msg)
-        
+
         # Note: registry_processor_base already sent detailed error notification
         # This is just for orchestration context
         try:
@@ -83,7 +87,7 @@ def update_registry_from_gamebook(game_date: str, season: str) -> Dict[str, Any]
                 },
                 processor_name="Reference Service Orchestration"
             )
-        except Exception as notify_ex:
+        except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
         
         return {
@@ -166,10 +170,10 @@ def update_registry_from_rosters(season: str, teams: Optional[List[str]] = None)
                 'processing_run_id': result['processing_run_id']
             }
         
-    except Exception as e:
+    except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded, KeyError, AttributeError, TypeError, ValueError) as e:
         error_msg = f"Error updating registry from rosters: {str(e)}"
         logger.error(error_msg)
-        
+
         # Note: registry_processor_base already sent detailed error notification
         # This is just for orchestration context
         try:
@@ -186,7 +190,7 @@ def update_registry_from_rosters(season: str, teams: Optional[List[str]] = None)
                 },
                 processor_name="Reference Service Orchestration"
             )
-        except Exception as notify_ex:
+        except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
         
         return {
@@ -221,10 +225,10 @@ def get_registry_summary() -> Dict[str, Any]:
             'generated_at': datetime.now().isoformat()
         }
         
-    except Exception as e:
+    except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded, KeyError, AttributeError, TypeError, ValueError) as e:
         error_msg = f"Error getting registry summary: {str(e)}"
         logger.error(error_msg)
-        
+
         try:
             notify_error(
                 title="Registry Service: Summary Query Failed",
@@ -237,7 +241,7 @@ def get_registry_summary() -> Dict[str, Any]:
                 },
                 processor_name="Reference Service Orchestration"
             )
-        except Exception as notify_ex:
+        except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
         
         return {
@@ -280,14 +284,14 @@ def process_pub_sub_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
                         },
                         processor_name="Reference Service Orchestration"
                     )
-                except Exception as notify_ex:
+                except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
                 return {
                     'status': 'error',
                     'message': error_msg
                 }
-            
+
             logger.info(f"Updating registry for gamebook processing: {game_date}, season {season}")
             result = update_registry_from_gamebook(game_date, season)
             
@@ -316,14 +320,14 @@ def process_pub_sub_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
                         },
                         processor_name="Reference Service Orchestration"
                     )
-                except Exception as notify_ex:
+                except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
                 return {
-                    'status': 'error', 
+                    'status': 'error',
                     'message': error_msg
                 }
-            
+
             logger.info(f"Updating registry for roster scraping: season {season}")
             if teams:
                 logger.info(f"Teams to update: {teams}")
@@ -376,21 +380,21 @@ def process_pub_sub_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
                         },
                         processor_name="Reference Service Orchestration"
                     )
-                except Exception as notify_ex:
+                except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
+
                 return {
                     'status': 'error',
                     'message': error_msg
                 }
-            
+
             return {
                 'status': 'success',
                 'trigger_type': trigger_type,
                 'processor_type': processor_type,
                 'result': result
             }
-        
+
         else:
             error_msg = f'Unknown trigger type: {trigger_type}'
             try:
@@ -404,15 +408,15 @@ def process_pub_sub_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
                         'action': 'Check message format or add new trigger handler'
                     }
                 )
-            except Exception as notify_ex:
+            except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             
             return {
                 'status': 'error',
                 'message': error_msg
             }
-    
-    except Exception as e:
+
+    except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded, KeyError, AttributeError, TypeError, ValueError) as e:
         logger.error(f"Error processing message: {e}")
         try:
             notify_error(
@@ -427,7 +431,7 @@ def process_pub_sub_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
                 },
                 processor_name="Reference Service Orchestration"
             )
-        except Exception as notify_ex:
+        except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
         
         return {
@@ -469,10 +473,10 @@ def process_message():
                     },
                     processor_name="Reference Service Orchestration"
                 )
-            except Exception as notify_ex:
+            except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             return jsonify({'error': 'No message received'}), 400
-        
+
         if 'message' not in envelope:
             try:
                 notify_error(
@@ -486,17 +490,17 @@ def process_message():
                     },
                     processor_name="Reference Service Orchestration"
                 )
-            except Exception as notify_ex:
+            except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             return jsonify({'error': 'Invalid Pub/Sub format'}), 400
-        
+
         # Decode the message
         import base64
         try:
             message_data = json.loads(
                 base64.b64decode(envelope['message']['data']).decode('utf-8')
             )
-        except (KeyError, json.JSONDecodeError, Exception) as e:
+        except (KeyError, json.JSONDecodeError, TypeError, ValueError, UnicodeDecodeError) as e:
             try:
                 notify_error(
                     title="Registry Service: Message Decode Failed",
@@ -509,7 +513,7 @@ def process_message():
                     },
                     processor_name="Reference Service Orchestration"
                 )
-            except Exception as notify_ex:
+            except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             return jsonify({'error': f'Message decode failed: {str(e)}'}), 400
         
@@ -521,8 +525,8 @@ def process_message():
             return jsonify(result), 200
         else:
             return jsonify(result), 500
-    
-    except Exception as e:
+
+    except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded, KeyError, AttributeError, TypeError, ValueError, json.JSONDecodeError) as e:
         logger.error(f"Error in process endpoint: {e}")
         try:
             notify_error(
@@ -536,7 +540,7 @@ def process_message():
                 },
                 processor_name="Reference Service Orchestration"
             )
-        except Exception as notify_ex:
+        except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
         
         return jsonify({
@@ -560,10 +564,10 @@ def manual_trigger(trigger_type: str):
         
         # Process the message
         result = process_pub_sub_message(message_data)
-        
+
         return jsonify(result)
-    
-    except Exception as e:
+
+    except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded, KeyError, AttributeError, TypeError, ValueError, json.JSONDecodeError) as e:
         logger.error(f"Error in manual trigger: {e}")
         return jsonify({
             'status': 'error',
@@ -580,8 +584,8 @@ def get_stats():
             'status': 'success',
             'registry_summary': summary
         })
-    
-    except Exception as e:
+
+    except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded, KeyError, AttributeError, TypeError, ValueError) as e:
         logger.error(f"Error getting stats: {e}")
         return jsonify({
             'status': 'error',
@@ -616,8 +620,8 @@ def gamebook_specific_trigger(action: str):
         
         result = process_pub_sub_message(message_data)
         return jsonify(result)
-    
-    except Exception as e:
+
+    except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded, KeyError, AttributeError, TypeError, ValueError) as e:
         logger.error(f"Error in gamebook trigger: {e}")
         return jsonify({
             'status': 'error',
@@ -660,7 +664,7 @@ def resolve_pending_names():
             'results': results
         })
 
-    except Exception as e:
+    except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded, KeyError, AttributeError, TypeError, ValueError, ImportError) as e:
         error_msg = f"Error in AI name resolution: {str(e)}"
         logger.error(error_msg)
 
@@ -676,7 +680,7 @@ def resolve_pending_names():
                 },
                 processor_name="Reference Service"
             )
-        except Exception as notify_ex:
+        except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
 
         return jsonify({
@@ -716,7 +720,7 @@ def registry_health_check():
                     details=results,
                     processor_name="Registry Health Check"
                 )
-            except Exception as notify_ex:
+            except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
 
         elif overall_status == 'WARNING':
@@ -726,7 +730,7 @@ def registry_health_check():
                     message="Registry health check found warnings",
                     details=results
                 )
-            except Exception as notify_ex:
+            except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
 
         return jsonify({
@@ -735,7 +739,7 @@ def registry_health_check():
             'results': results
         })
 
-    except Exception as e:
+    except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded, KeyError, AttributeError, TypeError, ValueError, ImportError) as e:
         error_msg = f"Error in health check: {str(e)}"
         logger.error(error_msg)
 

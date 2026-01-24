@@ -68,9 +68,10 @@ def get_storage_client(project_id: Optional[str] = None) -> storage.Client:
         - First call: ~100-300ms (creates client, authenticates)
         - Subsequent calls: <1ms (returns cached client)
     """
-    # Default project from environment
+    # Default project from centralized config
     if project_id is None:
-        project_id = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
+        from shared.config.gcp_config import get_project_id
+        project_id = get_project_id()
 
     cache_key = project_id
 

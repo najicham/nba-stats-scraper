@@ -59,7 +59,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
+from shared.config.gcp_config import get_project_id
+PROJECT_ID = get_project_id()
 PHASE4_TRIGGER_TOPIC = 'nba-phase4-trigger'
 SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
 
@@ -365,7 +366,7 @@ def verify_phase3_data_ready(game_date: str) -> tuple:
         tuple: (is_ready: bool, missing_tables: list, table_counts: dict)
     """
     try:
-        bq_client = get_bigquery_client(project_id=os.environ.get('GCP_PROJECT', 'nba-props-platform'))
+        bq_client = get_bigquery_client(project_id=PROJECT_ID)
         missing = []
         table_counts = {}
 

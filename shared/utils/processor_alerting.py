@@ -46,8 +46,10 @@ class ProcessorAlerting:
     
     def __init__(self):
         # Email configuration
+        from shared.config.gcp_config import get_project_id
+        project_id = get_project_id()
         self.sendgrid_api_key = os.environ.get('SENDGRID_API_KEY')
-        self.from_email = os.environ.get('ALERT_FROM_EMAIL', 'nba-processors@nba-props-platform.com')
+        self.from_email = os.environ.get('ALERT_FROM_EMAIL', f'nba-processors@{project_id}.com')
         self.default_recipients = self._parse_email_list(os.environ.get('ALERT_RECIPIENTS', ''))
         
         # Slack configuration  

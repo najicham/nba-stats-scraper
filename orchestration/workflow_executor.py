@@ -255,8 +255,8 @@ class WorkflowExecutor:
                 d.scrapers_triggered,
                 d.target_games,
                 d.decision_time
-            FROM `nba-props-platform.nba_orchestration.workflow_decisions` d
-            LEFT JOIN `nba-props-platform.nba_orchestration.workflow_executions` e
+            FROM `{self.project_id}.nba_orchestration.workflow_decisions` d
+            LEFT JOIN `{self.project_id}.nba_orchestration.workflow_executions` e
                 ON d.decision_id = e.decision_id
             WHERE d.action = 'RUN'
               AND DATE(d.decision_time) = CURRENT_DATE()

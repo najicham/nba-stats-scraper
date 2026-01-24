@@ -27,13 +27,12 @@ class TestDataProcessorImports:
 
     def test_analytics_processors_import(self):
         """Test Phase 3 analytics processor imports."""
-        from data_processors.analytics import (
-            PlayerGameSummaryProcessor,
-            TeamDefenseGameSummaryProcessor,
-            TeamOffenseGameSummaryProcessor,
-            UpcomingPlayerGameContextProcessor,
-            UpcomingTeamGameContextProcessor,
-        )
+        from data_processors.analytics.player_game_summary.player_game_summary_processor import PlayerGameSummaryProcessor
+        from data_processors.analytics.team_defense_game_summary.team_defense_game_summary_processor import TeamDefenseGameSummaryProcessor
+        from data_processors.analytics.team_offense_game_summary.team_offense_game_summary_processor import TeamOffenseGameSummaryProcessor
+        from data_processors.analytics.upcoming_player_game_context.upcoming_player_game_context_processor import UpcomingPlayerGameContextProcessor
+        from data_processors.analytics.upcoming_team_game_context.upcoming_team_game_context_processor import UpcomingTeamGameContextProcessor
+
         assert PlayerGameSummaryProcessor is not None
         assert TeamDefenseGameSummaryProcessor is not None
         assert TeamOffenseGameSummaryProcessor is not None

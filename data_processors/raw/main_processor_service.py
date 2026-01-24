@@ -22,6 +22,9 @@ import re
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 from google.cloud import storage, firestore
+from google.api_core.exceptions import GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded
+from google.cloud.exceptions import Conflict as AlreadyExistsError
+import requests.exceptions
 
 # Timeout for OddsAPI batch processing (10 minutes)
 # This prevents runaway batch jobs from exceeding the Firestore lock TTL (2 hours)
@@ -272,7 +275,7 @@ def check_boxscore_completeness():
             auto_reset = data.get('auto_reset_circuit_breakers', True)
             if auto_reset:
                 reset_count = _auto_reset_circuit_breakers(bq_client, start_date, end_date, logger)
-        except Exception as reset_error:
+        except (GoogleAPIError, KeyError, AttributeError) as reset_error:
             logger.warning(f"Circuit breaker auto-reset failed (non-fatal): {reset_error}")
 
         return jsonify({
@@ -286,7 +289,7 @@ def check_boxscore_completeness():
             "timestamp": datetime.now(timezone.utc).isoformat()
         }), 200
 
-    except Exception as e:
+    except (GoogleAPIError, KeyError, ValueError, TypeError) as e:
         logger.error(f"Boxscore completeness check failed: {e}")
         return jsonify({"error": str(e)}), 500
 
@@ -333,7 +336,7 @@ def _auto_reset_circuit_breakers(bq_client, start_date, end_date, logger) -> int
         if reset_count > 0:
             logger.info(f"Auto-reset {reset_count} circuit breakers for entities with recent boxscore data")
         return reset_count
-    except Exception as e:
+    except (GoogleAPIError, DeadlineExceeded) as e:
         logger.warning(f"Circuit breaker auto-reset query failed: {e}")
         return 0
 
@@ -586,7 +589,7 @@ def process_pubsub():
                 },
                 processor_name="Processor Orchestration"
             )
-        except Exception as notify_ex:
+        except (requests.exceptions.RequestException, GoogleAPIError, ValueError, TypeError) as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
         return jsonify({"error": "No Pub/Sub message received"}), 400
     
@@ -604,7 +607,7 @@ def process_pubsub():
                 },
                 processor_name="Processor Orchestration"
             )
-        except Exception as notify_ex:
+        except (requests.exceptions.RequestException, GoogleAPIError, ValueError, TypeError) as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
         return jsonify({"error": "Invalid Pub/Sub message format"}), 400
     
@@ -627,7 +630,7 @@ def process_pubsub():
                     },
                     processor_name="Processor Orchestration"
                 )
-            except Exception as notify_ex:
+            except (requests.exceptions.RequestException, GoogleAPIError, ValueError, TypeError) as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             return jsonify({"error": "No data in Pub/Sub message"}), 400
         
@@ -661,7 +664,7 @@ def process_pubsub():
                     },
                     processor_name="Processor Orchestration"
                 )
-            except Exception as notify_ex:
+            except (requests.exceptions.RequestException, GoogleAPIError, ValueError, TypeError) as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             return jsonify({"error": f"Invalid message format: {str(e)}"}), 400
         
@@ -710,7 +713,7 @@ def process_pubsub():
                     logger.error(f"❌ Batch processing failed: {processor_name} {context_key}={context_value}")
                     return jsonify({"status": "error", "processor": processor_name}), 500
 
-            except Exception as e:
+            except (GoogleAPIError, KeyError, ValueError, TypeError, AttributeError) as e:
                 logger.error(f"Batch processing error: {e}", exc_info=True)
                 return jsonify({"status": "error", "message": str(e)}), 500
 
@@ -795,7 +798,7 @@ def process_pubsub():
                                 "date": roster_date
                             }), 500
 
-                    except Exception as batch_error:
+                    except (GoogleAPIError, KeyError, ValueError, TypeError, AttributeError) as batch_error:
                         # Update lock with error status
                         lock_ref.update({
                             'status': 'error',
@@ -804,10 +807,10 @@ def process_pubsub():
                         })
                         raise
 
-                except Exception as lock_error:
+                except (AlreadyExistsError, GoogleAPIError) as lock_error:
                     # Check if it's an "already exists" error (another processor got the lock)
                     error_str = str(lock_error)
-                    if 'already exists' in error_str.lower() or 'ALREADY_EXISTS' in error_str:
+                    if 'already exists' in error_str.lower() or 'ALREADY_EXISTS' in error_str or isinstance(lock_error, AlreadyExistsError):
                         logger.info(f"🔓 ESPN roster batch for {roster_date} already being processed by another instance, skipping")
                         return jsonify({
                             "status": "skipped",
@@ -863,7 +866,7 @@ def process_pubsub():
                     logger.warning(f"Could not extract date from ESPN roster folder path: {file_path}")
                     return jsonify({"status": "skipped", "reason": "Could not extract date"}), 200
 
-            except Exception as folder_error:
+            except (GoogleAPIError, KeyError, ValueError, TypeError, AttributeError, json.JSONDecodeError) as folder_error:
                 logger.error(f"❌ Error processing ESPN roster folder: {folder_error}", exc_info=True)
                 return jsonify({"error": str(folder_error)}), 500
 
@@ -932,7 +935,7 @@ def process_pubsub():
                                 "season": season
                             }), 500
 
-                    except Exception as batch_error:
+                    except (GoogleAPIError, KeyError, ValueError, TypeError, AttributeError) as batch_error:
                         # Update lock with error status
                         lock_ref.update({
                             'status': 'error',
@@ -941,10 +944,10 @@ def process_pubsub():
                         })
                         raise
 
-                except Exception as lock_error:
+                except (AlreadyExistsError, GoogleAPIError) as lock_error:
                     # Check if it's an "already exists" error (another processor got the lock)
                     error_str = str(lock_error)
-                    if 'already exists' in error_str.lower() or 'ALREADY_EXISTS' in error_str:
+                    if 'already exists' in error_str.lower() or 'ALREADY_EXISTS' in error_str or isinstance(lock_error, AlreadyExistsError):
                         logger.info(f"🔓 BR roster batch for season {season} already being processed by another instance, skipping")
                         return jsonify({
                             "status": "skipped",
@@ -1054,7 +1057,7 @@ def process_pubsub():
                                     "date": game_date
                                 }), 500
 
-                        except Exception as batch_error:
+                        except (GoogleAPIError, KeyError, ValueError, TypeError, AttributeError) as batch_error:
                             # Update lock with error status
                             lock_ref.update({
                                 'status': 'error',
@@ -1063,10 +1066,10 @@ def process_pubsub():
                             })
                             raise
 
-                    except Exception as lock_error:
+                    except (AlreadyExistsError, GoogleAPIError) as lock_error:
                         # Check if it's an "already exists" error (another processor got the lock)
                         error_str = str(lock_error)
-                        if 'already exists' in error_str.lower() or 'ALREADY_EXISTS' in error_str:
+                        if 'already exists' in error_str.lower() or 'ALREADY_EXISTS' in error_str or isinstance(lock_error, AlreadyExistsError):
                             logger.info(f"🔓 OddsAPI {endpoint_type} batch for {game_date} already being processed by another instance, skipping")
                             return jsonify({
                                 "status": "skipped",
@@ -1110,7 +1113,7 @@ def process_pubsub():
                         'action': 'Add processor to PROCESSOR_REGISTRY if this is a new data source'
                     }
                 )
-            except Exception as notify_ex:
+            except (requests.exceptions.RequestException, GoogleAPIError, ValueError, TypeError) as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
 
             return jsonify({"status": "skipped", "reason": "No processor for file type"}), 200
@@ -1118,7 +1121,7 @@ def process_pubsub():
         # Extract metadata from file path
         try:
             opts = extract_opts_from_path(file_path)
-        except Exception as e:
+        except (ValueError, KeyError, IndexError, TypeError, AttributeError, json.JSONDecodeError, GoogleAPIError) as e:
             logger.error(f"Failed to extract opts from path: {file_path}", exc_info=True)
             try:
                 notify_warning(
@@ -1132,7 +1135,7 @@ def process_pubsub():
                         'action': 'Check file naming convention'
                     }
                 )
-            except Exception as notify_ex:
+            except (requests.exceptions.RequestException, GoogleAPIError, ValueError, TypeError) as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             # Continue with empty opts rather than failing
             opts = {}
@@ -1192,10 +1195,10 @@ def process_pubsub():
             # Send enhanced notification
             send_enhanced_error_notification(error_context)
 
-        except Exception as notify_ex:
+        except (requests.exceptions.RequestException, GoogleAPIError, ValueError, TypeError) as notify_ex:
             logger.warning(f"Failed to send enhanced notification: {notify_ex}")
         return jsonify({"error": f"Missing required field: {str(e)}"}), 400
-        
+
     except json.JSONDecodeError as e:
         # Invalid JSON in message data
         logger.error(f"Invalid JSON in message data: {e}", exc_info=True)
@@ -1210,11 +1213,11 @@ def process_pubsub():
             # Send enhanced notification
             send_enhanced_error_notification(error_context)
 
-        except Exception as notify_ex:
+        except (requests.exceptions.RequestException, GoogleAPIError, ValueError, TypeError) as notify_ex:
             logger.warning(f"Failed to send enhanced notification: {notify_ex}")
         return jsonify({"error": f"Invalid JSON: {str(e)}"}), 400
-        
-    except Exception as e:
+
+    except (GoogleAPIError, AttributeError, TypeError, ValueError) as e:
         # Unexpected orchestration error
         logger.error(f"Error processing message: {e}", exc_info=True)
         try:
@@ -1238,7 +1241,7 @@ def process_pubsub():
             # Send enhanced notification
             send_enhanced_error_notification(error_context)
 
-        except Exception as notify_ex:
+        except (requests.exceptions.RequestException, GoogleAPIError, ValueError, TypeError) as notify_ex:
             logger.warning(f"Failed to send enhanced notification: {notify_ex}")
         return jsonify({"error": str(e)}), 500
 
@@ -1371,7 +1374,7 @@ def extract_opts_from_path(file_path: str) -> dict:
                     opts['season_year'] = season_year
                     logger.warning(f"BDL player-box-scores: using file path date {game_date} (startDate/endDate not in JSON)")
 
-        except Exception as e:
+        except (GoogleAPIError, NotFound, json.JSONDecodeError, KeyError, ValueError) as e:
             logger.error(f"Failed to read dates from BDL player-box-scores file: {e}")
             # Fallback to file path parsing
             parts = file_path.split('/')
@@ -1456,10 +1459,10 @@ def extract_opts_from_path(file_path: str) -> dict:
                 try:
                     opts['roster_date'] = part
                     break
-                except Exception as e:
+                except (KeyError, TypeError) as e:
                     logger.warning(f"Failed to set roster_date from path part '{part}': {e}")
                     # Continue trying other parts
-        
+
         # Extract team abbreviation from team_{abbr} folder
         for part in parts:
             if part.startswith('team_') and len(part) > 5:

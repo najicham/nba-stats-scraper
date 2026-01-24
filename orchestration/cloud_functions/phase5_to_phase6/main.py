@@ -63,7 +63,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Constants
-PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
+from shared.config.gcp_config import get_project_id
+PROJECT_ID = get_project_id()
 PHASE6_EXPORT_TOPIC = 'nba-phase6-export-trigger'
 
 # Export types to trigger for tonight's predictions
@@ -336,8 +337,9 @@ def get_export_status(game_date: str) -> Dict:
     try:
         from google.cloud import storage
 
+        from shared.config.gcp_config import Buckets
         client = storage.Client()
-        bucket = client.bucket('nba-props-platform-api')
+        bucket = client.bucket(Buckets.API)
 
         files_to_check = [
             f'v1/tonight/all-players.json',

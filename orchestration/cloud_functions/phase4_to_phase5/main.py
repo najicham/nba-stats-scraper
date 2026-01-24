@@ -70,7 +70,8 @@ PHASE4_WARNING_THRESHOLD = 0.8  # Warn at 80% of timeout
 _execution_context = threading.local()
 
 # Constants
-PROJECT_ID = os.environ.get('GCP_PROJECT_ID') or os.environ.get('GCP_PROJECT', 'nba-props-platform')
+from shared.config.gcp_config import get_project_id
+PROJECT_ID = get_project_id()
 PHASE5_TRIGGER_TOPIC = 'nba-predictions-trigger'  # Downstream topic for predictions
 MAX_WAIT_HOURS = 4  # Maximum hours to wait for all processors before timeout
 MAX_WAIT_SECONDS = MAX_WAIT_HOURS * 3600
@@ -547,7 +548,7 @@ def verify_phase4_data_ready(game_date: str) -> tuple:
         tuple: (is_ready: bool, missing_tables: list, table_counts: dict)
     """
     try:
-        bq_client = get_bigquery_client(project_id=os.environ.get('GCP_PROJECT', 'nba-props-platform'))
+        bq_client = get_bigquery_client(project_id=PROJECT_ID)
         missing = []
         table_counts = {}
 

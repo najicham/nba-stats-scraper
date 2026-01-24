@@ -35,11 +35,12 @@ from google.api_core.exceptions import ServiceUnavailable, DeadlineExceeded
 
 from shared.utils.result import Result, ErrorType, classify_exception
 from shared.utils.retry_with_jitter import retry_with_jitter
+from shared.config.gcp_config import get_project_id
 
 logger = logging.getLogger(__name__)
 
-# Default project ID
-DEFAULT_PROJECT_ID = "nba-props-platform"
+# Default project ID (uses centralized config)
+DEFAULT_PROJECT_ID = get_project_id()
 
 # Query caching feature flags (enabled by default for cost savings)
 ENABLE_QUERY_CACHING = os.getenv('ENABLE_QUERY_CACHING', 'true').lower() == 'true'

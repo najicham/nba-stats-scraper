@@ -396,7 +396,7 @@ class TestProcessorCompletionValidation:
         mock_bq_client.insert_rows_json = Mock(return_value=[])
 
         # Act
-        result = validator.validate_processor_completion(
+        result = validator.validate_processor_completions(
             game_date=game_date,
             phase_name="phase3_to_phase4",
             processors_status={
@@ -425,7 +425,7 @@ class TestProcessorCompletionValidation:
         mock_bq_client.insert_rows_json = Mock(return_value=[])
 
         # Act
-        result = validator.validate_processor_completion(
+        result = validator.validate_processor_completions(
             game_date=game_date,
             phase_name="phase3_to_phase4",
             processors_status={
@@ -522,7 +522,7 @@ class TestEndToEndValidationFlow:
         )
 
         # 2. Validate processor completion
-        result2 = validator.validate_processor_completion(
+        result2 = validator.validate_processor_completions(
             game_date=game_date,
             phase_name="phase2_to_phase3",
             processors_status={
