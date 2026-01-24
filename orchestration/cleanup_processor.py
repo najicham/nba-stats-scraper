@@ -21,6 +21,7 @@ from typing import List, Dict, Any, Optional
 import pytz
 
 from google.cloud import pubsub_v1
+from google.api_core.exceptions import GoogleAPIError
 from shared.utils.bigquery_utils import execute_bigquery, insert_bigquery_rows
 from shared.utils.notification_system import notify_warning, notify_error
 from shared.config.pubsub_topics import TOPICS
@@ -284,7 +285,7 @@ class CleanupProcessor:
         try:
             result = execute_bigquery(query)
             return {row['source_file_path'] for row in result}
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.error(f"Failed to get processed files: {e}")
             # Return empty set to be safe - will trigger republish
             return set()
@@ -366,7 +367,7 @@ class CleanupProcessor:
                     success = True
                     break  # Success, exit retry loop
 
-                except Exception as e:
+                except (GoogleAPIError, TimeoutError) as e:
                     last_error = e
                     if attempt < MAX_RETRIES - 1:
                         # Calculate delay with exponential backoff and jitter
@@ -458,7 +459,7 @@ class CleanupProcessor:
         try:
             insert_bigquery_rows('nba_orchestration.cleanup_operations', [record])
             logger.info(f"✅ Logged cleanup operation to BigQuery")
-        except Exception as e:
+        except GoogleAPIError as e:
             logger.error(f"Failed to log cleanup operation: {e}")
         
         return {

@@ -19,12 +19,14 @@ import json
 import logging
 import os
 import smtplib
+import socket
 import time
 from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Dict, List, Optional, Any
 import requests
+from requests.exceptions import RequestException
 from shared.utils.auth_utils import get_api_key
 from shared.utils.slack_retry import send_slack_webhook_with_retry
 
@@ -198,7 +200,7 @@ class ProcessorAlerting:
             else:
                 return self._send_via_smtp(subject, body, recipients)
                 
-        except Exception as e:
+        except (RequestException, smtplib.SMTPException, socket.error) as e:
             logger.error(f"Failed to send email alert: {e}")
             return False
     
@@ -256,7 +258,7 @@ class ProcessorAlerting:
             logger.info(f"SMTP email sent successfully to {len(recipients)} recipients")
             return True
             
-        except Exception as e:
+        except (smtplib.SMTPException, socket.error, OSError) as e:
             logger.error(f"SMTP send error: {e}")
             return False
     
@@ -288,7 +290,7 @@ class ProcessorAlerting:
                 logger.error("Slack webhook failed after retries")
                 return False
 
-        except Exception as e:
+        except RequestException as e:
             logger.error(f"Failed to send Slack alert: {e}")
             return False
     
@@ -410,7 +412,7 @@ class ProcessorAlerting:
         try:
             response = requests.post(self.slack_webhook_url, json=payload, timeout=10)
             return response.status_code == 200
-        except Exception as e:
+        except RequestException as e:
             logger.error(f"Failed to send Slack message: {e}")
             return False
     

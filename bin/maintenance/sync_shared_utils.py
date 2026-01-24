@@ -47,6 +47,9 @@ CANONICAL_SOURCES = {
 
 # Files to sync and their canonical locations
 FILES_TO_SYNC = {
+    # config/
+    'sport_config.py': 'config',
+
     # utils/
     'slack_channels.py': 'utils',
     'metrics_utils.py': 'utils',
