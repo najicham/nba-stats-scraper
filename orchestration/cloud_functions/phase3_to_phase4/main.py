@@ -45,6 +45,15 @@ import requests
 from shared.clients.bigquery_pool import get_bigquery_client
 from shared.validation.phase_boundary_validator import PhaseBoundaryValidator, ValidationMode
 
+# Pydantic validation for Pub/Sub messages
+try:
+    from shared.validation.pubsub_models import Phase3CompletionMessage
+    from pydantic import ValidationError as PydanticValidationError
+    PYDANTIC_VALIDATION_ENABLED = True
+except ImportError:
+    PYDANTIC_VALIDATION_ENABLED = False
+    PydanticValidationError = Exception
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -1110,6 +1119,14 @@ def parse_pubsub_message(cloud_event) -> Dict:
             )
         else:
             raise ValueError("No data field in Pub/Sub message")
+
+        # Validate with Pydantic if available
+        if PYDANTIC_VALIDATION_ENABLED:
+            try:
+                validated = Phase3CompletionMessage.model_validate(message_data)
+                logger.debug(f"Pydantic validation passed for {validated.processor_name}")
+            except PydanticValidationError as e:
+                logger.warning(f"Pydantic validation failed: {e}. Using raw dict.")
 
         return message_data
 

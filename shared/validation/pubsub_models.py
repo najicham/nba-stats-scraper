@@ -74,6 +74,53 @@ class Phase2CompletionMessage(BaseModel):
     )
 
 
+class Phase3CompletionMessage(BaseModel):
+    """
+    Message schema for Phase 3 processor completion events.
+
+    Published to: nba-phase3-analytics-complete
+    Consumed by: phase3_to_phase4 orchestrator
+    """
+    processor_name: str = Field(
+        ...,
+        description="Name of the processor that completed"
+    )
+    game_date: str = Field(
+        ...,
+        pattern=r'^\d{4}-\d{2}-\d{2}$',
+        description="Game date in YYYY-MM-DD format"
+    )
+    phase: str = Field(
+        default="phase_3_analytics",
+        description="Pipeline phase identifier"
+    )
+    execution_id: Optional[str] = Field(
+        default=None,
+        description="Unique execution identifier"
+    )
+    correlation_id: Optional[str] = Field(
+        default=None,
+        description="Correlation ID for tracing"
+    )
+    output_table: Optional[str] = Field(
+        default=None,
+        description="Output BigQuery table name"
+    )
+    status: Literal["success", "partial", "failed", "skipped"] = Field(
+        default="success",
+        description="Processing status"
+    )
+    record_count: int = Field(
+        default=0,
+        ge=0,
+        description="Number of records processed"
+    )
+    metadata: Optional[dict] = Field(
+        default=None,
+        description="Additional metadata from processor"
+    )
+
+
 class Phase3AnalyticsMessage(BaseModel):
     """
     Message schema for Phase 3 analytics trigger events.
