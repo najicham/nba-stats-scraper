@@ -341,7 +341,10 @@ class PredictionDataLoader:
         )
 
         try:
-            results = self.client.query(query, job_config=job_config).result(timeout=QUERY_TIMEOUT_SECONDS)
+            # Retry on transient errors (ServiceUnavailable, DeadlineExceeded)
+            results = TRANSIENT_RETRY(
+                lambda: self.client.query(query, job_config=job_config).result(timeout=QUERY_TIMEOUT_SECONDS)
+            )()
 
             historical_games = []
             all_points = []
@@ -537,7 +540,10 @@ class PredictionDataLoader:
         )
 
         try:
-            results = self.client.query(query, job_config=job_config).result(timeout=QUERY_TIMEOUT_SECONDS)
+            # Retry on transient errors (ServiceUnavailable, DeadlineExceeded)
+            results = TRANSIENT_RETRY(
+                lambda: self.client.query(query, job_config=job_config).result(timeout=QUERY_TIMEOUT_SECONDS)
+            )()
 
             player_contexts: Dict[str, Dict] = {}
 
@@ -680,7 +686,10 @@ class PredictionDataLoader:
         )
 
         try:
-            results = self.client.query(query, job_config=job_config).result(timeout=QUERY_TIMEOUT_SECONDS)
+            # Retry on transient errors (ServiceUnavailable, DeadlineExceeded)
+            results = TRANSIENT_RETRY(
+                lambda: self.client.query(query, job_config=job_config).result(timeout=QUERY_TIMEOUT_SECONDS)
+            )()
 
             # Group results by player and calculate derived fields
             player_games: Dict[str, List[Dict]] = {p: [] for p in player_lookups}
@@ -823,7 +832,10 @@ class PredictionDataLoader:
         )
 
         try:
-            results = self.client.query(query, job_config=job_config).result(timeout=QUERY_TIMEOUT_SECONDS)
+            # Retry on transient errors (ServiceUnavailable, DeadlineExceeded)
+            results = TRANSIENT_RETRY(
+                lambda: self.client.query(query, job_config=job_config).result(timeout=QUERY_TIMEOUT_SECONDS)
+            )()
 
             player_features: Dict[str, Dict] = {}
 
@@ -971,7 +983,10 @@ class PredictionDataLoader:
         )
 
         try:
-            results = self.client.query(query, job_config=job_config).result(timeout=QUERY_TIMEOUT_SECONDS)
+            # Retry on transient errors (ServiceUnavailable, DeadlineExceeded)
+            results = TRANSIENT_RETRY(
+                lambda: self.client.query(query, job_config=job_config).result(timeout=QUERY_TIMEOUT_SECONDS)
+            )()
             players = [row.player_lookup for row in results]
             logger.debug(f"Found {len(players)} players for {game_date}")
             return players
