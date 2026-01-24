@@ -206,7 +206,7 @@ class CompletionTracker:
                 phase, game_date, processor_name, completion_data
             )
         except Exception as e:
-            logger.error(f"Firestore write failed for {phase}/{game_date}/{processor_name}: {e}")
+            logger.error(f"Firestore write failed for {phase}/{game_date}/{processor_name}: {e}", exc_info=True)
             self._firestore_available = False
 
         # Write to BigQuery (backup) - always attempt even if Firestore fails
@@ -215,7 +215,7 @@ class CompletionTracker:
                 phase, game_date, processor_name, completion_data
             )
         except Exception as e:
-            logger.error(f"BigQuery write failed for {phase}/{game_date}/{processor_name}: {e}")
+            logger.error(f"BigQuery write failed for {phase}/{game_date}/{processor_name}: {e}", exc_info=True)
 
         # Log outcome
         if firestore_success and bigquery_success:
@@ -225,7 +225,7 @@ class CompletionTracker:
         elif bigquery_success:
             logger.warning(f"Firestore primary failed, BigQuery backup succeeded for {phase}/{game_date}/{processor_name}")
         else:
-            logger.error(f"Both Firestore and BigQuery writes failed for {phase}/{game_date}/{processor_name}")
+            logger.error(f"Both Firestore and BigQuery writes failed for {phase}/{game_date}/{processor_name}", exc_info=True)
 
         return (firestore_success, bigquery_success)
 
@@ -289,7 +289,7 @@ class CompletionTracker:
         errors = self.bq_client.insert_rows_json(table_id, [row])
 
         if errors:
-            logger.error(f"BigQuery insert errors: {errors}")
+            logger.error(f"BigQuery insert errors: {errors}", exc_info=True)
             return False
 
         return True
@@ -377,7 +377,7 @@ class CompletionTracker:
             job.result(timeout=30)
             return True
         except Exception as e:
-            logger.error(f"Failed to update aggregate status: {e}")
+            logger.error(f"Failed to update aggregate status: {e}", exc_info=True)
             return False
 
     def get_completion_status(
@@ -534,7 +534,7 @@ class CompletionTracker:
                 "source": "bigquery_individual"
             }
         except Exception as e:
-            logger.error(f"BigQuery fallback query failed: {e}")
+            logger.error(f"BigQuery fallback query failed: {e}", exc_info=True)
 
             return {
                 "phase": phase,
@@ -591,7 +591,7 @@ class CompletionTracker:
             })
             firestore_success = True
         except Exception as e:
-            logger.error(f"Failed to mark triggered in Firestore: {e}")
+            logger.error(f"Failed to mark triggered in Firestore: {e}", exc_info=True)
 
         # Update BigQuery aggregate table
         if completed_processors and expected_processors:
@@ -606,7 +606,7 @@ class CompletionTracker:
                     mode=mode
                 )
             except Exception as e:
-                logger.error(f"Failed to mark triggered in BigQuery: {e}")
+                logger.error(f"Failed to mark triggered in BigQuery: {e}", exc_info=True)
 
         return (firestore_success, bigquery_success)
 

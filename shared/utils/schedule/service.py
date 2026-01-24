@@ -247,7 +247,7 @@ class NBAScheduleService:
                 logger.info("Season %d: %d game dates", season, len(date_game_map))
                 
             except Exception as e:
-                logger.error("Error processing season %d: %s", season, e)
+                logger.error("Error processing season %d: %s", season, e, exc_info=True)
                 continue
         
         # Sort by date
@@ -360,7 +360,7 @@ class NBAScheduleService:
             return None
 
         except Exception as e:
-            logger.error("Error getting season start for %d: %s", season_year, e)
+            logger.error("Error getting season start for %d: %s", season_year, e, exc_info=True)
             return None
 
     def clear_cache(self):

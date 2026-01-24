@@ -118,7 +118,8 @@ def retry_with_jitter(
                     if attempt >= max_attempts:
                         logger.error(
                             f"{func.__name__} failed after {max_attempts} attempts. "
-                            f"Last error: {type(e).__name__}: {str(e)}"
+                            f"Last error: {type(e).__name__}: {str(e)}",
+                            exc_info=True
                         )
                         raise
 
@@ -146,7 +147,8 @@ def retry_with_jitter(
                             on_retry(attempt, e, final_delay)
                         except Exception as callback_error:
                             logger.error(
-                                f"on_retry callback failed: {callback_error}"
+                                f"on_retry callback failed: {callback_error}",
+                                exc_info=True
                             )
 
                     # Sleep before retry
@@ -190,7 +192,8 @@ def retry_with_simple_jitter(
                 except exceptions as e:
                     if attempt >= max_attempts:
                         logger.error(
-                            f"{func.__name__} failed after {max_attempts} attempts"
+                            f"{func.__name__} failed after {max_attempts} attempts",
+                            exc_info=True
                         )
                         raise
 

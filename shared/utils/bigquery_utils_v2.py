@@ -173,7 +173,7 @@ def insert_bigquery_rows_v2(
         >>> if result.is_success:
         ...     print(f"Inserted {result.data} rows")
         >>> else:
-        ...     logger.error(f"Insert failed: {result.error.message}")
+        ...     logger.error(f"Insert failed: {result.error.message}", exc_info=True)
     """
     if not rows:
         logger.warning("No rows to insert")
@@ -382,7 +382,7 @@ def update_bigquery_rows_v2(
         >>> if result.is_success:
         ...     print(f"Updated {result.data} rows")
         >>> else:
-        ...     logger.error(f"DML failed: {result.error.message}")
+        ...     logger.error(f"DML failed: {result.error.message}", exc_info=True)
     """
     try:
         client = bigquery.Client(project=project_id)

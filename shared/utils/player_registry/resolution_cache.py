@@ -189,14 +189,14 @@ class ResolutionCache:
             load_job.result(timeout=60)
 
             if load_job.errors:
-                logger.error(f"Error caching resolution: {load_job.errors}")
+                logger.error(f"Error caching resolution: {load_job.errors}", exc_info=True)
                 return False
 
             logger.debug(f"Cached resolution for {resolution.unresolved_lookup}")
             return True
 
         except Exception as e:
-            logger.error(f"Failed to cache resolution: {e}")
+            logger.error(f"Failed to cache resolution: {e}", exc_info=True)
             return False
 
     def _increment_usage(self, unresolved_lookup: str):
@@ -264,7 +264,7 @@ class ResolutionCache:
                 }
             }
         except Exception as e:
-            logger.error(f"Error getting cache stats: {e}")
+            logger.error(f"Error getting cache stats: {e}", exc_info=True)
             return {}
 
     def clear_cache(self, before_date: str = None) -> int:
@@ -298,5 +298,5 @@ class ResolutionCache:
             logger.info(f"Cleared {deleted} cache entries")
             return deleted
         except Exception as e:
-            logger.error(f"Error clearing cache: {e}")
+            logger.error(f"Error clearing cache: {e}", exc_info=True)
             return 0

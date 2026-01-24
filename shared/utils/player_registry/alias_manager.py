@@ -139,7 +139,7 @@ class AliasManager:
             load_job.result(timeout=60)
 
             if load_job.errors:
-                logger.error(f"Errors inserting aliases: {load_job.errors}")
+                logger.error(f"Errors inserting aliases: {load_job.errors}", exc_info=True)
                 # Count successful rows
                 return len(new_rows) - len(load_job.errors)
 
@@ -147,7 +147,7 @@ class AliasManager:
             return len(new_rows)
 
         except Exception as e:
-            logger.error(f"Failed to create aliases: {e}")
+            logger.error(f"Failed to create aliases: {e}", exc_info=True)
             return 0
 
     def _get_existing_aliases(self, alias_lookups: List[str]) -> set:
@@ -218,7 +218,7 @@ class AliasManager:
                 notes=row.notes
             )
         except Exception as e:
-            logger.error(f"Error getting alias {alias_lookup}: {e}")
+            logger.error(f"Error getting alias {alias_lookup}: {e}", exc_info=True)
             return None
 
     def deactivate_alias(self, alias_lookup: str, reason: str) -> bool:
@@ -254,7 +254,7 @@ class AliasManager:
             logger.info(f"Deactivated alias: {alias_lookup} (reason: {reason})")
             return True
         except Exception as e:
-            logger.error(f"Failed to deactivate alias {alias_lookup}: {e}")
+            logger.error(f"Failed to deactivate alias {alias_lookup}: {e}", exc_info=True)
             return False
 
     def get_all_active_aliases(self) -> List[AliasRecord]:
@@ -286,7 +286,7 @@ class AliasManager:
 
             return aliases
         except Exception as e:
-            logger.error(f"Error getting all aliases: {e}")
+            logger.error(f"Error getting all aliases: {e}", exc_info=True)
             return []
 
     def get_alias_stats(self) -> Dict:
@@ -322,5 +322,5 @@ class AliasManager:
                 'by_type': by_type
             }
         except Exception as e:
-            logger.error(f"Error getting alias stats: {e}")
+            logger.error(f"Error getting alias stats: {e}", exc_info=True)
             return {'total': 0, 'active': 0, 'inactive': 0, 'by_type': {}}

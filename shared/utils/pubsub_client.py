@@ -152,7 +152,7 @@ class PubSubClient:
                 logger.info(f"Processed message {message.message_id}")
                 
             except Exception as e:
-                logger.error(f"Failed to process message {message.message_id}: {e}")
+                logger.error(f"Failed to process message {message.message_id}: {e}", exc_info=True)
                 message.nack()  # Negative acknowledgment for retry
         
         try:
@@ -173,7 +173,7 @@ class PubSubClient:
                     logger.info("Subscription cancelled")
                     
         except Exception as e:
-            logger.error(f"Error in subscription {subscription_name}: {e}")
+            logger.error(f"Error in subscription {subscription_name}: {e}", exc_info=True)
     
     def create_subscription(self, topic_name: str, subscription_name: str,
                           push_endpoint: Optional[str] = None) -> bool:
@@ -215,5 +215,5 @@ class PubSubClient:
             logger.info(f"Subscription {subscription_name} already exists")
             return True
         except Exception as e:
-            logger.error(f"Failed to create subscription {subscription_name}: {e}")
+            logger.error(f"Failed to create subscription {subscription_name}: {e}", exc_info=True)
             return False

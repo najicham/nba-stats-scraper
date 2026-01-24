@@ -249,7 +249,7 @@ class RosterChangeTracker:
             return changes
 
         except Exception as e:
-            logger.error(f"Error fetching roster changes: {e}")
+            logger.error(f"Error fetching roster changes: {e}", exc_info=True)
             return []
 
     def get_recent_changes_for_player(
@@ -544,7 +544,7 @@ class ActiveRosterCalculator:
             )
 
         except Exception as e:
-            logger.error(f"Error fetching active roster for {team_abbr}: {e}")
+            logger.error(f"Error fetching active roster for {team_abbr}: {e}", exc_info=True)
             return TeamRoster(
                 team_abbr=team_abbr,
                 roster_date=game_date,

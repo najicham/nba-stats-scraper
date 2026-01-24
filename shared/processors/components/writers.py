@@ -138,7 +138,7 @@ class BigQueryWriter(OutputWriter):
             }
 
         except Exception as e:
-            logger.error(f"Failed to write to BigQuery: {e}")
+            logger.error(f"Failed to write to BigQuery: {e}", exc_info=True)
             raise
 
         finally:

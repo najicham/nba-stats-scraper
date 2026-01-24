@@ -84,10 +84,10 @@ def send_to_slack(
         with request.urlopen(req, timeout=10) as response:
             return response.status == 200
     except error.HTTPError as e:
-        logger.error(f"Slack HTTP error: {e.code} - {e.reason}")
+        logger.error(f"Slack HTTP error: {e.code} - {e.reason}", exc_info=True)
         return False
     except Exception as e:
-        logger.error(f"Slack error: {e}")
+        logger.error(f"Slack error: {e}", exc_info=True)
         return False
 
 

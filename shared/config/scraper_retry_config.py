@@ -66,7 +66,7 @@ def _load_config(force_reload: bool = False) -> Dict[str, Any]:
             _config_load_time = now
             return _config_cache
     except Exception as e:
-        logger.error(f"Failed to load scraper retry config: {e}")
+        logger.error(f"Failed to load scraper retry config: {e}", exc_info=True)
         return {"scrapers": {}, "global": {}}
 
 

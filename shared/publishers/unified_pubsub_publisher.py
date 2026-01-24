@@ -151,7 +151,7 @@ class UnifiedPubSubPublisher:
 
         # Validate message
         if not self._validate_message(message):
-            logger.error(f"Message validation failed for {processor_name}")
+            logger.error(f"Message validation failed for {processor_name}", exc_info=True)
             return None
 
         # Publish
@@ -242,13 +242,13 @@ class UnifiedPubSubPublisher:
 
         for field in required_fields:
             if field not in message:
-                logger.error(f"Missing required field: {field}")
+                logger.error(f"Missing required field: {field}", exc_info=True)
                 return False
 
         # Validate status
         valid_statuses = ['success', 'partial', 'no_data', 'failed']
         if message['status'] not in valid_statuses:
-            logger.error(f"Invalid status: {message['status']}")
+            logger.error(f"Invalid status: {message['status']}", exc_info=True)
             return False
 
         return True

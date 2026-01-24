@@ -174,7 +174,7 @@ class NotificationRouter:
                     self._email_handler = EmailAlerter()
                     logger.info("Using Brevo for email alerts")
             except Exception as e:
-                logger.error(f"Failed to initialize email handler: {e}")
+                logger.error(f"Failed to initialize email handler: {e}", exc_info=True)
                 self._email_handler = None
                 self.config.email_enabled = False
         
@@ -185,7 +185,7 @@ class NotificationRouter:
                     default_webhook=self.config.slack_default_webhook
                 )
             except Exception as e:
-                logger.error(f"Failed to initialize Slack handler: {e}")
+                logger.error(f"Failed to initialize Slack handler: {e}", exc_info=True)
                 self._slack_handler = None
                 self.config.slack_enabled = False
         
@@ -197,7 +197,7 @@ class NotificationRouter:
                     self.config.discord_webhook_url_critical
                 )
             except Exception as e:
-                logger.error(f"Failed to initialize Discord handler: {e}")
+                logger.error(f"Failed to initialize Discord handler: {e}", exc_info=True)
                 self._discord_handler = None
                 self.config.discord_enabled = False
     
@@ -281,7 +281,7 @@ class NotificationRouter:
                     results['console'] = True
                     
             except Exception as e:
-                logger.error(f"Failed to send notification to {channel.value}: {e}")
+                logger.error(f"Failed to send notification to {channel.value}: {e}", exc_info=True)
                 results[channel.value] = False
         
         return results
@@ -388,7 +388,7 @@ class NotificationRouter:
                 return self._email_handler.send_error_alert(f"{title}: {message}", details, processor_name)
         
         except Exception as e:
-            logger.error(f"Failed to send email: {e}")
+            logger.error(f"Failed to send email: {e}", exc_info=True)
             return False
     
     def _send_to_slack(
@@ -414,7 +414,7 @@ class NotificationRouter:
                 processor_name=processor_name
             )
         except Exception as e:
-            logger.error(f"Failed to send Slack notification: {e}")
+            logger.error(f"Failed to send Slack notification: {e}", exc_info=True)
             return False
     
     def _send_to_discord(
@@ -440,7 +440,7 @@ class NotificationRouter:
                 processor_name=processor_name
             )
         except Exception as e:
-            logger.error(f"Failed to send Discord notification: {e}")
+            logger.error(f"Failed to send Discord notification: {e}", exc_info=True)
             return False
     
     def _send_to_console(

@@ -173,7 +173,7 @@ class ProcessorHeartbeat:
                 try:
                     self._emit_heartbeat()
                 except Exception as e:
-                    logger.error(f"Failed to emit heartbeat: {e}")
+                    logger.error(f"Failed to emit heartbeat: {e}", exc_info=True)
 
     def _emit_heartbeat(self, final_status: str = None):
         """Write heartbeat to Firestore."""
@@ -347,7 +347,7 @@ class HeartbeatMonitor:
             })
             result['actions'].append('marked_heartbeat_failed')
         except Exception as e:
-            logger.error(f"Failed to update heartbeat doc: {e}")
+            logger.error(f"Failed to update heartbeat doc: {e}", exc_info=True)
 
         # 2. Update processor_run_history
         try:
@@ -373,7 +373,7 @@ class HeartbeatMonitor:
             self.bigquery.query(update_query, job_config=job_config).result()
             result['actions'].append('updated_run_history')
         except Exception as e:
-            logger.error(f"Failed to update run history: {e}")
+            logger.error(f"Failed to update run history: {e}", exc_info=True)
 
         # 3. Clear locks
         try:

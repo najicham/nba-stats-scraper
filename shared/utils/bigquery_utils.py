@@ -154,7 +154,7 @@ def _insert_bigquery_rows_internal(
 
     if load_job.errors:
         logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
-        logger.error(f"Failed to insert rows into {table_id}: {load_job.errors}")
+        logger.error(f"Failed to insert rows into {table_id}: {load_job.errors}", exc_info=True)
         return False
 
     logger.debug(f"Successfully inserted {len(rows)} rows into {table_id}")

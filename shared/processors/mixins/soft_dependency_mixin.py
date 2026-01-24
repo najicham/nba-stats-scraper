@@ -118,7 +118,7 @@ class SoftDependencyMixin:
 
         # Log summary
         if result['errors']:
-            logger.error(f"Dependency check failed: {result['errors']}")
+            logger.error(f"Dependency check failed: {result['errors']}", exc_info=True)
         elif result['warnings']:
             logger.warning(f"Proceeding with degraded dependencies: {result['warnings']}")
         else:

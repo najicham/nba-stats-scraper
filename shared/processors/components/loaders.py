@@ -127,7 +127,7 @@ class BigQueryLoader(DataLoader):
             return df
 
         except Exception as e:
-            logger.error(f"Failed to load from {self.source_name}: {e}")
+            logger.error(f"Failed to load from {self.source_name}: {e}", exc_info=True)
             raise
 
     def _build_query(self, context: ComponentContext) -> str:
@@ -301,7 +301,7 @@ class FallbackLoader(DataLoader):
                 continue
 
         # All sources failed
-        logger.error(f"All sources failed: {sources_tried}")
+        logger.error(f"All sources failed: {sources_tried}", exc_info=True)
 
         if self.on_all_fail == 'error':
             raise ValueError(f"All data sources failed: {sources_tried}")

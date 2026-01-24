@@ -96,7 +96,7 @@ def send_mlb_alert(
         return True
 
     except Exception as e:
-        logger.error(f"Failed to send MLB alert: {e}")
+        logger.error(f"Failed to send MLB alert: {e}", exc_info=True)
         return False
 
 

@@ -107,7 +107,7 @@ class FieldValidator(Validator):
                     identifier=field,
                     details={'field': field, 'record_count': len(data)},
                 )
-                logger.error(f"Missing required field: {field}")
+                logger.error(f"Missing required field: {field}", exc_info=True)
 
         # Check optional fields
         for field in self.optional_fields:

@@ -267,7 +267,7 @@ class MLBRegistryReader:
                 return results[0].universal_player_id
             return None
         except Exception as e:
-            logger.error(f"Registry lookup failed for {player_lookup}: {e}")
+            logger.error(f"Registry lookup failed for {player_lookup}: {e}", exc_info=True)
             return None
 
     def _bulk_lookup_from_registry(
@@ -299,7 +299,7 @@ class MLBRegistryReader:
             results = self.bq_client.query(query, job_config=job_config).result()
             return {row.player_lookup: row.universal_player_id for row in results}
         except Exception as e:
-            logger.error(f"Bulk registry lookup failed: {e}")
+            logger.error(f"Bulk registry lookup failed: {e}", exc_info=True)
             return {}
 
     def _track_unresolved(self, player_lookup: str, player_type: str) -> None:
@@ -366,7 +366,7 @@ class MLBRegistryReader:
             load_job.result(timeout=30)
 
             if load_job.errors:
-                logger.error(f"BigQuery load errors: {load_job.errors}")
+                logger.error(f"BigQuery load errors: {load_job.errors}", exc_info=True)
             else:
                 logger.info(f"✅ Flushed {len(rows)} unresolved players to {table_id}")
 
@@ -415,7 +415,7 @@ class MLBRegistryReader:
             return len(results)
 
         except Exception as e:
-            logger.error(f"Failed to preload cache: {e}")
+            logger.error(f"Failed to preload cache: {e}", exc_info=True)
             return 0
 
     def clear_cache(self) -> None:

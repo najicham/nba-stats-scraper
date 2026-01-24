@@ -315,7 +315,7 @@ class GameIdConverter:
         try:
             return self.to_standard_format(game_date, away_abbr, home_abbr)
         except ValueError as e:
-            logger.error(f"Failed to normalize game_id '{game_id}': {e}")
+            logger.error(f"Failed to normalize game_id '{game_id}': {e}", exc_info=True)
             return None
 
     def validate_game_id(self, game_id: str, strict: bool = True) -> bool:

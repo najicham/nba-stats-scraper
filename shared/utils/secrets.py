@@ -56,7 +56,7 @@ class SecretManager:
                     logger.warning(f"Secret Manager unavailable for {secret_name}, using env var {fallback_env_var}")
                     return env_value
 
-            logger.error(f"Failed to retrieve secret {secret_name} from Secret Manager or env: {e}")
+            logger.error(f"Failed to retrieve secret {secret_name} from Secret Manager or env: {e}", exc_info=True)
             raise ValueError(f"Failed to retrieve secret {secret_name}: {e}")
 
     def get_odds_api_key(self) -> str:

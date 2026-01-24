@@ -204,7 +204,7 @@ class ProcessorAlerting:
                 return self._send_via_smtp(subject, body, recipients)
                 
         except (RequestException, smtplib.SMTPException, socket.error) as e:
-            logger.error(f"Failed to send email alert: {e}")
+            logger.error(f"Failed to send email alert: {e}", exc_info=True)
             return False
     
     def _send_via_sendgrid(self, subject: str, body: str, recipients: List[str]) -> bool:
@@ -230,7 +230,7 @@ class ProcessorAlerting:
             logger.info(f"Email alert sent successfully to {len(recipients)} recipients")
             return True
         else:
-            logger.error(f"SendGrid API error: {response.status_code} - {response.text}")
+            logger.error(f"SendGrid API error: {response.status_code} - {response.text}", exc_info=True)
             return False
     
     def _send_via_smtp(self, subject: str, body: str, recipients: List[str]) -> bool:
@@ -264,7 +264,7 @@ class ProcessorAlerting:
             return True
             
         except (smtplib.SMTPException, socket.error, OSError) as e:
-            logger.error(f"SMTP send error: {e}")
+            logger.error(f"SMTP send error: {e}", exc_info=True)
             return False
     
     def _send_slack_alert(self, alert_data: Dict[str, Any]) -> bool:
@@ -292,11 +292,11 @@ class ProcessorAlerting:
                 logger.info("Slack alert sent successfully")
                 return True
             else:
-                logger.error("Slack webhook failed after retries")
+                logger.error("Slack webhook failed after retries", exc_info=True)
                 return False
 
         except RequestException as e:
-            logger.error(f"Failed to send Slack alert: {e}")
+            logger.error(f"Failed to send Slack alert: {e}", exc_info=True)
             return False
     
     def _build_email_subject(self, alert_data: Dict[str, Any]) -> str:

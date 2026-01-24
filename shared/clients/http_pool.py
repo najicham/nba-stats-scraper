@@ -140,9 +140,9 @@ def get_http_session(
     if timeout:
         session.timeout = timeout
 
-    # Set default headers
+    # Set default headers (avoid identifying as scraper to reduce WAF detection)
     session.headers.update({
-        'User-Agent': 'NBA-Stats-Scraper/1.0 (Connection Pooling Enabled)',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'application/json',
         'Accept-Encoding': 'gzip, deflate'
     })

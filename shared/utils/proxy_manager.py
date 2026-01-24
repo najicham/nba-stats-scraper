@@ -204,7 +204,7 @@ def get_configured_proxy_urls() -> List[Tuple[str, str]]:
     proxies = []
 
     # ProxyFuel (primary)
-    proxyfuel_creds = os.getenv("PROXYFUEL_CREDENTIALS", "nchammas.gmail.com:bbuyfd")
+    proxyfuel_creds = os.getenv("PROXYFUEL_CREDENTIALS")
     if proxyfuel_creds:
         proxies.append((f"http://{proxyfuel_creds}@gate2.proxyfuel.com:2000", "proxyfuel"))
 

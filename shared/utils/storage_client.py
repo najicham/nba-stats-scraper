@@ -211,7 +211,7 @@ class StorageClient:
             logger.warning(f"Object gs://{bucket_name}/{blob_name} not found")
             return True  # Consider this success
         except Exception as e:
-            logger.error(f"Failed to delete gs://{bucket_name}/{blob_name}: {e}")
+            logger.error(f"Failed to delete gs://{bucket_name}/{blob_name}: {e}", exc_info=True)
             return False
     
     def object_exists(self, bucket_name: str, blob_name: str) -> bool:
@@ -221,7 +221,7 @@ class StorageClient:
             blob = bucket.blob(blob_name)
             return blob.exists()
         except Exception as e:
-            logger.error(f"Error checking if gs://{bucket_name}/{blob_name} exists: {e}")
+            logger.error(f"Error checking if gs://{bucket_name}/{blob_name} exists: {e}", exc_info=True)
             return False
     
     def generate_storage_path(self, service: str, component: str, 

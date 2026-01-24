@@ -305,7 +305,7 @@ class CircuitBreakerMixin:
 
         # Check circuit state BEFORE any processing
         if self._is_circuit_open(circuit_key):
-            logger.error(f"Circuit breaker OPEN for {circuit_key}, skipping")
+            logger.error(f"Circuit breaker OPEN for {circuit_key}, skipping", exc_info=True)
 
             # Update stats for logging
             if hasattr(self, 'stats'):

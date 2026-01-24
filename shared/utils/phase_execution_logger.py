@@ -123,7 +123,7 @@ def log_phase_execution(
             errors = client.insert_rows_json(table_id, [row])
 
             if errors:
-                logger.error(f"BigQuery insert errors: {errors}")
+                logger.error(f"BigQuery insert errors: {errors}", exc_info=True)
                 return False
             else:
                 logger.debug(f"Phase execution logged to {table_id}")

@@ -13,7 +13,7 @@ Usage:
         processor = msg.processor_name
         game_date = msg.game_date
     except ValidationError as e:
-        logger.error(f"Invalid message: {e}")
+        logger.error(f"Invalid message: {e}", exc_info=True)
 
 Created: 2026-01-24
 """
