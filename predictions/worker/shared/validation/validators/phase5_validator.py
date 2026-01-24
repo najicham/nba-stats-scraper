@@ -10,6 +10,7 @@ import time
 import logging
 
 from google.cloud import bigquery
+from google.api_core.exceptions import BadRequest
 
 from shared.validation.config import (
     PROJECT_ID,
@@ -143,8 +144,9 @@ def _query_predictions(client: bigquery.Client, game_date: date) -> Dict:
         try:
             query_result = client.query(query_with_prop, job_config=job_config).result(timeout=60)
             result['has_prop_line_column'] = True
-        except Exception:
-            # Fall back to simple query
+        except BadRequest:
+            # Column doesn't exist, fall back to simple query
+            logger.debug("has_prop_line column not found, using simple query")
             query_result = client.query(query_simple, job_config=job_config).result(timeout=60)
 
         for row in query_result:

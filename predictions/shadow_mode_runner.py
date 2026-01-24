@@ -29,6 +29,7 @@ from typing import Dict, List, Optional
 import json
 import logging
 from google.cloud import bigquery
+import google.api_core.exceptions
 from dataclasses import dataclass, asdict
 
 # Set up logging
@@ -313,8 +314,8 @@ def write_to_bigquery(
     try:
         client.create_table(table)
         logger.info(f"Created table {table_id}")
-    except Exception:
-        pass  # Table already exists
+    except google.api_core.exceptions.Conflict:
+        logger.debug(f"Table {table_id} already exists")  # Expected case
 
     # Insert rows
     errors = client.insert_rows_json(table_id, rows)

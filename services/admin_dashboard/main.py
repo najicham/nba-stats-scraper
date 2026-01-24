@@ -769,6 +769,45 @@ def api_stuck_processors():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/firestore-health')
+@rate_limit
+def api_firestore_health():
+    """
+    Get Firestore health status including connectivity, latency, and stuck processors.
+
+    Returns:
+        JSON with Firestore health metrics
+    """
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        from monitoring.firestore_health_check import FirestoreHealthMonitor
+
+        monitor = FirestoreHealthMonitor()
+        health_result = monitor.check_health()
+
+        return jsonify({
+            'status': health_result.get('status', 'unknown'),
+            'connectivity': health_result.get('connectivity', {}),
+            'write_latency_ms': health_result.get('write_latency_ms'),
+            'stuck_processors': health_result.get('stuck_processors', []),
+            'stuck_count': health_result.get('stuck_count', 0),
+            'phase_staleness': health_result.get('phase_staleness', {}),
+            'checked_at': datetime.now().isoformat()
+        })
+    except ImportError as e:
+        logger.error(f"Failed to import FirestoreHealthMonitor: {e}")
+        return jsonify({
+            'status': 'error',
+            'error': 'Health monitor not available',
+            'checked_at': datetime.now().isoformat()
+        }), 503
+    except Exception as e:
+        logger.error(f"Error in api_firestore_health: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/history')
 @rate_limit
 def api_history():

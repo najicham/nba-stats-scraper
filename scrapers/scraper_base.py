@@ -1764,29 +1764,32 @@ class ScraperBase:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True, args=launch_args,
                                         proxy=pw_proxy)
-            page = browser.new_page()
-            if _STEALTH_AVAILABLE:
-                _STEALTH_FN(page)
-
-            # ── single hop ───────────────────────────────────────────
-            page.route("**/*.{png,jpg,jpeg,gif,svg,woff,css}", lambda r: r.abort())
-            page.goto(harvest_url, wait_until="networkidle", timeout=90_000)
-
-            # OneTrust → Accept cookies if shown (non-blocking)
             try:
-                btn = page.locator("button#onetrust-accept-btn-handler")
-                if btn.is_visible(timeout=3_000):
-                    btn.click()
-            except (TimeoutError, Exception) as e:
-                # TimeoutError: button not visible in time; other playwright errors
-                # This is optional UI interaction, safe to continue without it
-                logger.debug("Cookie consent button not clicked: %s", type(e).__name__)
+                page = browser.new_page()
+                if _STEALTH_AVAILABLE:
+                    _STEALTH_FN(page)
 
-            # short pause so Akamai JS can finish
-            page.wait_for_timeout(1_500)
+                # ── single hop ───────────────────────────────────────────
+                page.route("**/*.{png,jpg,jpeg,gif,svg,woff,css}", lambda r: r.abort())
+                page.goto(harvest_url, wait_until="networkidle", timeout=90_000)
 
-            cookie_map = {c["name"]: c["value"] for c in page.context.cookies()}
-            browser.close()
+                # OneTrust → Accept cookies if shown (non-blocking)
+                try:
+                    btn = page.locator("button#onetrust-accept-btn-handler")
+                    if btn.is_visible(timeout=3_000):
+                        btn.click()
+                except (TimeoutError, Exception) as e:
+                    # TimeoutError: button not visible in time; other playwright errors
+                    # This is optional UI interaction, safe to continue without it
+                    logger.debug("Cookie consent button not clicked: %s", type(e).__name__)
+
+                # short pause so Akamai JS can finish
+                page.wait_for_timeout(1_500)
+
+                cookie_map = {c["name"]: c["value"] for c in page.context.cookies()}
+            finally:
+                # Ensure browser is always closed to prevent resource leaks
+                browser.close()
 
         # sanity
         if not cookie_map:
