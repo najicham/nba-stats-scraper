@@ -1,7 +1,7 @@
 # Operations Documentation
 
 **Created:** 2025-11-18 15:00 PST
-**Last Updated:** 2025-12-02
+**Last Updated:** 2026-01-24
 **Purpose:** Step-by-step operational procedures for backfills, maintenance, and data management
 **Audience:** Engineers running backfills, on-call engineers, operators
 **Focus:** How to execute operational tasks (backfills, validation, recovery)
@@ -12,6 +12,7 @@
 
 | Task | Document |
 |------|----------|
+| **Morning Validation** | [MORNING-VALIDATION-GUIDE.md](./MORNING-VALIDATION-GUIDE.md) - Validate today's or yesterday's orchestration |
 | **Daily Operations** | [daily-operations-runbook.md](./daily-operations-runbook.md) |
 | **ML Monitoring Reminders** | [ML-MONITORING-REMINDERS.md](./ML-MONITORING-REMINDERS.md) - Automated Slack reminders for XGBoost V1 monitoring |
 | **Incident Response** | [incident-response.md](./incident-response.md) |

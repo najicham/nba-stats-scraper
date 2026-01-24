@@ -299,30 +299,46 @@ If no project exists yet, create one following the structure above.
 - `README.md` - Goal, status, quick context for someone new
 - `PROGRESS.md` - Task checklist with checkboxes, last updated date
 
-### Morning Orchestration Validation
+### Validation Requests
 
-**When asked to "validate today's orchestration" or "validate yesterday's orchestration":**
+**Entry point for all validation:** `docs/validation/README.md`
 
-1. **Read the guide first**: `docs/02-operations/MORNING-VALIDATION-GUIDE.md`
-2. **Run health check**: `./bin/orchestration/quick_health_check.sh`
-3. **Follow scenario-specific checks** in the guide
+**When asked to validate, determine the scope:**
 
-**Two scenarios:**
+| User Says | Scope | Guide |
+|-----------|-------|-------|
+| "Validate today" / "Validate yesterday" | Daily orchestration | `docs/02-operations/MORNING-VALIDATION-GUIDE.md` |
+| "Validate this season" | Current season (2024-25) | `docs/validation/README.md` |
+| "Validate last season" | Previous season (2023-24) | `docs/validation/README.md` |
+| "Validate [specific season]" | That season's data | `docs/validation/README.md` |
+| "Validate backfill" | Pre/post backfill | `docs/02-operations/backfill/backfill-validation-checklist.md` |
 
-| Request | What to Check |
-|---------|---------------|
-| "Validate today" | Same-day predictions ready for tonight's games |
-| "Validate yesterday" | Overnight processing completed (boxscores, Phase 4, grading) |
+### Daily Orchestration Validation
 
-**Key documentation for orchestration:**
-- `docs/03-phases/phase1-orchestration/` - How orchestration works
-- `docs/02-operations/daily-operations-runbook.md` - Daily procedures
-- `bin/orchestration/README.md` - Available validation scripts
+1. **Read**: `docs/02-operations/MORNING-VALIDATION-GUIDE.md`
+2. **Run**: `./bin/orchestration/quick_health_check.sh`
+3. **Check**: Today = predictions ready; Yesterday = boxscores + Phase 4 + grading
 
-**If you find issues or missing info in orchestration docs:**
-1. Fix small errors directly in the relevant doc
-2. Add new checks to `docs/02-operations/MORNING-VALIDATION-GUIDE.md`
-3. For incidents, create postmortem in `docs/02-operations/postmortems/`
+### Season Validation
+
+1. **Read**: `docs/validation/README.md`
+2. **Season dates**:
+   - 2024-25 (current): Oct 22, 2024 - present
+   - 2023-24: Oct 24, 2023 - Jun 2024
+   - 2022-23: Oct 18, 2022 - Jun 2023
+   - 2021-22: Oct 19, 2021 - Jun 2022
+3. **Run coverage queries** from the validation README
+4. **Check project**: `docs/08-projects/current/historical-backfill-audit/`
+
+**Expected:** ~93% coverage (14-day bootstrap gap at season start is normal)
+
+### Updating Validation Docs
+
+When you find missing/incorrect info:
+1. **Small fixes**: Edit the relevant doc directly
+2. **New daily checks**: Add to `docs/02-operations/MORNING-VALIDATION-GUIDE.md`
+3. **New season checks**: Add to `docs/validation/README.md`
+4. **Incidents**: Create in `docs/02-operations/postmortems/`
 
 ### End-of-Session Checklist
 

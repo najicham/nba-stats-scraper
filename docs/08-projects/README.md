@@ -1,7 +1,16 @@
 # Active Projects & Implementation Work
 
-**Last Updated:** 2025-12-27
+**Last Updated:** 2026-01-24
 **Purpose:** Track active implementation work and preserve completed project artifacts
+
+---
+
+## Start Here
+
+| Document | Purpose |
+|----------|---------|
+| **[CLAUDE-CODE-PROJECT-WORKFLOW.md](./CLAUDE-CODE-PROJECT-WORKFLOW.md)** | How to document work (READ FIRST) |
+| **[project-summaries/](./project-summaries/)** | Periodic status snapshots |
 
 ---
 
@@ -10,6 +19,7 @@
 | What | Where |
 |------|-------|
 | **Current work** | [current/](./current/) |
+| **Project summaries** | [project-summaries/](./project-summaries/) |
 | **Completed projects** | [completed/](./completed/) |
 | **Completed index** | [completed/README.md](./completed/README.md) |
 
@@ -19,40 +29,40 @@
 
 ```
 08-projects/
-├── README.md           # This file
-├── current/            # Active work (8 projects)
-│   ├── 2025-26-season-backfill/
-│   ├── challenge-system-backend/
-│   ├── email-alerting/
-│   ├── four-season-backfill/
-│   ├── observability/
-│   ├── processor-optimization/
-│   ├── system-evolution/
-│   └── website-ui/
-│
-└── completed/          # Finished projects (20 projects)
-    ├── README.md       # Full index with descriptions
-    ├── phase4-phase5-integration/
-    ├── phase-6-publishing/
-    ├── frontend-api-backend/
-    ├── ai-name-resolution/
-    └── ... (16 more)
+├── README.md                        # This file
+├── CLAUDE-CODE-PROJECT-WORKFLOW.md  # How to document work
+├── project-summaries/               # Periodic status snapshots
+│   └── YYYY-MM-DD-PROJECT-SUMMARY.md
+├── current/                         # Active work (65+ projects)
+│   ├── architecture-refactoring-2026-01/
+│   ├── code-quality-2026-01/
+│   ├── pipeline-reliability-improvements/
+│   └── ... (see current/ for full list)
+├── completed/                       # Finished projects (20 projects)
+│   ├── README.md
+│   └── ... (indexed projects)
+├── archive/                         # Old/deprecated projects
+└── backlog/                         # Future work ideas
 ```
 
 ---
 
 ## Current Active Projects
 
-| Project | Description | Status | Last Updated |
-|---------|-------------|--------|--------------|
-| **challenge-system-backend** | Challenge/contest system API design | Design Phase | 2025-12-27 |
-| **website-ui** | Frontend UI implementation | In Progress | 2025-12-12 |
-| **2025-26-season-backfill** | Current season data completeness | In Progress | 2025-12-17 |
-| **four-season-backfill** | Historical seasons (2021-2024) | In Progress | 2025-12-14 |
-| **processor-optimization** | Performance improvements | In Progress | 2025-12-09 |
-| **system-evolution** | Architecture improvements | In Progress | 2025-12-11 |
-| **observability** | Monitoring enhancements | In Progress | 2025-12-06 |
-| **email-alerting** | Alert system implementation | In Progress | 2025-11-30 |
+See **[project-summaries/](./project-summaries/)** for detailed status snapshots.
+
+**Key Active Projects (January 2026):**
+
+| Project | Focus | Status |
+|---------|-------|--------|
+| **architecture-refactoring-2026-01** | Code duplication, large file cleanup | Planning |
+| **code-quality-2026-01** | Testing, security, tech debt | In Progress |
+| **pipeline-reliability-improvements** | Data pipeline robustness | Stable |
+| **live-data-reliability** | Live game data freshness | Phase 1 Complete |
+| **email-alerting** | AWS SES, Slack integration | Phases 1-3 Complete |
+| **website-ui** | Frontend UI implementation | Ready for Impl |
+| **challenge-system-backend** | API fixes for web feature | In Progress |
+| **system-evolution** | Post-backfill analysis | Planning |
 
 ---
 
@@ -60,9 +70,10 @@
 
 | Category | Count |
 |----------|-------|
-| Active projects | 8 |
+| Active projects | 65+ directories |
 | Completed projects | 20 |
-| Total documentation | 110+ files |
+| Project summaries | 1+ snapshots |
+| Total documentation | 600+ files |
 
 ---
 

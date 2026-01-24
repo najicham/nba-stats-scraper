@@ -449,7 +449,7 @@ gcloud run services describe SERVICE_NAME --region us-west2
 **Project Docs:**
 - Phase Pipeline Overview: `/docs/02-architecture/PIPELINE-PHASES.md`
 - Cloud Run Services: `/docs/03-infrastructure/CLOUD-RUN-SERVICES.md`
-- Incident Runbooks: `/docs/02-operations/runbooks/`
+- Incident Runbooks: `/docs/07-operations/RUNBOOKS.md`
 
 **Related Investigations:**
 - Session 98 Phase 3 Investigation: `/docs/09-handoff/SESSION-98-PHASE3-INVESTIGATION.md`

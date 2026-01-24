@@ -16,9 +16,19 @@
 | [05-development/](05-development/) | Guides, patterns, testing |
 | [06-reference/](06-reference/) | Quick lookups, processor cards |
 | [07-monitoring/](07-monitoring/) | Grafana, alerts, observability |
+| [07-admin-dashboard/](07-admin-dashboard/) | Pipeline UI documentation |
+| [07-security/](07-security/) | Security governance & compliance |
 | [08-projects/](08-projects/) | Active work tracking |
 | [09-handoff/](09-handoff/) | Session handoffs |
+| [validation/](validation/) | Data validation framework & reports |
 | [archive/](archive/) | Historical documentation |
+
+### Note on 07-* Directories
+
+Three directories share the "07-" prefix but serve different audiences:
+- **07-monitoring/** - System observability (engineers, ops)
+- **07-admin-dashboard/** - Pipeline UI documentation (UI users)
+- **07-security/** - Security governance (security team, compliance)
 
 ---
 
@@ -38,9 +48,11 @@
 | **Monitoring/alerting** | `07-monitoring/` |
 | **Architecture decisions** | `01-architecture/decisions/` |
 | **Deployment status/history** | `04-deployment/` |
+| **Validation framework/reports** | `validation/` |
+| **Security audits/compliance** | `07-security/` |
 
 **Full guide:** [05-development/docs-organization.md](05-development/docs-organization.md)
 
 ---
 
-**Last reorganized:** 2025-11-30
+**Last reorganized:** 2026-01-24
