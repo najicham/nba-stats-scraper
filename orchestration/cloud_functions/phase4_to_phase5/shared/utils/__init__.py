@@ -1,18 +1,14 @@
 # shared/utils/__init__.py
 """
-Shared utilities for NBA analytics platform
+Shared utilities for NBA analytics platform - MINIMAL VERSION for Cloud Functions
+
+This version only imports utilities that don't have heavy dependencies.
+For specific utilities, import directly from the module:
+    from shared.utils.phase_execution_logger import log_phase_execution
 """
 
-from .bigquery_client import BigQueryClient
-from .storage_client import StorageClient
-from .pubsub_client import PubSubClient
-# from .logging_utils import setup_logging, get_logger
-# from .metrics_utils import send_metric, create_custom_metric
-from .auth_utils import get_service_account_credentials
-# Lazy-loaded team mapper - use get_nba_tricode() convenience functions instead of direct import
-from .nba_team_mapper import get_nba_tricode, get_nba_tricode_fuzzy
-
-# Game ID conversion utilities
+# Only import lightweight utilities that don't cascade dependencies
+# Game ID conversion utilities (no external dependencies)
 from .game_id_converter import (
     GameIdConverter,
     get_game_id_converter,
@@ -21,81 +17,14 @@ from .game_id_converter import (
     is_standard_game_id
 )
 
-# Environment validation utilities
+# Environment validation utilities (no external dependencies)
 from .env_validation import (
     validate_required_env_vars,
     get_required_env_var,
     MissingEnvironmentVariablesError
 )
 
-# Rate limiting utilities
-from .rate_limiter import (
-    RateLimiter,
-    RateLimitConfig,
-    get_rate_limiter,
-    get_rate_limiter_for_url,
-    get_all_rate_limiter_stats,
-    reset_all_rate_limiters,
-    rate_limited,
-)
-
-# Prometheus metrics utilities
-from .prometheus_metrics import (
-    PrometheusMetrics,
-    create_metrics_blueprint,
-    setup_prometheus_metrics,
-    MetricsMiddleware,
-    Counter,
-    Gauge,
-    Histogram
-)
-
-# Roster management utilities
-from .roster_manager import (
-    RosterManager,
-    RosterChangeTracker,
-    ActiveRosterCalculator,
-    RosterChange,
-    PlayerAvailability,
-    TeamRoster,
-    TransactionType,
-    AvailabilityStatus,
-    get_roster_manager,
-    get_active_roster,
-    check_player_availability,
-    get_roster_changes,
-)
-
-# Completion tracking with BigQuery backup
-from .completion_tracker import (
-    CompletionTracker,
-    get_completion_tracker,
-)
-
-# Proxy management with health tracking
-from .proxy_manager import (
-    ProxyManager,
-    ProxyHealth,
-    ProxyHealthMetrics,
-    ProxyStatus,
-    ProxyConfig,
-    get_proxy_manager,
-    get_healthy_proxy_urls,
-    record_proxy_result,
-)
-
-
 __all__ = [
-    "BigQueryClient",
-    "StorageClient",
-    "PubSubClient",
-    #"setup_logging",
-    #"get_logger",
-    #"send_metric",
-    #"create_custom_metric",
-    "get_service_account_credentials",
-    "get_nba_tricode",
-    "get_nba_tricode_fuzzy",
     # Game ID converter
     "GameIdConverter",
     "get_game_id_converter",
@@ -106,45 +35,4 @@ __all__ = [
     "validate_required_env_vars",
     "get_required_env_var",
     "MissingEnvironmentVariablesError",
-    # Rate limiting
-    "RateLimiter",
-    "RateLimitConfig",
-    "get_rate_limiter",
-    "get_rate_limiter_for_url",
-    "get_all_rate_limiter_stats",
-    "reset_all_rate_limiters",
-    "rate_limited",
-    # Prometheus metrics
-    "PrometheusMetrics",
-    "create_metrics_blueprint",
-    "setup_prometheus_metrics",
-    "MetricsMiddleware",
-    "Counter",
-    "Gauge",
-    "Histogram",
-    # Roster management
-    "RosterManager",
-    "RosterChangeTracker",
-    "ActiveRosterCalculator",
-    "RosterChange",
-    "PlayerAvailability",
-    "TeamRoster",
-    "TransactionType",
-    "AvailabilityStatus",
-    "get_roster_manager",
-    "get_active_roster",
-    "check_player_availability",
-    "get_roster_changes",
-    # Completion tracking
-    "CompletionTracker",
-    "get_completion_tracker",
-    # Proxy management
-    "ProxyManager",
-    "ProxyHealth",
-    "ProxyHealthMetrics",
-    "ProxyStatus",
-    "ProxyConfig",
-    "get_proxy_manager",
-    "get_healthy_proxy_urls",
-    "record_proxy_result",
 ]

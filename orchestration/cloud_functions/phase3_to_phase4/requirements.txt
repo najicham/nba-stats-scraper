@@ -7,9 +7,16 @@ functions-framework==3.*
 # Google Cloud libraries
 google-cloud-firestore==2.*
 google-cloud-bigquery==3.*
+google-cloud-logging>=3.0.0
+google-cloud-storage>=2.0.0
 google-cloud-pubsub==2.*
 google-cloud-secret-manager==2.16.0
 
-# NEW: Mode-aware orchestration and health checks
+# HTTP and alerting
+requests>=2.31.0
 pytz>=2024.1  # Timezone support for mode detection
-requests>=2.31.0  # HTTP client for health endpoint checks
+
+# Data processing (required by shared utils)
+pandas>=2.0.0
+pyarrow>=10.0.0
+psutil>=5.9.0  # Required by prometheus_metrics

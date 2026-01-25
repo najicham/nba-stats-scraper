@@ -6,11 +6,16 @@ functions-framework==3.*
 
 # Google Cloud libraries
 google-cloud-firestore==2.*
-google-cloud-pubsub==2.*
 google-cloud-bigquery>=3.0.0
+google-cloud-logging>=3.0.0
+google-cloud-storage>=2.0.0
+google-cloud-pubsub==2.*
+google-cloud-secret-manager==2.16.0
 
 # HTTP requests for calling prediction coordinator
 requests==2.*
 
-# Note: google-cloud-logging is included automatically in Cloud Functions environment
-google-cloud-secret-manager==2.16.0
+# Data processing (required by shared utils)
+pandas>=2.0.0
+pyarrow>=10.0.0
+psutil>=5.9.0  # Required by prometheus_metrics
