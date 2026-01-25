@@ -326,7 +326,7 @@ class UpcomingTeamGameContextProcessor(
         return f"""
         SELECT
             COUNT(*) > 0 AS data_available
-        FROM `nba_raw.nbac_schedule`
+        FROM `nba_raw.v_nbac_schedule_latest`
         WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
           AND game_status IN (1, 2)  -- Scheduled or In Progress
         """

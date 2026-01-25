@@ -315,7 +315,7 @@ class PlayerGameSummaryProcessor(
                 schedule.game_status >= 3  -- Final only
                 AND bdl.game_id IS NOT NULL
             ) > 0 AS data_available
-        FROM `nba_raw.nbac_schedule` AS schedule
+        FROM `nba_raw.v_nbac_schedule_latest` AS schedule
         LEFT JOIN `nba_raw.bdl_player_boxscores` AS bdl
             ON schedule.game_id = bdl.game_id
         WHERE schedule.game_date BETWEEN '{start_date}' AND '{end_date}'

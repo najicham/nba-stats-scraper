@@ -188,7 +188,7 @@ class ScheduleDatabaseReader:
         """
         Get the NBA.com API season_type for a specific date.
 
-        Queries the raw schedule table to determine game type flags and maps
+        Queries the schedule deduplication view to determine game type flags and maps
         them to the season_type parameter expected by NBA.com stats API.
 
         Args:
@@ -204,14 +204,15 @@ class ScheduleDatabaseReader:
             - None if no games found or query fails
         """
         try:
-            # Query the raw schedule table which has the game type flags
+            # Use deduplication view to get accurate game status
+            # (raw table can have duplicate rows with conflicting statuses)
             query = """
                 SELECT
                     is_all_star,
                     is_playoffs,
                     playoff_round,
                     is_regular_season
-                FROM `nba-props-platform.nba_raw.nbac_schedule`
+                FROM `nba-props-platform.nba_raw.v_nbac_schedule_latest`
                 WHERE DATE(game_date) = @game_date
                 LIMIT 1
             """
@@ -265,14 +266,25 @@ class ScheduleDatabaseReader:
         """
         try:
             # Query for first regular season game of the season
-            # Must include date filter for partition elimination
+            # Uses inline deduplication since v_nbac_schedule_latest view
+            # only covers 90 days (not enough for historical seasons)
+            # Dedup logic: take highest game_status per game_id (Final=3 wins)
             query = """
+                WITH dedup AS (
+                    SELECT *,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY game_id
+                            ORDER BY game_status DESC, processed_at DESC
+                        ) as rn
+                    FROM `nba-props-platform.nba_raw.nbac_schedule`
+                    WHERE season_year = @season_year
+                      AND game_date >= @min_date
+                )
                 SELECT MIN(DATE(game_date)) as season_start
-                FROM `nba-props-platform.nba_raw.nbac_schedule`
-                WHERE season_year = @season_year
+                FROM dedup
+                WHERE rn = 1
                   AND is_regular_season = TRUE
                   AND game_status = 3
-                  AND game_date >= @min_date
             """
 
             # Use wide date range to satisfy partition filter

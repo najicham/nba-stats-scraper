@@ -290,7 +290,7 @@ class AsyncUpcomingPlayerGameContextProcessor(
                 game_date,
                 home_team_tricode as home_team_abbr,
                 away_team_tricode as away_team_abbr
-            FROM `{self.project_id}.nba_raw.nbac_schedule`
+            FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
             WHERE game_date = @game_date
         ),
         teams_playing AS (
@@ -388,7 +388,7 @@ class AsyncUpcomingPlayerGameContextProcessor(
                 ) as game_id,
                 home_team_tricode,
                 away_team_tricode
-            FROM `{self.project_id}.nba_raw.nbac_schedule`
+            FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
             WHERE game_date = @game_date
         ),
         players_with_games AS (
@@ -499,7 +499,7 @@ class AsyncUpcomingPlayerGameContextProcessor(
             game_date_est,
             is_primetime,
             season_year
-        FROM `{self.project_id}.nba_raw.nbac_schedule`
+        FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
         WHERE game_date >= @start_date
           AND game_date <= @end_date
         ORDER BY game_date, game_date_est

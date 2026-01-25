@@ -162,7 +162,7 @@ def _query_schedule(client: bigquery.Client, game_date: date) -> tuple:
         away_team_tricode as away_team,
         COALESCE(game_status_text, 'Unknown') as game_status,
         season_year
-    FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
+    FROM `{PROJECT_ID}.nba_raw.v_nbac_schedule_latest`
     WHERE game_date = @game_date
     ORDER BY game_id
     """

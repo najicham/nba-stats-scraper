@@ -322,7 +322,7 @@ class CompletenessChecker:
                 ELSE away_team_tricode
             END as entity_id,
             COUNT(DISTINCT game_date) as count
-        FROM `{self.project_id}.nba_raw.nbac_schedule`
+        FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
         WHERE {date_filter}
           AND {entity_filter}
           AND game_status = 3  -- Final games only
@@ -395,7 +395,7 @@ class CompletenessChecker:
                     SELECT DISTINCT
                         home_team_tricode as team_abbr,
                         game_date
-                    FROM `{self.project_id}.nba_raw.nbac_schedule`
+                    FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
                     WHERE game_date < @analysis_date
                         AND game_status = 3  -- Final games only
                         AND home_team_tricode IN (
@@ -408,7 +408,7 @@ class CompletenessChecker:
                     SELECT DISTINCT
                         away_team_tricode as team_abbr,
                         game_date
-                    FROM `{self.project_id}.nba_raw.nbac_schedule`
+                    FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
                     WHERE game_date < @analysis_date
                         AND game_status = 3  -- Final games only
                         AND away_team_tricode IN (
@@ -465,7 +465,7 @@ class CompletenessChecker:
                     SELECT
                         home_team_tricode as team_abbr,
                         game_date
-                    FROM `{self.project_id}.nba_raw.nbac_schedule`
+                    FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
                     WHERE game_date < @analysis_date
                         AND game_date >= DATE_SUB(@analysis_date, INTERVAL @lookback_window DAY)
                         AND game_status = 3  -- Final games only
@@ -479,7 +479,7 @@ class CompletenessChecker:
                     SELECT
                         away_team_tricode as team_abbr,
                         game_date
-                    FROM `{self.project_id}.nba_raw.nbac_schedule`
+                    FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
                     WHERE game_date < @analysis_date
                         AND game_date >= DATE_SUB(@analysis_date, INTERVAL @lookback_window DAY)
                         AND game_status = 3  -- Final games only
@@ -1589,7 +1589,7 @@ class CompletenessChecker:
             if team_abbr:
                 expected_query = f"""
                 SELECT DISTINCT game_date
-                FROM `{self.project_id}.nba_raw.nbac_schedule`
+                FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
                 WHERE (home_team_tricode = @team_abbr OR away_team_tricode = @team_abbr)
                   AND game_date >= @lookback_start
                   AND game_date <= @analysis_date
@@ -1709,7 +1709,7 @@ class CompletenessChecker:
                     home_team_tricode as team_abbr,
                     game_date,
                     'home' as venue
-                FROM `{self.project_id}.nba_raw.nbac_schedule`
+                FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
                 WHERE home_team_tricode IN UNNEST(@teams)
                   AND game_date >= @lookback_start
                   AND game_date <= @analysis_date
@@ -1719,7 +1719,7 @@ class CompletenessChecker:
                     away_team_tricode as team_abbr,
                     game_date,
                     'away' as venue
-                FROM `{self.project_id}.nba_raw.nbac_schedule`
+                FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
                 WHERE away_team_tricode IN UNNEST(@teams)
                   AND game_date >= @lookback_start
                   AND game_date <= @analysis_date

@@ -263,7 +263,7 @@ class TeamDefenseGameSummaryProcessor(
                 schedule.game_status >= 3  -- Final only
                 AND team_box.game_id IS NOT NULL
             ) > 0 AS data_available
-        FROM `nba_raw.nbac_schedule` AS schedule
+        FROM `nba_raw.v_nbac_schedule_latest` AS schedule
         LEFT JOIN `nba_raw.nbac_team_boxscore` AS team_box
             ON schedule.game_id = team_box.game_id
         WHERE schedule.game_date BETWEEN '{start_date}' AND '{end_date}'

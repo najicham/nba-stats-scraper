@@ -730,7 +730,7 @@ class UpcomingPlayerGameContextProcessor(
                 game_date,
                 home_team_tricode as home_team_abbr,
                 away_team_tricode as away_team_abbr
-            FROM `{self.project_id}.nba_raw.nbac_schedule`
+            FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
             WHERE game_date = @game_date
         ),
         teams_playing AS (
@@ -908,7 +908,7 @@ class UpcomingPlayerGameContextProcessor(
                 ) as game_id,
                 home_team_tricode,
                 away_team_tricode
-            FROM `{self.project_id}.nba_raw.nbac_schedule`
+            FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
             WHERE game_date = @game_date
         ),
         players_with_games AS (
@@ -1037,7 +1037,7 @@ class UpcomingPlayerGameContextProcessor(
             game_date_est,
             is_primetime,
             season_year
-        FROM `{self.project_id}.nba_raw.nbac_schedule`
+        FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
         WHERE game_date >= @start_date
           AND game_date <= @end_date
         ORDER BY game_date, game_date_est
@@ -1594,7 +1594,9 @@ class UpcomingPlayerGameContextProcessor(
         5. Assemble context record
         """
         # DEPENDENCY ROW COUNT VALIDATION
-        self.validate_dependency_row_counts(strict=True)
+        # NOTE: validate_dependency_row_counts() was called here but never implemented.
+        # Removed 2026-01-24 - dependency validation already happens in extract_data().
+        # See: analytics_base.py check_dependencies() for actual validation logic.
 
         if not self.players_to_process:
             logger.warning("No players to process")

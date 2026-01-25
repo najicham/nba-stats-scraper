@@ -194,7 +194,7 @@ class NBATravel:
                     ELSE 'AWAY'
                 END AS home_away,
                 home_team_tricode AS game_location
-            FROM `{self.project_id}.nba_raw.nbac_schedule`
+            FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
             WHERE (home_team_tricode = @team_abbr OR away_team_tricode = @team_abbr)
               AND game_date BETWEEN @start_date AND @end_date
               AND game_status = 3  -- Completed games only

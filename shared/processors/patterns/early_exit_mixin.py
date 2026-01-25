@@ -117,7 +117,7 @@ class EarlyExitMixin:
 
         query = f"""
         SELECT COUNT(*) as cnt
-        FROM `{self.project_id}.nba_raw.nbac_schedule`
+        FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
         WHERE game_date = '{game_date}'
           AND game_status IN (1, 3)
         """
@@ -164,7 +164,7 @@ class EarlyExitMixin:
             COUNT(*) as total_games,
             COUNTIF(game_status = 3) as finished_games,
             COUNTIF(game_status IN (1, 2)) as unfinished_games
-        FROM `{self.project_id}.nba_raw.nbac_schedule`
+        FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
         WHERE game_date = '{game_date}'
         """
 
