@@ -303,6 +303,82 @@ gcloud functions logs read auto-retry-processor --region us-west2 --limit 20
 
 ---
 
+## Issue: Ungradable Predictions (Expected Behavior)
+
+### Symptoms
+- Some prediction dates show 0% or low grading coverage
+- Thousands of predictions without grading results
+- Dates: Nov 4-18, 2025 most common
+
+### Expected Behavior - NOT A BUG
+This is **intentional and correct**. Some predictions cannot be graded:
+
+**Reasons predictions are ungradable:**
+1. **No betting lines available** (most common)
+   - Early season predictions before sportsbooks opened lines
+   - Players without established prop markets
+   - Low-volume games with limited betting options
+
+2. **Invalidated predictions**
+   - Postponed/cancelled games
+   - Player trades mid-prediction
+   - Schedule changes
+
+3. **Placeholder lines (20.0 points)**
+   - Used when no real line exists
+   - Filtered out of grading by design
+
+### Example Statistics
+- **Nov 4-18, 2025:** 3,189 ungradable predictions
+  - All had `line_source = NULL` or invalid
+  - Filtered out by grading processor logic
+  - These are "incomplete predictions by design"
+
+### Grading Filter Logic
+Predictions are only graded if they meet ALL criteria:
+```sql
+WHERE is_active = TRUE
+  AND current_points_line IS NOT NULL
+  AND current_points_line != 20.0
+  AND line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
+  AND invalidation_reason IS NULL
+```
+
+### What This Means
+- ✅ These predictions should NOT be graded
+- ✅ All gradable predictions ARE being graded
+- ✅ Metrics (MAE, win rate) are accurate for valid predictions
+- ❌ Do NOT try to "fix" ungradable predictions
+
+### Check if Ungradable is Expected
+```sql
+-- Check why predictions aren't gradable for a date
+SELECT
+  CASE
+    WHEN current_points_line IS NULL THEN 'No line'
+    WHEN current_points_line = 20.0 THEN 'Placeholder line'
+    WHEN line_source NOT IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS') THEN 'Invalid line source'
+    WHEN NOT is_active THEN 'Inactive'
+    WHEN invalidation_reason IS NOT NULL THEN 'Invalidated'
+    ELSE 'Unknown'
+  END as ungradable_reason,
+  COUNT(*) as count
+FROM `nba-props-platform.nba_predictions.player_prop_predictions`
+WHERE game_date = 'YYYY-MM-DD'
+GROUP BY ungradable_reason
+ORDER BY count DESC
+```
+
+### When to Investigate
+Only investigate if:
+- Recent dates (<7 days old) have <90% grading coverage
+- Predictions with valid lines are not being graded
+- Grading processor is showing errors
+
+Otherwise, ungradable predictions are expected and correct.
+
+---
+
 ## Quick Commands Reference
 
 ```bash

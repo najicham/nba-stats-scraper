@@ -51,18 +51,15 @@ PYTHONPATH=. python backfill_jobs/publishing/daily_export.py \
 
 ## 🟡 OPTIONAL - Do If Time Permits
 
-### 3. BDL Boxscore Gaps (~30 min total)
+### 3. BDL Boxscore Gaps - ✅ COMPLETE
 
-**Current:** 96.2% coverage
-**Target:** >98%
+**Status:** 99.9% coverage (678/679 games)
+**Note:** 1 missing game (MIA @ CHI 2026-01-08) is a gap in BDL API data, not processing issue.
 
-```bash
-# 4 high-priority dates (9 missing games)
-python bin/backfill/bdl_boxscores.py --date 2026-01-15  # 3 missing
-python bin/backfill/bdl_boxscores.py --date 2026-01-14  # 2 missing
-python bin/backfill/bdl_boxscores.py --date 2026-01-13  # 2 missing
-python bin/backfill/bdl_boxscores.py --date 2026-01-12  # 2 missing
-```
+**What was done (2026-01-25):**
+1. Scraped fresh data for 13 dates with gaps (Jan 1-17)
+2. Processed 24 new files with 5,643 player records
+3. Coverage improved from 96.6% → 99.9%
 
 ### 4. Admin Dashboard Cache (~5 min)
 
@@ -128,7 +125,7 @@ See: `/docs/08-projects/current/season-validation-plan/GRADING-BACKFILL-EXECUTIO
 | System performance updated | ✅ Complete |
 | Phase 6 exports regenerated | ✅ Complete (847/847 dates) |
 | ML feedback re-run | ✅ Complete (124/216 weekly snapshots) |
-| BDL coverage >98% | ⏸️ Optional |
+| BDL coverage >98% | ✅ 99.9% (678/679 games) |
 
 ---
 
