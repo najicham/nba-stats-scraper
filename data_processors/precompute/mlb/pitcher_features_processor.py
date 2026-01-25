@@ -1008,17 +1008,165 @@ class MlbPitcherFeaturesProcessor(PrecomputeProcessorBase):
         return sum(obp_values) / len(obp_values) if obp_values else 0.320
 
     def _write_features(self, features_list: List[Dict], game_date: date) -> int:
-        """Write features to BigQuery."""
+        """Write features to BigQuery using atomic MERGE operation.
+
+        CRITICAL FIX (Jan 25, 2026):
+        - Changed from f-string to parameterized query (prevents SQL injection)
+        - Changed from DELETE/INSERT to MERGE (prevents race condition where
+          readers see empty/partial data between delete and insert)
+
+        Note: BigQuery MERGE with UNNEST and complex structs can be tricky.
+        We use a temp table approach for reliability.
+        """
         if not features_list:
             return 0
 
-        # Delete existing records for this date
-        delete_query = f"""
-        DELETE FROM `{self.project_id}.{self.target_table}`
-        WHERE game_date = '{game_date}'
-        """
+        # Strategy: Load to temp table, then MERGE from temp table
+        # This is more reliable than UNNEST(@features) with complex structs
+        import uuid
+        temp_table_id = f"temp_pitcher_features_{uuid.uuid4().hex[:8]}"
+        temp_table_ref = f"{self.project_id}.mlb_precompute.{temp_table_id}"
+
         try:
-            self.bq_client.query(delete_query).result()
+            # Step 1: Load data to temporary table
+            temp_table = self.bq_client.dataset('mlb_precompute').table(temp_table_id)
+            errors = self.bq_client.insert_rows_json(temp_table, features_list)
+
+            if errors:
+                logger.warning(f"Temp table insert had errors: {errors}")
+                # Fallback to legacy method
+                return self._write_features_legacy(features_list, game_date)
+
+            # Step 2: MERGE from temp table (atomic operation)
+            merge_query = """
+            MERGE `{target}` T
+            USING `{temp}` S
+            ON T.game_date = S.game_date
+               AND T.player_lookup = S.player_lookup
+               AND T.game_id = S.game_id
+            WHEN MATCHED THEN
+                UPDATE SET
+                    opponent_team_abbr = S.opponent_team_abbr,
+                    season_year = S.season_year,
+                    f00_k_avg_last_3 = S.f00_k_avg_last_3,
+                    f01_k_avg_last_5 = S.f01_k_avg_last_5,
+                    f02_k_avg_last_10 = S.f02_k_avg_last_10,
+                    f03_k_std_last_10 = S.f03_k_std_last_10,
+                    f04_ip_avg_last_5 = S.f04_ip_avg_last_5,
+                    f05_season_k_per_9 = S.f05_season_k_per_9,
+                    f06_season_era = S.f06_season_era,
+                    f07_season_whip = S.f07_season_whip,
+                    f08_season_games = S.f08_season_games,
+                    f09_season_k_total = S.f09_season_k_total,
+                    f10_is_home = S.f10_is_home,
+                    f11_home_away_k_diff = S.f11_home_away_k_diff,
+                    f12_is_day_game = S.f12_is_day_game,
+                    f13_day_night_k_diff = S.f13_day_night_k_diff,
+                    f14_vs_opponent_k_rate = S.f14_vs_opponent_k_rate,
+                    f15_opponent_team_k_rate = S.f15_opponent_team_k_rate,
+                    f16_opponent_obp = S.f16_opponent_obp,
+                    f17_ballpark_k_factor = S.f17_ballpark_k_factor,
+                    f18_game_total_line = S.f18_game_total_line,
+                    f19_team_implied_runs = S.f19_team_implied_runs,
+                    f20_days_rest = S.f20_days_rest,
+                    f21_games_last_30_days = S.f21_games_last_30_days,
+                    f22_pitch_count_avg = S.f22_pitch_count_avg,
+                    f23_season_ip_total = S.f23_season_ip_total,
+                    f24_is_postseason = S.f24_is_postseason,
+                    f25_bottom_up_k_expected = S.f25_bottom_up_k_expected,
+                    f26_lineup_k_vs_hand = S.f26_lineup_k_vs_hand,
+                    f27_platoon_advantage = S.f27_platoon_advantage,
+                    f28_umpire_k_factor = S.f28_umpire_k_factor,
+                    f29_projected_innings = S.f29_projected_innings,
+                    f30_velocity_trend = S.f30_velocity_trend,
+                    f31_whiff_rate = S.f31_whiff_rate,
+                    f32_put_away_rate = S.f32_put_away_rate,
+                    f33_lineup_weak_spots = S.f33_lineup_weak_spots,
+                    f34_matchup_edge = S.f34_matchup_edge,
+                    feature_vector = S.feature_vector,
+                    actual_strikeouts = S.actual_strikeouts,
+                    strikeouts_line = S.strikeouts_line,
+                    bottom_up_k_expected = S.bottom_up_k_expected,
+                    actual_innings = S.actual_innings,
+                    actual_k_per_9 = S.actual_k_per_9,
+                    feature_version = S.feature_version,
+                    data_hash = S.data_hash,
+                    processed_at = S.processed_at
+            WHEN NOT MATCHED THEN
+                INSERT (
+                    player_lookup, game_date, game_id, opponent_team_abbr, season_year,
+                    f00_k_avg_last_3, f01_k_avg_last_5, f02_k_avg_last_10, f03_k_std_last_10, f04_ip_avg_last_5,
+                    f05_season_k_per_9, f06_season_era, f07_season_whip, f08_season_games, f09_season_k_total,
+                    f10_is_home, f11_home_away_k_diff, f12_is_day_game, f13_day_night_k_diff, f14_vs_opponent_k_rate,
+                    f15_opponent_team_k_rate, f16_opponent_obp, f17_ballpark_k_factor, f18_game_total_line, f19_team_implied_runs,
+                    f20_days_rest, f21_games_last_30_days, f22_pitch_count_avg, f23_season_ip_total, f24_is_postseason,
+                    f25_bottom_up_k_expected, f26_lineup_k_vs_hand, f27_platoon_advantage, f28_umpire_k_factor, f29_projected_innings,
+                    f30_velocity_trend, f31_whiff_rate, f32_put_away_rate, f33_lineup_weak_spots, f34_matchup_edge,
+                    feature_vector, actual_strikeouts, strikeouts_line, bottom_up_k_expected,
+                    actual_innings, actual_k_per_9, feature_version, data_hash, created_at, processed_at
+                )
+                VALUES (
+                    S.player_lookup, S.game_date, S.game_id, S.opponent_team_abbr, S.season_year,
+                    S.f00_k_avg_last_3, S.f01_k_avg_last_5, S.f02_k_avg_last_10, S.f03_k_std_last_10, S.f04_ip_avg_last_5,
+                    S.f05_season_k_per_9, S.f06_season_era, S.f07_season_whip, S.f08_season_games, S.f09_season_k_total,
+                    S.f10_is_home, S.f11_home_away_k_diff, S.f12_is_day_game, S.f13_day_night_k_diff, S.f14_vs_opponent_k_rate,
+                    S.f15_opponent_team_k_rate, S.f16_opponent_obp, S.f17_ballpark_k_factor, S.f18_game_total_line, S.f19_team_implied_runs,
+                    S.f20_days_rest, S.f21_games_last_30_days, S.f22_pitch_count_avg, S.f23_season_ip_total, S.f24_is_postseason,
+                    S.f25_bottom_up_k_expected, S.f26_lineup_k_vs_hand, S.f27_platoon_advantage, S.f28_umpire_k_factor, S.f29_projected_innings,
+                    S.f30_velocity_trend, S.f31_whiff_rate, S.f32_put_away_rate, S.f33_lineup_weak_spots, S.f34_matchup_edge,
+                    S.feature_vector, S.actual_strikeouts, S.strikeouts_line, S.bottom_up_k_expected,
+                    S.actual_innings, S.actual_k_per_9, S.feature_version, S.data_hash, CURRENT_TIMESTAMP(), S.processed_at
+                )
+            """.format(target=f"{self.project_id}.{self.target_table}", temp=temp_table_ref)
+
+            # Execute MERGE (no parameters needed - table names in query)
+            job = self.bq_client.query(merge_query)
+            job.result(timeout=120)  # 2 minute timeout
+
+            # Step 3: Cleanup temp table
+            self.bq_client.delete_table(temp_table_ref, not_found_ok=True)
+
+            logger.info(f"Successfully merged {len(features_list)} pitcher features for {game_date}")
+            return len(features_list)
+
+        except Exception as e:
+            logger.error(f"MERGE failed for pitcher features on {game_date}: {e}")
+            # Cleanup temp table if it exists
+            try:
+                self.bq_client.delete_table(temp_table_ref, not_found_ok=True)
+            except:
+                pass
+            # Fallback to legacy DELETE/INSERT with parameterized query
+            return self._write_features_legacy(features_list, game_date)
+
+    def _write_features_legacy(self, features_list: List[Dict], game_date: date) -> int:
+        """Legacy write using DELETE/INSERT with parameterized queries.
+
+        Used as fallback when MERGE fails. Still has race condition window
+        but uses parameterized queries to prevent SQL injection.
+
+        Args:
+            features_list: List of feature dictionaries to write
+            game_date: Date for the features
+
+        Returns:
+            Number of features written, or 0 on failure
+        """
+        # Use parameterized DELETE query (fixes SQL injection)
+        delete_query = """
+        DELETE FROM `{project}.{table}`
+        WHERE game_date = @game_date
+        """.format(project=self.project_id, table=self.target_table)
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date)
+            ]
+        )
+
+        try:
+            job = self.bq_client.query(delete_query, job_config=job_config)
+            job.result(timeout=60)  # 1 minute timeout for delete
         except Exception as e:
             logger.warning(f"Delete failed (table may not exist): {e}")
 
@@ -1030,6 +1178,7 @@ class MlbPitcherFeaturesProcessor(PrecomputeProcessorBase):
             logger.error(f"BigQuery insert errors: {errors}")
             return 0
 
+        logger.info(f"Legacy write: inserted {len(features_list)} features for {game_date}")
         return len(features_list)
 
 

@@ -389,7 +389,7 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
             west_teams = sum(1 for row in rows if row['conference'] == 'West')
             avg_games_played = sum(row['games_played'] for row in rows) / len(rows)
 
-            # Get top teams by conference
+            # Get top teams by conference (already has default None - safe)
             east_leader = next((row for row in sorted(rows, key=lambda x: x['conference_rank'] or 99)
                                if row['conference'] == 'East'), None)
             west_leader = next((row for row in sorted(rows, key=lambda x: x['conference_rank'] or 99)

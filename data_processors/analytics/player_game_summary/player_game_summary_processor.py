@@ -1059,11 +1059,14 @@ class PlayerGameSummaryProcessor(
         }
     
     def post_process(self) -> None:
-        """Send success notification."""
+        """Send success notification and run post-processing validations."""
         super().post_process()
-        
+
+        # Validate analytics player counts against boxscores
+        self._validate_analytics_player_counts()
+
         stats = self.get_analytics_stats()
-        
+
         try:
             notify_info(
                 title="Player Game Summary: Complete",
@@ -1076,6 +1079,148 @@ class PlayerGameSummaryProcessor(
             )
         except Exception as e:
             logger.warning(f"Failed to send notification: {e}")
+
+    def _validate_analytics_player_counts(self) -> None:
+        """
+        Validate analytics player counts against boxscore player counts.
+
+        Catches cases like NYK@PHI (19 analytics vs 34 boxscore) where
+        analytics processor skipped some players.
+
+        Logs warnings for games where analytics_count < boxscore_count * 0.9
+        (allowing 10% variance for legitimate reasons like DNPs).
+        """
+        if not self.transformed_data:
+            return
+
+        start_date = self.opts.get('start_date')
+        end_date = self.opts.get('end_date')
+
+        try:
+            # Query to compare analytics vs boxscore player counts per game
+            query = f"""
+            WITH analytics_counts AS (
+                SELECT game_id, COUNT(DISTINCT player_lookup) as analytics_count
+                FROM `{self.project_id}.nba_analytics.player_game_summary`
+                WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+                GROUP BY game_id
+            ),
+            boxscore_counts AS (
+                SELECT game_id, COUNT(DISTINCT player_lookup) as boxscore_count
+                FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+                WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+                GROUP BY game_id
+            )
+            SELECT
+                COALESCE(b.game_id, a.game_id) as game_id,
+                COALESCE(a.analytics_count, 0) as analytics_count,
+                COALESCE(b.boxscore_count, 0) as boxscore_count,
+                SAFE_DIVIDE(a.analytics_count, b.boxscore_count) as coverage_ratio
+            FROM boxscore_counts b
+            FULL OUTER JOIN analytics_counts a ON b.game_id = a.game_id
+            WHERE SAFE_DIVIDE(a.analytics_count, b.boxscore_count) < 0.9
+               OR a.analytics_count IS NULL
+            ORDER BY coverage_ratio ASC
+            """
+
+            result = self.bq_client.query(query).result()
+            gaps = list(result)
+
+            if gaps:
+                logger.warning(
+                    f"⚠️ Analytics player count gaps detected for {len(gaps)} game(s):"
+                )
+                for row in gaps:
+                    coverage_pct = (row.coverage_ratio * 100) if row.coverage_ratio else 0
+                    logger.warning(
+                        f"  - {row.game_id}: {row.analytics_count} analytics vs {row.boxscore_count} boxscore "
+                        f"({coverage_pct:.0f}% coverage)"
+                    )
+
+                # Send alert for significant gaps (< 80% coverage)
+                significant_gaps = [g for g in gaps if not g.coverage_ratio or g.coverage_ratio < 0.8]
+                if significant_gaps:
+                    self._send_player_count_gap_alert(significant_gaps)
+            else:
+                logger.info("✅ Analytics player count validation passed (all games ≥90% coverage)")
+
+        except Exception as e:
+            logger.warning(f"Failed to validate analytics player counts: {e}")
+
+    def _send_player_count_gap_alert(self, gaps: list) -> bool:
+        """Send Slack alert for significant analytics player count gaps."""
+        import os
+        import requests
+
+        slack_webhook = os.environ.get('SLACK_WEBHOOK_URL')
+        if not slack_webhook:
+            return False
+
+        try:
+            start_date = self.opts.get('start_date')
+            end_date = self.opts.get('end_date')
+
+            gaps_text = "\n".join([
+                f"• {g.game_id}: {g.analytics_count}/{g.boxscore_count} players "
+                f"({int((g.coverage_ratio or 0) * 100)}%)"
+                for g in gaps[:5]
+            ])
+            if len(gaps) > 5:
+                gaps_text += f"\n• ... and {len(gaps) - 5} more"
+
+            payload = {
+                "attachments": [{
+                    "color": "#FF9800",  # Orange for warning
+                    "blocks": [
+                        {
+                            "type": "header",
+                            "text": {
+                                "type": "plain_text",
+                                "text": ":warning: Analytics Player Count Gaps Detected",
+                                "emoji": True
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"*{len(gaps)} game(s) have significantly fewer analytics players than boxscores*\n"
+                                       f"This may indicate players were skipped during processing."
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "fields": [
+                                {"type": "mrkdwn", "text": f"*Date Range:*\n{start_date} to {end_date}"},
+                                {"type": "mrkdwn", "text": f"*Affected Games:*\n{len(gaps)}"},
+                            ]
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"*Games with <80% coverage:*\n```{gaps_text}```"
+                            }
+                        },
+                        {
+                            "type": "context",
+                            "elements": [{
+                                "type": "mrkdwn",
+                                "text": ":bulb: Check registry for unresolved players. May need to add player aliases."
+                            }]
+                        }
+                    ]
+                }]
+            }
+
+            response = requests.post(slack_webhook, json=payload, timeout=10)
+            response.raise_for_status()
+            logger.info(f"Player count gap alert sent for {len(gaps)} games")
+            return True
+
+        except Exception as e:
+            logger.warning(f"Failed to send player count gap alert: {e}")
+            return False
     
     def finalize(self) -> None:
         """Cleanup - flush unresolved players and save failures."""

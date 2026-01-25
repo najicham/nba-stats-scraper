@@ -354,7 +354,10 @@ class BdlPlayerBoxScoresProcessor(SmartIdempotencyMixin, ProcessorBase):
             # If streaming buffer error occurs, we catch and skip (duplicates will be
             # cleaned up on next run when buffer clears).
             for game_id in game_ids:
-                game_date = next(row['game_date'] for row in rows if row['game_id'] == game_id)
+                game_date = next((row['game_date'] for row in rows if row['game_id'] == game_id), None)
+                if game_date is None:
+                    logger.warning(f"game_id {game_id} not found in rows, skipping delete")
+                    continue
                 try:
                     delete_query = f"""
                     DELETE FROM `{table_id}`

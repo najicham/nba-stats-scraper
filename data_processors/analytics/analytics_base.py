@@ -57,6 +57,24 @@ except ImportError:
     HEARTBEAT_AVAILABLE = False
     ProcessorHeartbeat = None
 
+# Import pipeline logger for event tracking (added Jan 25 for resilience improvements)
+try:
+    from shared.utils.pipeline_logger import (
+        log_processor_start,
+        log_processor_complete,
+        log_processor_error,
+        mark_retry_succeeded,
+        classify_error as classify_error_for_retry
+    )
+    PIPELINE_LOGGER_AVAILABLE = True
+except ImportError:
+    PIPELINE_LOGGER_AVAILABLE = False
+    log_processor_start = None
+    log_processor_complete = None
+    log_processor_error = None
+    mark_retry_succeeded = None
+    classify_error_for_retry = None
+
 # Import soft dependency mixin for graceful degradation (added after Jan 23 incident)
 try:
     from shared.processors.mixins.soft_dependency_mixin import SoftDependencyMixin
@@ -320,6 +338,20 @@ class AnalyticsProcessorBase(TransformProcessorBase, SoftDependencyMixin, RunHis
                 except (RuntimeError, OSError, ValueError) as e:
                     logger.warning(f"Failed to start heartbeat: {e}")
                     self.heartbeat = None
+
+            # Log processor start to pipeline_event_log (added Jan 25 for resilience)
+            self._pipeline_event_id = None
+            if PIPELINE_LOGGER_AVAILABLE:
+                try:
+                    self._pipeline_event_id = log_processor_start(
+                        phase='phase_3',
+                        processor_name=self.processor_name,
+                        game_date=str(data_date) if data_date else str(opts.get('start_date')),
+                        correlation_id=self.correlation_id,
+                        trigger_source=opts.get('trigger_source', 'scheduled')
+                    )
+                except Exception as log_ex:
+                    logger.warning(f"Failed to log processor start: {log_ex}")
 
             # Check dependencies BEFORE extracting (if processor defines them)
             # In backfill mode, skip dependency checks entirely for performance
@@ -663,6 +695,28 @@ class AnalyticsProcessorBase(TransformProcessorBase, SoftDependencyMixin, RunHis
                 summary=self.stats
             )
 
+            # Log processor completion to pipeline_event_log (added Jan 25)
+            if PIPELINE_LOGGER_AVAILABLE:
+                try:
+                    data_date = opts.get('end_date') or opts.get('start_date')
+                    log_processor_complete(
+                        phase='phase_3',
+                        processor_name=self.processor_name,
+                        game_date=str(data_date) if data_date else None,
+                        duration_seconds=total_seconds,
+                        records_processed=self.stats.get('rows_processed', 0),
+                        correlation_id=self.correlation_id,
+                        parent_event_id=getattr(self, '_pipeline_event_id', None)
+                    )
+                    # Clear any pending retry entries for this processor
+                    mark_retry_succeeded(
+                        phase='phase_3',
+                        processor_name=self.processor_name,
+                        game_date=str(data_date) if data_date else None
+                    )
+                except Exception as log_ex:
+                    logger.warning(f"Failed to log processor complete: {log_ex}")
+
             return True
 
         except Exception as e:
@@ -721,6 +775,29 @@ class AnalyticsProcessorBase(TransformProcessorBase, SoftDependencyMixin, RunHis
                 summary=self.stats,
                 failure_category=failure_category
             )
+
+            # Log processor error to pipeline_event_log (added Jan 25)
+            # Only log transient errors to retry queue, not expected failures
+            if PIPELINE_LOGGER_AVAILABLE:
+                try:
+                    data_date = opts.get('end_date') or opts.get('start_date')
+                    error_type_for_retry = classify_error_for_retry(e) if classify_error_for_retry else 'transient'
+
+                    # Only queue for retry if it's a real error (not no_data_available)
+                    if failure_category in ['processing_error', 'timeout', 'upstream_failure']:
+                        import traceback
+                        log_processor_error(
+                            phase='phase_3',
+                            processor_name=self.processor_name,
+                            game_date=str(data_date) if data_date else None,
+                            error_message=str(e),
+                            error_type=error_type_for_retry,
+                            stack_trace=traceback.format_exc(),
+                            correlation_id=self.correlation_id,
+                            parent_event_id=getattr(self, '_pipeline_event_id', None)
+                        )
+                except Exception as log_ex:
+                    logger.warning(f"Failed to log processor error: {log_ex}")
 
             return False
 

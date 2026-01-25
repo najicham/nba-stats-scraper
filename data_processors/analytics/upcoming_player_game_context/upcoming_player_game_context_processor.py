@@ -836,24 +836,24 @@ class UpcomingPlayerGameContextProcessor(
             self.source_tracking['props']['rows_found'] = len(df)
             self.source_tracking['props']['last_updated'] = datetime.now(timezone.utc)
 
-            # Store players to process
-            players_with_props = 0
-            for _, row in df.iterrows():
-                has_prop = row.get('has_prop_line', False)
-                if has_prop:
-                    players_with_props += 1
+            # Store players to process (vectorized)
+            players_with_props = df['has_prop_line'].fillna(False).sum()
 
-                self.players_to_process.append({
-                    'player_lookup': row['player_lookup'],
-                    'game_id': row['game_id'],
-                    'team_abbr': row.get('team_abbr'),
-                    'home_team_abbr': row['home_team_abbr'],
-                    'away_team_abbr': row['away_team_abbr'],
-                    'has_prop_line': has_prop,
-                    'current_points_line': row.get('points_line'),
-                    'prop_source': row.get('prop_source'),
-                    'injury_status': row.get('injury_status')  # Include injury info
-                })
+            # Convert DataFrame to list of dicts efficiently
+            self.players_to_process.extend([
+                {
+                    'player_lookup': row.player_lookup,
+                    'game_id': row.game_id,
+                    'team_abbr': row.team_abbr if hasattr(row, 'team_abbr') else None,
+                    'home_team_abbr': row.home_team_abbr,
+                    'away_team_abbr': row.away_team_abbr,
+                    'has_prop_line': bool(row.has_prop_line) if hasattr(row, 'has_prop_line') else False,
+                    'current_points_line': row.points_line if hasattr(row, 'points_line') else None,
+                    'prop_source': row.prop_source if hasattr(row, 'prop_source') else None,
+                    'injury_status': row.injury_status if hasattr(row, 'injury_status') else None
+                }
+                for row in df.itertuples()
+            ])
 
             # Count unique teams for coverage monitoring
             unique_teams = set(row.get('team_abbr') for row in self.players_to_process if row.get('team_abbr'))
@@ -973,24 +973,24 @@ class UpcomingPlayerGameContextProcessor(
             self.source_tracking['props']['rows_found'] = len(df)
             self.source_tracking['props']['last_updated'] = datetime.now(timezone.utc)
 
-            # Store players to process (now ALL players, not just those with props)
-            players_with_props = 0
-            for _, row in df.iterrows():
-                has_prop = row.get('has_prop_line', False)
-                if has_prop:
-                    players_with_props += 1
+            # Store players to process (now ALL players, not just those with props) (vectorized)
+            players_with_props = df['has_prop_line'].fillna(False).sum()
 
-                self.players_to_process.append({
-                    'player_lookup': row['player_lookup'],
-                    'game_id': row['game_id'],
-                    'team_abbr': row.get('team_abbr'),
-                    'home_team_abbr': row['home_team_abbr'],
-                    'away_team_abbr': row['away_team_abbr'],
-                    'has_prop_line': has_prop,
-                    'current_points_line': row.get('points_line'),
-                    'prop_source': row.get('prop_source'),
-                    'injury_status': row.get('player_status')  # From gamebook
-                })
+            # Convert DataFrame to list of dicts efficiently
+            self.players_to_process.extend([
+                {
+                    'player_lookup': row.player_lookup,
+                    'game_id': row.game_id,
+                    'team_abbr': row.team_abbr if hasattr(row, 'team_abbr') else None,
+                    'home_team_abbr': row.home_team_abbr,
+                    'away_team_abbr': row.away_team_abbr,
+                    'has_prop_line': bool(row.has_prop_line) if hasattr(row, 'has_prop_line') else False,
+                    'current_points_line': row.points_line if hasattr(row, 'points_line') else None,
+                    'prop_source': row.prop_source if hasattr(row, 'prop_source') else None,
+                    'injury_status': row.player_status if hasattr(row, 'player_status') else None  # From gamebook
+                }
+                for row in df.itertuples()
+            ])
 
             logger.info(
                 f"[BACKFILL MODE] Found {len(self.players_to_process)} players for {self.target_date} "
@@ -1074,17 +1074,17 @@ class UpcomingPlayerGameContextProcessor(
                 # Fallback: just return the original
                 return [abbr]
 
-            # Store schedule data by game_id
+            # Store schedule data by game_id (vectorized)
             # ALSO create lookups using date-based format (YYYYMMDD_AWAY_HOME) to match props table
-            for _, row in df.iterrows():
-                row_dict = row.to_dict()
+            for row in df.itertuples():
+                row_dict = df.loc[row.Index].to_dict()
                 # Store with official NBA game_id
-                self.schedule_data[row['game_id']] = row_dict
+                self.schedule_data[row.game_id] = row_dict
 
                 # Create all variant game_id keys to handle inconsistent abbreviations
-                game_date_str = str(row['game_date']).replace('-', '')
-                away_variants = get_all_abbr_variants(row['away_team_abbr'])
-                home_variants = get_all_abbr_variants(row['home_team_abbr'])
+                game_date_str = str(row.game_date).replace('-', '')
+                away_variants = get_all_abbr_variants(row.away_team_abbr)
+                home_variants = get_all_abbr_variants(row.home_team_abbr)
 
                 # Store all combinations of away/home abbreviation variants
                 for away_abbr in away_variants:
@@ -1404,24 +1404,29 @@ class UpcomingPlayerGameContextProcessor(
             # Track latest update time for source tracking
             latest_processed = df['processed_at'].max() if 'processed_at' in df.columns else None
 
-            # Build injuries dict
-            for _, row in df.iterrows():
-                player_lookup = row['player_lookup']
+            # Build injuries dict (vectorized with apply)
+            def build_report(row):
+                """Build meaningful report string from reason fields."""
                 reason = row['reason']
                 reason_category = row['reason_category']
 
-                # Build a meaningful report string
                 if reason and str(reason).lower() not in ('unknown', 'nan', 'none', ''):
-                    report = reason
+                    return reason
                 elif reason_category and str(reason_category).lower() not in ('unknown', 'nan', 'none', ''):
-                    report = reason_category
-                else:
-                    report = None  # No reason available
+                    return reason_category
+                return None
 
-                self.injuries[player_lookup] = {
-                    'status': row['injury_status'],
-                    'report': report
+            # Create report column
+            df['report'] = df.apply(build_report, axis=1)
+
+            # Build injuries dict from DataFrame
+            self.injuries = {
+                row.player_lookup: {
+                    'status': row.injury_status,
+                    'report': row.report
                 }
+                for row in df.itertuples()
+            }
 
             # Log summary by status
             status_counts = {}

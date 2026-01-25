@@ -216,10 +216,13 @@ class NbacTeamBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
         # If we have explicit indicators, use them
         if len(home_away_fields) == 2:
             if 'HOME' in home_away_fields and 'AWAY' in home_away_fields:
-                away_team = next(t for t in teams if t.get('homeAway', '').upper() == 'AWAY')
-                home_team = next(t for t in teams if t.get('homeAway', '').upper() == 'HOME')
-                logger.debug("Home/away determined from explicit homeAway field")
-                return (away_team, home_team)
+                away_team = next((t for t in teams if t.get('homeAway', '').upper() == 'AWAY'), None)
+                home_team = next((t for t in teams if t.get('homeAway', '').upper() == 'HOME'), None)
+                if away_team is None or home_team is None:
+                    logger.warning("HOME/AWAY indicators present but team(s) not found, falling back to array order")
+                else:
+                    logger.debug("Home/away determined from explicit homeAway field")
+                    return (away_team, home_team)
         
         # Method 2: Use array order (NBA.com standard: teams[0] = away, teams[1] = home)
         logger.debug("Home/away determined from array order (teams[0]=away, teams[1]=home)")

@@ -628,8 +628,11 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
                 
                 for game_id in game_ids:
                     # Get the game_date for this game_id
-                    game_date = next(row['game_date'] for row in rows if row['game_id'] == game_id)
-                    
+                    game_date = next((row['game_date'] for row in rows if row['game_id'] == game_id), None)
+                    if game_date is None:
+                        logger.warning(f"game_id {game_id} not found in rows, skipping delete")
+                        continue
+
                     # Attempt safe deletion
                     delete_result = self.safe_delete_existing_data(table_id, game_id, game_date)
                     

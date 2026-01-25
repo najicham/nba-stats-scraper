@@ -929,10 +929,12 @@ class ProcessorBase(RunHistoryMixin):
                 'run_id': getattr(self, 'run_id', None)
             }
 
-            # Insert to monitoring table (non-blocking)
-            errors = self.bq_client.insert_rows_json(table_id, [row])
-            if errors:
-                logger.warning(f"Failed to log processor metrics: {errors}")
+            # Insert to monitoring table using batch loading (non-blocking)
+            # Avoids streaming buffer that blocks DML operations
+            from shared.utils.bigquery_utils import insert_bigquery_rows
+            success = insert_bigquery_rows(table_id, [row])
+            if not success:
+                logger.warning(f"Failed to log processor metrics")
 
         except Exception as e:
             # Don't fail processor if logging fails
@@ -1292,33 +1294,72 @@ class ProcessorBase(RunHistoryMixin):
                 logger.info(f"✅ Successfully batch loaded {len(rows)} rows")
 
             except Exception as load_e:
-                # Graceful failure for streaming buffer
+                # Retry logic for streaming buffer conflicts (fixed 2026-01-25)
+                # Previously: rows were silently skipped causing data loss
+                # Now: exponential backoff retry before failing
                 if "streaming buffer" in str(load_e).lower():
-                    logger.warning(f"⚠️ Load blocked by streaming buffer - {len(rows)} rows skipped")
-                    logger.info("Records will be processed on next run")
-                    self.stats["rows_skipped"] = len(rows)
-                    self.stats["skipped_streaming_buffer"] = True
+                    max_retries = 3
+                    retry_successful = False
 
-                    # Notify operators about streaming buffer conflict (added 2026-01-24)
-                    # This was previously a silent failure that could cause data gaps
-                    try:
-                        notify_warning(
-                            title=f"Streaming Buffer Conflict: {self.__class__.__name__}",
-                            message=f"BigQuery streaming buffer blocked batch load - {len(rows)} rows skipped",
-                            details={
-                                'processor': self.__class__.__name__,
-                                'run_id': self.run_id,
-                                'rows_skipped': len(rows),
-                                'table': self.table_name,
-                                'dataset': self.dataset_id,
-                                'remediation': 'Records will be processed on next run. If this persists, check for active streaming inserts.',
-                            },
-                            processor_name=self.__class__.__name__
+                    for attempt in range(max_retries):
+                        backoff_seconds = (2 ** attempt) * 60  # 60s, 120s, 240s
+                        logger.warning(
+                            f"⚠️ Streaming buffer conflict detected (attempt {attempt + 1}/{max_retries}). "
+                            f"Retrying in {backoff_seconds}s for {len(rows)} rows"
                         )
-                    except Exception as notify_ex:
-                        logger.warning(f"Failed to send streaming buffer notification: {notify_ex}")
+                        time.sleep(backoff_seconds)
 
-                    return  # Graceful failure
+                        try:
+                            # Retry the load operation with same parameters as original
+                            load_job = self.bq_client.load_table_from_file(
+                                io.BytesIO(ndjson_bytes),
+                                table_id,
+                                job_config=job_config
+                            )
+                            retry_config(load_job.result)(timeout=60)
+                            self.stats["rows_inserted"] = len(rows)
+                            logger.info(f"✅ Successfully loaded {len(rows)} rows after {attempt + 1} retries")
+                            retry_successful = True
+                            break
+                        except Exception as retry_e:
+                            if "streaming buffer" not in str(retry_e).lower():
+                                # Different error - fail immediately
+                                raise retry_e
+                            # Continue retrying if still streaming buffer issue
+                            if attempt == max_retries - 1:
+                                # Final attempt failed
+                                logger.error(
+                                    f"❌ Streaming buffer conflict persists after {max_retries} retries. "
+                                    f"FAILING to prevent data loss of {len(rows)} rows"
+                                )
+
+                    if not retry_successful:
+                        # Notify operators and raise exception (don't silently skip)
+                        try:
+                            notify_error(
+                                title=f"Streaming Buffer Failure: {self.__class__.__name__}",
+                                message=f"Failed to load {len(rows)} rows after {max_retries} retries due to streaming buffer conflicts",
+                                details={
+                                    'processor': self.__class__.__name__,
+                                    'run_id': self.run_id,
+                                    'rows_affected': len(rows),
+                                    'table': self.table_name,
+                                    'dataset': self.dataset_id,
+                                    'retries_attempted': max_retries,
+                                    'total_wait_time': '420 seconds (7 minutes)',
+                                    'remediation': 'Check for active streaming inserts. Manual intervention required.',
+                                },
+                                processor_name=self.__class__.__name__
+                            )
+                        except Exception as notify_ex:
+                            logger.warning(f"Failed to send streaming buffer failure notification: {notify_ex}")
+
+                        raise Exception(
+                            f"BigQuery streaming buffer conflict persisted after {max_retries} retries "
+                            f"(waited 420s total). Cannot complete batch load to prevent data loss."
+                        )
+
+                    return  # Success after retry
                 # Log if this was a serialization conflict that exhausted retries
                 elif is_serialization_error(load_e):
                     logger.error(f"❌ BigQuery serialization conflict - retries exhausted after 5 minutes")

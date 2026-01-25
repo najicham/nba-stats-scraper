@@ -80,6 +80,8 @@ class OddsApiGameLinesBatchProcessor(ProcessorBase):
         blobs = bucket.list_blobs(prefix=prefix)
 
         file_count = 0
+        failed_files = []  # CRITICAL FIX (Jan 25, 2026): Track failures
+
         for blob in blobs:
             # Skip non-JSON files
             if not blob.name.endswith('.json'):
@@ -105,7 +107,21 @@ class OddsApiGameLinesBatchProcessor(ProcessorBase):
 
             except Exception as e:
                 logger.error(f"Failed to process game-lines file {blob.name}: {e}")
-                # Continue with other files
+                failed_files.append(blob.name)
+
+        # CRITICAL FIX (Jan 25, 2026): Abort if too many files failed
+        # This prevents partial/incomplete data from being saved
+        if failed_files:
+            failure_rate = len(failed_files) / max(1, file_count + len(failed_files))
+            if failure_rate > 0.2:  # More than 20% failed
+                raise RuntimeError(
+                    f"Too many files failed ({len(failed_files)}/{file_count + len(failed_files)}): "
+                    f"{failed_files[:5]}"
+                )
+            logger.warning(
+                f"⚠️ {len(failed_files)} files failed but continuing "
+                f"(failure rate {failure_rate:.1%} < 20% threshold): {failed_files[:3]}"
+            )
 
         logger.info(f"✅ Loaded {file_count} game-lines files, {len(self.all_rows)} total rows")
 
@@ -296,6 +312,8 @@ class OddsApiPropsBatchProcessor(ProcessorBase):
         blobs = bucket.list_blobs(prefix=prefix)
 
         file_count = 0
+        failed_files = []  # CRITICAL FIX (Jan 25, 2026): Track failures
+
         for blob in blobs:
             # Skip non-JSON files
             if not blob.name.endswith('.json'):
@@ -321,7 +339,21 @@ class OddsApiPropsBatchProcessor(ProcessorBase):
 
             except Exception as e:
                 logger.error(f"Failed to process player-props file {blob.name}: {e}")
-                # Continue with other files
+                failed_files.append(blob.name)
+
+        # CRITICAL FIX (Jan 25, 2026): Abort if too many files failed
+        # This prevents partial/incomplete data from being saved
+        if failed_files:
+            failure_rate = len(failed_files) / max(1, file_count + len(failed_files))
+            if failure_rate > 0.2:  # More than 20% failed
+                raise RuntimeError(
+                    f"Too many files failed ({len(failed_files)}/{file_count + len(failed_files)}): "
+                    f"{failed_files[:5]}"
+                )
+            logger.warning(
+                f"⚠️ {len(failed_files)} files failed but continuing "
+                f"(failure rate {failure_rate:.1%} < 20% threshold): {failed_files[:3]}"
+            )
 
         logger.info(f"✅ Loaded {file_count} player-props files, {len(self.all_rows)} total rows")
 
