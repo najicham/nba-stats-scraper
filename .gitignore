@@ -203,3 +203,4 @@ catboost_info/
 models/
 Dockerfile.backup.*
 failed_games_*.json
+.backups/
