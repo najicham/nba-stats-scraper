@@ -28,16 +28,17 @@ Webhook URLs (updated 2026-01-12):
 - #app-error-alerts: https://hooks.slack.com/services/T0900NBTAET/B09HHJXMN8M/...
 - #gap-monitoring: https://hooks.slack.com/services/T0900NBTAET/B09JTE8TUR2/...
 
-Version: 1.2
+Version: 1.3
 Created: 2025-11-30
 Updated: 2026-01-12 - Added #daily-orchestration as primary channel
+Updated: 2026-01-25 - Unified on send_slack_webhook_with_retry for all calls
 """
 
-import json
 import logging
 import os
 from typing import Dict, List, Optional
-from urllib import request, error
+
+from shared.utils.slack_retry import send_slack_webhook_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +51,10 @@ def send_to_slack(
     icon_emoji: str = ":basketball:"
 ) -> bool:
     """
-    Send message to Slack webhook.
+    Send message to Slack webhook with automatic retry logic.
+
+    Uses send_slack_webhook_with_retry internally for reliability.
+    Retries up to 3 times with exponential backoff on transient failures.
 
     Args:
         webhook_url: Slack webhook URL
@@ -75,20 +79,7 @@ def send_to_slack(
     if blocks:
         payload["blocks"] = blocks
 
-    try:
-        req = request.Request(
-            webhook_url,
-            data=json.dumps(payload).encode('utf-8'),
-            headers={'Content-Type': 'application/json'}
-        )
-        with request.urlopen(req, timeout=10) as response:
-            return response.status == 200
-    except error.HTTPError as e:
-        logger.error(f"Slack HTTP error: {e.code} - {e.reason}", exc_info=True)
-        return False
-    except Exception as e:
-        logger.error(f"Slack error: {e}", exc_info=True)
-        return False
+    return send_slack_webhook_with_retry(webhook_url, payload)
 
 
 def send_prediction_summary_to_slack(prediction_data: Dict) -> bool:

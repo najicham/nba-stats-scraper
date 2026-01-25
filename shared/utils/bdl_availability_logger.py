@@ -280,6 +280,8 @@ class BdlAvailabilityLogger:
         """
         Send Slack alert when games are missing from BDL response.
 
+        Uses send_slack_webhook_with_retry for automatic retry on transient failures.
+
         Args:
             missing_records: List of GameAvailability records for missing games
 
@@ -294,7 +296,7 @@ class BdlAvailabilityLogger:
             return False
 
         try:
-            import requests
+            from shared.utils.slack_retry import send_slack_webhook_with_retry
 
             missing_games_str = "\n".join([
                 f"• {r.away_team}@{r.home_team}" +
@@ -346,10 +348,10 @@ class BdlAvailabilityLogger:
                 }]
             }
 
-            response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
-            response.raise_for_status()
-            logger.info(f"Missing games alert sent for {self.game_date}: {len(missing_records)} games")
-            return True
+            success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload)
+            if success:
+                logger.info(f"Missing games alert sent for {self.game_date}: {len(missing_records)} games")
+            return success
 
         except Exception as e:
             logger.warning(f"Failed to send missing games alert: {e}")
