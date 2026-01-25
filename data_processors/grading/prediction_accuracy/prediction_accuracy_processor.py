@@ -346,17 +346,24 @@ class PredictionAccuracyProcessor:
             injury_status_at_prediction,
             injury_flag_at_prediction,
             injury_reason_at_prediction,
-            injury_checked_at
+            injury_checked_at,
+            -- v3.5: Invalidation tracking (for postponed/cancelled games)
+            invalidation_reason
         FROM `{self.predictions_table}`
         WHERE game_date = '{game_date}'
             -- v3.10: Only grade active predictions (exclude deactivated duplicates)
             AND is_active = TRUE
             -- PHASE 1 FIX: Exclude placeholder lines from grading
             -- v3.8: Added BETTINGPROS as valid line source (fallback when odds_api unavailable)
+            -- v4.1 FIX: Removed has_prop_line filter - line_source is authoritative
+            -- The has_prop_line field has data inconsistencies (can be FALSE even when
+            -- line_source='ACTUAL_PROP'). Use line_source as the source of truth.
             AND current_points_line IS NOT NULL
             AND current_points_line != 20.0
             AND line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
-            AND has_prop_line = TRUE
+            -- v3.5: Skip invalidated predictions (postponed/cancelled games)
+            -- These predictions should not be graded as they would skew accuracy metrics
+            AND invalidation_reason IS NULL
         """
 
         try:
