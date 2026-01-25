@@ -35,7 +35,9 @@ Validate all backfilled data for the 2024-25 NBA season to ensure:
 | [04-RESULTS-STORAGE-SCHEMA.md](./04-RESULTS-STORAGE-SCHEMA.md) | BigQuery schema for storing validation results |
 | [05-EXECUTION-PLAN.md](./05-EXECUTION-PLAN.md) | Step-by-step execution commands |
 | [06-PRIORITIZATION-FRAMEWORK.md](./06-PRIORITIZATION-FRAMEWORK.md) | How to prioritize backfill work |
-| [07-RESEARCH-FINDINGS.md](./07-RESEARCH-FINDINGS.md) | **Schema corrections and known issues** |
+| [07-RESEARCH-FINDINGS.md](./07-RESEARCH-FINDINGS.md) | Schema corrections and known issues |
+| [08-ACTUAL-STATE-SUMMARY.md](./08-ACTUAL-STATE-SUMMARY.md) | **Real validation data from scans** |
+| [SONNET-HANDOFF.md](./SONNET-HANDOFF.md) | **Handoff document for execution** |
 
 ## Quick Overview
 
