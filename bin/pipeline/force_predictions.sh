@@ -12,6 +12,58 @@ set -euo pipefail
 DATE=${1:-$(TZ=America/New_York date -d "tomorrow" +%Y-%m-%d)}
 DATASET_PREFIX=${2:-""}
 REGION="us-west2"
+MAX_RETRIES=3
+RETRY_DELAY=30
+
+# Retry function with exponential backoff for Cloud Run calls
+# Handles HTTP 429 (rate limit) and 503 (service unavailable) with retries
+curl_with_retry() {
+    local url="$1"
+    local data="$2"
+    local attempt=1
+    local delay=$RETRY_DELAY
+
+    while [ $attempt -le $MAX_RETRIES ]; do
+        echo "  Attempt $attempt/$MAX_RETRIES..."
+
+        # Capture both response and HTTP status code
+        local response
+        local http_code
+        response=$(curl -s -w "\n%{http_code}" -X POST "$url" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "$data")
+
+        http_code=$(echo "$response" | tail -n1)
+        local body=$(echo "$response" | head -n -1)
+
+        # Check for success (2xx)
+        if [[ "$http_code" =~ ^2[0-9][0-9]$ ]]; then
+            echo "$body" | jq -r '.message // .error // .'
+            return 0
+        fi
+
+        # Check for rate limit (429) or service unavailable (503)
+        if [ "$http_code" = "429" ] || [ "$http_code" = "503" ]; then
+            echo "  HTTP $http_code - Rate limited or service unavailable"
+            if [ $attempt -lt $MAX_RETRIES ]; then
+                echo "  Waiting ${delay}s before retry..."
+                sleep $delay
+                delay=$((delay * 2))  # Exponential backoff
+                attempt=$((attempt + 1))
+            else
+                echo "  ERROR: Max retries exceeded"
+                echo "$body"
+                return 1
+            fi
+        else
+            # Other errors - don't retry
+            echo "  HTTP $http_code - Error:"
+            echo "$body" | jq -r '.message // .error // .' 2>/dev/null || echo "$body"
+            return 1
+        fi
+    done
+}
 
 echo "================================================"
 echo "FORCE PREDICTIONS FOR: $DATE"
@@ -73,10 +125,7 @@ PHASE3_PAYLOAD=$(cat <<EOF
 EOF
 )
 
-curl -s -X POST "https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app/process-date-range" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "$PHASE3_PAYLOAD" | jq -r '.message // .error // .'
+curl_with_retry "https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app/process-date-range" "$PHASE3_PAYLOAD"
 
 # Step 3: Run Phase 4 with skip_dependency_check
 echo ""
@@ -94,10 +143,7 @@ PHASE4_PAYLOAD=$(cat <<EOF
 EOF
 )
 
-curl -s -X POST "https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app/process-date" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "$PHASE4_PAYLOAD" | jq -r '.message // .error // .'
+curl_with_retry "https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app/process-date" "$PHASE4_PAYLOAD"
 
 # Step 4: Wait a moment for features to populate
 echo ""
@@ -117,10 +163,7 @@ PHASE5_PAYLOAD=$(cat <<EOF
 EOF
 )
 
-curl -s -X POST "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/start" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d "$PHASE5_PAYLOAD" | jq -r '.message // .error // .'
+curl_with_retry "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/start" "$PHASE5_PAYLOAD"
 
 # Verify results
 echo ""
