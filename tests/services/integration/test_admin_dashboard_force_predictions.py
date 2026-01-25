@@ -64,7 +64,8 @@ class TestForcePredictionsEndpoint:
 
         response = app_client.post(
             '/api/actions/force-predictions',
-            json={'date': target_date}
+            json={'date': target_date},
+            headers={'X-API-Key': 'test-api-key'}
         )
 
         assert response.status_code == 200
@@ -109,7 +110,8 @@ class TestForcePredictionsEndpoint:
         """Test error handling when date parameter missing."""
         response = app_client.post(
             '/api/actions/force-predictions',
-            json={}
+            json={},
+            headers={'X-API-Key': 'test-api-key'}
         )
 
         assert response.status_code == 400
@@ -121,7 +123,7 @@ class TestForcePredictionsEndpoint:
         mock_audit_logger.log_action.assert_called_with(
             'force_predictions',
             '/api/actions/force-predictions',
-            {},
+            {'date': None},
             'failure'
         )
 
@@ -134,7 +136,8 @@ class TestForcePredictionsEndpoint:
 
         response = app_client.post(
             '/api/actions/force-predictions',
-            json={'date': target_date}
+            json={'date': target_date},
+            headers={'X-API-Key': 'test-api-key'}
         )
 
         assert response.status_code == 500
@@ -167,7 +170,8 @@ class TestForcePredictionsEndpoint:
 
         response = app_client.post(
             '/api/actions/force-predictions',
-            json={'date': target_date}
+            json={'date': target_date},
+            headers={'X-API-Key': 'test-api-key'}
         )
 
         assert response.status_code == 500
@@ -187,7 +191,8 @@ class TestForcePredictionsEndpoint:
 
         response = app_client.post(
             '/api/actions/force-predictions',
-            json={'date': target_date}
+            json={'date': target_date},
+            headers={'X-API-Key': 'test-api-key'}
         )
 
         assert response.status_code == 200
@@ -209,7 +214,8 @@ class TestForcePredictionsEndpoint:
         for _ in range(10):
             response = app_client.post(
                 '/api/actions/force-predictions',
-                json={'date': target_date}
+                json={'date': target_date},
+            headers={'X-API-Key': 'test-api-key'}
             )
             responses.append(response.status_code)
 
@@ -225,7 +231,8 @@ class TestForcePredictionsEndpoint:
         # ISO format (expected)
         response1 = app_client.post(
             '/api/actions/force-predictions',
-            json={'date': '2026-01-25'}
+            json={'date': '2026-01-25'},
+            headers={'X-API-Key': 'test-api-key'}
         )
         assert response1.status_code == 200
 
@@ -245,7 +252,8 @@ class TestForcePredictionsEndpoint:
             json={
                 'date': target_date,
                 'correlation_id': correlation_id
-            }
+            },
+            headers={'X-API-Key': 'test-api-key'}
         )
 
         assert response.status_code == 200
