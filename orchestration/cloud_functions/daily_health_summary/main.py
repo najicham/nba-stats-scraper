@@ -49,6 +49,14 @@ from shared.utils.slack_retry import send_slack_webhook_with_retry
 import functions_framework
 import requests
 
+# Try to import postponement detector
+try:
+    from shared.utils.postponement_detector import PostponementDetector
+    POSTPONEMENT_DETECTOR_AVAILABLE = True
+except ImportError:
+    POSTPONEMENT_DETECTOR_AVAILABLE = False
+    logger.warning("PostponementDetector not available - skipping postponement checks")
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -271,6 +279,120 @@ class HealthChecker:
             'has_data': len(results) > 0 if results else False
         }
 
+    def check_postponements(self, check_date: str) -> Dict:
+        """
+        Check for postponed/rescheduled games.
+
+        Uses the PostponementDetector module to find schedule anomalies.
+
+        Returns:
+            Dict with anomaly counts and details
+        """
+        if not POSTPONEMENT_DETECTOR_AVAILABLE:
+            return {
+                'available': False,
+                'total_anomalies': 0,
+                'critical_count': 0,
+                'high_count': 0,
+                'anomalies': []
+            }
+
+        try:
+            from datetime import datetime
+            date_obj = datetime.strptime(check_date, '%Y-%m-%d').date()
+
+            detector = PostponementDetector(sport="NBA", bq_client=self.client)
+            anomalies = detector.detect_all(date_obj)
+
+            critical_count = sum(1 for a in anomalies if a.get('severity') == 'CRITICAL')
+            high_count = sum(1 for a in anomalies if a.get('severity') == 'HIGH')
+
+            # Get summary for reporting
+            summary_anomalies = []
+            for a in anomalies:
+                if a.get('severity') in ('CRITICAL', 'HIGH'):
+                    summary_anomalies.append({
+                        'type': a['type'],
+                        'severity': a['severity'],
+                        'teams': a.get('teams', 'Unknown'),
+                        'date': a.get('game_date') or a.get('original_date'),
+                        'predictions_affected': a.get('predictions_affected', 0)
+                    })
+
+            return {
+                'available': True,
+                'total_anomalies': len(anomalies),
+                'critical_count': critical_count,
+                'high_count': high_count,
+                'anomalies': summary_anomalies
+            }
+        except Exception as e:
+            logger.error(f"Error checking postponements: {e}", exc_info=True)
+            return {
+                'available': False,
+                'error': str(e),
+                'total_anomalies': 0,
+                'critical_count': 0,
+                'high_count': 0,
+                'anomalies': []
+            }
+
+    def check_workflow_decision_gaps(self, hours: int = 48, threshold_minutes: int = 120) -> Dict:
+        """Check for gaps in workflow decisions (orchestration health).
+
+        This check would have caught the 45-hour outage (Jan 23-25) within 2 hours.
+        The master controller makes workflow decisions regularly; gaps indicate
+        orchestration is stalled or dead.
+
+        Args:
+            hours: How many hours back to check (default: 48)
+            threshold_minutes: Alert if gap exceeds this (default: 120 = 2 hours)
+
+        Returns:
+            Dict with max_gap_minutes, gap_start, gap_end, decision_count
+        """
+        query = f"""
+        WITH decisions AS (
+            SELECT
+                timestamp,
+                LAG(timestamp) OVER (ORDER BY timestamp) as prev_timestamp
+            FROM `{PROJECT_ID}.nba_orchestration.workflow_decisions`
+            WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {hours} HOUR)
+        ),
+        gaps AS (
+            SELECT
+                prev_timestamp as gap_start,
+                timestamp as gap_end,
+                TIMESTAMP_DIFF(timestamp, prev_timestamp, MINUTE) as gap_minutes
+            FROM decisions
+            WHERE prev_timestamp IS NOT NULL
+        )
+        SELECT
+            (SELECT COUNT(*) FROM decisions) as decision_count,
+            (SELECT MAX(gap_minutes) FROM gaps) as max_gap_minutes,
+            (SELECT gap_start FROM gaps ORDER BY gap_minutes DESC LIMIT 1) as worst_gap_start,
+            (SELECT gap_end FROM gaps ORDER BY gap_minutes DESC LIMIT 1) as worst_gap_end
+        """
+        results = self.run_query(query)
+        if results and results[0]:
+            r = results[0]
+            return {
+                'decision_count': r.get('decision_count') or 0,
+                'max_gap_minutes': r.get('max_gap_minutes') or 0,
+                'worst_gap_start': str(r.get('worst_gap_start', '')),
+                'worst_gap_end': str(r.get('worst_gap_end', '')),
+                'threshold_minutes': threshold_minutes,
+                'is_healthy': (r.get('max_gap_minutes') or 0) < threshold_minutes
+            }
+        return {
+            'decision_count': 0,
+            'max_gap_minutes': 0,
+            'worst_gap_start': '',
+            'worst_gap_end': '',
+            'threshold_minutes': threshold_minutes,
+            'is_healthy': False  # No data is unhealthy
+        }
+
     def run_health_check(self) -> Dict:
         """Run comprehensive health check and return results."""
         today, yesterday, tomorrow = get_dates()
@@ -359,6 +481,43 @@ class HealthChecker:
                 elif success_rate < 80:
                     self.warnings.append(f"Proxy: {target_host} success rate {success_rate}%")
 
+        # 10. Workflow Decision Gaps (CRITICAL - would have caught 45h outage)
+        workflow = self.check_workflow_decision_gaps(hours=48, threshold_minutes=120)
+        results['checks']['workflow_health'] = workflow
+
+        if workflow['decision_count'] == 0:
+            self.issues.append("CRITICAL: No workflow decisions in last 48 hours - orchestration may be dead")
+        elif not workflow['is_healthy']:
+            gap = workflow['max_gap_minutes']
+            if gap >= 360:  # 6+ hours
+                self.issues.append(f"CRITICAL: {gap} min gap in workflow decisions (orchestration stalled)")
+            elif gap >= 120:  # 2+ hours
+                self.warnings.append(f"Workflow decision gap: {gap} min (threshold: 120 min)")
+
+        # 11. Postponement Detection (check yesterday and today)
+        postponement_yesterday = self.check_postponements(yesterday)
+        postponement_today = self.check_postponements(today)
+        results['checks']['postponements'] = {
+            'yesterday': postponement_yesterday,
+            'today': postponement_today
+        }
+
+        # Add issues for postponements
+        for check_name, postponement in [('Yesterday', postponement_yesterday), ('Today', postponement_today)]:
+            if postponement['critical_count'] > 0:
+                for a in postponement['anomalies']:
+                    if a['severity'] == 'CRITICAL':
+                        self.issues.append(
+                            f"POSTPONEMENT: {a['teams']} on {a['date']} - {a['type']} "
+                            f"({a['predictions_affected']} predictions affected)"
+                        )
+            if postponement['high_count'] > 0:
+                for a in postponement['anomalies']:
+                    if a['severity'] == 'HIGH':
+                        self.warnings.append(
+                            f"Schedule anomaly: {a['teams']} - {a['type']}"
+                        )
+
         # Determine overall status
         if self.issues:
             results['status'] = 'CRITICAL'
@@ -425,6 +584,15 @@ def send_slack_summary(results: Dict) -> bool:
             f"*Registry Status*\n"
             f"Pending Failures: {registry.get('pending_players', 0)} players"
         )
+
+        # Add workflow health (critical for catching orchestration outages)
+        workflow = checks.get('workflow_health', {})
+        workflow_status = ":white_check_mark:" if workflow.get('is_healthy', False) else ":rotating_light:"
+        max_gap = workflow.get('max_gap_minutes', 0)
+        decisions = workflow.get('decision_count', 0)
+        metrics_text += f"\n\n*Orchestration Health (48h)*\n"
+        metrics_text += f"{workflow_status} Max gap: {max_gap} min (threshold: 120)\n"
+        metrics_text += f"Decisions: {decisions}"
 
         # Add proxy health if available
         proxy_health = checks.get('proxy_health', {})
