@@ -198,12 +198,17 @@ class StorageClient:
             return []
     
     def delete_object(self, bucket_name: str, blob_name: str) -> bool:
-        """Delete object from Cloud Storage"""
+        """Delete object from Cloud Storage with retry on transient errors"""
         try:
             bucket = self.client.bucket(bucket_name)
             blob = bucket.blob(blob_name)
-            blob.delete()
-            
+
+            @GCS_RETRY
+            def _delete():
+                blob.delete()
+
+            _delete()
+
             logger.info(f"Deleted gs://{bucket_name}/{blob_name}")
             return True
             
