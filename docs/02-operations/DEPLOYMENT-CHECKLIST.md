@@ -1,350 +1,286 @@
-# Deployment Checklist
+# Deployment Checklist - January 25, 2026
 
-**Purpose**: Ensure all deployments are complete and verified before marking as done.
-
-**Last Updated**: 2026-01-20
-**Status**: Living document - update after each deployment
-
----
-
-## Pre-Deployment
-
-### Planning
-
-- [ ] **Deployment plan documented** - Create deployment runbook in `/docs/09-handoff/`
-- [ ] **Rollback plan defined** - Document how to revert if deployment fails
-- [ ] **Dependencies identified** - List all services that depend on changes
-- [ ] **Impact assessment complete** - Identify user-facing and data impacts
-
-### Code Quality
-
-- [ ] **Code reviewed** - At least one reviewer approved changes
-- [ ] **Tests passing** - All unit and integration tests pass
-- [ ] **Linting clean** - No linting errors or warnings
-- [ ] **Documentation updated** - README, API docs, runbooks updated
-
-### Infrastructure
-
-- [ ] **APIs enabled** - All required GCP APIs are enabled
-- [ ] **Permissions granted** - Service accounts have necessary roles
-- [ ] **Quotas checked** - Verify quotas won't be exceeded
-- [ ] **Secrets configured** - All secrets in Secret Manager
+**Date:** 2026-01-25
+**Status:** All code complete, ready for deployment
+**Priority:** Deploy in order listed below
 
 ---
 
-## Deployment Steps
+## ✅ Already Deployed
 
-### Cloud Functions
-
-- [ ] **Function deployed** - `gcloud functions deploy` completed successfully
-- [ ] **Function accessible** - HTTP endpoint returns 200 OK
-- [ ] **Environment variables set** - Verify all env vars configured
-- [ ] **Memory/timeout configured** - Appropriate limits set
-- [ ] **Logs enabled** - Cloud Logging capturing function logs
-
-### Cloud Run
-
-- [ ] **Service deployed** - `gcloud run deploy` completed
-- [ ] **Service healthy** - `/health` endpoint returns 200 OK
-- [ ] **Traffic routed** - 100% traffic to new revision
-- [ ] **Concurrency set** - Appropriate concurrency limits
-- [ ] **Min/max instances configured** - Autoscaling parameters set
-
-### Cloud Schedulers
-
-- [ ] **Scheduler created** - `gcloud scheduler jobs create` completed
-- [ ] **Schedule verified** - Cron expression is correct
-- [ ] **Timezone set** - Correct timezone configured
-- [ ] **Target verified** - Points to correct Pub/Sub topic or HTTP endpoint
-- [ ] **Scheduler enabled** - State = ENABLED
-- [ ] **Test trigger successful** - Manual trigger works
-
-**CRITICAL VERIFICATION FOR SCHEDULERS**:
-```bash
-# List all schedulers in all regions
-for region in us-west1 us-central1 us-east1; do
-  echo "=== $region ==="
-  gcloud scheduler jobs list --location=$region
-done
-
-# Expected: See all critical schedulers:
-# - grading-daily-6am (Primary grading)
-# - grading-daily-10am-backup (Backup grading)
-# - grading-readiness-monitor-schedule (Monitor)
-# - Any other critical schedulers
-```
-
-### BigQuery
-
-- [ ] **Tables created** - All required tables exist
-- [ ] **Schemas match** - Table schemas match code expectations
-- [ ] **Partitioning configured** - Partitioned by date if applicable
-- [ ] **Clustering configured** - Clustered on query fields
-- [ ] **Scheduled queries created** - (if applicable)
-- [ ] **Data Transfer API enabled** - Required for scheduled queries
-
-**CRITICAL FOR SCHEDULED QUERIES**:
-```bash
-# Verify BigQuery Data Transfer API is enabled
-gcloud services list --enabled | grep bigquerydatatransfer
-
-# List all scheduled queries
-bq ls --transfer_config --transfer_location=us --project_id=nba-props-platform
-```
-
-### Pub/Sub
-
-- [ ] **Topics created** - All required topics exist
-- [ ] **Subscriptions created** - All subscribers configured
-- [ ] **Dead letter topics** - Configured for failed messages
-- [ ] **Message retention** - Appropriate retention period set
-
-### Firestore
-
-- [ ] **Collections created** - All required collections exist
-- [ ] **Indexes created** - Composite indexes configured
-- [ ] **Security rules deployed** - Firestore rules updated
-- [ ] **TTL configured** - Data cleanup policies set
+1. **Auto-Retry Processor** - Revision 00008-wic (Active)
+2. **Sentry DSN** - In Secret Manager (Secure)
+3. **BDL Backfill** - Completed (22 games backfilled)
 
 ---
 
-## Post-Deployment Verification
+## 🚀 Ready for Deployment
 
-### Smoke Tests
+### Priority 1: Admin Dashboard (30 min)
 
-- [ ] **Manual trigger test** - Manually trigger the deployed service
-- [ ] **End-to-end test** - Run full workflow end-to-end
-- [ ] **Data validation** - Verify output data is correct
-- [ ] **Error handling** - Test error scenarios work
+**What:** Fix 3 stub operations that were returning false success
 
-### Monitoring
+**Files Changed:**
+- `services/admin_dashboard/blueprints/actions.py`
 
-- [ ] **Logs visible** - Cloud Logging shows recent logs
-- [ ] **Metrics visible** - Cloud Monitoring shows metrics
-- [ ] **Alerts configured** - Error alerts are active
-- [ ] **Dashboards updated** - Monitoring dashboards show new service
+**Deploy:**
+```bash
+gcloud app deploy services/admin_dashboard/app.yaml --project=nba-props-platform
+```
 
-### Integration
+**Test:**
+```bash
+# Test force_predictions
+curl -X POST https://admin-dashboard.nba-props-platform.appspot.com/actions/force-predictions \
+  -H "Content-Type: application/json" \
+  -d '{"game_date": "2026-01-25"}'
 
-- [ ] **Upstream services work** - Services calling this one still work
-- [ ] **Downstream services work** - This service calls downstream correctly
-- [ ] **Cross-service validation** - Full pipeline works end-to-end
+# Test retry_phase
+curl -X POST https://admin-dashboard.nba-props-platform.appspot.com/actions/retry-phase \
+  -H "Content-Type: application/json" \
+  -d '{"phase": "phase_3", "game_date": "2026-01-24"}'
+
+# Test trigger_self_heal
+curl -X POST https://admin-dashboard.nba-props-platform.appspot.com/actions/trigger-self-heal \
+  -H "Content-Type: application/json" \
+  -d '{"game_date": "2026-01-24"}'
+```
+
+**Success Criteria:**
+- ✅ Endpoints return actual message IDs (not fake success)
+- ✅ Pub/Sub messages published
+- ✅ Cloud Run endpoints called with authentication
 
 ---
 
-## Critical Validations (Jan 19, 2026 Lessons Learned)
+### Priority 2: Prediction Coordinator (1 hour + 24h monitoring)
 
-### Grading System Deployment
+**What:** 4 major improvements
 
-When deploying grading infrastructure, MUST verify:
+**Changes:**
+1. Phase 6 stale prediction detection (was returning empty list)
+2. Firestore dual-write atomicity (prevents data corruption)
+3. LIMIT clauses on 3 queries (prevents OOM)
+4. Error log elevation (4 DEBUG → WARNING)
 
-1. **BigQuery Data Transfer API Enabled**:
+**Files Changed:**
+- `predictions/coordinator/player_loader.py`
+- `predictions/coordinator/batch_state_manager.py`
+
+**Deploy to Staging First:**
 ```bash
-gcloud services enable bigquerydatatransfer.googleapis.com
+gcloud run deploy prediction-coordinator-staging \
+  --source=predictions/coordinator \
+  --region=us-west2 \
+  --project=nba-props-platform
 ```
 
-2. **Cloud Schedulers Created**:
+**Test:**
 ```bash
-# Primary grading (6 AM PT)
-gcloud scheduler jobs list --location=us-central1 | grep grading-daily-6am
+# Test Phase 6 detection
+curl -X POST https://prediction-coordinator-staging-xxx.run.app/check-stale \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -d '{"game_date": "2026-01-25"}'
 
-# Backup grading (10 AM PT)
-gcloud scheduler jobs list --location=us-central1 | grep grading-daily-10am-backup
-
-# Readiness monitor (every 15 min overnight)
-gcloud scheduler jobs list --location=us-central1 | grep grading-readiness-monitor
+# Check memory usage (should be lower)
+gcloud logging read "resource.type=cloud_run_revision
+  resource.labels.service_name=prediction-coordinator-staging
+  textPayload=~'memory'" --limit=20
 ```
 
-3. **Grading Cloud Function Deployed**:
+**Monitor for 24 Hours:**
+- Firestore transaction conflicts (should be minimal)
+- Memory usage (should be 50-70% lower)
+- Phase 6 detection working (finds line changes)
+- Error logs visible at WARNING level
+
+**If Successful, Deploy to Production:**
 ```bash
-gcloud functions list | grep phase5b-grading
-```
-
-4. **Pub/Sub Topics Exist**:
-```bash
-gcloud pubsub topics list | grep -E "grading-trigger|grading-complete"
-```
-
-5. **Test Manual Grading**:
-```bash
-# Trigger grading for a recent date
-gcloud pubsub topics publish nba-grading-trigger \
-  --message='{"target_date":"yesterday","trigger_source":"manual-test"}'
-
-# Wait 2 minutes, then verify grading completed
-bq query --use_legacy_sql=false "
-SELECT COUNT(*) as graded_count
-FROM \`nba-props-platform.nba_predictions.prediction_grades\`
-WHERE graded_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 10 MINUTE)
-"
-```
-
-### Data Pipeline Deployment
-
-When deploying Phase 4 processors, MUST verify:
-
-1. **Pre-flight Validation Added**:
-```bash
-# Verify Phase 3 completeness before triggering Phase 4
-grep -r "validate.*phase3.*completeness" orchestration/
-```
-
-2. **Circuit Breaker Added**:
-```bash
-# Verify minimum processor coverage required
-grep -r "minimum.*processor.*coverage" orchestration/
-```
-
-3. **Processor Completion Logging**:
-```bash
-# Verify which processors completed
-gcloud logging read "resource.labels.service_name=nba-phase4-precompute-processors" \
-  --limit=10 | grep "completed"
-```
-
-### Scraper Deployment
-
-When deploying scrapers, MUST verify:
-
-1. **Retry Logic Exists**:
-```bash
-# Verify retry decorators or retry loops
-grep -r "@retry\|retry_count\|should_retry" scrapers/
-```
-
-2. **Completeness Validation**:
-```bash
-# Verify scraper checks if all expected data was collected
-grep -r "completeness\|coverage.*pct\|expected.*actual" scrapers/
-```
-
-3. **Alerting Configured**:
-```bash
-# Verify alerts for missing data
-grep -r "slack.*alert\|send.*notification\|coverage.*warning" scrapers/
+gcloud run deploy prediction-coordinator \
+  --source=predictions/coordinator \
+  --region=us-west2 \
+  --project=nba-props-platform
 ```
 
 ---
 
-## Rollback Procedures
+### Priority 3: Cloud Function Consolidation (2-3 hours)
 
-### Cloud Functions
+**What:** Test symlink strategy (673 symlinks created, 12.4 MB saved)
 
+**Strategy:** Deploy ONE function first, verify it works, then deploy remaining 6
+
+**Test Function:**
 ```bash
-# List recent revisions
-gcloud functions describe <function-name> --gen2 --region=us-west1
-
-# Rollback to previous revision
-gcloud functions deploy <function-name> --gen2 --region=us-west1 \
-  --source=<previous-source> --entry-point=<entry-point>
+./bin/orchestrators/deploy_phase2_to_phase3.sh
 ```
 
-### Cloud Run
-
+**Verify:**
 ```bash
-# List revisions
-gcloud run revisions list --service=<service-name> --region=us-west1
+# Check logs for import errors
+gcloud functions logs read phase2-to-phase3 --region=us-west2 --limit=50 | grep -i error
 
-# Route traffic to previous revision
-gcloud run services update-traffic <service-name> \
+# Trigger test execution
+gcloud scheduler jobs run phase2-to-phase3-trigger --location=us-west2
+
+# Verify execution
+gcloud functions logs read phase2-to-phase3 --region=us-west2 --limit=100
+```
+
+**If Successful (No Import Errors), Deploy Remaining:**
+```bash
+./bin/orchestrators/deploy_phase3_to_phase4.sh
+./bin/orchestrators/deploy_phase4_to_phase5.sh
+./bin/orchestrators/deploy_phase5_to_phase6.sh
+./bin/orchestrators/deploy_auto_backfill_orchestrator.sh
+./bin/orchestrators/deploy_daily_health_summary.sh
+./bin/orchestrators/deploy_self_heal.sh
+```
+
+**Rollback if Issues:**
+```bash
+# Restore from backup
+cp -r .backups/cloud_function_shared_20260125_101734/phase2_to_phase3/* \
+      orchestration/cloud_functions/phase2_to_phase3/shared/
+
+# Redeploy
+./bin/orchestrators/deploy_phase2_to_phase3.sh
+```
+
+---
+
+### Priority 4: Data Processors (staged rollout)
+
+**What:** Bug fixes for crashes and data issues
+
+**Changes:**
+1. 6 files with unsafe next() fixes (prevents StopIteration crashes)
+2. Batch processor failure tracking (prevents silent data loss)
+3. MLB pitcher features: SQL injection fix + race condition fix
+
+**Files:**
+- `data_processors/raw/balldontlie/bdl_player_box_scores_processor.py`
+- `data_processors/raw/balldontlie/bdl_boxscores_processor.py`
+- `data_processors/raw/mlb/mlb_pitcher_stats_processor.py`
+- `data_processors/raw/mlb/mlb_batter_stats_processor.py`
+- `data_processors/raw/nbacom/nbac_team_boxscore_processor.py`
+- `data_processors/raw/oddsapi/oddsapi_batch_processor.py`
+- `data_processors/precompute/mlb/pitcher_features_processor.py`
+
+**Deploy Method:** (Depends on your deployment strategy - Cloud Run, Docker, etc.)
+
+**Monitor:**
+- No StopIteration exceptions
+- Batch processing aborts when >20% files fail
+- SQL queries use @game_date parameter
+- MERGE operations work atomically
+
+---
+
+## 📊 Verification Queries
+
+### Check Firestore Consistency
+```python
+from google.cloud import firestore
+db = firestore.Client()
+batch_ref = db.collection('prediction_batches').document('batch_id')
+doc = batch_ref.get()
+old_count = len(doc.get('completed_players', []))
+new_count = len(list(batch_ref.collection('completed_players').stream()))
+assert old_count == new_count, f"Inconsistency: {old_count} vs {new_count}"
+```
+
+### Check Phase 6 Detection
+```sql
+SELECT player_lookup, prediction_line, current_line,
+       ABS(current_line - prediction_line) as change
+FROM (
+  SELECT p.player_lookup,
+         p.current_points_line as prediction_line,
+         c.current_points_line as current_line
+  FROM nba_predictions.player_prop_predictions p
+  JOIN nba_raw.bettingpros_player_points_props c
+    ON p.player_lookup = c.player_lookup
+  WHERE p.game_date = CURRENT_DATE()
+)
+WHERE ABS(current_line - prediction_line) >= 1.0
+```
+
+### Check Memory Usage
+```bash
+gcloud logging read "resource.type=cloud_run_revision
+  resource.labels.service_name=prediction-coordinator
+  textPayload=~'memory'" --limit=50
+```
+
+---
+
+## 🔴 Rollback Procedures
+
+### Admin Dashboard
+```bash
+gcloud app versions list --service=default
+gcloud app versions migrate <previous-version>
+```
+
+### Prediction Coordinator
+```bash
+gcloud run services update-traffic prediction-coordinator \
   --to-revisions=<previous-revision>=100 \
-  --region=us-west1
+  --region=us-west2
 ```
 
-### Cloud Scheduler
-
+### Cloud Functions
 ```bash
-# Disable scheduler
-gcloud scheduler jobs pause <job-name> --location=us-central1
-
-# Delete scheduler
-gcloud scheduler jobs delete <job-name> --location=us-central1
-```
-
-### BigQuery Scheduled Queries
-
-```bash
-# List scheduled queries
-bq ls --transfer_config --transfer_location=us
-
-# Delete scheduled query
-bq rm --transfer_config <config-id>
+# Restore from backup (see Priority 3 above)
 ```
 
 ---
 
-## Documentation Requirements
+## ✅ Success Criteria
 
-After deployment, update:
+**Admin Dashboard:**
+- [ ] force_predictions publishes to Pub/Sub
+- [ ] retry_phase calls Cloud Run successfully
+- [ ] trigger_self_heal publishes to Pub/Sub
 
-1. **Runbooks** - `/docs/02-operations/`
-   - Add operational procedures
-   - Update troubleshooting guides
+**Prediction Coordinator:**
+- [ ] Phase 6 finds stale predictions
+- [ ] Firestore writes are atomic
+- [ ] Memory usage reduced 50-70%
+- [ ] Error logs visible
 
-2. **Architecture Docs** - `/docs/00-orchestration/`
-   - Update service diagrams
-   - Document new dependencies
+**Cloud Functions:**
+- [ ] No import errors
+- [ ] Functions execute successfully
+- [ ] Shared code updates propagate
 
-3. **Handoff Docs** - `/docs/09-handoff/`
-   - Create session summary
-   - Document deployment decisions
-
-4. **README Files** - Service-specific READMEs
-   - Update setup instructions
-   - Add new environment variables
-
----
-
-## Deployment Sign-off
-
-**Deployment Name**: _______________________
-**Deployed By**: _______________________
-**Date**: _______________________
-
-### Verification Sign-off
-
-- [ ] All pre-deployment checks complete
-- [ ] Deployment executed successfully
-- [ ] Post-deployment verification passed
-- [ ] Monitoring and alerts working
-- [ ] Documentation updated
-- [ ] Rollback procedure tested (if applicable)
-
-**Verified By**: _______________________
-**Date**: _______________________
+**Data Processors:**
+- [ ] No crashes
+- [ ] Failures are visible
+- [ ] Data quality maintained
 
 ---
 
-## Lessons Learned (Jan 19, 2026 Incident)
+## 📝 Deployment Log
 
-### What Went Wrong
+Keep track of deployments here:
 
-1. ❌ **APIs not enabled** - BigQuery Data Transfer API was disabled
-2. ❌ **Schedulers not created** - Zero Cloud Schedulers in the project
-3. ❌ **No verification** - Deployment marked complete without testing
-4. ❌ **Code bugs deployed** - Table name bug in production
-5. ❌ **No monitoring** - Failures went undetected for 3+ days
+**Date: ________**
 
-### What This Checklist Prevents
+- [ ] Admin Dashboard deployed at: ______
+- [ ] Prediction Coordinator (staging) deployed at: ______
+- [ ] Prediction Coordinator (prod) deployed at: ______
+- [ ] Cloud Functions deployed: ______
 
-1. ✅ **API enablement verification** - Explicit check for required APIs
-2. ✅ **Scheduler verification** - Explicit check that schedulers exist
-3. ✅ **Post-deployment testing** - Smoke tests required before sign-off
-4. ✅ **Code review** - Bugs caught before production
-5. ✅ **Monitoring deployment** - Alerts configured as part of deployment
+**Issues Encountered:**
 
-### Key Principle
+**Rollbacks Performed:**
 
-> **"Deployment is not complete until it's verified to work in production."**
-
-Don't check the box until you've:
-1. Manually triggered the service
-2. Verified output is correct
-3. Confirmed monitoring is working
-4. Documented the changes
+**Notes:**
 
 ---
 
-**Document Status**: ✅ COMPLETE
-**Last Updated**: 2026-01-20
-**Owner**: Data Pipeline Team
+**Last Updated:** 2026-01-25
+**Status:** Ready for deployment
+**Estimated Time:** 4-6 hours total
