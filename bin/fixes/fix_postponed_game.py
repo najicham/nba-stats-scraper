@@ -162,17 +162,39 @@ def invalidate_predictions(
         return 0
 
 
-def update_schedule_status(game_id: str, game_date: date, dry_run: bool = False) -> bool:
-    """Update schedule record to show postponed status."""
+def update_schedule_status(
+    game_id: str,
+    game_date: date,
+    new_date: Optional[date] = None,
+    dry_run: bool = False
+) -> bool:
+    """
+    Update schedule record to show postponed/rescheduled status.
+
+    If new_date is provided, uses "Rescheduled" status.
+    Otherwise uses "Postponed" status.
+
+    Args:
+        game_id: NBA.com game ID
+        game_date: Original scheduled date
+        new_date: New date if rescheduled (optional)
+        dry_run: If True, only log what would happen
+    """
+    # Determine status text based on whether we have a new date
+    if new_date:
+        status_text = f"Rescheduled to {new_date.strftime('%b %d')}"
+    else:
+        status_text = "Postponed"
+
     if dry_run:
-        logger.info(f"[DRY RUN] Would update schedule for {game_id} on {game_date}")
+        logger.info(f"[DRY RUN] Would update schedule for {game_id} on {game_date} -> '{status_text}'")
         return True
 
     # Note: BigQuery doesn't support UPDATE on partitioned tables easily
     # We'll use a MERGE or just log the required fix
     query = """
     UPDATE `nba_raw.nbac_schedule`
-    SET game_status_text = 'Postponed'
+    SET game_status_text = @status_text
     WHERE game_date = @game_date
       AND game_id = @game_id
     """
@@ -181,12 +203,13 @@ def update_schedule_status(game_id: str, game_date: date, dry_run: bool = False)
         query_parameters=[
             bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
             bigquery.ScalarQueryParameter("game_id", "STRING", game_id),
+            bigquery.ScalarQueryParameter("status_text", "STRING", status_text),
         ]
     )
 
     try:
         client.query(query, job_config=job_config).result()
-        logger.info(f"Updated schedule status for {game_id} to 'Postponed'")
+        logger.info(f"Updated schedule status for {game_id} to '{status_text}'")
         return True
     except Exception as e:
         logger.error(f"Failed to update schedule: {e}")
@@ -244,6 +267,54 @@ def record_postponement(
         return False
 
 
+def trigger_predictions_for_date(game_date: date) -> bool:
+    """
+    Trigger prediction generation for a date by calling force_predictions.sh.
+
+    This is a convenience function to regenerate predictions after a game
+    is rescheduled to a new date.
+
+    Args:
+        game_date: Date to generate predictions for
+
+    Returns:
+        True if predictions were triggered successfully
+    """
+    import subprocess
+    import os
+
+    script_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+        'bin', 'pipeline', 'force_predictions.sh'
+    )
+
+    if not os.path.exists(script_path):
+        logger.warning(f"force_predictions.sh not found at {script_path}")
+        return False
+
+    try:
+        logger.info(f"Triggering predictions for {game_date}...")
+        result = subprocess.run(
+            [script_path, str(game_date)],
+            capture_output=True,
+            text=True,
+            timeout=300  # 5 minute timeout
+        )
+
+        if result.returncode == 0:
+            logger.info(f"Predictions triggered successfully for {game_date}")
+            return True
+        else:
+            logger.error(f"Failed to trigger predictions: {result.stderr}")
+            return False
+    except subprocess.TimeoutExpired:
+        logger.error("Prediction generation timed out")
+        return False
+    except Exception as e:
+        logger.error(f"Error triggering predictions: {e}")
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(description='Fix postponed game data')
     parser.add_argument('--game-id', required=True, help='NBA.com game ID (e.g., 0022500644)')
@@ -251,6 +322,8 @@ def main():
     parser.add_argument('--new-date', help='Rescheduled date (YYYY-MM-DD)')
     parser.add_argument('--reason', default='Game postponed', help='Reason for postponement')
     parser.add_argument('--dry-run', action='store_true', help='Show what would be done without making changes')
+    parser.add_argument('--trigger-predictions', action='store_true',
+                       help='Automatically trigger predictions for new date after fix')
 
     args = parser.parse_args()
 
@@ -318,7 +391,7 @@ def main():
 
     # Step 4: Update schedule
     print("\nStep 4: Updating schedule status...")
-    if update_schedule_status(args.game_id, original_date, args.dry_run):
+    if update_schedule_status(args.game_id, original_date, new_date, args.dry_run):
         print("  Schedule updated to 'Postponed'")
     else:
         print("  WARNING: Failed to update schedule")
@@ -353,6 +426,30 @@ def main():
     if args.dry_run:
         print("\n[DRY RUN - No changes were made]")
         print("Run without --dry-run to apply changes")
+
+    # Step 6: Handle prediction regeneration for new date
+    if new_date and not args.dry_run:
+        if args.trigger_predictions:
+            print("\n" + "=" * 60)
+            print("Step 6: Triggering Predictions for New Date")
+            print("=" * 60)
+            print(f"  Triggering predictions for {new_date}...")
+            if trigger_predictions_for_date(new_date):
+                print("  Predictions triggered successfully!")
+            else:
+                print("  WARNING: Failed to trigger predictions automatically")
+                print(f"  Run manually: ./bin/pipeline/force_predictions.sh {new_date}")
+        else:
+            print("\n" + "=" * 60)
+            print("NEXT STEP: Generate Predictions for New Date")
+            print("=" * 60)
+            print(f"  The game has been rescheduled to {new_date}.")
+            print(f"  To generate predictions for the new date, run:")
+            print(f"")
+            print(f"    ./bin/pipeline/force_predictions.sh {new_date}")
+            print(f"")
+            print(f"  Or add --trigger-predictions to trigger automatically.")
+            print(f"  Or wait for the daily pipeline to run automatically.")
 
     return 0
 

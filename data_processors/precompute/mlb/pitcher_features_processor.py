@@ -1134,8 +1134,8 @@ class MlbPitcherFeaturesProcessor(PrecomputeProcessorBase):
             # Cleanup temp table if it exists
             try:
                 self.bq_client.delete_table(temp_table_ref, not_found_ok=True)
-            except:
-                pass
+            except Exception:
+                pass  # Ignore cleanup errors, fallback to legacy method
             # Fallback to legacy DELETE/INSERT with parameterized query
             return self._write_features_legacy(features_list, game_date)
 

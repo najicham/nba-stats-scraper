@@ -8,11 +8,16 @@ This script detects games that may have been postponed by checking for:
 3. News articles mentioning postponement keywords
 4. Final games without any boxscore data
 
+By default, games already tracked in game_postponements table (with status
+'confirmed' or 'resolved') are filtered out to reduce noise. Use --include-handled
+to see all anomalies.
+
 Usage:
     python bin/validation/detect_postponements.py --date 2026-01-24
     python bin/validation/detect_postponements.py --days 3
     python bin/validation/detect_postponements.py --slack  # Send Slack alerts
     python bin/validation/detect_postponements.py --log    # Log to BigQuery
+    python bin/validation/detect_postponements.py --include-handled  # Include handled games
 """
 
 import argparse
@@ -153,6 +158,8 @@ def main():
     parser.add_argument('--sport', type=str, default='NBA', help='Sport (NBA or MLB)')
     parser.add_argument('--slack', action='store_true', help='Send Slack alert for CRITICAL/HIGH findings')
     parser.add_argument('--no-slack', action='store_true', help='Disable Slack alerts (for testing)')
+    parser.add_argument('--include-handled', action='store_true',
+                       help='Include games already tracked in game_postponements table')
 
     args = parser.parse_args()
 
@@ -167,7 +174,7 @@ def main():
     all_anomalies = []
 
     for check_date in check_dates:
-        anomalies = detector.detect_all(check_date)
+        anomalies = detector.detect_all(check_date, include_handled=args.include_handled)
         all_anomalies.extend(anomalies)
 
         if args.log:

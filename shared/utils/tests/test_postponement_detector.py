@@ -309,8 +309,9 @@ class TestPostponementDetector:
 
         result = detector.detect_all(date(2026, 1, 24))
 
-        # Should have called query 4 times (one for each detection method)
-        assert detector.client.query.call_count == 4
+        # Should have called query 5 times:
+        # 1 for handled game IDs check + 4 for detection methods
+        assert detector.client.query.call_count == 5
         assert result == []
 
     def test_detect_all_clears_previous_anomalies(self, detector):

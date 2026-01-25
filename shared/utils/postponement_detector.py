@@ -58,20 +58,68 @@ class PostponementDetector:
         self.sport = sport
         self.client = bq_client or bigquery.Client()
         self.anomalies: List[Dict[str, Any]] = []
+        self._handled_game_ids: set = set()  # Cache of already-handled games
 
-    def detect_all(self, check_date: date) -> List[Dict[str, Any]]:
+    def _get_handled_game_ids(self, check_date: date) -> set:
+        """
+        Get game_ids that are already tracked in game_postponements table.
+
+        Games with status 'confirmed' or 'resolved' are considered handled
+        and will be filtered from detection results (unless include_handled=True).
+
+        Args:
+            check_date: Date to check around (looks ±7 days)
+
+        Returns:
+            Set of game_ids that are already handled
+        """
+        query = """
+        SELECT DISTINCT game_id
+        FROM `nba_orchestration.game_postponements`
+        WHERE sport = @sport
+          AND original_date >= DATE_SUB(@check_date, INTERVAL 7 DAY)
+          AND original_date <= DATE_ADD(@check_date, INTERVAL 7 DAY)
+          AND status IN ('confirmed', 'resolved')
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("sport", "STRING", self.sport),
+                bigquery.ScalarQueryParameter("check_date", "DATE", check_date)
+            ]
+        )
+
+        try:
+            results = self.client.query(query, job_config=job_config).result()
+            handled = {row.game_id for row in results}
+            logger.info(f"Found {len(handled)} already-handled postponements in tracking table")
+            return handled
+        except Exception as e:
+            logger.warning(f"Failed to query game_postponements table: {e}")
+            return set()
+
+    def detect_all(self, check_date: date, include_handled: bool = False) -> List[Dict[str, Any]]:
         """
         Run all detection methods for a given date.
 
         Args:
             check_date: Date to check for anomalies
+            include_handled: If True, include games already tracked in game_postponements
+                           table with status 'confirmed' or 'resolved'.
+                           Default False filters these out to reduce noise.
 
         Returns:
             List of anomaly dictionaries with severity, type, details
         """
-        logger.info(f"Running postponement detection for {check_date}")
+        logger.info(f"Running postponement detection for {check_date} (include_handled={include_handled})")
 
         self.anomalies = []
+
+        # Load already-handled games for filtering (unless include_handled=True)
+        if not include_handled:
+            self._handled_game_ids = self._get_handled_game_ids(check_date)
+        else:
+            self._handled_game_ids = set()
 
         # Detection methods
         self._detect_final_without_scores(check_date)
@@ -112,6 +160,11 @@ class PostponementDetector:
             return
 
         for row in results:
+            # Skip already-handled games
+            if row.game_id in self._handled_game_ids:
+                logger.debug(f"Skipping already-handled game: {row.game_id}")
+                continue
+
             teams = f"{row.away_team_tricode}@{row.home_team_tricode}"
             predictions_affected = get_affected_predictions(
                 row.game_date, teams, self.client
@@ -162,6 +215,11 @@ class PostponementDetector:
             return
 
         for row in results:
+            # Skip already-handled games
+            if row.game_id in self._handled_game_ids:
+                logger.debug(f"Skipping already-handled game: {row.game_id}")
+                continue
+
             dates = [str(d) for d in row.dates]
             teams = f"{row.away_team}@{row.home_team}"
             original_date = datetime.strptime(dates[0], '%Y-%m-%d').date()
@@ -241,6 +299,11 @@ class PostponementDetector:
             return
 
         for row in results:
+            # Skip already-handled games
+            if row.game_id in self._handled_game_ids:
+                logger.debug(f"Skipping already-handled game: {row.game_id}")
+                continue
+
             # Check if we already have this as another anomaly type
             existing = [a for a in self.anomalies if a.get('game_id') == row.game_id]
             if existing:

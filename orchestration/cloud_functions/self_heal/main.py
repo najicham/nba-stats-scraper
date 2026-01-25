@@ -714,7 +714,8 @@ def heal_for_date(target_date, result):
         else:
             result["actions_taken"].append(f"Phase 3 trigger failed for {target_date}")
     except Exception as e:
-        result["actions_taken"].append(f"Phase 3 error ({target_date}): {str(e)[:50]}")
+        logger.error(f"Phase 3 trigger error for {target_date}: {e}", exc_info=True)
+        result["actions_taken"].append(f"Phase 3 error ({target_date}): {str(e)}")
 
     time.sleep(10)
 
@@ -725,7 +726,8 @@ def heal_for_date(target_date, result):
         else:
             result["actions_taken"].append(f"Phase 4 trigger failed for {target_date}")
     except Exception as e:
-        result["actions_taken"].append(f"Phase 4 error ({target_date}): {str(e)[:50]}")
+        logger.error(f"Phase 4 trigger error for {target_date}: {e}", exc_info=True)
+        result["actions_taken"].append(f"Phase 4 error ({target_date}): {str(e)}")
 
     time.sleep(10)
 
@@ -736,7 +738,8 @@ def heal_for_date(target_date, result):
         else:
             result["actions_taken"].append(f"Predictions trigger failed for {target_date}")
     except Exception as e:
-        result["actions_taken"].append(f"Predictions error ({target_date}): {str(e)[:50]}")
+        logger.error(f"Predictions trigger error for {target_date}: {e}", exc_info=True)
+        result["actions_taken"].append(f"Predictions error ({target_date}): {str(e)}")
 
 
 @functions_framework.http

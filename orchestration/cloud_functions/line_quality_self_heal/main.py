@@ -168,6 +168,7 @@ class LineQualitySelfHealer:
             ON pp.player_lookup = bp.player_lookup AND pp.game_date = bp.game_date
         WHERE oa.player_lookup IS NOT NULL OR bp.player_lookup IS NOT NULL
         ORDER BY pp.game_date DESC, pp.player_lookup
+        LIMIT 1000
         """
 
         try:

@@ -122,11 +122,24 @@ echo -e "${BLUE}Deploying Cloud Function...${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
+# Create temporary build directory with dereferenced symlinks
+echo -e "${YELLOW}Creating deployment package (dereferencing symlinks)...${NC}"
+BUILD_DIR=$(mktemp -d)
+trap "rm -rf $BUILD_DIR" EXIT
+
+# Copy source with dereferenced symlinks using rsync
+rsync -aL --exclude='__pycache__' --exclude='*.pyc' --exclude='.git' \
+    "$SOURCE_DIR/" "$BUILD_DIR/"
+
+echo -e "${GREEN}✓ Build directory created: $BUILD_DIR${NC}"
+echo -e "${YELLOW}Deploying from build directory...${NC}"
+echo ""
+
 gcloud functions deploy $FUNCTION_NAME \
     --gen2 \
     --runtime $RUNTIME \
     --region $REGION \
-    --source $SOURCE_DIR \
+    --source $BUILD_DIR \
     --entry-point $ENTRY_POINT \
     --trigger-topic $TRIGGER_TOPIC \
     --set-env-vars GCP_PROJECT=$PROJECT_ID \

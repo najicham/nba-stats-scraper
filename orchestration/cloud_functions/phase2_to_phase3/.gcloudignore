@@ -1,0 +1,23 @@
+# Include everything by default
+# Only exclude what we don't need
+
+# Exclude Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Exclude test files
+*_test.py
+test_*.py
+
+# Exclude editor files
+*.swp
+*.swo
+*~
+
+# Exclude documentation
+*.md
+
+# IMPORTANT: Do NOT exclude the shared/ directory
+# It contains symlinks that must be dereferenced during deployment

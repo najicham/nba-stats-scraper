@@ -39,23 +39,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy shared utilities (needed for UnifiedPubSubPublisher imports)
 COPY shared/ /app/shared/
 
-# Copy coordinator code (flat structure for simple imports)
-COPY predictions/coordinator/coordinator.py /app/coordinator.py
-COPY predictions/coordinator/player_loader.py /app/player_loader.py
-COPY predictions/coordinator/progress_tracker.py /app/progress_tracker.py
-COPY predictions/coordinator/run_history.py /app/run_history.py
-COPY predictions/coordinator/coverage_monitor.py /app/coverage_monitor.py
-COPY predictions/coordinator/batch_state_manager.py /app/batch_state_manager.py
+# Copy predictions directory maintaining structure for imports
+COPY predictions/ /app/predictions/
+
+# Copy gunicorn config to root for easier CMD reference
 COPY predictions/coordinator/gunicorn_config.py /app/gunicorn_config.py
-
-# Copy batch staging writer (needed for BatchConsolidator)
-COPY predictions/worker/batch_staging_writer.py /app/batch_staging_writer.py
-
-# Copy distributed lock (needed by batch_staging_writer for Firestore locking)
-COPY predictions/worker/distributed_lock.py /app/distributed_lock.py
-
-# Copy data loaders (needed for batch historical games optimization)
-COPY predictions/worker/data_loaders.py /app/data_loaders.py
 
 # Environment variables
 # PYTHONPATH: Ensures imports work correctly
@@ -78,4 +66,4 @@ HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
 # - config gunicorn_config.py - Use configuration file with proper logging setup
 # - Logging configuration ensures Python logger.info() appears in Cloud Run logs
 # - Configuration includes: workers, threads, timeout, log formatting
-CMD exec gunicorn --config gunicorn_config.py coordinator:app
+CMD exec gunicorn --config gunicorn_config.py predictions.coordinator.coordinator:app

@@ -14,6 +14,7 @@ from google.cloud import bigquery
 
 from ..services.rate_limiter import rate_limit
 from ..services.auth import check_auth
+from ..services.client_pool import get_bigquery_client as get_shared_bq_client
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +22,8 @@ partials_bp = Blueprint('partials', __name__)
 
 
 def get_bq_client():
-    """Get BigQuery client."""
-    project_id = os.environ.get('GCP_PROJECT_ID')
-    return bigquery.Client(project=project_id)
+    """Get BigQuery client (uses shared client pool)."""
+    return get_shared_bq_client()
 
 
 def clamp_param(value: int, min_val: int, max_val: int, default: int) -> int:

@@ -59,6 +59,9 @@ from shared.utils.env_validation import validate_required_env_vars
 from shared.utils.auth_utils import get_api_key
 from shared.endpoints.health import create_health_blueprint, HealthChecker
 
+# Postponement detection (Jan 2026)
+from shared.utils.postponement_detector import PostponementDetector
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -275,6 +278,108 @@ def _check_data_completeness_for_predictions(
             'missing_games': row['total_expected'] - row['total_with_analytics']
         }
     }
+
+
+# =============================================================================
+# POSTPONEMENT CHECK (Jan 2026 Resilience)
+# Warns if games on the target date are known to be postponed
+# =============================================================================
+
+def _check_for_postponed_games(game_date: date) -> dict:
+    """
+    Check if any games on the target date are known to be postponed.
+
+    Checks two sources:
+    1. game_postponements table - known postponements already tracked
+    2. PostponementDetector - detects games appearing on multiple dates (rescheduled)
+
+    Args:
+        game_date: Date we're making predictions for
+
+    Returns:
+        dict with:
+            - has_postponements: bool - True if any postponed games found
+            - tracked_postponements: list - Games in game_postponements table
+            - detected_rescheduled: list - Games detected as rescheduled
+            - total_count: int - Total number of postponed games
+    """
+    from google.cloud import bigquery
+
+    client = bigquery.Client(project=PROJECT_ID)
+    result = {
+        'has_postponements': False,
+        'tracked_postponements': [],
+        'detected_rescheduled': [],
+        'total_count': 0
+    }
+
+    # Check 1: Known postponements in tracking table
+    query = """
+    SELECT
+        game_id,
+        original_date,
+        new_date,
+        reason,
+        status,
+        detection_details
+    FROM `nba_orchestration.game_postponements`
+    WHERE original_date = @game_date
+      AND status IN ('detected', 'confirmed')
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("game_date", "DATE", game_date)
+        ]
+    )
+
+    try:
+        rows = list(client.query(query, job_config=job_config).result())
+        for row in rows:
+            details = row.detection_details
+            if isinstance(details, str):
+                import json
+                try:
+                    details = json.loads(details)
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    details = {}
+
+            result['tracked_postponements'].append({
+                'game_id': row.game_id,
+                'original_date': str(row.original_date),
+                'new_date': str(row.new_date) if row.new_date else None,
+                'reason': row.reason,
+                'status': row.status,
+                'matchup': details.get('matchup', 'Unknown')
+            })
+    except Exception as e:
+        logger.warning(f"Failed to check game_postponements table: {e}")
+
+    # Check 2: Detect rescheduled games (same game_id on multiple dates)
+    try:
+        detector = PostponementDetector(sport="NBA", bq_client=client)
+        anomalies = detector.detect_all(game_date)
+
+        for anomaly in anomalies:
+            if anomaly['type'] == 'GAME_RESCHEDULED':
+                # Check if this is the ORIGINAL date (we don't want to skip the NEW date)
+                original_date = anomaly.get('original_date')
+                if original_date and str(game_date) == original_date:
+                    result['detected_rescheduled'].append({
+                        'game_id': anomaly['game_id'],
+                        'teams': anomaly['teams'],
+                        'original_date': original_date,
+                        'new_date': anomaly.get('new_date'),
+                        'all_dates': anomaly.get('all_dates', [])
+                    })
+    except Exception as e:
+        logger.warning(f"PostponementDetector check failed: {e}")
+
+    # Combine results
+    result['total_count'] = len(result['tracked_postponements']) + len(result['detected_rescheduled'])
+    result['has_postponements'] = result['total_count'] > 0
+
+    return result
 
 
 def require_api_key(f):
@@ -544,11 +649,14 @@ def start_prediction_batch():
         "use_multiple_lines": false,    # test multiple betting lines
         "correlation_id": "abc-123",    # optional - for pipeline tracing
         "parent_processor": "MLFeatureStore",  # optional
-        "dataset_prefix": "test"        # optional - for test dataset isolation
+        "dataset_prefix": "test",       # optional - for test dataset isolation
+        "skip_completeness_check": false,  # skip data completeness validation
+        "skip_postponement_check": false   # skip postponed game detection
     }
 
     Returns:
         202 Accepted with batch info
+        503 Service Unavailable if data incomplete (unless skip_completeness_check=true)
     """
     global current_tracker, current_batch_id, current_correlation_id, current_game_date
 
@@ -630,6 +738,40 @@ def start_prediction_batch():
             except Exception as e:
                 # Don't block predictions if check fails - log and continue
                 logger.warning(f"Data completeness check failed (continuing anyway): {e}")
+
+        # =========================================================================
+        # POSTPONEMENT CHECK (Jan 2026 Resilience)
+        # Warn if games on the target date are known to be postponed.
+        # Currently non-blocking (warning only) - can be made blocking later.
+        # =========================================================================
+        skip_postponement_check = request_data.get('skip_postponement_check', False)
+        if not skip_postponement_check:
+            try:
+                postponement_result = _check_for_postponed_games(game_date)
+                if postponement_result['has_postponements']:
+                    # Log details of each postponed game
+                    for pp in postponement_result['tracked_postponements']:
+                        logger.warning(
+                            f"⚠️ POSTPONED GAME (tracked): {pp['matchup']} on {pp['original_date']} "
+                            f"→ {pp['new_date'] or 'TBD'} ({pp['reason']})"
+                        )
+                    for pp in postponement_result['detected_rescheduled']:
+                        logger.warning(
+                            f"⚠️ RESCHEDULED GAME (detected): {pp['teams']} appears on dates: "
+                            f"{', '.join(pp['all_dates'])}"
+                        )
+
+                    logger.warning(
+                        f"⚠️ POSTPONEMENT CHECK: Found {postponement_result['total_count']} "
+                        f"postponed/rescheduled game(s) on {game_date}. "
+                        f"Predictions will still be generated but may need invalidation. "
+                        f"Set skip_postponement_check=true to suppress this warning."
+                    )
+                else:
+                    logger.info(f"✅ Postponement check passed: no postponed games found for {game_date}")
+            except Exception as e:
+                # Don't block predictions if check fails - log and continue
+                logger.warning(f"Postponement check failed (continuing anyway): {e}")
 
         # Check if batch already running
         if current_tracker and not current_tracker.is_complete:

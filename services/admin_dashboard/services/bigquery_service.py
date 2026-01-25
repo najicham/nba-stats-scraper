@@ -10,6 +10,8 @@ import logging
 from datetime import date, timedelta
 from typing import Dict, List, Optional
 from google.cloud import bigquery
+from shared.utils.query_cache import QueryCache
+from services.admin_dashboard.services.client_pool import get_bigquery_client
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +48,19 @@ class BigQueryService:
         Args:
             sport: 'nba' or 'mlb' (default: 'nba')
         """
-        self.client = bigquery.Client(project=PROJECT_ID)
+        self.client = get_bigquery_client(project_id=PROJECT_ID)
         self.sport = sport.lower()
         self.datasets = SPORT_DATASETS.get(self.sport, SPORT_DATASETS['nba'])
+
+        # Initialize query cache with smart TTL
+        # - 5 min for same-day data (may be updated)
+        # - 1 hour for historical data (stable)
+        # - 24 hours for reference data (static)
+        self.cache = QueryCache(
+            default_ttl_seconds=300,  # 5 minutes default
+            max_size=500,  # Limit memory usage
+            name=f"{sport}_admin_cache"
+        )
 
     def get_daily_status(self, target_date: date) -> Optional[Dict]:
         """
@@ -61,6 +73,16 @@ class BigQueryService:
         - predictions: Active prediction count
         - pipeline_status: Overall status (COMPLETE, PHASE_X_PENDING, etc.)
         """
+        # Check cache first
+        cache_key = self.cache.generate_key(
+            "daily_status",
+            {"date": target_date},
+            prefix="status"
+        )
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         query = f"""
         SELECT
             game_date,
@@ -78,7 +100,7 @@ class BigQueryService:
             result = list(self.client.query(query).result(timeout=60))
             if result:
                 row = result[0]
-                return {
+                data = {
                     'game_date': str(row.game_date),
                     'games_scheduled': row.games_scheduled,
                     'phase3_context': row.phase3_context,
@@ -89,7 +111,7 @@ class BigQueryService:
                 }
             else:
                 # No data for this date
-                return {
+                data = {
                     'game_date': target_date.isoformat(),
                     'games_scheduled': 0,
                     'phase3_context': 0,
@@ -98,6 +120,13 @@ class BigQueryService:
                     'players_with_predictions': 0,
                     'pipeline_status': 'NO_DATA'
                 }
+
+            # Cache with smart TTL: 5 min for today, 1 hour for historical
+            from datetime import date as date_cls
+            ttl = 300 if target_date >= date_cls.today() else 3600
+            self.cache.set(cache_key, data, ttl_seconds=ttl)
+            return data
+
         except Exception as e:
             logger.error(f"Error querying daily status: {e}")
             raise
@@ -108,6 +137,16 @@ class BigQueryService:
 
         Returns list of games with context/feature/prediction counts.
         """
+        # Check cache first
+        cache_key = self.cache.generate_key(
+            "games_detail",
+            {"date": target_date},
+            prefix="games"
+        )
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         query = f"""
         WITH games AS (
             SELECT
@@ -165,7 +204,7 @@ class BigQueryService:
 
         try:
             result = list(self.client.query(query).result(timeout=60))
-            return [
+            data = [
                 {
                     'game_id': row.game_id,
                     'home_team': row.home_team_name,
@@ -180,6 +219,13 @@ class BigQueryService:
                 }
                 for row in result
             ]
+
+            # Cache with smart TTL: 5 min for today, 1 hour for historical
+            from datetime import date as date_cls
+            ttl = 300 if target_date >= date_cls.today() else 3600
+            self.cache.set(cache_key, data, ttl_seconds=ttl)
+            return data
+
         except Exception as e:
             logger.error(f"Error querying game details: {e}")
             raise
@@ -409,6 +455,16 @@ class BigQueryService:
         Returns accuracy metrics for each system over the last N days.
         Uses prediction_accuracy_summary view (Session 85).
         """
+        # Check cache first
+        cache_key = self.cache.generate_key(
+            "grading_by_system",
+            {"days": days},
+            prefix="grading"
+        )
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         query = f"""
         SELECT
             system_id,
@@ -428,7 +484,7 @@ class BigQueryService:
 
         try:
             result = list(self.client.query(query).result(timeout=60))
-            return [
+            data = [
                 {
                     'system_id': row.system_id,
                     'total_predictions': row.total_predictions,
@@ -441,6 +497,11 @@ class BigQueryService:
                 }
                 for row in result
             ]
+
+            # Cache for 30 minutes (grading data updated periodically)
+            self.cache.set(cache_key, data, ttl_seconds=1800)
+            return data
+
         except Exception as e:
             logger.error(f"Error querying grading by system: {e}")
             return []

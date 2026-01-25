@@ -104,7 +104,8 @@ gcloud run deploy $SERVICE_NAME \
     --min-instances=0 \
     --max-instances=5 \
     --set-env-vars="$ENV_VARS" \
-    --labels="commit-sha=$GIT_COMMIT_SHA,git-branch=${GIT_BRANCH//\//-}"
+    --labels="commit-sha=$GIT_COMMIT_SHA,git-branch=${GIT_BRANCH//\//-}" \
+    --clear-base-image
 
 DEPLOY_STATUS=$?
 DEPLOY_PHASE_END=$(date +%s)
