@@ -447,7 +447,13 @@ def handle_prediction_request():
         # Extract dataset_prefix for test isolation (if present)
         dataset_prefix = request_data.get('dataset_prefix', '')
 
-        logger.info(f"Processing prediction request: {request_data.get('player_lookup')} on {request_data.get('game_date')} (dataset_prefix: {dataset_prefix or 'production'})")
+        # Extract correlation_id for request tracing
+        correlation_id = request_data.get('correlation_id')
+
+        logger.info(
+            f"Processing prediction request: {request_data.get('player_lookup')} on {request_data.get('game_date')} "
+            f"(dataset_prefix: {dataset_prefix or 'production'}, correlation_id: {correlation_id})"
+        )
 
         # Extract request parameters
         player_lookup = request_data['player_lookup']
@@ -581,9 +587,9 @@ def handle_prediction_request():
             return ('Staging write failed - triggering retry', 500)
 
         # Publish completion event ONLY if staging write succeeded
-        # (include batch_id for Firestore state tracking)
+        # (include batch_id for Firestore state tracking, correlation_id for tracing)
         pubsub_start = time.time()
-        publish_completion_event(player_lookup, game_date_str, len(predictions), batch_id=batch_id)
+        publish_completion_event(player_lookup, game_date_str, len(predictions), batch_id=batch_id, correlation_id=correlation_id)
         pubsub_duration = time.time() - pubsub_start
 
         # Log successful execution
@@ -1653,7 +1659,7 @@ def write_predictions_to_bigquery(predictions: List[Dict], batch_id: Optional[st
         return False  # FAILURE: Signal caller to return 500 for retry
 
 
-def publish_completion_event(player_lookup: str, game_date: str, prediction_count: int, batch_id: str = None):
+def publish_completion_event(player_lookup: str, game_date: str, prediction_count: int, batch_id: str = None, correlation_id: str = None):
     """
     Publish prediction-ready event to Pub/Sub
 
@@ -1664,15 +1670,17 @@ def publish_completion_event(player_lookup: str, game_date: str, prediction_coun
         game_date: Game date string
         prediction_count: Number of predictions generated
         batch_id: Batch identifier (REQUIRED for Firestore state tracking)
+        correlation_id: Correlation ID for request tracing
     """
     pubsub_publisher = get_pubsub_publisher()
     topic_path = pubsub_publisher.topic_path(PROJECT_ID, PUBSUB_READY_TOPIC)
-    
+
     message_data = {
         'player_lookup': player_lookup,
         'game_date': game_date,
         'predictions_generated': prediction_count,
         'batch_id': batch_id,  # Critical for Firestore state persistence!
+        'correlation_id': correlation_id,  # For request tracing
         'timestamp': datetime.utcnow().isoformat(),
         'worker_instance': os.environ.get('K_REVISION', 'unknown')
     }

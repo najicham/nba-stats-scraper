@@ -1383,7 +1383,8 @@ def publish_prediction_requests(
             message = {
                 **request_data,
                 'batch_id': batch_id,
-                'timestamp': datetime.now().isoformat()
+                'timestamp': datetime.now().isoformat(),
+                'correlation_id': current_correlation_id or batch_id  # Include correlation_id for tracing
             }
 
             # Add dataset_prefix for test isolation if specified
