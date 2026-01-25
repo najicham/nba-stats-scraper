@@ -1,7 +1,7 @@
 # Postponement Handling - Comprehensive TODO List
 
 **Created:** 2026-01-25
-**Last Updated:** 2026-01-25 (Session 3 Complete)
+**Last Updated:** 2026-01-25 (Session 4 In Progress)
 **Handoff Doc:** `docs/09-handoff/2026-01-25-POSTPONEMENT-HANDLING-HANDOFF.md`
 
 ---
@@ -156,6 +156,65 @@
 
 ---
 
+## Session 4 Completed (2026-01-25)
+
+- [x] **Fix logger bug in daily_health_summary/main.py**
+  - Line 58 used `logger` before it was defined
+  - Moved logging config above import try/except
+  - Done: 2026-01-25
+
+- [x] **Add missing symlink for postponement_detector.py**
+  - Cloud function couldn't import PostponementDetector
+  - Created symlink in `daily_health_summary/shared/utils/`
+  - Done: 2026-01-25
+
+- [x] **Investigate CHI@MIA reschedule**
+  - Confirmed: Jan 30 → Jan 31 (game_id=0022500692)
+  - Already tracked in game_postponements table
+  - No predictions existed, nothing to invalidate
+  - System working correctly
+  - Done: 2026-01-25
+
+---
+
+## Resilience Improvements (Identified Session 4)
+
+### P1 - High Impact
+
+- [ ] **Cloud Function Deployment Validation Script**
+  - Pre-deploy check that verifies:
+    - All symlinks resolve correctly
+    - No undefined variable references
+    - Import statements work
+  - Create `bin/deploy/validate_cloud_function.sh`
+
+- [ ] **Automated Symlink Management**
+  - Script to sync shared module symlinks to all cloud functions
+  - Prevents missing symlink bugs like we just fixed
+  - Consider: `bin/shared/sync_cloud_function_symlinks.sh`
+
+- [ ] **Detection Before Prediction Generation**
+  - Check postponement status in prediction coordinator
+  - Skip generating predictions for postponed games
+  - Prevents wasted computation
+
+### P2 - Medium Impact
+
+- [ ] **Duplicate Schedule Entry Cleanup**
+  - When game rescheduled, update original date's status
+  - Currently both dates remain with "Scheduled" status
+  - Should mark original as "Rescheduled" or "Moved"
+
+- [ ] **Automated Prediction Regeneration**
+  - Auto-trigger predictions for new date when game moves
+  - Currently requires manual intervention
+
+- [ ] **Multi-Source Postponement Verification**
+  - Cross-check NBA.com schedule with ESPN/BDL
+  - Reduces false positives
+
+---
+
 ## Technical Debt
 
 ### Code Quality
@@ -180,9 +239,12 @@
   - Provides complete audit trail
   - Done: 2026-01-25
 
-- [ ] Add unit tests for detection script
+- [x] Add unit tests for detection script
   - Test each detection method
   - Test with mock BigQuery data
+  - Created: `shared/utils/tests/test_postponement_detector.py`
+  - 27 tests covering all detection methods, severity classification, error handling
+  - Done: 2026-01-25
 
 - [ ] Add integration tests
   - Full flow: detect → fix → verify
@@ -221,10 +283,11 @@
 
 ## Notes
 
-- GSW@MIN was the trigger for this project
-- Also found CHI@MIA rescheduled (Jan 30 → Jan 31)
-- News articles captured postponement but weren't acted on
+- GSW@MIN was the trigger for this project (Jan 24 postponed, fixed with 55 predictions invalidated)
+- CHI@MIA rescheduled (Jan 30 → Jan 31) - **RESOLVED**: Detected before predictions generated, no action needed
+- News articles captured postponement but weren't acted on initially
 - Rate limiting on prediction coordinator - **FIXED** with retry logic in `force_predictions.sh`
   - Added `curl_with_retry()` function with exponential backoff (30s, 60s, 120s)
   - Handles HTTP 429 (rate limited) and 503 (service unavailable)
   - Applied to all Cloud Run API calls in pipeline scripts
+- Cloud function symlinks must be manually created - **potential for bugs** (see Resilience Improvements)

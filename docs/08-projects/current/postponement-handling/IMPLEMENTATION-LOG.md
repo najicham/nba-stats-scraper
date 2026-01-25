@@ -203,11 +203,134 @@ The coordinator:
 
 ---
 
+## 2026-01-25: Session 4 - Deployment Prep & Hardening
+
+### Phase 10: Bug Fixes
+
+#### 10.1 Fixed Logger Bug in Cloud Function
+**File:** `orchestration/cloud_functions/daily_health_summary/main.py`
+
+**Problem:** Line 58 referenced `logger.warning()` before `logger` was defined on line 62.
+The try/except block for importing PostponementDetector used logger before it existed.
+
+**Fix:** Moved logging configuration (lines 61-62) above the import try/except block.
+
+#### 10.2 Added Missing Symlink for Cloud Function
+**Problem:** `postponement_detector.py` existed in `shared/utils/` but was NOT symlinked
+to the cloud function's shared folder at `orchestration/cloud_functions/daily_health_summary/shared/utils/`.
+
+**Fix:** Created symlink:
+```bash
+cd orchestration/cloud_functions/daily_health_summary/shared/utils
+ln -s ../../../../../shared/utils/postponement_detector.py postponement_detector.py
+```
+
+### Phase 11: CHI@MIA Investigation
+
+**Findings:**
+- Game ID: 0022500692
+- Original date: 2026-01-30
+- New date: 2026-01-31
+- Status: Both entries show "Scheduled" (game hasn't played yet)
+- Predictions: 0 predictions exist for Jan 30 (nothing to invalidate)
+- Tracking: Already recorded in `game_postponements` table (status=detected)
+
+**Result:** System working correctly - detected reschedule before predictions were generated.
+
+### Phase 12: Cloud Function Deployment
+
+**Problem:** Initial deployment failed due to:
+1. Logger bug (using `logger` before defined)
+2. Symlinks pointing outside deployment directory not resolved by gcloud
+
+**Solution:**
+1. Fixed logger definition order in main.py
+2. Updated deploy script to copy ENTIRE shared/ directory from project root:
+   ```bash
+   REPO_ROOT="$(cd "$(dirname "$SOURCE_DIR")/../.." && pwd)"
+   cp -r "$REPO_ROOT/shared" "${TEMP_DIR}/"
+   ```
+
+**Deployment Result:**
+```
+Function: daily-health-summary
+Revision: daily-health-summary-00017-mol
+State: ACTIVE
+URL: https://daily-health-summary-f7p3g7f6ya-wl.a.run.app
+```
+
+**Verification:**
+- PostponementDetector available: YES
+- Detected GSW@MIN FINAL_WITHOUT_SCORES (CRITICAL)
+- Detected CHI@MIA and GSW@MIN rescheduled (HIGH)
+
+## Session 4 Completed
+
+- [x] Fix logger bug in cloud function
+- [x] Add postponement_detector.py symlink
+- [x] Update deploy script to handle shared module dependencies
+- [x] Deploy to production
+- [x] Verify postponement detection works in production
+- [x] Investigate CHI@MIA (already tracked, no action needed)
+- [x] Update documentation
+
+---
+
+## Future Improvements (Resilience)
+
+### High Priority
+
+1. **Cloud Function Deployment Checklist**
+   - Add pre-deploy validation script that checks:
+     - All symlinks resolve correctly
+     - No undefined variables referenced
+     - Import statements all work
+   - Could be a `bin/deploy/validate_cloud_function.sh` script
+
+2. **Automated Symlink Management**
+   - When adding new shared modules, need to manually add symlinks to each cloud function
+   - Consider: Script to sync all shared module symlinks automatically
+   - Or: Switch to package-based deployment (pip install shared module)
+
+3. **Detection Before Prediction Generation**
+   - Currently predictions might be generated before postponement is detected
+   - Add postponement check to prediction coordinator before generating
+   - Prevents wasted predictions for postponed games
+
+### Medium Priority
+
+4. **Duplicate Schedule Entry Cleanup**
+   - When game is rescheduled, both dates remain in schedule
+   - Should update original date's status to "Rescheduled" or delete the duplicate
+   - Prevents confusion and data anomalies
+
+5. **Automated Prediction Regeneration**
+   - When game is rescheduled, auto-trigger predictions for new date
+   - Currently requires manual `force_predictions.sh` run
+
+6. **Multi-Source Postponement Verification**
+   - Cross-check schedule data with ESPN/BDL for confirmation
+   - Reduces false positives from single-source data issues
+
+### Lower Priority
+
+7. **Unit Tests for PostponementDetector**
+   - Mock BigQuery responses
+   - Test each detection method independently
+   - Prevent regressions
+
+8. **Alerting Dashboard**
+   - Visual history of postponements
+   - Prediction impact tracking over time
+
+---
+
 ## Discovered Issues
 
-1. **CHI@MIA also rescheduled** (Jan 30 → Jan 31)
-   - Need to investigate reason
-   - Should run fix script when confirmed
+1. **CHI@MIA rescheduled** (Jan 30 → Jan 31) - RESOLVED
+   - Already tracked in system
+   - No predictions to invalidate
+   - System detected before any damage
 
 2. **News parsing could be smarter**
    - Currently just keyword matching
@@ -216,3 +339,7 @@ The coordinator:
 3. **Rate Limiting (Resolved)**
    - Cloud Run can return 429 on cold starts or high load
    - Added retry logic to pipeline scripts
+
+4. **Cloud Function Symlinks Not Automated**
+   - New shared modules require manual symlink creation
+   - Easy to forget during feature development

@@ -49,6 +49,10 @@ from shared.utils.slack_retry import send_slack_webhook_with_retry
 import functions_framework
 import requests
 
+# Configure logging (must be before any logger usage)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Try to import postponement detector
 try:
     from shared.utils.postponement_detector import PostponementDetector
@@ -56,10 +60,6 @@ try:
 except ImportError:
     POSTPONEMENT_DETECTOR_AVAILABLE = False
     logger.warning("PostponementDetector not available - skipping postponement checks")
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 # Pydantic validation for HTTP requests
 try:

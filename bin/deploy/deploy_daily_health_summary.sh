@@ -120,11 +120,48 @@ if [ -n "$SLACK_WEBHOOK_URL" ]; then
     echo -e "${GREEN}✓ SLACK_WEBHOOK_URL configured${NC}"
 fi
 
+# Create temp directory for deployment (to resolve symlinks)
+TEMP_DIR=$(mktemp -d)
+trap "rm -rf ${TEMP_DIR}" EXIT
+
+echo -e "${YELLOW}Preparing deployment package...${NC}"
+
+# Copy main function files
+cp "$SOURCE_DIR/main.py" "${TEMP_DIR}/"
+cp "$SOURCE_DIR/requirements.txt" "${TEMP_DIR}/"
+
+# Copy the ENTIRE shared module from project root (not the symlinked version)
+# This ensures all dependencies are included without chasing individual symlinks
+REPO_ROOT="$(cd "$(dirname "$SOURCE_DIR")/../.." && pwd)"
+cp -r "$REPO_ROOT/shared" "${TEMP_DIR}/"
+
+# Remove pycache and other unnecessary files
+find "${TEMP_DIR}/shared" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+find "${TEMP_DIR}/shared" -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
+find "${TEMP_DIR}/shared" -type f -name "*.pyc" -delete 2>/dev/null || true
+
+# Verify critical imports will work
+if [ ! -f "${TEMP_DIR}/shared/clients/bigquery_pool.py" ]; then
+    echo -e "${RED}Error: bigquery_pool.py not found in deployment package${NC}"
+    exit 1
+fi
+
+if [ ! -f "${TEMP_DIR}/shared/config/gcp_config.py" ]; then
+    echo -e "${RED}Error: gcp_config.py not found in deployment package${NC}"
+    exit 1
+fi
+
+if [ ! -f "${TEMP_DIR}/shared/utils/postponement_detector.py" ]; then
+    echo -e "${YELLOW}Warning: postponement_detector.py not found - detection will be disabled${NC}"
+fi
+
+echo -e "${GREEN}✓ Deployment package prepared ($(find ${TEMP_DIR} -type f | wc -l) files)${NC}"
+
 gcloud functions deploy $FUNCTION_NAME \
     --gen2 \
     --runtime $RUNTIME \
     --region $REGION \
-    --source $SOURCE_DIR \
+    --source $TEMP_DIR \
     --entry-point $ENTRY_POINT \
     --trigger-http \
     --allow-unauthenticated \
