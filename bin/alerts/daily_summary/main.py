@@ -208,6 +208,165 @@ def count_recent_alerts() -> int:
         return -1  # Indicate error
 
 
+def query_data_completeness(client: bigquery.Client) -> Dict[str, Any]:
+    """
+    Query data completeness for yesterday across all pipeline phases.
+
+    Added 2026-01-24 as part of Pipeline Resilience improvements.
+    Detects gaps in BDL, Analytics, and Features within 24 hours.
+    """
+    try:
+        query = """
+        WITH yesterday AS (
+            SELECT DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY) as check_date
+        ),
+        schedule_count AS (
+            SELECT COUNT(DISTINCT game_id) as expected
+            FROM `nba_raw.v_nbac_schedule_latest`, yesterday
+            WHERE game_status = 3 AND game_date = check_date
+        ),
+        bdl_count AS (
+            SELECT COUNT(DISTINCT game_id) as actual
+            FROM `nba_raw.bdl_player_boxscores`, yesterday
+            WHERE game_date = check_date
+        ),
+        analytics_count AS (
+            SELECT COUNT(DISTINCT game_id) as actual
+            FROM `nba_analytics.player_game_summary`, yesterday
+            WHERE game_date = check_date
+        ),
+        feature_quality AS (
+            SELECT
+                COUNT(*) as features,
+                ROUND(AVG(feature_quality_score), 1) as avg_quality
+            FROM `nba_predictions.ml_feature_store_v2`, yesterday
+            WHERE game_date = check_date
+        )
+        SELECT
+            s.expected as expected_games,
+            COALESCE(b.actual, 0) as bdl_games,
+            ROUND(COALESCE(b.actual, 0) * 100.0 / NULLIF(s.expected, 0), 1) as bdl_pct,
+            COALESCE(a.actual, 0) as analytics_games,
+            ROUND(COALESCE(a.actual, 0) * 100.0 / NULLIF(s.expected, 0), 1) as analytics_pct,
+            f.features as feature_count,
+            f.avg_quality as feature_quality
+        FROM schedule_count s
+        CROSS JOIN bdl_count b
+        CROSS JOIN analytics_count a
+        CROSS JOIN feature_quality f
+        """
+
+        query_job = client.query(query)
+        results = list(query_job.result(timeout=60))
+
+        if not results:
+            return {
+                'expected_games': 0,
+                'bdl_pct': 0,
+                'analytics_pct': 0,
+                'feature_quality': 0,
+                'has_gaps': False,
+                'gap_details': []
+            }
+
+        row = results[0]
+        gaps = []
+
+        if (row.bdl_pct or 0) < 90:
+            gaps.append(f"BDL: {row.bdl_pct}%")
+        if (row.analytics_pct or 0) < 90:
+            gaps.append(f"Analytics: {row.analytics_pct}%")
+        if (row.feature_quality or 0) < 75:
+            gaps.append(f"Feature quality: {row.feature_quality}")
+
+        return {
+            'expected_games': row.expected_games or 0,
+            'bdl_pct': row.bdl_pct or 0,
+            'analytics_pct': row.analytics_pct or 0,
+            'feature_quality': row.feature_quality or 0,
+            'has_gaps': len(gaps) > 0,
+            'gap_details': gaps
+        }
+    except Exception as e:
+        print(f"Error querying data completeness: {e}")
+        return {
+            'expected_games': -1,
+            'bdl_pct': -1,
+            'analytics_pct': -1,
+            'feature_quality': -1,
+            'has_gaps': True,
+            'gap_details': [f"Query error: {str(e)[:50]}"]
+        }
+
+
+def query_recovery_stats(client: bigquery.Client) -> Dict[str, Any]:
+    """Query auto-retry system stats from failed_processor_queue."""
+    try:
+        query = """
+        WITH queue_stats AS (
+            SELECT
+                status,
+                COUNT(*) as count,
+                AVG(retry_count) as avg_retries
+            FROM `nba_orchestration.failed_processor_queue`
+            WHERE created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+            GROUP BY status
+        ),
+        event_stats AS (
+            SELECT
+                event_type,
+                COUNT(*) as count
+            FROM `nba_orchestration.pipeline_event_log`
+            WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+            GROUP BY event_type
+        )
+        SELECT
+            COALESCE((SELECT count FROM queue_stats WHERE status = 'pending'), 0) as pending_retries,
+            COALESCE((SELECT count FROM queue_stats WHERE status = 'succeeded'), 0) as successful_retries,
+            COALESCE((SELECT count FROM queue_stats WHERE status = 'failed_permanent'), 0) as permanent_failures,
+            COALESCE((SELECT count FROM event_stats WHERE event_type = 'error'), 0) as errors_24h,
+            COALESCE((SELECT count FROM event_stats WHERE event_type = 'processor_complete'), 0) as completions_24h
+        """
+
+        query_job = client.query(query)
+        results = list(query_job.result(timeout=60))
+
+        if not results:
+            return {
+                'pending_retries': 0,
+                'successful_retries': 0,
+                'permanent_failures': 0,
+                'errors_24h': 0,
+                'completions_24h': 0,
+                'auto_recovery_rate': 0
+            }
+
+        row = results[0]
+        total_issues = (row.successful_retries or 0) + (row.permanent_failures or 0)
+        auto_recovery_rate = 0
+        if total_issues > 0:
+            auto_recovery_rate = ((row.successful_retries or 0) / total_issues) * 100
+
+        return {
+            'pending_retries': row.pending_retries or 0,
+            'successful_retries': row.successful_retries or 0,
+            'permanent_failures': row.permanent_failures or 0,
+            'errors_24h': row.errors_24h or 0,
+            'completions_24h': row.completions_24h or 0,
+            'auto_recovery_rate': round(auto_recovery_rate, 1)
+        }
+    except Exception as e:
+        print(f"Error querying recovery stats: {e}")
+        return {
+            'pending_retries': -1,
+            'successful_retries': -1,
+            'permanent_failures': -1,
+            'errors_24h': -1,
+            'completions_24h': -1,
+            'auto_recovery_rate': -1
+        }
+
+
 def get_dlq_depth() -> int:
     """Get Dead Letter Queue message count using Cloud Monitoring API."""
     try:
@@ -266,7 +425,9 @@ def format_slack_message(
     unique_stats: Dict[str, int],
     feature_quality: Dict[str, Any],
     alert_count: int,
-    dlq_depth: int
+    dlq_depth: int,
+    recovery_stats: Dict[str, Any] = None,
+    data_completeness: Dict[str, Any] = None
 ) -> Dict[str, Any]:
     """Format data as Slack Block Kit message."""
 
@@ -355,6 +516,60 @@ def format_slack_message(
         dlq_emoji = "✅" if dlq_depth < 50 else "⚠️"
         blocks[-1]['text']['text'] += f"\n• Dead Letter Queue: {dlq_depth} messages {dlq_emoji}"
 
+    # Add recovery stats section if available
+    if recovery_stats and recovery_stats.get('pending_retries', -1) >= 0:
+        recovery_emoji = "✅" if recovery_stats['pending_retries'] == 0 else "⚠️"
+        rate_emoji = "✅" if recovery_stats['auto_recovery_rate'] >= 80 else "⚠️"
+
+        blocks.extend([
+            {
+                "type": "divider"
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": f"*🔄 Auto-Recovery System (7 day)*\n"
+                            f"• Pending Retries: *{recovery_stats['pending_retries']}* {recovery_emoji}\n"
+                            f"• Successfully Recovered: *{recovery_stats['successful_retries']}*\n"
+                            f"• Permanent Failures: *{recovery_stats['permanent_failures']}*\n"
+                            f"• Auto-Recovery Rate: *{recovery_stats['auto_recovery_rate']}%* {rate_emoji}\n"
+                            f"• Pipeline Events (24h): {recovery_stats['completions_24h']} complete, {recovery_stats['errors_24h']} errors"
+                }
+            }
+        ])
+
+    # Add data completeness section if available (Jan 2026 Resilience)
+    if data_completeness and data_completeness.get('expected_games', -1) >= 0:
+        completeness_emoji = "🚨" if data_completeness['has_gaps'] else "✅"
+        bdl_emoji = "✅" if data_completeness['bdl_pct'] >= 90 else "⚠️"
+        analytics_emoji = "✅" if data_completeness['analytics_pct'] >= 90 else "⚠️"
+        quality_emoji = "✅" if data_completeness['feature_quality'] >= 75 else "⚠️"
+
+        completeness_text = (
+            f"*📦 Data Completeness (Yesterday)* {completeness_emoji}\n"
+            f"• Expected Games: *{data_completeness['expected_games']}*\n"
+            f"• BDL Coverage: *{data_completeness['bdl_pct']}%* {bdl_emoji}\n"
+            f"• Analytics Coverage: *{data_completeness['analytics_pct']}%* {analytics_emoji}\n"
+            f"• Feature Quality: *{data_completeness['feature_quality']}* {quality_emoji}"
+        )
+
+        if data_completeness['has_gaps']:
+            completeness_text += f"\n\n⚠️ *GAPS DETECTED:* {', '.join(data_completeness['gap_details'])}"
+
+        blocks.extend([
+            {
+                "type": "divider"
+            },
+            {
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": completeness_text
+                }
+            }
+        ])
+
     # Add links section
     blocks.extend([
         {
@@ -434,10 +649,16 @@ def send_daily_summary(request):
         print("Getting DLQ depth...")
         dlq_depth = get_dlq_depth()
 
+        print("Querying recovery stats...")
+        recovery_stats = query_recovery_stats(client)
+
+        print("Checking data completeness...")
+        data_completeness = query_data_completeness(client)
+
         # Format Slack message
         print("Formatting Slack message...")
         slack_message = format_slack_message(
-            summary, top_picks, unique_stats, feature_quality, alert_count, dlq_depth
+            summary, top_picks, unique_stats, feature_quality, alert_count, dlq_depth, recovery_stats, data_completeness
         )
 
         # Send to Slack

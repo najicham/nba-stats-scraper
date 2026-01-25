@@ -202,3 +202,74 @@ For issues with the dashboard itself:
 For pipeline issues detected by dashboard:
 - See `docs/02-operations/troubleshooting-guide.md`
 - Check relevant runbooks in `docs/02-operations/`
+
+---
+
+## Cloud Function Shared Directory Consolidation
+
+### Overview
+
+The `consolidate_cloud_function_shared.sh` script eliminates code duplication across cloud functions by replacing duplicated files with symlinks to the root `/shared/` directory.
+
+**Problem Solved:** Previously, identical files were copied across 7 cloud functions, resulting in:
+- 13 MB of duplicated code
+- Configuration drift between functions
+- 7x maintenance burden for every change
+
+**Solution:** 673 symlinks created, reducing disk usage to 576 KB (95% reduction)
+
+### Quick Start
+
+```bash
+# Preview changes without applying
+./bin/operations/consolidate_cloud_function_shared.sh --dry-run
+
+# Consolidate all cloud functions
+./bin/operations/consolidate_cloud_function_shared.sh
+
+# Verify symlinks are correct
+./bin/operations/consolidate_cloud_function_shared.sh --verify
+
+# Or use dedicated verification script
+./bin/validation/verify_cloud_function_symlinks.sh
+```
+
+### Usage
+
+```bash
+# Consolidate all cloud functions
+./bin/operations/consolidate_cloud_function_shared.sh
+
+# Consolidate specific cloud function
+./bin/operations/consolidate_cloud_function_shared.sh --cloud-function phase2_to_phase3
+
+# Dry run (preview changes)
+./bin/operations/consolidate_cloud_function_shared.sh --dry-run
+
+# Verify symlinks
+./bin/operations/consolidate_cloud_function_shared.sh --verify
+```
+
+### What Gets Consolidated
+
+- **Utils**: completeness_checker.py, bigquery_utils.py, 50+ other utilities
+- **Config**: orchestration_config.py (16,142 lines!), feature_flags.py
+- **Processors**: early_exit_mixin.py, circuit_breaker_mixin.py, quality_mixin.py
+- **Validation**: phase_boundary_validator.py, validation config
+- **Directories**: alerts/, backfill/, change_detection/, clients/, etc.
+
+### Impact
+
+**Before:** 13 MB (2.2 MB × 7 cloud functions)
+**After:** 576 KB (95% reduction)
+
+**Maintenance:** Edit once in `/shared/`, propagates to all cloud functions automatically
+
+### Documentation
+
+Full documentation: `/docs/architecture/cloud-function-shared-consolidation.md`
+
+### Related Scripts
+
+- `/bin/validation/verify_cloud_function_symlinks.sh` - Verify symlinks
+- `/bin/orchestrators/deploy_phase2_to_phase3.sh` - Deploy with symlinks
