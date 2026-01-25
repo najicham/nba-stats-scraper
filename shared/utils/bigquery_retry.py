@@ -304,7 +304,7 @@ def retry_on_quota_exceeded(func):
             table_name = extract_table_name(error_info) if isinstance(e, (BadRequest, Forbidden)) else None
 
             logger.error(
-                "BigQuery operation failed after quota retries" if is_quota_exceeded_error(e, exc_info=True, exc_info=True, exc_info=True, exc_info=True, exc_info=True, exc_info=True, exc_info=True) else "BigQuery operation failed",
+                "BigQuery operation failed after quota retries" if is_quota_exceeded_error(e) else "BigQuery operation failed",
                 extra={
                     'event_type': 'bigquery_quota_retry_exhausted' if is_quota_exceeded_error(e) else 'bigquery_operation_failed',
                     'function_name': func.__name__,
@@ -433,7 +433,7 @@ def retry_on_transient(func):
             error_type = type(e).__name__
 
             logger.error(
-                f"BigQuery operation failed after transient retries ({error_type})" if is_transient_error(e) else f"BigQuery operation failed ({error_type}, exc_info=True, exc_info=True, exc_info=True, exc_info=True, exc_info=True, exc_info=True, exc_info=True)",
+                f"BigQuery operation failed after transient retries ({error_type})" if is_transient_error(e) else f"BigQuery operation failed ({error_type})",
                 extra={
                     'event_type': 'bigquery_transient_retry_exhausted' if is_transient_error(e) else 'bigquery_operation_failed',
                     'function_name': func.__name__,

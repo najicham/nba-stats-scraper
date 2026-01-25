@@ -57,8 +57,16 @@ from datetime import datetime, timedelta, date
 from typing import Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass
 
-# Import schedule service for new features
-from shared.utils.schedule import NBAScheduleService, GameType, NBAGame
+# Import schedule service for new features (optional - may not exist in all deployments)
+try:
+    from shared.utils.schedule import NBAScheduleService, GameType, NBAGame
+    SCHEDULE_AVAILABLE = True
+except ImportError:
+    SCHEDULE_AVAILABLE = False
+    NBAScheduleService = None
+    GameType = None
+    NBAGame = None
+    logging.warning("schedule service not available - schedule features disabled")
 
 # Fuzzy matching (optional - gracefully degrade if not available)
 try:
@@ -118,11 +126,14 @@ class NBATeamMapper:
         self.fuzzy_lookup_cache = {}
         self._build_lookup_indexes()
         
-        # Initialize schedule service for new features
-        self.schedule = NBAScheduleService(use_database=use_database)
-        
+        # Initialize schedule service for new features (if available)
+        if SCHEDULE_AVAILABLE and NBAScheduleService is not None:
+            self.schedule = NBAScheduleService(use_database=use_database)
+        else:
+            self.schedule = None
+
         # Cache for team schedules
-        self._team_schedule_cache: Dict[Tuple[str, int], List[NBAGame]] = {}
+        self._team_schedule_cache: Dict[Tuple[str, int], List] = {}
         
         logger.info("NBATeamMapper initialized with %d teams", len(self.teams_data))
     
@@ -549,11 +560,11 @@ class NBATeamMapper:
     # ========================================================================
     
     def get_team_schedule(
-        self, 
-        team_code: str, 
-        season: int, 
-        game_type: GameType = GameType.REGULAR_PLAYOFF
-    ) -> List[NBAGame]:
+        self,
+        team_code: str,
+        season: int,
+        game_type = None  # GameType.REGULAR_PLAYOFF if available
+    ) -> List:
         """
         Get all games for a team in a season.
         
@@ -594,7 +605,7 @@ class NBATeamMapper:
         logger.debug("Found %d games for %s in season %d", len(team_games), team_code, season)
         return team_games
     
-    def get_back_to_back_games(self, team_code: str, season: int) -> List[Tuple[NBAGame, NBAGame]]:
+    def get_back_to_back_games(self, team_code: str, season: int) -> List[Tuple]:
         """
         Find back-to-back games for a team.
         

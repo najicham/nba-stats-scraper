@@ -149,7 +149,7 @@ def retry_with_jitter(
                             logger.error(
                                 f"on_retry callback failed: {callback_error}",
                                 exc_info=True
-                            , exc_info=True, exc_info=True, exc_info=True, exc_info=True, exc_info=True, exc_info=True, exc_info=True)
+                            )
 
                     # Sleep before retry
                     time.sleep(final_delay)
@@ -194,7 +194,7 @@ def retry_with_simple_jitter(
                         logger.error(
                             f"{func.__name__} failed after {max_attempts} attempts",
                             exc_info=True
-                        , exc_info=True, exc_info=True, exc_info=True, exc_info=True, exc_info=True, exc_info=True, exc_info=True)
+                        )
                         raise
 
                     # Exponential backoff: 2^attempt
