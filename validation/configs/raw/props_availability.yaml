@@ -1,0 +1,31 @@
+# Props Availability Validator Configuration
+# Validates that scheduled games have adequate betting line coverage
+
+processor:
+  name: "props_availability"
+  type: "raw"
+  description: "Validates props availability for scheduled games - alerts on missing/insufficient betting lines"
+  table: "nba_raw.odds_api_props"
+  layers:
+    - bigquery
+
+# BigQuery validations
+bigquery_validations:
+  enabled: true
+
+  # Custom validations handled in validator class:
+  # - Zero props games (CRITICAL)
+  # - Player coverage < 3 (CRITICAL) or < 8 (WARNING)
+  # - Bookmaker coverage tracking
+  # - Props freshness (staleness detection)
+
+# Remediation
+remediation:
+  scraper_backfill_template: "python scrapers/odds_api/odds_api_props.py --date {date} --force"
+
+# Notification
+notifications:
+  enabled: true
+  channels:
+    - slack
+  severity_threshold: "warning"  # Notify on warning or above
