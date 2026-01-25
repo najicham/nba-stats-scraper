@@ -59,7 +59,7 @@ class WorkflowConfig:
                 
             except Exception as e:
                 self._load_error = e
-                logger.error("Failed to load config: %s", e)
+                logger.error("Failed to load config: %s", e, exc_info=True)
                 
                 # If we had a valid config before, keep using it
                 if self._config is not None:

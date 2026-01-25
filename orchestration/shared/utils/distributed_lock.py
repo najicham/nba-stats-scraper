@@ -193,7 +193,7 @@ class DistributedLock:
                 )
             return acquired
         except gcp_exceptions.GoogleAPICallError as e:
-            logger.error(f"Firestore error acquiring lock: {e}")
+            logger.error(f"Firestore error acquiring lock: {e}", exc_info=True)
             return False
 
     @contextmanager
@@ -302,7 +302,7 @@ class DistributedLock:
             logger.info(f"Lock {lock_key} already released (not found)")
             self.lock_doc_ref = None
         except Exception as e:
-            logger.error(f"Error releasing lock {lock_key}: {e}")
+            logger.error(f"Error releasing lock {lock_key}: {e}", exc_info=True)
             # Don't raise - lock will expire via TTL
 
     def force_release(self, game_date: str):
@@ -324,7 +324,7 @@ class DistributedLock:
         except gcp_exceptions.NotFound:
             logger.info(f"Lock {lock_key} not found (already released)")
         except Exception as e:
-            logger.error(f"Error force releasing lock {lock_key}: {e}")
+            logger.error(f"Error force releasing lock {lock_key}: {e}", exc_info=True)
             raise
 
 

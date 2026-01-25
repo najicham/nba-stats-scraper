@@ -877,12 +877,12 @@ def cleanup_old_documents(
                             collection_result['documents_deleted'] += 1
                         except Exception as e:
                             error_msg = f"Failed to delete {collection_name}/{doc_id}: {str(e)}"
-                            logger.error(error_msg)
+                            logger.error(error_msg, exc_info=True)
                             collection_result['errors'].append(error_msg)
 
         except Exception as e:
             error_msg = f"Error processing collection {collection_name}: {str(e)}"
-            logger.error(error_msg)
+            logger.error(error_msg, exc_info=True)
             collection_result['errors'].append(error_msg)
 
         results['collections'][collection_name] = collection_result

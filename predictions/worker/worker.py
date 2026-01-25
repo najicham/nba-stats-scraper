@@ -1638,7 +1638,7 @@ def write_predictions_to_bigquery(predictions: List[Dict], batch_id: Optional[st
     except Exception as e:
         write_duration = time.time() - write_start_time
         logger.error(
-            f"STAGING WRITE EXCEPTION for {player_lookup}: {type(e).__name__}: {e} "
+            f"STAGING WRITE EXCEPTION for {player_lookup}: {type(e, exc_info=True).__name__}: {e} "
             f"(batch={batch_id}) - will trigger Pub/Sub retry"
         )
 
@@ -1684,7 +1684,7 @@ def publish_completion_event(player_lookup: str, game_date: str, prediction_coun
         future.result(timeout=30)  # 30 second max for publish
         logger.debug(f"Published completion event for {player_lookup}")
     except TimeoutError:
-        logger.error(f"Timeout publishing completion event for {player_lookup} after 30s")
+        logger.error(f"Timeout publishing completion event for {player_lookup} after 30s", exc_info=True)
         # Don't raise - log and continue
     except Exception as e:
         logger.error(f"Error publishing completion event: {e}", exc_info=True)

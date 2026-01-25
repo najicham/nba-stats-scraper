@@ -172,7 +172,7 @@ class ParameterResolver:
             logger.info(f"✅ Loaded parameter config from {self.config_path}")
             return config
         except (FileNotFoundError, yaml.YAMLError, PermissionError) as e:
-            logger.error(f"Failed to load parameter config: {e}")
+            logger.error(f"Failed to load parameter config: {e}", exc_info=True)
             return {'simple_scrapers': {}, 'complex_scrapers': []}
     
     def _determine_target_date(
@@ -278,7 +278,7 @@ class ParameterResolver:
             logger.error(
                 f"Schedule service timed out after {SCHEDULE_SERVICE_TIMEOUT_SECONDS}s "
                 f"for date {resolved_target_date}. Proceeding with empty games list."
-            )
+            , exc_info=True)
         except (ConnectionError, TimeoutError, ValueError) as e:
             logger.warning(f"Failed to get games for {resolved_target_date}: {e}")
 
@@ -775,5 +775,5 @@ class ParameterResolver:
         try:
             return self.schedule_service.get_games_for_date(date_str)
         except (ConnectionError, TimeoutError, ValueError) as e:
-            logger.error(f"Failed to get games for {date_str}: {e}")
+            logger.error(f"Failed to get games for {date_str}: {e}", exc_info=True)
             return []

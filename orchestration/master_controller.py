@@ -336,7 +336,7 @@ class MasterWorkflowController:
             )
 
         except GoogleAPIError as e:
-            logger.error(f"Failed to check schedule status: {e}")
+            logger.error(f"Failed to check schedule status: {e}", exc_info=True)
             return WorkflowDecision(
                 action=DecisionAction.ABORT,
                 reason=f"Cannot verify schedule status: {str(e)}",
@@ -623,7 +623,7 @@ class MasterWorkflowController:
             )
             
         except GoogleAPIError as e:
-            logger.error(f"Error checking collected games: {e}")
+            logger.error(f"Error checking collected games: {e}", exc_info=True)
             # Assume need to collect, better to retry than skip
             scrapers = self._extract_scrapers_from_plan(config['execution_plan'])
 
@@ -795,7 +795,7 @@ class MasterWorkflowController:
             )
 
         except GoogleAPIError as e:
-            logger.error(f"Error checking collected early games: {e}")
+            logger.error(f"Error checking collected early games: {e}", exc_info=True)
             scrapers = self._extract_scrapers_from_plan(config['execution_plan'])
 
             return WorkflowDecision(
@@ -1047,7 +1047,7 @@ class MasterWorkflowController:
             )
 
         except GoogleAPIError as e:
-            logger.error(f"Error checking for missing BDL games: {e}")
+            logger.error(f"Error checking for missing BDL games: {e}", exc_info=True)
             return WorkflowDecision(
                 action=DecisionAction.ABORT,
                 reason=f"Cannot query for missing games: {str(e)}",
@@ -1116,7 +1116,7 @@ class MasterWorkflowController:
             insert_bigquery_rows('nba_orchestration.workflow_decisions', records)
             logger.info(f"✅ Logged {len(records)} workflow decisions to BigQuery")
         except GoogleAPIError as e:
-            logger.error(f"Failed to log decisions to BigQuery: {e}")
+            logger.error(f"Failed to log decisions to BigQuery: {e}", exc_info=True)
             # CRITICAL: Decision logging failure is a serious audit issue - propagate error
             # This allows monitoring/alerting systems to detect and respond
             raise

@@ -280,7 +280,7 @@ class XGBoostV1:
                     f"Circuit breaker OPEN for GCS model loading: {e}. "
                     f"XGBoost v1 falling back to mock model.",
                     exc_info=True
-                )
+                , exc_info=True)
                 from predictions.shared.mock_xgboost_model import load_mock_model
                 return load_mock_model(seed=42)
 

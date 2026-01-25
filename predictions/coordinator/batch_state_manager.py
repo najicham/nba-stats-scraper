@@ -1234,7 +1234,7 @@ _Check Cloud Logging for detailed error traces._"""
                     logger.error(
                         f"Failed to record completion after {max_retries} attempts: {e}",
                         exc_info=True
-                    )
+                    , exc_info=True)
                     raise
 
         return False

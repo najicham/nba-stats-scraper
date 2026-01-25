@@ -290,7 +290,7 @@ class CleanupProcessor:
             result = execute_bigquery(query)
             return {row['source_file_path'] for row in result}
         except GoogleAPIError as e:
-            logger.error(f"Failed to get processed files: {e}")
+            logger.error(f"Failed to get processed files: {e}", exc_info=True)
             # Return empty set to be safe - will trigger republish
             return set()
     
@@ -385,7 +385,7 @@ class CleanupProcessor:
                         logger.error(
                             f"❌ Failed to republish {file_info['scraper_name']} after {MAX_RETRIES} attempts: {e}",
                             exc_info=True
-                        )
+                        , exc_info=True)
 
             if not success:
                 failed_files.append({
@@ -464,7 +464,7 @@ class CleanupProcessor:
             insert_bigquery_rows('nba_orchestration.cleanup_operations', [record])
             logger.info(f"✅ Logged cleanup operation to BigQuery")
         except GoogleAPIError as e:
-            logger.error(f"Failed to log cleanup operation: {e}")
+            logger.error(f"Failed to log cleanup operation: {e}", exc_info=True)
         
         return {
             'cleanup_id': cleanup_id,

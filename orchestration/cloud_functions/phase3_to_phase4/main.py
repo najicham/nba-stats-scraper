@@ -1262,7 +1262,7 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
             # Log validation framework errors but don't block Phase 4
             # (don't want validation bugs to break the pipeline)
             logger.error(
-                f"Phase boundary validation framework error (non-blocking): {validation_error}",
+                f"Phase boundary validation framework error (non-blocking, exc_info=True): {validation_error}",
                 exc_info=True
             )
         # Read Firestore to get all processor data (including entities_changed)

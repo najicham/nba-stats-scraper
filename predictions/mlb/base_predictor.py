@@ -152,7 +152,7 @@ class BaseMLBPredictor(ABC):
                     logger.error(
                         f"IL query failed after {max_retries} attempts: {e}",
                         extra={
-                            "error_type": type(e).__name__,
+                            "error_type": type(e, exc_info=True).__name__,
                             "cache_age_hours": cache_age_hours,
                             "fallback_action": "return_empty_set"
                         },

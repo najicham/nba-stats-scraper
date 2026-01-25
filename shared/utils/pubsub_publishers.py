@@ -302,7 +302,7 @@ class AnalyticsPubSubPublisher:
             logger.error(
                 f"Failed to publish Phase 3 completion for {analytics_table}: {e}",
                 exc_info=True
-            )
+            , exc_info=True, exc_info=True, exc_info=True, exc_info=True, exc_info=True, exc_info=True, exc_info=True)
 
             # Capture in Sentry if available
             try:

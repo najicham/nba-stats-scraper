@@ -932,7 +932,7 @@ def main(cloud_event):
         logger.error(
             f"[{correlation_id}] Error in grading after {duration_seconds:.1f}s: {e}",
             exc_info=True
-        )
+        , exc_info=True)
         # Re-raise to trigger Pub/Sub retry
         raise
 

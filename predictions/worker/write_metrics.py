@@ -319,7 +319,7 @@ class PredictionWriteMetrics:
                 else:
                     logger.error(
                         f"DML rate limit hit - all {max_retries} retries exhausted"
-                    )
+                    , exc_info=True)
                     raise
             except Exception as e:
                 # Non-DML errors should be raised immediately

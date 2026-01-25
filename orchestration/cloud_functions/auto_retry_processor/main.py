@@ -200,7 +200,7 @@ def publish_retry_message(
         return True
 
     except Exception as e:
-        logger.error(f"Failed to trigger retry via HTTP: {e}")
+        logger.error(f"Failed to trigger retry via HTTP: {e}", exc_info=True)
         return False
 
 
@@ -250,7 +250,7 @@ def update_retry_status(
         return True
 
     except Exception as e:
-        logger.error(f"Failed to update retry status: {e}")
+        logger.error(f"Failed to update retry status: {e}", exc_info=True)
         return False
 
 
@@ -316,7 +316,7 @@ def send_permanent_failure_alert(
         return True
 
     except Exception as e:
-        logger.error(f"Failed to send Slack alert: {e}")
+        logger.error(f"Failed to send Slack alert: {e}", exc_info=True)
         return False
 
 

@@ -86,7 +86,7 @@ class DailyScheduleLocker:
                 logger.info(f"   {workflow_name}: {len(expected_runs)} expected runs")
                 
             except (KeyError, ValueError, TypeError) as e:
-                logger.error(f"Error generating schedule for {workflow_name}: {e}")
+                logger.error(f"Error generating schedule for {workflow_name}: {e}", exc_info=True)
         
         # Write to BigQuery
         if schedule_records:
@@ -274,5 +274,5 @@ class DailyScheduleLocker:
         try:
             insert_bigquery_rows('nba_orchestration.daily_expected_schedule', records)
         except GoogleAPIError as e:
-            logger.error(f"Failed to write schedule to BigQuery: {e}")
+            logger.error(f"Failed to write schedule to BigQuery: {e}", exc_info=True)
             raise

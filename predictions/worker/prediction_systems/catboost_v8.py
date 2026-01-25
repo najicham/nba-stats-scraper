@@ -201,7 +201,7 @@ class CatBoostV8:
                         f"Circuit breaker OPEN for GCS model loading: {e}. "
                         f"CatBoost v8 will use fallback predictions.",
                         exc_info=True
-                    )
+                    , exc_info=True)
                     return  # Model stays None, fallback will be used
 
             self.model = cb.CatBoostRegressor()

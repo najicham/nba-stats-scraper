@@ -512,14 +512,14 @@ class WorkflowExecutor:
                         results = future.result(timeout=future_timeout)  # Configurable per-scraper timeout
                         scraper_executions.extend(results)
                     except TimeoutError:
-                        logger.error(f"⏱️ Scraper {scraper_name} timed out after {future_timeout}s")
+                        logger.error(f"⏱️ Scraper {scraper_name} timed out after {future_timeout}s", exc_info=True)
                         scraper_executions.append(ScraperExecution(
                             scraper_name=scraper_name,
                             status='failed',
                             error_message=f'Timeout after {future_timeout}s'
                         ))
                     except Exception as e:
-                        logger.error(f"❌ Failed to get result from {scraper_name}: {e}")
+                        logger.error(f"❌ Failed to get result from {scraper_name}: {e}", exc_info=True)
                         scraper_executions.append(ScraperExecution(
                             scraper_name=scraper_name,
                             status='failed',
@@ -843,7 +843,7 @@ class WorkflowExecutor:
                     continue
                 else:
                     final_msg = f"{error_msg} (failed after {max_retries} retries)"
-                    logger.error(f"Max retries exceeded: {final_msg}")
+                    logger.error(f"Max retries exceeded: {final_msg}", exc_info=True)
                     return ScraperExecution(
                         scraper_name=scraper_name,
                         status='failed',
@@ -864,7 +864,7 @@ class WorkflowExecutor:
                     continue
                 else:
                     final_msg = f"{error_msg} (failed after {max_retries} retries)"
-                    logger.error(f"Max retries exceeded: {final_msg}")
+                    logger.error(f"Max retries exceeded: {final_msg}", exc_info=True)
                     return ScraperExecution(
                         scraper_name=scraper_name,
                         status='failed',
@@ -924,7 +924,7 @@ class WorkflowExecutor:
             WorkflowExecutor._logging_failure_count = 0
 
         except Exception as e:
-            logger.error(f"Failed to log workflow execution: {e}")
+            logger.error(f"Failed to log workflow execution: {e}", exc_info=True)
             # Don't fail the workflow if logging fails - execution already completed
 
             # Track consecutive failures for alerting
@@ -947,4 +947,4 @@ class WorkflowExecutor:
                     # Reset after alerting to avoid alert spam
                     WorkflowExecutor._logging_failure_count = 0
                 except Exception as notify_error:
-                    logger.error(f"Failed to send logging failure alert: {notify_error}")
+                    logger.error(f"Failed to send logging failure alert: {notify_error}", exc_info=True)

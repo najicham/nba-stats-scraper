@@ -1805,7 +1805,7 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
             )
             logger.info(f"Summary: {json.dumps(summary, indent=2)}")
         else:
-            logger.warning("Failed to publish batch summary")
+            logger.error("Failed to publish batch summary")
 
         # Send prediction completion email
         send_prediction_completion_email(summary, game_date, batch_id)

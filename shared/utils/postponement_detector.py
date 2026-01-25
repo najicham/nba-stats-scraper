@@ -156,7 +156,7 @@ class PostponementDetector:
         try:
             results = list(self.client.query(query, job_config=job_config).result())
         except Exception as e:
-            logger.error(f"Failed to detect final without scores: {e}")
+            logger.error(f"Failed to detect final without scores: {e}", exc_info=True)
             return
 
         for row in results:
@@ -211,7 +211,7 @@ class PostponementDetector:
         try:
             results = list(self.client.query(query, job_config=job_config).result())
         except Exception as e:
-            logger.error(f"Failed to detect rescheduled games: {e}")
+            logger.error(f"Failed to detect rescheduled games: {e}", exc_info=True)
             return
 
         for row in results:
@@ -295,7 +295,7 @@ class PostponementDetector:
         try:
             results = list(self.client.query(query, job_config=job_config).result())
         except Exception as e:
-            logger.error(f"Failed to detect final without boxscores: {e}")
+            logger.error(f"Failed to detect final without boxscores: {e}", exc_info=True)
             return
 
         for row in results:
@@ -357,7 +357,7 @@ class PostponementDetector:
         try:
             results = list(self.client.query(query, job_config=job_config).result())
         except Exception as e:
-            logger.error(f"Failed to detect news postponements: {e}")
+            logger.error(f"Failed to detect news postponements: {e}", exc_info=True)
             return
 
         if results:
@@ -423,7 +423,7 @@ class PostponementDetector:
             logger.info(f"Logged {anomaly['type']} anomaly for {game_id} to BigQuery")
             return game_id
         except Exception as e:
-            logger.error(f"Failed to log anomaly: {e}")
+            logger.error(f"Failed to log anomaly: {e}", exc_info=True)
             return None
 
     def get_summary(self) -> Dict[str, Any]:

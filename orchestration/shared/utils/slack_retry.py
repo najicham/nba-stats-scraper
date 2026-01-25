@@ -85,7 +85,7 @@ def retry_slack_webhook(
                     if attempt >= max_attempts:
                         logger.error(
                             f"{func.__name__} failed after {max_attempts} attempts sending Slack webhook. "
-                            f"Last error: {type(e).__name__}: {str(e)}",
+                            f"Last error: {type(e).__name__}: {str(e, exc_info=True)}",
                             exc_info=True
                         )
                         raise

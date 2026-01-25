@@ -298,7 +298,7 @@ class PredictionCoverageMonitor:
             except Exception as e:
                 logger.error(f"Failed to send critical alert via notification system: {e}", exc_info=True)
         else:
-            logger.warning("Notification system unavailable - critical alert logged only")
+            logger.error("Notification system unavailable - critical alert logged only")
 
     def _send_warning_alert(
         self,
@@ -378,7 +378,7 @@ class PredictionCoverageMonitor:
             if success:
                 logger.debug(f"Sent metric {metric_name}={value} with labels {labels}")
             else:
-                logger.warning(f"Failed to send metric {metric_name}")
+                logger.error(f"Failed to send metric {metric_name}")
 
             return success
 
