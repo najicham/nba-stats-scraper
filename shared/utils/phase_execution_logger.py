@@ -35,6 +35,7 @@ BigQuery Schema (table: `nba_orchestration.phase_execution_log`):
 Created: January 22, 2026
 """
 
+import json
 import logging
 import os
 from datetime import datetime, timezone
@@ -106,7 +107,7 @@ def log_phase_execution(
             "games_processed": games_processed,
             "status": status,
             "correlation_id": correlation_id,
-            "metadata": metadata,  # BigQuery insert_rows_json handles dict -> JSON
+            "metadata": json.dumps(metadata) if metadata else None,
         }
 
         logger.info(
@@ -115,15 +116,16 @@ def log_phase_execution(
         )
 
         # Write to BigQuery (unless dry run)
+        # Use batch loading instead of streaming inserts to avoid 90-minute
+        # streaming buffer that blocks DML operations (MERGE/UPDATE/DELETE)
         if not dry_run:
-            from google.cloud import bigquery
-            client = bigquery.Client(project=project_id)
+            from shared.utils.bigquery_utils import insert_bigquery_rows
 
-            table_id = f"{project_id}.{dataset}.{table}"
-            errors = client.insert_rows_json(table_id, [row])
+            table_id = f"{dataset}.{table}"
+            success = insert_bigquery_rows(table_id, [row], project_id=project_id)
 
-            if errors:
-                logger.error(f"BigQuery insert errors: {errors}", exc_info=True)
+            if not success:
+                logger.error(f"Failed to log phase execution to {table_id}")
                 return False
             else:
                 logger.debug(f"Phase execution logged to {table_id}")

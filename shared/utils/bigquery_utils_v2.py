@@ -182,7 +182,7 @@ def insert_bigquery_rows_v2(
 
     try:
         from shared.clients import get_bigquery_client
-    client = get_bigquery_client(project_id)
+        client = get_bigquery_client(project_id)
 
         # Ensure table_id has project prefix
         if not table_id.startswith(f"{project_id}."):
@@ -264,7 +264,7 @@ def get_table_row_count_v2(
     """
     try:
         from shared.clients import get_bigquery_client
-    client = get_bigquery_client(project_id)
+        client = get_bigquery_client(project_id)
 
         # Ensure table_id has project prefix
         if not table_id.startswith(f"{project_id}."):
@@ -322,7 +322,7 @@ def execute_bigquery_with_params_v2(
     """
     try:
         from shared.clients import get_bigquery_client
-    client = get_bigquery_client(project_id)
+        client = get_bigquery_client(project_id)
 
         # Build query parameters
         job_config = bigquery.QueryJobConfig()
@@ -390,7 +390,7 @@ def update_bigquery_rows_v2(
     """
     try:
         from shared.clients import get_bigquery_client
-    client = get_bigquery_client(project_id)
+        client = get_bigquery_client(project_id)
         query_job = client.query(query)
         result = query_job.result(timeout=60)
 
@@ -444,7 +444,7 @@ def table_exists_v2(
     """
     try:
         from shared.clients import get_bigquery_client
-    client = get_bigquery_client(project_id)
+        client = get_bigquery_client(project_id)
 
         # Ensure table_id has project prefix
         if not table_id.startswith(f"{project_id}."):

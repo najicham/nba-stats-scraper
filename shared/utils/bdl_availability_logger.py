@@ -29,12 +29,18 @@ Usage in scraper:
 Created: January 21, 2026
 """
 
+import json
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set, Tuple
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
+
+# Slack alerting for missing games
+SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
+MISSING_GAMES_ALERT_ENABLED = os.environ.get('MISSING_GAMES_ALERT_ENABLED', 'true').lower() == 'true'
 
 
 @dataclass
@@ -251,10 +257,18 @@ class BdlAvailabilityLogger:
 
         # Log summary
         available_count = sum(1 for r in records if r.was_available)
+        missing_count = len(records) - available_count
         logger.info(
             f"BDL availability for {self.game_date}: "
             f"{available_count}/{len(records)} games available"
         )
+
+        # Alert on missing games and queue for auto-retry
+        if missing_count > 0 and MISSING_GAMES_ALERT_ENABLED:
+            missing_records = [r for r in records if not r.was_available]
+            self._send_missing_games_alert(missing_records)
+            # Queue missing games for auto-retry
+            self._queue_missing_games_for_retry(missing_records)
 
         # Write to BigQuery
         if not dry_run and records:
@@ -262,12 +276,193 @@ class BdlAvailabilityLogger:
 
         return records
 
-    def _write_to_bigquery(self, records: List[GameAvailability]) -> None:
-        """Write availability records to BigQuery."""
+    def _send_missing_games_alert(self, missing_records: List[GameAvailability]) -> bool:
+        """
+        Send Slack alert when games are missing from BDL response.
+
+        Args:
+            missing_records: List of GameAvailability records for missing games
+
+        Returns:
+            True if alert sent successfully, False otherwise
+        """
+        if not SLACK_WEBHOOK_URL:
+            logger.debug("SLACK_WEBHOOK_URL not configured, skipping missing games alert")
+            return False
+
+        if not missing_records:
+            return False
+
+        try:
+            import requests
+
+            missing_games_str = "\n".join([
+                f"• {r.away_team}@{r.home_team}" +
+                (f" (expected start: {r.expected_start_time.strftime('%I:%M %p ET')})" if r.expected_start_time else "")
+                for r in missing_records
+            ])
+
+            payload = {
+                "attachments": [{
+                    "color": "#FF9800",  # Orange for warning
+                    "blocks": [
+                        {
+                            "type": "header",
+                            "text": {
+                                "type": "plain_text",
+                                "text": ":warning: BDL API Missing Games",
+                                "emoji": True
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"*{len(missing_records)} game(s) expected but NOT returned by BDL API*"
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "fields": [
+                                {"type": "mrkdwn", "text": f"*Date:*\n{self.game_date}"},
+                                {"type": "mrkdwn", "text": f"*Workflow:*\n{self.workflow or 'manual'}"},
+                            ]
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"*Missing Games:*\n{missing_games_str}"
+                            }
+                        },
+                        {
+                            "type": "context",
+                            "elements": [{
+                                "type": "mrkdwn",
+                                "text": ":bulb: These games may not have completed yet, or BDL API may be delayed. Check back later or use alternative source (NBA.com)."
+                            }]
+                        }
+                    ]
+                }]
+            }
+
+            response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
+            response.raise_for_status()
+            logger.info(f"Missing games alert sent for {self.game_date}: {len(missing_records)} games")
+            return True
+
+        except Exception as e:
+            logger.warning(f"Failed to send missing games alert: {e}")
+            return False
+
+    def _queue_missing_games_for_retry(self, missing_records: List[GameAvailability]) -> int:
+        """
+        Queue missing games for auto-retry in the failed_processor_queue.
+
+        This enables the auto_retry_processor cloud function to automatically
+        retry fetching missing games after a delay.
+
+        Args:
+            missing_records: List of GameAvailability records for missing games
+
+        Returns:
+            Number of games successfully queued for retry
+        """
+        if not missing_records:
+            return 0
+
+        AUTO_RETRY_ENABLED = os.environ.get('AUTO_RETRY_MISSING_GAMES', 'true').lower() == 'true'
+        if not AUTO_RETRY_ENABLED:
+            logger.debug("Auto-retry for missing games is disabled")
+            return 0
+
         try:
             from google.cloud import bigquery
-            from shared.config.gcp_config import get_table_id
+            from datetime import timedelta
+            import uuid
+
             client = bigquery.Client()
+
+            # Queue each missing game for retry
+            rows_to_insert = []
+            now = datetime.now(timezone.utc)
+            # First retry after 30 minutes (games may still be finishing)
+            next_retry = now + timedelta(minutes=30)
+
+            for record in missing_records:
+                game_key = f"{record.away_team}@{record.home_team}"
+
+                # Check if already queued (avoid duplicates)
+                check_query = f"""
+                SELECT COUNT(*) as cnt
+                FROM `nba_orchestration.failed_processor_queue`
+                WHERE game_date = '{self.game_date}'
+                  AND processor_name = 'bdl_player_box_scores'
+                  AND status IN ('pending', 'retrying')
+                  AND JSON_EXTRACT_SCALAR(metadata, '$.game_key') = '{game_key}'
+                """
+
+                try:
+                    result = list(client.query(check_query).result())
+                    if result and result[0].cnt > 0:
+                        logger.debug(f"Game {game_key} already queued for retry, skipping")
+                        continue
+                except Exception as e:
+                    logger.warning(f"Could not check for existing queue entry: {e}")
+
+                rows_to_insert.append({
+                    "id": str(uuid.uuid4()),
+                    "game_date": self.game_date,
+                    "phase": "phase_2",
+                    "processor_name": "bdl_player_box_scores",
+                    "error_message": f"Game {game_key} not returned by BDL API",
+                    "error_type": "missing_game",
+                    "retry_count": 0,
+                    "max_retries": 3,
+                    "first_failure_at": now.isoformat(),
+                    "next_retry_at": next_retry.isoformat(),
+                    "status": "pending",
+                    "correlation_id": self.execution_id,
+                    "metadata": json.dumps({
+                        "game_key": game_key,
+                        "home_team": record.home_team,
+                        "away_team": record.away_team,
+                        "workflow": self.workflow,
+                        "expected_start_time": record.expected_start_time.isoformat() if record.expected_start_time else None,
+                        "is_west_coast": record.is_west_coast
+                    }),
+                    "created_at": now.isoformat(),
+                    "updated_at": now.isoformat()
+                })
+
+            if not rows_to_insert:
+                logger.debug("No new games to queue for retry (all already queued)")
+                return 0
+
+            # Insert into failed_processor_queue
+            table_ref = client.dataset("nba_orchestration").table("failed_processor_queue")
+
+            errors = client.insert_rows_json(table_ref, rows_to_insert)
+
+            if errors:
+                logger.warning(f"Errors inserting retry queue entries: {errors}")
+                return 0
+
+            logger.info(
+                f"Queued {len(rows_to_insert)} missing games for auto-retry "
+                f"(next retry at {next_retry.strftime('%H:%M:%S UTC')})"
+            )
+            return len(rows_to_insert)
+
+        except Exception as e:
+            logger.warning(f"Failed to queue missing games for retry: {e}")
+            return 0
+
+    def _write_to_bigquery(self, records: List[GameAvailability]) -> None:
+        """Write availability records to BigQuery using batch loading (not streaming)."""
+        try:
+            from shared.config.gcp_config import get_table_id
+            from shared.utils.bigquery_utils import insert_bigquery_rows
 
             table_id = get_table_id("nba_orchestration", "bdl_game_scrape_attempts")
 
@@ -295,12 +490,12 @@ class BdlAvailabilityLogger:
                     "is_west_coast": r.is_west_coast,
                 })
 
-            errors = client.insert_rows_json(table_id, rows)
+            # Use batch loading instead of streaming to avoid 90-minute buffer conflicts
+            success = insert_bigquery_rows(table_id, rows)
 
-            if errors:
-                # Log detailed error info for debugging
+            if not success:
                 logger.error(
-                    f"BigQuery insert errors for bdl_game_scrape_attempts: {errors}. "
+                    f"BigQuery batch insert failed for bdl_game_scrape_attempts. "
                     f"Table: {table_id}, Rows attempted: {len(rows)}, "
                     f"Game date: {self.game_date}, Workflow: {self.workflow}"
                 )

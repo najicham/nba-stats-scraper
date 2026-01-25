@@ -139,9 +139,14 @@ class AliasManager:
             load_job.result(timeout=60)
 
             if load_job.errors:
-                logger.error(f"Errors inserting aliases: {load_job.errors}", exc_info=True)
-                # Count successful rows
-                return len(new_rows) - len(load_job.errors)
+                # CRITICAL FIX (Jan 25, 2026): Don't guess successful count
+                # load_job.errors is a list of error dicts, not a count of failed rows.
+                # One error dict may describe multiple failed rows, or one row may
+                # have multiple errors. Raise exception instead of guessing.
+                logger.error(f"Partial failure inserting aliases: {load_job.errors}", exc_info=True)
+                raise RuntimeError(
+                    f"Partial failure inserting {len(new_rows)} aliases: {load_job.errors[:3]}"
+                )
 
             logger.info(f"Created {len(new_rows)} aliases")
             return len(new_rows)

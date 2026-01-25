@@ -305,7 +305,9 @@ class MLBPlayerIDResolver:
         player_name: str = None,
         team_abbr: str = None
     ) -> str:
-        """Create a new universal ID and insert into registry."""
+        """Create a new universal ID and insert into registry using batch loading."""
+        from shared.utils.bigquery_utils import insert_bigquery_rows
+
         # Generate unique ID
         universal_id = self._generate_universal_id(player_lookup)
 
@@ -323,9 +325,10 @@ class MLBPlayerIDResolver:
         }
 
         try:
-            errors = self.bq_client.insert_rows_json(self.registry_table, [row])
-            if errors:
-                logger.warning(f"Error inserting new player: {errors}")
+            # Use batch loading instead of streaming to avoid 90-minute buffer conflicts
+            success = insert_bigquery_rows(self.registry_table, [row], self.project_id)
+            if not success:
+                logger.warning(f"Batch insert failed for new player: {player_lookup}")
         except Exception as e:
             logger.warning(f"Failed to insert new player {player_lookup}: {e}")
 
@@ -336,7 +339,9 @@ class MLBPlayerIDResolver:
         player_lookups: List[str],
         player_type: str = None
     ) -> Dict[str, str]:
-        """Bulk create new universal IDs."""
+        """Bulk create new universal IDs using batch loading."""
+        from shared.utils.bigquery_utils import insert_bigquery_rows
+
         if not player_lookups:
             return {}
 
@@ -361,9 +366,10 @@ class MLBPlayerIDResolver:
             })
 
         try:
-            errors = self.bq_client.insert_rows_json(self.registry_table, rows)
-            if errors:
-                logger.warning(f"Errors inserting {len(errors)} players")
+            # Use batch loading instead of streaming to avoid 90-minute buffer conflicts
+            success = insert_bigquery_rows(self.registry_table, rows, self.project_id)
+            if not success:
+                logger.warning(f"Batch insert failed for {len(rows)} players")
         except Exception as e:
             logger.error(f"Failed bulk insert: {e}", exc_info=True)
 

@@ -1680,8 +1680,12 @@ def publish_completion_event(player_lookup: str, game_date: str, prediction_coun
     try:
         message_bytes = json.dumps(message_data).encode('utf-8')
         future = pubsub_publisher.publish(topic_path, data=message_bytes)
-        future.result()  # Wait for publish to complete
+        # CRITICAL FIX (Jan 25, 2026): Added timeout to prevent indefinite hang
+        future.result(timeout=30)  # 30 second max for publish
         logger.debug(f"Published completion event for {player_lookup}")
+    except TimeoutError:
+        logger.error(f"Timeout publishing completion event for {player_lookup} after 30s")
+        # Don't raise - log and continue
     except Exception as e:
         logger.error(f"Error publishing completion event: {e}", exc_info=True)
         # Don't raise - log and continue

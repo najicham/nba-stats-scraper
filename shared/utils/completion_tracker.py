@@ -283,11 +283,14 @@ class CompletionTracker:
             "inserted_at": now.isoformat(),
         }
 
-        # Insert row
-        errors = self.bq_client.insert_rows_json(table_id, [row])
+        # Insert row using batch loading instead of streaming inserts
+        # to avoid 90-minute streaming buffer that blocks DML operations
+        from shared.utils.bigquery_utils import insert_bigquery_rows
+        short_table_id = f"{self.bq_dataset}.{self.bq_table}"
+        success = insert_bigquery_rows(short_table_id, [row], project_id=self.project_id)
 
-        if errors:
-            logger.error(f"BigQuery insert errors: {errors}", exc_info=True)
+        if not success:
+            logger.error(f"Failed to insert completion record to BigQuery")
             return False
 
         return True

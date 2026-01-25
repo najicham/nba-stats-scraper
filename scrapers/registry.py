@@ -161,8 +161,8 @@ NBA_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
         "GetNbaComPlayerMovement"
     ),
     "nbac_schedule": (
-        "scrapers.nbacom.nbac_current_schedule_v2_1", 
-        "GetDataNbaSeasonSchedule"
+        "scrapers.nbacom.nbac_schedule_cdn",
+        "GetNbaComScheduleCdn"
     ),
     "nbac_schedule_cdn": (
         "scrapers.nbacom.nbac_schedule_cdn", 

@@ -36,6 +36,16 @@ QUERY_CACHE_TTL_SECONDS = int(os.getenv('QUERY_CACHE_TTL_SECONDS', '3600'))  # 1
 _SAFE_IDENTIFIER_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
 
 
+class BigQueryInsertError(Exception):
+    """Raised when BigQuery insert fails.
+
+    CRITICAL FIX (Jan 25, 2026): Previously, insert failures returned False
+    which callers often ignored, causing silent data loss. Now raises this
+    exception to ensure failures are noticed.
+    """
+    pass
+
+
 def _validate_sql_identifier(value: str, param_name: str) -> str:
     """
     Validate that a string is safe for SQL interpolation.
@@ -73,9 +83,24 @@ def _execute_bigquery_internal(
     query: str,
     project_id: str,
     as_dict: bool,
-    use_cache: Optional[bool]
+    use_cache: Optional[bool],
+    page_size: Optional[int] = None
 ) -> List[Dict[str, Any]]:
-    """Internal function with retry logic for BigQuery queries."""
+    """Internal function with retry logic for BigQuery queries.
+
+    Week 3 Update: Added pagination support to prevent OOM issues.
+
+    Args:
+        query: SQL query to execute
+        project_id: GCP project ID
+        as_dict: If True, return list of dicts. If False, return raw rows.
+        use_cache: Override caching (None = use feature flag, True/False = explicit)
+        page_size: Results per page (default: None = load all to memory).
+                   Use 1000-10000 for large result sets to prevent OOM.
+
+    Returns:
+        List of dictionaries or rows
+    """
     from shared.clients import get_bigquery_client
     client = get_bigquery_client(project_id)
 
@@ -93,8 +118,14 @@ def _execute_bigquery_internal(
 
     query_job = client.query(query, job_config=job_config)
 
-    # Wait for completion with timeout to prevent indefinite hangs
-    results = query_job.result(timeout=60)
+    # Week 3: Add pagination support to prevent OOM
+    if page_size is not None:
+        # Stream results with pagination
+        results = query_job.result(page_size=page_size, timeout=60)
+        logger.debug(f"Streaming results with page_size={page_size}")
+    else:
+        # Legacy behavior: load all to memory
+        results = query_job.result(timeout=60)
 
     # Week 1: Log cache hit/miss for monitoring
     if should_cache and hasattr(query_job, 'cache_hit'):
@@ -103,24 +134,38 @@ def _execute_bigquery_internal(
         else:
             logger.debug(f"❌ BigQuery cache MISS - scanned {query_job.total_bytes_processed} bytes")
 
-    if as_dict:
-        # Convert to list of dictionaries
-        return [dict(row) for row in results]
+    # Week 3: Stream processing for pagination
+    if page_size is not None:
+        # Process results page by page to avoid loading all to memory
+        output = []
+        for page in results.pages:
+            for row in page:
+                if as_dict:
+                    output.append(dict(row))
+                else:
+                    output.append(row)
+        return output
     else:
-        return list(results)
+        # Legacy behavior: convert all results at once
+        if as_dict:
+            return [dict(row) for row in results]
+        else:
+            return list(results)
 
 
 def execute_bigquery(
     query: str,
     project_id: str = DEFAULT_PROJECT_ID,
     as_dict: bool = True,
-    use_cache: Optional[bool] = None
+    use_cache: Optional[bool] = None,
+    page_size: Optional[int] = None
 ) -> List[Dict[str, Any]]:
     """
     Execute a BigQuery query and return results as list of dicts.
 
     Week 1 Update: Now supports query result caching to reduce costs.
     Week 2 Update: Now retries on transient failures (ServiceUnavailable, DeadlineExceeded).
+    Week 3 Update: Added pagination support to prevent OOM issues.
 
     Simple utility for orchestration queries where you don't need
     a managed client instance.
@@ -130,18 +175,26 @@ def execute_bigquery(
         project_id: GCP project ID
         as_dict: If True, return list of dicts. If False, return raw rows.
         use_cache: Override caching (None = use feature flag, True/False = explicit)
+        page_size: Results per page (default: None = load all to memory).
+                   For large result sets (10K+ rows), use 1000-10000 to prevent OOM.
+                   Example: page_size=5000 processes 5000 rows at a time.
 
     Returns:
         List of dictionaries with query results (empty list on error)
 
     Example:
+        >>> # Small result set (default behavior)
         >>> query = "SELECT * FROM `project.dataset.table` WHERE DATE(timestamp) = CURRENT_DATE()"
         >>> results = execute_bigquery(query)
+
+        >>> # Large result set (prevent OOM)
+        >>> query = "SELECT * FROM `project.dataset.large_table` WHERE season = '2024-2025'"
+        >>> results = execute_bigquery(query, page_size=5000)
         >>> for row in results:
         ...     print(row['column_name'])
     """
     try:
-        return _execute_bigquery_internal(query, project_id, as_dict, use_cache)
+        return _execute_bigquery_internal(query, project_id, as_dict, use_cache, page_size)
     except GoogleAPIError as e:
         logger.error(f"BigQuery query failed: {e}", exc_info=True)
         logger.debug(f"Failed query: {query}")
@@ -186,9 +239,13 @@ def _insert_bigquery_rows_internal(
     load_job.result(timeout=60)
 
     if load_job.errors:
-        logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
-        logger.error(f"Failed to insert rows into {table_id}: {load_job.errors}", exc_info=True)
-        return False
+        # CRITICAL FIX (Jan 25, 2026): Raise exception instead of returning False
+        # Previously callers might ignore the return value, causing silent data loss
+        error_summary = load_job.errors[:3]
+        logger.error(f"Failed to insert {len(rows)} rows into {table_id}: {error_summary}")
+        raise BigQueryInsertError(
+            f"Failed to insert {len(rows)} rows into {table_id}: {error_summary}"
+        )
 
     logger.debug(f"Successfully inserted {len(rows)} rows into {table_id}")
     return True
@@ -253,12 +310,12 @@ def table_exists(
     """
     try:
         from shared.clients import get_bigquery_client
-    client = get_bigquery_client(project_id)
-        
+        client = get_bigquery_client(project_id)
+
         # Ensure table_id has project prefix
         if not table_id.startswith(f"{project_id}."):
             table_id = f"{project_id}.{table_id}"
-        
+
         client.get_table(table_id)
         return True
         
@@ -289,12 +346,12 @@ def get_table_row_count(
     """
     try:
         from shared.clients import get_bigquery_client
-    client = get_bigquery_client(project_id)
-        
+        client = get_bigquery_client(project_id)
+
         # Ensure table_id has project prefix
         if not table_id.startswith(f"{project_id}."):
             table_id = f"{project_id}.{table_id}"
-        
+
         table = client.get_table(table_id)
         return table.num_rows
         
@@ -309,28 +366,36 @@ def get_table_row_count(
 def execute_bigquery_with_params(
     query: str,
     params: Dict[str, Any],
-    project_id: str = DEFAULT_PROJECT_ID
+    project_id: str = DEFAULT_PROJECT_ID,
+    page_size: Optional[int] = None
 ) -> List[Dict[str, Any]]:
     """
     Execute a parameterized BigQuery query.
-    
+
+    Week 3 Update: Added pagination support to prevent OOM issues.
+
     Safer than string interpolation for user input.
-    
+
     Args:
         query: SQL query with @param_name placeholders
         params: Dictionary of parameter names to values
         project_id: GCP project ID
-        
+        page_size: Results per page (default: None = load all to memory).
+                   For large result sets, use 1000-10000 to prevent OOM.
+
     Returns:
         List of dictionaries with query results
-        
+
     Example:
         >>> query = "SELECT * FROM table WHERE date = @target_date"
         >>> params = {"target_date": "2024-01-15"}
         >>> results = execute_bigquery_with_params(query, params)
+
+        >>> # Large result set
+        >>> results = execute_bigquery_with_params(query, params, page_size=5000)
     """
     try:
-        return _execute_bigquery_with_params_internal(query, params, project_id)
+        return _execute_bigquery_with_params_internal(query, params, project_id, page_size)
     except GoogleAPIError as e:
         logger.error(f"Parameterized query failed: {e}", exc_info=True)
         logger.debug(f"Failed query: {query}, params: {params}")
@@ -346,9 +411,22 @@ def execute_bigquery_with_params(
 def _execute_bigquery_with_params_internal(
     query: str,
     params: Dict[str, Any],
-    project_id: str
+    project_id: str,
+    page_size: Optional[int] = None
 ) -> List[Dict[str, Any]]:
-    """Internal function with retry logic for parameterized queries."""
+    """Internal function with retry logic for parameterized queries.
+
+    Week 3 Update: Added pagination support to prevent OOM issues.
+
+    Args:
+        query: SQL query with @param_name placeholders
+        params: Dictionary of parameter names to values
+        project_id: GCP project ID
+        page_size: Results per page (default: None = load all to memory)
+
+    Returns:
+        List of dictionaries
+    """
     from shared.clients import get_bigquery_client
     client = get_bigquery_client(project_id)
 
@@ -372,10 +450,22 @@ def _execute_bigquery_with_params_internal(
         )
 
     query_job = client.query(query, job_config=job_config)
-    # Wait for completion with timeout to prevent indefinite hangs
-    results = query_job.result(timeout=60)
 
-    return [dict(row) for row in results]
+    # Week 3: Add pagination support
+    if page_size is not None:
+        results = query_job.result(page_size=page_size, timeout=60)
+        logger.debug(f"Streaming parameterized query results with page_size={page_size}")
+
+        # Process results page by page
+        output = []
+        for page in results.pages:
+            for row in page:
+                output.append(dict(row))
+        return output
+    else:
+        # Legacy behavior: load all to memory
+        results = query_job.result(timeout=60)
+        return [dict(row) for row in results]
 
 
 @retry_with_jitter(

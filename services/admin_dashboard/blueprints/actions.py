@@ -8,14 +8,22 @@ Routes:
 """
 
 import os
+import json
 import logging
+import requests
 from flask import Blueprint, jsonify, request
+from google.cloud import pubsub_v1
+import google.auth.transport.requests
+import google.oauth2.id_token
 
 from ..services.rate_limiter import rate_limit
 from ..services.auth import check_auth
 from ..services.audit_logger import get_audit_logger
 
 logger = logging.getLogger(__name__)
+
+# GCP Configuration
+GCP_PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
 
 actions_bp = Blueprint('actions', __name__)
 
@@ -37,21 +45,36 @@ def action_force_predictions():
         if not target_date:
             return jsonify({'error': 'Missing required parameter: date'}), 400
 
+        # Publish to prediction-coordinator Pub/Sub topic
+        publisher = pubsub_v1.PublisherClient()
+        topic_path = publisher.topic_path(GCP_PROJECT_ID, 'nba-predictions-trigger')
+
+        message_data = {
+            'game_date': target_date,
+            'action': 'predict',
+            'force': True,
+            'triggered_by': 'admin_dashboard'
+        }
+
+        message_bytes = json.dumps(message_data).encode('utf-8')
+        future = publisher.publish(topic_path, message_bytes)
+        message_id = future.result()
+
+        logger.info(f"Force predictions published to Pub/Sub: message_id={message_id}, date={target_date}")
+
         # Log the action
         audit_logger.log_action(
             action_type='force_predictions',
-            action_details={'date': target_date},
+            action_details={'date': target_date, 'message_id': message_id},
             success=True,
             ip_address=request.remote_addr,
             user_agent=request.headers.get('User-Agent')
         )
 
-        # TODO: Implement actual prediction triggering logic
-        # This would typically call a Cloud Run service or publish to Pub/Sub
-
         return jsonify({
             'status': 'triggered',
             'date': target_date,
+            'message_id': message_id,
             'message': f'Prediction generation triggered for {target_date}'
         })
 
@@ -88,29 +111,59 @@ def action_retry_phase():
         if not phase or not target_date:
             return jsonify({'error': 'Missing required parameters: phase and date'}), 400
 
-        # Validate phase
-        valid_phases = ['phase_1', 'phase_2', 'phase_3', 'phase_4', 'phase_5', 'phase_6']
-        if phase not in valid_phases:
+        # Map phase to Cloud Run endpoint
+        phase_urls = {
+            'phase_2': 'https://nba-phase2-raw-processors-f7p3g7f6ya-wl.a.run.app/process',
+            'phase_3': 'https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app/process',
+            'phase_4': 'https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app/process',
+            'phase_5': 'https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/predict',
+        }
+
+        url = phase_urls.get(phase)
+        if not url:
+            valid_phases = list(phase_urls.keys())
             return jsonify({'error': f'Invalid phase. Must be one of: {valid_phases}'}), 400
+
+        # Get authentication token for Cloud Run
+        auth_req = google.auth.transport.requests.Request()
+        id_token = google.oauth2.id_token.fetch_id_token(auth_req, url)
+
+        # Call Cloud Run endpoint
+        headers = {
+            'Authorization': f'Bearer {id_token}',
+            'Content-Type': 'application/json'
+        }
+        payload = {
+            'game_date': target_date,
+            'force': True
+        }
+
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        success = response.status_code == 200
+
+        logger.info(f"Phase retry request sent: phase={phase}, date={target_date}, "
+                   f"status_code={response.status_code}")
 
         # Log the action
         audit_logger.log_action(
             action_type='retry_phase',
-            action_details={'phase': phase, 'date': target_date},
-            success=True,
+            action_details={
+                'phase': phase,
+                'date': target_date,
+                'status_code': response.status_code
+            },
+            success=success,
             ip_address=request.remote_addr,
             user_agent=request.headers.get('User-Agent')
         )
 
-        # TODO: Implement actual phase retry logic
-        # This would typically call a Cloud Run service or publish to Pub/Sub
-
         return jsonify({
-            'status': 'triggered',
+            'status': 'triggered' if success else 'failed',
             'phase': phase,
             'date': target_date,
+            'status_code': response.status_code,
             'message': f'Retry triggered for {phase} on {target_date}'
-        })
+        }), (200 if success else 500)
 
     except Exception as e:
         logger.error(f"Error retrying phase: {e}", exc_info=True)
@@ -143,22 +196,41 @@ def action_trigger_self_heal():
         target_date = data.get('date')
         mode = data.get('mode', 'auto')  # auto, force, dry_run
 
+        # Publish to self-heal Pub/Sub topic
+        publisher = pubsub_v1.PublisherClient()
+        topic_path = publisher.topic_path(GCP_PROJECT_ID, 'self-heal-trigger')
+
+        message_data = {
+            'game_date': target_date,
+            'action': 'heal',
+            'mode': mode,
+            'triggered_by': 'admin_dashboard'
+        }
+
+        message_bytes = json.dumps(message_data).encode('utf-8')
+        future = publisher.publish(topic_path, message_bytes)
+        message_id = future.result()
+
+        logger.info(f"Self-heal published to Pub/Sub: message_id={message_id}, date={target_date}, mode={mode}")
+
         # Log the action
         audit_logger.log_action(
             action_type='trigger_self_heal',
-            action_details={'date': target_date, 'mode': mode},
+            action_details={
+                'date': target_date,
+                'mode': mode,
+                'message_id': message_id
+            },
             success=True,
             ip_address=request.remote_addr,
             user_agent=request.headers.get('User-Agent')
         )
 
-        # TODO: Implement actual self-heal triggering logic
-        # This would typically call the self_heal Cloud Function
-
         return jsonify({
             'status': 'triggered',
             'date': target_date,
             'mode': mode,
+            'message_id': message_id,
             'message': f'Self-heal triggered in {mode} mode'
         })
 

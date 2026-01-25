@@ -179,6 +179,104 @@ app.register_blueprint(create_health_blueprint(
 logger.info("Health check endpoints registered: /health, /ready, /health/deep")
 
 
+# =============================================================================
+# DATA COMPLETENESS GATE (Jan 2026 Resilience)
+# Prevents predictions when historical data is incomplete
+# =============================================================================
+
+def _check_data_completeness_for_predictions(
+    game_date: date,
+    dataset_prefix: str = '',
+    lookback_days: int = 7,
+    threshold_pct: float = 80.0
+) -> dict:
+    """
+    Check if historical data is complete enough to make reliable predictions.
+
+    Checks analytics coverage for the lookback period. If coverage is below
+    threshold, predictions should be blocked to prevent using stale data.
+
+    Args:
+        game_date: Date we're making predictions for
+        dataset_prefix: Optional dataset prefix for test isolation
+        lookback_days: How many days of history to check
+        threshold_pct: Minimum coverage percentage required
+
+    Returns:
+        dict with:
+            - is_complete: bool - True if data meets threshold
+            - analytics_coverage_pct: float - Actual coverage percentage
+            - threshold: float - Required threshold
+            - details: dict - Per-date breakdown
+    """
+    from google.cloud import bigquery
+
+    client = bigquery.Client(project=PROJECT_ID)
+
+    # Check analytics coverage for the lookback period
+    query = f"""
+    WITH schedule AS (
+        SELECT
+            game_date,
+            COUNT(DISTINCT game_id) as expected_games
+        FROM `{PROJECT_ID}.nba_raw.v_nbac_schedule_latest`
+        WHERE game_status = 3
+            AND game_date >= DATE_SUB(@game_date, INTERVAL {lookback_days} DAY)
+            AND game_date < @game_date
+        GROUP BY 1
+    ),
+    analytics AS (
+        SELECT
+            game_date,
+            COUNT(DISTINCT game_id) as analytics_games
+        FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+        WHERE game_date >= DATE_SUB(@game_date, INTERVAL {lookback_days} DAY)
+            AND game_date < @game_date
+        GROUP BY 1
+    )
+    SELECT
+        COALESCE(SUM(s.expected_games), 0) as total_expected,
+        COALESCE(SUM(a.analytics_games), 0) as total_with_analytics,
+        SAFE_DIVIDE(SUM(a.analytics_games), SUM(s.expected_games)) * 100 as coverage_pct
+    FROM schedule s
+    LEFT JOIN analytics a ON s.game_date = a.game_date
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+        ]
+    )
+
+    result = list(client.query(query, job_config=job_config).result())
+
+    if not result or result[0]['total_expected'] == 0:
+        # No games in lookback period - likely offseason
+        return {
+            'is_complete': True,
+            'analytics_coverage_pct': 100.0,
+            'threshold': threshold_pct,
+            'details': {'note': 'No games in lookback period'}
+        }
+
+    row = result[0]
+    coverage_pct = row['coverage_pct'] or 0.0
+
+    return {
+        'is_complete': coverage_pct >= threshold_pct,
+        'analytics_coverage_pct': coverage_pct,
+        'threshold': threshold_pct,
+        'total_expected_games': row['total_expected'],
+        'total_with_analytics': row['total_with_analytics'],
+        'lookback_days': lookback_days,
+        'details': {
+            'expected_games': row['total_expected'],
+            'games_with_analytics': row['total_with_analytics'],
+            'missing_games': row['total_expected'] - row['total_with_analytics']
+        }
+    }
+
+
 def require_api_key(f):
     """
     Decorator to require API key authentication for endpoints.
@@ -496,6 +594,42 @@ def start_prediction_batch():
             f"(correlation_id={correlation_id}, parent={parent_processor}, "
             f"dataset_prefix={dataset_prefix or 'production'})"
         )
+
+        # =========================================================================
+        # DATA COMPLETENESS GATE (Jan 2026 Resilience)
+        # Refuse to make predictions if historical data is incomplete.
+        # This prevents silent failures where predictions are made with stale data.
+        # =========================================================================
+        skip_completeness_check = request_data.get('skip_completeness_check', False)
+        if not skip_completeness_check:
+            try:
+                completeness_result = _check_data_completeness_for_predictions(game_date, dataset_prefix)
+                if not completeness_result['is_complete']:
+                    logger.error(
+                        f"🚨 DATA COMPLETENESS GATE: Refusing to make predictions! "
+                        f"Analytics coverage: {completeness_result['analytics_coverage_pct']:.1f}% "
+                        f"(threshold: {completeness_result['threshold']}%)"
+                    )
+                    return jsonify({
+                        'status': 'error',
+                        'error': 'DATA_INCOMPLETE',
+                        'message': (
+                            f"Cannot make predictions - historical data is incomplete. "
+                            f"Analytics coverage: {completeness_result['analytics_coverage_pct']:.1f}% "
+                            f"(requires {completeness_result['threshold']}%). "
+                            f"Run backfill or set skip_completeness_check=true to override."
+                        ),
+                        'details': completeness_result,
+                        'game_date': str(game_date)
+                    }), 503  # Service Unavailable
+                else:
+                    logger.info(
+                        f"✅ Data completeness check passed: "
+                        f"{completeness_result['analytics_coverage_pct']:.1f}% coverage"
+                    )
+            except Exception as e:
+                # Don't block predictions if check fails - log and continue
+                logger.warning(f"Data completeness check failed (continuing anyway): {e}")
 
         # Check if batch already running
         if current_tracker and not current_tracker.is_complete:

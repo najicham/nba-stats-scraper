@@ -24,27 +24,28 @@ class PhaseTransitionConfig:
     # This list is used for tracking completeness in Firestore.
     phase2_expected_processors: List[str] = field(default_factory=lambda: [
         # Core daily processors that reliably publish completion messages
-        'bdl_player_boxscores',       # Daily box scores from balldontlie
-        'bigdataball_play_by_play',   # Per-game play-by-play
-        'odds_api_game_lines',        # Per-game odds
-        'nbac_schedule',              # Schedule updates
-        'nbac_gamebook_player_stats', # Post-game player stats
-        'br_rosters_current',         # Basketball-ref rosters
+        # NOTE: These must match the processor_name values in config/workflows.yaml
+        'p2_bdl_box_scores',          # Daily box scores from balldontlie
+        'p2_bigdataball_pbp',         # Per-game play-by-play
+        'p2_odds_game_lines',         # Per-game odds
+        'p2_nbacom_schedule',         # Schedule updates
+        'p2_nbacom_gamebook_pdf',     # Post-game player stats
+        'p2_br_season_roster',        # Basketball-ref rosters
     ])
 
     # Phase 2: Required vs Optional Processors
     # Required: MUST complete before Phase 3 can proceed (with deadline)
     # Optional: Nice to have, but won't block Phase 3
     phase2_required_processors: List[str] = field(default_factory=lambda: [
-        'bdl_player_boxscores',       # Critical for player predictions
-        'odds_api_game_lines',        # Critical for betting lines
-        'nbac_schedule',              # Critical for game schedule
-        'nbac_gamebook_player_stats', # Critical for post-game stats
+        'p2_bdl_box_scores',          # Critical for player predictions
+        'p2_odds_game_lines',         # Critical for betting lines
+        'p2_nbacom_schedule',         # Critical for game schedule
+        'p2_nbacom_gamebook_pdf',     # Critical for post-game stats
     ])
 
     phase2_optional_processors: List[str] = field(default_factory=lambda: [
-        'bigdataball_play_by_play',   # External dependency, may fail
-        'br_rosters_current',         # Only runs on roster changes
+        'p2_bigdataball_pbp',         # External dependency, may fail
+        'p2_br_season_roster',        # Only runs on roster changes
     ])
 
     # Phase 3 -> Phase 4: List of expected processors

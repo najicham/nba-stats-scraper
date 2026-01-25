@@ -523,9 +523,13 @@ class PhaseBoundaryValidator:
                 })
 
             if rows_to_insert:
-                errors = self.bq_client.insert_rows_json(table_id, rows_to_insert)
-                if errors:
-                    logger.error(f"Failed to log validation to BigQuery: {errors}", exc_info=True)
+                # Use batch loading to avoid streaming buffer issues
+                from shared.utils.bigquery_utils import insert_bigquery_rows
+                from shared.config.gcp_config import get_project_id
+                short_table_id = table_id.replace(f"{get_project_id()}.", "")
+                success = insert_bigquery_rows(short_table_id, rows_to_insert)
+                if not success:
+                    logger.error(f"Failed to log validation to BigQuery")
                 else:
                     logger.info(f"Logged {len(rows_to_insert)} validation issues to BigQuery")
 

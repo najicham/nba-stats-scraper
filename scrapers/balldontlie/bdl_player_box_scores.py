@@ -70,6 +70,14 @@ except ImportError:
     def notify_warning(*args, **kwargs): pass
     def notify_info(*args, **kwargs): pass
 
+# BDL availability logging (for tracking per-game data availability)
+try:
+    from shared.utils.bdl_availability_logger import log_bdl_game_availability
+    BDL_AVAILABILITY_LOGGING_ENABLED = True
+except ImportError:
+    BDL_AVAILABILITY_LOGGING_ENABLED = False
+    def log_bdl_game_availability(*args, **kwargs): pass
+
 logger = logging.getLogger("scraper_base")
 
 # --------------------------------------------------------------------------- #
@@ -413,6 +421,25 @@ class BdlPlayerBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send success notification: {notify_ex}")
+
+            # Log BDL game availability for tracking per-game data availability
+            # This enables answering: "When did BDL first return data for game X?"
+            if BDL_AVAILABILITY_LOGGING_ENABLED:
+                for game_date in dates_done:
+                    try:
+                        availability_records = log_bdl_game_availability(
+                            game_date=game_date,
+                            execution_id=self.run_id,
+                            box_scores=rows,
+                            workflow=self.opts.get("workflow")
+                        )
+                        # Log missing games as warnings
+                        missing_games = [r for r in availability_records if not r.was_available]
+                        if missing_games:
+                            missing_str = ", ".join([f"{r.away_team}@{r.home_team}" for r in missing_games])
+                            logger.warning(f"BDL API missing {len(missing_games)} games for {game_date}: {missing_str}")
+                    except Exception as avail_ex:
+                        logger.warning(f"Failed to log BDL availability for {game_date}: {avail_ex}")
 
         except Exception as e:
             # General transformation error

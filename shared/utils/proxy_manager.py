@@ -257,7 +257,31 @@ class ProxyManager:
         # Initialize proxies
         self._load_proxies()
 
-        logger.info(f"ProxyManager initialized with {len(self._proxies)} proxies")
+        # Log proxy status with clear visibility
+        proxy_count = len(self._proxies)
+        if proxy_count == 0:
+            logger.error("=" * 60)
+            logger.error("CRITICAL: NO PROXIES CONFIGURED")
+            logger.error("=" * 60)
+            logger.error("NBA.com scraping WILL FAIL without proxies!")
+            logger.error("")
+            logger.error("Missing environment variables:")
+            if not os.getenv("DECODO_PROXY_CREDENTIALS"):
+                logger.error("  - DECODO_PROXY_CREDENTIALS (not set)")
+            if not os.getenv("PROXYFUEL_CREDENTIALS"):
+                logger.error("  - PROXYFUEL_CREDENTIALS (not set)")
+            if not os.getenv("BRIGHTDATA_CREDENTIALS"):
+                logger.error("  - BRIGHTDATA_CREDENTIALS (not set)")
+            logger.error("")
+            logger.error("To fix: Add credentials to .env file or set environment variables")
+            logger.error("See .env.example for instructions")
+            logger.error("=" * 60)
+        else:
+            providers = {}
+            for health in self._proxies.values():
+                providers[health.provider] = providers.get(health.provider, 0) + 1
+            provider_str = ", ".join(f"{p}: {c}" for p, c in providers.items())
+            logger.info(f"ProxyManager initialized with {proxy_count} proxies ({provider_str})")
 
     def _load_proxies(self):
         """Load and initialize all configured proxies."""
@@ -759,12 +783,13 @@ class ProxyManager:
                 "scraper_name": "proxy_manager"  # Generic source
             }
 
-            from shared.config.gcp_config import get_table_id
-            table_ref = get_table_id("nba_orchestration", "proxy_health_metrics")
-            errors = client.insert_rows_json(table_ref, [row])
+            # Use batch loading to avoid streaming buffer issues
+            from shared.utils.bigquery_utils import insert_bigquery_rows
+            table_id = "nba_orchestration.proxy_health_metrics"
+            success = insert_bigquery_rows(table_id, [row])
 
-            if errors:
-                logger.debug(f"BigQuery insert errors: {errors}")
+            if not success:
+                logger.debug(f"Failed to log proxy result")
 
         except Exception as e:
             logger.debug(f"Failed to log proxy result to BigQuery: {e}")
@@ -797,12 +822,13 @@ class ProxyManager:
                 "provider_stats": str(metrics.providers)  # JSON as string for simplicity
             }
 
-            from shared.config.gcp_config import get_table_id
-            table_ref = get_table_id("nba_orchestration", "proxy_health_snapshots")
-            errors = client.insert_rows_json(table_ref, [row])
+            # Use batch loading to avoid streaming buffer issues
+            from shared.utils.bigquery_utils import insert_bigquery_rows
+            table_id = "nba_orchestration.proxy_health_snapshots"
+            success = insert_bigquery_rows(table_id, [row])
 
-            if errors:
-                logger.debug(f"BigQuery metrics insert errors: {errors}")
+            if not success:
+                logger.debug(f"Failed to log health metrics")
             else:
                 self._last_metrics_log = now
 

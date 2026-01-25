@@ -85,13 +85,14 @@ def log_proxy_result(
             "proxy_ip": proxy_ip
         }
 
-        # Insert to BigQuery (streaming insert)
-        from shared.config.gcp_config import get_table_id
-        table_ref = get_table_id("nba_orchestration", "proxy_health_metrics")
-        errors = client.insert_rows_json(table_ref, [row])
+        # Insert to BigQuery using batch loading (not streaming)
+        # to avoid 90-minute streaming buffer that blocks DML operations
+        from shared.utils.bigquery_utils import insert_bigquery_rows
+        table_id = "nba_orchestration.proxy_health_metrics"
+        success = insert_bigquery_rows(table_id, [row])
 
-        if errors:
-            logger.warning(f"BigQuery insert errors: {errors}")
+        if not success:
+            logger.warning(f"Failed to log proxy result to BigQuery")
             return False
 
         return True

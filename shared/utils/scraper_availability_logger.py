@@ -278,11 +278,10 @@ class ScraperAvailabilityLogger:
         records: List[Tuple[GameDataStatus, bool, bool, Optional[datetime]]],
         attempt_number: int
     ) -> None:
-        """Write availability records to BigQuery."""
+        """Write availability records to BigQuery using batch loading (not streaming)."""
         try:
-            from google.cloud import bigquery
             from shared.config.gcp_config import get_table_id
-            client = bigquery.Client()
+            from shared.utils.bigquery_utils import insert_bigquery_rows
 
             table_id = get_table_id("nba_orchestration", "scraper_data_arrival")
 
@@ -321,11 +320,12 @@ class ScraperAvailabilityLogger:
                     "source_url": self.source_url,
                 })
 
-            errors = client.insert_rows_json(table_id, rows)
+            # Use batch loading instead of streaming to avoid 90-minute buffer conflicts
+            success = insert_bigquery_rows(table_id, rows)
 
-            if errors:
+            if not success:
                 logger.error(
-                    f"BigQuery insert errors for scraper_data_arrival: {errors}. "
+                    f"BigQuery batch insert failed for scraper_data_arrival. "
                     f"Scraper: {self.scraper_name}, Date: {self.game_date}"
                 )
             else:

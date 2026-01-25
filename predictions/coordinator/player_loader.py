@@ -304,9 +304,10 @@ class PlayerLoader:
         WHERE game_date = @game_date
           AND (avg_minutes_per_game_last_7 >= @min_minutes OR has_prop_line = TRUE)  -- v3.7: Include players with prop lines even if returning from injury
           AND (player_status IS NULL OR player_status NOT IN ('OUT', 'DOUBTFUL'))
-          AND is_production_ready = TRUE  -- Only process players with complete upstream data
+          AND (is_production_ready = TRUE OR has_prop_line = TRUE)  -- v3.11: Allow players with prop lines even if data incomplete - sportsbooks validated they'll play
         QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY created_at DESC) = 1
         ORDER BY avg_minutes_per_game_last_7 DESC
+        LIMIT 500  -- Memory optimization: Cap at 500 players per day (covers ~20 games)
         """.format(project=self.project_id, dataset=dataset)
         
         job_config = bigquery.QueryJobConfig(
@@ -657,7 +658,7 @@ class PlayerLoader:
                 }
             return None
         except Exception as e:
-            logger.debug(f"No {sportsbook} line in odds_api for {player_lookup}: {e}")
+            logger.warning(f"No {sportsbook} line in odds_api for {player_lookup}: {e}")
             return None
 
     def _query_bettingpros_betting_line_for_book(
@@ -724,7 +725,7 @@ class PlayerLoader:
                 }
             return None
         except Exception as e:
-            logger.debug(f"No {sportsbook} line in bettingpros for {player_lookup}: {e}")
+            logger.warning(f"No {sportsbook} line in bettingpros for {player_lookup}: {e}")
             return None
 
     def _track_line_source(self, source: str, player_lookup: str):
@@ -894,7 +895,7 @@ class PlayerLoader:
             return None
 
         except Exception as e:
-            logger.debug(f"No betting line found in odds_api for {player_lookup}: {e}")
+            logger.warning(f"No betting line found in odds_api for {player_lookup}: {e}")
             return None
 
     def _query_bettingpros_betting_line(
@@ -967,7 +968,7 @@ class PlayerLoader:
             return None
 
         except Exception as e:
-            logger.debug(f"No betting line found in bettingpros for {player_lookup}: {e}")
+            logger.warning(f"No betting line found in bettingpros for {player_lookup}: {e}")
             return None
     
     def _estimate_betting_line(self, player_lookup: str) -> float:
@@ -1175,6 +1176,7 @@ class PlayerLoader:
         FROM `{project}.nba_analytics.upcoming_player_game_context`
         WHERE game_id = @game_id
         ORDER BY team_abbr, avg_minutes_per_game_last_7 DESC
+        LIMIT 50  -- Memory optimization: Single game has max ~30 players, 50 is safe upper bound
         """.format(project=self.project_id)
         
         job_config = bigquery.QueryJobConfig(
@@ -1210,25 +1212,129 @@ class PlayerLoader:
     def get_players_with_stale_predictions(
         self,
         game_date: date,
-        stale_threshold_minutes: int = 60
+        line_change_threshold: float = 1.0
     ) -> List[str]:
         """
         Get players whose predictions are stale (betting lines changed significantly)
-        
-        Used for real-time updates when lines move
-        
+
+        Compares current betting lines vs lines used when predictions were made.
+        Returns players where line moved >= threshold (default 1.0 point).
+
+        This is a Phase 6 feature for real-time prediction updates when betting
+        markets move significantly. It prevents serving predictions based on
+        outdated lines that could mislead users.
+
+        Implementation:
+        - Queries latest lines from bettingpros_player_points_props
+        - Compares with lines stored in player_prop_predictions
+        - Returns players where ABS(current_line - prediction_line) >= threshold
+        - Uses QUALIFY for efficient deduplication
+
+        Integration Example (in coordinator.py):
+            # Before generating new predictions, check for stale ones
+            stale_players = player_loader.get_players_with_stale_predictions(
+                game_date=today,
+                line_change_threshold=1.0
+            )
+            if stale_players:
+                logger.info(f"Regenerating {len(stale_players)} stale predictions")
+                # Create requests only for stale players
+                for player_lookup in stale_players:
+                    publish_prediction_request(player_lookup, today)
+
         Args:
-            game_date: Game date
-            stale_threshold_minutes: How old before predictions are stale
-        
+            game_date: Game date to check
+            line_change_threshold: Minimum line change to trigger regeneration (default: 1.0 point)
+
         Returns:
-            List of player_lookups needing updated predictions
+            List of player_lookup values needing prediction regeneration
+
+        Example:
+            >>> loader = PlayerLoader('nba-props-platform')
+            >>> stale = loader.get_players_with_stale_predictions(
+            ...     game_date=date(2026, 1, 24),
+            ...     line_change_threshold=1.0
+            ... )
+            >>> print(stale)
+            ['klaythompson', 'tyresemaxey', 'nazreid']
         """
-        # TODO: Implement when Phase 6 is ready
-        # Compare current lines vs lines used in predictions
-        # Return players where line moved >1 point
-        logger.info("get_players_with_stale_predictions not yet implemented")
-        return []
+        query = """
+        WITH current_lines AS (
+            -- Get most recent betting line for each player
+            SELECT
+                player_lookup,
+                points_line as current_line,
+                created_at
+            FROM `{project}.nba_raw.bettingpros_player_points_props`
+            WHERE game_date = @game_date
+              AND bet_side = 'over'
+              AND is_active = TRUE
+              AND points_line IS NOT NULL
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY player_lookup
+                ORDER BY created_at DESC
+            ) = 1
+        ),
+        prediction_lines AS (
+            -- Get lines used in predictions (deduplicated by player)
+            SELECT
+                player_lookup,
+                current_points_line as prediction_line,
+                created_at
+            FROM `{project}.nba_predictions.player_prop_predictions`
+            WHERE game_date = @game_date
+              AND current_points_line IS NOT NULL
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY player_lookup
+                ORDER BY created_at DESC
+            ) = 1
+        )
+        SELECT DISTINCT
+            p.player_lookup,
+            p.prediction_line,
+            c.current_line,
+            ABS(c.current_line - p.prediction_line) as line_change
+        FROM prediction_lines p
+        JOIN current_lines c
+            ON p.player_lookup = c.player_lookup
+        WHERE ABS(c.current_line - p.prediction_line) >= @threshold
+        ORDER BY line_change DESC
+        LIMIT 500  -- Memory optimization: Cap stale predictions check at 500 players
+        """.format(project=self.project_id)
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                bigquery.ScalarQueryParameter("threshold", "FLOAT64", line_change_threshold)
+            ]
+        )
+
+        try:
+            result = self.client.query(query, job_config=job_config).result(timeout=30)
+            stale_players = [row.player_lookup for row in result]
+
+            if stale_players:
+                logger.info(
+                    f"Found {len(stale_players)} players with stale predictions "
+                    f"(line changes >= {line_change_threshold} points) for {game_date}"
+                )
+                # Log details for debugging
+                result = self.client.query(query, job_config=job_config).result(timeout=30)
+                for row in list(result)[:5]:  # Log first 5 for debugging
+                    logger.debug(
+                        f"  {row.player_lookup}: prediction_line={row.prediction_line:.1f}, "
+                        f"current_line={row.current_line:.1f}, change={row.line_change:.1f}"
+                    )
+                if len(stale_players) > 5:
+                    logger.debug(f"  ... and {len(stale_players) - 5} more")
+            else:
+                logger.info(f"No stale predictions found for {game_date} (threshold={line_change_threshold})")
+
+            return stale_players
+
+        except Exception as e:
+            logger.error(f"Error detecting stale predictions for {game_date}: {e}", exc_info=True)
+            return []
     
     def close(self):
         """Close BigQuery client connection"""

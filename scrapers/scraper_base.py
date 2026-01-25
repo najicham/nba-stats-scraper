@@ -120,6 +120,25 @@ from shared.config.sport_config import (
     get_current_sport,
 )
 
+# Import pipeline logger for event tracking and auto-retry queue (Jan 2026 resilience)
+try:
+    from shared.utils.pipeline_logger import (
+        log_processor_start,
+        log_processor_complete,
+        log_processor_error,
+        mark_retry_succeeded,
+        classify_error as classify_error_for_retry
+    )
+    _PIPELINE_LOGGER_AVAILABLE = True
+except ImportError:
+    _PIPELINE_LOGGER_AVAILABLE = False
+    log_processor_start = None
+    log_processor_complete = None
+    log_processor_error = None
+    mark_retry_succeeded = None
+    classify_error_for_retry = None
+    logger.warning("Could not import pipeline_logger - auto-retry queue disabled")
+
 ##############################################################################
 # Configure a default logger so INFO messages appear in the console.
 ##############################################################################
@@ -302,6 +321,23 @@ class ScraperBase:
                 # Initialize cost tracking
                 self._init_cost_tracking()
 
+                # Log processor start event for pipeline tracking (Jan 2026 resilience)
+                self._pipeline_event_id = None
+                if _PIPELINE_LOGGER_AVAILABLE and log_processor_start:
+                    try:
+                        game_date = opts.get('date') or opts.get('gamedate', '')
+                        if game_date and len(game_date) == 8:  # YYYYMMDD format
+                            game_date = f"{game_date[:4]}-{game_date[4:6]}-{game_date[6:8]}"
+                        self._pipeline_event_id = log_processor_start(
+                            phase='phase_2',
+                            processor_name=self._get_scraper_name(),
+                            game_date=game_date if game_date else None,
+                            correlation_id=self.run_id,
+                            trigger_source=opts.get('triggered_by', 'scheduled')
+                        )
+                    except Exception as e:
+                        logger.debug(f"Pipeline start logging failed (non-critical): {e}")
+
                 self.step_info("start", "Scraper run starting", extra={"opts": opts})
 
                 self.set_opts(opts)
@@ -352,6 +388,29 @@ class ScraperBase:
                 
                 # ✅ NEW: Log execution to Phase 1 orchestration
                 self._log_execution_to_bigquery()
+
+                # Log processor completion event for pipeline tracking (Jan 2026 resilience)
+                if _PIPELINE_LOGGER_AVAILABLE and log_processor_complete:
+                    try:
+                        game_date = self._extract_game_date()
+                        log_processor_complete(
+                            phase='phase_2',
+                            processor_name=self._get_scraper_name(),
+                            game_date=game_date if game_date else None,
+                            duration_seconds=self.stats.get('total_runtime', 0),
+                            records_processed=self.get_scraper_stats().get('rowCount', 0),
+                            correlation_id=self.run_id,
+                            parent_event_id=getattr(self, '_pipeline_event_id', None)
+                        )
+                        # Clear any pending retry entries for this processor/date
+                        if mark_retry_succeeded and game_date:
+                            mark_retry_succeeded(
+                                phase='phase_2',
+                                processor_name=self._get_scraper_name(),
+                                game_date=game_date
+                            )
+                    except Exception as e:
+                        logger.debug(f"Pipeline complete logging failed (non-critical): {e}")
 
                 # ✅ NEW: Finalize and save cost tracking metrics
                 self._finalize_cost_tracking(success=True)
@@ -419,6 +478,31 @@ class ScraperBase:
                     self._log_scraper_failure_for_backfill(e)
                 except Exception as backfill_log_ex:
                     logger.warning(f"Failed to log failure for backfill: {backfill_log_ex}")
+
+                # ✅ NEW (Jan 2026): Log to pipeline_event_log and queue for auto-retry
+                if _PIPELINE_LOGGER_AVAILABLE and log_processor_error:
+                    try:
+                        game_date = self._extract_game_date()
+                        # Classify error as transient (network, rate limit) or permanent (code bug)
+                        error_type = classify_error_for_retry(e) if classify_error_for_retry else 'transient'
+                        log_processor_error(
+                            phase='phase_2',
+                            processor_name=self._get_scraper_name(),
+                            game_date=game_date if game_date else None,
+                            error_message=str(e)[:1000],
+                            error_type=error_type,
+                            stack_trace=traceback.format_exc()[:4000],
+                            correlation_id=self.run_id,
+                            parent_event_id=getattr(self, '_pipeline_event_id', None),
+                            metadata={
+                                'url': getattr(self, 'url', 'unknown'),
+                                'retry_count': self.download_retry_count,
+                                'step': self._get_current_step()
+                            }
+                        )
+                        # Note: log_processor_error automatically queues transient errors for retry
+                    except Exception as pipeline_log_ex:
+                        logger.warning(f"Pipeline error logging failed (non-critical): {pipeline_log_ex}")
 
                 # ✅ NEW: Publish failed event to Pub/Sub
                 try:
@@ -1228,13 +1312,14 @@ class ScraperBase:
                 logger.error(f"LAYER1_VALIDATION: Cannot create BigQuery client - {e}")
                 return
 
-            project_id = get_project_id()
+            # Use batch loading to avoid streaming buffer issues
+            from shared.utils.bigquery_utils import insert_bigquery_rows
             orchestration_dataset = get_orchestration_dataset()
-            table_id = f"{project_id}.{orchestration_dataset}.scraper_output_validation"
+            table_id = f"{orchestration_dataset}.scraper_output_validation"
 
-            errors = bq_client.insert_rows_json(table_id, [validation_result])
-            if errors:
-                logger.warning(f"LAYER1_VALIDATION: Failed to insert to BigQuery: {errors}")
+            success = insert_bigquery_rows(table_id, [validation_result])
+            if not success:
+                logger.warning(f"LAYER1_VALIDATION: Failed to insert to BigQuery")
             else:
                 # FIX #4: Add success logging for visibility
                 logger.info(f"LAYER1_VALIDATION: Successfully logged to BigQuery - status: {validation_result.get('validation_status')}, rows: {validation_result.get('row_count')}")

@@ -19,7 +19,9 @@ from functools import wraps
 from zoneinfo import ZoneInfo
 from flask import Flask, render_template, jsonify, request
 import requests
-from google.cloud import bigquery
+from google.cloud import bigquery, pubsub_v1
+import google.auth.transport.requests
+import google.oauth2.id_token
 
 # Configure logging
 logging.basicConfig(
@@ -33,6 +35,7 @@ logger = logging.getLogger(__name__)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from shared.utils.env_validation import validate_required_env_vars
 from shared.endpoints.health import create_health_blueprint, HealthChecker
+from shared.utils.prometheus_metrics import PrometheusMetrics, create_metrics_blueprint
 validate_required_env_vars(
     ['GCP_PROJECT_ID', 'ADMIN_DASHBOARD_API_KEY'],
     service_name='AdminDashboard'
@@ -1632,37 +1635,35 @@ def action_force_predictions():
     try:
         logger.info(f"Force predictions requested for {target_date}")
 
-        # Call the prediction coordinator
-        result = call_cloud_run_service(
-            'prediction_coordinator',
-            '/start',
-            payload={'game_date': target_date}
-        )
+        # Publish to prediction-coordinator Pub/Sub topic
+        publisher = pubsub_v1.PublisherClient()
+        gcp_project_id = os.environ.get('GCP_PROJECT_ID')
+        topic_path = publisher.topic_path(gcp_project_id, 'nba-predictions-trigger')
 
-        if result.get('success'):
-            # Log successful action to BigQuery audit trail
-            audit_logger.log_action('force_predictions', endpoint, parameters, 'success')
-            # Track metrics
-            dashboard_action_requests.inc(labels={'action_type': 'force_predictions', 'result': 'success'})
+        message_data = {
+            'game_date': target_date,
+            'action': 'predict',
+            'force': True,
+            'triggered_by': 'admin_dashboard'
+        }
 
-            return jsonify({
-                'status': 'triggered',
-                'date': target_date,
-                'message': 'Force predictions job triggered successfully',
-                'service_response': result.get('response')
-            })
-        else:
-            # Log failed action to BigQuery audit trail
-            audit_logger.log_action('force_predictions', endpoint, parameters, 'failure')
-            # Track metrics
-            dashboard_action_requests.inc(labels={'action_type': 'force_predictions', 'result': 'failure'})
+        message_bytes = json.dumps(message_data).encode('utf-8')
+        future = publisher.publish(topic_path, message_bytes)
+        message_id = future.result()
 
-            return jsonify({
-                'status': 'failed',
-                'date': target_date,
-                'error': result.get('error', 'Unknown error'),
-                'status_code': result.get('status_code')
-            }), 500
+        logger.info(f"Force predictions published to Pub/Sub: message_id={message_id}, date={target_date}")
+
+        # Log successful action to BigQuery audit trail
+        audit_logger.log_action('force_predictions', endpoint, parameters, 'success')
+        # Track metrics
+        dashboard_action_requests.inc(labels={'action_type': 'force_predictions', 'result': 'success'})
+
+        return jsonify({
+            'status': 'triggered',
+            'date': target_date,
+            'message_id': message_id,
+            'message': f'Prediction generation triggered for {target_date}'
+        })
 
     except Exception as e:
         logger.error(f"Error forcing predictions: {e}")
@@ -1780,31 +1781,42 @@ def action_trigger_self_heal():
     parameters = {}
 
     try:
-        logger.info("Self-heal trigger requested")
+        data = request.get_json() or {}
+        target_date = data.get('date')
+        mode = data.get('mode', 'auto')  # auto, force, dry_run
 
-        result = call_cloud_run_service(
-            'self_heal',
-            '/',
-            method='GET'
-        )
+        logger.info(f"Self-heal trigger requested: date={target_date}, mode={mode}")
 
-        if result.get('success'):
-            # Log successful action to BigQuery audit trail
-            audit_logger.log_action('trigger_self_heal', endpoint, parameters, 'success')
+        # Publish to self-heal Pub/Sub topic
+        publisher = pubsub_v1.PublisherClient()
+        gcp_project_id = os.environ.get('GCP_PROJECT_ID')
+        topic_path = publisher.topic_path(gcp_project_id, 'self-heal-trigger')
 
-            return jsonify({
-                'status': 'triggered',
-                'message': 'Self-heal check triggered successfully',
-                'service_response': result.get('response')
-            })
-        else:
-            # Log failed action to BigQuery audit trail
-            audit_logger.log_action('trigger_self_heal', endpoint, parameters, 'failure')
+        message_data = {
+            'game_date': target_date,
+            'action': 'heal',
+            'mode': mode,
+            'triggered_by': 'admin_dashboard'
+        }
 
-            return jsonify({
-                'status': 'failed',
-                'error': result.get('error', 'Unknown error')
-            }), 500
+        message_bytes = json.dumps(message_data).encode('utf-8')
+        future = publisher.publish(topic_path, message_bytes)
+        message_id = future.result()
+
+        logger.info(f"Self-heal published to Pub/Sub: message_id={message_id}, date={target_date}, mode={mode}")
+
+        # Log successful action to BigQuery audit trail
+        parameters['date'] = target_date
+        parameters['mode'] = mode
+        audit_logger.log_action('trigger_self_heal', endpoint, parameters, 'success')
+
+        return jsonify({
+            'status': 'triggered',
+            'date': target_date,
+            'mode': mode,
+            'message_id': message_id,
+            'message': f'Self-heal triggered in {mode} mode'
+        })
 
     except Exception as e:
         logger.error(f"Error triggering self-heal: {e}")

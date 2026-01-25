@@ -275,12 +275,17 @@ class BatchStateManager:
 
         Week 1 Update: Now supports dual-write pattern for ArrayUnion → Subcollection migration.
 
+        CRITICAL FIX (Jan 25, 2026): Dual-write mode now uses transactions to prevent data corruption.
+        Previously, array write and subcollection write were separate operations - if subcollection
+        write failed after array write succeeded, data became inconsistent. Now both writes happen
+        atomically within a single transaction.
+
         This avoids transaction contention when multiple workers complete simultaneously.
         Uses Firestore's atomic operations: ArrayUnion and Increment.
 
         Migration Modes (controlled by feature flags):
         1. Legacy mode (subcollection disabled): Write only to array
-        2. Dual-write mode (default): Write to both array AND subcollection
+        2. Dual-write mode (default): Write to both array AND subcollection (TRANSACTIONAL)
         3. Subcollection-only mode: Write only to subcollection
 
         Args:
@@ -300,19 +305,15 @@ class BatchStateManager:
             # Week 1: Implement dual-write pattern
             if self.enable_subcollection:
                 if self.dual_write_mode:
-                    # DUAL-WRITE MODE: Write to both old and new
-                    logger.debug(f"Dual-write mode: Recording {player_lookup} to both structures")
+                    # DUAL-WRITE MODE: Write to both old and new (TRANSACTIONAL)
+                    logger.debug(f"Dual-write mode: Recording {player_lookup} to both structures (transactional)")
 
-                    # Write to OLD structure (ArrayUnion)
-                    doc_ref.update({
-                        'completed_players': ArrayUnion([player_lookup]),
-                        'predictions_by_player.{}'.format(player_lookup): predictions_count,
-                        'total_predictions': Increment(predictions_count),
-                        'updated_at': SERVER_TIMESTAMP
-                    })
-
-                    # Write to NEW structure (subcollection)
-                    self._record_completion_subcollection(batch_id, player_lookup, predictions_count)
+                    # Use transaction to ensure atomicity
+                    self._record_completion_dual_write_transactional(
+                        batch_id,
+                        player_lookup,
+                        predictions_count
+                    )
 
                     # Validate consistency (every 10th completion to reduce overhead)
                     import random
@@ -435,6 +436,68 @@ class BatchStateManager:
     # ============================================================================
     # Week 1: Subcollection Migration Methods
     # ============================================================================
+
+    def _record_completion_dual_write_transactional(
+        self,
+        batch_id: str,
+        player_lookup: str,
+        predictions_count: int
+    ) -> None:
+        """
+        CRITICAL FIX (Jan 25, 2026): Transactional dual-write to prevent data corruption.
+
+        Writes to both array (old) and subcollection (new) structures atomically.
+        If either write fails, both are rolled back to maintain consistency.
+
+        This fixes the P0 bug where subcollection write could fail after array write
+        succeeded, causing data inconsistency.
+
+        Args:
+            batch_id: Batch identifier
+            player_lookup: Player identifier
+            predictions_count: Number of predictions generated
+        """
+        firestore = _get_firestore()
+        ArrayUnion, Increment, SERVER_TIMESTAMP = _get_firestore_helpers()
+
+        batch_ref = self.collection.document(batch_id)
+        completion_ref = batch_ref.collection('completions').document(player_lookup)
+
+        @firestore.transactional
+        def dual_write_in_transaction(transaction):
+            """
+            Perform both writes atomically within transaction.
+
+            This ensures that either both writes succeed or both fail.
+            No partial state is possible.
+            """
+            # Write to OLD structure (ArrayUnion)
+            transaction.update(batch_ref, {
+                'completed_players': ArrayUnion([player_lookup]),
+                'predictions_by_player.{}'.format(player_lookup): predictions_count,
+                'total_predictions': Increment(predictions_count),
+                'updated_at': SERVER_TIMESTAMP
+            })
+
+            # Write to NEW structure (subcollection)
+            transaction.set(completion_ref, {
+                'completed_at': SERVER_TIMESTAMP,
+                'predictions_count': predictions_count,
+                'player_lookup': player_lookup
+            })
+
+            # Update subcollection counters
+            transaction.update(batch_ref, {
+                'completed_count': Increment(1),
+                'total_predictions_subcoll': Increment(predictions_count),
+                'last_updated': SERVER_TIMESTAMP
+            })
+
+        # Execute transaction
+        transaction = self.db.transaction()
+        dual_write_in_transaction(transaction)
+
+        logger.debug(f"Recorded completion for {player_lookup} in both structures (transactional)")
 
     def _record_completion_subcollection(
         self,
