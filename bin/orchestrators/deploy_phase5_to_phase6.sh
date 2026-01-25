@@ -23,7 +23,7 @@ REGION="us-west2"
 RUNTIME="python311"
 ENTRY_POINT="orchestrate_phase5_to_phase6"
 TRIGGER_TOPIC="nba-phase5-predictions-complete"
-MEMORY="256MB"
+MEMORY="512MB"
 TIMEOUT="60s"
 MAX_INSTANCES="10"
 MIN_INSTANCES="0"
@@ -33,6 +33,16 @@ SOURCE_DIR="orchestration/cloud_functions/phase5_to_phase6"
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}Phase 5→6 Orchestrator Deployment${NC}"
 echo -e "${BLUE}========================================${NC}"
+echo ""
+
+# Pre-deployment validation
+echo -e "${YELLOW}Running pre-deployment validations...${NC}"
+if python bin/validation/validate_cloud_function_imports.py --function phase5_to_phase6 2>/dev/null; then
+    echo -e "${GREEN}✓ Cloud Function import validation passed${NC}"
+else
+    echo -e "${RED}✗ Cloud Function import validation FAILED${NC}"
+    exit 1
+fi
 echo ""
 
 # Check source directory

@@ -1,15 +1,27 @@
 #!/bin/bash
-# Deploy Phase 3 → Phase 4 Orchestrator to Google Cloud Functions
+# Deploy Auto-Retry Processor Cloud Function
 #
-# This orchestrator tracks completion of all 5 Phase 3 processors and triggers
-# Phase 4 when complete.
+# This function is triggered by Cloud Scheduler every 15 minutes.
+# It queries the failed_processor_queue and triggers retries for eligible processors.
 #
 # Usage:
-#   ./bin/orchestrators/deploy_phase3_to_phase4.sh
+#   ./bin/orchestrators/deploy_auto_retry_processor.sh
+#
+# Prerequisites:
+#   - gcloud CLI installed and authenticated
+#   - Cloud Scheduler job created (see below)
+#
+# After deploying, create the Cloud Scheduler job:
+#   gcloud scheduler jobs create pubsub auto-retry-processor-trigger \
+#     --schedule="*/15 * * * *" \
+#     --topic=auto-retry-trigger \
+#     --message-body='{"action":"retry"}' \
+#     --location=us-west2 \
+#     --time-zone="America/New_York"
 
-set -e  # Exit on error
+set -e
 
-# Colors
+# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -18,41 +30,27 @@ NC='\033[0m'
 
 # Configuration
 PROJECT_ID="nba-props-platform"
-FUNCTION_NAME="phase3-to-phase4-orchestrator"
+FUNCTION_NAME="auto-retry-processor"
 REGION="us-west2"
 RUNTIME="python311"
-ENTRY_POINT="orchestrate_phase3_to_phase4"
-TRIGGER_TOPIC="nba-phase3-analytics-complete"
-MEMORY="512MB"
-TIMEOUT="60s"
-MAX_INSTANCES="10"
+ENTRY_POINT="auto_retry_processors"
+TRIGGER_TOPIC="auto-retry-trigger"
+MEMORY="256MB"
+TIMEOUT="120s"
+MAX_INSTANCES="1"
 MIN_INSTANCES="0"
 
-SOURCE_DIR="orchestration/cloud_functions/phase3_to_phase4"
+# Source directory
+SOURCE_DIR="orchestration/cloud_functions/auto_retry_processor"
 
 echo -e "${BLUE}========================================${NC}"
-echo -e "${BLUE}Phase 3→4 Orchestrator Deployment${NC}"
+echo -e "${BLUE}Auto-Retry Processor Deployment${NC}"
 echo -e "${BLUE}========================================${NC}"
 echo ""
 
-# Pre-deployment validation
-echo -e "${YELLOW}Running pre-deployment validations...${NC}"
-if python bin/validation/validate_cloud_function_imports.py --function phase3_to_phase4 2>/dev/null; then
-    echo -e "${GREEN}✓ Cloud Function import validation passed${NC}"
-else
-    echo -e "${RED}✗ Cloud Function import validation FAILED${NC}"
-    exit 1
-fi
-echo ""
-
-# Check source directory
+# Check if source directory exists
 if [ ! -d "$SOURCE_DIR" ]; then
     echo -e "${RED}Error: Source directory not found: $SOURCE_DIR${NC}"
-    exit 1
-fi
-
-if [ ! -f "$SOURCE_DIR/main.py" ]; then
-    echo -e "${RED}Error: main.py not found in $SOURCE_DIR${NC}"
     exit 1
 fi
 
@@ -61,47 +59,32 @@ echo "  Project ID:      $PROJECT_ID"
 echo "  Function Name:   $FUNCTION_NAME"
 echo "  Region:          $REGION"
 echo "  Trigger Topic:   $TRIGGER_TOPIC"
+echo "  Memory:          $MEMORY"
+echo "  Timeout:         $TIMEOUT"
 echo ""
 
 # Check authentication
 echo -e "${YELLOW}Checking authentication...${NC}"
 if ! gcloud auth list --filter=status:ACTIVE --format="value(account)" | grep -q .; then
     echo -e "${RED}Error: Not authenticated with gcloud${NC}"
-    echo "Run: gcloud auth login"
     exit 1
 fi
 echo -e "${GREEN}✓ Authenticated${NC}"
 echo ""
 
-# Set project
-CURRENT_PROJECT=$(gcloud config get-value project 2>/dev/null)
-if [ "$CURRENT_PROJECT" != "$PROJECT_ID" ]; then
-    echo -e "${YELLOW}Switching to project $PROJECT_ID${NC}"
-    gcloud config set project $PROJECT_ID
-fi
+# Verify project
+gcloud config set project $PROJECT_ID 2>/dev/null
 echo -e "${GREEN}✓ Project set to $PROJECT_ID${NC}"
 echo ""
 
-# Check Pub/Sub topics
-echo -e "${YELLOW}Checking Pub/Sub topics...${NC}"
-
+# Create Pub/Sub topic if needed
+echo -e "${YELLOW}Checking Pub/Sub topic...${NC}"
 if gcloud pubsub topics describe $TRIGGER_TOPIC --project=$PROJECT_ID &>/dev/null; then
-    echo -e "${GREEN}✓ Input topic exists: $TRIGGER_TOPIC${NC}"
+    echo -e "${GREEN}✓ Topic exists: $TRIGGER_TOPIC${NC}"
 else
-    echo -e "${RED}✗ Input topic not found: $TRIGGER_TOPIC${NC}"
-    echo -e "${YELLOW}Creating topic...${NC}"
+    echo -e "${YELLOW}Creating topic: $TRIGGER_TOPIC${NC}"
     gcloud pubsub topics create $TRIGGER_TOPIC --project=$PROJECT_ID
     echo -e "${GREEN}✓ Created topic: $TRIGGER_TOPIC${NC}"
-fi
-
-OUTPUT_TOPIC="nba-phase4-trigger"
-if gcloud pubsub topics describe $OUTPUT_TOPIC --project=$PROJECT_ID &>/dev/null; then
-    echo -e "${GREEN}✓ Output topic exists: $OUTPUT_TOPIC${NC}"
-else
-    echo -e "${RED}✗ Output topic not found: $OUTPUT_TOPIC${NC}"
-    echo -e "${YELLOW}Creating topic...${NC}"
-    gcloud pubsub topics create $OUTPUT_TOPIC --project=$PROJECT_ID
-    echo -e "${GREEN}✓ Created topic: $OUTPUT_TOPIC${NC}"
 fi
 echo ""
 
@@ -131,7 +114,23 @@ echo -e "${GREEN}Deployment Complete!${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 
-# Get function details
+# Check if scheduler job exists
+echo -e "${YELLOW}Checking Cloud Scheduler job...${NC}"
+if gcloud scheduler jobs describe auto-retry-processor-trigger --location=$REGION --project=$PROJECT_ID &>/dev/null; then
+    echo -e "${GREEN}✓ Scheduler job exists${NC}"
+else
+    echo -e "${YELLOW}Creating Cloud Scheduler job...${NC}"
+    gcloud scheduler jobs create pubsub auto-retry-processor-trigger \
+        --schedule="*/15 * * * *" \
+        --topic=$TRIGGER_TOPIC \
+        --message-body='{"action":"retry"}' \
+        --location=$REGION \
+        --time-zone="America/New_York" \
+        --project=$PROJECT_ID
+    echo -e "${GREEN}✓ Created scheduler job${NC}"
+fi
+echo ""
+
 echo -e "${YELLOW}Function Details:${NC}"
 gcloud functions describe $FUNCTION_NAME \
     --region $REGION \
@@ -144,10 +143,10 @@ echo -e "${YELLOW}Next Steps:${NC}"
 echo "1. View logs:"
 echo "   ${BLUE}gcloud functions logs read $FUNCTION_NAME --region $REGION --limit 50${NC}"
 echo ""
-echo "2. Test by checking status:"
-echo "   ${BLUE}python orchestration/cloud_functions/phase3_to_phase4/main.py <game_date>${NC}"
+echo "2. Test manually:"
+echo "   ${BLUE}gcloud scheduler jobs run auto-retry-processor-trigger --location=$REGION${NC}"
 echo ""
-echo "3. Monitor Firestore:"
-echo "   ${BLUE}https://console.firebase.google.com/project/$PROJECT_ID/firestore/data/phase3_completion${NC}"
+echo "3. Check BigQuery queue:"
+echo "   ${BLUE}bq query 'SELECT * FROM nba_orchestration.failed_processor_queue LIMIT 10'${NC}"
 echo ""
-echo -e "${GREEN}✓ Orchestrator deployed successfully!${NC}"
+echo -e "${GREEN}✓ Auto-Retry Processor deployed successfully!${NC}"

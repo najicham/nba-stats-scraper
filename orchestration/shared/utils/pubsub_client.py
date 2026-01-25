@@ -170,10 +170,15 @@ class PubSubClient:
 
             logger.info(f"Listening for messages on {subscription_name}")
 
-            # Keep the main thread running
+            # Keep the main thread running with timeout to prevent indefinite hangs
+            # CRITICAL FIX (Jan 25, 2026): Added timeout to prevent service from
+            # hanging indefinitely if Pub/Sub has issues
             with self.subscriber:
                 try:
-                    streaming_pull_future.result()
+                    streaming_pull_future.result(timeout=300)  # 5 minute max
+                except TimeoutError:
+                    logger.warning("Streaming pull timed out after 5 minutes, cancelling")
+                    streaming_pull_future.cancel()
                 except KeyboardInterrupt:
                     streaming_pull_future.cancel()
                     logger.info("Subscription cancelled")

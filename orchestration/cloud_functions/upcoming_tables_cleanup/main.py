@@ -192,7 +192,8 @@ def _cleanup_single_table(client: bigquery.Client, table_name: str, cutoff_date:
         """
 
         job = client.query(delete_query)
-        job.result()  # Wait for completion
+        # CRITICAL FIX (Jan 25, 2026): Added timeout to prevent indefinite hang
+        job.result(timeout=120)  # 2 minute max for cleanup query
 
         logger.info(f"   ✅ {table_name}: Deleted {records_to_delete} records")
 

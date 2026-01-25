@@ -44,6 +44,7 @@ import pytz
 import requests
 from shared.clients.bigquery_pool import get_bigquery_client
 from shared.validation.phase_boundary_validator import PhaseBoundaryValidator, ValidationMode
+from shared.utils.phase_execution_logger import log_phase_execution
 
 # Completion tracker for dual-write to Firestore and BigQuery
 try:
@@ -349,6 +350,11 @@ def check_phase4_services_health() -> Tuple[bool, Dict[str, Dict]]:
 # DATA FRESHNESS VALIDATION
 # ============================================================================
 
+# Coverage threshold for phase transition gating (blocks if below this)
+# Setting to 80% to prevent NULL cascades from partial data
+COVERAGE_THRESHOLD_PCT = float(os.environ.get('COVERAGE_THRESHOLD_PCT', '80.0'))
+COVERAGE_GATING_ENABLED = os.environ.get('COVERAGE_GATING_ENABLED', 'true').lower() == 'true'
+
 # R-008: Data freshness validation for Phase 3 analytics tables
 # Required Phase 3 tables that must have data before Phase 4 can proceed
 REQUIRED_PHASE3_TABLES = [
@@ -411,6 +417,182 @@ def verify_phase3_data_ready(game_date: str) -> tuple:
         logger.error(f"R-008: Data freshness verification failed: {e}", exc_info=True)
         # On error, return False with empty details
         return (False, ['verification_error'], {'error': str(e)})
+
+
+def check_data_coverage(game_date: str) -> tuple:
+    """
+    Check data coverage against scheduled games to prevent NULL cascades.
+
+    This prevents the pipeline from proceeding with partial data by comparing
+    actual games with analytics data vs expected games from schedule.
+
+    Args:
+        game_date: The date to check (YYYY-MM-DD)
+
+    Returns:
+        tuple: (is_sufficient: bool, coverage_pct: float, details: dict)
+            - is_sufficient: True if coverage >= COVERAGE_THRESHOLD_PCT
+            - coverage_pct: Percentage of scheduled games with analytics data
+            - details: Dict with expected_games, actual_games, missing_games
+    """
+    if not COVERAGE_GATING_ENABLED:
+        logger.info("Coverage gating disabled, skipping check")
+        return (True, 100.0, {'gating_disabled': True})
+
+    try:
+        bq_client = get_bigquery_client(project_id=PROJECT_ID)
+
+        # Query to compare schedule vs actual analytics data
+        query = f"""
+        WITH scheduled_games AS (
+            SELECT DISTINCT game_id
+            FROM `{PROJECT_ID}.nba_raw.v_nbac_schedule_latest`
+            WHERE game_date = '{game_date}'
+              AND game_status_text NOT IN ('Postponed', 'Cancelled')
+        ),
+        games_with_analytics AS (
+            -- Check player_game_summary as the canonical Phase 3 table
+            SELECT DISTINCT game_id
+            FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+            WHERE game_date = '{game_date}'
+        )
+        SELECT
+            (SELECT COUNT(*) FROM scheduled_games) as expected_games,
+            (SELECT COUNT(*) FROM games_with_analytics) as actual_games,
+            ARRAY(
+                SELECT game_id FROM scheduled_games
+                EXCEPT DISTINCT
+                SELECT game_id FROM games_with_analytics
+            ) as missing_game_ids
+        """
+
+        result = list(bq_client.query(query).result())
+
+        if not result:
+            logger.warning(f"Coverage check returned no results for {game_date}")
+            return (False, 0.0, {'error': 'No results from query'})
+
+        row = result[0]
+        expected_games = row.expected_games or 0
+        actual_games = row.actual_games or 0
+        missing_game_ids = list(row.missing_game_ids) if row.missing_game_ids else []
+
+        # Calculate coverage percentage
+        if expected_games == 0:
+            # No games scheduled - consider this as 100% coverage
+            coverage_pct = 100.0
+            logger.info(f"No games scheduled for {game_date}, coverage = 100%")
+        else:
+            coverage_pct = (actual_games / expected_games) * 100
+
+        is_sufficient = coverage_pct >= COVERAGE_THRESHOLD_PCT
+
+        details = {
+            'expected_games': expected_games,
+            'actual_games': actual_games,
+            'coverage_pct': round(coverage_pct, 1),
+            'threshold_pct': COVERAGE_THRESHOLD_PCT,
+            'missing_games': len(missing_game_ids),
+            'missing_game_ids': missing_game_ids[:10]  # Limit to first 10
+        }
+
+        if is_sufficient:
+            logger.info(
+                f"Coverage check PASSED for {game_date}: {coverage_pct:.1f}% "
+                f"({actual_games}/{expected_games} games) >= {COVERAGE_THRESHOLD_PCT}%"
+            )
+        else:
+            logger.warning(
+                f"Coverage check FAILED for {game_date}: {coverage_pct:.1f}% "
+                f"({actual_games}/{expected_games} games) < {COVERAGE_THRESHOLD_PCT}%. "
+                f"Missing games: {missing_game_ids[:5]}"
+            )
+
+        return (is_sufficient, coverage_pct, details)
+
+    except Exception as e:
+        logger.error(f"Coverage check failed: {e}", exc_info=True)
+        # On error, allow transition (fail-open) but log warning
+        return (True, 0.0, {'error': str(e), 'fail_open': True})
+
+
+def send_coverage_alert(game_date: str, coverage_pct: float, details: dict) -> bool:
+    """
+    Send Slack alert when data coverage is below threshold.
+
+    Args:
+        game_date: The date being processed
+        coverage_pct: Actual coverage percentage
+        details: Coverage check details
+
+    Returns:
+        True if alert sent successfully, False otherwise
+    """
+    if not SLACK_WEBHOOK_URL:
+        logger.warning("SLACK_WEBHOOK_URL not configured, skipping coverage alert")
+        return False
+
+    try:
+        missing_games = details.get('missing_game_ids', [])
+        missing_games_str = ', '.join(missing_games[:5])
+        if len(missing_games) > 5:
+            missing_games_str += f' (+{len(missing_games) - 5} more)'
+
+        payload = {
+            "attachments": [{
+                "color": "#FF0000",  # Red for blocking
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": ":no_entry: Phase 4 BLOCKED - Low Data Coverage",
+                            "emoji": True
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Phase 4 trigger blocked due to insufficient data coverage!*\n"
+                                   f"Coverage {coverage_pct:.1f}% is below threshold {COVERAGE_THRESHOLD_PCT}%."
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
+                            {"type": "mrkdwn", "text": f"*Coverage:*\n{coverage_pct:.1f}%"},
+                            {"type": "mrkdwn", "text": f"*Expected:*\n{details.get('expected_games', 0)} games"},
+                            {"type": "mrkdwn", "text": f"*Actual:*\n{details.get('actual_games', 0)} games"},
+                        ]
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Missing Games:*\n`{missing_games_str}`"
+                        }
+                    },
+                    {
+                        "type": "context",
+                        "elements": [{
+                            "type": "mrkdwn",
+                            "text": ":warning: Phase 4 will NOT run. Check Phase 2/3 processor logs for missing data."
+                        }]
+                    }
+                ]
+            }]
+        }
+
+        response = requests.post(SLACK_WEBHOOK_URL, json=payload, timeout=10)
+        response.raise_for_status()
+        logger.info(f"Coverage alert sent successfully for {game_date}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send coverage alert: {e}", exc_info=True)
+        return False
 
 
 def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_counts: Dict) -> bool:
@@ -967,6 +1149,29 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
                 f"Cannot trigger Phase 4 with incomplete upstream data."
             )
 
+        # COVERAGE CHECK: Verify data coverage percentage against scheduled games
+        # This catches "partial data" scenarios that pass the existence check
+        is_sufficient, coverage_pct, coverage_details = check_data_coverage(game_date)
+
+        if not is_sufficient:
+            logger.error(
+                f"Coverage check FAILED for {game_date}: {coverage_pct:.1f}% < {COVERAGE_THRESHOLD_PCT}%. "
+                f"BLOCKING Phase 4 trigger to prevent NULL cascades."
+            )
+            send_coverage_alert(game_date, coverage_pct, coverage_details)
+
+            raise ValueError(
+                f"Data coverage insufficient for {game_date}: {coverage_pct:.1f}% "
+                f"(threshold: {COVERAGE_THRESHOLD_PCT}%). "
+                f"Missing {coverage_details.get('missing_games', 0)} games. "
+                f"Cannot trigger Phase 4 with partial data."
+            )
+
+        logger.info(
+            f"All validation gates passed for {game_date}: "
+            f"data_exists=True, coverage={coverage_pct:.1f}%"
+        )
+
         # Enhanced Phase Boundary Validation (BLOCKING mode)
         # Validates game count, processor completions, and data quality
         try:
@@ -1139,6 +1344,28 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
             f"Published Phase 4 trigger: message_id={message_id}, game_date={game_date}, "
             f"incremental={any_incremental}, players_changed={len(all_player_changes)}"
         )
+
+        # Log phase execution for latency tracking and monitoring
+        log_phase_execution(
+            phase_name="phase3_to_phase4",
+            game_date=game_date,
+            start_time=datetime.now(timezone.utc),  # Use current time as start (orchestrator is fast)
+            duration_seconds=0.0,  # Orchestrator execution is near-instant
+            games_processed=EXPECTED_PROCESSOR_COUNT,
+            status="complete",
+            correlation_id=correlation_id,
+            metadata={
+                "mode": mode,
+                "trigger_reason": trigger_reason,
+                "data_freshness_verified": is_ready,
+                "coverage_pct": coverage_pct,
+                "players_changed": len(all_player_changes),
+                "teams_changed": len(all_team_changes),
+                "is_incremental": any_incremental,
+                "message_id": message_id
+            }
+        )
+
         return message_id
 
     except Exception as e:

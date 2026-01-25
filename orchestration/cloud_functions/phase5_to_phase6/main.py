@@ -48,6 +48,7 @@ from typing import Dict, Optional, Tuple
 import functions_framework
 from google.cloud import bigquery, pubsub_v1
 from shared.clients.bigquery_pool import get_bigquery_client
+from shared.utils.phase_execution_logger import log_phase_execution
 
 # Pydantic validation for Pub/Sub messages
 try:
@@ -283,6 +284,23 @@ def trigger_phase6_tonight_export(
     logger.info(
         f"[{correlation_id}] Published Phase 6 trigger: message_id={message_id}, "
         f"game_date={game_date}, export_types={TONIGHT_EXPORT_TYPES}"
+    )
+
+    # Log phase execution for latency tracking and monitoring
+    log_phase_execution(
+        phase_name="phase5_to_phase6",
+        game_date=game_date,
+        start_time=datetime.now(timezone.utc),
+        duration_seconds=0.0,
+        games_processed=1,  # One batch of predictions
+        status="complete",
+        correlation_id=correlation_id,
+        metadata={
+            "export_types": TONIGHT_EXPORT_TYPES,
+            "completed_predictions": completed_predictions,
+            "batch_id": batch_id,
+            "message_id": message_id
+        }
     )
 
     return message_id

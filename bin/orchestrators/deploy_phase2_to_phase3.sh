@@ -29,7 +29,7 @@ REGION="us-west2"
 RUNTIME="python311"
 ENTRY_POINT="orchestrate_phase2_to_phase3"
 TRIGGER_TOPIC="nba-phase2-raw-complete"
-MEMORY="256MB"
+MEMORY="512MB"
 TIMEOUT="60s"
 MAX_INSTANCES="10"
 MIN_INSTANCES="0"
@@ -40,6 +40,28 @@ SOURCE_DIR="orchestration/cloud_functions/phase2_to_phase3"
 echo -e "${BLUE}========================================${NC}"
 echo -e "${BLUE}Phase 2→3 Orchestrator Deployment${NC}"
 echo -e "${BLUE}========================================${NC}"
+echo ""
+
+# Pre-deployment validation
+echo -e "${YELLOW}Running pre-deployment validations...${NC}"
+
+# Validate orchestration config matches workflows.yaml
+if python bin/validation/validate_orchestration_config.py 2>/dev/null; then
+    echo -e "${GREEN}✓ Orchestration config validation passed${NC}"
+else
+    echo -e "${RED}✗ Orchestration config validation FAILED${NC}"
+    echo "  Run: python bin/validation/validate_orchestration_config.py --fix"
+    exit 1
+fi
+
+# Validate Cloud Function imports
+if python bin/validation/validate_cloud_function_imports.py --function phase2_to_phase3 2>/dev/null; then
+    echo -e "${GREEN}✓ Cloud Function import validation passed${NC}"
+else
+    echo -e "${RED}✗ Cloud Function import validation FAILED${NC}"
+    echo "  Run: python bin/validation/validate_cloud_function_imports.py --function phase2_to_phase3"
+    exit 1
+fi
 echo ""
 
 # Check if source directory exists

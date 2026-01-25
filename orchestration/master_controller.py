@@ -242,7 +242,10 @@ class MasterWorkflowController:
 
                 elif decision_type == "discovery":
                     decision = self._evaluate_discovery(workflow_name, workflow_config, current_time, games_today)
-                
+
+                elif decision_type == "bdl_catchup":
+                    decision = self._evaluate_bdl_catchup(workflow_name, workflow_config, current_time)
+
                 else:
                     logger.warning(f"Unknown decision_type: {decision_type}, skipping")
                     continue
@@ -930,10 +933,134 @@ class MasterWorkflowController:
             }
         )
     
+    def _evaluate_bdl_catchup(self, workflow_name: str, config: Dict, current_time: datetime) -> WorkflowDecision:
+        """
+        Evaluate BDL catch-up workflow.
+
+        Finds games from last N days that have NBAC data (game_status=3) but missing
+        BDL box score data, then retries collection during the scheduled window.
+
+        This addresses the issue where BDL API data can be 45+ hours late,
+        especially for West Coast games.
+
+        Logic:
+        1. Check if in time window (fixed_time +/- tolerance)
+        2. Get lookback_days from config (e.g., 3)
+        3. Query for Final games with NBAC data but NO BDL data
+        4. Return RUN with target_games list if missing found
+        """
+        schedule = config['schedule']
+
+        # Check 1: Time window
+        fixed_time_str = schedule.get('fixed_time')  # e.g., "10:00"
+        tolerance_minutes = schedule.get('tolerance_minutes', 30)
+
+        if fixed_time_str:
+            hour, minute = map(int, fixed_time_str.split(':'))
+            window_time = current_time.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+            time_diff_minutes = abs((current_time - window_time).total_seconds() / 60)
+
+            if time_diff_minutes > tolerance_minutes:
+                return WorkflowDecision(
+                    action=DecisionAction.SKIP,
+                    reason=f"Not in time window ({fixed_time_str} ±{tolerance_minutes}min)",
+                    workflow_name=workflow_name,
+                    priority=config['priority'],
+                    next_check_time=window_time,
+                    context={'time_diff_minutes': int(time_diff_minutes)}
+                )
+
+        # Check 2: Find games missing BDL data
+        lookback_days = schedule.get('lookback_days', 3)
+
+        # Query for Final games (status=3) that have schedule data but no BDL box scores
+        # Uses the dedup view v_nbac_schedule_latest to get accurate game status
+        query = f"""
+            SELECT
+                s.game_id,
+                s.game_date,
+                s.home_team_tricode,
+                s.away_team_tricode
+            FROM `nba-props-platform.nba_raw.v_nbac_schedule_latest` s
+            LEFT JOIN (
+                SELECT DISTINCT game_id
+                FROM `nba-props-platform.nba_raw.bdl_player_boxscores`
+            ) b ON s.game_id = b.game_id
+            WHERE s.game_status = 3  -- Final games only
+              AND s.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
+              AND s.game_date < CURRENT_DATE()  -- Don't include today
+              AND b.game_id IS NULL  -- Missing BDL data
+            ORDER BY s.game_date DESC
+        """
+
+        try:
+            result = execute_bigquery(query)
+            missing_games = list(result) if result else []
+
+            if not missing_games:
+                return WorkflowDecision(
+                    action=DecisionAction.SKIP,
+                    reason=f"No games missing BDL data in last {lookback_days} days",
+                    workflow_name=workflow_name,
+                    priority=config['priority'],
+                    context={
+                        'lookback_days': lookback_days,
+                        'missing_count': 0
+                    },
+                    next_check_time=current_time + timedelta(hours=4)
+                )
+
+            # Build list of game dates that need collection
+            # Group by date for efficient scraping
+            missing_dates = sorted(set(row['game_date'].strftime('%Y-%m-%d') for row in missing_games))
+            missing_game_ids = [row['game_id'] for row in missing_games]
+
+            # Log details for debugging
+            game_details = [
+                f"{row['away_team_tricode']}@{row['home_team_tricode']} ({row['game_date']})"
+                for row in missing_games[:5]  # First 5 for brevity
+            ]
+            if len(missing_games) > 5:
+                game_details.append(f"... and {len(missing_games) - 5} more")
+
+            logger.info(f"BDL catch-up found {len(missing_games)} games missing data: {game_details}")
+
+            # Get scraper from execution plan
+            execution_plan = config.get('execution_plan', {})
+            scraper = execution_plan.get('scraper', 'bdl_box_scores')
+
+            return WorkflowDecision(
+                action=DecisionAction.RUN,
+                reason=f"Found {len(missing_games)} games missing BDL data across {len(missing_dates)} dates",
+                workflow_name=workflow_name,
+                priority=config['priority'],
+                scrapers=[scraper],
+                target_games=missing_game_ids,
+                alert_level=AlertLevel.INFO if len(missing_games) < 5 else AlertLevel.WARNING,
+                context={
+                    'lookback_days': lookback_days,
+                    'missing_count': len(missing_games),
+                    'missing_dates': missing_dates,
+                    'sample_games': game_details
+                }
+            )
+
+        except GoogleAPIError as e:
+            logger.error(f"Error checking for missing BDL games: {e}")
+            return WorkflowDecision(
+                action=DecisionAction.ABORT,
+                reason=f"Cannot query for missing games: {str(e)}",
+                workflow_name=workflow_name,
+                priority=config['priority'],
+                alert_level=AlertLevel.WARNING,
+                context={'error': str(e)}
+            )
+
     def _extract_scrapers_from_plan(self, execution_plan: Dict) -> List[str]:
         """
         Extract list of scrapers from execution plan.
-        
+
         Handles various plan structures:
         - Simple: {"type": "parallel", "scrapers": [...]}
         - Multi-step: {"step_1": {...}, "step_2": {...}}

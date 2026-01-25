@@ -42,6 +42,7 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from google.cloud import firestore, pubsub_v1, bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
+from shared.utils.phase_execution_logger import log_phase_execution
 import functions_framework
 
 # Completion tracker for dual-write to Firestore and BigQuery
@@ -1232,6 +1233,25 @@ def trigger_phase5(game_date: str, correlation_id: str, upstream_message: Dict) 
         except Exception as e:
             logger.warning(f"Failed to trigger prediction coordinator via HTTP: {e}")
             # Don't fail - Pub/Sub message was sent, coordinator can pick it up
+
+        # Log phase execution for latency tracking and monitoring
+        log_phase_execution(
+            phase_name="phase4_to_phase5",
+            game_date=game_date,
+            start_time=datetime.now(timezone.utc),
+            duration_seconds=0.0,
+            games_processed=EXPECTED_PROCESSOR_COUNT,
+            status="complete",
+            correlation_id=correlation_id,
+            metadata={
+                "data_freshness_verified": is_ready,
+                "total_processors_complete": total_complete,
+                "critical_complete": critical_complete,
+                "missing_tables": missing_tables if not is_ready else [],
+                "coordinator_healthy": coordinator_healthy,
+                "message_id": message_id
+            }
+        )
 
         return message_id
 
