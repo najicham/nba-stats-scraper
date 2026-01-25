@@ -241,6 +241,21 @@ def query_data_completeness(client: bigquery.Client) -> Dict[str, Any]:
                 ROUND(AVG(feature_quality_score), 1) as avg_quality
             FROM `nba_predictions.ml_feature_store_v2`, yesterday
             WHERE game_date = check_date
+        ),
+        gradable_predictions AS (
+            SELECT COUNT(*) as gradable
+            FROM `nba_predictions.player_prop_predictions`, yesterday
+            WHERE game_date = check_date
+                AND is_active = TRUE
+                AND current_points_line IS NOT NULL
+                AND current_points_line != 20.0
+                AND line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
+                AND invalidation_reason IS NULL
+        ),
+        graded_predictions AS (
+            SELECT COUNT(*) as graded
+            FROM `nba_predictions.prediction_accuracy`, yesterday
+            WHERE game_date = check_date
         )
         SELECT
             s.expected as expected_games,
@@ -249,11 +264,16 @@ def query_data_completeness(client: bigquery.Client) -> Dict[str, Any]:
             COALESCE(a.actual, 0) as analytics_games,
             ROUND(COALESCE(a.actual, 0) * 100.0 / NULLIF(s.expected, 0), 1) as analytics_pct,
             f.features as feature_count,
-            f.avg_quality as feature_quality
+            f.avg_quality as feature_quality,
+            COALESCE(gp.gradable, 0) as gradable_predictions,
+            COALESCE(gr.graded, 0) as graded_predictions,
+            ROUND(COALESCE(gr.graded, 0) * 100.0 / NULLIF(gp.gradable, 0), 1) as grading_pct
         FROM schedule_count s
         CROSS JOIN bdl_count b
         CROSS JOIN analytics_count a
         CROSS JOIN feature_quality f
+        CROSS JOIN gradable_predictions gp
+        CROSS JOIN graded_predictions gr
         """
 
         query_job = client.query(query)
@@ -265,6 +285,9 @@ def query_data_completeness(client: bigquery.Client) -> Dict[str, Any]:
                 'bdl_pct': 0,
                 'analytics_pct': 0,
                 'feature_quality': 0,
+                'grading_pct': 0,
+                'gradable_predictions': 0,
+                'graded_predictions': 0,
                 'has_gaps': False,
                 'gap_details': []
             }
@@ -278,12 +301,17 @@ def query_data_completeness(client: bigquery.Client) -> Dict[str, Any]:
             gaps.append(f"Analytics: {row.analytics_pct}%")
         if (row.feature_quality or 0) < 75:
             gaps.append(f"Feature quality: {row.feature_quality}")
+        if (row.grading_pct or 0) < 90:
+            gaps.append(f"Grading: {row.grading_pct}%")
 
         return {
             'expected_games': row.expected_games or 0,
             'bdl_pct': row.bdl_pct or 0,
             'analytics_pct': row.analytics_pct or 0,
             'feature_quality': row.feature_quality or 0,
+            'grading_pct': row.grading_pct or 0,
+            'gradable_predictions': row.gradable_predictions or 0,
+            'graded_predictions': row.graded_predictions or 0,
             'has_gaps': len(gaps) > 0,
             'gap_details': gaps
         }
@@ -294,6 +322,9 @@ def query_data_completeness(client: bigquery.Client) -> Dict[str, Any]:
             'bdl_pct': -1,
             'analytics_pct': -1,
             'feature_quality': -1,
+            'grading_pct': -1,
+            'gradable_predictions': -1,
+            'graded_predictions': -1,
             'has_gaps': True,
             'gap_details': [f"Query error: {str(e)[:50]}"]
         }
@@ -545,12 +576,14 @@ def format_slack_message(
         bdl_emoji = "✅" if data_completeness['bdl_pct'] >= 90 else "⚠️"
         analytics_emoji = "✅" if data_completeness['analytics_pct'] >= 90 else "⚠️"
         quality_emoji = "✅" if data_completeness['feature_quality'] >= 75 else "⚠️"
+        grading_emoji = "✅" if data_completeness['grading_pct'] >= 90 else "⚠️"
 
         completeness_text = (
             f"*📦 Data Completeness (Yesterday)* {completeness_emoji}\n"
             f"• Expected Games: *{data_completeness['expected_games']}*\n"
             f"• BDL Coverage: *{data_completeness['bdl_pct']}%* {bdl_emoji}\n"
             f"• Analytics Coverage: *{data_completeness['analytics_pct']}%* {analytics_emoji}\n"
+            f"• Grading Coverage: *{data_completeness['grading_pct']}%* ({data_completeness['graded_predictions']}/{data_completeness['gradable_predictions']}) {grading_emoji}\n"
             f"• Feature Quality: *{data_completeness['feature_quality']}* {quality_emoji}"
         )
 

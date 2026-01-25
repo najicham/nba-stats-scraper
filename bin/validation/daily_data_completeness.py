@@ -77,7 +77,12 @@ def get_daily_completeness(days_back: int = 7) -> List[Dict]:
         FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
         WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days_back} DAY)
             AND system_id = 'catboost_v8'
+            -- Match grading processor filters exactly:
             AND is_active = TRUE
+            AND current_points_line IS NOT NULL
+            AND current_points_line != 20.0
+            AND line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
+            AND invalidation_reason IS NULL
         GROUP BY 1
     ),
     grading_coverage AS (
