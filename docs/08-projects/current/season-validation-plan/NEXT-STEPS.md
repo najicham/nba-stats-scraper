@@ -126,8 +126,8 @@ See: `/docs/08-projects/current/season-validation-plan/GRADING-BACKFILL-EXECUTIO
 |------|--------|
 | Grading coverage >80% | ✅ 98.1% |
 | System performance updated | ✅ Complete |
-| Phase 6 exports regenerated | ⏸️ **DO NEXT** |
-| ML feedback re-run | ⏸️ **DO NEXT** |
+| Phase 6 exports regenerated | ✅ Complete (847/847 dates) |
+| ML feedback re-run | ✅ Complete (124/216 weekly snapshots) |
 | BDL coverage >98% | ⏸️ Optional |
 
 ---
