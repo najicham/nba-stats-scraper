@@ -86,6 +86,11 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.player_prop_predi
   injury_reason_at_prediction STRING,               -- Injury reason text (e.g., "Left Knee - Soreness")
   injury_checked_at TIMESTAMP,                      -- When injury status was checked
 
+  -- Invalidation Tracking (2 fields - v3.5 Postponement Handling)
+  -- Tracks when predictions are invalidated due to postponed/cancelled games
+  invalidation_reason STRING,                   -- 'game_postponed', 'game_cancelled', 'player_inactive'
+  invalidated_at TIMESTAMP,                     -- When prediction was invalidated
+
   -- Timestamps (2 fields)
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP() NOT NULL,
   updated_at TIMESTAMP
@@ -196,6 +201,17 @@ ADD COLUMN IF NOT EXISTS injury_reason_at_prediction STRING
 ADD COLUMN IF NOT EXISTS injury_checked_at TIMESTAMP
   OPTIONS (description='Timestamp when injury status was checked during prediction');
 
+-- v3.5: Add invalidation tracking for postponed/cancelled games
+-- When games are postponed, predictions need to be marked as invalid so they:
+-- 1. Don't get graded (would skew accuracy metrics)
+-- 2. Are excluded from downstream analysis
+-- 3. Have an audit trail of why they were invalidated
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS invalidation_reason STRING
+  OPTIONS (description='Reason prediction was invalidated: game_postponed, game_cancelled, player_inactive'),
+ADD COLUMN IF NOT EXISTS invalidated_at TIMESTAMP
+  OPTIONS (description='When prediction was invalidated');
+
 -- ============================================================================
 -- VERSION HISTORY
 -- ============================================================================
@@ -212,6 +228,9 @@ ADD COLUMN IF NOT EXISTS injury_checked_at TIMESTAMP
 --                       injury_reason_at_prediction, injury_checked_at
 --                       Enables distinguishing expected vs surprise voids
 --                       Captures injury status AT PREDICTION TIME for better analysis
+-- v3.5 (+invalidation): Added invalidation_reason, invalidated_at
+--                       Tracks predictions invalidated due to postponed/cancelled games
+--                       Ensures invalidated predictions are excluded from grading
 --
 -- Last Updated: January 2026
 -- Status: Production Ready
