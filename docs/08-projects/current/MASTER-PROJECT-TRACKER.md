@@ -1,11 +1,78 @@
-# Master Project Tracker - January 24, 2026
-**Last Updated:** 2026-01-24 Session 13
-**Status:** 🟢 Critical Fixes Applied - Infrastructure Improvements
+# Master Project Tracker - January 25, 2026
+**Last Updated:** 2026-01-25 Session 15 (Final)
+**Status:** 🟢 Pipeline Resilience Phase 1+2 Complete
 **Owner:** Data Engineering Team
 
 ---
 
 ## Executive Dashboard
+
+### 🔄 Session 15: Pipeline Resilience Implementation Complete (Jan 24-25)
+
+Implemented Week 1 + Week 2 resilience improvements from the Jan 24 remediation plan.
+
+#### Week 1 Deliverables ✅
+| Deliverable | Status | Description |
+|-------------|--------|-------------|
+| Orchestrator Deployments | ✅ DEPLOYED | Phase 3→4, 4→5, 5→6 all redeployed with 512MB + fixes |
+| failed_processor_queue Table | ✅ CREATED | BigQuery table for auto-retry tracking |
+| pipeline_event_log Table | ✅ CREATED | BigQuery table for audit trail |
+| pipeline_logger Utility | ✅ CREATED | `shared/utils/pipeline_logger.py` for event logging |
+| auto-retry-processor Function | ✅ DEPLOYED | Cloud Function + Scheduler (every 15 min) |
+| Cloud Function Import Fix | ✅ FIXED | `shared/validation/__init__.py` simplified in all CFs |
+
+#### Week 2 Deliverables ✅
+| Deliverable | Status | Description |
+|-------------|--------|-------------|
+| Phase 3 Event Logging | ✅ INTEGRATED | `analytics_base.py` logs start/complete/error events |
+| Phase 4 Event Logging | ✅ INTEGRATED | `precompute_base.py` logs start/complete/error events |
+| Recovery Dashboard View | ✅ CREATED | `nba_orchestration.v_recovery_dashboard` BigQuery view |
+| Memory Warning Alert | ✅ CREATED | `bin/monitoring/setup_memory_alerts.sh` script |
+| Config Drift Detection | ✅ CREATED | `bin/validation/detect_config_drift.py` script |
+| Daily Health Email Updates | ✅ UPDATED | Added recovery stats to daily summary |
+| E2E Tests for Auto-Retry | ✅ CREATED | `tests/e2e/test_auto_retry.py` |
+
+**Key Accomplishments:**
+- All Phase 3-4 processor events now logged to BigQuery for observability
+- Auto-retry system detects failures and retries transient errors (up to 3 times)
+- Recovery dashboard provides single pane of glass for pipeline health
+- Config drift detection prevents silent misconfigurations
+- Daily health email now includes recovery stats (pending, succeeded, rate)
+
+**New Files Created:**
+- `shared/utils/pipeline_logger.py` - Comprehensive pipeline event logging with deduplication
+- `orchestration/cloud_functions/auto_retry_processor/main.py` - Auto-retry Cloud Function
+- `bin/orchestrators/deploy_auto_retry_processor.sh` - Deploy script
+- `bin/validation/detect_config_drift.py` - Config drift detection
+- `bin/monitoring/setup_memory_alerts.sh` - Memory alert setup
+- `tests/e2e/test_auto_retry.py` - E2E tests for auto-retry system
+
+---
+
+### 🔄 Session 14: Critical Orchestration Remediation (Jan 24 Evening)
+
+Root cause analysis and fix for daily orchestration failure (1/6 Phase 2 complete):
+
+| Fix | Priority | Status | Impact |
+|-----|----------|--------|--------|
+| Processor Name Mismatch | P0 | ✅ FIXED | Config expected old names, scrapers publish `p2_*` names |
+| BigQuery Metadata Serialization | P1 | ✅ FIXED | Added `json.dumps()` for metadata field |
+| Registry Broken Entry | P2 | ✅ FIXED | `nbac_schedule` pointed to missing file |
+| Orchestrator Memory (256→512MB) | P1 | ✅ FIXED | OOM errors eliminated |
+| Memory Monitoring Script | P2 | ✅ ADDED | `check_cloud_resources.sh` for proactive detection |
+
+**Files Modified:**
+- `shared/config/orchestration_config.py` - Fixed 6 processor names
+- `shared/utils/phase_execution_logger.py` - Added json.dumps()
+- `scrapers/registry.py` - Fixed nbac_schedule entry
+- `bin/orchestrators/deploy_*.sh` (4 files) - Memory 256→512MB
+- `bin/monitoring/check_cloud_resources.sh` - NEW monitoring script
+- `docs/00-orchestration/services.md` - Memory guidelines
+- `docs/00-orchestration/troubleshooting.md` - 4 new troubleshooting sections
+
+**Root Cause:** Orchestration config processor names didn't match what scrapers actually publish. Config expected `bdl_player_boxscores` but scrapers publish `p2_bdl_box_scores`.
+
+---
 
 ### 🔄 Session 13: Critical Infrastructure Fixes (Jan 24)
 
@@ -826,8 +893,18 @@ WHERE game_date >= CURRENT_DATE() - 3
 | 2026-01-24 Session 13 | Fixed 5 precompute processors: added get_upstream_data_check_query() to all | ✅ |
 | 2026-01-24 Session 13 | Processors fixed: ml_feature_store, player_daily_cache, player_composite_factors, player_shot_zone_analysis, team_defense_zone_analysis | ✅ |
 
+| 2026-01-25 Session 15 | Deployed phase3-to-phase4 orchestrator (512MB, fixed imports) | ✅ |
+| 2026-01-25 Session 15 | Deployed phase4-to-phase5 orchestrator (512MB, fixed imports) | ✅ |
+| 2026-01-25 Session 15 | Deployed phase5-to-phase6 orchestrator (512MB, fixed imports) | ✅ |
+| 2026-01-25 Session 15 | Fixed Cloud Function validation __init__.py (all CFs) - removed historical_completeness import | ✅ |
+| 2026-01-25 Session 15 | Created nba_orchestration.failed_processor_queue BigQuery table | ✅ |
+| 2026-01-25 Session 15 | Created nba_orchestration.pipeline_event_log BigQuery table | ✅ |
+| 2026-01-25 Session 15 | Created shared/utils/pipeline_logger.py for event logging | ✅ |
+| 2026-01-25 Session 15 | Created and deployed auto-retry-processor Cloud Function | ✅ |
+| 2026-01-25 Session 15 | Created Cloud Scheduler job (every 15 min) for auto-retry | ✅ |
+
 ---
 
-**Last Updated:** January 24, 2026 (Session 13)
+**Last Updated:** January 25, 2026 (Session 15)
 **Next Update:** As needed
-**Status:** 🟢 Critical Infrastructure Fixes Applied
+**Status:** 🟢 Pipeline Resilience Phase 1 Complete

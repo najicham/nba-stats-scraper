@@ -428,14 +428,84 @@ except Exception as e:
 
 ---
 
+## NEW: Exploration Session Findings (2026-01-25 Afternoon)
+
+### Updated Duplicate Analysis
+
+The duplicate prediction issue is **more extensive than initially reported**:
+
+```
+| Metric | Value |
+|--------|-------|
+| Duplicate business keys | 1,692 |
+| Extra rows total | 6,473 |
+| Worst case | dariusgarland: 10 NULLs per system on 2026-01-19 |
+```
+
+**Root cause identified:** Multiple batches for same game_date create different `prediction_id` values:
+- Batch 1 (13:28:50): 5 workers write staging tables
+- Batch 2 (15:06:07): 5 more workers write staging tables
+- Batch 3 (22:00:02): 4 more workers write staging tables
+- Each consolidation finds "NOT MATCHED" and inserts new rows
+
+**Cleanup query:**
+```sql
+DELETE FROM nba_predictions.player_prop_predictions
+WHERE prediction_id NOT IN (
+  SELECT MIN(prediction_id)
+  FROM nba_predictions.player_prop_predictions
+  WHERE game_date >= '2026-01-15'
+  GROUP BY game_id, player_lookup, system_id,
+           CAST(COALESCE(current_points_line, -1) AS INT64)
+);
+```
+
+### nbac_player_boxscore Failing (2026-01-24)
+
+**Error:** `NoHttpStatusCodeException: No status_code on download response`
+- NBA.com API returning no HTTP status (possible blocking)
+- 8 retry attempts exhausted
+- Result: 2026-01-24 only 85.7% complete (6/7 games)
+
+**In failed_processor_queue:** 1 pending item for nbac_player_boxscore
+
+### 618 Orphaned Analytics Records
+
+Analytics records exist without matching raw boxscores since Jan 1, 2026.
+
+### Scraper Resilience Gaps Identified
+
+1. **BDL pagination partial data loss** - When pagination fails, collected data is discarded
+2. **Three uncoordinated retry systems** - ProxyCircuitBreaker, ProxyManager, RateLimitHandler
+3. **Circuit breaker too aggressive** - Opens after just 3 failures
+4. **HTTP timeout (20s) may be insufficient** for large responses
+
+### Processor Silent Record Skipping
+
+1. **Records filtered without per-record tracking** in bdl_player_box_scores_processor
+2. **Smart idempotency hides data gaps** - Hash match skips validation
+3. **Streaming buffer rows lost** - Skipped without retry in same run
+
+### No Phase Transitions in 48 Hours
+
+Workflow health shows ERROR: No phase transitions logged. Needs investigation.
+
+**Full details:** See `docs/09-handoff/2026-01-25-EXPLORATION-SESSION-FINDINGS.md`
+
+---
+
 ## Summary Checklist
 
 | Item | Priority | Status |
 |------|----------|--------|
+| **Clean up 6,473 duplicate predictions** | **P0** | **NEW - Needs cleanup** |
+| **Retry nbac_player_boxscore for Jan 24** | **P0** | **NEW - Pending** |
 | Verify HTTP endpoint URLs resolve | CRITICAL | Verify before deploy |
 | Test one endpoint manually | CRITICAL | Verify before deploy |
 | Create gate_overrides table | HIGH | Not created |
 | Monitor tonight's games | HIGH | After 11 PM ET |
+| **Investigate 618 orphaned analytics** | **HIGH** | **NEW** |
+| **Investigate no phase transitions** | **HIGH** | **NEW** |
 | Test new validators | MEDIUM | Before relying on them |
 | Track feature quality recovery | MEDIUM | Ongoing |
 | Investigate phase execution log | MEDIUM | After critical fixes |
@@ -445,5 +515,6 @@ except Exception as e:
 ---
 
 *Created: 2026-01-25*
+*Updated: 2026-01-25 (Added exploration session findings)*
 *Purpose: Pre-deployment verification and risk mitigation*
-*Related: FINAL-COMPREHENSIVE-HANDOFF.md, MASTER-PLAN-ADDITIONS.md*
+*Related: FINAL-COMPREHENSIVE-HANDOFF.md, MASTER-PLAN-ADDITIONS.md, EXPLORATION-SESSION-FINDINGS.md*

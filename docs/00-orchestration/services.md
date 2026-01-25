@@ -15,14 +15,32 @@ Complete list of all services in the NBA pipeline.
 
 ## Cloud Functions
 
-| Function | Trigger | Purpose |
-|----------|---------|---------|
-| `phase2-to-phase3-orchestrator` | Pub/Sub: nba-phase2-raw-complete | Triggers Phase 3 after Phase 2 |
-| `phase3-to-phase4-orchestrator` | Pub/Sub: nba-phase3-analytics-complete | Triggers Phase 4 after Phase 3 |
-| `phase4-to-phase5-orchestrator` | Pub/Sub: nba-phase4-precompute-complete | Triggers Phase 5 after Phase 4 |
-| `phase5-to-phase6-orchestrator` | Pub/Sub: nba-phase5-predictions-complete | Triggers Phase 6 after Phase 5 |
-| `phase5b-grading` | Pub/Sub: nba-grading-trigger | Grades predictions |
-| `phase6-export` | Pub/Sub: nba-phase6-export-trigger | Exports to API |
+| Function | Trigger | Memory | Purpose |
+|----------|---------|--------|---------|
+| `phase2-to-phase3-orchestrator` | Pub/Sub: nba-phase2-raw-complete | 512MB | Triggers Phase 3 after Phase 2 |
+| `phase3-to-phase4-orchestrator` | Pub/Sub: nba-phase3-analytics-complete | 512MB | Triggers Phase 4 after Phase 3 |
+| `phase4-to-phase5-orchestrator` | Pub/Sub: nba-phase4-precompute-complete | 512MB | Triggers Phase 5 after Phase 4 |
+| `phase5-to-phase6-orchestrator` | Pub/Sub: nba-phase5-predictions-complete | 512MB | Triggers Phase 6 after Phase 5 |
+| `phase5b-grading` | Pub/Sub: nba-grading-trigger | 1GB | Grades predictions |
+| `phase6-export` | Pub/Sub: nba-phase6-export-trigger | 2GB | Exports to API |
+
+### Memory Guidelines
+
+**Orchestrators:** Minimum 512MB. BigQuery and Firestore clients consume ~250MB at startup.
+
+**Warning Signs:**
+- Log message: `Memory limit of X MiB exceeded with Y MiB used`
+- Container exits with code 137 (OOM killed)
+- Startup probe failures
+
+**Monitoring:**
+```bash
+# Check all service memory allocations
+./bin/monitoring/check_cloud_resources.sh
+
+# Include OOM warning check from logs
+./bin/monitoring/check_cloud_resources.sh --check-logs
+```
 
 ## Cloud Scheduler Jobs
 

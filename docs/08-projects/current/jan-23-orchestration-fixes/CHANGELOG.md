@@ -1,4 +1,354 @@
-# Changelog - January 23, 2026 Orchestration Fixes
+# Changelog - January 23-25, 2026 Orchestration Fixes
+
+## [2026-01-25] - Session 15: Pipeline Resilience Phase 1 Implementation
+
+### Orchestrator Deployments
+
+All remaining orchestrators redeployed with 512MB memory and fixed imports:
+
+| Orchestrator | Memory | Status |
+|--------------|--------|--------|
+| phase3-to-phase4-orchestrator | 512MB | ✅ DEPLOYED |
+| phase4-to-phase5-orchestrator | 512MB | ✅ DEPLOYED |
+| phase5-to-phase6-orchestrator | 512MB | ✅ DEPLOYED |
+
+### Fixed
+
+#### Cloud Function Validation __init__.py (All Functions)
+- **Issue**: `ModuleNotFoundError: No module named 'shared.validation.historical_completeness'`
+- **Root Cause**: Cloud Function `shared/validation/__init__.py` tried to import `historical_completeness` which doesn't exist in CF directories
+- **Fix**: Simplified all Cloud Function `shared/validation/__init__.py` files to only import locally available modules:
+  - `orchestration/cloud_functions/phase2_to_phase3/shared/validation/__init__.py`
+  - `orchestration/cloud_functions/phase3_to_phase4/shared/validation/__init__.py`
+  - `orchestration/cloud_functions/phase4_to_phase5/shared/validation/__init__.py`
+  - `orchestration/cloud_functions/phase5_to_phase6/shared/validation/__init__.py`
+  - `orchestration/cloud_functions/auto_backfill_orchestrator/shared/validation/__init__.py`
+
+### Added
+
+#### BigQuery Tables for Resilience
+
+**nba_orchestration.failed_processor_queue**
+```sql
+CREATE TABLE nba_orchestration.failed_processor_queue (
+  id STRING NOT NULL,
+  game_date DATE NOT NULL,
+  phase STRING NOT NULL,
+  processor_name STRING NOT NULL,
+  error_message STRING,
+  error_type STRING,  -- 'transient' or 'permanent'
+  retry_count INT64 DEFAULT 0,
+  max_retries INT64 DEFAULT 3,
+  first_failure_at TIMESTAMP NOT NULL,
+  last_retry_at TIMESTAMP,
+  next_retry_at TIMESTAMP,
+  status STRING DEFAULT 'pending',
+  correlation_id STRING,
+  created_at TIMESTAMP,
+  updated_at TIMESTAMP
+) PARTITION BY game_date;
+```
+
+**nba_orchestration.pipeline_event_log**
+```sql
+CREATE TABLE nba_orchestration.pipeline_event_log (
+  event_id STRING NOT NULL,
+  timestamp TIMESTAMP,
+  event_type STRING NOT NULL,  -- phase_start, processor_complete, error, retry
+  phase STRING,
+  processor_name STRING,
+  game_date DATE,
+  correlation_id STRING,
+  trigger_source STRING,
+  duration_seconds FLOAT64,
+  records_processed INT64,
+  error_type STRING,
+  error_message STRING,
+  stack_trace STRING,
+  metadata JSON
+) PARTITION BY DATE(timestamp);
+```
+
+#### Pipeline Logger Utility
+- **File**: `shared/utils/pipeline_logger.py`
+- **Purpose**: Comprehensive event logging to BigQuery for observability
+- **Functions**:
+  - `log_pipeline_event()` - Log any pipeline event
+  - `log_processor_start()` - Convenience for processor start
+  - `log_processor_complete()` - Convenience for processor completion
+  - `log_processor_error()` - Log error and optionally queue for retry
+  - `queue_for_retry()` - Add to failed_processor_queue
+  - `classify_error()` - Classify as 'transient' or 'permanent'
+
+#### Auto-Retry Processor Cloud Function
+- **Location**: `orchestration/cloud_functions/auto_retry_processor/`
+- **Trigger**: Cloud Scheduler every 15 minutes
+- **Function**: Queries `failed_processor_queue` for pending retries and triggers appropriate Pub/Sub messages
+- **Features**:
+  - Exponential backoff (15min, 30min, 60min)
+  - Max 3 retries before marking permanent
+  - Slack alerts for permanent failures
+  - Phase-to-topic mapping for correct retry routing
+
+**Cloud Scheduler Job Created:**
+```
+Name: auto-retry-processor-trigger
+Schedule: */15 * * * *
+Topic: auto-retry-trigger
+Timezone: America/New_York
+```
+
+### New Files
+| File | Purpose |
+|------|---------|
+| `shared/utils/pipeline_logger.py` | Event logging utility |
+| `orchestration/cloud_functions/auto_retry_processor/main.py` | Auto-retry Cloud Function |
+| `orchestration/cloud_functions/auto_retry_processor/requirements.txt` | Dependencies |
+| `bin/orchestrators/deploy_auto_retry_processor.sh` | Deploy script |
+
+### Impact
+- **Observability**: All pipeline events can now be logged to BigQuery
+- **Auto-Recovery**: Transient failures automatically retried up to 3 times
+- **Alerting**: Permanent failures trigger Slack alerts for manual intervention
+- **Audit Trail**: Complete event history for debugging and analysis
+
+### Verification Commands
+```bash
+# Check BigQuery tables
+bq show nba_orchestration.failed_processor_queue
+bq show nba_orchestration.pipeline_event_log
+
+# Test auto-retry manually
+gcloud scheduler jobs run auto-retry-processor-trigger --location=us-west2
+
+# Check Cloud Function logs
+gcloud functions logs read auto-retry-processor --region us-west2 --limit 20
+
+# Query pending retries
+bq query 'SELECT * FROM nba_orchestration.failed_processor_queue WHERE status = "pending"'
+```
+
+---
+
+## [2026-01-25] - Session 15b: Pipeline Resilience Phase 2 Complete
+
+### Added
+
+#### Event Logging Integration
+- **analytics_base.py**: Added pipeline logger integration for Phase 3 processors
+  - Logs processor start/complete/error to pipeline_event_log
+  - Auto-queues transient errors for retry
+  - Clears retry entries on success
+- **precompute_base.py**: Added pipeline logger integration for Phase 4 processors
+  - Same event logging as Phase 3
+
+#### Recovery Dashboard View
+- **nba_orchestration.v_recovery_dashboard**: BigQuery view that shows:
+  - Active failures with retry count
+  - Success rate by processor
+  - Recovery time metrics
+  - Summary statistics
+
+#### Config Drift Detection
+- **bin/validation/detect_config_drift.py**: Script to detect Cloud resource config drift
+  - Compares deployed vs expected configs (memory, timeout, max_instances)
+  - Checks all orchestrators and Cloud Run services
+  - Supports Slack alerting with `--alert` flag
+
+#### Memory Warning Alert
+- **bin/monitoring/setup_memory_alerts.sh**: Creates Cloud Monitoring alert policy
+  - Fires when Cloud Function uses >80% memory
+  - Prevents OOM errors proactively
+
+#### E2E Tests for Auto-Retry
+- **tests/e2e/test_auto_retry.py**: Comprehensive tests for:
+  - Pipeline logger event logging
+  - Queue deduplication
+  - Error classification
+  - Retry success marking
+  - Stale entry cleanup
+
+#### Daily Health Email Updates
+- **bin/alerts/daily_summary/main.py**: Added recovery stats section:
+  - Pending retries count
+  - Successful recoveries (7 day)
+  - Permanent failures
+  - Auto-recovery rate percentage
+  - Pipeline events (24h)
+
+### Files Created/Modified
+| File | Change |
+|------|--------|
+| `data_processors/analytics/analytics_base.py` | Added pipeline logger integration |
+| `data_processors/precompute/precompute_base.py` | Added pipeline logger integration |
+| `nba_orchestration.v_recovery_dashboard` | Created BigQuery view |
+| `bin/validation/detect_config_drift.py` | Created config drift detection |
+| `bin/monitoring/setup_memory_alerts.sh` | Created memory alert setup |
+| `tests/e2e/test_auto_retry.py` | Created e2e tests |
+| `bin/alerts/daily_summary/main.py` | Added recovery stats section |
+
+### Impact
+- **Observability**: All Phase 3-4 processor events now logged to BigQuery
+- **Recovery Dashboard**: Single view for monitoring auto-retry health
+- **Proactive Monitoring**: Memory alerts prevent OOM before they happen
+- **Config Drift**: Detect misconfiguration before it causes problems
+- **Daily Visibility**: Recovery stats in daily health email
+
+---
+
+## [2026-01-25] - Session 15c: Master Controller Firestore Permission Fix
+
+### Root Cause Analysis
+During validation, discovered that the master controller had been failing since Jan 23 due to missing Firestore permissions.
+
+**Symptoms:**
+- Workflow controller showing 0 workflows evaluated
+- Only `bdl_live_boxscores` scraper running (has dedicated scheduler)
+- All Jan 24 games showing "Scheduled" instead of "Final"
+- Phase 2 completion tracking stuck at 0/6
+
+**Root Cause:**
+```
+ERROR: Firestore error acquiring lock: 403 Missing or insufficient permissions.
+```
+The `bigdataball-puller` service account used by `nba-scrapers` Cloud Run service was missing the `datastore.user` IAM role needed for Firestore distributed locking.
+
+### Fix Applied
+```bash
+gcloud projects add-iam-policy-binding nba-props-platform \
+  --member="serviceAccount:bigdataball-puller@nba-props-platform.iam.gserviceaccount.com" \
+  --role="roles/datastore.user"
+```
+
+### Recovery Actions
+1. Granted Firestore permissions to service account
+2. Manually updated schedule to correct game statuses
+3. Triggered workflow evaluation - 3 workflows now running
+4. Started Phase 3 analytics backfill for Jan 23-24
+5. Started background monitoring for scraper completion
+
+### Documentation Updated
+- Added "Master Controller Firestore Lock Permission Denied" section to troubleshooting guide
+- Added "Auto-Retry System Not Working" section to troubleshooting guide
+
+### Impact
+- Master controller now working correctly
+- Workflows evaluating and running as expected
+- Analytics backfill in progress for Jan 23-24
+
+---
+
+## [2026-01-24] - Session 14: Critical Orchestration Remediation
+
+### Root Cause Analysis
+Daily orchestration showed 1/6 Phase 2 processors complete despite scrapers running successfully. Multi-issue cascade:
+
+| Issue | Severity | Root Cause |
+|-------|----------|------------|
+| Phase 2 scrapers incomplete (1/6) | CRITICAL | Processor name mismatch in orchestration config |
+| BigQuery insert error | HIGH | `metadata` field needs JSON serialization |
+| Phase 3 analytics incomplete (1/5) | HIGH | Cascaded from Phase 2 failure |
+| Low prediction coverage (35.9%) | MEDIUM | Cascaded from upstream failures |
+
+### Fixed
+
+#### shared/config/orchestration_config.py
+- **Processor name mismatch**: Orchestrator expected `bdl_player_boxscores` but scrapers publish `p2_bdl_box_scores`
+- **Fix**: Updated all Phase 2 processor names to match actual `processor_name` values from workflows.yaml:
+  - `bdl_player_boxscores` → `p2_bdl_box_scores`
+  - `bigdataball_play_by_play` → `p2_bigdataball_pbp`
+  - `odds_api_game_lines` → `p2_odds_game_lines`
+  - `nbac_schedule` → `p2_nbacom_schedule`
+  - `nbac_gamebook_player_stats` → `p2_nbacom_gamebook_pdf`
+  - `br_rosters_current` → `p2_br_season_roster`
+
+#### shared/utils/phase_execution_logger.py
+- **BigQuery insert error**: `metadata` dict passed to JSON field without serialization
+- **Fix**: Added `json.dumps(metadata) if metadata else None`
+
+#### scrapers/registry.py
+- **Broken registry entry**: `nbac_schedule` pointed to non-existent `nbac_current_schedule_v2_1.py`
+- **Fix**: Updated to point to `nbac_schedule_cdn` module
+
+#### bin/orchestrators/deploy_*.sh (all 4 scripts)
+- **Memory limit exceeded**: phase2-to-phase3-orchestrator was at 256MB, using 253MB
+- **Fix**: Updated all orchestrator deploy scripts from `MEMORY="256MB"` to `MEMORY="512MB"`
+
+### Added
+
+#### bin/monitoring/check_cloud_resources.sh
+New monitoring script to detect memory issues proactively:
+```bash
+# Check all service memory allocations
+./bin/monitoring/check_cloud_resources.sh
+
+# Include OOM warning check from logs
+./bin/monitoring/check_cloud_resources.sh --check-logs
+```
+
+### Documentation Updated
+- `docs/00-orchestration/services.md` - Added Memory column, memory guidelines
+- `docs/00-orchestration/troubleshooting.md` - Added 4 new troubleshooting sections
+
+### Impact
+- Phase 2 orchestrator now correctly tracks processor completions
+- BigQuery phase execution logging works without errors
+- Orchestrators have adequate memory (512MB minimum)
+- Proactive memory monitoring prevents future OOM issues
+
+### Verification Commands
+```bash
+# Verify orchestration config fix
+python -c "from shared.config.orchestration_config import get_orchestration_config; print(get_orchestration_config().phase_transitions.phase2_expected_processors)"
+
+# Verify logger fix
+python -c "from shared.utils.phase_execution_logger import log_phase_execution; print('OK')"
+
+# Verify registry fix
+python -c "from scrapers.registry import get_scraper_instance; print(get_scraper_instance('nbac_schedule'))"
+
+# Check memory allocations
+./bin/monitoring/check_cloud_resources.sh
+```
+
+---
+
+## [2026-01-24] - Session 14b: Resilience Improvements
+
+### Added
+
+#### Validation Scripts
+- **bin/validation/validate_orchestration_config.py**: Validates orchestration config processor names match workflows.yaml
+- **bin/validation/validate_cloud_function_imports.py**: Validates Cloud Functions have all required shared modules
+
+#### Pre-Deploy Checks
+Updated all orchestrator deploy scripts with validation:
+- `bin/orchestrators/deploy_phase2_to_phase3.sh`
+- `bin/orchestrators/deploy_phase3_to_phase4.sh`
+- `bin/orchestrators/deploy_phase4_to_phase5.sh`
+- `bin/orchestrators/deploy_phase5_to_phase6.sh`
+
+### Fixed
+
+#### Cloud Function Import Issues
+Simplified `shared/utils/__init__.py` in all Cloud Functions to prevent import failures:
+- `orchestration/cloud_functions/phase3_to_phase4/shared/utils/__init__.py`
+- `orchestration/cloud_functions/phase4_to_phase5/shared/utils/__init__.py`
+- `orchestration/cloud_functions/phase5_to_phase6/shared/utils/__init__.py`
+- `orchestration/cloud_functions/auto_backfill_orchestrator/shared/utils/__init__.py`
+
+#### Processor Bug
+- **upcoming_player_game_context_processor.py:1597**: Removed call to non-existent `validate_dependency_row_counts()` method
+
+### Documentation
+- Created comprehensive resilience plan: `docs/08-projects/current/pipeline-resilience-improvements/RESILIENCE-PLAN-2026-01-24.md`
+
+### Impact
+- All orchestrator deploys now validate before deployment
+- Cloud Functions will not fail due to missing shared modules
+- upcoming_player_game_context backfill now works
+
+---
 
 ## [2026-01-23] - Critical Bug Fixes
 
