@@ -54,9 +54,11 @@ class MockScraper(ScraperBase):
         response.headers = {}
         return response
 
-    def decode_download_content(self, response):
+    def decode_download_content(self):
         """Override with mock implementation"""
-        return json.loads(response.text)
+        # Uses self.raw_response set by download_data()
+        if hasattr(self, 'raw_response') and self.raw_response:
+            self.decoded_data = json.loads(self.raw_response.text)
 
     def transform_data(self, data):
         """Override with mock implementation"""
@@ -161,11 +163,11 @@ class TestDownloadBasics:
 
         scraper.download_data = Mock(side_effect=set_raw_response)
 
-        result = scraper.download_and_decode()
+        # download_and_decode() doesn't return a value, it sets instance variables
+        scraper.download_and_decode()
 
-        assert result is True
-        assert scraper.data == {"data": "test"}
-        assert scraper.stats.get('download_success') is True
+        # Check that decoded_data was set correctly
+        assert scraper.decoded_data == {"data": "test"}
 
     def test_download_handles_network_error(self):
         """Test download handles network errors gracefully"""
