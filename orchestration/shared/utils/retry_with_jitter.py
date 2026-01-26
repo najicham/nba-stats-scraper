@@ -146,8 +146,9 @@ def retry_with_jitter(
                             on_retry(attempt, e, final_delay)
                         except Exception as callback_error:
                             logger.error(
-                                f"on_retry callback failed: {callback_error}"
-                            , exc_info=True)
+                                f"on_retry callback failed: {callback_error}",
+                                exc_info=True
+                            )
 
                     # Sleep before retry
                     time.sleep(final_delay)

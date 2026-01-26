@@ -385,7 +385,7 @@ class CleanupProcessor:
                         logger.error(
                             f"❌ Failed to republish {file_info['scraper_name']} after {MAX_RETRIES} attempts: {e}",
                             exc_info=True
-                        , exc_info=True)
+                        )
 
             if not success:
                 failed_files.append({
