@@ -5,16 +5,21 @@ FILE: scripts/validate_tonight_data.py
 Comprehensive validation script for tonight's game data.
 Checks each stage of the pipeline and reports issues.
 
-Run after 2 PM ET to verify tonight's predictions are ready.
+TIMING GUIDANCE:
+  Pre-Game Check:  Run after 5 PM ET (before games start at 7 PM)
+  Post-Game Check: Run after 6 AM ET next day (after predictions generated)
+
+Running earlier may show false alarms as workflows haven't completed yet.
 
 Usage:
     python scripts/validate_tonight_data.py [--date YYYY-MM-DD]
+    python scripts/validate_tonight_data.py --date 2026-01-26  # Check specific date
 """
 
 import sys
 import os
 import argparse
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timezone, timedelta
 from typing import Dict, List, Tuple
 from collections import defaultdict
 
@@ -152,7 +157,12 @@ class TonightDataValidator:
         return missing_teams_by_game
 
     def check_predictions(self) -> Tuple[int, int]:
-        """Check predictions exist and aren't duplicated."""
+        """
+        Check predictions exist and aren't duplicated.
+
+        Predictions are generated the morning AFTER games complete.
+        If checking same day as games, predictions won't exist yet - this is expected.
+        """
         # Check for predictions
         query = f"""
         SELECT
@@ -175,8 +185,15 @@ class TonightDataValidator:
         self.stats['prediction_games'] = games
 
         if total_rows == 0:
-            self.add_issue('predictions', f'No predictions for {self.target_date}')
-            return 0, 0
+            # Check if this is expected (same day as target date)
+            if self.target_date >= date.today():
+                # Predictions for today/future - expected to be missing
+                print(f"ℹ️  Predictions: Not generated yet (run tomorrow morning after games complete)")
+                return 0, 0
+            else:
+                # Historical date - predictions should exist
+                self.add_issue('predictions', f'No predictions for {self.target_date}')
+                return 0, 0
 
         # Check for duplicates
         if total_rows > unique_players:
@@ -603,6 +620,25 @@ class TonightDataValidator:
         print(f"\n{'='*60}")
         print(f"TONIGHT'S DATA VALIDATION - {self.target_date}")
         print(f"{'='*60}\n")
+
+        # Check timing and warn if running too early
+        current_hour = datetime.now(timezone.utc).hour
+        current_time_et = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=5)  # Convert to ET
+        hour_et = current_time_et.hour
+
+        if self.target_date == date.today():
+            if hour_et < 17:  # Before 5 PM ET
+                print(f"⚠️  WARNING: Running validation at {hour_et:02d}:{current_time_et.minute:02d} ET")
+                print(f"    Recommended times:")
+                print(f"      Pre-game check:  5 PM ET or later (betting data + Phase 3)")
+                print(f"      Post-game check: 6 AM ET next day (predictions)")
+                print(f"    Data may not be available yet - expect false alarms!\n")
+        elif self.target_date < date.today():
+            # Checking past date - all data should exist
+            print(f"ℹ️  Checking historical date: {self.target_date}\n")
+        else:
+            # Checking future date - no data expected
+            print(f"ℹ️  Checking future date: {self.target_date} (no data expected)\n")
 
         # Run each check
         game_count = self.check_schedule()
