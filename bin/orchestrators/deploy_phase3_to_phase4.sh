@@ -120,7 +120,18 @@ trap "rm -rf $BUILD_DIR" EXIT
 rsync -aL --exclude='__pycache__' --exclude='*.pyc' --exclude='.git' \
     "$SOURCE_DIR/" "$BUILD_DIR/"
 
+# Copy consolidated shared utilities (post-consolidation requirement)
+echo -e "${YELLOW}Including consolidated orchestration.shared.utils...${NC}"
+mkdir -p "$BUILD_DIR/orchestration/shared"
+rsync -aL --exclude='__pycache__' --exclude='*.pyc' \
+    "orchestration/shared/utils/" "$BUILD_DIR/orchestration/shared/utils/"
+rsync -aL --exclude='__pycache__' --exclude='*.pyc' \
+    "orchestration/shared/__init__.py" "$BUILD_DIR/orchestration/shared/__init__.py" 2>/dev/null || true
+# Create __init__.py for orchestration package
+echo "# Orchestration package" > "$BUILD_DIR/orchestration/__init__.py"
+
 echo -e "${GREEN}✓ Build directory created: $BUILD_DIR${NC}"
+echo -e "${GREEN}✓ Consolidated utils included${NC}"
 echo -e "${YELLOW}Deploying from build directory...${NC}"
 echo ""
 
