@@ -73,6 +73,7 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
     download_type: DownloadType = DownloadType.JSON
     decode_download_data: bool = True
     header_profile: str | None = "data"
+    proxy_enabled: bool = True  # Prevent IP blocking from rapid requests
 
     GCS_PATH_KEY = "nba_com_play_by_play"
     exporters = [
