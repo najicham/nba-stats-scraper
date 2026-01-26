@@ -1335,6 +1335,94 @@ def api_processor_failures():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/failed-processor-queue')
+@rate_limit
+def api_failed_processor_queue():
+    """Get the failed processor retry queue status."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    include_resolved = request.args.get('include_resolved', 'false').lower() == 'true'
+    try:
+        queue = bq_service.get_failed_processor_queue(include_resolved=include_resolved)
+
+        # Calculate summary stats
+        pending = sum(1 for q in queue if q['status'] == 'pending')
+        retrying = sum(1 for q in queue if q['status'] == 'retrying')
+        exhausted = sum(1 for q in queue if q['status'] == 'exhausted')
+        resolved = sum(1 for q in queue if q['status'] == 'resolved')
+
+        return jsonify({
+            'queue': queue,
+            'summary': {
+                'total': len(queue),
+                'pending': pending,
+                'retrying': retrying,
+                'exhausted': exhausted,
+                'resolved': resolved
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error in api_failed_processor_queue: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/pipeline-timeline')
+@rate_limit
+def api_pipeline_timeline():
+    """Get pipeline event timeline for visualization."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    target_date = request.args.get('date')
+    hours = clamp_param(request.args.get('hours', type=int, default=24), 1, 168)
+
+    try:
+        events = bq_service.get_pipeline_event_timeline(target_date=target_date, hours=hours)
+
+        # Group by phase for summary
+        phase_summary = {}
+        for event in events:
+            phase = event['phase'] or 'unknown'
+            if phase not in phase_summary:
+                phase_summary[phase] = {'total': 0, 'completed': 0, 'error': 0, 'running': 0}
+            phase_summary[phase]['total'] += 1
+            phase_summary[phase][event['status']] += 1
+
+        return jsonify({
+            'events': events,
+            'summary': {
+                'total_events': len(events),
+                'by_phase': phase_summary
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error in api_pipeline_timeline: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/partials/pipeline-timeline')
+@rate_limit
+def partial_pipeline_timeline():
+    """HTMX partial: Pipeline timeline display."""
+    if not check_auth():
+        return '<div class="text-red-500">Unauthorized</div>', 401
+
+    target_date = request.args.get('date')
+    hours = clamp_param(request.args.get('hours', type=int, default=24), 1, 168)
+
+    try:
+        events = bq_service.get_pipeline_event_timeline(target_date=target_date, hours=hours)
+    except Exception as e:
+        return f'<div class="text-red-500">Error: {e}</div>', 500
+
+    return render_template(
+        'components/pipeline_timeline.html',
+        events=events,
+        target_date=target_date
+    )
+
+
 @app.route('/partials/processor-failures')
 @rate_limit
 def partial_processor_failures():
@@ -1345,10 +1433,15 @@ def partial_processor_failures():
     hours = clamp_param(request.args.get('hours', type=int), *PARAM_BOUNDS['hours'])
     try:
         failures = bq_service.get_processor_failures(hours=hours)
+        retry_queue = bq_service.get_failed_processor_queue(include_resolved=False)
     except Exception as e:
         return f'<div class="text-red-500">Error: {e}</div>', 500
 
-    return render_template('components/processor_failures.html', failures=failures)
+    return render_template(
+        'components/processor_failures.html',
+        failures=failures,
+        retry_queue=retry_queue
+    )
 
 
 @app.route('/api/coverage-metrics')
@@ -1359,15 +1452,18 @@ def api_coverage_metrics():
         return jsonify({'error': 'Unauthorized'}), 401
 
     days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+    trend_days = clamp_param(request.args.get('trend_days', type=int, default=30), 7, 90)
     try:
         coverage = bq_service.get_player_game_summary_coverage(days=days)
         grading = bq_service.get_grading_status(days=days)
+        grading_coverage_trend = bq_service.get_grading_coverage_daily(days=trend_days)
         return jsonify({
             'player_game_summary_coverage': coverage,
-            'grading_status': grading
+            'grading_status': grading,
+            'grading_coverage_trend': grading_coverage_trend
         })
     except Exception as e:
-        logger.error(f"Error in api_coverage_metrics: {e}")
+        logger.error(f"Error in api_coverage_metrics: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
@@ -1379,16 +1475,19 @@ def partial_coverage_metrics():
         return '<div class="text-red-500">Unauthorized</div>', 401
 
     days = clamp_param(request.args.get('days', type=int), *PARAM_BOUNDS['days'])
+    trend_days = clamp_param(request.args.get('trend_days', type=int, default=30), 7, 90)
     try:
         coverage = bq_service.get_player_game_summary_coverage(days=days)
         grading = bq_service.get_grading_status(days=days)
+        grading_coverage_trend = bq_service.get_grading_coverage_daily(days=trend_days)
     except Exception as e:
         return f'<div class="text-red-500">Error: {e}</div>', 500
 
     return render_template(
         'components/coverage_metrics.html',
         coverage=coverage,
-        grading=grading
+        grading=grading,
+        grading_coverage_trend=grading_coverage_trend
     )
 
 
@@ -1533,6 +1632,46 @@ def api_grading_by_system():
         })
     except Exception as e:
         logger.error(f"Error in api_grading_by_system: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/grading-coverage-trend')
+@rate_limit
+def api_grading_coverage_trend():
+    """Get grading coverage trend from ops.grading_coverage_daily view."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    days = clamp_param(request.args.get('days', type=int, default=30), 7, 90)
+    try:
+        trend_data = bq_service.get_grading_coverage_daily(days=days)
+
+        # Calculate summary stats (filter out None coverage values for avg)
+        if trend_data:
+            valid_coverage = [d['coverage_pct'] for d in trend_data if d['coverage_pct'] is not None]
+            avg_coverage = sum(valid_coverage) / len(valid_coverage) if valid_coverage else 0
+            excellent_days = sum(1 for d in trend_data if d['status'] == 'EXCELLENT')
+            good_days = sum(1 for d in trend_data if d['status'] == 'GOOD')
+            acceptable_days = sum(1 for d in trend_data if d['status'] == 'ACCEPTABLE')
+            poor_days = sum(1 for d in trend_data if d['status'] == 'POOR')
+        else:
+            avg_coverage = 0
+            excellent_days = good_days = acceptable_days = poor_days = 0
+
+        return jsonify({
+            'grading_coverage_trend': trend_data,
+            'summary': {
+                'days_queried': days,
+                'days_with_data': len(trend_data),
+                'avg_coverage_pct': round(avg_coverage, 1),
+                'excellent_days': excellent_days,
+                'good_days': good_days,
+                'acceptable_days': acceptable_days,
+                'poor_days': poor_days
+            }
+        })
+    except Exception as e:
+        logger.error(f"Error in api_grading_coverage_trend: {e}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 

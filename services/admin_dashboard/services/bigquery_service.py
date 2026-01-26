@@ -325,6 +325,186 @@ class BigQueryService:
             logger.error(f"Error querying processor failures: {e}")
             return []
 
+    def get_pipeline_event_timeline(self, target_date: str = None, hours: int = 24) -> List[Dict]:
+        """
+        Get pipeline events for timeline visualization.
+
+        Returns events grouped by processor with start/end times for Gantt-style display.
+
+        Args:
+            target_date: Specific game_date to filter (YYYY-MM-DD), or None for recent
+            hours: If target_date not specified, get events from last N hours
+
+        Returns:
+            List of events with timing info
+        """
+        if target_date:
+            date_filter = f"game_date = '{target_date}'"
+            time_filter = "timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)"
+        else:
+            date_filter = "1=1"
+            time_filter = f"timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {hours} HOUR)"
+
+        query = f"""
+        WITH events AS (
+            SELECT
+                event_id,
+                timestamp,
+                event_type,
+                phase,
+                processor_name,
+                game_date,
+                correlation_id,
+                duration_seconds,
+                records_processed,
+                error_message
+            FROM `{PROJECT_ID}.{self.datasets['orchestration']}.pipeline_event_log`
+            WHERE {date_filter}
+              AND {time_filter}
+        ),
+        -- Pair start events with their corresponding complete/error events
+        paired AS (
+            SELECT
+                s.event_id,
+                s.timestamp as start_time,
+                s.phase,
+                s.processor_name,
+                s.game_date,
+                s.correlation_id,
+                COALESCE(
+                    c.timestamp,
+                    e.timestamp,
+                    TIMESTAMP_ADD(s.timestamp, INTERVAL 1 MINUTE)
+                ) as end_time,
+                CASE
+                    WHEN c.event_id IS NOT NULL THEN 'completed'
+                    WHEN e.event_id IS NOT NULL THEN 'error'
+                    ELSE 'running'
+                END as status,
+                COALESCE(c.duration_seconds, s.duration_seconds) as duration_seconds,
+                COALESCE(c.records_processed, s.records_processed) as records_processed,
+                e.error_message
+            FROM events s
+            LEFT JOIN events c ON s.correlation_id = c.correlation_id
+                AND c.event_type = 'processor_complete'
+            LEFT JOIN events e ON s.correlation_id = e.correlation_id
+                AND e.event_type = 'error'
+            WHERE s.event_type = 'processor_start'
+        )
+        SELECT
+            event_id,
+            start_time,
+            end_time,
+            phase,
+            processor_name,
+            game_date,
+            correlation_id,
+            status,
+            duration_seconds,
+            records_processed,
+            error_message
+        FROM paired
+        ORDER BY start_time DESC
+        LIMIT 200
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'event_id': row.event_id,
+                    'start_time': row.start_time.isoformat() if row.start_time else None,
+                    'end_time': row.end_time.isoformat() if row.end_time else None,
+                    'phase': row.phase,
+                    'processor_name': row.processor_name,
+                    'game_date': row.game_date.isoformat() if row.game_date else None,
+                    'correlation_id': row.correlation_id,
+                    'status': row.status,
+                    'duration_seconds': row.duration_seconds,
+                    'records_processed': row.records_processed,
+                    'error_message': row.error_message[:200] if row.error_message else None
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying pipeline event timeline: {e}", exc_info=True)
+            return []
+
+    def get_failed_processor_queue(self, include_resolved: bool = False) -> List[Dict]:
+        """
+        Get the failed processor retry queue from nba_orchestration.failed_processor_queue.
+
+        Shows processors pending retry, currently retrying, or exhausted.
+
+        Args:
+            include_resolved: If True, include resolved items (default False)
+
+        Returns:
+            List of queue entries with retry status
+        """
+        status_filter = "" if include_resolved else "AND status != 'resolved'"
+
+        query = f"""
+        SELECT
+            id,
+            game_date,
+            phase,
+            processor_name,
+            error_message,
+            error_type,
+            retry_count,
+            max_retries,
+            first_failure_at,
+            last_retry_at,
+            next_retry_at,
+            status,
+            resolution_notes,
+            correlation_id,
+            created_at,
+            updated_at
+        FROM `{PROJECT_ID}.{self.datasets['orchestration']}.failed_processor_queue`
+        WHERE created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+          {status_filter}
+        ORDER BY
+            CASE status
+                WHEN 'pending' THEN 1
+                WHEN 'retrying' THEN 2
+                WHEN 'exhausted' THEN 3
+                WHEN 'resolved' THEN 4
+                ELSE 5
+            END,
+            next_retry_at ASC NULLS LAST,
+            created_at DESC
+        LIMIT 100
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'id': row.id,
+                    'game_date': row.game_date.isoformat() if row.game_date else None,
+                    'phase': row.phase,
+                    'processor_name': row.processor_name,
+                    'error_message': row.error_message[:300] if row.error_message else None,
+                    'error_type': row.error_type,
+                    'retry_count': row.retry_count,
+                    'max_retries': row.max_retries,
+                    'first_failure_at': row.first_failure_at.isoformat() if row.first_failure_at else None,
+                    'last_retry_at': row.last_retry_at.isoformat() if row.last_retry_at else None,
+                    'next_retry_at': row.next_retry_at.isoformat() if row.next_retry_at else None,
+                    'status': row.status,
+                    'resolution_notes': row.resolution_notes,
+                    'correlation_id': row.correlation_id,
+                    'created_at': row.created_at.isoformat() if row.created_at else None,
+                    'updated_at': row.updated_at.isoformat() if row.updated_at else None
+                }
+                for row in result
+            ]
+        except Exception as e:
+            logger.error(f"Error querying failed processor queue: {e}", exc_info=True)
+            return []
+
     def get_player_game_summary_coverage(self, days: int = 7) -> List[Dict]:
         """
         Get player_game_summary coverage for recent days.
@@ -446,6 +626,67 @@ class BigQueryService:
             ]
         except Exception as e:
             logger.error(f"Error querying grading status: {e}")
+            return []
+
+    def get_grading_coverage_daily(self, days: int = 30) -> List[Dict]:
+        """
+        Get grading coverage trend from ops.grading_coverage_daily view.
+
+        Returns daily grading coverage with status ratings:
+        - EXCELLENT: >=95%
+        - GOOD: 80-95%
+        - ACCEPTABLE: 50-80%
+        - POOR: <50%
+
+        Args:
+            days: Number of days to fetch (default 30, max 90)
+        """
+        # Check cache first
+        cache_key = self.cache.generate_key(
+            "grading_coverage_daily",
+            {"days": days},
+            prefix="coverage"
+        )
+        cached = self.cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        # Limit to max 90 days (view range)
+        days = min(days, 90)
+
+        query = f"""
+        SELECT
+            game_date,
+            total_predictions,
+            gradable_predictions,
+            graded_count,
+            coverage_pct,
+            status
+        FROM `{PROJECT_ID}.ops.grading_coverage_daily`
+        WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
+        ORDER BY game_date DESC
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            data = [
+                {
+                    'game_date': row.game_date.isoformat() if row.game_date else None,
+                    'total_predictions': row.total_predictions,
+                    'gradable_predictions': row.gradable_predictions,
+                    'graded_count': row.graded_count,
+                    'coverage_pct': float(row.coverage_pct) if row.coverage_pct is not None else None,
+                    'status': row.status
+                }
+                for row in result
+            ]
+
+            # Cache for 30 minutes
+            self.cache.set(cache_key, data, ttl_seconds=1800)
+            return data
+
+        except Exception as e:
+            logger.error(f"Error querying grading coverage daily: {e}", exc_info=True)
             return []
 
     def get_grading_by_system(self, days: int = 7) -> List[Dict]:
