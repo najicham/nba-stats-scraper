@@ -12,6 +12,13 @@ Transforms raw Phase 2 data into player game analytics with:
 - Prop betting results calculation
 - Full source tracking (6 sources × 3 fields = 18 fields)
 
+REFACTORED: This file has been split into modules for maintainability:
+- sources/shot_zone_analyzer.py: Shot zone extraction from BigDataBall PBP
+- sources/prop_calculator.py: Prop betting calculations
+- sources/player_registry.py: Universal ID integration
+- calculators/quality_scorer.py: Source coverage quality scoring
+- calculators/change_detector.py: Change detection wrapper
+
 Version: 2.0 (Clean rewrite)
 Last Updated: November 2025
 Status: Production Ready
@@ -28,15 +35,15 @@ from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 from data_processors.analytics.analytics_base import AnalyticsProcessorBase
 from shared.utils.notification_system import notify_error, notify_warning, notify_info
-from shared.utils.player_registry import RegistryReader, PlayerNotFoundError
 
 # Pattern imports (Week 1 - Foundation Patterns)
 from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin, QualityMixin
 from shared.config.source_coverage import SourceCoverageEventType, SourceCoverageSeverity
 from shared.processors.patterns.quality_columns import build_quality_columns_with_legacy
 
-# Change detection (v1.1 feature)
-from shared.change_detection.change_detector import PlayerChangeDetector
+# Extracted modules for maintainability
+from .sources import ShotZoneAnalyzer, PropCalculator, PlayerRegistryHandler
+from .calculators import QualityScorer, ChangeDetectorWrapper
 
 logger = logging.getLogger(__name__)
 
@@ -158,27 +165,30 @@ class PlayerGameSummaryProcessor(
         super().__init__()
         self.table_name = 'player_game_summary'
         self.processing_strategy = 'MERGE_UPDATE'
-        
-        # Registry for universal player IDs
-        self.registry = RegistryReader(
-            source_name='player_game_summary',
-            cache_ttl_seconds=300
-        )
-        
-        # Track registry stats
-        self.registry_stats = {
-            'players_found': 0,
-            'players_not_found': 0,
-            'records_skipped': 0
-        }
 
-        # Track registry failures for observability (v2.1 feature)
-        self.registry_failures = []
+        # Lazy-loaded modules (initialized when needed)
+        self._shot_zone_analyzer: Optional[ShotZoneAnalyzer] = None
+        self._registry_handler: Optional[PlayerRegistryHandler] = None
 
-        # Shot zone data from play-by-play (Pass 2 enrichment)
-        self.shot_zone_data: Dict = {}
-        self.shot_zones_available: bool = False
-        self.shot_zones_source: Optional[str] = None
+    @property
+    def shot_zone_analyzer(self) -> ShotZoneAnalyzer:
+        """Lazy-load shot zone analyzer."""
+        if self._shot_zone_analyzer is None:
+            self._shot_zone_analyzer = ShotZoneAnalyzer(
+                bq_client=self.bq_client,
+                project_id=self.project_id
+            )
+        return self._shot_zone_analyzer
+
+    @property
+    def registry_handler(self) -> PlayerRegistryHandler:
+        """Lazy-load registry handler."""
+        if self._registry_handler is None:
+            self._registry_handler = PlayerRegistryHandler(
+                source_name='player_game_summary',
+                cache_ttl_seconds=300
+            )
+        return self._registry_handler
 
     def get_dependencies(self) -> dict:
         """
@@ -273,7 +283,7 @@ class PlayerGameSummaryProcessor(
             }
         }
 
-    def get_change_detector(self) -> PlayerChangeDetector:
+    def get_change_detector(self):
         """
         Provide change detector for incremental processing (v1.1 feature).
 
@@ -283,7 +293,7 @@ class PlayerGameSummaryProcessor(
         Returns:
             PlayerChangeDetector configured for player stats
         """
-        return PlayerChangeDetector(project_id=self.project_id)
+        return ChangeDetectorWrapper.create_detector(project_id=self.project_id)
 
     def get_upstream_data_check_query(self, start_date: str, end_date: str) -> Optional[str]:
         """
@@ -619,189 +629,7 @@ class PlayerGameSummaryProcessor(
 
         # Extract shot zones from play-by-play (Pass 2 enrichment)
         if not self.raw_data.empty:
-            self._extract_player_shot_zones(start_date, end_date)
-
-    def _extract_player_shot_zones(self, start_date: str, end_date: str) -> None:
-        """
-        Extract shot zone data from BigDataBall play-by-play (Pass 2 enrichment).
-
-        Extracts per-player:
-        - Shot attempts and makes by zone (paint, mid-range, three)
-        - Assisted vs unassisted field goals
-        - And-1 counts (made shot + shooting foul)
-        - Blocks by zone (paint, mid-range, three) - tracks the BLOCKER
-
-        Zone definitions:
-        - Paint: shot_distance <= 8 feet
-        - Mid-range: shot_distance > 8 AND NOT 3pt
-        - Three-point: event_subtype contains '3pt' OR shot_distance >= 23.75
-
-        Gracefully handles missing play-by-play data.
-        """
-        try:
-            # Query BigDataBall play-by-play for player shot zones, shot creation, and blocks
-            query = f"""
-            WITH player_shots AS (
-                SELECT
-                    game_id,
-                    -- Strip player_id prefix (format changed in Oct 2024: "1630552jalenjohnson" -> "jalenjohnson")
-                    REGEXP_REPLACE(player_1_lookup, r'^[0-9]+', '') as player_lookup,
-                    -- Classify shot zone
-                    CASE
-                        WHEN shot_distance <= 8.0 THEN 'paint'
-                        WHEN event_subtype LIKE '%3pt%' OR shot_distance >= 23.75 THEN 'three'
-                        ELSE 'mid_range'
-                    END as zone,
-                    shot_made,
-                    player_2_role  -- 'assist' or 'block' or NULL
-                FROM `{self.project_id}.nba_raw.bigdataball_play_by_play`
-                WHERE event_type = 'shot'
-                    AND shot_made IS NOT NULL
-                    AND shot_distance IS NOT NULL
-                    AND player_1_lookup IS NOT NULL
-                    AND game_date BETWEEN '{start_date}' AND '{end_date}'
-            ),
-            -- And-1 counts from free throw 1/1 events (indicates made shot + foul)
-            and1_events AS (
-                SELECT
-                    game_id,
-                    REGEXP_REPLACE(player_1_lookup, r'^[0-9]+', '') as player_lookup,
-                    COUNT(*) as and1_count
-                FROM `{self.project_id}.nba_raw.bigdataball_play_by_play`
-                WHERE event_type = 'free throw'
-                    AND event_subtype = 'free throw 1/1'
-                    AND player_1_lookup IS NOT NULL
-                    AND game_date BETWEEN '{start_date}' AND '{end_date}'
-                GROUP BY game_id, player_1_lookup
-            ),
-            -- Block aggregates by zone - tracks the BLOCKER (player_2), not the shooter
-            block_aggregates AS (
-                SELECT
-                    game_id,
-                    REGEXP_REPLACE(player_2_lookup, r'^[0-9]+', '') as blocker_lookup,
-                    COUNT(CASE WHEN zone = 'paint' THEN 1 END) as paint_blocks,
-                    COUNT(CASE WHEN zone = 'mid_range' THEN 1 END) as mid_range_blocks,
-                    COUNT(CASE WHEN zone = 'three' THEN 1 END) as three_pt_blocks
-                FROM (
-                    SELECT
-                        game_id,
-                        REGEXP_REPLACE(player_2_lookup, r'^[0-9]+', '') as player_2_lookup,
-                        CASE
-                            WHEN shot_distance <= 8.0 THEN 'paint'
-                            WHEN event_subtype LIKE '%3pt%' OR shot_distance >= 23.75 THEN 'three'
-                            ELSE 'mid_range'
-                        END as zone
-                    FROM `{self.project_id}.nba_raw.bigdataball_play_by_play`
-                    WHERE event_type = 'shot'
-                        AND player_2_role = 'block'
-                        AND shot_distance IS NOT NULL
-                        AND player_2_lookup IS NOT NULL
-                        AND game_date BETWEEN '{start_date}' AND '{end_date}'
-                )
-                GROUP BY game_id, player_2_lookup
-            ),
-            shot_aggregates AS (
-                SELECT
-                    game_id,
-                    player_lookup,
-                    -- Paint zone
-                    COUNT(CASE WHEN zone = 'paint' THEN 1 END) as paint_attempts,
-                    COUNT(CASE WHEN zone = 'paint' AND shot_made = TRUE THEN 1 END) as paint_makes,
-                    -- Mid-range zone
-                    COUNT(CASE WHEN zone = 'mid_range' THEN 1 END) as mid_range_attempts,
-                    COUNT(CASE WHEN zone = 'mid_range' AND shot_made = TRUE THEN 1 END) as mid_range_makes,
-                    -- Three-point (for validation against box score)
-                    COUNT(CASE WHEN zone = 'three' THEN 1 END) as three_attempts_pbp,
-                    COUNT(CASE WHEN zone = 'three' AND shot_made = TRUE THEN 1 END) as three_makes_pbp,
-                    -- Assisted vs unassisted field goals
-                    COUNT(CASE WHEN shot_made = TRUE AND player_2_role = 'assist' THEN 1 END) as assisted_fg_makes,
-                    COUNT(CASE WHEN shot_made = TRUE AND (player_2_role IS NULL OR player_2_role NOT IN ('assist', 'block')) THEN 1 END) as unassisted_fg_makes
-                FROM player_shots
-                GROUP BY game_id, player_lookup
-            )
-            SELECT
-                s.game_id,
-                s.player_lookup,
-                s.paint_attempts,
-                s.paint_makes,
-                s.mid_range_attempts,
-                s.mid_range_makes,
-                s.three_attempts_pbp,
-                s.three_makes_pbp,
-                s.assisted_fg_makes,
-                s.unassisted_fg_makes,
-                COALESCE(a.and1_count, 0) as and1_count,
-                b.paint_blocks,
-                b.mid_range_blocks,
-                b.three_pt_blocks
-            FROM shot_aggregates s
-            LEFT JOIN and1_events a ON s.game_id = a.game_id AND s.player_lookup = a.player_lookup
-            LEFT JOIN block_aggregates b ON s.game_id = b.game_id AND s.player_lookup = b.blocker_lookup
-            """
-
-            shot_zones_df = self.bq_client.query(query).to_dataframe()
-
-            if not shot_zones_df.empty:
-                # Convert to dict keyed by (game_id, player_lookup)
-                blocks_found = 0
-                for _, row in shot_zones_df.iterrows():
-                    key = (row['game_id'], row['player_lookup'])
-                    self.shot_zone_data[key] = {
-                        'paint_attempts': int(row['paint_attempts']) if pd.notna(row['paint_attempts']) else None,
-                        'paint_makes': int(row['paint_makes']) if pd.notna(row['paint_makes']) else None,
-                        'mid_range_attempts': int(row['mid_range_attempts']) if pd.notna(row['mid_range_attempts']) else None,
-                        'mid_range_makes': int(row['mid_range_makes']) if pd.notna(row['mid_range_makes']) else None,
-                        'assisted_fg_makes': int(row['assisted_fg_makes']) if pd.notna(row['assisted_fg_makes']) else None,
-                        'unassisted_fg_makes': int(row['unassisted_fg_makes']) if pd.notna(row['unassisted_fg_makes']) else None,
-                        'and1_count': int(row['and1_count']) if pd.notna(row['and1_count']) else None,
-                        # Block tracking by zone (tracks the BLOCKER)
-                        'paint_blocks': int(row['paint_blocks']) if pd.notna(row['paint_blocks']) else None,
-                        'mid_range_blocks': int(row['mid_range_blocks']) if pd.notna(row['mid_range_blocks']) else None,
-                        'three_pt_blocks': int(row['three_pt_blocks']) if pd.notna(row['three_pt_blocks']) else None,
-                    }
-                    # Count players with any blocks
-                    if pd.notna(row['paint_blocks']) or pd.notna(row['mid_range_blocks']) or pd.notna(row['three_pt_blocks']):
-                        blocks_found += 1
-
-                self.shot_zones_available = True
-                self.shot_zones_source = 'bigdataball_pbp'
-                logger.info(f"✅ Extracted shot zones + shot creation + blocks for {len(self.shot_zone_data)} player-games ({blocks_found} with blocks) from BigDataBall")
-            else:
-                logger.warning("⚠️ BigDataBall play-by-play query returned no shot zones")
-                self.shot_zones_available = False
-                self.shot_zones_source = None
-
-        except Exception as e:
-            logger.warning(f"⚠️ Failed to extract shot zones (non-critical): {e}")
-            self.shot_zones_available = False
-            self.shot_zones_source = None
-
-    def _get_shot_zone_data(self, game_id: str, player_lookup: str) -> Dict:
-        """
-        Get shot zone data for a specific player-game.
-
-        Returns dict with all shot zone fields, using None for missing data.
-        This allows using **self._get_shot_zone_data() in record building.
-        """
-        key = (game_id, player_lookup)
-        zones = self.shot_zone_data.get(key, {})
-
-        return {
-            # Shot zones by location
-            'paint_attempts': zones.get('paint_attempts'),
-            'paint_makes': zones.get('paint_makes'),
-            'mid_range_attempts': zones.get('mid_range_attempts'),
-            'mid_range_makes': zones.get('mid_range_makes'),
-            # Shot creation (assisted vs self-created)
-            'assisted_fg_makes': zones.get('assisted_fg_makes'),
-            'unassisted_fg_makes': zones.get('unassisted_fg_makes'),
-            # And-1 (made shot + shooting foul)
-            'and1_count': zones.get('and1_count'),
-            # Block tracking by zone (tracks the BLOCKER)
-            'paint_blocks': zones.get('paint_blocks'),
-            'mid_range_blocks': zones.get('mid_range_blocks'),
-            'three_pt_blocks': zones.get('three_pt_blocks'),
-        }
+            self.shot_zone_analyzer.extract_shot_zones(start_date, end_date)
 
     def validate_extracted_data(self) -> None:
         """Enhanced validation with cross-source quality checks."""
@@ -910,9 +738,9 @@ class PlayerGameSummaryProcessor(
     def calculate_analytics(self) -> None:
         """
         Calculate analytics with full source tracking.
-        
+
         Key features in v2.0:
-        - Universal player ID via RegistryReader (batch lookup)
+        - Universal player ID via PlayerRegistryHandler (batch lookup)
         - Source tracking via **self.build_source_tracking_fields()
         - No manual attribute setting!
         """
@@ -920,29 +748,15 @@ class PlayerGameSummaryProcessor(
         # REGISTRY: Batch lookup for universal player IDs
         # =====================================================================
         logger.info("Looking up universal player IDs...")
-        
+
+        season_year = None
         if not self.raw_data.empty and 'season_year' in self.raw_data.columns:
             season_year = int(self.raw_data['season_year'].mode()[0])
-            season_str = f"{season_year}-{str(season_year + 1)[-2:]}"
-            self.registry.set_default_context(season=season_str)
-            logger.info(f"Registry context: {season_str}")
-        
-        unique_players = self.raw_data['player_lookup'].dropna().unique().tolist()
-        logger.info(f"Batch lookup for {len(unique_players)} players")
 
-        # Skip logging unresolved players here - we'll log them during game processing
-        # with full context (game_id, game_date, etc.)
-        uid_map = self.registry.get_universal_ids_batch(
+        unique_players = self.raw_data['player_lookup'].dropna().unique().tolist()
+        uid_map = self.registry_handler.batch_lookup_universal_ids(
             unique_players,
-            skip_unresolved_logging=True
-        )
-        
-        self.registry_stats['players_found'] = len(uid_map)
-        self.registry_stats['players_not_found'] = len(unique_players) - len(uid_map)
-        
-        logger.info(
-            f"Registry: {self.registry_stats['players_found']} found, "
-            f"{self.registry_stats['players_not_found']} not found"
+            season_year=season_year
         )
         
         # =====================================================================
@@ -957,12 +771,14 @@ class PlayerGameSummaryProcessor(
 
         self.transformed_data = records
 
+        stats = self.registry_handler.get_stats()
         logger.info(f"✅ Processed {len(records)} records")
-        logger.info(f"⚠️ Skipped {self.registry_stats['records_skipped']} (no registry match)")
+        logger.info(f"⚠️ Skipped {stats['registry_records_skipped']} (no registry match)")
 
         # Save failure records to BigQuery for observability (v2.1 feature)
-        if self.registry_failures:
-            self.save_registry_failures()
+        failures = self.registry_handler.get_failures()
+        if failures:
+            self.save_registry_failures(failures)
 
     def _parse_minutes_to_decimal(self, minutes_str: str) -> Optional[float]:
         """
@@ -1048,15 +864,35 @@ class PlayerGameSummaryProcessor(
         """Return processing stats for monitoring."""
         if not self.transformed_data:
             return {}
-            
+
+        stats = self.registry_handler.get_stats() if self._registry_handler else {}
         return {
             'records_processed': len(self.transformed_data),
-            'registry_players_found': self.registry_stats['players_found'],
-            'registry_records_skipped': self.registry_stats['records_skipped'],
+            **stats,
             'source_nbac_completeness': getattr(self, 'source_nbac_completeness_pct', None),
             'source_bdl_completeness': getattr(self, 'source_bdl_completeness_pct', None),
             'source_odds_completeness': getattr(self, 'source_odds_completeness_pct', None)
         }
+
+    def save_registry_failures(self, failures: List[Dict]) -> None:
+        """
+        Save registry failures to BigQuery for observability.
+
+        Args:
+            failures: List of registry failure records
+        """
+        if not failures:
+            return
+
+        try:
+            table_id = f"{self.project_id}.nba_analytics.registry_failures"
+            errors = self.bq_client.insert_rows_json(table_id, failures)
+            if errors:
+                logger.warning(f"Failed to save registry failures: {errors}")
+            else:
+                logger.info(f"Saved {len(failures)} registry failure records")
+        except Exception as e:
+            logger.warning(f"Failed to save registry failures: {e}")
     
     def post_process(self) -> None:
         """Send success notification and run post-processing validations."""
@@ -1323,17 +1159,16 @@ class PlayerGameSummaryProcessor(
                     'team_abbr': row['team_abbr'] if pd.notna(row['team_abbr']) else None,
                     'source': 'player_game_summary'
                 }
-                self.registry._log_unresolved_player(player_lookup, game_context)
-                self.registry_stats['records_skipped'] += 1
+                self.registry_handler.log_unresolved_player(player_lookup, game_context)
 
                 # Track failure for observability (v2.1 feature)
-                self.registry_failures.append({
-                    'player_lookup': player_lookup,
-                    'game_date': row['game_date'],
-                    'team_abbr': row['team_abbr'] if pd.notna(row['team_abbr']) else None,
-                    'season': f"{int(row['season_year'])}-{str(int(row['season_year']) + 1)[-2:]}" if pd.notna(row['season_year']) else None,
-                    'game_id': row['game_id']
-                })
+                self.registry_handler.track_registry_failure(
+                    player_lookup=player_lookup,
+                    game_date=row['game_date'],
+                    team_abbr=row['team_abbr'] if pd.notna(row['team_abbr']) else None,
+                    season_year=int(row['season_year']) if pd.notna(row['season_year']) else None,
+                    game_id=row['game_id']
+                )
                 return None
 
             # Parse minutes
@@ -1342,13 +1177,6 @@ class PlayerGameSummaryProcessor(
 
             # Parse plus/minus
             plus_minus_int = self._parse_plus_minus(row['plus_minus'])
-
-            # Calculate prop outcome
-            over_under_result = None
-            margin = None
-            if pd.notna(row['points']) and pd.notna(row['points_line']):
-                over_under_result = 'OVER' if row['points'] >= row['points_line'] else 'UNDER'
-                margin = float(row['points']) - float(row['points_line'])
 
             # Calculate efficiency
             ts_pct = None
@@ -1430,7 +1258,7 @@ class PlayerGameSummaryProcessor(
                 'ft_makes': int(row['free_throws_made']) if pd.notna(row['free_throws_made']) else None,
 
                 # Shot zones + shot creation (Pass 2 enrichment from BigDataBall play-by-play)
-                **self._get_shot_zone_data(row['game_id'], player_lookup),
+                **self.shot_zone_analyzer.get_shot_zone_data(row['game_id'], player_lookup),
 
                 # Efficiency
                 'usage_rate': round(usage_rate, 1) if usage_rate else None,
@@ -1439,14 +1267,12 @@ class PlayerGameSummaryProcessor(
                 'starter_flag': bool(minutes_decimal and minutes_decimal > 20) if minutes_decimal else False,
                 'win_flag': False,
 
-                # Prop betting
-                'points_line': float(row['points_line']) if pd.notna(row['points_line']) else None,
-                'over_under_result': over_under_result,
-                'margin': round(margin, 2) if margin is not None else None,
-                'opening_line': None,  # Pass 3 enhancement
-                'line_movement': None,
-                'points_line_source': row.get('points_line_source'),
-                'opening_line_source': None,
+                # Prop betting (using PropCalculator)
+                **PropCalculator.get_prop_fields(
+                    points=row['points'] if pd.notna(row['points']) else None,
+                    points_line=row['points_line'] if pd.notna(row['points_line']) else None,
+                    points_line_source=row.get('points_line_source')
+                ),
 
                 # Availability
                 'is_active': bool(row['player_status'] == 'active'),
@@ -1455,23 +1281,18 @@ class PlayerGameSummaryProcessor(
                 # SOURCE TRACKING: One-liner adds all 18 fields!
                 **self.build_source_tracking_fields(),
 
-                # Quality columns using centralized helper
-                **build_quality_columns_with_legacy(
-                    tier='gold' if row['primary_source'] == 'nbac_gamebook' else 'silver',
-                    score=100.0 if row['primary_source'] == 'nbac_gamebook' else 85.0,
-                    issues=[] if row['primary_source'] == 'nbac_gamebook' else ['backup_source_used'],
-                    sources=[row['primary_source']] if row['primary_source'] else ['unknown'],
+                # Quality columns (using QualityScorer)
+                **QualityScorer.calculate_quality(
+                    primary_source=row['primary_source'],
+                    has_plus_minus=pd.notna(row.get('plus_minus')),
+                    has_shot_zones=self.shot_zone_analyzer.shot_zones_available
                 ),
 
-                # Additional tracking fields
-                'primary_source_used': row['primary_source'],
-                'processed_with_issues': False,
-                'shot_zones_estimated': None,
-                'quality_sample_size': None,  # Populated by Phase 4
-                'quality_used_fallback': row['primary_source'] != 'nbac_gamebook',
-                'quality_reconstructed': False,
-                'quality_calculated_at': datetime.now(timezone.utc).isoformat(),
-                'quality_metadata': {'sources_used': [row['primary_source']], 'early_season': False},
+                # Additional quality tracking fields
+                **QualityScorer.get_additional_quality_fields(
+                    primary_source=row['primary_source'],
+                    shot_zones_estimated=False
+                ),
 
                 # Metadata
                 'processed_at': datetime.now(timezone.utc).isoformat()
@@ -1534,7 +1355,9 @@ class PlayerGameSummaryProcessor(
             }
             self.raw_data = pd.DataFrame()
             self.transformed_data = []
-            self.registry_failures = []
+            # Reset lazy-loaded modules for fresh processing
+            self._registry_handler = None
+            self._shot_zone_analyzer = None
             self.registry_stats = {
                 'players_found': 0,
                 'players_not_found': 0,
@@ -1554,15 +1377,16 @@ class PlayerGameSummaryProcessor(
             logger.info(f"Extracted {len(self.raw_data)} player records for game {game_id}")
 
             # Step 2: Extract shot zones for this game
-            self._extract_player_shot_zones(game_date, game_date)
+            self.shot_zone_analyzer.extract_shot_zones(game_date, game_date)
 
             # Step 3: Set registry context and do batch lookup
-            self.registry.set_default_context(season=season)
+            # Registry context set in batch_lookup_universal_ids
+            # self.registry.set_default_context(season=season)
 
             unique_players = self.raw_data['player_lookup'].dropna().unique().tolist()
             logger.info(f"Looking up {len(unique_players)} players in registry")
 
-            uid_map = self.registry.get_universal_ids_batch(
+            uid_map = self.registry_handler.registry.get_universal_ids_batch(
                 unique_players,
                 skip_unresolved_logging=True
             )
