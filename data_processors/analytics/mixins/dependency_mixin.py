@@ -182,10 +182,16 @@ class DependencyMixin:
             if check_type == 'date_range':
                 # Check for records in date range (most common for Phase 3)
                 # Include data_hash if available (for smart idempotency tracking)
+                # Use MAX(processed_at) from most recent game_date to avoid false staleness from old data
                 query = f"""
+                WITH latest_date AS (
+                    SELECT MAX({date_field}) as max_date
+                    FROM `{self.project_id}.{table_name}`
+                    WHERE {date_field} BETWEEN '{start_date}' AND '{end_date}'
+                )
                 SELECT
                     COUNT(*) as row_count,
-                    MAX(processed_at) as last_updated,
+                    MAX(CASE WHEN {date_field} = (SELECT max_date FROM latest_date) THEN processed_at END) as last_updated,
                     ARRAY_AGG({hash_field} IGNORE NULLS ORDER BY processed_at DESC LIMIT 1)[SAFE_OFFSET(0)] as representative_hash
                 FROM `{self.project_id}.{table_name}`
                 WHERE {date_field} BETWEEN '{start_date}' AND '{end_date}'
@@ -206,6 +212,7 @@ class DependencyMixin:
             elif check_type == 'lookback_days':
                 # Check for records in a lookback window from end_date
                 # Used for historical data sources (e.g., player boxscores for last 30 days)
+                # Use MAX(processed_at) from most recent game_date to avoid false staleness
                 lookback = config.get('lookback_days', 30)
                 # Calculate lookback start date (datetime/timedelta already imported at module level)
                 if isinstance(end_date, str):
@@ -214,9 +221,14 @@ class DependencyMixin:
                     end_dt = end_date
                 lookback_start = (end_dt - timedelta(days=lookback)).strftime('%Y-%m-%d')
                 query = f"""
+                WITH latest_date AS (
+                    SELECT MAX({date_field}) as max_date
+                    FROM `{self.project_id}.{table_name}`
+                    WHERE {date_field} BETWEEN '{lookback_start}' AND '{end_date}'
+                )
                 SELECT
                     COUNT(*) as row_count,
-                    MAX(processed_at) as last_updated,
+                    MAX(CASE WHEN {date_field} = (SELECT max_date FROM latest_date) THEN processed_at END) as last_updated,
                     ARRAY_AGG({hash_field} IGNORE NULLS ORDER BY processed_at DESC LIMIT 1)[SAFE_OFFSET(0)] as representative_hash
                 FROM `{self.project_id}.{table_name}`
                 WHERE {date_field} BETWEEN '{lookback_start}' AND '{end_date}'
