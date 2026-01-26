@@ -30,7 +30,7 @@ from typing import Dict, List, Optional, Any
 import pandas as pd
 from google.cloud import bigquery
 
-from shared.utils.notification_system import notify_error, notify_warning, notify_info
+from orchestration.shared.utils.notification_system import notify_error, notify_warning, notify_info
 from shared.config.source_coverage import (
     QualityTier,
     SourceCoverageEventType,
@@ -521,7 +521,7 @@ class QualityMixin:
     ):
         """Send email alert for quality degradation."""
         try:
-            from shared.utils.email_alerting_ses import EmailAlerterSES
+            from orchestration.shared.utils.email_alerting_ses import EmailAlerterSES
 
             # Determine reason for degradation
             issues = current_quality.get('issues', [])
