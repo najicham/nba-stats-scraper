@@ -302,7 +302,7 @@ class PlayerDataLoader:
                 COALESCE(s.away_team_tricode, g.team_abbr) as away_team_abbr
             FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats` g
             LEFT JOIN schedule_data s
-                ON g.game_id = s.nba_game_id  -- Join on NBA official ID
+                ON g.game_id = s.game_id  -- FIXED: Join on generated game_id (YYYYMMDD_AWAY_HOME format)
             WHERE g.game_date = @game_date
               AND g.player_lookup IS NOT NULL
               AND (g.player_status IS NULL OR g.player_status NOT IN ('DNP', 'DND', 'NWT'))
