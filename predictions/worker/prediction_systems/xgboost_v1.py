@@ -186,9 +186,9 @@ class XGBoostV1:
         """
         try:
             feature_vector = np.array([
-                features.get('points_avg_last_5', 0),
-                features.get('points_avg_last_10', 0),
-                features.get('points_avg_season', 0),
+                features.get('points_avg_last_5', 10.0),  # Match CatBoost and feature store defaults
+                features.get('points_avg_last_10', 10.0),  # Match CatBoost and feature store defaults
+                features.get('points_avg_season', 10.0),  # Match CatBoost and feature store defaults
                 features.get('points_std_last_10', 0),
                 features.get('minutes_avg_last_10', 0),
                 features.get('fatigue_score', 70),
