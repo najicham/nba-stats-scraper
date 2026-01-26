@@ -60,6 +60,50 @@ logger = logging.getLogger(__name__)
 ENABLE_TEAM_PARALLELIZATION = os.environ.get('ENABLE_TEAM_PARALLELIZATION', 'true').lower() == 'true'
 
 
+def safe_int(value, default=None):
+    """
+    Safely convert value to int, handling NaN, None, and empty strings.
+
+    Args:
+        value: Value to convert to int
+        default: Default value to return if conversion fails (default: None)
+
+    Returns:
+        int or default value
+
+    Examples:
+        >>> safe_int(123)
+        123
+        >>> safe_int("456")
+        456
+        >>> safe_int("")
+        None
+        >>> safe_int("  ")
+        None
+        >>> safe_int(None)
+        None
+        >>> safe_int(float('nan'))
+        None
+        >>> safe_int("", default=0)
+        0
+    """
+    # Handle pandas NaN, None, and numpy NaN
+    if pd.isna(value):
+        return default
+
+    # Handle string values - strip whitespace and check if empty
+    if isinstance(value, str):
+        value = value.strip()
+        if not value:
+            return default
+
+    # Try conversion
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
 class TeamOffenseGameSummaryProcessor(
     FallbackSourceMixin,
     QualityMixin,
@@ -268,7 +312,7 @@ class TeamOffenseGameSummaryProcessor(
         skip, reason = self.should_skip_processing(start_date)
         if skip:
             logger.info(f"✅ SMART REPROCESSING: Skipping processing - {reason}")
-            self.raw_data = []
+            self.raw_data = pd.DataFrame()
             return
 
         logger.info(f"🔄 PROCESSING: {reason}")
@@ -683,13 +727,13 @@ class TeamOffenseGameSummaryProcessor(
                 for _, row in shot_zones_df.iterrows():
                     key = (row['game_id'], row['team_abbr'])
                     self.shot_zone_data[key] = {
-                        'paint_attempts': int(row['paint_attempts']) if pd.notna(row['paint_attempts']) else None,
-                        'paint_makes': int(row['paint_makes']) if pd.notna(row['paint_makes']) else None,
-                        'mid_range_attempts': int(row['mid_range_attempts']) if pd.notna(row['mid_range_attempts']) else None,
-                        'mid_range_makes': int(row['mid_range_makes']) if pd.notna(row['mid_range_makes']) else None,
-                        'points_in_paint': int(row['points_in_paint']) if pd.notna(row['points_in_paint']) else None,
-                        'three_attempts_pbp': int(row['three_attempts_pbp']) if pd.notna(row['three_attempts_pbp']) else None,
-                        'three_makes_pbp': int(row['three_makes_pbp']) if pd.notna(row['three_makes_pbp']) else None,
+                        'paint_attempts': safe_int(row['paint_attempts']),
+                        'paint_makes': safe_int(row['paint_makes']),
+                        'mid_range_attempts': safe_int(row['mid_range_attempts']),
+                        'mid_range_makes': safe_int(row['mid_range_makes']),
+                        'points_in_paint': safe_int(row['points_in_paint']),
+                        'three_attempts_pbp': safe_int(row['three_attempts_pbp']),
+                        'three_makes_pbp': safe_int(row['three_makes_pbp']),
                     }
                 
                 self.shot_zones_available = True
@@ -741,18 +785,23 @@ class TeamOffenseGameSummaryProcessor(
 
         # Validate points calculation
         for _, row in self.raw_data.iterrows():
-            two_pt_makes = row['fg_made'] - row['three_pt_made']
-            calculated_points = (two_pt_makes * 2) + (row['three_pt_made'] * 3) + row['ft_made']
-            
-            if calculated_points != row['points']:
+            fg_made = safe_int(row['fg_made'], default=0)
+            three_pt_made = safe_int(row['three_pt_made'], default=0)
+            ft_made = safe_int(row['ft_made'], default=0)
+            points = safe_int(row['points'], default=0)
+
+            two_pt_makes = fg_made - three_pt_made
+            calculated_points = (two_pt_makes * 2) + (three_pt_made * 3) + ft_made
+
+            if calculated_points != points:
                 self.log_quality_issue(
                     issue_type='points_calculation_mismatch',
                     severity='high',
                     identifier=f"{row['game_id']}_{row['team_abbr']}",
                     details={
-                        'reported_points': int(row['points']),
-                        'calculated_points': int(calculated_points),
-                        'difference': int(row['points'] - calculated_points)
+                        'reported_points': points,
+                        'calculated_points': calculated_points,
+                        'difference': points - calculated_points
                     }
                 )
         
@@ -803,19 +852,22 @@ class TeamOffenseGameSummaryProcessor(
                 
                 # minutes field is cumulative player-minutes (5 players × game time)
                 # Convert to actual game minutes by dividing by 5
-                total_player_minutes = int(row['minutes'].split(':')[0]) if pd.notna(row['minutes']) else 240
+                minutes_str = row['minutes'] if pd.notna(row['minutes']) else ''
+                total_player_minutes = safe_int(minutes_str.split(':')[0] if ':' in minutes_str else '', default=240)
                 actual_game_minutes = total_player_minutes / 5  # Convert to real game time
-                offensive_rating = (row['points'] / possessions) * 100 if possessions > 0 else None
-                pace = possessions * (48 / actual_game_minutes) if actual_game_minutes > 0 else None
+                offensive_rating = (row['points'] / possessions) * 100 if possessions and possessions > 0 else None
+                pace = possessions * (48 / actual_game_minutes) if possessions and actual_game_minutes > 0 else None
                 ts_pct = self._calculate_true_shooting_pct(
                     row['points'],
                     row['fg_attempted'],
                     row['ft_attempted']
                 )
                 
-                # Determine win/loss
-                win_flag = row['points'] > row['opponent_points']
-                margin_of_victory = row['points'] - row['opponent_points']
+                # Determine win/loss (handle None/empty values)
+                points = safe_int(row['points'])
+                opponent_points = safe_int(row['opponent_points'])
+                win_flag = (points or 0) > (opponent_points or 0)
+                margin_of_victory = (points - opponent_points) if (points is not None and opponent_points is not None) else None
                 
                 # Get shot zones (if available)
                 shot_zone_key = (row['game_id'], row['team_abbr'])
@@ -841,20 +893,20 @@ class TeamOffenseGameSummaryProcessor(
                     'game_date': row['game_date'].isoformat() if pd.notna(row['game_date']) else None,
                     'team_abbr': row['team_abbr'],
                     'opponent_team_abbr': row['opponent_team_abbr'],
-                    'season_year': int(row['season_year']) if pd.notna(row['season_year']) else None,
-                    
+                    'season_year': safe_int(row['season_year']),
+
                     # Basic offensive stats
-                    'points_scored': int(row['points']) if pd.notna(row['points']) else None,
-                    'fg_attempts': int(row['fg_attempted']) if pd.notna(row['fg_attempted']) else None,
-                    'fg_makes': int(row['fg_made']) if pd.notna(row['fg_made']) else None,
-                    'three_pt_attempts': int(row['three_pt_attempted']) if pd.notna(row['three_pt_attempted']) else None,
-                    'three_pt_makes': int(row['three_pt_made']) if pd.notna(row['three_pt_made']) else None,
-                    'ft_attempts': int(row['ft_attempted']) if pd.notna(row['ft_attempted']) else None,
-                    'ft_makes': int(row['ft_made']) if pd.notna(row['ft_made']) else None,
-                    'rebounds': int(row['total_rebounds']) if pd.notna(row['total_rebounds']) else None,
-                    'assists': int(row['assists']) if pd.notna(row['assists']) else None,
-                    'turnovers': int(row['turnovers']) if pd.notna(row['turnovers']) else None,
-                    'personal_fouls': int(row['personal_fouls']) if pd.notna(row['personal_fouls']) else None,
+                    'points_scored': safe_int(row['points']),
+                    'fg_attempts': safe_int(row['fg_attempted']),
+                    'fg_makes': safe_int(row['fg_made']),
+                    'three_pt_attempts': safe_int(row['three_pt_attempted']),
+                    'three_pt_makes': safe_int(row['three_pt_made']),
+                    'ft_attempts': safe_int(row['ft_attempted']),
+                    'ft_makes': safe_int(row['ft_made']),
+                    'rebounds': safe_int(row['total_rebounds']),
+                    'assists': safe_int(row['assists']),
+                    'turnovers': safe_int(row['turnovers']),
+                    'personal_fouls': safe_int(row['personal_fouls']),
                     
                     # Shot zones (from play-by-play if available)
                     'team_paint_attempts': shot_zones.get('paint_attempts'),
@@ -1064,19 +1116,22 @@ class TeamOffenseGameSummaryProcessor(
 
             # minutes field is cumulative player-minutes (5 players × game time)
             # Convert to actual game minutes by dividing by 5
-            total_player_minutes = int(row['minutes'].split(':')[0]) if pd.notna(row['minutes']) else 240
+            minutes_str = row['minutes'] if pd.notna(row['minutes']) else ''
+            total_player_minutes = safe_int(minutes_str.split(':')[0] if ':' in minutes_str else '', default=240)
             actual_game_minutes = total_player_minutes / 5  # Convert to real game time
-            offensive_rating = (row['points'] / possessions) * 100 if possessions > 0 else None
-            pace = possessions * (48 / actual_game_minutes) if actual_game_minutes > 0 else None
+            offensive_rating = (row['points'] / possessions) * 100 if possessions and possessions > 0 else None
+            pace = possessions * (48 / actual_game_minutes) if possessions and actual_game_minutes > 0 else None
             ts_pct = self._calculate_true_shooting_pct(
                 row['points'],
                 row['fg_attempted'],
                 row['ft_attempted']
             )
 
-            # Determine win/loss
-            win_flag = row['points'] > row['opponent_points']
-            margin_of_victory = row['points'] - row['opponent_points']
+            # Determine win/loss (handle None/empty values)
+            points = safe_int(row['points'])
+            opponent_points = safe_int(row['opponent_points'])
+            win_flag = (points or 0) > (opponent_points or 0)
+            margin_of_victory = (points - opponent_points) if (points is not None and opponent_points is not None) else None
 
             # Get shot zones (if available)
             shot_zone_key = (row['game_id'], row['team_abbr'])
@@ -1102,20 +1157,20 @@ class TeamOffenseGameSummaryProcessor(
                 'game_date': row['game_date'].isoformat() if pd.notna(row['game_date']) else None,
                 'team_abbr': row['team_abbr'],
                 'opponent_team_abbr': row['opponent_team_abbr'],
-                'season_year': int(row['season_year']) if pd.notna(row['season_year']) else None,
+                'season_year': safe_int(row['season_year']),
 
                 # Basic offensive stats
-                'points_scored': int(row['points']) if pd.notna(row['points']) else None,
-                'fg_attempts': int(row['fg_attempted']) if pd.notna(row['fg_attempted']) else None,
-                'fg_makes': int(row['fg_made']) if pd.notna(row['fg_made']) else None,
-                'three_pt_attempts': int(row['three_pt_attempted']) if pd.notna(row['three_pt_attempted']) else None,
-                'three_pt_makes': int(row['three_pt_made']) if pd.notna(row['three_pt_made']) else None,
-                'ft_attempts': int(row['ft_attempted']) if pd.notna(row['ft_attempted']) else None,
-                'ft_makes': int(row['ft_made']) if pd.notna(row['ft_made']) else None,
-                'rebounds': int(row['total_rebounds']) if pd.notna(row['total_rebounds']) else None,
-                'assists': int(row['assists']) if pd.notna(row['assists']) else None,
-                'turnovers': int(row['turnovers']) if pd.notna(row['turnovers']) else None,
-                'personal_fouls': int(row['personal_fouls']) if pd.notna(row['personal_fouls']) else None,
+                'points_scored': safe_int(row['points']),
+                'fg_attempts': safe_int(row['fg_attempted']),
+                'fg_makes': safe_int(row['fg_made']),
+                'three_pt_attempts': safe_int(row['three_pt_attempted']),
+                'three_pt_makes': safe_int(row['three_pt_made']),
+                'ft_attempts': safe_int(row['ft_attempted']),
+                'ft_makes': safe_int(row['ft_made']),
+                'rebounds': safe_int(row['total_rebounds']),
+                'assists': safe_int(row['assists']),
+                'turnovers': safe_int(row['turnovers']),
+                'personal_fouls': safe_int(row['personal_fouls']),
 
                 # Shot zones (from play-by-play if available)
                 'team_paint_attempts': shot_zones.get('paint_attempts'),
@@ -1232,7 +1287,7 @@ class TeamOffenseGameSummaryProcessor(
     def _parse_overtime_periods(self, minutes_str: str) -> int:
         """
         Parse overtime periods from minutes string.
-        
+
         Examples:
           "240:00" = 0 OT (regulation)
           "265:00" = 1 OT (240 + 25)
@@ -1240,18 +1295,22 @@ class TeamOffenseGameSummaryProcessor(
         """
         if not minutes_str or minutes_str == '':
             return 0
-        
+
         try:
             # Parse total minutes (before colon)
-            total_minutes = int(minutes_str.split(':')[0])
-            
+            if ':' not in minutes_str:
+                return 0
+
+            minutes_part = minutes_str.split(':')[0]
+            total_minutes = safe_int(minutes_part, default=240)
+
             if total_minutes <= 240:
                 return 0
-            
+
             # Calculate OT periods
             overtime_minutes = total_minutes - 240
             return overtime_minutes // 25
-            
+
         except Exception as e:
             logger.warning(f"Failed to parse OT periods from '{minutes_str}': {e}")
             return 0

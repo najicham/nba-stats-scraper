@@ -14,7 +14,8 @@ from unittest.mock import Mock, MagicMock, patch
 
 # Import processor - adjust path to match your project structure
 from data_processors.analytics.team_offense_game_summary.team_offense_game_summary_processor import (
-    TeamOffenseGameSummaryProcessor
+    TeamOffenseGameSummaryProcessor,
+    safe_int
 )
 
 
@@ -655,6 +656,158 @@ class TestGetAnalyticsStats:
         # Should not crash
         result = proc.get_analytics_stats()
         assert isinstance(result, dict)
+
+
+class TestSafeIntFunction:
+    """Test safe_int helper function for empty string handling."""
+
+    def test_safe_int_with_valid_integer(self):
+        """Test safe_int with valid integer."""
+        result = safe_int(123)
+        assert result == 123
+
+    def test_safe_int_with_valid_string(self):
+        """Test safe_int with valid string number."""
+        result = safe_int("456")
+        assert result == 456
+
+    def test_safe_int_with_empty_string(self):
+        """Test safe_int with empty string returns None."""
+        result = safe_int("")
+        assert result is None
+
+    def test_safe_int_with_whitespace_only(self):
+        """Test safe_int with whitespace-only string returns None."""
+        result = safe_int("   ")
+        assert result is None
+
+    def test_safe_int_with_none(self):
+        """Test safe_int with None returns None."""
+        result = safe_int(None)
+        assert result is None
+
+    def test_safe_int_with_nan(self):
+        """Test safe_int with NaN returns None."""
+        result = safe_int(float('nan'))
+        assert result is None
+
+    def test_safe_int_with_pandas_nan(self):
+        """Test safe_int with pandas NaN returns None."""
+        result = safe_int(pd.NA)
+        assert result is None
+
+    def test_safe_int_with_empty_string_and_default(self):
+        """Test safe_int with empty string and custom default."""
+        result = safe_int("", default=0)
+        assert result == 0
+
+    def test_safe_int_with_invalid_string(self):
+        """Test safe_int with invalid string returns default."""
+        result = safe_int("abc")
+        assert result is None
+
+    def test_safe_int_with_invalid_string_and_default(self):
+        """Test safe_int with invalid string and custom default."""
+        result = safe_int("xyz", default=-1)
+        assert result == -1
+
+    def test_safe_int_with_string_number_with_spaces(self):
+        """Test safe_int strips whitespace from string numbers."""
+        result = safe_int("  42  ")
+        assert result == 42
+
+    def test_safe_int_with_float(self):
+        """Test safe_int converts float to int."""
+        result = safe_int(3.14)
+        assert result == 3
+
+    def test_safe_int_with_float_string(self):
+        """Test safe_int returns None for float string (not valid int string)."""
+        result = safe_int("3.14")
+        assert result is None
+
+
+class TestEmptyStringHandling:
+    """Test processor handles empty strings in real data scenario."""
+
+    @pytest.fixture
+    def processor(self):
+        """Create processor instance with mocked dependencies."""
+        proc = TeamOffenseGameSummaryProcessor()
+        proc.bq_client = Mock()
+        proc.project_id = 'test-project'
+        return proc
+
+    def test_calculate_analytics_with_empty_string_stats(self, processor):
+        """Test calculate_analytics handles empty strings gracefully."""
+        # Simulate raw data with empty strings (the actual bug scenario)
+        processor.raw_data = pd.DataFrame([
+            {
+                'game_id': '20260125_BOS_LAL',
+                'nba_game_id': '0022500656',
+                'game_date': date(2026, 1, 25),
+                'team_abbr': 'BOS',
+                'opponent_team_abbr': 'LAL',
+                'season_year': '2025',
+                'is_home': True,
+                # Empty strings for numeric fields (the bug)
+                'points': '',
+                'fg_made': '',
+                'fg_attempted': '',
+                'three_pt_made': '',
+                'three_pt_attempted': '',
+                'ft_made': '',
+                'ft_attempted': '',
+                'total_rebounds': '',
+                'assists': '',
+                'turnovers': '',
+                'personal_fouls': '',
+                'offensive_rebounds': '',
+                'opponent_points': '100',
+                'minutes': '240:00'
+            }
+        ])
+
+        processor.shot_zones_available = False
+        processor.shot_zone_data = {}
+        processor._fallback_quality_tier = 'gold'
+        processor._fallback_quality_score = 100.0
+        processor._fallback_quality_issues = []
+        processor._source_used = 'nbac_team_boxscore'
+
+        # Should not raise ValueError
+        processor.calculate_analytics()
+
+        # Check that transformed data was created
+        assert len(processor.transformed_data) == 1
+        record = processor.transformed_data[0]
+
+        # All numeric fields should be None (not crash)
+        assert record['points_scored'] is None
+        assert record['fg_attempts'] is None
+        assert record['fg_makes'] is None
+        assert record['three_pt_attempts'] is None
+        assert record['three_pt_makes'] is None
+        assert record['ft_attempts'] is None
+        assert record['ft_makes'] is None
+        assert record['rebounds'] is None
+        assert record['assists'] is None
+        assert record['turnovers'] is None
+        assert record['personal_fouls'] is None
+
+        # Core identifiers should still work
+        assert record['game_id'] == '20260125_BOS_LAL'
+        assert record['team_abbr'] == 'BOS'
+
+    def test_parse_overtime_with_empty_minutes(self, processor):
+        """Test _parse_overtime_periods handles empty string in minutes."""
+        # Empty string before colon
+        result = processor._parse_overtime_periods(":00")
+        assert result == 0
+
+        # Just a colon
+        result = processor._parse_overtime_periods(":")
+        assert result == 0
 
 
 # ============================================================================
