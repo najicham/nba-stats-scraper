@@ -2,9 +2,28 @@
 
 **Date:** 2026-01-26
 **Purpose:** Decision on implementing resource-level tracking for source data unavailability
-**Status:** 🟡 Awaiting Decision
+**Status:** ✅ APPROVED - Implement After P0 Incident Resolved
 **Estimated Effort:** 4-5 hours implementation
-**Recommended:** ✅ Yes - Implement
+**Decision:** Defer until 2026-01-26 P0 incident resolved
+**Priority:** P2 (operational issue is P0)
+
+---
+
+## ✅ DECISION MADE (2026-01-26)
+
+**Decision:** Implement source-block tracking system - **AFTER P0 incident resolved**
+
+**Rationale:**
+- Design is solid and solves real problem ✅
+- 2026-01-25 "75% validation" issue is **cosmetic**
+- 2026-01-26 pipeline completely stalled is **operational P0**
+- This work is worth 4-5 hours - just not during active incident
+
+**Timeline:**
+- **NOW:** Fix 2026-01-26 P0 (betting scrapers 0 records, Phase 3 stalled, no predictions)
+- **AFTER P0:** Implement this tracking system (design ready, 4-5 hours)
+
+**Status:** Deferred to post-incident. Design approved, ready for implementation.
 
 ---
 

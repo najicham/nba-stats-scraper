@@ -27,6 +27,21 @@ from data_processors.precompute.precompute_base import PrecomputeProcessorBase, 
 
 
 # ============================================================================
+# Module-level Fixtures for Test Isolation
+# ============================================================================
+
+@pytest.fixture(autouse=True)
+def mock_gcp_env():
+    """Mock GCP environment variables for test isolation.
+
+    This ensures GCP_PROJECT_ID is set consistently across all tests,
+    preventing test isolation issues when multiple test files are run together.
+    """
+    with patch.dict(os.environ, {'GCP_PROJECT_ID': 'test-project'}, clear=False):
+        yield
+
+
+# ============================================================================
 # Test Fixture - Concrete Implementation
 # ============================================================================
 
@@ -91,10 +106,8 @@ class TestPrecomputeInitialization:
 
     @patch('data_processors.precompute.precompute_base.get_bigquery_client')
     @patch('data_processors.precompute.precompute_base.get_precompute_dataset')
-    @patch('data_processors.precompute.precompute_base.get_project_id')
-    def test_processor_initializes_with_defaults(self, mock_project, mock_dataset, mock_bq):
+    def test_processor_initializes_with_defaults(self, mock_dataset, mock_bq):
         """Test processor initializes with default values"""
-        mock_project.return_value = 'test-project'
         mock_dataset.return_value = 'precompute_dataset'
         mock_bq.return_value = Mock()
 
@@ -1152,6 +1165,133 @@ class TestHeartbeat:
         processor = ConcretePrecomputeProcessor()
 
         assert hasattr(processor, 'heartbeat')
+
+
+# ============================================================================
+# Test Record Date Level Failure
+# ============================================================================
+
+class TestRecordDateLevelFailure:
+    """Test suite for _record_date_level_failure method"""
+
+    @patch('data_processors.precompute.precompute_base.get_bigquery_client')
+    @patch('data_processors.precompute.precompute_base.get_precompute_dataset')
+    @patch('data_processors.precompute.precompute_base.get_project_id')
+    def test_record_date_level_failure_with_date_object(self, mock_project, mock_dataset, mock_bq):
+        """Test _record_date_level_failure handles date object with isoformat"""
+        mock_project.return_value = 'test-project'
+        mock_dataset.return_value = 'precompute_dataset'
+
+        # Create mock BQ client with table and load job
+        mock_bq_client = Mock()
+        mock_table = Mock()
+        mock_table.schema = []
+        mock_bq_client.get_table.return_value = mock_table
+
+        mock_load_job = Mock()
+        mock_load_job.errors = None
+        mock_load_job.result.return_value = None
+        mock_bq_client.load_table_from_json.return_value = mock_load_job
+
+        mock_bq.return_value = mock_bq_client
+
+        processor = ConcretePrecomputeProcessor()
+        processor.set_opts({'analysis_date': date(2024, 1, 15)})
+
+        # Call method with date object
+        processor._record_date_level_failure('DATA_QUALITY', 'Test failure reason')
+
+        # Verify BQ client methods were called
+        assert mock_bq_client.get_table.called
+        assert mock_bq_client.load_table_from_json.called
+
+        # Verify the failure record contains the date as string
+        call_args = mock_bq_client.load_table_from_json.call_args
+        failure_record = call_args[0][0][0]
+        assert failure_record['analysis_date'] == '2024-01-15'
+        assert failure_record['failure_category'] == 'DATA_QUALITY'
+        assert failure_record['failure_reason'] == 'Test failure reason'
+
+    @patch('data_processors.precompute.precompute_base.get_bigquery_client')
+    @patch('data_processors.precompute.precompute_base.get_precompute_dataset')
+    @patch('data_processors.precompute.precompute_base.get_project_id')
+    def test_record_date_level_failure_with_string_date(self, mock_project, mock_dataset, mock_bq):
+        """Test _record_date_level_failure handles string date"""
+        mock_project.return_value = 'test-project'
+        mock_dataset.return_value = 'precompute_dataset'
+
+        mock_bq_client = Mock()
+        mock_table = Mock()
+        mock_table.schema = []
+        mock_bq_client.get_table.return_value = mock_table
+
+        mock_load_job = Mock()
+        mock_load_job.errors = None
+        mock_load_job.result.return_value = None
+        mock_bq_client.load_table_from_json.return_value = mock_load_job
+
+        mock_bq.return_value = mock_bq_client
+
+        processor = ConcretePrecomputeProcessor()
+        processor.set_opts({'analysis_date': '2024-01-15'})
+
+        # Call method with string date
+        processor._record_date_level_failure('DATA_QUALITY', 'Test failure')
+
+        # Verify the failure record contains the date as string
+        call_args = mock_bq_client.load_table_from_json.call_args
+        failure_record = call_args[0][0][0]
+        assert failure_record['analysis_date'] == '2024-01-15'
+
+    @patch('data_processors.precompute.precompute_base.get_bigquery_client')
+    @patch('data_processors.precompute.precompute_base.get_precompute_dataset')
+    @patch('data_processors.precompute.precompute_base.get_project_id')
+    def test_record_date_level_failure_normalizes_missing_dependencies(self, mock_project, mock_dataset, mock_bq):
+        """Test _record_date_level_failure normalizes MISSING_DEPENDENCIES to singular form"""
+        mock_project.return_value = 'test-project'
+        mock_dataset.return_value = 'precompute_dataset'
+
+        mock_bq_client = Mock()
+        mock_table = Mock()
+        mock_table.schema = []
+        mock_bq_client.get_table.return_value = mock_table
+
+        mock_load_job = Mock()
+        mock_load_job.errors = None
+        mock_load_job.result.return_value = None
+        mock_bq_client.load_table_from_json.return_value = mock_load_job
+
+        mock_bq.return_value = mock_bq_client
+
+        processor = ConcretePrecomputeProcessor()
+        processor.set_opts({'analysis_date': date(2024, 1, 15)})
+
+        # Call with MISSING_DEPENDENCIES (plural)
+        processor._record_date_level_failure('MISSING_DEPENDENCIES', 'Missing required tables')
+
+        # Verify category was normalized to singular
+        call_args = mock_bq_client.load_table_from_json.call_args
+        failure_record = call_args[0][0][0]
+        assert failure_record['failure_category'] == 'MISSING_DEPENDENCY'
+
+    @patch('data_processors.precompute.precompute_base.get_bigquery_client')
+    @patch('data_processors.precompute.precompute_base.get_precompute_dataset')
+    @patch('data_processors.precompute.precompute_base.get_project_id')
+    def test_record_date_level_failure_handles_bigquery_error(self, mock_project, mock_dataset, mock_bq):
+        """Test _record_date_level_failure handles BigQuery API errors gracefully"""
+        mock_project.return_value = 'test-project'
+        mock_dataset.return_value = 'precompute_dataset'
+
+        mock_bq_client = Mock()
+        mock_bq_client.get_table.side_effect = GoogleAPIError("Table not found")
+
+        mock_bq.return_value = mock_bq_client
+
+        processor = ConcretePrecomputeProcessor()
+        processor.set_opts({'analysis_date': date(2024, 1, 15)})
+
+        # Should not raise - error is caught and logged
+        processor._record_date_level_failure('DATA_QUALITY', 'Test failure')
 
 
 if __name__ == '__main__':

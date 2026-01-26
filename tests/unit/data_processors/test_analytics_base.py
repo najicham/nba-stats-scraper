@@ -27,6 +27,21 @@ from data_processors.analytics.analytics_base import AnalyticsProcessorBase
 
 
 # ============================================================================
+# Module-level Fixtures for Test Isolation
+# ============================================================================
+
+@pytest.fixture(autouse=True)
+def mock_gcp_env():
+    """Mock GCP environment variables for test isolation.
+
+    This ensures GCP_PROJECT_ID is set consistently across all tests,
+    preventing test isolation issues when multiple test files are run together.
+    """
+    with patch.dict(os.environ, {'GCP_PROJECT_ID': 'test-project'}, clear=False):
+        yield
+
+
+# ============================================================================
 # Test Fixture - Concrete Implementation
 # ============================================================================
 
@@ -55,10 +70,8 @@ class TestAnalyticsInitialization:
 
     @patch('data_processors.analytics.analytics_base.get_bigquery_client')
     @patch('data_processors.analytics.analytics_base.get_analytics_dataset')
-    @patch('data_processors.analytics.analytics_base.get_project_id')
-    def test_processor_initializes_with_defaults(self, mock_project, mock_dataset, mock_bq):
+    def test_processor_initializes_with_defaults(self, mock_dataset, mock_bq):
         """Test processor initializes with default values"""
-        mock_project.return_value = 'test-project'
         mock_dataset.return_value = 'analytics_dataset'
         mock_bq.return_value = Mock()
 
@@ -762,10 +775,8 @@ class TestLogProcessingRun:
 
     @patch('data_processors.analytics.analytics_base.get_bigquery_client')
     @patch('data_processors.analytics.analytics_base.get_analytics_dataset')
-    @patch('data_processors.analytics.analytics_base.get_project_id')
-    def test_log_processing_run_success(self, mock_project, mock_dataset, mock_bq):
+    def test_log_processing_run_success(self, mock_dataset, mock_bq):
         """Test log_processing_run with successful run"""
-        mock_project.return_value = 'test-project'
         mock_dataset.return_value = 'analytics_dataset'
 
         # Mock BigQuery client and table operations
@@ -779,6 +790,7 @@ class TestLogProcessingRun:
         mock_bq.return_value = mock_bq_client
 
         processor = ConcreteAnalyticsProcessor()
+        processor.bq_client = mock_bq_client  # Override with our mock
         processor.set_opts({
             'start_date': date(2024, 1, 1),
             'end_date': date(2024, 1, 31)
@@ -793,10 +805,8 @@ class TestLogProcessingRun:
 
     @patch('data_processors.analytics.analytics_base.get_bigquery_client')
     @patch('data_processors.analytics.analytics_base.get_analytics_dataset')
-    @patch('data_processors.analytics.analytics_base.get_project_id')
-    def test_log_processing_run_with_error(self, mock_project, mock_dataset, mock_bq):
+    def test_log_processing_run_with_error(self, mock_dataset, mock_bq):
         """Test log_processing_run with error"""
-        mock_project.return_value = 'test-project'
         mock_dataset.return_value = 'analytics_dataset'
 
         # Mock BigQuery client and table operations
@@ -810,6 +820,7 @@ class TestLogProcessingRun:
         mock_bq.return_value = mock_bq_client
 
         processor = ConcreteAnalyticsProcessor()
+        processor.bq_client = mock_bq_client  # Override with our mock
         processor.set_opts({
             'start_date': date(2024, 1, 1),
             'end_date': date(2024, 1, 31)
@@ -1064,12 +1075,10 @@ class TestInitClientsErrorHandling:
 
     @patch('data_processors.analytics.analytics_base.get_bigquery_client')
     @patch('data_processors.analytics.analytics_base.get_analytics_dataset')
-    @patch('data_processors.analytics.analytics_base.get_project_id')
-    def test_init_clients_handles_bigquery_error(self, mock_project, mock_dataset, mock_bq):
+    def test_init_clients_handles_bigquery_error(self, mock_dataset, mock_bq):
         """Test init_clients handles BigQuery API errors"""
         from google.api_core.exceptions import GoogleAPIError
 
-        mock_project.return_value = 'test-project'
         mock_dataset.return_value = 'analytics_dataset'
         mock_bq.return_value = Mock()
 
@@ -1082,20 +1091,19 @@ class TestInitClientsErrorHandling:
             with pytest.raises(GoogleAPIError):
                 processor.init_clients()
 
-    @patch('data_processors.analytics.analytics_base.get_bigquery_client')
     @patch('data_processors.analytics.analytics_base.get_analytics_dataset')
-    @patch('data_processors.analytics.analytics_base.get_project_id')
-    def test_init_clients_sends_notification_on_error(self, mock_project, mock_dataset, mock_bq):
+    def test_init_clients_sends_notification_on_error(self, mock_dataset):
         """Test init_clients sends notification on BigQuery error"""
         from google.api_core.exceptions import GoogleAPIError
 
-        mock_project.return_value = 'test-project'
         mock_dataset.return_value = 'analytics_dataset'
-        mock_bq.return_value = Mock()
 
-        processor = ConcreteAnalyticsProcessor()
-        processor.set_opts({'start_date': '2024-01-01', 'end_date': '2024-01-31'})
+        # Create processor with initial mock
+        with patch('data_processors.analytics.analytics_base.get_bigquery_client', return_value=Mock()):
+            processor = ConcreteAnalyticsProcessor()
+            processor.set_opts({'start_date': '2024-01-01', 'end_date': '2024-01-31'})
 
+        # Now test init_clients with error
         with patch('data_processors.analytics.analytics_base.get_bigquery_client',
                    side_effect=GoogleAPIError("API Error")):
             with patch.object(processor, '_send_notification') as mock_notify:
@@ -1107,20 +1115,19 @@ class TestInitClientsErrorHandling:
                 call_args = mock_notify.call_args
                 assert 'Client Initialization Failed' in call_args[1]['title']
 
-    @patch('data_processors.analytics.analytics_base.get_bigquery_client')
     @patch('data_processors.analytics.analytics_base.get_analytics_dataset')
-    @patch('data_processors.analytics.analytics_base.get_project_id')
-    def test_init_clients_handles_notification_failure(self, mock_project, mock_dataset, mock_bq):
+    def test_init_clients_handles_notification_failure(self, mock_dataset):
         """Test init_clients handles notification failure gracefully"""
         from google.api_core.exceptions import GoogleAPIError
 
-        mock_project.return_value = 'test-project'
         mock_dataset.return_value = 'analytics_dataset'
-        mock_bq.return_value = Mock()
 
-        processor = ConcreteAnalyticsProcessor()
-        processor.set_opts({'start_date': '2024-01-01', 'end_date': '2024-01-31'})
+        # Create processor with initial mock
+        with patch('data_processors.analytics.analytics_base.get_bigquery_client', return_value=Mock()):
+            processor = ConcreteAnalyticsProcessor()
+            processor.set_opts({'start_date': '2024-01-01', 'end_date': '2024-01-31'})
 
+        # Now test init_clients with error
         with patch('data_processors.analytics.analytics_base.get_bigquery_client',
                    side_effect=GoogleAPIError("API Error")):
             with patch.object(processor, '_send_notification',
