@@ -191,8 +191,9 @@ def retry_with_simple_jitter(
                 except exceptions as e:
                     if attempt >= max_attempts:
                         logger.error(
-                            f"{func.__name__} failed after {max_attempts} attempts"
-                        , exc_info=True)
+                            f"{func.__name__} failed after {max_attempts} attempts",
+                            exc_info=True
+                        )
                         raise
 
                     # Exponential backoff: 2^attempt
