@@ -9,14 +9,14 @@
 
 ## Session Overview
 
-| Session | Scope | Risk | Est. Time | Dependencies |
-|---------|-------|------|-----------|--------------|
-| **R1** | Admin Dashboard | Low | 2-3 hrs | None |
-| **R2** | Scraper Base | Medium | 2-3 hrs | None |
-| **R3** | Raw Processor Service | Medium | 1.5-2 hrs | None |
-| **R4** | Base Classes | **HIGH** | 3-4 hrs | None |
-| **R5** | Analytics Processors | Medium | 2-3 hrs | R4 |
-| **R6** | Precompute & Reference | Medium | 2-3 hrs | R4 |
+| Session | Scope | Risk | Est. Time | Status |
+|---------|-------|------|-----------|--------|
+| **R1** | Admin Dashboard | Low | 2-3 hrs | ✅ Complete |
+| **R2** | Scraper Base | Medium | 2-3 hrs | Pending |
+| **R3** | Raw Processor Service | Medium | 1.5-2 hrs | ✅ Complete |
+| **R4** | Base Classes | **HIGH** | 3-4 hrs | 🔄 In Progress (Phase 1) |
+| **R5** | Analytics Processors | Medium | 2-3 hrs | Blocked by R4 |
+| **R6** | Precompute & Reference | Medium | 2-3 hrs | Blocked by R4 |
 
 ---
 
@@ -170,3 +170,38 @@ After all sessions complete:
 - R4 should be done by the most experienced person
 - All sessions use Sonnet - it's faster and sufficient for mechanical refactoring
 - Create commits at logical checkpoints within each session
+
+---
+
+## Progress Tracking
+
+### Completed Sessions ✅
+
+**R1: Admin Dashboard** (2026-01-25)
+- main.py: 3,098 → 108 lines (96.5% reduction)
+- Extracted 10 Flask blueprints
+- All tests passing
+
+**R3: Raw Processor Service** (2026-01-25)
+- process_pubsub(): 696 → ~100 lines (85% reduction)
+- extract_opts_from_path(): 429 → ~10 lines (98% reduction)
+- Created 6 handlers + 20+ path extractors across 6 domains
+- All 32 processor tests passing
+
+### In Progress 🔄
+
+**R4: Base Classes** (Phase 1/4 complete)
+- analytics_base.py: 2,947 → 2,362 lines (20% reduction)
+- Extracted QualityMixin (180 lines) and MetadataMixin (430 lines)
+- Target: <450 lines after all 4 phases
+
+### Next Up
+
+**R2: Scraper Base** - Independent, can start anytime
+**R5 & R6** - Blocked until R4 completes
+
+### Overall Progress
+
+- **Sessions Complete:** 2/6 (33%)
+- **Lines Refactored:** ~5,200 lines extracted into modular components
+- **Files >2000 LOC:** 11 → 8 remaining
