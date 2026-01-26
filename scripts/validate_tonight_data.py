@@ -111,17 +111,23 @@ class TonightDataValidator:
         return True
 
     def check_game_context(self) -> Dict[str, List[str]]:
-        """Check game context coverage for each game."""
+        """
+        Check game context coverage for each game.
+
+        Note: Schedule uses NBA game_id format (0022500661) while upcoming_player_game_context
+        uses date format (20260126_MEM_HOU). We JOIN on game_date and teams instead.
+        """
         query = f"""
         SELECT
-            s.game_id,
+            s.game_id as schedule_game_id,
             s.home_team_tricode as expected_home,
             s.away_team_tricode as expected_away,
             ARRAY_AGG(DISTINCT gc.team_abbr IGNORE NULLS) as actual_teams,
             COUNT(DISTINCT gc.player_lookup) as player_count
         FROM `{self.project}.nba_raw.nbac_schedule` s
         LEFT JOIN `{self.project}.nba_analytics.upcoming_player_game_context` gc
-            ON s.game_id = gc.game_id AND gc.game_date = '{self.target_date}'
+            ON gc.game_date = '{self.target_date}'
+            AND (gc.team_abbr = s.home_team_tricode OR gc.team_abbr = s.away_team_tricode)
         WHERE s.game_date = '{self.target_date}'
         GROUP BY s.game_id, s.home_team_tricode, s.away_team_tricode
         ORDER BY s.game_id
