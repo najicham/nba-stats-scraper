@@ -194,3 +194,31 @@ If you find something missing or incorrect in the orchestration docs:
 ---
 
 **Last Updated:** 2026-01-24
+
+
+---
+
+## Shot Zone Coverage Check (Added 2026-01-25)
+
+Check shot zone data completeness to ensure ML predictions have quality input.
+
+**Target:** ≥80% completeness  
+**Alert if:** <70% or >10 players missing shot zones
+
+**Quick check:**
+```sql
+SELECT
+    COUNT(*) as total_players,
+    COUNTIF(has_shot_zone_data = 1.0) as with_zones,
+    ROUND(100.0 * COUNTIF(has_shot_zone_data = 1.0) / COUNT(*), 1) as completeness_pct
+FROM `nba_predictions.ml_feature_store_v2`
+WHERE game_date = CURRENT_DATE()
+```
+
+**If completeness low:**
+1. Check BigDataBall PBP scraper status
+2. Check NBAC PBP fallback usage rate
+3. See [Shot Zone Failures Runbook](runbooks/shot-zone-failures.md)
+
+**Related:** [ML Feature Catalog](../05-ml/features/feature-catalog.md)
+
