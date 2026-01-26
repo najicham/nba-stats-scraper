@@ -148,6 +148,89 @@ WHERE system_id = 'xgboost_v1'
 
 ---
 
+## Operational Reminders
+
+### 📅 PERIODIC CHECK - CloudFront IP Block Recovery
+**Status:** ⏳ Pending (Check every 6-12 hours until cleared)
+**Priority:** 🟡 MEDIUM
+**Started:** 2026-01-27
+
+**What happened:**
+- AWS CloudFront (NBA.com's CDN) blocked our IP after rapid sequential requests on 2026-01-26
+- Also blocked all 3 proxy IPs (403 Forbidden)
+- 6/8 games successfully downloaded (75% complete)
+- 2/8 games missing: 0022500651 (DEN @ MEM), 0022500652 (DAL @ MIL)
+
+**What CloudFront is:**
+```
+Your Script → Internet → CloudFront (AWS CDN) → NBA.com → Data
+                             ↑
+                        BLOCKED HERE (403 Forbidden)
+```
+
+**What to check:**
+Run this command every 6-12 hours to see if block has cleared:
+```bash
+curl -I "https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_0022500651.json" | head -1
+```
+
+**Success criteria:**
+- Response changes from `HTTP/2 403` to `HTTP/2 200`
+- Block typically clears in 24-72 hours
+
+**When block clears, run:**
+```bash
+# Navigate to project
+cd ~/code/nba-stats-scraper
+
+# Retry first game
+python3 scripts/backfill_pbp_20260125.py --game-id 0022500651
+
+# Wait 18-20 seconds (prevent re-triggering rate limit)
+sleep 20
+
+# Retry second game
+python3 scripts/backfill_pbp_20260125.py --game-id 0022500652
+
+# Verify both games uploaded to GCS (should show 8 total)
+gsutil ls gs://nba-scraped-data/nba-com/play-by-play/2026-01-25/ | wc -l
+
+# Verify specific games
+gsutil ls gs://nba-scraped-data/nba-com/play-by-play/2026-01-25/game-0022500651/
+gsutil ls gs://nba-scraped-data/nba-com/play-by-play/2026-01-25/game-0022500652/
+```
+
+**Expected output:**
+```
+✅ 0022500651 (DEN @ MEM): ~600 events
+✅ 0022500652 (DAL @ MIL): ~600 events
+Total games in GCS: 8 (was 6)
+```
+
+**Alternative if block persists >72 hours:**
+```bash
+# Run from GCP Cloud Shell (different IP)
+gcloud cloud-shell ssh
+cd /workspace/nba-stats-scraper
+git pull origin main
+python3 scripts/backfill_pbp_20260125.py --game-id 0022500651
+sleep 20
+python3 scripts/backfill_pbp_20260125.py --game-id 0022500652
+```
+
+**After completion:**
+- [ ] Update `docs/08-projects/current/2026-01-25-incident-remediation/STATUS.md`
+- [ ] Update `docs/08-projects/current/MASTER-PROJECT-TRACKER.md`
+- [ ] Mark this reminder as ✅ COMPLETE
+
+**Reference:**
+- Project docs: `docs/08-projects/current/2026-01-25-incident-remediation/`
+- Incident reports: `docs/incidents/2026-01-25-*.md`
+
+**Time required:** 5 minutes (once block clears)
+
+---
+
 ## Future Milestones
 
 ### 📅 2026-03-17 (60 days) - Ensemble Optimization

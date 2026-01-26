@@ -9,24 +9,16 @@
 
 ## 🚨 ACTIVE REMINDERS
 
-### ⏸️ 2026-01-25 Incident Remediation - Awaiting CloudFront IP Block Clearance
-**Priority:** 🟡 MEDIUM | **Type:** Data Completeness | **ETA:** When IP block clears (check every 6-12 hours)
+### ⏸️ CloudFront IP Block Recovery - Check Periodically
+**Priority:** 🟡 MEDIUM | **Type:** Data Completeness | **Check:** Every 6-12 hours
 
-**Status:** 1/3 tasks complete (proxy enabled ✅), waiting for AWS CloudFront IP ban to expire
-
-**Next Action:**
+**Quick Check:**
 ```bash
-# Check if block cleared (every 6-12 hours):
 curl -I "https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_0022500651.json" | head -1
 # Waiting for: HTTP/2 200 (currently: HTTP/2 403)
-
-# When cleared, retry 2 missing games:
-python3 scripts/backfill_pbp_20260125.py --game-id 0022500651
-sleep 20
-python3 scripts/backfill_pbp_20260125.py --game-id 0022500652
 ```
 
-**Details:** `docs/08-projects/current/2026-01-25-incident-remediation/REMINDER-RETRY-GAMES.md`
+**Full Details:** `docs/02-operations/ML-MONITORING-REMINDERS.md` → "CloudFront IP Block Recovery"
 
 ---
 
