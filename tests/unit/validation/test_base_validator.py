@@ -16,6 +16,7 @@ import pytest
 import yaml
 import tempfile
 import os
+import time
 from unittest.mock import Mock, patch, MagicMock, mock_open
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -2106,6 +2107,428 @@ class TestValidateMethod:
         # Verify the returned report matches
         assert result == mock_report
         assert result.processor_name == 'test'
+
+
+# ============================================================================
+# Test Helper Methods
+# ============================================================================
+
+class TestGetExpectedDates:
+    """Tests for _get_expected_dates method"""
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_get_expected_dates_returns_list_of_dates(self, mock_storage, mock_bq, temp_config_file):
+        """Test _get_expected_dates returns list of date strings"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock _execute_query to return mock rows
+        mock_row1 = Mock()
+        mock_row1.game_date = '2024-01-01'
+        mock_row2 = Mock()
+        mock_row2.game_date = '2024-01-02'
+        mock_row3 = Mock()
+        mock_row3.game_date = '2024-01-03'
+
+        validator._execute_query = Mock(return_value=[mock_row1, mock_row2, mock_row3])
+
+        result = validator._get_expected_dates('2024-01-01', '2024-01-31', None)
+
+        # Verify result is list of date strings
+        assert result == ['2024-01-01', '2024-01-02', '2024-01-03']
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_get_expected_dates_passes_cache_key_to_execute_query(self, mock_storage, mock_bq, temp_config_file):
+        """Test _get_expected_dates passes cache_key to _execute_query for caching"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock _execute_query
+        mock_row = Mock()
+        mock_row.game_date = '2024-01-01'
+        validator._execute_query = Mock(return_value=[mock_row])
+
+        # Call method
+        validator._get_expected_dates('2024-01-01', '2024-01-31', 2024)
+
+        # Verify _execute_query was called with a cache_key
+        call_args = validator._execute_query.call_args
+        assert 'cache_key' in call_args[1]
+        assert call_args[1]['cache_key'] == 'expected_dates_2024-01-01_2024-01-31_2024'
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_get_expected_dates_with_season_filter(self, mock_storage, mock_bq, temp_config_file):
+        """Test _get_expected_dates with season_year parameter"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock _execute_query
+        mock_row = Mock()
+        mock_row.game_date = '2024-01-01'
+        validator._execute_query = Mock(return_value=[mock_row])
+
+        result = validator._get_expected_dates('2024-01-01', '2024-01-31', 2024)
+
+        # Verify query was called
+        assert validator._execute_query.called
+        # Verify result is processed correctly
+        assert result == ['2024-01-01']
+
+
+class TestCheckDataFreshness:
+    """Tests for _check_data_freshness method"""
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_data_freshness_data_is_fresh(self, mock_storage, mock_bq, temp_config_file):
+        """Test data freshness check when data is fresh"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock BigQuery query result - data is 10 hours old
+        mock_row = Mock()
+        mock_row.last_processed = '2024-01-01 10:00:00'
+        mock_row.hours_old = 10.0
+
+        # Create proper mock chain for query().result()
+        mock_query_job = Mock()
+        mock_query_job.result = Mock(return_value=iter([mock_row]))
+        validator.bq_client.query = Mock(return_value=mock_query_job)
+
+        config = {
+            'target_table': 'nba_raw.test_table',
+            'max_age_hours': 24,
+            'timestamp_field': 'processed_at'
+        }
+
+        validator._check_data_freshness(config, '2024-01-01', '2024-01-31')
+
+        # Verify result was added
+        assert len(validator.results) == 1
+        result = validator.results[0]
+        assert result.check_name == 'data_freshness'
+        assert result.passed is True
+        assert result.severity == 'info'
+        assert '10.0 hours old' in result.message
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_data_freshness_data_is_stale(self, mock_storage, mock_bq, temp_config_file):
+        """Test data freshness check when data is stale"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock BigQuery query result - data is 48 hours old
+        mock_row = Mock()
+        mock_row.last_processed = '2024-01-01 10:00:00'
+        mock_row.hours_old = 48.0
+
+        # Create proper mock chain for query().result()
+        mock_query_job = Mock()
+        mock_query_job.result = Mock(return_value=iter([mock_row]))
+        validator.bq_client.query = Mock(return_value=mock_query_job)
+
+        config = {
+            'target_table': 'nba_raw.test_table',
+            'max_age_hours': 24,
+            'timestamp_field': 'processed_at'
+        }
+
+        validator._check_data_freshness(config, '2024-01-01', '2024-01-31')
+
+        # Verify result was added
+        result = validator.results[0]
+        assert result.passed is False
+        assert result.severity == 'warning'  # 2x max_age_hours -> warning
+        assert '48.0 hours old' in result.message
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_data_freshness_very_stale_data(self, mock_storage, mock_bq, temp_config_file):
+        """Test data freshness check when data is very stale"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock BigQuery query result - data is 100 hours old
+        mock_row = Mock()
+        mock_row.last_processed = '2024-01-01 10:00:00'
+        mock_row.hours_old = 100.0
+
+        # Create proper mock chain for query().result()
+        mock_query_job = Mock()
+        mock_query_job.result = Mock(return_value=iter([mock_row]))
+        validator.bq_client.query = Mock(return_value=mock_query_job)
+
+        config = {
+            'target_table': 'nba_raw.test_table',
+            'max_age_hours': 24
+        }
+
+        validator._check_data_freshness(config, '2024-01-01', '2024-01-31')
+
+        # Verify result was added with error severity
+        result = validator.results[0]
+        assert result.passed is False
+        assert result.severity == 'error'  # > 2x max_age_hours -> error
+        assert '100.0 hours old' in result.message
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_data_freshness_no_data_found(self, mock_storage, mock_bq, temp_config_file):
+        """Test data freshness check when no data found"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock BigQuery query result - no data (hours_old is None)
+        mock_row = Mock()
+        mock_row.last_processed = None
+        mock_row.hours_old = None
+
+        # Create proper mock chain for query().result()
+        mock_query_job = Mock()
+        mock_query_job.result = Mock(return_value=iter([mock_row]))
+        validator.bq_client.query = Mock(return_value=mock_query_job)
+
+        config = {
+            'target_table': 'nba_raw.test_table',
+            'max_age_hours': 24
+        }
+
+        validator._check_data_freshness(config, '2024-01-01', '2024-01-31')
+
+        # Verify result
+        result = validator.results[0]
+        assert result.passed is False
+        assert 'No data found in date range' in result.message
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_data_freshness_handles_exception(self, mock_storage, mock_bq, temp_config_file):
+        """Test data freshness check handles BigQuery exceptions"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock BigQuery query to raise exception
+        validator.bq_client.query = Mock(side_effect=Exception('BigQuery error'))
+
+        config = {
+            'target_table': 'nba_raw.test_table',
+            'max_age_hours': 24
+        }
+
+        validator._check_data_freshness(config, '2024-01-01', '2024-01-31')
+
+        # Verify error result was added
+        result = validator.results[0]
+        assert result.passed is False
+        assert result.severity == 'error'
+        assert 'Freshness check failed' in result.message
+        assert 'BigQuery error' in result.message
+
+
+class TestGenerateReport:
+    """Tests for _generate_report method"""
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_generate_report_all_passed(self, mock_storage, mock_bq, temp_config_file):
+        """Test _generate_report when all checks pass"""
+        validator = BaseValidator(temp_config_file)
+        validator._start_time = time.time()
+
+        # Add some passing results
+        validator.results = [
+            ValidationResult(
+                check_name='test1',
+                check_type='completeness',
+                layer='bigquery',
+                passed=True,
+                severity='info',
+                message='Test 1 passed'
+            ),
+            ValidationResult(
+                check_name='test2',
+                check_type='field_validation',
+                layer='bigquery',
+                passed=True,
+                severity='info',
+                message='Test 2 passed'
+            )
+        ]
+
+        # Mock _log_report and _build_summary
+        validator._log_report = Mock()
+        validator._build_summary = Mock(return_value={})
+
+        report = validator._generate_report('run123', '2024-01-01', '2024-01-31', 2024)
+
+        # Verify report structure
+        assert report.processor_name == validator.processor_name
+        assert report.validation_run_id == 'run123'
+        assert report.date_range_start == '2024-01-01'
+        assert report.date_range_end == '2024-01-31'
+        assert report.season_year == 2024
+        assert report.total_checks == 2
+        assert report.passed_checks == 2
+        assert report.failed_checks == 0
+        assert report.overall_status == 'pass'
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_generate_report_with_failures(self, mock_storage, mock_bq, temp_config_file):
+        """Test _generate_report with failures"""
+        validator = BaseValidator(temp_config_file)
+        validator._start_time = time.time()
+
+        # Add mixed results
+        validator.results = [
+            ValidationResult(
+                check_name='test1',
+                check_type='completeness',
+                layer='bigquery',
+                passed=True,
+                severity='info',
+                message='Test 1 passed'
+            ),
+            ValidationResult(
+                check_name='test2',
+                check_type='field_validation',
+                layer='bigquery',
+                passed=False,
+                severity='error',
+                message='Test 2 failed'
+            )
+        ]
+
+        validator._log_report = Mock()
+        validator._build_summary = Mock(return_value={})
+
+        report = validator._generate_report('run123', '2024-01-01', '2024-01-31', None)
+
+        # Verify counts
+        assert report.total_checks == 2
+        assert report.passed_checks == 1
+        assert report.failed_checks == 1
+        assert report.overall_status == 'fail'  # Has error
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_generate_report_status_critical(self, mock_storage, mock_bq, temp_config_file):
+        """Test _generate_report with critical severity"""
+        validator = BaseValidator(temp_config_file)
+        validator._start_time = time.time()
+
+        validator.results = [
+            ValidationResult(
+                check_name='test1',
+                check_type='system',
+                layer='framework',
+                passed=False,
+                severity='critical',
+                message='Critical failure'
+            )
+        ]
+
+        validator._log_report = Mock()
+        validator._build_summary = Mock(return_value={})
+
+        report = validator._generate_report('run123', '2024-01-01', '2024-01-31', None)
+
+        # Critical failure -> overall status = fail
+        assert report.overall_status == 'fail'
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_generate_report_status_warning(self, mock_storage, mock_bq, temp_config_file):
+        """Test _generate_report with warning severity"""
+        validator = BaseValidator(temp_config_file)
+        validator._start_time = time.time()
+
+        validator.results = [
+            ValidationResult(
+                check_name='test1',
+                check_type='freshness',
+                layer='schedule',
+                passed=False,
+                severity='warning',
+                message='Data is slightly stale'
+            )
+        ]
+
+        validator._log_report = Mock()
+        validator._build_summary = Mock(return_value={})
+
+        report = validator._generate_report('run123', '2024-01-01', '2024-01-31', None)
+
+        # Only warnings -> overall status = warn
+        assert report.overall_status == 'warn'
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_generate_report_collects_remediation_commands(self, mock_storage, mock_bq, temp_config_file):
+        """Test _generate_report collects remediation commands"""
+        validator = BaseValidator(temp_config_file)
+        validator._start_time = time.time()
+
+        validator.results = [
+            ValidationResult(
+                check_name='test1',
+                check_type='completeness',
+                layer='bigquery',
+                passed=False,
+                severity='error',
+                message='Missing data',
+                remediation=['command1', 'command2']
+            ),
+            ValidationResult(
+                check_name='test2',
+                check_type='completeness',
+                layer='bigquery',
+                passed=False,
+                severity='error',
+                message='More missing data',
+                remediation=['command2', 'command3']  # command2 is duplicate
+            )
+        ]
+
+        validator._log_report = Mock()
+        validator._build_summary = Mock(return_value={})
+
+        report = validator._generate_report('run123', '2024-01-01', '2024-01-31', None)
+
+        # Verify remediation commands are collected and deduplicated
+        assert len(report.remediation_commands) == 3
+        assert 'command1' in report.remediation_commands
+        assert 'command2' in report.remediation_commands
+        assert 'command3' in report.remediation_commands
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_generate_report_calls_log_report(self, mock_storage, mock_bq, temp_config_file):
+        """Test _generate_report calls _log_report"""
+        validator = BaseValidator(temp_config_file)
+        validator._start_time = time.time()
+
+        validator.results = []
+        validator._log_report = Mock()
+        validator._build_summary = Mock(return_value={})
+
+        report = validator._generate_report('run123', '2024-01-01', '2024-01-31', None)
+
+        # Verify _log_report was called with the report
+        validator._log_report.assert_called_once_with(report)
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_generate_report_includes_execution_duration(self, mock_storage, mock_bq, temp_config_file):
+        """Test _generate_report includes execution duration"""
+        validator = BaseValidator(temp_config_file)
+        validator._start_time = time.time() - 5.0  # Started 5 seconds ago
+
+        validator.results = []
+        validator._log_report = Mock()
+        validator._build_summary = Mock(return_value={})
+
+        report = validator._generate_report('run123', '2024-01-01', '2024-01-31', None)
+
+        # Verify execution duration is set and approximately correct
+        assert report.execution_duration >= 4.9  # At least ~5 seconds
+        assert report.execution_duration < 10.0  # But not too long
 
 
 if __name__ == '__main__':

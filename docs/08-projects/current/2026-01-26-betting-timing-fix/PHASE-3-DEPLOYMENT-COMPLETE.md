@@ -482,15 +482,15 @@ Enjoy!
 | `config/workflows.yaml` | ✅ Deployed | Configuration fix |
 | `orchestration/workflow_timing.py` | ✅ Deployed | Timing utilities |
 | `scripts/validate_tonight_data.py` | ✅ Deployed | Enhanced validation |
-| `docs/08-projects/2026-01-26-betting-timing-fix/DEPLOYMENT-READY.md` | ✅ Created | Deployment doc |
-| `docs/08-projects/2026-01-26-betting-timing-fix/PHASE-3-DEPLOYMENT-COMPLETE.md` | ✅ Created | This file |
+| `docs/08-projects/current/2026-01-26-betting-timing-fix/DEPLOYMENT-READY.md` | ✅ Created | Deployment doc |
+| `docs/08-projects/current/2026-01-26-betting-timing-fix/PHASE-3-DEPLOYMENT-COMPLETE.md` | ✅ Created | This file |
 
 ---
 
 ## References
 - Action Plan: `docs/sessions/2026-01-26-COMPREHENSIVE-ACTION-PLAN.md`
-- Phase 1: `docs/08-projects/2026-01-26-betting-timing-fix/PHASE-1-COMPLETE.md`
-- Phase 2: `docs/08-projects/2026-01-26-betting-timing-fix/PHASE-2-VALIDATION-FIXES.md`
-- Deployment Ready: `docs/08-projects/2026-01-26-betting-timing-fix/DEPLOYMENT-READY.md`
+- Phase 1: `docs/08-projects/current/2026-01-26-betting-timing-fix/PHASE-1-COMPLETE.md`
+- Phase 2: `docs/08-projects/current/2026-01-26-betting-timing-fix/PHASE-2-VALIDATION-FIXES.md`
+- Deployment Ready: `docs/08-projects/current/2026-01-26-betting-timing-fix/DEPLOYMENT-READY.md`
 - Git Push: e31306af → a6cd5536
 - Key Commits: f4385d03 (config), 91215d5a (validation), a44a4c48 (prevention)

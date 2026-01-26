@@ -278,6 +278,6 @@ $ python scripts/validate_tonight_data.py --date 2026-01-26
 ## References
 
 - Action Plan: `docs/sessions/2026-01-26-COMPREHENSIVE-ACTION-PLAN.md`
-- Phase 1 Results: `docs/08-projects/2026-01-26-betting-timing-fix/PHASE-1-COMPLETE.md`
+- Phase 1 Results: `docs/08-projects/current/2026-01-26-betting-timing-fix/PHASE-1-COMPLETE.md`
 - Incident Report: `docs/incidents/2026-01-26-BETTING-DATA-TIMING-ISSUE-ROOT-CAUSE.md`
 - Workflow Config: `config/workflows.yaml` (to be committed in Phase 3)

@@ -247,7 +247,7 @@ After running all checks, count your ✅:
 
 1. Document success in a new file:
 ```bash
-echo "2026-01-27 - First Production Run: SUCCESS" >> docs/08-projects/2026-01-26-betting-timing-fix/PRODUCTION-RESULTS.md
+echo "2026-01-27 - First Production Run: SUCCESS" >> docs/08-projects/current/2026-01-26-betting-timing-fix/PRODUCTION-RESULTS.md
 ```
 
 2. Update stakeholders:
@@ -437,12 +437,12 @@ python scripts/validate_tonight_data.py --date 2026-01-27 2>&1 | grep -A 5 "SUMM
 
 **If you need help**:
 1. Check this document first
-2. Review deployment docs: `docs/08-projects/2026-01-26-betting-timing-fix/`
+2. Review deployment docs: `docs/08-projects/current/2026-01-26-betting-timing-fix/`
 3. Check incident reports: `docs/incidents/`
 4. Rollback if needed (commands above)
 
 **Key Files**:
-- This checklist: `docs/08-projects/2026-01-26-betting-timing-fix/TOMORROW-MORNING-CHECKLIST.md`
+- This checklist: `docs/08-projects/current/2026-01-26-betting-timing-fix/TOMORROW-MORNING-CHECKLIST.md`
 - Deployment complete: `PHASE-3-DEPLOYMENT-COMPLETE.md`
 - Executive summary: `EXECUTIVE-SUMMARY.md`
 

@@ -303,7 +303,7 @@ tail -f logs/master_controller.log | grep betting_lines
 | `config/workflows.yaml` | ✅ Committed | 6h → 12h window fix |
 | `orchestration/workflow_timing.py` | ✅ Committed | Timing utilities |
 | `scripts/validate_tonight_data.py` | ✅ Committed | Timing-aware checks + bug fixes |
-| `docs/08-projects/2026-01-26-betting-timing-fix/` | ✅ Complete | Project documentation |
+| `docs/08-projects/current/2026-01-26-betting-timing-fix/` | ✅ Complete | Project documentation |
 | `docs/incidents/2026-01-26-BETTING-DATA-TIMING-ISSUE-ROOT-CAUSE.md` | ✅ Complete | Root cause analysis |
 
 **Status**: ✅ READY FOR PRODUCTION DEPLOYMENT
@@ -312,8 +312,8 @@ tail -f logs/master_controller.log | grep betting_lines
 
 ## References
 - Action Plan: `docs/sessions/2026-01-26-COMPREHENSIVE-ACTION-PLAN.md`
-- Phase 1 Results: `docs/08-projects/2026-01-26-betting-timing-fix/PHASE-1-COMPLETE.md`
-- Phase 2 Results: `docs/08-projects/2026-01-26-betting-timing-fix/PHASE-2-VALIDATION-FIXES.md`
+- Phase 1 Results: `docs/08-projects/current/2026-01-26-betting-timing-fix/PHASE-1-COMPLETE.md`
+- Phase 2 Results: `docs/08-projects/current/2026-01-26-betting-timing-fix/PHASE-2-VALIDATION-FIXES.md`
 - Incident Report: `docs/incidents/2026-01-26-BETTING-DATA-TIMING-ISSUE-ROOT-CAUSE.md`
 - Config Change: Commit f4385d03
 - Validation Fixes: Commit 91215d5a

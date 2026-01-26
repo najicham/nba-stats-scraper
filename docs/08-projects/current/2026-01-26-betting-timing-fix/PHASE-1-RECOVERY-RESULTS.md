@@ -117,7 +117,7 @@ Status: To be checked
 ---
 
 ## Files Updated
-- Created: `docs/08-projects/2026-01-26-betting-timing-fix/PHASE-1-RECOVERY-RESULTS.md`
+- Created: `docs/08-projects/current/2026-01-26-betting-timing-fix/PHASE-1-RECOVERY-RESULTS.md`
 - To update: Task list with Phase 1 completion status
 
 ## References

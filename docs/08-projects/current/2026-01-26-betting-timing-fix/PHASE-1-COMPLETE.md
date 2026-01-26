@@ -162,8 +162,8 @@ The proposed fix (6h → 12h window) is correct:
 ---
 
 ## Files Created/Updated
-1. `docs/08-projects/2026-01-26-betting-timing-fix/PHASE-1-RECOVERY-RESULTS.md`
-2. `docs/08-projects/2026-01-26-betting-timing-fix/PHASE-1-COMPLETE.md`
+1. `docs/08-projects/current/2026-01-26-betting-timing-fix/PHASE-1-RECOVERY-RESULTS.md`
+2. `docs/08-projects/current/2026-01-26-betting-timing-fix/PHASE-1-COMPLETE.md`
 3. Task list updated (Tasks #1, #2, #3 completed)
 
 ## References

@@ -93,7 +93,7 @@ git revert f4385d03 && git push origin main
 ## 📋 Full Checklist
 
 If you want details, see:
-`docs/08-projects/2026-01-26-betting-timing-fix/TOMORROW-MORNING-CHECKLIST.md`
+`docs/08-projects/current/2026-01-26-betting-timing-fix/TOMORROW-MORNING-CHECKLIST.md`
 
 ---
 
@@ -111,12 +111,12 @@ If you want details, see:
 
 **If Success**:
 ```bash
-echo "2026-01-27: First production run SUCCESS ✅" >> docs/08-projects/2026-01-26-betting-timing-fix/PRODUCTION-RESULTS.md
+echo "2026-01-27: First production run SUCCESS ✅" >> docs/08-projects/current/2026-01-26-betting-timing-fix/PRODUCTION-RESULTS.md
 ```
 
 **If Failure**:
 ```bash
-echo "2026-01-27: First production run FAILED ❌ - [reason]" >> docs/08-projects/2026-01-26-betting-timing-fix/PRODUCTION-RESULTS.md
+echo "2026-01-27: First production run FAILED ❌ - [reason]" >> docs/08-projects/current/2026-01-26-betting-timing-fix/PRODUCTION-RESULTS.md
 ```
 
 ---

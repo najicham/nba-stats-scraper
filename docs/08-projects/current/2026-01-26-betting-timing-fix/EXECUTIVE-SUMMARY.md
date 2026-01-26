@@ -354,10 +354,10 @@ betting_lines:
 
 ### Documentation
 - **Action Plan**: `docs/sessions/2026-01-26-COMPREHENSIVE-ACTION-PLAN.md`
-- **Phase 1 Results**: `docs/08-projects/2026-01-26-betting-timing-fix/PHASE-1-COMPLETE.md`
-- **Phase 2 Results**: `docs/08-projects/2026-01-26-betting-timing-fix/PHASE-2-VALIDATION-FIXES.md`
-- **Phase 3 Results**: `docs/08-projects/2026-01-26-betting-timing-fix/PHASE-3-DEPLOYMENT-COMPLETE.md`
-- **Deployment Doc**: `docs/08-projects/2026-01-26-betting-timing-fix/DEPLOYMENT-READY.md`
+- **Phase 1 Results**: `docs/08-projects/current/2026-01-26-betting-timing-fix/PHASE-1-COMPLETE.md`
+- **Phase 2 Results**: `docs/08-projects/current/2026-01-26-betting-timing-fix/PHASE-2-VALIDATION-FIXES.md`
+- **Phase 3 Results**: `docs/08-projects/current/2026-01-26-betting-timing-fix/PHASE-3-DEPLOYMENT-COMPLETE.md`
+- **Deployment Doc**: `docs/08-projects/current/2026-01-26-betting-timing-fix/DEPLOYMENT-READY.md`
 - **Incident Report**: `docs/incidents/2026-01-26-BETTING-DATA-TIMING-ISSUE-ROOT-CAUSE.md`
 
 ### Code Changes

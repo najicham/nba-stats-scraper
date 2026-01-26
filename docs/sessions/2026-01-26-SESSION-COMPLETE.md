@@ -61,13 +61,14 @@ All objectives achieved:
 
 ## Key Files Created
 
-**Project Documentation** (`docs/08-projects/2026-01-26-betting-timing-fix/`):
+**Project Documentation** (`docs/08-projects/current/2026-01-26-betting-timing-fix/`):
 1. `EXECUTIVE-SUMMARY.md` - Complete project overview
 2. `PHASE-1-COMPLETE.md` - Recovery results
 3. `PHASE-2-VALIDATION-FIXES.md` - Validation improvements
 4. `PHASE-3-DEPLOYMENT-COMPLETE.md` - Deployment documentation
 5. `DEPLOYMENT-READY.md` - Pre-deployment checklist
 6. `TOMORROW-MORNING-CHECKLIST.md` - Verification steps
+7. `QUICK-START-TOMORROW.md` - 5-minute verification guide
 
 **Session Documentation** (`docs/sessions/`):
 - `2026-01-26-COMPREHENSIVE-ACTION-PLAN.md` - Original plan (from assessment)
@@ -243,7 +244,7 @@ To github.com:najicham/nba-stats-scraper.git
 ### Tomorrow Morning (2026-01-27 @ 10:00 AM ET)
 **Action Required**: Run verification checklist
 
-**File**: `docs/08-projects/2026-01-26-betting-timing-fix/TOMORROW-MORNING-CHECKLIST.md`
+**File**: `docs/08-projects/current/2026-01-26-betting-timing-fix/TOMORROW-MORNING-CHECKLIST.md`
 
 **Quick Commands**:
 ```bash
@@ -394,13 +395,14 @@ afternoon availability temporarily while we fix.
 
 ## References
 
-**All Documentation** (`docs/08-projects/2026-01-26-betting-timing-fix/`):
+**All Documentation** (`docs/08-projects/current/2026-01-26-betting-timing-fix/`):
 - `EXECUTIVE-SUMMARY.md` - Project overview
 - `PHASE-1-COMPLETE.md` - Recovery phase
 - `PHASE-2-VALIDATION-FIXES.md` - Validation phase
 - `PHASE-3-DEPLOYMENT-COMPLETE.md` - Deployment phase
 - `DEPLOYMENT-READY.md` - Pre-deployment doc
 - `TOMORROW-MORNING-CHECKLIST.md` - Verification steps
+- `QUICK-START-TOMORROW.md` - 5-minute quick start
 
 **Action Plan**:
 - `docs/sessions/2026-01-26-COMPREHENSIVE-ACTION-PLAN.md`

@@ -41,6 +41,7 @@ from shared.utils.notification_system import (
     notify_error,
     notify_warning,
 )
+from shared.utils.source_block_tracker import record_source_block
 
 from ..utils.exceptions import (
     DownloadDataException,
@@ -687,7 +688,7 @@ class HttpHandlerMixin:
                             circuit_breaker=circuit_breaker
                         )
 
-                        # Also log to BigQuery for monitoring
+                        # Also log to BigQuery for monitoring (host-level)
                         log_proxy_result(
                             scraper_name=self.__class__.__name__,
                             target_host=target_host,
@@ -697,6 +698,34 @@ class HttpHandlerMixin:
                             error_type=error_type,
                             proxy_provider=provider
                         )
+
+                        # NEW: Resource-level tracking for 403/404/410 (source blocks)
+                        if status_code in {403, 404, 410}:
+                            # Extract resource_id from opts (game_id if available)
+                            resource_id = self.opts.get('game_id')
+                            game_date = self.opts.get('gamedate') or self.opts.get('game_date')
+
+                            if resource_id:
+                                # Determine resource type based on scraper
+                                if 'play_by_play' in self.__class__.__name__.lower() or 'pbp' in self.scraper_name.lower():
+                                    resource_type = 'play_by_play'
+                                elif 'boxscore' in self.__class__.__name__.lower():
+                                    resource_type = 'boxscore'
+                                else:
+                                    resource_type = 'unknown'
+
+                                # Record source block
+                                record_source_block(
+                                    resource_id=resource_id,
+                                    resource_type=resource_type,
+                                    source_system=f"{target_host.replace('.', '_')}",
+                                    source_url=self.url,
+                                    http_status_code=status_code,
+                                    game_date=game_date,
+                                    notes=f"Blocked by {target_host} (HTTP {status_code})",
+                                    created_by="scraper"
+                                )
+
                         break  # Move to next proxy
 
                     elif status_code in RETRYABLE_STATUS_CODES and attempt < MAX_RETRIES_PER_PROXY - 1:
