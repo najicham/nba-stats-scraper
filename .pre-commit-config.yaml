@@ -6,6 +6,15 @@ repos:
   # Local hooks
   - repo: local
     hooks:
+      - id: check-import-paths
+        name: Check import paths in shared code
+        description: Prevents shared code from importing from orchestration.shared.*
+        entry: python .pre-commit-hooks/check_import_paths.py
+        language: python
+        pass_filenames: false
+        always_run: true
+        verbose: true
+
       - id: check-shared-sync
         name: Check shared files sync
         description: Ensures shared/ files are in sync with cloud function copies
