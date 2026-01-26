@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import argparse
 import json
+import os
 from datetime import datetime
 from typing import Dict, Tuple, List
 
@@ -47,8 +48,9 @@ import xgboost as xgb
 from google.cloud import bigquery, storage
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 
-# Configuration
-PROJECT_ID = "nba-props-platform"
+# Configuration (from environment variables with defaults)
+PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+GCS_MODEL_BUCKET = os.environ.get('GCS_MODEL_BUCKET', 'nba-ml-models')
 MODEL_OUTPUT_DIR = Path("models")
 MODEL_OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -469,7 +471,7 @@ def save_model(
         print("\nUploading to GCS...")
         try:
             storage_client = storage.Client(project=PROJECT_ID)
-            bucket_name = "nba-ml-models"  # TODO: Make configurable
+            bucket_name = GCS_MODEL_BUCKET
             bucket = storage_client.bucket(bucket_name)
 
             # Upload model

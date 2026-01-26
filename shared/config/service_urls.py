@@ -49,13 +49,22 @@ class Services:
     # Phase 6: Export/Grading
     PHASE6_EXPORT = 'phase6-export'
 
+    # Orchestration services
+    SELF_HEAL = 'self-heal'
+    PIPELINE_RECONCILIATION = 'pipeline-reconciliation'
+    ADMIN_DASHBOARD = 'nba-admin-dashboard'
+
     # MLB Services
+    MLB_PHASE3_ANALYTICS = 'mlb-phase3-analytics-processors'
+    MLB_PHASE4_PRECOMPUTE = 'mlb-phase4-precompute-processors'
     MLB_PREDICTION_WORKER = 'mlb-prediction-worker'
-    MLB_GRADING_SERVICE = 'mlb-grading-service'
+    MLB_GRADING_SERVICE = 'mlb-phase6-grading'
+    MLB_SELF_HEAL = 'mlb-self-heal'
 
 
 # Default Cloud Run URLs (project-specific)
 _DEFAULT_URLS = {
+    # NBA Services
     Services.PHASE1_SCRAPERS: f'https://{Services.PHASE1_SCRAPERS}-{DEFAULT_PROJECT_NUMBER}.us-west2.run.app',
     Services.PHASE2_PROCESSORS: f'https://{Services.PHASE2_PROCESSORS}-{DEFAULT_PROJECT_NUMBER}.us-west2.run.app',
     Services.PHASE3_ANALYTICS: f'https://{Services.PHASE3_ANALYTICS}-{DEFAULT_PROJECT_NUMBER}.us-west2.run.app',
@@ -63,12 +72,21 @@ _DEFAULT_URLS = {
     Services.PREDICTION_COORDINATOR: f'https://{Services.PREDICTION_COORDINATOR}-{DEFAULT_PROJECT_NUMBER}.us-west2.run.app',
     Services.PREDICTION_WORKER: f'https://{Services.PREDICTION_WORKER}-{DEFAULT_PROJECT_NUMBER}.us-west2.run.app',
     Services.PHASE6_EXPORT: f'https://{Services.PHASE6_EXPORT}-{DEFAULT_PROJECT_NUMBER}.us-west2.run.app',
+    # Orchestration Services
+    Services.SELF_HEAL: f'https://{Services.SELF_HEAL}-{DEFAULT_PROJECT_NUMBER}.us-west2.run.app',
+    Services.PIPELINE_RECONCILIATION: f'https://{Services.PIPELINE_RECONCILIATION}-{DEFAULT_PROJECT_NUMBER}.us-west2.run.app',
+    Services.ADMIN_DASHBOARD: f'https://{Services.ADMIN_DASHBOARD}-{DEFAULT_PROJECT_NUMBER}.us-west2.run.app',
+    # MLB Services
+    Services.MLB_PHASE3_ANALYTICS: f'https://{Services.MLB_PHASE3_ANALYTICS}-{DEFAULT_PROJECT_NUMBER}.us-west2.run.app',
+    Services.MLB_PHASE4_PRECOMPUTE: f'https://{Services.MLB_PHASE4_PRECOMPUTE}-{DEFAULT_PROJECT_NUMBER}.us-west2.run.app',
     Services.MLB_PREDICTION_WORKER: f'https://{Services.MLB_PREDICTION_WORKER}-{DEFAULT_PROJECT_NUMBER}.us-west2.run.app',
     Services.MLB_GRADING_SERVICE: f'https://{Services.MLB_GRADING_SERVICE}-{DEFAULT_PROJECT_NUMBER}.us-west2.run.app',
+    Services.MLB_SELF_HEAL: f'https://{Services.MLB_SELF_HEAL}-{DEFAULT_PROJECT_NUMBER}.us-west2.run.app',
 }
 
 # Environment variable names for each service (allows override)
 _ENV_VAR_NAMES = {
+    # NBA Services
     Services.PHASE1_SCRAPERS: 'PHASE1_SCRAPERS_URL',
     Services.PHASE2_PROCESSORS: 'PHASE2_PROCESSORS_URL',
     Services.PHASE3_ANALYTICS: 'PHASE3_ANALYTICS_URL',
@@ -76,8 +94,16 @@ _ENV_VAR_NAMES = {
     Services.PREDICTION_COORDINATOR: 'PREDICTION_COORDINATOR_URL',
     Services.PREDICTION_WORKER: 'PREDICTION_WORKER_URL',
     Services.PHASE6_EXPORT: 'PHASE6_EXPORT_URL',
+    # Orchestration Services
+    Services.SELF_HEAL: 'SELF_HEAL_URL',
+    Services.PIPELINE_RECONCILIATION: 'PIPELINE_RECONCILIATION_URL',
+    Services.ADMIN_DASHBOARD: 'ADMIN_DASHBOARD_URL',
+    # MLB Services
+    Services.MLB_PHASE3_ANALYTICS: 'MLB_PHASE3_ANALYTICS_URL',
+    Services.MLB_PHASE4_PRECOMPUTE: 'MLB_PHASE4_PRECOMPUTE_URL',
     Services.MLB_PREDICTION_WORKER: 'MLB_PREDICTION_WORKER_URL',
     Services.MLB_GRADING_SERVICE: 'MLB_GRADING_SERVICE_URL',
+    Services.MLB_SELF_HEAL: 'MLB_SELF_HEAL_URL',
 }
 
 

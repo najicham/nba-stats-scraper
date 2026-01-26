@@ -19,6 +19,7 @@ import google.oauth2.id_token
 from ..services.rate_limiter import rate_limit
 from ..services.auth import check_auth
 from ..services.audit_logger import get_audit_logger
+from shared.config.service_urls import get_service_url, Services
 
 logger = logging.getLogger(__name__)
 
@@ -111,12 +112,12 @@ def action_retry_phase():
         if not phase or not target_date:
             return jsonify({'error': 'Missing required parameters: phase and date'}), 400
 
-        # Map phase to Cloud Run endpoint
+        # Map phase to Cloud Run endpoint - using centralized service_urls
         phase_urls = {
-            'phase_2': 'https://nba-phase2-raw-processors-f7p3g7f6ya-wl.a.run.app/process',
-            'phase_3': 'https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app/process',
-            'phase_4': 'https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app/process',
-            'phase_5': 'https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/predict',
+            'phase_2': f'{get_service_url(Services.PHASE2_PROCESSORS)}/process',
+            'phase_3': f'{get_service_url(Services.PHASE3_ANALYTICS)}/process',
+            'phase_4': f'{get_service_url(Services.PHASE4_PRECOMPUTE)}/process',
+            'phase_5': f'{get_service_url(Services.PREDICTION_COORDINATOR)}/predict',
         }
 
         url = phase_urls.get(phase)

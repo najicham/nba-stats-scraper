@@ -21,10 +21,11 @@ import os
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# MLB Service URLs
-PHASE3_URL = "https://mlb-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app"
-PHASE4_URL = "https://mlb-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app"
-PREDICTION_URL = "https://mlb-prediction-worker-f7p3g7f6ya-wl.a.run.app"
+# MLB Service URLs - centralized via shared.config.service_urls
+from shared.config.service_urls import get_service_url, Services
+PHASE3_URL = get_service_url(Services.MLB_PHASE3_ANALYTICS)
+PHASE4_URL = get_service_url(Services.MLB_PHASE4_PRECOMPUTE)
+PREDICTION_URL = get_service_url(Services.MLB_PREDICTION_WORKER)
 
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID") or os.environ.get("GCP_PROJECT", "nba-props-platform")
 

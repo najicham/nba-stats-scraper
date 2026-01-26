@@ -131,7 +131,7 @@ class TestErrorHandlingAndRetries:
         # Should retry and eventually succeed
         try:
             update_with_retry(None, {})
-        except:
+        except Exception:
             update_with_retry(None, {})  # Retry
 
         assert attempt_count == 2

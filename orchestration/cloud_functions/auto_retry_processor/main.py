@@ -33,6 +33,8 @@ import requests
 import google.auth.transport.requests
 import google.oauth2.id_token
 
+from shared.config.service_urls import get_service_url, Services
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -45,10 +47,10 @@ DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() == 'true'
 # Cloud Run HTTP endpoint mapping by phase
 # Using direct HTTP calls instead of Pub/Sub for more reliable retry triggering
 PHASE_HTTP_ENDPOINTS = {
-    'phase_2': 'https://nba-phase2-raw-processors-f7p3g7f6ya-wl.a.run.app/process',
-    'phase_3': 'https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app/process',
-    'phase_4': 'https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app/process',
-    'phase_5': 'https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/predict',
+    'phase_2': f'{get_service_url(Services.PHASE2_PROCESSORS)}/process',
+    'phase_3': f'{get_service_url(Services.PHASE3_ANALYTICS)}/process',
+    'phase_4': f'{get_service_url(Services.PHASE4_PRECOMPUTE)}/process',
+    'phase_5': f'{get_service_url(Services.PREDICTION_COORDINATOR)}/predict',
 }
 
 # Maximum retries before marking as permanent failure

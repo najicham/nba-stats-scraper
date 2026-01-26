@@ -55,10 +55,11 @@ def retry_with_backoff(max_attempts=3, base_delay=2.0, max_delay=30.0, exception
         return wrapper
     return decorator
 
-# Service URLs
-PHASE3_URL = "https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app"
-PHASE4_URL = "https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app"
-COORDINATOR_URL = "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app"
+# Service URLs - centralized via shared.config.service_urls
+from shared.config.service_urls import get_service_url, Services
+PHASE3_URL = get_service_url(Services.PHASE3_ANALYTICS)
+PHASE4_URL = get_service_url(Services.PHASE4_PRECOMPUTE)
+COORDINATOR_URL = get_service_url(Services.PREDICTION_COORDINATOR)
 
 from shared.config.gcp_config import get_project_id
 PROJECT_ID = get_project_id()

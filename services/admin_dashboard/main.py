@@ -37,6 +37,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from shared.utils.env_validation import validate_required_env_vars
 from shared.endpoints.health import create_health_blueprint, HealthChecker
 from shared.utils.prometheus_metrics import PrometheusMetrics, create_metrics_blueprint
+from shared.config.service_urls import get_service_url, Services
 validate_required_env_vars(
     ['GCP_PROJECT_ID', 'ADMIN_DASHBOARD_API_KEY'],
     service_name='AdminDashboard'
@@ -566,25 +567,22 @@ if not API_KEY:
     logger.warning("ADMIN_DASHBOARD_API_KEY not set - all authenticated requests will be rejected")
 
 # Pipeline Reconciliation Function URL (R-007)
-RECONCILIATION_FUNCTION_URL = os.environ.get(
-    'RECONCILIATION_FUNCTION_URL',
-    'https://pipeline-reconciliation-f7p3g7f6ya-wl.a.run.app'
-)
+RECONCILIATION_FUNCTION_URL = get_service_url(Services.PIPELINE_RECONCILIATION)
 
-# Cloud Run service URLs (sport-specific)
+# Cloud Run service URLs (sport-specific) - using centralized service_urls
 SERVICE_URLS = {
     'nba': {
-        'prediction_coordinator': 'https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app',
-        'phase3_analytics': 'https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app',
-        'phase4_precompute': 'https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app',
-        'self_heal': 'https://self-heal-f7p3g7f6ya-wl.a.run.app',
+        'prediction_coordinator': get_service_url(Services.PREDICTION_COORDINATOR),
+        'phase3_analytics': get_service_url(Services.PHASE3_ANALYTICS),
+        'phase4_precompute': get_service_url(Services.PHASE4_PRECOMPUTE),
+        'self_heal': get_service_url(Services.SELF_HEAL),
     },
     'mlb': {
-        'prediction_worker': 'https://mlb-prediction-worker-f7p3g7f6ya-wl.a.run.app',
-        'phase3_analytics': 'https://mlb-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app',
-        'phase4_precompute': 'https://mlb-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app',
-        'phase6_grading': 'https://mlb-phase6-grading-f7p3g7f6ya-wl.a.run.app',
-        'self_heal': 'https://mlb-self-heal-f7p3g7f6ya-wl.a.run.app',
+        'prediction_worker': get_service_url(Services.MLB_PREDICTION_WORKER),
+        'phase3_analytics': get_service_url(Services.MLB_PHASE3_ANALYTICS),
+        'phase4_precompute': get_service_url(Services.MLB_PHASE4_PRECOMPUTE),
+        'phase6_grading': get_service_url(Services.MLB_GRADING_SERVICE),
+        'self_heal': get_service_url(Services.MLB_SELF_HEAL),
     }
 }
 

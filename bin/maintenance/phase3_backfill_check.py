@@ -192,8 +192,9 @@ def process_backfill_candidates(candidates_by_processor: Dict[str, List],
 
 
 def send_summary_notification(candidates: Dict, results: Dict):
-    """Send summary notification (placeholder for future implementation)."""
-    # TODO: Integrate with notification system
+    """Send summary notification via logging. Future: Could integrate with Slack/email."""
+    # NOTE: Currently logs summary to stdout. Slack integration available via
+    # shared/notifications if needed for alerting.
     logger.info("\n" + "=" * 80)
     logger.info("BACKFILL SUMMARY")
     logger.info("=" * 80)
