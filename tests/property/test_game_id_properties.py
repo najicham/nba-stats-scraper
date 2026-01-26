@@ -118,6 +118,22 @@ def valid_game_id(draw):
     return to_standard_game_id(game_date, away, home)
 
 
+@composite
+def same_teams_different_dates(draw):
+    """Generate two game ID components with same teams but different dates."""
+    # Generate first game
+    date1 = draw(valid_game_date())
+    away = draw(valid_nba_team())
+    home = draw(valid_nba_team())
+    assume(away != home)  # Different teams
+
+    # Generate second game with same teams, different date
+    date2 = draw(valid_game_date())
+    assume(date1 != date2)
+
+    return (date1, away, home), (date2, away, home)
+
+
 # =============================================================================
 # Bijection Tests (Round-Trip)
 # =============================================================================
@@ -178,15 +194,12 @@ class TestGameIdBijection:
 class TestNoCollisions:
     """Test that different inputs produce different game IDs."""
 
-    @given(valid_game_id_components(), valid_game_id_components())
-    def test_different_dates_different_ids(self, comp1, comp2):
+    @given(same_teams_different_dates())
+    def test_different_dates_different_ids(self, game_pair):
         """Property: Different dates produce different game IDs."""
+        comp1, comp2 = game_pair
         date1, away1, home1 = comp1
         date2, away2, home2 = comp2
-
-        # Same teams, different dates
-        assume(date1 != date2)
-        assume(away1 == away2 and home1 == home2)
 
         game_id1 = to_standard_game_id(date1, away1, home1)
         game_id2 = to_standard_game_id(date2, away2, home2)

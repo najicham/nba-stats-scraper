@@ -109,9 +109,9 @@ def aggregate_player_season(game_records):
         'total_points': sum(g['points'] for g in game_records),
         'total_rebounds': sum(g['rebounds'] for g in game_records),
         'total_assists': sum(g['assists'] for g in game_records),
-        'avg_points': statistics.mean([g['points'] for g in game_records]),
-        'avg_rebounds': statistics.mean([g['rebounds'] for g in game_records]),
-        'avg_assists': statistics.mean([g['assists'] for g in game_records]),
+        'avg_points': float(statistics.mean([g['points'] for g in game_records])),
+        'avg_rebounds': float(statistics.mean([g['rebounds'] for g in game_records])),
+        'avg_assists': float(statistics.mean([g['assists'] for g in game_records])),
         'games_played': len(game_records),
     }
 

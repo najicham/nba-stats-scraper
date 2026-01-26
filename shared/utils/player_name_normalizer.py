@@ -16,16 +16,16 @@ from typing import Optional
 def normalize_name_for_lookup(name: str) -> str:
     """
     Create normalized lookup key from player name for database matching.
-    
+
     This is the primary normalization function used across all processors
     for consistent name matching and database lookups.
-    
+
     Args:
         name: Original player name (e.g., "LeBron James Jr.", "José Alvarado")
-        
+
     Returns:
         Normalized name suitable for lookups (e.g., "lebronjamesjr", "josealvarado")
-        
+
     Examples:
         >>> normalize_name_for_lookup("LeBron James Jr.")
         'lebronjamesjr'
@@ -38,13 +38,37 @@ def normalize_name_for_lookup(name: str) -> str:
     """
     if not name:
         return ""
-    
-    # Convert to lowercase first
-    normalized = name.lower()
-    
+
+    # Use NFKC normalization first to handle Unicode edge cases consistently
+    normalized = unicodedata.normalize('NFKC', name)
+
+    # Handle Turkish special characters BEFORE diacritic removal
+    # Turkish 'ı' (dotless i, U+0131) and 'İ' (I with dot, U+0130) need explicit handling
+    # because they don't have direct ASCII equivalents and behave differently in case conversion
+    normalized = normalized.replace('ı', 'i')  # Turkish dotless i → regular i
+    normalized = normalized.replace('İ', 'I')  # Turkish I with dot → regular I
+
     # Remove/normalize diacritics and accents (ā → a, é → e, etc.)
+    # Do this BEFORE case conversion to avoid Unicode case-folding issues
+    # (e.g., Turkish characters have special case rules that can cause inconsistencies)
     normalized = remove_diacritics(normalized)
-    
+
+    # Use casefold() instead of lower() for better Unicode handling
+    # casefold() handles special cases like German 'ß' → 'ss' more consistently
+    normalized = normalized.casefold()
+
+    # Normalize common suffix variations before removing punctuation
+    # This ensures "Junior" and "Jr." normalize to the same value
+    suffix_mappings = {
+        'junior': 'jr',
+        'senior': 'sr',
+        'jr.': 'jr',
+        'sr.': 'sr',
+    }
+    for long_form, short_form in suffix_mappings.items():
+        if normalized.endswith(' ' + long_form):
+            normalized = normalized[:-len(long_form)-1] + short_form
+
     # Remove common punctuation and separators
     normalized = normalized.replace(' ', '')      # spaces
     normalized = normalized.replace('-', '')      # hyphens
@@ -52,17 +76,17 @@ def normalize_name_for_lookup(name: str) -> str:
     normalized = normalized.replace('.', '')      # periods (NEW - this was missing)
     normalized = normalized.replace(',', '')      # commas
     normalized = normalized.replace('_', '')      # underscores
-    
+
     # Remove any remaining non-alphanumeric characters
     normalized = re.sub(r'[^a-z0-9]', '', normalized)
-    
+
     return normalized
 
 
 def remove_diacritics(text: str) -> str:
     """
     Remove diacritics and accents from text, converting to ASCII equivalents.
-    
+
     Examples:
         >>> remove_diacritics("José")
         'jose'
@@ -73,13 +97,22 @@ def remove_diacritics(text: str) -> str:
     """
     if not text:
         return ""
-    
+
     # Normalize to NFD (decomposed form) to separate base chars from diacritics
     nfd = unicodedata.normalize('NFD', text)
-    
+
     # Filter out combining characters (diacritics/accents)
     ascii_text = ''.join(char for char in nfd if unicodedata.category(char) != 'Mn')
-    
+
+    # For characters that don't decompose (like extended Latin), try NFKD normalization
+    # This handles characters like 'ȴ' (U+0234) which don't have NFD decompositions
+    if ascii_text == text:  # No change means NFD didn't help
+        nfkd = unicodedata.normalize('NFKD', text)
+        ascii_text = ''.join(char for char in nfkd if unicodedata.category(char) != 'Mn')
+
+    # If still no ASCII equivalent, filter to only ASCII chars
+    ascii_text = ''.join(char for char in ascii_text if ord(char) < 128)
+
     return ascii_text
 
 

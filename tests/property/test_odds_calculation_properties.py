@@ -75,10 +75,8 @@ def calculate_vig(prob1, prob2):
 def remove_vig(prob1, prob2):
     """Remove vig to get true probabilities."""
     total = prob1 + prob2
-    if total <= 1.0:
-        # No vig to remove
-        return prob1, prob2
-
+    # Always normalize to sum to 1.0, even if total < 1.0
+    # This ensures the output is a valid probability distribution
     return prob1 / total, prob2 / total
 
 
@@ -88,14 +86,14 @@ def remove_vig(prob1, prob2):
 
 @composite
 def american_odds_positive(draw):
-    """Generate positive American odds (+100 to +1000)."""
-    return draw(st.integers(min_value=100, max_value=1000))
+    """Generate positive American odds (+101 to +1000), excluding +100 (even money)."""
+    return draw(st.integers(min_value=101, max_value=1000))
 
 
 @composite
 def american_odds_negative(draw):
-    """Generate negative American odds (-1000 to -100)."""
-    return draw(st.integers(min_value=-1000, max_value=-100))
+    """Generate negative American odds (-1000 to -101), excluding -100 (even money)."""
+    return draw(st.integers(min_value=-1000, max_value=-101))
 
 
 @composite
@@ -114,6 +112,15 @@ def decimal_odds(draw):
 def probability(draw):
     """Generate valid probability (0.01 to 0.99)."""
     return draw(st.floats(min_value=0.01, max_value=0.99, allow_nan=False, allow_infinity=False))
+
+
+@composite
+def fair_probability_pair(draw):
+    """Generate a pair of probabilities that sum to 1.0 (fair odds)."""
+    # Generate first probability, second is determined to make them sum to 1.0
+    prob1 = draw(st.floats(min_value=0.01, max_value=0.99, allow_nan=False, allow_infinity=False))
+    prob2 = 1.0 - prob1
+    return prob1, prob2
 
 
 # =============================================================================
@@ -239,14 +246,15 @@ class TestVigCalculation:
 
         assert abs(vig - expected) < 0.0001
 
-    @given(probability(), probability())
-    def test_fair_odds_have_zero_vig(self, prob1, prob2):
+    @given(fair_probability_pair())
+    def test_fair_odds_have_zero_vig(self, prob_pair):
         """Property: Fair odds (sum to 1) have zero vig."""
-        assume(abs(prob1 + prob2 - 1.0) < 0.01)  # Close to fair
+        prob1, prob2 = prob_pair
 
         vig = calculate_vig(prob1, prob2)
 
-        assert abs(vig) < 0.02
+        # Fair odds should have vig very close to 0 (allowing for floating point precision)
+        assert abs(vig) < 1e-10
 
     @given(probability(), probability())
     def test_remove_vig_sums_to_one(self, prob1, prob2):

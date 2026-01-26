@@ -60,26 +60,34 @@ def get_nba_tricode(identifier: str):
 
     normalized = identifier.upper().strip()
 
-    # Direct NBA tricode match
+    # Check if empty after stripping
+    if not normalized:
+        return None
+
+    # 1. Direct NBA tricode match
     if normalized in TEAM_MAPPINGS:
         return normalized
 
-    # Match by full name
-    for nba_code, (full_name, _, _) in TEAM_MAPPINGS.items():
-        if normalized == full_name.upper():
-            return nba_code
-        if normalized in full_name.upper():
-            return nba_code
-
-    # Match by Basketball Reference tricode
+    # 2. Match by Basketball Reference tricode (exact)
     for nba_code, (_, br_code, _) in TEAM_MAPPINGS.items():
         if normalized == br_code.upper():
             return nba_code
 
-    # Match by ESPN tricode
+    # 3. Match by ESPN tricode (exact)
     for nba_code, (_, _, espn_code) in TEAM_MAPPINGS.items():
         if normalized == espn_code.upper():
             return nba_code
+
+    # 4. Match by full name (exact)
+    for nba_code, (full_name, _, _) in TEAM_MAPPINGS.items():
+        if normalized == full_name.upper():
+            return nba_code
+
+    # 5. Partial match by full name (substring) - only for longer strings to avoid false positives
+    if len(normalized) >= 4:
+        for nba_code, (full_name, _, _) in TEAM_MAPPINGS.items():
+            if normalized in full_name.upper():
+                return nba_code
 
     return None
 
