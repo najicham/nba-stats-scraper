@@ -6,12 +6,15 @@ This project documents the remediation efforts for the 2026-01-25 orchestration 
 
 - **[STATUS.md](STATUS.md)** - Detailed project status, tasks, and technical analysis
 - **[COMPLETION-CHECKLIST.md](COMPLETION-CHECKLIST.md)** - Quick reference for completing remaining work
+- **[GSW-SAC-FIX.md](GSW-SAC-FIX.md)** - GSW/SAC player extraction bug fix documentation
 
 ## Incident Overview
 
 **Date:** 2026-01-26 (original incident)
 **Remediation Start:** 2026-01-27
-**Status:** ⚠️ 75% Complete - Blocked by CloudFront IP ban
+**Last Updated:** 2026-01-27 23:30
+**Status:** Active
+**Progress:** ⚠️ 40% Complete - Multiple blockers
 
 ### What Happened
 
@@ -38,13 +41,17 @@ AWS CloudFront serving `cdn.nba.com` implements aggressive IP blocking:
 
 ### Completed ✅
 - [x] Proxy enabled on PBP scraper
-- [x] Root cause identified and documented
+- [x] Root cause identified and documented (PBP IP blocking)
 - [x] Preventive measures in place
+- [x] Fixed GSW/SAC player extraction bug (JOIN condition)
+- [x] Verified extraction now finds all 12 teams
 
 ### Blocked ⚠️
-- [ ] Retry game 0022500651 (DEN @ MEM) - IP blocked
-- [ ] Retry game 0022500652 (DAL @ MIL) - IP blocked
+- [ ] Retry game 0022500651 (DEN @ MEM) - CloudFront IP blocked
+- [ ] Retry game 0022500652 (DAL @ MIL) - CloudFront IP blocked
 - [ ] Verify all 8 games in GCS - Partial (6/8)
+- [ ] Fix table_id bug in bigquery_save_ops.py - Duplicate dataset name
+- [ ] Rerun player context processor to populate GSW/SAC data
 
 ### Blocker Details
 **Issue:** IP address still blocked by CloudFront (403 Forbidden)
@@ -55,11 +62,13 @@ AWS CloudFront serving `cdn.nba.com` implements aggressive IP blocking:
 
 ### Code Changes
 - `scrapers/nbacom/nbac_play_by_play.py` - Added proxy_enabled = True
+- `data_processors/analytics/upcoming_player_game_context/loaders/player_loaders.py` - Fixed JOIN condition (line 305)
 
 ### Documentation Created
 - `docs/08-projects/current/2026-01-25-incident-remediation/STATUS.md`
 - `docs/08-projects/current/2026-01-25-incident-remediation/COMPLETION-CHECKLIST.md`
 - `docs/08-projects/current/2026-01-25-incident-remediation/README.md` (this file)
+- `docs/08-projects/current/2026-01-25-incident-remediation/GSW-SAC-FIX.md`
 
 ### Documentation Updated
 - `docs/08-projects/current/MASTER-PROJECT-TRACKER.md` - Added current session
@@ -110,6 +119,7 @@ python3 scripts/backfill_pbp_20260125.py --game-id 0022500652
 
 ### Commits
 - `5e63e632` - Enable proxy rotation for PBP scraper
+- `533ac2ef` - Fix GSW/SAC player extraction bug (JOIN condition)
 
 ## Lessons Learned
 
@@ -130,12 +140,19 @@ python3 scripts/backfill_pbp_20260125.py --game-id 0022500652
 
 ## Success Metrics
 
+### Play-by-Play Scraper Issues
 - [x] Proxy rotation enabled (preventive measure)
 - [ ] All 8 games in GCS (currently 6/8)
 - [ ] Zero future IP blocking incidents
 
-**Current Progress:** 33% complete (1/3 tasks)
-**Data Completeness:** 75% (6/8 games)
+### Player Context Extraction Issues
+- [x] GSW/SAC extraction bug fixed
+- [ ] Table_id save operation bug fixed
+- [ ] All 16 teams in player context table (currently 14/16)
+
+**Current Progress:** 40% complete (2/5 tasks)
+**PBP Data Completeness:** 75% (6/8 games)
+**Player Context Completeness:** 87.5% (14/16 teams)
 
 ## Timeline
 

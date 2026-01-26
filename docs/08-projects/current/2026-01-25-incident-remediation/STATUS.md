@@ -1,18 +1,90 @@
 # 2026-01-25 Incident Remediation - Project Status
 **Project Start:** 2026-01-26 (original incident)
 **Current Session:** 2026-01-27
-**Status:** ⚠️ PARTIALLY COMPLETE - External Blocker
+**Status:** ⚠️ PARTIALLY COMPLETE - Multiple Issues
 
 ---
 
 ## Executive Summary
 
-Completing remediation for 2026-01-25 orchestration failures focusing on Play-by-Play (PBP) scraper improvements to prevent future IP blocking incidents.
+Completing remediation for 2026-01-25 orchestration failures focusing on:
+1. Play-by-Play (PBP) scraper improvements (IP blocking)
+2. Player context extraction bug (GSW/SAC teams missing)
 
 **Current Status:**
 - ✅ **Task 1 Complete:** Proxy enabled on PBP scraper
 - ⚠️ **Task 2 Blocked:** Cannot retry failed games due to CloudFront IP block (403)
 - ⚠️ **Task 3 Partial:** 6/8 games in GCS (75% complete)
+- ✅ **Task 4 Complete:** Fixed GSW/SAC player extraction bug
+- ⚠️ **Task 5 Blocked:** Cannot save player context due to table_id bug
+
+---
+
+## Task Breakdown
+
+### ✅ Task 4: Fix GSW/SAC Player Extraction Bug - COMPLETE
+
+**Objective:** Fix missing GSW and SAC teams from upcoming_player_game_context table
+
+**Issue:**
+- Only 212/~247 players extracted (14/16 teams)
+- GSW@MIN and SAC@DET games completely missing (35 players)
+- 2/8 games (25%) affected
+
+**Root Cause:** Incorrect JOIN condition in backfill query
+```python
+# WRONG: player_loaders.py:305
+LEFT JOIN schedule_data s
+    ON g.game_id = s.nba_game_id  # NBA official format doesn't match gamebook format
+
+# FIXED:
+LEFT JOIN schedule_data s
+    ON g.game_id = s.game_id  # Both use YYYYMMDD_AWAY_HOME format
+```
+
+**Verification:**
+```sql
+-- After fix: All 12 teams now present
+| team_abbr | players | games |
+| GSW       |      17 |     1 | ✅
+| SAC       |      18 |     1 | ✅
+```
+
+**Commit:** 533ac2ef
+```
+fix: Correct JOIN condition in player_loaders backfill query
+```
+
+**Status:** ✅ Complete - All teams now extracted correctly
+
+**Documentation:** [GSW-SAC-FIX.md](GSW-SAC-FIX.md)
+
+---
+
+### ⚠️ Task 5: Rerun Processor to Populate Database - BLOCKED
+
+**Objective:** Populate missing GSW/SAC data in BigQuery
+
+**Blocker:** Save operation fails with table_id error:
+```
+ValueError: table_id must be a fully-qualified ID in standard SQL format,
+got nba-props-platform.nba_analytics.nba_analytics.upcoming_player_game_context
+                                    ^^^^^^^^^^^^ duplicate dataset name
+```
+
+**Location:** `data_processors/analytics/operations/bigquery_save_ops.py:125`
+
+**Test Results:**
+- ✅ Extraction works: 358 players found (including GSW/SAC)
+- ✅ Calculation works: 227 players processed successfully
+- ❌ Save fails: Duplicate dataset name in table_id
+
+**Status:** ⚠️ Blocked - Requires separate bug fix
+
+**Next Steps:**
+1. Fix table_id bug in bigquery_save_ops.py
+2. Rerun processor: `python -m data_processors.analytics.upcoming_player_game_context.upcoming_player_game_context_processor 2026-01-25`
+3. Verify database: Check GSW/SAC player counts
 
 ---
 
@@ -204,10 +276,12 @@ WARNING:scrapers.utils.proxy_utils:Circuit decodo+cdn.nba.com: CLOSED → OPEN (
 - [ ] Documentation updated
 - [ ] Commit pushed to main
 
-### Current Progress: 33% Complete
+### Current Progress: 40% Complete
 - **Task 1:** ✅ 100% Complete (proxy enabled)
 - **Task 2:** ⚠️ 0% Complete (blocked by CloudFront)
 - **Task 3:** ⚠️ 75% Complete (6/8 games)
+- **Task 4:** ✅ 100% Complete (GSW/SAC extraction fixed)
+- **Task 5:** ⚠️ 0% Complete (blocked by save operation bug)
 
 ---
 
@@ -241,6 +315,7 @@ WARNING:scrapers.utils.proxy_utils:Circuit decodo+cdn.nba.com: CLOSED → OPEN (
 
 ### Commits
 - `5e63e632` - Enable proxy rotation for PBP scraper
+- `533ac2ef` - Fix GSW/SAC player extraction bug
 
 ---
 
