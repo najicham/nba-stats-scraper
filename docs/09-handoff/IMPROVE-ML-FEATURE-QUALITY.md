@@ -7,7 +7,35 @@
 
 ---
 
-## Executive Summary
+## ⚠️ UPDATE (2026-01-25)
+
+**The original findings in this document were based on INCORRECT data from the Jan 2, 2026 comprehensive data quality report.**
+
+**Actual Findings (2026-01-25 Investigation):**
+
+1. **Historical training data (2021-2024) had EXCELLENT quality:**
+   - `minutes_played`: 99-100% coverage ✅
+   - `usage_rate`: 93-97% coverage ✅
+   - **The model was trained on good data, not garbage**
+
+2. **Current season (Oct 2025 - Jan 2026) has DEGRADED quality:**
+   - `minutes_played`: 64-90% coverage (Nov 3 bug, mostly fixed)
+   - `usage_rate`: 0-54% coverage (fix deployed but NOT running daily)
+
+3. **Real Issues:**
+   - Processor with team stats join NOT running daily (only ran Jan 24)
+   - Need to backfill Oct 2025 - Jan 2026 data
+   - Need to enable daily processing
+
+**See updated investigation reports:**
+- [ML Feature Quality Investigation](2026-01-25-ML-FEATURE-QUALITY-INVESTIGATION.md)
+- [Data Quality Validation](2026-01-25-DATA-QUALITY-VALIDATION.md)
+
+**The content below is from the original (incorrect) handoff and should be disregarded.**
+
+---
+
+## Executive Summary (OUTDATED - See Update Above)
 
 A comprehensive audit of the ML feature store revealed critical data quality issues that significantly impact prediction accuracy. The most severe finding: **95.8% of minutes data and 100% of usage rate data are NULL**, meaning the model is learning from imputed defaults rather than real data.
 
