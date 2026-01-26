@@ -1,14 +1,15 @@
 # predictions/worker/prediction_systems/catboost_v8.py
 
 """
-CatBoost V8 Prediction System (Shadow Mode)
+CatBoost V8 Prediction System (Shadow Mode) - Updated 2026-01-25
 
 Production ML model trained on 76,863 games achieving 3.40 MAE.
 Runs in shadow mode alongside the mock-based XGBoost V1 for comparison.
 
 Key Differences from XGBoost V1:
-- Uses 33 features (vs 25 in v1)
+- Uses 34 features (vs 25 in v1) - updated from 33 on 2026-01-25
 - Includes Vegas lines, opponent history, minutes/PPM history
+- NEW: Shot zone missingness indicator (Feature #33)
 - Uses stacked ensemble (XGBoost + LightGBM + CatBoost with Ridge meta-learner)
 - Trained on real historical data (2021-2024)
 
@@ -16,6 +17,12 @@ Performance:
 - MAE: 3.40 (vs mock's 4.80)
 - Beats Vegas by 25% on out-of-sample 2024-25 data
 - 71.6% betting accuracy
+
+Shot Zone Handling (Updated 2026-01-25):
+- Features 18-20 (paint%, mid-range%, three%) now NULLABLE
+- Uses np.nan when shot zone data unavailable (CatBoost handles natively)
+- Feature 33: has_shot_zone_data indicator (1.0 = all zones available, 0.0 = missing)
+- Allows model to distinguish "average shooter" from "data unavailable"
 
 Usage:
     from predictions.worker.prediction_systems.catboost_v8 import CatBoostV8
@@ -77,6 +84,8 @@ V8_FEATURES = [
     # Minutes/PPM history (2)
     "minutes_avg_last_10",
     "ppm_avg_last_10",
+    # Shot zone data availability (1) - Added 2026-01-25
+    "has_shot_zone_data",
 ]
 
 
@@ -361,9 +370,11 @@ class CatBoostV8:
                 features.get('home_away', 0),
                 features.get('back_to_back', 0),
                 features.get('playoff_game', 0),
-                features.get('pct_paint', 30),
-                features.get('pct_mid_range', 20),
-                features.get('pct_three', 30),
+                # Shot zone features (18-20) - NULLABLE since 2026-01-25
+                # Use np.nan to allow CatBoost to handle missingness natively
+                features.get('pct_paint') if features.get('pct_paint') is not None else np.nan,
+                features.get('pct_mid_range') if features.get('pct_mid_range') is not None else np.nan,
+                features.get('pct_three') if features.get('pct_three') is not None else np.nan,
                 features.get('pct_free_throw', 20),
                 features.get('team_pace', 100),
                 features.get('team_off_rating', 112),
@@ -379,11 +390,18 @@ class CatBoostV8:
                 # Minutes/PPM history (2)
                 minutes_avg_last_10 if minutes_avg_last_10 is not None else features.get('minutes_avg_last_10', 25),
                 ppm_avg_last_10 if ppm_avg_last_10 is not None else 0.4,
+                # Feature 33: Shot zone data availability indicator (NEW - 2026-01-25)
+                features.get('has_shot_zone_data', 0.0),
             ]).reshape(1, -1)
 
             # Validate
-            if np.any(np.isnan(vector)) or np.any(np.isinf(vector)):
-                logger.warning("Feature vector contains NaN or Inf values")
+            # NOTE: Allow NaN for shot zone features (indices 18-20) as CatBoost handles them natively
+            # Other features should not be NaN
+            non_shot_zone_mask = np.ones(vector.shape[1], dtype=bool)
+            non_shot_zone_mask[18:21] = False  # Allow NaN for features 18, 19, 20 (shot zones)
+
+            if np.any(np.isnan(vector[:, non_shot_zone_mask])) or np.any(np.isinf(vector)):
+                logger.warning("Feature vector contains NaN or Inf values in non-shot-zone features")
                 return None
 
             return vector
