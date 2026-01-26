@@ -406,7 +406,7 @@ class PlayerDailyCacheProcessor(
         
         query = f"""
         WITH ranked_games AS (
-            SELECT 
+            SELECT
                 player_lookup,
                 universal_player_id,
                 game_date,
@@ -418,11 +418,11 @@ class PlayerDailyCacheProcessor(
                 fg_makes,
                 assisted_fg_makes,
                 ROW_NUMBER() OVER (
-                    PARTITION BY player_lookup 
+                    PARTITION BY player_lookup
                     ORDER BY game_date DESC
                 ) as game_rank
             FROM `{self.project_id}.nba_analytics.player_game_summary`
-            WHERE game_date <= '{analysis_date.isoformat()}'
+            WHERE game_date < '{analysis_date.isoformat()}'  -- FIX: Changed <= to < (cache should only include games BEFORE analysis_date)
               AND season_year = {season_year}
               AND is_active = TRUE
               AND (minutes_played > 0 OR points > 0)  -- Fallback for historical data with NULL minutes
@@ -438,20 +438,20 @@ class PlayerDailyCacheProcessor(
     
     def _extract_team_offense_data(self, analysis_date: date) -> None:
         """Extract team offense data (last 10 games per team)."""
-        
+
         query = f"""
         WITH ranked_games AS (
-            SELECT 
+            SELECT
                 team_abbr,
                 game_date,
                 pace,
                 offensive_rating,
                 ROW_NUMBER() OVER (
-                    PARTITION BY team_abbr 
+                    PARTITION BY team_abbr
                     ORDER BY game_date DESC
                 ) as game_rank
             FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
-            WHERE game_date <= '{analysis_date.isoformat()}'
+            WHERE game_date < '{analysis_date.isoformat()}'  -- FIX: Changed <= to < (cache should only include games BEFORE analysis_date)
         )
         SELECT *
         FROM ranked_games

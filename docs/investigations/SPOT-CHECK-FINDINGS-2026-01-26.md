@@ -103,27 +103,129 @@ Gui Santos (2025-01-15) usage_rate off by 2.44%:
 ### Status
 TODO - Not yet investigated
 
+## Broader Sweep Results (100 samples)
+
+**Summary**: Confirmed widespread systematic issue
+- **66% sample pass rate** (66/100)
+- **34 players failed** with rolling average errors
+- **Error range**: 2% to 37% for points_avg_last_5
+- **Most common failures**: Rolling averages (Check A, D, E)
+- **Secondary issue**: Usage rate precision (Check B)
+
+**Pattern identified**: All rolling average failures are consistent with the date filter bug.
+
+## Fixes Implemented
+
+### Fix 1: Player Game Summary Extraction (Line 425)
+**File**: `data_processors/precompute/player_daily_cache/player_daily_cache_processor.py`
+**Function**: `_extract_player_game_data()`
+**Change**: `game_date <= '{analysis_date}'` → `game_date < '{analysis_date}'`
+
+### Fix 2: Team Offense Data Extraction (Line 454)
+**File**: `data_processors/precompute/player_daily_cache/player_daily_cache_processor.py`
+**Function**: `_extract_team_offense_data()`
+**Change**: `game_date <= '{analysis_date}'` → `game_date < '{analysis_date}'`
+
+**Rationale**: Both queries extract data for cache calculation. Cache semantics require "as of" behavior - features should only include games BEFORE the cache_date, not including it.
+
+## Impact Assessment
+
+### Tables Affected
+1. **nba_precompute.player_daily_cache** - Primary issue (wrong rolling averages)
+2. **nba_predictions.ml_feature_store_v2** - Cascading issue (copies bad values from cache)
+3. Predictions using these features - Potential accuracy impact
+
+### Time Period Affected
+- All dates processed with the buggy code
+- Likely spans entire 2024-25 season (October 2024 - January 2025)
+- Estimated: ~100+ days × ~450 players = ~45,000 affected cache records
+
 ## Recommendations
 
-1. **URGENT**: Fix Mo Bamba date bug and regenerate affected data
-2. **Review**: Consider increasing usage_rate tolerance to 2.5% or 3% to account for floating point precision
-3. **Run broader sweep**: Complete 100-sample spot check to identify if these are isolated or systematic issues
+### 1. **URGENT**: Regenerate Affected Data
 
-## Files to Update
+Priority order:
+1. Regenerate `player_daily_cache` for affected dates (2024-10-01 to 2025-01-26)
+2. Regenerate `ml_feature_store_v2` (depends on cache)
+3. Consider re-running predictions for critical dates if accuracy impact is measurable
 
-1. `data_processors/precompute/player_daily_cache/player_daily_cache_processor.py` - Line 425 (date filter bug)
-2. Consider updating tolerance in `scripts/spot_check_data_accuracy.py` if usage_rate precision is inherent
+### 2. **Usage Rate Precision** (Lower Priority)
 
-## Test Plan
+Multiple players show 2-5% usage_rate mismatches:
+- Could be floating-point precision issue
+- Could be rounding differences in formula
+- Recommend: Investigate usage_rate calculation after fixing rolling averages
 
-After fix:
+### 3. **Validation** (Post-Fix)
+
+Run spot checks to verify fix:
 ```bash
-# 1. Test Mo Bamba specifically
+# Verify specific known failures
 python scripts/spot_check_data_accuracy.py --player-lookup mobamba --date 2025-01-20
+python scripts/spot_check_data_accuracy.py --player-lookup joshgiddey --date 2025-01-20
 
-# 2. Run broader sample
-python scripts/spot_check_data_accuracy.py --samples 100 --start-date 2025-01-01 --end-date 2025-01-20
-
-# 3. Check recent dates
-python scripts/spot_check_data_accuracy.py --samples 50 --start-date 2025-01-15 --end-date 2025-01-25
+# Broad validation
+python scripts/spot_check_data_accuracy.py --samples 100 --start-date 2025-01-15 --end-date 2025-01-25
 ```
+
+## Files Modified
+
+1. `data_processors/precompute/player_daily_cache/player_daily_cache_processor.py`
+   - Line 425: Fixed player game data extraction
+   - Line 454: Fixed team offense data extraction
+
+## Data Regeneration Plan
+
+### Phase 1: Recent Data (High Priority)
+```bash
+# Regenerate last 30 days (most critical for predictions)
+for date in $(seq -f "2025-01-%02g" 1 26); do
+  python data_processors/precompute/player_daily_cache/player_daily_cache_processor.py \
+    --analysis_date $date
+done
+```
+
+### Phase 2: Season Data (Medium Priority)
+```bash
+# Backfill entire 2024-25 season
+python backfill_jobs/precompute/player_daily_cache/player_daily_cache_precompute_backfill.py \
+  --start-date 2024-10-01 \
+  --end-date 2025-01-26
+```
+
+### Phase 3: Downstream Updates (Post Phase 1-2)
+```bash
+# Regenerate ML feature store (depends on cache)
+python data_processors/predictions/ml_feature_store_v2_processor.py \
+  --start-date 2024-10-01 \
+  --end-date 2025-01-26
+```
+
+## Testing Verification
+
+After regeneration, verify fix with spot checks:
+
+```bash
+# 1. Test known failures from sweep
+python scripts/spot_check_data_accuracy.py --player-lookup mobamba --date 2025-01-20
+python scripts/spot_check_data_accuracy.py --player-lookup joshgiddey --date 2025-01-20
+python scripts/spot_check_data_accuracy.py --player-lookup justinchampagnie --date 2025-01-08
+
+# 2. Broad validation across date range
+python scripts/spot_check_data_accuracy.py --samples 100 --start-date 2025-01-01 --end-date 2025-01-26
+
+# 3. Expected result: >95% accuracy (vs current 30%)
+```
+
+## Root Cause Analysis
+
+**What went wrong**: Date filter used `<=` instead of `<` in cache data extraction
+
+**Why it matters**: Cache represents "features as of cache_date" meaning it should only include historical data (games before that date), not including the date itself
+
+**How it propagated**:
+1. Wrong data in `player_daily_cache`
+2. `ml_feature_store_v2` copied wrong values
+3. Spot check correctly detected the discrepancy
+
+**Lesson learned**: Cache semantics must be clearly documented and enforced in code comments

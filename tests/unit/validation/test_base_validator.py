@@ -1270,5 +1270,362 @@ class TestFilePresenceCheck:
         assert len(result.affected_items) == 20
 
 
+# ============================================================================
+# Test Layer Validation Methods
+# ============================================================================
+
+class TestGcsLayerValidation:
+    """Tests for _validate_gcs_layer method"""
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_gcs_layer_with_file_presence_check(self, mock_storage, mock_bq, temp_config_file):
+        """Test GCS layer validation with file_presence config"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock the _check_file_presence method
+        validator._check_file_presence = Mock()
+
+        # Update config to include GCS validations
+        validator.config['gcs_validations'] = {
+            'file_presence': {
+                'bucket': 'test-bucket',
+                'path_pattern': 'test/{date}/*.json'
+            }
+        }
+
+        validator._validate_gcs_layer('2024-01-01', '2024-01-31', 2024)
+
+        # Verify _check_file_presence was called with correct parameters
+        validator._check_file_presence.assert_called_once_with(
+            validator.config['gcs_validations']['file_presence'],
+            '2024-01-01',
+            '2024-01-31',
+            2024
+        )
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_gcs_layer_without_file_presence_check(self, mock_storage, mock_bq, temp_config_file):
+        """Test GCS layer validation without file_presence config"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock the _check_file_presence method
+        validator._check_file_presence = Mock()
+
+        # Update config with empty GCS validations
+        validator.config['gcs_validations'] = {}
+
+        validator._validate_gcs_layer('2024-01-01', '2024-01-31', None)
+
+        # Verify _check_file_presence was NOT called
+        validator._check_file_presence.assert_not_called()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_gcs_layer_with_no_gcs_config(self, mock_storage, mock_bq, temp_config_file):
+        """Test GCS layer validation with no gcs_validations in config"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock the _check_file_presence method
+        validator._check_file_presence = Mock()
+
+        # Remove gcs_validations from config
+        if 'gcs_validations' in validator.config:
+            del validator.config['gcs_validations']
+
+        validator._validate_gcs_layer('2024-01-01', '2024-01-31', None)
+
+        # Verify _check_file_presence was NOT called
+        validator._check_file_presence.assert_not_called()
+
+
+class TestBigQueryLayerValidation:
+    """Tests for _validate_bigquery_layer method"""
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_bigquery_layer_with_completeness_check(self, mock_storage, mock_bq, temp_config_file):
+        """Test BigQuery layer validation with completeness check"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock the check methods
+        validator._check_completeness = Mock()
+        validator._check_team_presence = Mock()
+        validator._check_field_validation = Mock()
+
+        # Update config to include only completeness
+        validator.config['bigquery_validations'] = {
+            'completeness': {
+                'target_table': 'nba_raw.test_table',
+                'reference_table': 'nba_raw.schedule'
+            }
+        }
+
+        validator._validate_bigquery_layer('2024-01-01', '2024-01-31', 2024)
+
+        # Verify only _check_completeness was called
+        validator._check_completeness.assert_called_once_with(
+            validator.config['bigquery_validations']['completeness'],
+            '2024-01-01',
+            '2024-01-31',
+            2024
+        )
+        validator._check_team_presence.assert_not_called()
+        validator._check_field_validation.assert_not_called()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_bigquery_layer_with_team_presence_check(self, mock_storage, mock_bq, temp_config_file):
+        """Test BigQuery layer validation with team_presence check"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock the check methods
+        validator._check_completeness = Mock()
+        validator._check_team_presence = Mock()
+        validator._check_field_validation = Mock()
+
+        # Update config to include only team_presence
+        validator.config['bigquery_validations'] = {
+            'team_presence': {
+                'target_table': 'nba_raw.test_table',
+                'expected_teams': 30
+            }
+        }
+
+        validator._validate_bigquery_layer('2024-01-01', '2024-01-31', 2024)
+
+        # Verify only _check_team_presence was called
+        validator._check_team_presence.assert_called_once_with(
+            validator.config['bigquery_validations']['team_presence'],
+            '2024-01-01',
+            '2024-01-31',
+            2024
+        )
+        validator._check_completeness.assert_not_called()
+        validator._check_field_validation.assert_not_called()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_bigquery_layer_with_field_validation_check(self, mock_storage, mock_bq, temp_config_file):
+        """Test BigQuery layer validation with field_validation check"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock the check methods
+        validator._check_completeness = Mock()
+        validator._check_team_presence = Mock()
+        validator._check_field_validation = Mock()
+
+        # Update config to include only field_validation
+        validator.config['bigquery_validations'] = {
+            'field_validation': {
+                'target_table': 'nba_raw.test_table',
+                'fields': ['player_id', 'team_id']
+            }
+        }
+
+        validator._validate_bigquery_layer('2024-01-01', '2024-01-31', None)
+
+        # Verify only _check_field_validation was called
+        validator._check_field_validation.assert_called_once_with(
+            validator.config['bigquery_validations']['field_validation'],
+            '2024-01-01',
+            '2024-01-31'
+        )
+        validator._check_completeness.assert_not_called()
+        validator._check_team_presence.assert_not_called()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_bigquery_layer_with_all_checks(self, mock_storage, mock_bq, temp_config_file):
+        """Test BigQuery layer validation with all three checks"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock the check methods
+        validator._check_completeness = Mock()
+        validator._check_team_presence = Mock()
+        validator._check_field_validation = Mock()
+
+        # Update config to include all checks
+        validator.config['bigquery_validations'] = {
+            'completeness': {
+                'target_table': 'nba_raw.test_table',
+                'reference_table': 'nba_raw.schedule'
+            },
+            'team_presence': {
+                'target_table': 'nba_raw.test_table',
+                'expected_teams': 30
+            },
+            'field_validation': {
+                'target_table': 'nba_raw.test_table',
+                'fields': ['player_id', 'team_id']
+            }
+        }
+
+        validator._validate_bigquery_layer('2024-01-01', '2024-01-31', 2024)
+
+        # Verify all three check methods were called
+        validator._check_completeness.assert_called_once()
+        validator._check_team_presence.assert_called_once()
+        validator._check_field_validation.assert_called_once()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_bigquery_layer_with_no_checks(self, mock_storage, mock_bq, temp_config_file):
+        """Test BigQuery layer validation with empty config"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock the check methods
+        validator._check_completeness = Mock()
+        validator._check_team_presence = Mock()
+        validator._check_field_validation = Mock()
+
+        # Update config with empty bigquery_validations
+        validator.config['bigquery_validations'] = {}
+
+        validator._validate_bigquery_layer('2024-01-01', '2024-01-31', None)
+
+        # Verify no check methods were called
+        validator._check_completeness.assert_not_called()
+        validator._check_team_presence.assert_not_called()
+        validator._check_field_validation.assert_not_called()
+
+
+class TestScheduleLayerValidation:
+    """Tests for _validate_schedule_layer method"""
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_schedule_layer_with_data_freshness_enabled(self, mock_storage, mock_bq, temp_config_file):
+        """Test schedule layer validation with data_freshness enabled"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock the check methods
+        validator._check_data_freshness = Mock()
+        validator._check_processing_schedule = Mock()
+
+        # Update config with data_freshness enabled
+        validator.config['schedule_checks'] = {
+            'data_freshness': {
+                'enabled': True,
+                'target_table': 'nba_raw.test_table',
+                'max_staleness_hours': 24
+            }
+        }
+
+        validator._validate_schedule_layer('2024-01-01', '2024-01-31')
+
+        # Verify _check_data_freshness was called
+        validator._check_data_freshness.assert_called_once_with(
+            validator.config['schedule_checks']['data_freshness'],
+            '2024-01-01',
+            '2024-01-31'
+        )
+        validator._check_processing_schedule.assert_not_called()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_schedule_layer_with_data_freshness_disabled(self, mock_storage, mock_bq, temp_config_file):
+        """Test schedule layer validation with data_freshness disabled"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock the check methods
+        validator._check_data_freshness = Mock()
+        validator._check_processing_schedule = Mock()
+
+        # Update config with data_freshness disabled
+        validator.config['schedule_checks'] = {
+            'data_freshness': {
+                'enabled': False,
+                'target_table': 'nba_raw.test_table'
+            }
+        }
+
+        validator._validate_schedule_layer('2024-01-01', '2024-01-31')
+
+        # Verify _check_data_freshness was NOT called
+        validator._check_data_freshness.assert_not_called()
+        validator._check_processing_schedule.assert_not_called()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_schedule_layer_with_processing_schedule_enabled(self, mock_storage, mock_bq, temp_config_file):
+        """Test schedule layer validation with processing_schedule enabled"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock the check methods
+        validator._check_data_freshness = Mock()
+        validator._check_processing_schedule = Mock()
+
+        # Update config with processing_schedule enabled
+        validator.config['schedule_checks'] = {
+            'processing_schedule': {
+                'enabled': True,
+                'target_table': 'nba_raw.test_table',
+                'expected_processing_time': '02:00'
+            }
+        }
+
+        validator._validate_schedule_layer('2024-01-01', '2024-01-31')
+
+        # Verify _check_processing_schedule was called
+        validator._check_processing_schedule.assert_called_once_with(
+            validator.config['schedule_checks']['processing_schedule'],
+            '2024-01-01',
+            '2024-01-31'
+        )
+        validator._check_data_freshness.assert_not_called()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_schedule_layer_with_both_checks_enabled(self, mock_storage, mock_bq, temp_config_file):
+        """Test schedule layer validation with both checks enabled"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock the check methods
+        validator._check_data_freshness = Mock()
+        validator._check_processing_schedule = Mock()
+
+        # Update config with both checks enabled
+        validator.config['schedule_checks'] = {
+            'data_freshness': {
+                'enabled': True,
+                'target_table': 'nba_raw.test_table',
+                'max_staleness_hours': 24
+            },
+            'processing_schedule': {
+                'enabled': True,
+                'target_table': 'nba_raw.test_table',
+                'expected_processing_time': '02:00'
+            }
+        }
+
+        validator._validate_schedule_layer('2024-01-01', '2024-01-31')
+
+        # Verify both check methods were called
+        validator._check_data_freshness.assert_called_once()
+        validator._check_processing_schedule.assert_called_once()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_schedule_layer_with_no_schedule_checks(self, mock_storage, mock_bq, temp_config_file):
+        """Test schedule layer validation with no schedule_checks config"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock the check methods
+        validator._check_data_freshness = Mock()
+        validator._check_processing_schedule = Mock()
+
+        # Remove schedule_checks from config
+        if 'schedule_checks' in validator.config:
+            del validator.config['schedule_checks']
+
+        validator._validate_schedule_layer('2024-01-01', '2024-01-31')
+
+        # Verify no check methods were called
+        validator._check_data_freshness.assert_not_called()
+        validator._check_processing_schedule.assert_not_called()
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
