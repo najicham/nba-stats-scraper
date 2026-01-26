@@ -346,6 +346,7 @@ def queue_for_retry(
         bool: True if queued successfully
     """
     try:
+        from google.cloud import bigquery
         from shared.config.gcp_config import get_project_id
         from shared.utils.bigquery_utils import insert_bigquery_rows
 
@@ -360,32 +361,48 @@ def queue_for_retry(
         next_retry = now + __import__('datetime').timedelta(minutes=retry_delay_minutes)
 
         # Check for existing active entry (deduplication)
+        # Use parameterized query to avoid SQL injection
         dedup_query = f"""
         SELECT id, retry_count FROM `{full_table_id}`
-        WHERE phase = '{phase}'
-          AND processor_name = '{processor_name}'
-          AND game_date = DATE('{game_date}')
+        WHERE phase = @phase
+          AND processor_name = @processor_name
+          AND game_date = DATE(@game_date)
           AND status IN ('pending', 'retrying')
         LIMIT 1
         """
 
-        existing = list(client.query(dedup_query).result())
+        dedup_job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("phase", "STRING", phase),
+                bigquery.ScalarQueryParameter("processor_name", "STRING", processor_name),
+                bigquery.ScalarQueryParameter("game_date", "STRING", game_date),
+            ]
+        )
+        existing = list(client.query(dedup_query, job_config=dedup_job_config).result())
         if existing:
             # Update existing entry instead of creating duplicate
             existing_id = existing[0].id
             existing_retry_count = existing[0].retry_count
             logger.info(f"Existing queue entry found for {processor_name}/{game_date}, updating instead of duplicating")
 
+            # Use parameterized query to avoid SQL injection and syntax errors
             update_query = f"""
             UPDATE `{full_table_id}`
             SET
-                error_message = '{(error_message[:4000] if error_message else "").replace("'", "''")}',
-                next_retry_at = TIMESTAMP('{next_retry.isoformat()}'),
+                error_message = @error_message,
+                next_retry_at = TIMESTAMP(@next_retry_at),
                 status = 'pending',
                 updated_at = CURRENT_TIMESTAMP()
-            WHERE id = '{existing_id}'
+            WHERE id = @existing_id
             """
-            client.query(update_query).result()
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("error_message", "STRING", error_message[:4000] if error_message else None),
+                    bigquery.ScalarQueryParameter("next_retry_at", "STRING", next_retry.isoformat()),
+                    bigquery.ScalarQueryParameter("existing_id", "STRING", existing_id),
+                ]
+            )
+            client.query(update_query, job_config=job_config).result()
             logger.info(f"Updated existing queue entry {existing_id} for {processor_name}")
             return True
 
@@ -493,19 +510,27 @@ def mark_retry_succeeded(
         client = _get_bq_client()
 
         # Update any pending/retrying entries for this processor
+        # Use parameterized query to avoid SQL injection
         update_query = f"""
         UPDATE `{table_id}`
         SET
             status = 'succeeded',
             resolution_notes = 'Completed successfully after retry',
             updated_at = CURRENT_TIMESTAMP()
-        WHERE phase = '{phase}'
-          AND processor_name = '{processor_name}'
-          AND game_date = DATE('{game_date}')
+        WHERE phase = @phase
+          AND processor_name = @processor_name
+          AND game_date = DATE(@game_date)
           AND status IN ('pending', 'retrying')
         """
 
-        result = client.query(update_query).result()
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("phase", "STRING", phase),
+                bigquery.ScalarQueryParameter("processor_name", "STRING", processor_name),
+                bigquery.ScalarQueryParameter("game_date", "STRING", game_date),
+            ]
+        )
+        result = client.query(update_query, job_config=job_config).result()
         # BigQuery DML doesn't return affected rows easily, so we just log
         logger.info(f"Marked retry entries as succeeded for {processor_name}/{game_date}")
         return True
