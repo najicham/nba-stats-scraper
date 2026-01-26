@@ -113,6 +113,14 @@ Phase 6: Publishing     →  API endpoints, dashboards
 
 ## 🚨 Recent Changes
 
+### Session 113 (2026-01-26) ✅
+- ✅ **Added comprehensive spot check system** for data accuracy verification
+- ✅ **6 automated checks**: rolling averages, usage rate, minutes parsing, ML features, cache, points arithmetic
+- ✅ **Integrated into daily validation** (5 spot checks, 95% accuracy threshold)
+- ✅ **Found real data quality issues**: Mo Bamba (28% rolling avg error), usage rate precision issues
+- ✅ **Documentation**: 599-line usage guide + troubleshooting
+- 📝 [Full guide](./docs/06-testing/SPOT-CHECK-SYSTEM.md) | [Handoff](./docs/09-handoff/2026-01-26-FINAL-SPOT-CHECK-SUMMARY.md)
+
 ### Week 0 Security (2026-01-19) 🔒
 - ✅ **Fixed 13 critical security vulnerabilities** (97+ individual issues)
 - ✅ **SQL injection**: 47 queries converted to parameterized format
@@ -172,6 +180,12 @@ See [deployment guide](./docs/04-deployment/) for configuration details.
 ```bash
 # Check system health
 ./monitoring/check-system-health.sh
+
+# Run data accuracy spot checks
+python scripts/spot_check_data_accuracy.py --samples 10
+
+# Validate tonight's data
+python scripts/validate_tonight_data.py
 
 # Deploy prediction worker
 bash bin/predictions/deploy/deploy_prediction_worker.sh
