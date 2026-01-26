@@ -13,6 +13,8 @@ REFACTORED: This file has been split into modules for maintainability:
 - team_context.py: Opponent metrics and variance calculations
 - travel_context.py: Travel distance and timezone calculations
 - betting_data.py: Prop lines, game lines, and public betting
+- calculators/: Quality flags and context builders
+- loaders/: Data extraction modules (player and game data)
 
 FIXES IN THIS VERSION:
 - Fixed KeyError when handling players with no historical data (empty DataFrame)
@@ -103,6 +105,9 @@ from .betting_data import BettingDataExtractor
 # Calculator modules (Week 6 - Maintainability Refactor)
 from .calculators import QualityFlagsCalculator, ContextBuilder
 
+# Loader modules (Week 7 - Reduce file size)
+from .loaders import PlayerDataLoader, GameDataLoader
+
 logger = logging.getLogger(__name__)
 
 
@@ -174,6 +179,8 @@ class UpcomingPlayerGameContextProcessor(
         self._betting_data_extractor = None  # Lazy-loaded
         self._quality_calculator = None  # Lazy-loaded (Week 6)
         self._context_builder = None  # Lazy-loaded (Week 6)
+        self._player_loader = None  # Lazy-loaded (Week 7)
+        self._game_data_loader = None  # Lazy-loaded (Week 7)
 
         # Season start date (for completeness checking - Week 5)
         self.season_start_date = None
@@ -223,6 +230,24 @@ class UpcomingPlayerGameContextProcessor(
             roster_ages = getattr(self, 'roster_ages', {})
             self._context_builder = ContextBuilder(roster_ages=roster_ages)
         return self._context_builder
+
+    def _get_player_loader(self) -> PlayerDataLoader:
+        """Lazy-load player data loader."""
+        if self._player_loader is None:
+            if self.target_date is None:
+                raise ValueError("target_date must be set before creating player loader")
+            self._player_loader = PlayerDataLoader(self.bq_client, self.project_id, self.target_date)
+        return self._player_loader
+
+    def _get_game_data_loader(self) -> GameDataLoader:
+        """Lazy-load game data loader."""
+        if self._game_data_loader is None:
+            if self.target_date is None:
+                raise ValueError("target_date must be set before creating game data loader")
+            self._game_data_loader = GameDataLoader(
+                self.bq_client, self.project_id, self.target_date, self.lookback_days
+            )
+        return self._game_data_loader
 
     def get_upstream_data_check_query(self, start_date: str, end_date: str) -> str:
         """
@@ -588,324 +613,15 @@ class UpcomingPlayerGameContextProcessor(
         processing_mode = self._determine_processing_mode()
         self._processing_mode = processing_mode  # Store for later reference
 
-        if processing_mode == 'daily':
-            self._extract_players_daily_mode()
-        else:
-            self._extract_players_backfill_mode()
+        # Delegate to player loader
+        player_loader = self._get_player_loader()
+        player_loader._extract_players_with_props(processing_mode)
 
-    def _extract_players_daily_mode(self) -> None:
-        """
-        Extract players using DAILY mode (pre-game data).
+        # Copy results back to processor
+        self.players_to_process = player_loader.players_to_process
+        self.source_tracking['props'] = player_loader.source_tracking['props']
+        self._props_source = player_loader._props_source
 
-        Uses schedule + roster to get players who will play today.
-        LEFT JOINs with injury report for player status.
-        LEFT JOINs with props for has_prop_line flag.
-
-        This is the FIX for Issue 1 - daily predictions now work because
-        we don't depend on gamebook (which only exists post-game).
-        """
-        self._props_source = 'roster'  # Track source used
-
-        # Calculate roster date range for partition filtering
-        # We use a wider window (90 days) to handle cases where roster scraping may be behind
-        # The query will find the latest roster within this range
-        roster_start = (self.target_date - timedelta(days=90)).isoformat()
-        roster_end = self.target_date.isoformat()
-
-        logger.info(f"Looking for roster data between {roster_start} and {roster_end}")
-
-        # DAILY MODE: Schedule + Roster + Injury
-        # Using date range for partition elimination
-        daily_query = f"""
-        WITH games_today AS (
-            -- Get all games scheduled for target date
-            -- FIXED: Use standard game_id format (YYYYMMDD_AWAY_HOME) instead of NBA official ID
-            SELECT
-                CONCAT(
-                    FORMAT_DATE('%Y%m%d', game_date),
-                    '_',
-                    away_team_tricode,
-                    '_',
-                    home_team_tricode
-                ) as game_id,
-                game_date,
-                home_team_tricode as home_team_abbr,
-                away_team_tricode as away_team_abbr
-            FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
-            WHERE game_date = @game_date
-        ),
-        teams_playing AS (
-            -- Get all teams playing today (both home and away)
-            SELECT DISTINCT home_team_abbr as team_abbr FROM games_today
-            UNION DISTINCT
-            SELECT DISTINCT away_team_abbr as team_abbr FROM games_today
-        ),
-        latest_roster_per_team AS (
-            -- Find the most recent roster PER TEAM within partition range
-            -- FIX: Previous query found global MAX, but different teams may have different latest dates
-            SELECT team_abbr, MAX(roster_date) as roster_date
-            FROM `{self.project_id}.nba_raw.espn_team_rosters`
-            WHERE roster_date >= @roster_start
-              AND roster_date <= @roster_end
-            GROUP BY team_abbr
-        ),
-        roster_players AS (
-            -- Get all players from rosters of teams playing today
-            -- Using date range for partition elimination, then filter to latest per team
-            SELECT DISTINCT
-                r.player_lookup,
-                r.team_abbr
-            FROM `{self.project_id}.nba_raw.espn_team_rosters` r
-            INNER JOIN latest_roster_per_team lr
-                ON r.team_abbr = lr.team_abbr
-                AND r.roster_date = lr.roster_date
-            WHERE r.roster_date >= @roster_start
-              AND r.roster_date <= @roster_end
-              AND r.team_abbr IN (SELECT team_abbr FROM teams_playing)
-              AND r.player_lookup IS NOT NULL
-        ),
-        players_with_games AS (
-            -- Join roster players with their game info
-            SELECT DISTINCT
-                rp.player_lookup,
-                g.game_id,
-                rp.team_abbr,
-                g.home_team_abbr,
-                g.away_team_abbr
-            FROM roster_players rp
-            INNER JOIN games_today g
-                ON rp.team_abbr = g.home_team_abbr
-                OR rp.team_abbr = g.away_team_abbr
-        ),
-        injuries AS (
-            -- Get latest injury report for target date
-            SELECT DISTINCT
-                player_lookup,
-                injury_status
-            FROM `{self.project_id}.nba_raw.nbac_injury_report`
-            WHERE report_date = @game_date
-              AND player_lookup IS NOT NULL
-        ),
-        props AS (
-            -- Check which players have prop lines (from either source)
-            SELECT DISTINCT
-                player_lookup,
-                points_line,
-                'odds_api' as prop_source
-            FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE game_date = @game_date
-              AND player_lookup IS NOT NULL
-            UNION DISTINCT
-            SELECT DISTINCT
-                player_lookup,
-                points_line,
-                'bettingpros' as prop_source
-            FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
-            WHERE game_date = @game_date
-              AND is_active = TRUE
-              AND player_lookup IS NOT NULL
-        )
-        SELECT
-            p.player_lookup,
-            p.game_id,
-            p.team_abbr,
-            p.home_team_abbr,
-            p.away_team_abbr,
-            i.injury_status,
-            pr.points_line,
-            pr.prop_source,
-            CASE WHEN pr.player_lookup IS NOT NULL THEN TRUE ELSE FALSE END as has_prop_line
-        FROM players_with_games p
-        LEFT JOIN injuries i ON p.player_lookup = i.player_lookup
-        LEFT JOIN props pr ON p.player_lookup = pr.player_lookup
-        -- Filter out players marked OUT or DOUBTFUL in injury report
-        WHERE i.injury_status IS NULL
-           OR i.injury_status NOT IN ('Out', 'OUT', 'Doubtful', 'DOUBTFUL')
-        """
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("game_date", "DATE", self.target_date),
-                bigquery.ScalarQueryParameter("roster_start", "DATE", roster_start),
-                bigquery.ScalarQueryParameter("roster_end", "DATE", roster_end),
-            ]
-        )
-
-        try:
-            df = self.bq_client.query(daily_query, job_config=job_config).to_dataframe()
-
-            # Track source usage
-            self.source_tracking['props']['rows_found'] = len(df)
-            self.source_tracking['props']['last_updated'] = datetime.now(timezone.utc)
-
-            # Store players to process (vectorized)
-            players_with_props = df['has_prop_line'].fillna(False).sum()
-
-            # Convert DataFrame to list of dicts efficiently
-            self.players_to_process.extend([
-                {
-                    'player_lookup': row.player_lookup,
-                    'game_id': row.game_id,
-                    'team_abbr': row.team_abbr if hasattr(row, 'team_abbr') else None,
-                    'home_team_abbr': row.home_team_abbr,
-                    'away_team_abbr': row.away_team_abbr,
-                    'has_prop_line': bool(row.has_prop_line) if hasattr(row, 'has_prop_line') else False,
-                    'current_points_line': row.points_line if hasattr(row, 'points_line') else None,
-                    'prop_source': row.prop_source if hasattr(row, 'prop_source') else None,
-                    'injury_status': row.injury_status if hasattr(row, 'injury_status') else None
-                }
-                for row in df.itertuples()
-            ])
-
-            # Count unique teams for coverage monitoring
-            unique_teams = set(row.get('team_abbr') for row in self.players_to_process if row.get('team_abbr'))
-            teams_count = len(unique_teams)
-
-            logger.info(
-                f"[DAILY MODE] Found {len(self.players_to_process)} players for {self.target_date} "
-                f"({players_with_props} with prop lines, {len(self.players_to_process) - players_with_props} without) "
-                f"from {teams_count} teams"
-            )
-
-            # MONITORING: Alert if roster coverage is critically low
-            # Expected: 10-16 teams per day (5-8 games), alert if < 6 teams
-            if teams_count < 6 and len(self.players_to_process) > 0:
-                logger.warning(
-                    f"LOW ROSTER COVERAGE: Only {teams_count} teams found for {self.target_date}. "
-                    f"Expected 10-16 teams. Check ESPN roster scraper and schedule data."
-                )
-                self._send_roster_coverage_alert(self.target_date, teams_count, len(self.players_to_process))
-
-        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
-            logger.error(f"BigQuery error extracting players (daily mode): {e}")
-            self.source_tracking['props']['rows_found'] = 0
-            raise
-        except (KeyError, AttributeError, TypeError) as e:
-            logger.error(f"Data error extracting players (daily mode): {e}")
-            self.source_tracking['props']['rows_found'] = 0
-            raise
-
-    def _extract_players_backfill_mode(self) -> None:
-        """
-        Extract players using BACKFILL mode (post-game data).
-
-        Uses gamebook to get players who actually played.
-        This is the original query - gamebook has actual player data post-game.
-        """
-        self._props_source = 'gamebook'  # Track source used
-
-        # BACKFILL MODE: Gamebook (post-game actual players)
-        backfill_query = f"""
-        WITH schedule_data AS (
-            -- Get schedule data with partition filter
-            -- FIXED: Create standard game_id format (YYYYMMDD_AWAY_HOME)
-            SELECT
-                game_id as nba_game_id,
-                CONCAT(
-                    FORMAT_DATE('%Y%m%d', game_date),
-                    '_',
-                    away_team_tricode,
-                    '_',
-                    home_team_tricode
-                ) as game_id,
-                home_team_tricode,
-                away_team_tricode
-            FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
-            WHERE game_date = @game_date
-        ),
-        players_with_games AS (
-            -- Get ALL active players from gamebook who have games on target date
-            SELECT DISTINCT
-                g.player_lookup,
-                s.game_id,  -- Use standard game_id from schedule
-                g.team_abbr,
-                g.player_status,
-                -- Get home/away from schedule since gamebook may not have it
-                COALESCE(s.home_team_tricode, g.team_abbr) as home_team_abbr,
-                COALESCE(s.away_team_tricode, g.team_abbr) as away_team_abbr
-            FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats` g
-            LEFT JOIN schedule_data s
-                ON g.game_id = s.nba_game_id  -- Join on NBA official ID
-            WHERE g.game_date = @game_date
-              AND g.player_lookup IS NOT NULL
-              AND (g.player_status IS NULL OR g.player_status NOT IN ('DNP', 'DND', 'NWT'))
-        ),
-        props AS (
-            -- Check which players have prop lines (from either source)
-            SELECT DISTINCT
-                player_lookup,
-                points_line,
-                'odds_api' as prop_source
-            FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE game_date = @game_date
-              AND player_lookup IS NOT NULL
-            UNION DISTINCT
-            SELECT DISTINCT
-                player_lookup,
-                points_line,
-                'bettingpros' as prop_source
-            FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
-            WHERE game_date = @game_date
-              AND is_active = TRUE
-              AND player_lookup IS NOT NULL
-        )
-        SELECT
-            p.player_lookup,
-            p.game_id,
-            p.team_abbr,
-            p.home_team_abbr,
-            p.away_team_abbr,
-            p.player_status,
-            pr.points_line,
-            pr.prop_source,
-            CASE WHEN pr.player_lookup IS NOT NULL THEN TRUE ELSE FALSE END as has_prop_line
-        FROM players_with_games p
-        LEFT JOIN props pr ON p.player_lookup = pr.player_lookup
-        """
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("game_date", "DATE", self.target_date),
-            ]
-        )
-
-        try:
-            df = self.bq_client.query(backfill_query, job_config=job_config).to_dataframe()
-
-            # Track source usage
-            self.source_tracking['props']['rows_found'] = len(df)
-            self.source_tracking['props']['last_updated'] = datetime.now(timezone.utc)
-
-            # Store players to process (now ALL players, not just those with props) (vectorized)
-            players_with_props = df['has_prop_line'].fillna(False).sum()
-
-            # Convert DataFrame to list of dicts efficiently
-            self.players_to_process.extend([
-                {
-                    'player_lookup': row.player_lookup,
-                    'game_id': row.game_id,
-                    'team_abbr': row.team_abbr if hasattr(row, 'team_abbr') else None,
-                    'home_team_abbr': row.home_team_abbr,
-                    'away_team_abbr': row.away_team_abbr,
-                    'has_prop_line': bool(row.has_prop_line) if hasattr(row, 'has_prop_line') else False,
-                    'current_points_line': row.points_line if hasattr(row, 'points_line') else None,
-                    'prop_source': row.prop_source if hasattr(row, 'prop_source') else None,
-                    'injury_status': row.player_status if hasattr(row, 'player_status') else None  # From gamebook
-                }
-                for row in df.itertuples()
-            ])
-
-            logger.info(
-                f"[BACKFILL MODE] Found {len(self.players_to_process)} players for {self.target_date} "
-                f"({players_with_props} with prop lines, {len(self.players_to_process) - players_with_props} without)"
-            )
-
-        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
-            logger.error(f"BigQuery error extracting players (backfill mode): {e}")
-            self.source_tracking['props']['rows_found'] = 0
-            raise
-        except (KeyError, AttributeError, TypeError) as e:
-            logger.error(f"Data error extracting players (backfill mode): {e}")
-            self.source_tracking['props']['rows_found'] = 0
-            raise
 
     def _extract_schedule_data(self) -> None:
         """
@@ -916,93 +632,13 @@ class UpcomingPlayerGameContextProcessor(
         - Game start times
         - Back-to-back detection (requires looking at surrounding dates)
         """
-        game_ids = list(set([p['game_id'] for p in self.players_to_process if p.get('game_id')]))
+        # Delegate to game data loader
+        game_loader = self._get_game_data_loader()
+        game_loader._extract_schedule_data(self.players_to_process)
 
-        # Get schedule for target date plus surrounding dates for back-to-back detection
-        start_date = self.target_date - timedelta(days=5)
-        end_date = self.target_date + timedelta(days=5)
-
-        # FIXED: Use standard game_id format (YYYYMMDD_AWAY_HOME) instead of NBA official ID
-        query = f"""
-        SELECT
-            CONCAT(
-                FORMAT_DATE('%Y%m%d', game_date),
-                '_',
-                away_team_tricode,
-                '_',
-                home_team_tricode
-            ) as game_id,
-            game_date,
-            home_team_tricode as home_team_abbr,
-            away_team_tricode as away_team_abbr,
-            game_date_est,
-            is_primetime,
-            season_year
-        FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
-        WHERE game_date >= @start_date
-          AND game_date <= @end_date
-        ORDER BY game_date, game_date_est
-        """
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
-                bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
-            ]
-        )
-
-        try:
-            df = self.bq_client.query(query, job_config=job_config).to_dataframe()
-
-            # Track source usage (count only target date games)
-            target_games = df[df['game_date'] == self.target_date]
-            self.source_tracking['schedule']['rows_found'] = len(target_games)
-            self.source_tracking['schedule']['last_updated'] = datetime.now(timezone.utc)
-
-            # Use NBATeamMapper for comprehensive abbreviation handling
-            team_mapper = get_nba_team_mapper()
-
-            def get_all_abbr_variants(abbr: str) -> list:
-                """Return all known abbreviation variants for a team using NBATeamMapper."""
-                team_info = get_team_info(abbr)
-                if team_info:
-                    # Return all tricode variants (nba, br, espn)
-                    variants = list(set([
-                        team_info.nba_tricode,
-                        team_info.br_tricode,
-                        team_info.espn_tricode
-                    ]))
-                    return variants
-                # Fallback: just return the original
-                return [abbr]
-
-            # Store schedule data by game_id (vectorized)
-            # ALSO create lookups using date-based format (YYYYMMDD_AWAY_HOME) to match props table
-            for row in df.itertuples():
-                row_dict = df.loc[row.Index].to_dict()
-                # Store with official NBA game_id
-                self.schedule_data[row.game_id] = row_dict
-
-                # Create all variant game_id keys to handle inconsistent abbreviations
-                game_date_str = str(row.game_date).replace('-', '')
-                away_variants = get_all_abbr_variants(row.away_team_abbr)
-                home_variants = get_all_abbr_variants(row.home_team_abbr)
-
-                # Store all combinations of away/home abbreviation variants
-                for away_abbr in away_variants:
-                    for home_abbr in home_variants:
-                        date_based_id = f"{game_date_str}_{away_abbr}_{home_abbr}"
-                        self.schedule_data[date_based_id] = row_dict
-
-            logger.info(f"Extracted schedule for {len(target_games)} games on {self.target_date}")
-
-        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
-            logger.error(f"BigQuery error extracting schedule data: {e}")
-            self.source_tracking['schedule']['rows_found'] = 0
-            raise
-        except (KeyError, AttributeError, TypeError) as e:
-            logger.error(f"Data error extracting schedule data: {e}")
-            self.source_tracking['schedule']['rows_found'] = 0
-            raise
+        # Copy results back to processor
+        self.schedule_data = game_loader.schedule_data
+        self.source_tracking['schedule'] = game_loader.source_tracking['schedule']
 
     def _extract_historical_boxscores(self) -> None:
         """
@@ -1013,73 +649,13 @@ class UpcomingPlayerGameContextProcessor(
         2. nba_raw.nbac_player_boxscores (fallback)
         3. nba_raw.nbac_gamebook_player_stats (last resort)
         """
-        player_lookups = [p['player_lookup'] for p in self.players_to_process]
+        # Delegate to game data loader
+        game_loader = self._get_game_data_loader()
+        game_loader._extract_historical_boxscores(self.players_to_process)
 
-        start_date = self.target_date - timedelta(days=self.lookback_days)
-
-        # Try BDL first (PRIMARY)
-        query = f"""
-        SELECT
-            player_lookup,
-            game_date,
-            team_abbr,
-            points,
-            minutes,
-            assists,
-            rebounds,
-            field_goals_made,
-            field_goals_attempted,
-            three_pointers_made,
-            three_pointers_attempted,
-            free_throws_made,
-            free_throws_attempted
-        FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
-        WHERE player_lookup IN UNNEST(@player_lookups)
-          AND game_date >= @start_date
-          AND game_date < @target_date
-        ORDER BY player_lookup, game_date DESC
-        """
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups),
-                bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
-                bigquery.ScalarQueryParameter("target_date", "DATE", self.target_date),
-            ]
-        )
-
-        try:
-            df = self.bq_client.query(query, job_config=job_config).to_dataframe()
-
-            # Convert minutes string to decimal
-            if 'minutes' in df.columns:
-                df['minutes_decimal'] = df['minutes'].apply(parse_minutes)
-            else:
-                df['minutes_decimal'] = 0.0
-
-            # Track source usage
-            self.source_tracking['boxscore']['rows_found'] = len(df)
-            self.source_tracking['boxscore']['last_updated'] = datetime.now(timezone.utc)
-
-            # FIX: Handle empty DataFrame properly to avoid KeyError
-            # Store by player_lookup
-            for player_lookup in player_lookups:
-                if df.empty or 'player_lookup' not in df.columns:
-                    # No data available - store empty DataFrame
-                    self.historical_boxscores[player_lookup] = pd.DataFrame()
-                else:
-                    player_data = df[df['player_lookup'] == player_lookup].copy()
-                    self.historical_boxscores[player_lookup] = player_data
-
-            logger.info(f"Extracted {len(df)} historical boxscore records for {len(player_lookups)} players")
-
-        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
-            logger.error(f"BigQuery error extracting historical boxscores: {e}")
-            self.source_tracking['boxscore']['rows_found'] = 0
-            raise
-        except (KeyError, AttributeError, TypeError) as e:
-            logger.error(f"Data error extracting historical boxscores: {e}")
-            self.source_tracking['boxscore']['rows_found'] = 0
-            raise
+        # Copy results back to processor
+        self.historical_boxscores = game_loader.historical_boxscores
+        self.source_tracking['boxscore'] = game_loader.source_tracking['boxscore']
 
     def _extract_prop_lines(self) -> None:
         """
@@ -1093,23 +669,14 @@ class UpcomingPlayerGameContextProcessor(
         - Odds API has snapshot_timestamp for line history
         - BettingPros has opening_line field and bookmaker_last_update
         """
-        player_game_pairs = [(p['player_lookup'], p['game_id']) for p in self.players_to_process]
-
-        # Use the same source as the driver query
-        use_bettingpros = getattr(self, '_props_source', 'odds_api') == 'bettingpros'
-
+        # Delegate to game data loader
+        game_loader = self._get_game_data_loader()
+        game_loader._props_source = getattr(self, '_props_source', 'odds_api')
         betting_extractor = self._get_betting_data_extractor()
+        game_loader._extract_prop_lines(self.players_to_process, betting_extractor)
 
-        if use_bettingpros:
-            logger.info(f"Extracting prop lines from BettingPros for {len(player_game_pairs)} players")
-            self.prop_lines = betting_extractor.extract_prop_lines_from_bettingpros(
-                player_game_pairs, self.target_date
-            )
-        else:
-            logger.info(f"Extracting prop lines from Odds API for {len(player_game_pairs)} players")
-            self.prop_lines = betting_extractor.extract_prop_lines_from_odds_api(
-                player_game_pairs, self.target_date
-            )
+        # Copy results back to processor
+        self.prop_lines = game_loader.prop_lines
 
     def _extract_game_lines(self) -> None:
         """
@@ -1119,55 +686,15 @@ class UpcomingPlayerGameContextProcessor(
         Opening: Earliest snapshot
         Current: Most recent snapshot
         """
-        game_ids = list(set([p['game_id'] for p in self.players_to_process]))
+        # Delegate to game data loader
+        game_loader = self._get_game_data_loader()
+        game_loader.schedule_data = self.schedule_data  # Pass schedule data
         betting_extractor = self._get_betting_data_extractor()
+        game_loader._extract_game_lines(self.players_to_process, betting_extractor)
 
-        for game_id in game_ids:
-            try:
-                # Get spread consensus
-                spread_info = betting_extractor.get_game_line_consensus(
-                    game_id, 'spreads', self.target_date, self.schedule_data
-                )
-
-                # Get total consensus
-                total_info = betting_extractor.get_game_line_consensus(
-                    game_id, 'totals', self.target_date, self.schedule_data
-                )
-
-                self.game_lines[game_id] = {
-                    **spread_info,
-                    **total_info
-                }
-
-                # Track source usage
-                self.source_tracking['game_lines']['rows_found'] += 1
-
-            except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
-                logger.warning(f"BigQuery error extracting game lines for {game_id}: {e}")
-                self.game_lines[game_id] = {
-                    'game_spread': None,
-                    'opening_spread': None,
-                    'spread_movement': None,
-                    'spread_source': None,
-                    'game_total': None,
-                    'opening_total': None,
-                    'total_movement': None,
-                    'total_source': None
-                }
-            except (KeyError, AttributeError, TypeError) as e:
-                logger.warning(f"Data error extracting game lines for {game_id}: {e}")
-                self.game_lines[game_id] = {
-                    'game_spread': None,
-                    'opening_spread': None,
-                    'spread_movement': None,
-                    'spread_source': None,
-                    'game_total': None,
-                    'opening_total': None,
-                    'total_movement': None,
-                    'total_source': None
-                }
-
-        self.source_tracking['game_lines']['last_updated'] = datetime.now(timezone.utc)
+        # Copy results back to processor
+        self.game_lines = game_loader.game_lines
+        self.source_tracking['game_lines'] = game_loader.source_tracking['game_lines']
 
     def _extract_rosters(self) -> None:
         """
@@ -1176,69 +703,12 @@ class UpcomingPlayerGameContextProcessor(
         Loads the latest roster data from espn_team_rosters for player demographics.
         Stores in self.roster_ages as {player_lookup: age}.
         """
-        if not hasattr(self, 'roster_ages'):
-            self.roster_ages = {}
+        # Delegate to game data loader
+        game_loader = self._get_game_data_loader()
+        game_loader._extract_rosters(self.players_to_process)
 
-        if not self.players_to_process:
-            logger.info("No players to lookup roster data for")
-            return
-
-        unique_players = list(set(p['player_lookup'] for p in self.players_to_process))
-        logger.info(f"Extracting roster data for {len(unique_players)} players")
-
-        # Query for latest roster entry per player with age
-        query = f"""
-            WITH latest_roster AS (
-                SELECT
-                    player_lookup,
-                    age,
-                    birth_date,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY player_lookup
-                        ORDER BY roster_date DESC, scrape_hour DESC
-                    ) as rn
-                FROM `{self.project_id}.nba_raw.espn_team_rosters`
-                WHERE roster_date <= @target_date
-                  AND player_lookup IN UNNEST(@player_lookups)
-            )
-            SELECT player_lookup, age, birth_date
-            FROM latest_roster
-            WHERE rn = 1
-        """
-
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter("target_date", "DATE", self.target_date),
-                bigquery.ArrayQueryParameter("player_lookups", "STRING", unique_players),
-            ]
-        )
-
-        try:
-            results = self.bq_client.query(query, job_config=job_config).result()
-
-            for row in results:
-                player_lookup = row.player_lookup
-                age = row.age
-
-                # If age is None but birth_date exists, calculate age
-                if age is None and row.birth_date:
-                    try:
-                        birth = row.birth_date
-                        if isinstance(birth, str):
-                            birth = date.fromisoformat(birth)
-                        age = (self.target_date - birth).days // 365
-                    except (ValueError, TypeError, AttributeError):
-                        pass
-
-                if age is not None:
-                    self.roster_ages[player_lookup] = age
-
-            logger.info(f"Loaded roster ages for {len(self.roster_ages)} players")
-
-        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
-            logger.warning(f"BigQuery error loading roster data: {e}")
-        except (KeyError, AttributeError, TypeError) as e:
-            logger.warning(f"Data error loading roster data: {e}")
+        # Copy results back to processor
+        self.roster_ages = game_loader.roster_ages
 
     def _extract_injuries(self) -> None:
         """
@@ -1247,123 +717,13 @@ class UpcomingPlayerGameContextProcessor(
         Gets the latest injury status for each player for the target game date.
         Stores results in self.injuries as {player_lookup: {'status': ..., 'report': ...}}.
         """
-        if not self.players_to_process:
-            logger.info("No players to lookup injuries for")
-            return
+        # Delegate to game data loader
+        game_loader = self._get_game_data_loader()
+        game_loader._extract_injuries(self.players_to_process)
 
-        # Get unique player lookups for matching
-        unique_players = list(set(p['player_lookup'] for p in self.players_to_process))
-
-        logger.info(f"Extracting injury data for {len(unique_players)} players")
-
-        query = f"""
-        WITH latest_report AS (
-            SELECT
-                player_lookup,
-                injury_status,
-                reason,
-                reason_category,
-                report_date,
-                processed_at,
-                ROW_NUMBER() OVER (
-                    PARTITION BY player_lookup
-                    ORDER BY report_date DESC, processed_at DESC
-                ) as rn
-            FROM `{self.project_id}.nba_raw.nbac_injury_report`
-            WHERE player_lookup IN UNNEST(@player_lookups)
-              AND game_date = @target_date
-        )
-        SELECT
-            player_lookup,
-            injury_status,
-            reason,
-            reason_category,
-            processed_at
-        FROM latest_report
-        WHERE rn = 1
-        """
-
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ArrayQueryParameter("player_lookups", "STRING", unique_players),
-                bigquery.ScalarQueryParameter("target_date", "DATE", self.target_date.isoformat()),
-            ]
-        )
-
-        try:
-            df = self.bq_client.query(query, job_config=job_config).to_dataframe()
-
-            if df.empty:
-                logger.info("No injury report data found for target date")
-                self.source_tracking['injuries'] = {
-                    'last_updated': None,
-                    'rows_found': 0,
-                    'players_with_status': 0
-                }
-                return
-
-            # Track latest update time for source tracking
-            latest_processed = df['processed_at'].max() if 'processed_at' in df.columns else None
-
-            # Build injuries dict (vectorized with apply)
-            def build_report(row):
-                """Build meaningful report string from reason fields."""
-                reason = row['reason']
-                reason_category = row['reason_category']
-
-                if reason and str(reason).lower() not in ('unknown', 'nan', 'none', ''):
-                    return reason
-                elif reason_category and str(reason_category).lower() not in ('unknown', 'nan', 'none', ''):
-                    return reason_category
-                return None
-
-            # Create report column
-            df['report'] = df.apply(build_report, axis=1)
-
-            # Build injuries dict from DataFrame
-            self.injuries = {
-                row.player_lookup: {
-                    'status': row.injury_status,
-                    'report': row.report
-                }
-                for row in df.itertuples()
-            }
-
-            # Log summary by status
-            status_counts = {}
-            for info in self.injuries.values():
-                status = info['status']
-                status_counts[status] = status_counts.get(status, 0) + 1
-
-            logger.info(
-                f"Extracted injury data for {len(self.injuries)} players: "
-                f"{', '.join(f'{k}={v}' for k, v in sorted(status_counts.items()))}"
-            )
-
-            # Track in source_tracking for observability
-            self.source_tracking['injuries'] = {
-                'last_updated': latest_processed,
-                'rows_found': len(df),
-                'players_with_status': len(self.injuries),
-                'status_breakdown': status_counts
-            }
-
-        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
-            logger.warning(f"BigQuery error extracting injury data: {e}. Continuing without injury info.")
-            self.source_tracking['injuries'] = {
-                'last_updated': None,
-                'rows_found': 0,
-                'players_with_status': 0,
-                'error': str(e)
-            }
-        except (KeyError, AttributeError, TypeError) as e:
-            logger.warning(f"Data error extracting injury data: {e}. Continuing without injury info.")
-            self.source_tracking['injuries'] = {
-                'last_updated': None,
-                'rows_found': 0,
-                'players_with_status': 0,
-                'error': str(e)
-            }
+        # Copy results back to processor
+        self.injuries = game_loader.injuries
+        self.source_tracking['injuries'] = game_loader.source_tracking['injuries']
 
     def _extract_registry(self) -> None:
         """
@@ -1372,39 +732,13 @@ class UpcomingPlayerGameContextProcessor(
         Populates self.registry dict with {player_lookup: universal_player_id}.
         Uses RegistryReader for efficient batch lookups with caching.
         """
-        if not self.players_to_process:
-            logger.info("No players to lookup in registry")
-            return
+        # Delegate to game data loader
+        game_loader = self._get_game_data_loader()
+        game_loader._extract_registry(self.players_to_process)
 
-        # Get unique player lookups
-        unique_players = list(set(p['player_lookup'] for p in self.players_to_process))
-        logger.info(f"Looking up {len(unique_players)} unique players in registry")
-
-        try:
-            # Batch lookup all players at once
-            uid_map = self.registry_reader.get_universal_ids_batch(
-                unique_players,
-                skip_unresolved_logging=True
-            )
-
-            # Store results in self.registry
-            self.registry = uid_map
-
-            # Track stats
-            self.registry_stats['players_found'] = len(uid_map)
-            self.registry_stats['players_not_found'] = len(unique_players) - len(uid_map)
-
-            logger.info(
-                f"Registry lookup complete: {self.registry_stats['players_found']} found, "
-                f"{self.registry_stats['players_not_found']} not found"
-            )
-
-        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
-            logger.warning(f"BigQuery error in registry lookup: {e}. Continuing without universal IDs.")
-            self.registry = {}
-        except (KeyError, AttributeError, TypeError) as e:
-            logger.warning(f"Data error in registry lookup: {e}. Continuing without universal IDs.")
-            self.registry = {}
+        # Copy results back to processor
+        self.registry = game_loader.registry
+        self.registry_stats = game_loader.registry_stats
 
     # ========================================================================
     # CIRCUIT BREAKER METHODS (Week 5 - Completeness Checking)
@@ -2046,154 +1380,6 @@ class UpcomingPlayerGameContextProcessor(
             'source_game_lines_hash': compute_hash('game_lines'),
         }
 
-    def save_analytics(self) -> bool:
-        """
-        Save results to BigQuery using atomic MERGE pattern.
-
-        Returns:
-            True if successful, False otherwise
-        """
-        if not self.transformed_data:
-            logger.warning("No data to save")
-            return True
-
-        table_id = f"{self.project_id}.{self.table_name}"
-        temp_table_id = None
-        timing = {}
-        overall_start = time.time()
-
-        try:
-            # Step 1: Get target table schema
-            step_start = time.time()
-            target_table = self.bq_client.get_table(table_id)
-            target_schema = target_table.schema
-            schema_fields = {field.name for field in target_schema}
-            required_fields = {f.name for f in target_schema if f.mode == "REQUIRED"}
-            timing['get_schema'] = time.time() - step_start
-            logger.info(f"Got target schema ({timing['get_schema']:.2f}s)")
-
-            # Step 2: Create temporary table
-            step_start = time.time()
-            temp_table_id = f"{table_id}_temp_{uuid.uuid4().hex[:8]}"
-            temp_table = bigquery.Table(temp_table_id, schema=target_schema)
-            self.bq_client.create_table(temp_table)
-            timing['create_temp_table'] = time.time() - step_start
-            logger.info(f"Created temp table ({timing['create_temp_table']:.2f}s)")
-
-            # Step 3: Sanitize and filter data
-            step_start = time.time()
-            import math
-
-            def sanitize_value(v):
-                if v is None:
-                    return None
-                if isinstance(v, float):
-                    if math.isnan(v) or math.isinf(v):
-                        return None
-                if hasattr(v, 'item'):
-                    return v.item()
-                return v
-
-            current_utc = datetime.now(timezone.utc)
-            filtered_data = []
-            for record in self.transformed_data:
-                out = {k: sanitize_value(v) for k, v in record.items() if k in schema_fields}
-                if "processed_at" in required_fields and out.get("processed_at") is None:
-                    out["processed_at"] = current_utc.isoformat()
-                filtered_data.append(out)
-
-            timing['sanitize_data'] = time.time() - step_start
-            logger.info(f"Sanitized {len(filtered_data)} records ({timing['sanitize_data']:.2f}s)")
-
-            # Step 4: Load data to temp table
-            step_start = time.time()
-            ndjson_data = "\n".join(json.dumps(row, default=str) for row in filtered_data)
-            ndjson_bytes = ndjson_data.encode('utf-8')
-
-            job_config = bigquery.LoadJobConfig(
-                schema=target_schema,
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
-                autodetect=False
-            )
-
-            load_job = self.bq_client.load_table_from_file(
-                io.BytesIO(ndjson_bytes),
-                temp_table_id,
-                job_config=job_config
-            )
-            load_job.result(timeout=60)
-            timing['load_temp_table'] = time.time() - step_start
-            logger.info(f"Loaded {len(filtered_data)} rows to temp table ({timing['load_temp_table']:.2f}s)")
-
-            # Step 5: Execute MERGE (atomic upsert)
-            step_start = time.time()
-
-            merge_keys = {'player_lookup', 'game_date'}
-            update_columns = [f.name for f in target_schema if f.name not in merge_keys]
-            update_set_clause = ",\n                ".join(
-                f"target.{col} = source.{col}" for col in update_columns
-            )
-
-            merge_query = f"""
-            MERGE `{table_id}` AS target
-            USING (
-                SELECT * EXCEPT(row_num) FROM (
-                    SELECT *, ROW_NUMBER() OVER (
-                        PARTITION BY player_lookup, game_date
-                        ORDER BY processed_at DESC
-                    ) as row_num
-                    FROM `{temp_table_id}`
-                ) WHERE row_num = 1
-            ) AS source
-            ON target.player_lookup = source.player_lookup
-               AND target.game_date = source.game_date
-            WHEN MATCHED THEN
-                UPDATE SET
-                {update_set_clause}
-            WHEN NOT MATCHED THEN
-                INSERT ROW
-            """
-
-            merge_job = self.bq_client.query(merge_query)
-            merge_job.result(timeout=60)
-
-            timing['merge_operation'] = time.time() - step_start
-            rows_affected = merge_job.num_dml_affected_rows or 0
-            logger.info(f"MERGE completed: {rows_affected} rows affected ({timing['merge_operation']:.2f}s)")
-
-            timing['total'] = time.time() - overall_start
-            logger.info(
-                f"Save complete: {len(filtered_data)} records in {timing['total']:.2f}s "
-                f"(schema: {timing['get_schema']:.1f}s, load: {timing['load_temp_table']:.1f}s, "
-                f"merge: {timing['merge_operation']:.1f}s)"
-            )
-
-            return True
-
-        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
-            error_msg = str(e).lower()
-
-            if "streaming buffer" in error_msg:
-                logger.warning(
-                    f"MERGE blocked by streaming buffer - {len(self.transformed_data)} records skipped. "
-                    f"Will succeed on next run."
-                )
-                return False
-
-            logger.error(f"BigQuery error saving to BigQuery: {e}")
-            return False
-        except (KeyError, AttributeError, TypeError, ValueError, json.JSONDecodeError) as e:
-            logger.error(f"Data error saving to BigQuery: {e}")
-            return False
-
-        finally:
-            if temp_table_id:
-                try:
-                    self.bq_client.delete_table(temp_table_id, not_found_ok=True)
-                    logger.debug(f"Cleaned up temp table {temp_table_id}")
-                except (GoogleAPIError, NotFound) as cleanup_e:
-                    logger.warning(f"Failed to cleanup temp table: {cleanup_e}")
 
     # ========================================================================
     # Utility Methods
