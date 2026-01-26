@@ -85,29 +85,29 @@ def regenerate_cache_for_date(client: bigquery.Client, project_id: str, cache_da
                 universal_player_id,
                 MAX(team_abbr) as team_abbr,
 
-                -- Points averaging
-                ROUND(AVG(CASE WHEN game_rank <= 5 THEN points END), 4) as points_avg_last_5,
-                ROUND(AVG(CASE WHEN game_rank <= 10 THEN points END), 4) as points_avg_last_10,
-                ROUND(AVG(points), 4) as points_avg_season,
-                ROUND(STDDEV(CASE WHEN game_rank <= 10 THEN points END), 4) as points_std_last_10,
+                -- Points averaging (cast to NUMERIC for BigQuery compatibility)
+                CAST(ROUND(AVG(CASE WHEN game_rank <= 5 THEN points END), 4) AS NUMERIC) as points_avg_last_5,
+                CAST(ROUND(AVG(CASE WHEN game_rank <= 10 THEN points END), 4) AS NUMERIC) as points_avg_last_10,
+                CAST(ROUND(AVG(points), 4) AS NUMERIC) as points_avg_season,
+                CAST(ROUND(STDDEV(CASE WHEN game_rank <= 10 THEN points END), 4) AS NUMERIC) as points_std_last_10,
 
-                -- Last 10 game averages
-                ROUND(AVG(CASE WHEN game_rank <= 10 THEN minutes_played END), 4) as minutes_avg_last_10,
-                ROUND(AVG(CASE WHEN game_rank <= 10 THEN usage_rate END), 4) as usage_rate_last_10,
-                ROUND(AVG(CASE WHEN game_rank <= 10 THEN ts_pct END), 4) as ts_pct_last_10,
+                -- Last 10 game averages (cast to NUMERIC)
+                CAST(ROUND(AVG(CASE WHEN game_rank <= 10 THEN minutes_played END), 4) AS NUMERIC) as minutes_avg_last_10,
+                CAST(ROUND(AVG(CASE WHEN game_rank <= 10 THEN usage_rate END), 4) AS NUMERIC) as usage_rate_last_10,
+                CAST(ROUND(AVG(CASE WHEN game_rank <= 10 THEN ts_pct END), 4) AS NUMERIC) as ts_pct_last_10,
 
-                -- Assisted rate
-                ROUND(
+                -- Assisted rate (cast to NUMERIC)
+                CAST(ROUND(
                     SAFE_DIVIDE(
                         SUM(CASE WHEN game_rank <= 10 THEN assisted_fg_makes ELSE 0 END),
                         SUM(CASE WHEN game_rank <= 10 THEN fg_makes ELSE 0 END)
                     ),
                     9
-                ) as assisted_rate_last_10,
+                ) AS NUMERIC) as assisted_rate_last_10,
 
                 -- Season totals
                 COUNT(*) as games_played_season,
-                ROUND(AVG(usage_rate), 4) as player_usage_rate_season
+                CAST(ROUND(AVG(usage_rate), 4) AS NUMERIC) as player_usage_rate_season
             FROM player_games
             GROUP BY player_lookup, universal_player_id
             HAVING COUNT(*) >= 5  -- Minimum games required
@@ -123,7 +123,7 @@ def regenerate_cache_for_date(client: bigquery.Client, project_id: str, cache_da
             WHERE game_date = DATE('{cache_date}')
         )
 
-        -- Step 4: Join stats with scheduled players
+        -- Step 4: Join stats with scheduled players (NOTE: only updating rolling avg fields that exist in schema)
         SELECT
             sp.player_lookup,
             sp.universal_player_id,
@@ -135,11 +135,8 @@ def regenerate_cache_for_date(client: bigquery.Client, project_id: str, cache_da
             ps.minutes_avg_last_10,
             ps.usage_rate_last_10,
             ps.ts_pct_last_10,
-            ps.assisted_rate_last_10,
             ps.games_played_season,
-            ps.player_usage_rate_season,
-            sp.team_abbr,
-            CURRENT_TIMESTAMP() as processed_at
+            ps.player_usage_rate_season
         FROM scheduled_players sp
         INNER JOIN player_stats ps
             ON sp.player_lookup = ps.player_lookup
@@ -147,7 +144,7 @@ def regenerate_cache_for_date(client: bigquery.Client, project_id: str, cache_da
     ON target.cache_date = source.cache_date
        AND target.player_lookup = source.player_lookup
 
-    -- Update existing records
+    -- Update existing records (only fields that exist in schema)
     WHEN MATCHED THEN UPDATE SET
         target.points_avg_last_5 = source.points_avg_last_5,
         target.points_avg_last_10 = source.points_avg_last_10,
@@ -156,45 +153,8 @@ def regenerate_cache_for_date(client: bigquery.Client, project_id: str, cache_da
         target.minutes_avg_last_10 = source.minutes_avg_last_10,
         target.usage_rate_last_10 = source.usage_rate_last_10,
         target.ts_pct_last_10 = source.ts_pct_last_10,
-        target.assisted_rate_last_10 = source.assisted_rate_last_10,
         target.games_played_season = source.games_played_season,
-        target.player_usage_rate_season = source.player_usage_rate_season,
-        target.processed_at = source.processed_at
-
-    -- Insert new records (shouldn't happen, but handle gracefully)
-    WHEN NOT MATCHED THEN INSERT (
-        player_lookup,
-        universal_player_id,
-        cache_date,
-        points_avg_last_5,
-        points_avg_last_10,
-        points_avg_season,
-        points_std_last_10,
-        minutes_avg_last_10,
-        usage_rate_last_10,
-        ts_pct_last_10,
-        assisted_rate_last_10,
-        games_played_season,
-        player_usage_rate_season,
-        team_abbr,
-        processed_at
-    ) VALUES (
-        source.player_lookup,
-        source.universal_player_id,
-        source.cache_date,
-        source.points_avg_last_5,
-        source.points_avg_last_10,
-        source.points_avg_season,
-        source.points_std_last_10,
-        source.minutes_avg_last_10,
-        source.usage_rate_last_10,
-        source.ts_pct_last_10,
-        source.assisted_rate_last_10,
-        source.games_played_season,
-        source.player_usage_rate_season,
-        source.team_abbr,
-        source.processed_at
-    )
+        target.player_usage_rate_season = source.player_usage_rate_season
     """
 
     try:

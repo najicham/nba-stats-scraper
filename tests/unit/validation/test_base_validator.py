@@ -1627,5 +1627,486 @@ class TestScheduleLayerValidation:
         validator._check_processing_schedule.assert_not_called()
 
 
+# ============================================================================
+# Test Main Validate Method
+# ============================================================================
+
+class TestValidateMethod:
+    """Tests for the main validate() method"""
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_with_auto_detect_date_range(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() auto-detects date range when not provided"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock all the methods called by validate()
+        validator._auto_detect_date_range = Mock(return_value=('2024-01-01', '2024-01-31'))
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock()
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        validator._generate_report = Mock(return_value=Mock(overall_status='pass'))
+        validator._print_validation_summary = Mock()
+        validator._save_results = Mock()
+        validator._send_notification = Mock()
+
+        # Call validate without start_date/end_date
+        result = validator.validate()
+
+        # Verify auto-detect was called
+        validator._auto_detect_date_range.assert_called_once_with(None)
+
+        # Verify instance variables were set
+        assert validator.start_date == '2024-01-01'
+        assert validator.end_date == '2024-01-31'
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_with_provided_dates(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() uses provided dates instead of auto-detect"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock methods
+        validator._auto_detect_date_range = Mock()
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock()
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        validator._generate_report = Mock(return_value=Mock(overall_status='pass'))
+        validator._print_validation_summary = Mock()
+        validator._save_results = Mock()
+        validator._send_notification = Mock()
+
+        # Call validate with explicit dates
+        validator.validate(start_date='2024-02-01', end_date='2024-02-29', season_year=2024)
+
+        # Verify auto-detect was NOT called
+        validator._auto_detect_date_range.assert_not_called()
+
+        # Verify instance variables were set correctly
+        assert validator.start_date == '2024-02-01'
+        assert validator.end_date == '2024-02-29'
+        assert validator.season_year == 2024
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_uses_default_layers_from_config(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() uses layers from config when not provided"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock methods
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock()
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        validator._generate_report = Mock(return_value=Mock(overall_status='pass'))
+        validator._print_validation_summary = Mock()
+        validator._save_results = Mock()
+        validator._send_notification = Mock()
+
+        # Set default layers in config
+        validator.config['processor']['layers'] = ['bigquery']
+        validator.config['bigquery_validations'] = {'enabled': True}
+
+        validator.validate(start_date='2024-01-01', end_date='2024-01-31')
+
+        # Verify only bigquery layer was called
+        validator._validate_bigquery_layer.assert_called_once()
+        validator._validate_gcs_layer.assert_not_called()
+        validator._validate_schedule_layer.assert_not_called()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_uses_provided_layers(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() uses provided layers parameter"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock methods
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock()
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        validator._generate_report = Mock(return_value=Mock(overall_status='pass'))
+        validator._print_validation_summary = Mock()
+        validator._save_results = Mock()
+        validator._send_notification = Mock()
+
+        # Set enabled flags
+        validator.config['gcs_validations'] = {'enabled': True}
+        validator.config['bigquery_validations'] = {'enabled': True}
+
+        # Call with specific layers parameter
+        validator.validate(
+            start_date='2024-01-01',
+            end_date='2024-01-31',
+            layers=['gcs', 'bigquery']
+        )
+
+        # Verify both layers were called
+        validator._validate_gcs_layer.assert_called_once()
+        validator._validate_bigquery_layer.assert_called_once()
+        validator._validate_schedule_layer.assert_not_called()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_skips_disabled_layers(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() skips layers that are disabled in config"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock methods
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock()
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        validator._generate_report = Mock(return_value=Mock(overall_status='pass'))
+        validator._print_validation_summary = Mock()
+        validator._save_results = Mock()
+        validator._send_notification = Mock()
+
+        # Set gcs enabled=False
+        validator.config['gcs_validations'] = {'enabled': False}
+        validator.config['bigquery_validations'] = {'enabled': True}
+
+        validator.validate(
+            start_date='2024-01-01',
+            end_date='2024-01-31',
+            layers=['gcs', 'bigquery']
+        )
+
+        # Verify gcs layer was NOT called (disabled)
+        validator._validate_gcs_layer.assert_not_called()
+        # Verify bigquery was called (enabled)
+        validator._validate_bigquery_layer.assert_called_once()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_calls_custom_validations(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() calls _run_custom_validations"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock methods
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock()
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        validator._generate_report = Mock(return_value=Mock(overall_status='pass'))
+        validator._print_validation_summary = Mock()
+        validator._save_results = Mock()
+        validator._send_notification = Mock()
+
+        validator.validate(start_date='2024-01-01', end_date='2024-01-31', season_year=2024)
+
+        # Verify custom validations was called with correct params
+        validator._run_custom_validations.assert_called_once_with('2024-01-01', '2024-01-31', 2024)
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_handles_validation_exception(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() handles exceptions during validation"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock methods - make one raise an exception
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock(side_effect=Exception('BigQuery error'))
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        validator._generate_report = Mock(return_value=Mock(overall_status='fail'))
+        validator._print_validation_summary = Mock()
+        validator._save_results = Mock()
+        validator._send_notification = Mock()
+
+        validator.config['bigquery_validations'] = {'enabled': True}
+
+        validator.validate(start_date='2024-01-01', end_date='2024-01-31', layers=['bigquery'])
+
+        # Verify an error result was added
+        error_results = [r for r in validator.results if r.check_name == 'validation_execution']
+        assert len(error_results) == 1
+        assert error_results[0].passed is False
+        assert 'BigQuery error' in error_results[0].message
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_output_mode_summary(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() with output_mode='summary'"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock methods
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock()
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        validator._generate_report = Mock(return_value=Mock(overall_status='pass'))
+        validator._print_validation_summary = Mock()
+        validator._print_detailed_report = Mock()
+        validator._print_dates_only = Mock()
+        validator._save_results = Mock()
+        validator._send_notification = Mock()
+
+        validator.validate(start_date='2024-01-01', end_date='2024-01-31', output_mode='summary')
+
+        # Verify summary was called
+        validator._print_validation_summary.assert_called_once()
+        validator._print_detailed_report.assert_not_called()
+        validator._print_dates_only.assert_not_called()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_output_mode_detailed(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() with output_mode='detailed'"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock methods
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock()
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        validator._generate_report = Mock(return_value=Mock(overall_status='pass'))
+        validator._print_validation_summary = Mock()
+        validator._print_detailed_report = Mock()
+        validator._print_dates_only = Mock()
+        validator._save_results = Mock()
+        validator._send_notification = Mock()
+
+        validator.validate(start_date='2024-01-01', end_date='2024-01-31', output_mode='detailed')
+
+        # Verify detailed was called
+        validator._print_detailed_report.assert_called_once()
+        validator._print_validation_summary.assert_not_called()
+        validator._print_dates_only.assert_not_called()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_output_mode_dates(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() with output_mode='dates'"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock methods
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock()
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        validator._generate_report = Mock(return_value=Mock(overall_status='pass'))
+        validator._print_validation_summary = Mock()
+        validator._print_detailed_report = Mock()
+        validator._print_dates_only = Mock()
+        validator._save_results = Mock()
+        validator._send_notification = Mock()
+
+        validator.validate(start_date='2024-01-01', end_date='2024-01-31', output_mode='dates')
+
+        # Verify dates was called
+        validator._print_dates_only.assert_called_once()
+        validator._print_validation_summary.assert_not_called()
+        validator._print_detailed_report.assert_not_called()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_output_mode_quiet(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() with output_mode='quiet'"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock methods
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock()
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        validator._generate_report = Mock(return_value=Mock(overall_status='pass'))
+        validator._print_validation_summary = Mock()
+        validator._print_detailed_report = Mock()
+        validator._print_dates_only = Mock()
+        validator._save_results = Mock()
+        validator._send_notification = Mock()
+
+        validator.validate(start_date='2024-01-01', end_date='2024-01-31', output_mode='quiet')
+
+        # Verify no print methods were called
+        validator._print_validation_summary.assert_not_called()
+        validator._print_detailed_report.assert_not_called()
+        validator._print_dates_only.assert_not_called()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_output_mode_unknown_defaults_to_summary(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() with unknown output_mode defaults to summary"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock methods
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock()
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        validator._generate_report = Mock(return_value=Mock(overall_status='pass'))
+        validator._print_validation_summary = Mock()
+        validator._print_detailed_report = Mock()
+        validator._print_dates_only = Mock()
+        validator._save_results = Mock()
+        validator._send_notification = Mock()
+
+        validator.validate(start_date='2024-01-01', end_date='2024-01-31', output_mode='unknown')
+
+        # Verify summary was called (default for unknown)
+        validator._print_validation_summary.assert_called_once()
+        validator._print_detailed_report.assert_not_called()
+        validator._print_dates_only.assert_not_called()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_calls_save_results(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() calls _save_results"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock methods
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock()
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        mock_report = Mock(overall_status='pass')
+        validator._generate_report = Mock(return_value=mock_report)
+        validator._print_validation_summary = Mock()
+        validator._save_results = Mock()
+        validator._send_notification = Mock()
+
+        validator.validate(start_date='2024-01-01', end_date='2024-01-31')
+
+        # Verify save_results was called with the report
+        validator._save_results.assert_called_once_with(mock_report)
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_handles_save_results_exception(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() handles exceptions during _save_results"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock methods - make save_results raise exception
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock()
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        validator._generate_report = Mock(return_value=Mock(overall_status='pass'))
+        validator._print_validation_summary = Mock()
+        validator._save_results = Mock(side_effect=Exception('Save failed'))
+        validator._send_notification = Mock()
+
+        # Should not raise exception
+        result = validator.validate(start_date='2024-01-01', end_date='2024-01-31')
+
+        # Validate still returns a report
+        assert result is not None
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_sends_notification_on_failure_when_notify_true(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() sends notification when notify=True and validation fails"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock methods
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock()
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        mock_report = Mock(overall_status='fail')
+        validator._generate_report = Mock(return_value=mock_report)
+        validator._print_validation_summary = Mock()
+        validator._save_results = Mock()
+        validator._send_notification = Mock()
+
+        validator.validate(start_date='2024-01-01', end_date='2024-01-31', notify=True)
+
+        # Verify notification was sent
+        validator._send_notification.assert_called_once_with(mock_report)
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_does_not_send_notification_when_notify_false(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() does not send notification when notify=False"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock methods
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock()
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        mock_report = Mock(overall_status='fail')
+        validator._generate_report = Mock(return_value=mock_report)
+        validator._print_validation_summary = Mock()
+        validator._save_results = Mock()
+        validator._send_notification = Mock()
+
+        validator.validate(start_date='2024-01-01', end_date='2024-01-31', notify=False)
+
+        # Verify notification was NOT sent
+        validator._send_notification.assert_not_called()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_does_not_send_notification_on_pass(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() does not send notification when validation passes"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock methods
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock()
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        mock_report = Mock(overall_status='pass')
+        validator._generate_report = Mock(return_value=mock_report)
+        validator._print_validation_summary = Mock()
+        validator._save_results = Mock()
+        validator._send_notification = Mock()
+
+        validator.validate(start_date='2024-01-01', end_date='2024-01-31', notify=True)
+
+        # Verify notification was NOT sent (validation passed)
+        validator._send_notification.assert_not_called()
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_handles_notification_exception(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() handles exceptions during _send_notification"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock methods - make send_notification raise exception
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock()
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        mock_report = Mock(overall_status='fail')
+        validator._generate_report = Mock(return_value=mock_report)
+        validator._print_validation_summary = Mock()
+        validator._save_results = Mock()
+        validator._send_notification = Mock(side_effect=Exception('Notification failed'))
+
+        # Should not raise exception
+        result = validator.validate(start_date='2024-01-01', end_date='2024-01-31', notify=True)
+
+        # Validate still returns a report
+        assert result is not None
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_validate_returns_report(self, mock_storage, mock_bq, temp_config_file):
+        """Test validate() returns the generated report"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock methods
+        validator._validate_gcs_layer = Mock()
+        validator._validate_bigquery_layer = Mock()
+        validator._validate_schedule_layer = Mock()
+        validator._run_custom_validations = Mock()
+        mock_report = Mock(overall_status='pass', processor_name='test')
+        validator._generate_report = Mock(return_value=mock_report)
+        validator._print_validation_summary = Mock()
+        validator._save_results = Mock()
+        validator._send_notification = Mock()
+
+        result = validator.validate(start_date='2024-01-01', end_date='2024-01-31')
+
+        # Verify the returned report matches
+        assert result == mock_report
+        assert result.processor_name == 'test'
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
