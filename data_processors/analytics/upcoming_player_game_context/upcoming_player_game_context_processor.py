@@ -132,7 +132,7 @@ class UpcomingPlayerGameContextProcessor(
 
     def __init__(self):
         super().__init__()
-        self.table_name = 'nba_analytics.upcoming_player_game_context'
+        self.table_name = 'upcoming_player_game_context'
         self.processing_strategy = 'MERGE_UPDATE'
         self.entity_type = 'player'
         self.entity_field = 'player_lookup'
