@@ -285,7 +285,7 @@ class CompletionTracker:
 
         # Insert row using batch loading instead of streaming inserts
         # to avoid 90-minute streaming buffer that blocks DML operations
-        from shared.utils.bigquery_utils import insert_bigquery_rows
+        from orchestration.shared.utils.bigquery_utils import insert_bigquery_rows
         short_table_id = f"{self.bq_dataset}.{self.bq_table}"
         success = insert_bigquery_rows(short_table_id, [row], project_id=self.project_id)
 
