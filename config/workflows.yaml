@@ -348,10 +348,10 @@ workflows:
     priority: "CRITICAL"
     decision_type: "game_aware"
     description: "Collect betting lines multiple times before games start"
-    
+
     schedule:
       game_aware: true
-      window_before_game_hours: 6  # Start 6 hours before first game
+      window_before_game_hours: 12  # Start 12 hours before first game (was 6)
       business_hours:
         start: 8   # 8 AM ET
         end: 20    # 8 PM ET
