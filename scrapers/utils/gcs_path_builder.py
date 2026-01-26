@@ -41,6 +41,8 @@ class GCSPathBuilder:
         "bdl_player_box_scores": "ball-dont-lie/player-box-scores/%(date)s/%(timestamp)s.json",  # Primary path key
         "bdl_player_box_scores_by_date": "ball-dont-lie/player-box-scores/%(date)s/%(timestamp)s.json",  # Alias
         "bdl_player_box_scores_by_game": "ball-dont-lie/player-box-scores/%(date)s/game_%(game_id)s/%(timestamp)s.json",
+        "bdl_player_averages": "ball-dont-lie/player-averages/%(season)s/%(timestamp)s.json",
+        "bdl_player_detail": "ball-dont-lie/player-detail/%(date)s/%(timestamp)s.json",
 
         "bdl_standings": "ball-dont-lie/standings/%(season_formatted)s/%(date)s/%(timestamp)s.json",
         "bdl_box_scores": "ball-dont-lie/boxscores/%(date)s/%(timestamp)s.json",
