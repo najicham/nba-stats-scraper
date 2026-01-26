@@ -186,7 +186,10 @@ def get_source_blocked_resources(
           verification_count,
           available_from_alt_source,
           alt_source_system,
-          notes
+          notes,
+          is_resolved,
+          resolved_at,
+          resolution_notes
         FROM `nba-props-platform.nba_orchestration.source_blocked_resources`
         WHERE {where_sql}
         ORDER BY game_date DESC, resource_id
