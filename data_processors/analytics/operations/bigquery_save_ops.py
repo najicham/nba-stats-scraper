@@ -51,7 +51,7 @@ class BigQuerySaveOpsMixin:
     See module docstring for complete dependency list.
     """
 
-    def save_analytics(self) -> None:
+    def save_analytics(self) -> bool:
         """
         Save calculated analytics to BigQuery using batch loading.
 
@@ -66,6 +66,9 @@ class BigQuerySaveOpsMixin:
         - Retry logic for serialization conflicts
         - Graceful handling of streaming buffer conflicts
         - Statistics tracking (rows_inserted)
+
+        Returns:
+            bool: True if save was successful, False otherwise
 
         Raises:
             Exception: On BigQuery load failures after retries
@@ -87,7 +90,7 @@ class BigQuerySaveOpsMixin:
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
-            return
+            return False
 
         table_id = f"{self.project_id}.{self.get_output_dataset()}.{self.table_name}"
 
@@ -118,7 +121,7 @@ class BigQuerySaveOpsMixin:
 
         if not rows:
             logger.warning("No rows to insert")
-            return
+            return False
 
         # Get target table schema (needed for both MERGE and INSERT strategies)
         try:
@@ -136,7 +139,7 @@ class BigQuerySaveOpsMixin:
 
             # Check for duplicates after successful merge
             self._check_for_duplicates_post_save()
-            return  # MERGE handles everything, we're done
+            return True  # MERGE completed successfully
 
         # For non-MERGE strategies, use batch INSERT via BigQuery load job
         logger.info(f"Inserting {len(rows)} rows to {table_id} using batch INSERT")
@@ -156,7 +159,7 @@ class BigQuerySaveOpsMixin:
 
             if not sanitized_rows:
                 logger.warning("No valid rows after sanitization")
-                return
+                return False
 
             ndjson_data = "\n".join(json.dumps(row) for row in sanitized_rows)
             ndjson_bytes = ndjson_data.encode('utf-8')
@@ -187,13 +190,15 @@ class BigQuerySaveOpsMixin:
                 # Check for duplicates after successful save
                 self._check_for_duplicates_post_save()
 
+                return True  # Successfully saved data
+
             except Exception as load_e:
                 if "streaming buffer" in str(load_e).lower():
                     logger.warning(f"⚠️ Load blocked by streaming buffer - {len(rows)} rows skipped")
                     logger.info("Records will be processed on next run")
                     self.stats["rows_skipped"] = len(rows)
                     self.stats["rows_processed"] = 0
-                    return
+                    return False
                 else:
                     # Log detailed error info from BigQuery load job
                     if hasattr(load_job, 'errors') and load_job.errors:
