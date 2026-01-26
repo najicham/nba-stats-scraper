@@ -1,0 +1,50 @@
+# Coverage configuration file
+# See https://coverage.readthedocs.io/en/latest/config.html
+
+[run]
+source = .
+omit =
+    */tests/*
+    */test_*
+    */.venv/*
+    */venv/*
+    */site-packages/*
+    */dist-packages/*
+    */__pycache__/*
+    */migrations/*
+    */setup.py
+    */conftest.py
+    */cloud_functions/*/main.py  # Cloud function entry points are deployment-tested
+    */bin/*  # Command-line scripts
+
+[report]
+precision = 2
+show_missing = True
+skip_covered = False
+exclude_lines =
+    # Have to re-enable the standard pragma
+    pragma: no cover
+
+    # Don't complain about missing debug-only code:
+    def __repr__
+    def __str__
+
+    # Don't complain if tests don't hit defensive assertion code:
+    raise AssertionError
+    raise NotImplementedError
+
+    # Don't complain if non-runnable code isn't run:
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:
+    @abstract
+    @abc.abstractmethod
+
+    # Don't complain about logger statements
+    logger.debug
+    logger.trace
+
+[html]
+directory = htmlcov
+
+[xml]
+output = coverage.xml
