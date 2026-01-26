@@ -116,7 +116,18 @@ class TonightDataValidator:
 
         Note: Schedule uses NBA game_id format (0022500661) while upcoming_player_game_context
         uses date format (20260126_MEM_HOU). We JOIN on game_date and teams instead.
+
+        Accounts for source-blocked games - doesn't count them as failures.
         """
+        # Get source-blocked games for this date
+        from shared.utils.source_block_tracker import get_source_blocked_resources
+
+        blocked_games = get_source_blocked_resources(
+            game_date=str(self.target_date),
+            resource_type='play_by_play'
+        )
+        blocked_game_ids = {g['resource_id'] for g in blocked_games}
+
         query = f"""
         SELECT
             s.game_id as schedule_game_id,
@@ -134,31 +145,50 @@ class TonightDataValidator:
         """
         results = list(self.client.query(query).result(timeout=60))
 
+        total_games = len(results)
         missing_teams_by_game = {}
+        blocked_count = 0
+
         for row in results:
+            game_id = row.schedule_game_id
+            game = f"{row.expected_away}@{row.expected_home}"
             expected = {row.expected_home, row.expected_away}
             actual = set(row.actual_teams or [])
             missing = expected - actual
 
-            if missing:
-                game = f"{row.expected_away}@{row.expected_home}"
-                missing_teams_by_game[game] = list(missing)
-                self.add_issue('game_context',
-                    f'{game}: Missing teams {missing}, only have {actual}')
+            # Check if this game is source-blocked
+            is_blocked = game_id in blocked_game_ids
 
-            if row.player_count == 0:
-                game = f"{row.expected_away}@{row.expected_home}"
-                self.add_issue('game_context',
-                    f'{game}: No players in game_context!')
+            if missing or row.player_count == 0:
+                if is_blocked:
+                    # This is expected - game is blocked at source
+                    blocked_count += 1
+                else:
+                    # This is a real issue - game should have data
+                    if missing:
+                        missing_teams_by_game[game] = list(missing)
+                        self.add_issue('game_context',
+                            f'{game}: Missing teams {missing}, only have {actual}')
+                    if row.player_count == 0:
+                        self.add_issue('game_context',
+                            f'{game}: No players in game_context!')
 
         total_players = sum(r.player_count for r in results)
         self.stats['game_context_players'] = total_players
+        self.stats['game_context_blocked'] = blocked_count
 
-        games_with_issues = len(missing_teams_by_game)
-        if games_with_issues == 0:
-            print(f"✓ Game Context: All games have both teams, {total_players} total players")
+        games_with_data = total_games - blocked_count - len(missing_teams_by_game)
+
+        if len(missing_teams_by_game) == 0:
+            if blocked_count > 0:
+                print(f"✓ Game Context: {games_with_data}/{total_games - blocked_count} available games, {total_players} total players")
+                print(f"  ℹ️  {blocked_count} games source-blocked (not counted as failures)")
+            else:
+                print(f"✓ Game Context: All {total_games} games have both teams, {total_players} total players")
         else:
-            print(f"✗ Game Context: {games_with_issues} games missing teams")
+            print(f"✗ Game Context: {len(missing_teams_by_game)} games missing teams")
+            if blocked_count > 0:
+                print(f"  ℹ️  {blocked_count} additional games source-blocked")
 
         return missing_teams_by_game
 
