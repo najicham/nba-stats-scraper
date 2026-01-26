@@ -116,20 +116,21 @@ class TestOptionsValidation:
 class TestGCSLoading:
     """Test suite for GCS data loading"""
 
-    @patch('data_processors.raw.processor_base.storage.Client')
-    def test_load_json_from_gcs_success(self, mock_storage_client):
+    def test_load_json_from_gcs_success(self):
         """Test successful JSON loading from GCS"""
         processor = MockProcessor()
-        processor.set_opts({
-            'project_id': 'test-project'
-        })
+        processor.set_opts({'project_id': 'test-project'})
 
-        # Mock GCS blob
+        # Initialize gcs_client
+        processor.gcs_client = Mock()
+
+        # Mock GCS blob - use download_as_string() not download_as_text()
         mock_blob = Mock()
-        mock_blob.download_as_text.return_value = '{"test": "data"}'
+        mock_blob.exists.return_value = True
+        mock_blob.download_as_string.return_value = b'{"test": "data"}'
         mock_bucket = Mock()
         mock_bucket.blob.return_value = mock_blob
-        mock_storage_client.return_value.bucket.return_value = mock_bucket
+        processor.gcs_client.bucket.return_value = mock_bucket
 
         result = processor.load_json_from_gcs(
             bucket='test-bucket',
@@ -137,37 +138,44 @@ class TestGCSLoading:
         )
 
         assert result == {"test": "data"}
-        mock_blob.download_as_text.assert_called_once()
+        mock_blob.download_as_string.assert_called_once()
 
-    @patch('data_processors.raw.processor_base.storage.Client')
-    def test_load_json_from_gcs_file_not_found(self, mock_storage_client):
+    def test_load_json_from_gcs_file_not_found(self):
         """Test GCS loading handles file not found"""
         processor = MockProcessor()
         processor.set_opts({'project_id': 'test-project'})
 
-        # Mock blob not found
-        mock_bucket = Mock()
-        mock_bucket.blob.side_effect = Exception("File not found")
-        mock_storage_client.return_value.bucket.return_value = mock_bucket
+        # Initialize gcs_client
+        processor.gcs_client = Mock()
 
-        with pytest.raises(Exception):
+        # Mock blob not found - use exists() check
+        mock_blob = Mock()
+        mock_blob.exists.return_value = False
+        mock_bucket = Mock()
+        mock_bucket.blob.return_value = mock_blob
+        processor.gcs_client.bucket.return_value = mock_bucket
+
+        with pytest.raises(FileNotFoundError):
             processor.load_json_from_gcs(
                 bucket='test-bucket',
                 file_path='nonexistent.json'
             )
 
-    @patch('data_processors.raw.processor_base.storage.Client')
-    def test_load_json_from_gcs_invalid_json(self, mock_storage_client):
+    def test_load_json_from_gcs_invalid_json(self):
         """Test GCS loading handles invalid JSON"""
         processor = MockProcessor()
         processor.set_opts({'project_id': 'test-project'})
 
-        # Mock blob with invalid JSON
+        # Initialize gcs_client
+        processor.gcs_client = Mock()
+
+        # Mock blob with invalid JSON - use download_as_string()
         mock_blob = Mock()
-        mock_blob.download_as_text.return_value = 'invalid json{{'
+        mock_blob.exists.return_value = True
+        mock_blob.download_as_string.return_value = b'invalid json{{'
         mock_bucket = Mock()
         mock_bucket.blob.return_value = mock_blob
-        mock_storage_client.return_value.bucket.return_value = mock_bucket
+        processor.gcs_client.bucket.return_value = mock_bucket
 
         with pytest.raises(json.JSONDecodeError):
             processor.load_json_from_gcs(
@@ -287,8 +295,7 @@ class TestErrorCategorization:
 class TestSaveData:
     """Test suite for BigQuery save operations"""
 
-    @patch('data_processors.raw.processor_base.get_bigquery_client')
-    def test_save_data_appends_rows(self, mock_get_bq):
+    def test_save_data_appends_rows(self):
         """Test save_data appends rows to BigQuery"""
         processor = MockProcessor()
         processor.set_opts({
@@ -299,34 +306,50 @@ class TestSaveData:
             {"id": 1, "value": "test1"},
             {"id": 2, "value": "test2"}
         ]
+        processor.dataset_id = 'test_dataset'
+        processor.table_name = 'test_table'
 
-        # Mock BigQuery client
+        # Mock BigQuery client - uses load_table_from_file, not load_table_from_json
         mock_bq_client = Mock()
+
+        # Mock get_table for schema retrieval
+        mock_table = Mock()
+        mock_table.schema = []
+        mock_bq_client.get_table.return_value = mock_table
+
+        # Mock load job
         mock_job = Mock()
         mock_job.result.return_value = None
         mock_job.errors = None
-        mock_bq_client.load_table_from_json.return_value = mock_job
-        mock_get_bq.return_value = mock_bq_client
+        mock_bq_client.load_table_from_file.return_value = mock_job
+
         processor.bq_client = mock_bq_client
 
         processor.save_data()
 
-        # Should have called load_table_from_json
-        mock_bq_client.load_table_from_json.assert_called()
+        # Should have called load_table_from_file (not load_table_from_json)
+        mock_bq_client.load_table_from_file.assert_called()
+        assert processor.stats.get('rows_inserted') == 2
 
-    @patch('data_processors.raw.processor_base.get_bigquery_client')
-    def test_save_data_handles_errors(self, mock_get_bq):
+    def test_save_data_handles_errors(self):
         """Test save_data handles BigQuery errors"""
         processor = MockProcessor()
         processor.set_opts({
             'project_id': 'test-project'
         })
         processor.transformed_data = [{"id": 1}]
+        processor.dataset_id = 'test_dataset'
+        processor.table_name = 'test_table'
 
-        # Mock BigQuery client to raise error
+        # Mock BigQuery client to raise error - uses load_table_from_file
         mock_bq_client = Mock()
-        mock_bq_client.load_table_from_json.side_effect = Exception("BigQuery error")
-        mock_get_bq.return_value = mock_bq_client
+
+        # Mock get_table for schema retrieval
+        mock_table = Mock()
+        mock_table.schema = []
+        mock_bq_client.get_table.return_value = mock_table
+
+        mock_bq_client.load_table_from_file.side_effect = Exception("BigQuery error")
         processor.bq_client = mock_bq_client
 
         with pytest.raises(Exception):
@@ -458,8 +481,9 @@ class TestRunLifecycle:
 
         processor.load_data = failing_load
 
-        with pytest.raises(Exception):
-            processor.run()
+        # ProcessorBase.run() returns False on error, doesn't raise
+        result = processor.run()
+        assert result is False
 
     def test_run_handles_transform_error(self):
         """Test run handles transform_data error"""
@@ -472,8 +496,9 @@ class TestRunLifecycle:
 
         processor.transform_data = failing_transform
 
-        with pytest.raises(Exception):
-            processor.run()
+        # ProcessorBase.run() returns False on error, doesn't raise
+        result = processor.run()
+        assert result is False
 
 
 class TestStatsTracking:
