@@ -102,8 +102,15 @@ from .team_context import TeamContextCalculator
 from .travel_context import TravelContextCalculator
 from .betting_data import BettingDataExtractor
 
-# Calculator modules (Week 6 - Maintainability Refactor)
-from .calculators import QualityFlagsCalculator, ContextBuilder
+# Calculator modules (Week 6 - Maintainability Refactor, R5 extraction)
+from .calculators import (
+    QualityFlagsCalculator,
+    ContextBuilder,
+    MatchupCalculator,
+    UsageCalculator,
+    GameUtils,
+    CompletenessCheckerHelper
+)
 
 # Loader modules (Week 7 - Reduce file size)
 from .loaders import PlayerDataLoader, GameDataLoader
@@ -179,6 +186,9 @@ class UpcomingPlayerGameContextProcessor(
         self._betting_data_extractor = None  # Lazy-loaded
         self._quality_calculator = None  # Lazy-loaded (Week 6)
         self._context_builder = None  # Lazy-loaded (Week 6)
+        self._matchup_calculator = None  # Lazy-loaded (R5 refactor)
+        self._usage_calculator = None  # Lazy-loaded (R5 refactor)
+        self._completeness_helper = None  # Lazy-loaded (R5 refactor)
         self._player_loader = None  # Lazy-loaded (Week 7)
         self._game_data_loader = None  # Lazy-loaded (Week 7)
 
@@ -230,6 +240,24 @@ class UpcomingPlayerGameContextProcessor(
             roster_ages = getattr(self, 'roster_ages', {})
             self._context_builder = ContextBuilder(roster_ages=roster_ages)
         return self._context_builder
+
+    def _get_matchup_calculator(self) -> MatchupCalculator:
+        """Lazy-load matchup calculator."""
+        if self._matchup_calculator is None:
+            self._matchup_calculator = MatchupCalculator(self.bq_client, self.project_id)
+        return self._matchup_calculator
+
+    def _get_usage_calculator(self) -> UsageCalculator:
+        """Lazy-load usage calculator."""
+        if self._usage_calculator is None:
+            self._usage_calculator = UsageCalculator(self.bq_client, self.project_id)
+        return self._usage_calculator
+
+    def _get_completeness_helper(self) -> CompletenessCheckerHelper:
+        """Lazy-load completeness checker helper."""
+        if self._completeness_helper is None:
+            self._completeness_helper = CompletenessCheckerHelper(self.completeness_checker)
+        return self._completeness_helper
 
     def _get_player_loader(self) -> PlayerDataLoader:
         """Lazy-load player data loader."""
@@ -847,70 +875,13 @@ class UpcomingPlayerGameContextProcessor(
         # Get all player lookups
         all_players = [p['player_lookup'] for p in self.players_to_process]
 
-        # NEW (Week 5): Batch completeness checking for ALL 5 windows
-        logger.info(f"Checking completeness for {len(all_players)} players across 5 windows...")
-
-        completeness_start = time.time()
+        # Batch completeness checking for ALL 5 windows (using helper)
         try:
-            # Define all completeness check configurations
-            completeness_windows = [
-                ('l5', 5, 'games'),      # Window 1: L5 games
-                ('l10', 10, 'games'),    # Window 2: L10 games
-                ('l7d', 7, 'days'),      # Window 3: L7 days
-                ('l14d', 14, 'days'),    # Window 4: L14 days
-                ('l30d', 30, 'days'),    # Window 5: L30 days
-            ]
-
-            # Helper function to run single completeness check
-            def run_completeness_check(window_config):
-                name, lookback, window_type = window_config
-                return (name, self.completeness_checker.check_completeness_batch(
-                    entity_ids=list(all_players),
-                    entity_type='player',
-                    analysis_date=self.target_date,
-                    upstream_table='nba_raw.bdl_player_boxscores',
-                    upstream_entity_field='player_lookup',
-                    lookback_window=lookback,
-                    window_type=window_type,
-                    season_start_date=self.season_start_date,
-                    dnp_aware=True
-                ))
-
-            # Run all 5 completeness checks in parallel
-            completeness_results = {}
-            with ThreadPoolExecutor(max_workers=5) as executor:
-                futures = {executor.submit(run_completeness_check, config): config[0]
-                          for config in completeness_windows}
-                for future in as_completed(futures):
-                    window_name = futures[future]
-                    try:
-                        name, result = future.result()
-                        completeness_results[name] = result
-                    except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
-                        logger.warning(f"BigQuery error in completeness check for {window_name}: {e}")
-                        completeness_results[window_name] = {}
-                    except (KeyError, AttributeError, TypeError, ValueError) as e:
-                        logger.warning(f"Data error in completeness check for {window_name}: {e}")
-                        completeness_results[window_name] = {}
-
-            # Extract results with defaults
-            comp_l5 = completeness_results.get('l5', {})
-            comp_l10 = completeness_results.get('l10', {})
-            comp_l7d = completeness_results.get('l7d', {})
-            comp_l14d = completeness_results.get('l14d', {})
-            comp_l30d = completeness_results.get('l30d', {})
-
-            # Check bootstrap mode
-            is_bootstrap = self.completeness_checker.is_bootstrap_mode(
-                self.target_date, self.season_start_date
-            )
-            is_season_boundary = self.completeness_checker.is_season_boundary(self.target_date)
-
-            completeness_elapsed = time.time() - completeness_start
-            logger.info(
-                f"Completeness check complete in {completeness_elapsed:.1f}s (5 windows, parallel). "
-                f"Bootstrap mode: {is_bootstrap}, Season boundary: {is_season_boundary}"
-            )
+            completeness_helper = self._get_completeness_helper()
+            comp_l5, comp_l10, comp_l7d, comp_l14d, comp_l30d, is_bootstrap, is_season_boundary = \
+                completeness_helper.run_batch_completeness_checks(
+                    all_players, self.target_date, self.season_start_date
+                )
         except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
             logger.error(
                 f"Completeness checking FAILED (BigQuery error: {e}). "
