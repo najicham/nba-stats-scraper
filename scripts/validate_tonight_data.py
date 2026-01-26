@@ -187,8 +187,133 @@ class TonightDataValidator:
         print(f"✓ Predictions: {unique_players} players, {games} games ({total_rows} rows)")
         return unique_players, total_rows
 
+    def check_betting_data(self) -> Tuple[int, int]:
+        """
+        Check betting data from Odds API with timing awareness.
+
+        Checks odds_api_player_points_props and odds_api_game_lines tables.
+        Uses workflow timing to distinguish between "not started yet" and "failed".
+
+        Returns:
+            (props_count, lines_count) tuple
+        """
+        from datetime import datetime, timezone
+
+        # Get game times for timing awareness
+        game_times_query = f"""
+        SELECT game_date_est
+        FROM `{self.project}.nba_raw.nbac_schedule`
+        WHERE game_date = '{self.target_date}'
+        """
+        try:
+            game_results = list(self.client.query(game_times_query).result(timeout=30))
+            game_times = [datetime.fromisoformat(str(r.game_date_est)) for r in game_results if r.game_date_est]
+        except Exception as e:
+            self.add_warning('betting_data', f'Could not get game times for workflow timing check: {e}')
+            game_times = []
+
+        # Check props data
+        props_query = f"""
+        SELECT
+            COUNT(*) as total_props,
+            COUNT(DISTINCT game_id) as games_with_props
+        FROM `{self.project}.nba_raw.odds_api_player_points_props`
+        WHERE game_date = '{self.target_date}'
+        """
+        props_result = list(self.client.query(props_query).result(timeout=60))[0]
+        props_count = props_result.total_props
+        props_games = props_result.games_with_props
+
+        # Check lines data
+        lines_query = f"""
+        SELECT
+            COUNT(*) as total_lines,
+            COUNT(DISTINCT game_id) as games_with_lines
+        FROM `{self.project}.nba_raw.odds_api_game_lines`
+        WHERE game_date = '{self.target_date}'
+        """
+        lines_result = list(self.client.query(lines_query).result(timeout=60))[0]
+        lines_count = lines_result.total_lines
+        lines_games = lines_result.games_with_lines
+
+        self.stats['betting_props_count'] = props_count
+        self.stats['betting_props_games'] = props_games
+        self.stats['betting_lines_count'] = lines_count
+        self.stats['betting_lines_games'] = lines_games
+
+        # Use workflow timing awareness
+        if game_times:
+            try:
+                # Import timing utilities
+                sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+                from orchestration.workflow_timing import get_workflow_status_message
+
+                current_time = datetime.now(timezone.utc)
+
+                # Check props status
+                props_status, props_message = get_workflow_status_message(
+                    'betting_lines',
+                    current_time,
+                    game_times,
+                    props_count > 0
+                )
+
+                if props_status == 'TOO_EARLY':
+                    print(f"ℹ️ Betting Props: {props_message}")
+                elif props_status == 'WITHIN_LAG':
+                    print(f"⏳ Betting Props: {props_message}")
+                elif props_status == 'FAILURE':
+                    self.add_issue('betting_data', f'Betting Props: {props_message}')
+                    print(f"✗ Betting Props: No data found (workflow should have run)")
+                else:  # DATA_FOUND or UNKNOWN
+                    print(f"✓ Betting Props: {props_count} records, {props_games} games")
+
+                # Check lines status
+                lines_status, lines_message = get_workflow_status_message(
+                    'betting_lines',
+                    current_time,
+                    game_times,
+                    lines_count > 0
+                )
+
+                if lines_status == 'TOO_EARLY':
+                    print(f"ℹ️ Betting Lines: {lines_message}")
+                elif lines_status == 'WITHIN_LAG':
+                    print(f"⏳ Betting Lines: {lines_message}")
+                elif lines_status == 'FAILURE':
+                    self.add_issue('betting_data', f'Betting Lines: {lines_message}')
+                    print(f"✗ Betting Lines: No data found (workflow should have run)")
+                else:  # DATA_FOUND or UNKNOWN
+                    print(f"✓ Betting Lines: {lines_count} records, {lines_games} games")
+
+            except Exception as e:
+                # Fallback to simple check if timing utilities fail
+                self.add_warning('betting_data', f'Could not check workflow timing: {e}')
+                if props_count == 0:
+                    self.add_warning('betting_data', 'No betting props data found')
+                else:
+                    print(f"✓ Betting Props: {props_count} records, {props_games} games")
+
+                if lines_count == 0:
+                    self.add_warning('betting_data', 'No betting lines data found')
+                else:
+                    print(f"✓ Betting Lines: {lines_count} records, {lines_games} games")
+        else:
+            # No game times available, simple check
+            if props_count == 0:
+                self.add_warning('betting_data', 'No betting props data found')
+            else:
+                print(f"✓ Betting Props: {props_count} records, {props_games} games")
+
+            if lines_count == 0:
+                self.add_warning('betting_data', 'No betting lines data found')
+            else:
+                print(f"✓ Betting Lines: {lines_count} records, {lines_games} games")
+
+        return props_count, lines_count
+
     def check_prop_lines(self) -> int:
-        """Check prop lines exist."""
+        """Check prop lines exist from BettingPros (legacy source)."""
         query = f"""
         SELECT
             COUNT(DISTINCT player_lookup) as players_with_lines
@@ -202,9 +327,9 @@ class TonightDataValidator:
         self.stats['players_with_lines'] = players
 
         if players == 0:
-            self.add_warning('prop_lines', 'No prop lines from BettingPros')
+            self.add_warning('prop_lines', 'No prop lines from BettingPros (legacy source)')
         else:
-            print(f"✓ Prop Lines: {players} players have betting lines")
+            print(f"✓ Prop Lines (BettingPros): {players} players have betting lines")
 
         return players
 
@@ -279,8 +404,8 @@ class TonightDataValidator:
                 COUNTIF(minutes_played IS NOT NULL) as has_minutes,
                 COUNTIF(usage_rate IS NOT NULL) as has_usage_rate,
                 COUNTIF(source_team_last_updated IS NOT NULL) as has_team_join,
-                ROUND(100.0 * COUNTIF(minutes_played IS NOT NULL) / COUNT(*), 1) as minutes_pct,
-                ROUND(100.0 * COUNTIF(usage_rate IS NOT NULL) / COUNT(*), 1) as usage_rate_pct,
+                ROUND(100.0 * COUNTIF(minutes_played IS NOT NULL) / NULLIF(COUNT(*), 0), 1) as minutes_pct,
+                ROUND(100.0 * COUNTIF(usage_rate IS NOT NULL) / NULLIF(COUNT(*), 0), 1) as usage_rate_pct,
                 -- For active players only (minutes > 0)
                 COUNTIF(minutes_played > 0) as active_players,
                 COUNTIF(minutes_played > 0 AND usage_rate IS NOT NULL) as active_with_usage,
@@ -487,6 +612,8 @@ class TonightDataValidator:
 
         print()
         self.check_roster_freshness()
+        print()
+        self.check_betting_data()  # NEW: Check Odds API betting data with timing awareness
         print()
         self.check_game_context()
         print()

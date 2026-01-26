@@ -699,5 +699,576 @@ class TestLayerStats:
         assert stats['gcs']['failed'] == 1
 
 
+# ============================================================================
+# Test Validation Check Methods
+# ============================================================================
+
+class TestCompletenessCheck:
+    """Tests for _check_completeness method"""
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_completeness_all_dates_present(self, mock_storage, mock_bq, temp_config_file):
+        """Test completeness check when all dates are present"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock query result - no missing dates
+        mock_result = []
+        validator._execute_query = Mock(return_value=mock_result)
+
+        config = {
+            'target_table': 'nba_raw.test_table',
+            'reference_table': 'nba_raw.nbac_schedule',
+            'match_field': 'game_date',
+            'severity': 'error'
+        }
+
+        validator._check_completeness(config, '2024-01-01', '2024-01-31', None)
+
+        assert len(validator.results) == 1
+        result = validator.results[0]
+        assert result.check_name == 'completeness_game_date'
+        assert result.check_type == 'completeness'
+        assert result.layer == 'bigquery'
+        assert result.passed is True
+        assert result.severity == 'error'
+        assert result.message == 'All dates present'
+        assert result.affected_count == 0
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_completeness_missing_dates(self, mock_storage, mock_bq, temp_config_file):
+        """Test completeness check with missing dates"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock query result - 3 missing dates
+        mock_row1 = Mock()
+        mock_row1.missing_date = '2024-01-15'
+        mock_row2 = Mock()
+        mock_row2.missing_date = '2024-01-16'
+        mock_row3 = Mock()
+        mock_row3.missing_date = '2024-01-17'
+
+        mock_result = [mock_row1, mock_row2, mock_row3]
+        validator._execute_query = Mock(return_value=mock_result)
+        validator._generate_backfill_commands = Mock(return_value=['backfill cmd1', 'backfill cmd2'])
+
+        config = {
+            'target_table': 'nba_raw.test_table',
+            'reference_table': 'nba_raw.nbac_schedule',
+            'match_field': 'game_date',
+            'severity': 'error'
+        }
+
+        validator._check_completeness(config, '2024-01-01', '2024-01-31', None)
+
+        assert len(validator.results) == 1
+        result = validator.results[0]
+        assert result.check_name == 'completeness_game_date'
+        assert result.passed is False
+        assert result.message == 'Found 3 missing game_dates'
+        assert result.affected_count == 3
+        assert result.affected_items == ['2024-01-15', '2024-01-16', '2024-01-17']
+        assert result.remediation == ['backfill cmd1', 'backfill cmd2']
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_completeness_with_season_filter(self, mock_storage, mock_bq, temp_config_file):
+        """Test completeness check with season year filter"""
+        validator = BaseValidator(temp_config_file)
+
+        mock_result = []
+        validator._execute_query = Mock(return_value=mock_result)
+
+        config = {
+            'target_table': 'nba_raw.test_table',
+            'reference_table': 'nba_raw.nbac_schedule',
+            'match_field': 'game_date',
+            'severity': 'warning'
+        }
+
+        validator._check_completeness(config, '2024-01-01', '2024-01-31', 2024)
+
+        # Verify the query was called with correct parameters
+        validator._execute_query.assert_called_once()
+        query_arg = validator._execute_query.call_args[0][0]
+        assert 'season_year = 2024' in query_arg
+
+        result = validator.results[0]
+        assert result.severity == 'warning'
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_completeness_with_reference_filter(self, mock_storage, mock_bq, temp_config_file):
+        """Test completeness check with reference filter"""
+        validator = BaseValidator(temp_config_file)
+
+        mock_result = []
+        validator._execute_query = Mock(return_value=mock_result)
+
+        config = {
+            'target_table': 'nba_raw.test_table',
+            'reference_table': 'nba_raw.nbac_schedule',
+            'match_field': 'game_date',
+            'severity': 'error',
+            'reference_filter': 'game_status = 3'
+        }
+
+        validator._check_completeness(config, '2024-01-01', '2024-01-31', None)
+
+        # Verify the query includes the reference filter
+        query_arg = validator._execute_query.call_args[0][0]
+        assert 'game_status = 3' in query_arg
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_completeness_many_missing_dates(self, mock_storage, mock_bq, temp_config_file):
+        """Test completeness check with many missing dates (tests truncation)"""
+        validator = BaseValidator(temp_config_file)
+
+        # Create 25 missing dates
+        mock_result = []
+        for i in range(25):
+            mock_row = Mock()
+            mock_row.missing_date = f'2024-01-{i+1:02d}'
+            mock_result.append(mock_row)
+
+        validator._execute_query = Mock(return_value=mock_result)
+        validator._generate_backfill_commands = Mock(return_value=[])
+
+        config = {
+            'target_table': 'nba_raw.test_table',
+            'reference_table': 'nba_raw.nbac_schedule',
+            'match_field': 'game_date',
+            'severity': 'error'
+        }
+
+        validator._check_completeness(config, '2024-01-01', '2024-01-31', None)
+
+        result = validator.results[0]
+        assert result.affected_count == 25
+        # Should only store first 20 items
+        assert len(result.affected_items) == 20
+
+
+class TestTeamPresenceCheck:
+    """Tests for _check_team_presence method"""
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_team_presence_all_teams_present(self, mock_storage, mock_bq, temp_config_file):
+        """Test team presence check when all 30 teams are present"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock query result - 30 teams
+        mock_result = []
+        teams = ['ATL', 'BOS', 'BRK', 'CHO', 'CHI', 'CLE', 'DAL', 'DEN', 'DET', 'GSW',
+                 'HOU', 'IND', 'LAC', 'LAL', 'MEM', 'MIA', 'MIL', 'MIN', 'NOP', 'NYK',
+                 'OKC', 'ORL', 'PHI', 'PHO', 'POR', 'SAC', 'SAS', 'TOR', 'UTA', 'WAS']
+        for team in teams:
+            mock_row = Mock()
+            mock_row.team = team
+            mock_result.append(mock_row)
+
+        validator._execute_query = Mock(return_value=mock_result)
+
+        config = {
+            'target_table': 'nba_raw.test_table',
+            'expected_teams': 30,
+            'severity': 'warning'
+        }
+
+        validator._check_team_presence(config, '2024-01-01', '2024-01-31', None)
+
+        assert len(validator.results) == 1
+        result = validator.results[0]
+        assert result.check_name == 'team_presence'
+        assert result.check_type == 'team_presence'
+        assert result.layer == 'bigquery'
+        assert result.passed is True
+        assert result.severity == 'warning'
+        assert result.message == 'Found 30/30 teams'
+        assert result.affected_count == 0
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_team_presence_missing_teams(self, mock_storage, mock_bq, temp_config_file):
+        """Test team presence check with missing teams"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock query result - only 25 teams
+        mock_result = []
+        teams = ['ATL', 'BOS', 'BRK', 'CHO', 'CHI', 'CLE', 'DAL', 'DEN', 'DET', 'GSW',
+                 'HOU', 'IND', 'LAC', 'LAL', 'MEM', 'MIA', 'MIL', 'MIN', 'NOP', 'NYK',
+                 'OKC', 'ORL', 'PHI', 'PHO', 'POR']
+        for team in teams:
+            mock_row = Mock()
+            mock_row.team = team
+            mock_result.append(mock_row)
+
+        validator._execute_query = Mock(return_value=mock_result)
+
+        config = {
+            'target_table': 'nba_raw.test_table',
+            'expected_teams': 30,
+            'severity': 'warning'
+        }
+
+        validator._check_team_presence(config, '2024-01-01', '2024-01-31', None)
+
+        result = validator.results[0]
+        assert result.passed is False
+        assert result.message == 'Found 25/30 teams'
+        assert result.affected_count == 5
+        assert len(result.affected_items) == 25
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_team_presence_with_season_filter(self, mock_storage, mock_bq, temp_config_file):
+        """Test team presence check with season year filter"""
+        validator = BaseValidator(temp_config_file)
+
+        mock_result = []
+        validator._execute_query = Mock(return_value=mock_result)
+
+        config = {
+            'target_table': 'nba_raw.test_table',
+            'expected_teams': 30,
+            'severity': 'warning'
+        }
+
+        validator._check_team_presence(config, '2024-01-01', '2024-01-31', 2024)
+
+        # Verify the query includes season filter
+        query_arg = validator._execute_query.call_args[0][0]
+        assert 'season_year = 2024' in query_arg
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_team_presence_exactly_expected_teams(self, mock_storage, mock_bq, temp_config_file):
+        """Test team presence check with exactly the expected number"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock query result - exactly 30 teams
+        mock_result = []
+        for i in range(30):
+            mock_row = Mock()
+            mock_row.team = f'TEAM{i}'
+            mock_result.append(mock_row)
+
+        validator._execute_query = Mock(return_value=mock_result)
+
+        config = {
+            'target_table': 'nba_raw.test_table',
+            'expected_teams': 30,
+            'severity': 'error'
+        }
+
+        validator._check_team_presence(config, '2024-01-01', '2024-01-31', None)
+
+        result = validator.results[0]
+        assert result.passed is True
+        assert result.severity == 'error'
+
+
+class TestFieldValidationCheck:
+    """Tests for _check_field_validation method"""
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_field_validation_no_nulls(self, mock_storage, mock_bq, temp_config_file):
+        """Test field validation when no NULL values found"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock query result - 0 null count
+        # Need to return a fresh iterator each time the method is called
+        def mock_execute_query(*args, **kwargs):
+            mock_row = Mock()
+            mock_row.null_count = 0
+            return iter([mock_row])
+
+        validator._execute_query = Mock(side_effect=mock_execute_query)
+
+        config = {
+            'target_table': 'nba_raw.test_table',
+            'required_not_null': ['game_id', 'game_date']
+        }
+
+        validator._check_field_validation(config, '2024-01-01', '2024-01-31')
+
+        # Should have 2 results (one for each field)
+        assert len(validator.results) == 2
+
+        result1 = validator.results[0]
+        assert result1.check_name == 'field_not_null_game_id'
+        assert result1.check_type == 'field_validation'
+        assert result1.layer == 'bigquery'
+        assert result1.passed is True
+        assert result1.severity == 'error'
+        assert result1.message == 'game_id has no NULLs'
+        assert result1.affected_count == 0
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_field_validation_with_nulls(self, mock_storage, mock_bq, temp_config_file):
+        """Test field validation with NULL values found"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock query result - 5 null values
+        # Need to return a fresh iterator each time the method is called
+        def mock_execute_query(*args, **kwargs):
+            mock_row = Mock()
+            mock_row.null_count = 5
+            return iter([mock_row])
+
+        validator._execute_query = Mock(side_effect=mock_execute_query)
+
+        config = {
+            'target_table': 'nba_raw.test_table',
+            'required_not_null': ['game_id']
+        }
+
+        validator._check_field_validation(config, '2024-01-01', '2024-01-31')
+
+        result = validator.results[0]
+        assert result.passed is False
+        assert result.message == 'Found 5 NULL game_id values'
+        assert result.affected_count == 5
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_field_validation_multiple_fields(self, mock_storage, mock_bq, temp_config_file):
+        """Test field validation with multiple fields"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock query results - different null counts for each field
+        def mock_execute_query(query, start_date, end_date):
+            if 'game_id' in query:
+                mock_row = Mock()
+                mock_row.null_count = 0
+                return iter([mock_row])
+            elif 'team_id' in query:
+                mock_row = Mock()
+                mock_row.null_count = 3
+                return iter([mock_row])
+            elif 'score' in query:
+                mock_row = Mock()
+                mock_row.null_count = 0
+                return iter([mock_row])
+
+        validator._execute_query = Mock(side_effect=mock_execute_query)
+
+        config = {
+            'target_table': 'nba_raw.test_table',
+            'required_not_null': ['game_id', 'team_id', 'score']
+        }
+
+        validator._check_field_validation(config, '2024-01-01', '2024-01-31')
+
+        # Should have 3 results
+        assert len(validator.results) == 3
+
+        # First field: game_id - passed
+        assert validator.results[0].check_name == 'field_not_null_game_id'
+        assert validator.results[0].passed is True
+
+        # Second field: team_id - failed
+        assert validator.results[1].check_name == 'field_not_null_team_id'
+        assert validator.results[1].passed is False
+        assert validator.results[1].affected_count == 3
+
+        # Third field: score - passed
+        assert validator.results[2].check_name == 'field_not_null_score'
+        assert validator.results[2].passed is True
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_field_validation_empty_field_list(self, mock_storage, mock_bq, temp_config_file):
+        """Test field validation with empty field list"""
+        validator = BaseValidator(temp_config_file)
+
+        config = {
+            'target_table': 'nba_raw.test_table',
+            'required_not_null': []
+        }
+
+        validator._check_field_validation(config, '2024-01-01', '2024-01-31')
+
+        # Should have no results
+        assert len(validator.results) == 0
+
+
+class TestFilePresenceCheck:
+    """Tests for _check_file_presence method"""
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_file_presence_all_files_present(self, mock_storage, mock_bq, temp_config_file):
+        """Test file presence check when all files are present"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock expected dates
+        validator._get_expected_dates = Mock(return_value=['2024-01-01', '2024-01-02', '2024-01-03'])
+
+        # Mock GCS bucket - all files present
+        mock_bucket = Mock()
+        mock_blob = Mock()
+        mock_bucket.list_blobs = Mock(return_value=[mock_blob])  # Returns a blob for each prefix
+        validator.gcs_client.bucket = Mock(return_value=mock_bucket)
+
+        config = {
+            'bucket': 'test-bucket',
+            'path_pattern': 'espn/scoreboard/{date}/*.json'
+        }
+
+        validator._check_file_presence(config, '2024-01-01', '2024-01-03', None)
+
+        assert len(validator.results) == 1
+        result = validator.results[0]
+        assert result.check_name == 'gcs_file_presence'
+        assert result.check_type == 'file_presence'
+        assert result.layer == 'gcs'
+        assert result.passed is True
+        assert result.severity == 'error'
+        assert result.message == 'All GCS files present'
+        assert result.affected_count == 0
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_file_presence_missing_files(self, mock_storage, mock_bq, temp_config_file):
+        """Test file presence check with missing files"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock expected dates
+        validator._get_expected_dates = Mock(return_value=['2024-01-01', '2024-01-02', '2024-01-03'])
+
+        # Mock GCS bucket - some files missing
+        mock_bucket = Mock()
+        def mock_list_blobs(prefix, max_results):
+            # Return blobs for some dates, empty for others
+            if '2024-01-02' in prefix:
+                return []  # Missing
+            else:
+                mock_blob = Mock()
+                return [mock_blob]
+
+        mock_bucket.list_blobs = Mock(side_effect=mock_list_blobs)
+        validator.gcs_client.bucket = Mock(return_value=mock_bucket)
+        validator._generate_scraper_commands = Mock(return_value=['scrape cmd'])
+
+        config = {
+            'bucket': 'test-bucket',
+            'path_pattern': 'espn/scoreboard/{date}/*.json'
+        }
+
+        validator._check_file_presence(config, '2024-01-01', '2024-01-03', None)
+
+        result = validator.results[0]
+        assert result.passed is False
+        assert result.message == 'Found 1 dates with missing GCS files'
+        assert result.affected_count == 1
+        assert result.affected_items == ['2024-01-02']
+        assert result.remediation == ['scrape cmd']
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_file_presence_with_wildcard_pattern(self, mock_storage, mock_bq, temp_config_file):
+        """Test file presence check with wildcard pattern"""
+        validator = BaseValidator(temp_config_file)
+
+        validator._get_expected_dates = Mock(return_value=['2024-01-01'])
+
+        mock_bucket = Mock()
+        mock_blob = Mock()
+        mock_bucket.list_blobs = Mock(return_value=[mock_blob])
+        validator.gcs_client.bucket = Mock(return_value=mock_bucket)
+
+        config = {
+            'bucket': 'test-bucket',
+            'path_pattern': 'nba-com/schedule/{date}/*.json'
+        }
+
+        validator._check_file_presence(config, '2024-01-01', '2024-01-01', None)
+
+        # Verify that list_blobs was called with the correct prefix
+        call_args = mock_bucket.list_blobs.call_args
+        assert call_args[1]['prefix'] == 'nba-com/schedule/2024-01-01/'
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_file_presence_with_exact_path(self, mock_storage, mock_bq, temp_config_file):
+        """Test file presence check with exact file path (no wildcard)"""
+        validator = BaseValidator(temp_config_file)
+
+        validator._get_expected_dates = Mock(return_value=['2024-01-01'])
+
+        mock_bucket = Mock()
+        mock_blob = Mock()
+        mock_bucket.list_blobs = Mock(return_value=[mock_blob])
+        validator.gcs_client.bucket = Mock(return_value=mock_bucket)
+
+        config = {
+            'bucket': 'test-bucket',
+            'path_pattern': 'nba-com/schedule/{date}/data.json'
+        }
+
+        validator._check_file_presence(config, '2024-01-01', '2024-01-01', None)
+
+        # Verify that list_blobs was called with the correct prefix
+        call_args = mock_bucket.list_blobs.call_args
+        assert call_args[1]['prefix'] == 'nba-com/schedule/2024-01-01/'
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_file_presence_gcs_error(self, mock_storage, mock_bq, temp_config_file):
+        """Test file presence check with GCS error"""
+        validator = BaseValidator(temp_config_file)
+
+        validator._get_expected_dates = Mock(return_value=['2024-01-01'])
+
+        # Mock GCS bucket to raise an exception
+        validator.gcs_client.bucket = Mock(side_effect=Exception('GCS connection failed'))
+
+        config = {
+            'bucket': 'test-bucket',
+            'path_pattern': 'espn/scoreboard/{date}/*.json'
+        }
+
+        validator._check_file_presence(config, '2024-01-01', '2024-01-01', None)
+
+        result = validator.results[0]
+        assert result.passed is False
+        assert result.message == 'GCS check failed: GCS connection failed'
+        assert result.severity == 'error'
+
+    @patch('validation.base_validator.bigquery.Client')
+    @patch('validation.base_validator.storage.Client')
+    def test_check_file_presence_many_missing_dates(self, mock_storage, mock_bq, temp_config_file):
+        """Test file presence check with many missing dates (tests truncation)"""
+        validator = BaseValidator(temp_config_file)
+
+        # Mock 25 expected dates
+        expected_dates = [f'2024-01-{i+1:02d}' for i in range(25)]
+        validator._get_expected_dates = Mock(return_value=expected_dates)
+
+        # Mock GCS bucket - all files missing
+        mock_bucket = Mock()
+        mock_bucket.list_blobs = Mock(return_value=[])  # No blobs found
+        validator.gcs_client.bucket = Mock(return_value=mock_bucket)
+        validator._generate_scraper_commands = Mock(return_value=[])
+
+        config = {
+            'bucket': 'test-bucket',
+            'path_pattern': 'espn/scoreboard/{date}/*.json'
+        }
+
+        validator._check_file_presence(config, '2024-01-01', '2024-01-25', None)
+
+        result = validator.results[0]
+        assert result.affected_count == 25
+        # Should only store first 20 items
+        assert len(result.affected_items) == 20
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
