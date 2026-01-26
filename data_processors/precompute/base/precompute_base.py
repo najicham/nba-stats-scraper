@@ -45,6 +45,7 @@ from data_processors.precompute.base.mixins import (
 
 # Import precompute mixins
 from data_processors.precompute.mixins.defensive_check_mixin import DefensiveCheckMixin
+from data_processors.precompute.mixins.backfill_mode_mixin import BackfillModeMixin
 
 # Import precompute operations
 from data_processors.precompute.operations.bigquery_save_ops import BigQuerySaveOpsMixin
@@ -113,6 +114,7 @@ class PrecomputeProcessorBase(
     FailureTrackingMixin,
     BigQuerySaveOpsMixin,
     DefensiveCheckMixin,
+    BackfillModeMixin,
     DependencyMixin,
     TransformProcessorBase,
     SoftDependencyMixin,
@@ -479,3 +481,56 @@ class PrecomputeProcessorBase(
     # - _log_pipeline_complete()
     # - _handle_failure_notification()
     # - _log_pipeline_error()
+
+    # =========================================================================
+    # Abstract Method Implementations (Required by TransformProcessorBase)
+    # =========================================================================
+
+    def set_opts(self, opts: Dict) -> None:
+        """Set processing options."""
+        self.opts = opts
+        self.opts["run_id"] = self.run_id
+
+    def validate_opts(self) -> None:
+        """Validate required options are present."""
+        for required_opt in self.required_opts:
+            if required_opt not in self.opts:
+                raise ValueError(f"Missing required option: {required_opt}")
+
+    def set_additional_opts(self) -> None:
+        """Set additional options derived from main opts."""
+        if "timestamp" not in self.opts:
+            from datetime import datetime, timezone
+            self.opts["timestamp"] = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+
+    def validate_additional_opts(self) -> None:
+        """Validate additional options - child classes override if needed."""
+        pass
+
+    def init_clients(self) -> None:
+        """Initialize GCP clients (BigQuery, Firestore, etc.)."""
+        from shared.config.gcp_config import get_project_id
+        self.project_id = self.opts.get("project_id") or get_project_id()
+        self.bq_client = get_bigquery_client(project_id=self.project_id)
+
+    def validate_extracted_data(self) -> None:
+        """Validate extracted data - child classes override if needed."""
+        if self.raw_data is None or (hasattr(self.raw_data, '__len__') and len(self.raw_data) == 0):
+            raise ValueError("No data extracted")
+
+    def log_processing_run(self, success: bool, error: str = None) -> None:
+        """
+        Log processing run to processor_run_history table.
+        Run history is tracked via RunHistoryMixin.start_run_tracking()
+        which is called in run() method.
+        """
+        # Run history logging is handled by RunHistoryMixin via start_run_tracking()
+        # and is automatically recorded in the run() method
+        pass
+
+    def post_process(self) -> None:
+        """
+        Post-processing hook called after successful processing.
+        Child classes override to publish completion messages, etc.
+        """
+        pass

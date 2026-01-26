@@ -1,9 +1,16 @@
 # shared/utils/sentry_config.py
 import sentry_sdk
 from sentry_sdk.integrations.flask import FlaskIntegration
-from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 import os
+
+# SQLAlchemy integration is optional - only available if sqlalchemy is installed
+try:
+    from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+    HAS_SQLALCHEMY = True
+except ImportError:
+    HAS_SQLALCHEMY = False
+    SqlalchemyIntegration = None
 
 
 def is_local():
@@ -58,7 +65,10 @@ def configure_sentry():
             FlaskIntegration(
                 transaction_style='endpoint'  # Track by Flask route
             ),
-            SqlalchemyIntegration(),  # Track database queries
+            *(
+                [SqlalchemyIntegration()]  # Track database queries (if SQLAlchemy available)
+                if HAS_SQLALCHEMY else []
+            ),
             LoggingIntegration(
                 level=None,  # Capture all log levels
                 event_level=None  # Send logs as breadcrumbs

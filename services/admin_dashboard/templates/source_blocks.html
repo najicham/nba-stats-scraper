@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Source Blocks - NBA Props Admin</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 20px;
+        }
+        .container { max-width: 1400px; margin: 0 auto; }
+        h1 { margin-bottom: 30px; font-size: 2rem; }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: #1e293b;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #334155;
+        }
+        .stat-label { color: #94a3b8; font-size: 0.875rem; margin-bottom: 8px; }
+        .stat-value { font-size: 2rem; font-weight: 700; }
+        .stat-value.success { color: #10b981; }
+        .stat-value.warning { color: #f59e0b; }
+        .stat-value.error { color: #ef4444; }
+
+        .section {
+            background: #1e293b;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #334155;
+            margin-bottom: 20px;
+        }
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .section-title { font-size: 1.25rem; font-weight: 600; }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th {
+            background: #0f172a;
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid #334155;
+        }
+        td {
+            padding: 12px;
+            border-bottom: 1px solid #334155;
+        }
+        tr:hover { background: #0f172a; }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+        .badge.resolved { background: #10b981; color: #0f172a; }
+        .badge.active { background: #ef4444; color: white; }
+        .badge.alt-available { background: #3b82f6; color: white; }
+
+        .status-403 { color: #ef4444; }
+        .status-404 { color: #f59e0b; }
+        .status-410 { color: #94a3b8; }
+
+        .btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.875rem;
+        }
+        .btn-primary {
+            background: #3b82f6;
+            color: white;
+        }
+        .btn-primary:hover { background: #2563eb; }
+        .btn-secondary {
+            background: #475569;
+            color: white;
+        }
+        .btn-secondary:hover { background: #334155; }
+
+        .filter-bar {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        select, input {
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #334155;
+            background: #0f172a;
+            color: #e2e8f0;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #64748b;
+        }
+        .empty-state h3 { margin-bottom: 12px; }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #64748b;
+        }
+
+        .pattern-card {
+            background: #0f172a;
+            padding: 16px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            border-left: 4px solid #ef4444;
+        }
+        .pattern-header {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+        }
+        .pattern-source { font-weight: 600; font-size: 1.1rem; }
+        .pattern-count { color: #ef4444; font-weight: 700; }
+        .pattern-details { color: #94a3b8; font-size: 0.875rem; }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+        }
+        .modal.active { display: flex; align-items: center; justify-content: center; }
+        .modal-content {
+            background: #1e293b;
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 500px;
+            width: 90%;
+        }
+        .modal-title { font-size: 1.5rem; margin-bottom: 20px; }
+        .form-group { margin-bottom: 16px; }
+        .form-label { display: block; margin-bottom: 6px; font-weight: 600; }
+        textarea {
+            width: 100%;
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #334155;
+            background: #0f172a;
+            color: #e2e8f0;
+            resize: vertical;
+        }
+        .checkbox-label { display: flex; align-items: center; gap: 8px; }
+        input[type="checkbox"] { width: auto; }
+    </style>
+</head>
+<body>
+    <div class="container" x-data="sourceBlockDashboard()">
+        <h1>🚫 Source Block Monitoring</h1>
+
+        <!-- Summary Stats -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Active Blocks</div>
+                <div class="stat-value error" x-text="stats.active_blocks">--</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Resolved (7d)</div>
+                <div class="stat-value success" x-text="stats.resolved_count">--</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Coverage (7d)</div>
+                <div class="stat-value" :class="stats.coverage_pct >= 90 ? 'success' : stats.coverage_pct >= 70 ? 'warning' : 'error'">
+                    <span x-text="stats.coverage_pct + '%'">--</span>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Alt Sources Available</div>
+                <div class="stat-value warning" x-text="stats.alt_available">--</div>
+            </div>
+        </div>
+
+        <!-- Active Blocks Section -->
+        <div class="section">
+            <div class="section-header">
+                <h2 class="section-title">Active Source Blocks</h2>
+                <div class="filter-bar">
+                    <select x-model="filters.days" @change="loadBlocks()">
+                        <option value="7">Last 7 days</option>
+                        <option value="14">Last 14 days</option>
+                        <option value="30">Last 30 days</option>
+                    </select>
+                    <select x-model="filters.source" @change="loadBlocks()">
+                        <option value="">All Sources</option>
+                        <option value="cdn_nba_com">NBA.com CDN</option>
+                        <option value="bdb">BigDataBall</option>
+                    </select>
+                    <select x-model="filters.type" @change="loadBlocks()">
+                        <option value="">All Types</option>
+                        <option value="play_by_play">Play-by-Play</option>
+                        <option value="boxscore">Box Score</option>
+                    </select>
+                    <button class="btn btn-secondary" @click="loadBlocks()">🔄 Refresh</button>
+                </div>
+            </div>
+
+            <div x-show="loading" class="loading">
+                <div>⏳ Loading source blocks...</div>
+            </div>
+
+            <div x-show="!loading && blocks.length === 0" class="empty-state">
+                <h3>✅ No Active Source Blocks</h3>
+                <p>All resources are accessible from their sources</p>
+            </div>
+
+            <div x-show="!loading && blocks.length > 0">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Resource ID</th>
+                            <th>Type</th>
+                            <th>Source</th>
+                            <th>HTTP</th>
+                            <th>Game Date</th>
+                            <th>Blocked (hrs)</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="block in blocks" :key="block.resource_id">
+                            <tr>
+                                <td><code x-text="block.resource_id"></code></td>
+                                <td x-text="block.resource_type"></td>
+                                <td x-text="block.source_system"></td>
+                                <td>
+                                    <span :class="'status-' + block.http_status_code" x-text="block.http_status_code"></span>
+                                </td>
+                                <td x-text="block.game_date"></td>
+                                <td x-text="Math.round(block.hours_blocked)"></td>
+                                <td>
+                                    <span class="badge" :class="block.is_resolved ? 'resolved' : 'active'"
+                                          x-text="block.is_resolved ? 'Resolved' : 'Active'"></span>
+                                    <span x-show="block.available_from_alt_source" class="badge alt-available">Alt Available</span>
+                                </td>
+                                <td>
+                                    <button class="btn btn-primary"
+                                            @click="openResolveModal(block)"
+                                            x-show="!block.is_resolved">
+                                        Resolve
+                                    </button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Blocking Patterns Section -->
+        <div class="section">
+            <div class="section-header">
+                <h2 class="section-title">Blocking Patterns (30d)</h2>
+            </div>
+
+            <div x-show="patterns.length === 0" class="empty-state">
+                <p>No blocking patterns detected</p>
+            </div>
+
+            <template x-for="pattern in patterns" :key="pattern.source_system + pattern.resource_type">
+                <div class="pattern-card">
+                    <div class="pattern-header">
+                        <div class="pattern-source" x-text="pattern.source_system + ' / ' + pattern.resource_type"></div>
+                        <div class="pattern-count" x-text="pattern.total_blocks + ' blocks'"></div>
+                    </div>
+                    <div class="pattern-details">
+                        <span x-text="pattern.unique_resources_blocked + ' unique resources'"></span>
+                        •
+                        <span x-text="pattern.active_count + ' active'"></span>
+                        •
+                        <span x-text="pattern.resolved_count + ' resolved'"></span>
+                        •
+                        <span x-text="Math.round(pattern.resolution_rate) + '% resolution rate'"></span>
+                    </div>
+                </div>
+            </template>
+        </div>
+
+        <!-- Coverage with Blocks Section -->
+        <div class="section">
+            <div class="section-header">
+                <h2 class="section-title">Coverage Analysis (7d)</h2>
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Total Games</th>
+                        <th>Blocked</th>
+                        <th>Expected Available</th>
+                        <th>Actual Collected</th>
+                        <th>Coverage %</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="day in coverage" :key="day.game_date">
+                        <tr>
+                            <td x-text="day.game_date"></td>
+                            <td x-text="day.total_games"></td>
+                            <td x-text="day.blocked_games"></td>
+                            <td x-text="day.expected_available"></td>
+                            <td x-text="day.actual_collected"></td>
+                            <td>
+                                <span :class="day.coverage_pct >= 90 ? 'success' : day.coverage_pct >= 70 ? 'warning' : 'error'"
+                                      x-text="day.coverage_pct + '%'"></span>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Resolve Modal -->
+        <div class="modal" :class="{'active': showResolveModal}">
+            <div class="modal-content">
+                <h3 class="modal-title">Resolve Source Block</h3>
+
+                <div class="form-group">
+                    <label class="form-label">Resource ID:</label>
+                    <code x-text="selectedBlock?.resource_id"></code>
+                </div>
+
+                <div class="form-group">
+                    <label class="form-label">Resolution Notes:</label>
+                    <textarea x-model="resolveForm.notes" rows="3" placeholder="e.g., Data now available, marked as resolved"></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" x-model="resolveForm.altAvailable">
+                        Available from alternative source
+                    </label>
+                </div>
+
+                <div class="form-group" x-show="resolveForm.altAvailable">
+                    <label class="form-label">Alternative Source:</label>
+                    <input type="text" x-model="resolveForm.altSource" placeholder="e.g., bdb, nba_stats_api">
+                </div>
+
+                <div style="display: flex; gap: 12px; margin-top: 24px;">
+                    <button class="btn btn-primary" @click="resolveBlock()">✅ Resolve</button>
+                    <button class="btn btn-secondary" @click="showResolveModal = false">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function sourceBlockDashboard() {
+            return {
+                loading: false,
+                blocks: [],
+                patterns: [],
+                coverage: [],
+                stats: {
+                    active_blocks: 0,
+                    resolved_count: 0,
+                    coverage_pct: 0,
+                    alt_available: 0
+                },
+                filters: {
+                    days: 7,
+                    source: '',
+                    type: ''
+                },
+                showResolveModal: false,
+                selectedBlock: null,
+                resolveForm: {
+                    notes: '',
+                    altAvailable: false,
+                    altSource: ''
+                },
+
+                init() {
+                    this.loadData();
+                },
+
+                async loadData() {
+                    await Promise.all([
+                        this.loadBlocks(),
+                        this.loadPatterns(),
+                        this.loadCoverage()
+                    ]);
+                },
+
+                async loadBlocks() {
+                    this.loading = true;
+                    try {
+                        const params = new URLSearchParams({
+                            days: this.filters.days,
+                            ...(this.filters.source && {source: this.filters.source}),
+                            ...(this.filters.type && {type: this.filters.type})
+                        });
+
+                        const response = await fetch(`/api/source-blocks?${params}`);
+                        const data = await response.json();
+
+                        if (data.success) {
+                            this.blocks = data.blocks;
+                            this.updateStats();
+                        }
+                    } catch (error) {
+                        console.error('Error loading blocks:', error);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                async loadPatterns() {
+                    try {
+                        const response = await fetch('/api/source-blocks/patterns?days=30');
+                        const data = await response.json();
+
+                        if (data.success) {
+                            this.patterns = data.patterns;
+                        }
+                    } catch (error) {
+                        console.error('Error loading patterns:', error);
+                    }
+                },
+
+                async loadCoverage() {
+                    try {
+                        const response = await fetch('/api/source-blocks/coverage?days=7');
+                        const data = await response.json();
+
+                        if (data.success) {
+                            this.coverage = data.coverage_by_date;
+                            this.stats.coverage_pct = data.summary.overall_coverage_pct;
+                        }
+                    } catch (error) {
+                        console.error('Error loading coverage:', error);
+                    }
+                },
+
+                updateStats() {
+                    this.stats.active_blocks = this.blocks.filter(b => !b.is_resolved).length;
+                    this.stats.resolved_count = this.blocks.filter(b => b.is_resolved).length;
+                    this.stats.alt_available = this.blocks.filter(b => b.available_from_alt_source).length;
+                },
+
+                openResolveModal(block) {
+                    this.selectedBlock = block;
+                    this.resolveForm = {
+                        notes: '',
+                        altAvailable: false,
+                        altSource: ''
+                    };
+                    this.showResolveModal = true;
+                },
+
+                async resolveBlock() {
+                    try {
+                        const response = await fetch('/api/source-blocks/resolve', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({
+                                resource_id: this.selectedBlock.resource_id,
+                                resolution_notes: this.resolveForm.notes,
+                                available_from_alt_source: this.resolveForm.altAvailable,
+                                alt_source_system: this.resolveForm.altSource
+                            })
+                        });
+
+                        const data = await response.json();
+
+                        if (data.success) {
+                            alert('✅ Source block resolved!');
+                            this.showResolveModal = false;
+                            this.loadData();
+                        } else {
+                            alert('❌ Error: ' + data.error);
+                        }
+                    } catch (error) {
+                        console.error('Error resolving block:', error);
+                        alert('❌ Error resolving block');
+                    }
+                }
+            }
+        }
+    </script>
+</body>
+</html>

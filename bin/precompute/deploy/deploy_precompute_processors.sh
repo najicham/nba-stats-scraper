@@ -38,7 +38,7 @@ ENV_VARS="$ENV_VARS,GIT_BRANCH=$GIT_BRANCH"
 ENV_VARS="$ENV_VARS,DEPLOY_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # Add email configuration if available
-if [[ -n "$EMAIL_ALERTS_TO" ]]; then
+if [[ -n "${EMAIL_ALERTS_TO:-}" ]]; then
     echo "✅ Adding email alerting configuration..."
 
     # AWS SES configuration (credentials in Secret Manager)

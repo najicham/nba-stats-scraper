@@ -12,13 +12,16 @@
 Daily orchestration validation revealed **critical production issues** blocking predictions for today's 7 NBA games. Analysis shows systemic problems across multiple pipeline layers requiring immediate intervention.
 
 **Critical Findings**:
-1. 🔴 Phase 4 service broken (SQLAlchemy dependency missing)
+1. 🔴 Phase 4 service broken (SQLAlchemy dependency missing) - **NEW, BLOCKING**
 2. 🔴 Zero predictions generated for today (7 games affected)
 3. 🔴 Phase 3 stalled at 20% completion (1/5 processors)
-4. 🟡 Systemic low prediction coverage (32-48% vs expected 90%)
-5. 🟡 High scraper failure rates (80-97% for critical scrapers)
+4. 🟡 Betting workflow timing misconfigured (6h window → starts at 1 PM, not 8 AM) - **FIX READY**
+5. 🟡 Systemic low prediction coverage (32-48% vs expected 90%)
+6. 🟡 High scraper failure rates (80-97% for critical scrapers)
 
 **Overlap Analysis**: Recent project work has addressed related issues but the Phase 4 deployment failure is new and blocking.
+
+**Related Document**: A separate investigation identified the betting timing issue - see `docs/sessions/2026-01-26-COMPREHENSIVE-ACTION-PLAN.md` for that fix (commit f4385d03, local only, not yet deployed).
 
 ---
 
@@ -134,7 +137,30 @@ nbac_team_boxscore          | 2026-01-25  | 12h        | ✅ Yesterday's data
 
 ### 🟡 Systemic Issues (Lower Priority but Recurring)
 
-#### Issue #4: Low Prediction Coverage (32-48%)
+#### Issue #4: Betting Workflow Timing Misconfigured
+**Severity**: MEDIUM (P1) - Already has fix ready
+**Impact**: Betting data not available until 1 PM for 7 PM games
+
+**Root Cause** (from separate investigation):
+- `betting_lines` workflow configured with `window_before_game_hours: 6`
+- For 7 PM games, workflow starts at 1 PM (6 hours before)
+- Users expected morning predictions, but data unavailable until afternoon
+- Validation at 10 AM correctly reported "0 records" - but this was expected behavior
+
+**Fix Status**:
+- ✅ Fix implemented locally: `window_before_game_hours: 6 → 12`
+- ✅ Commit: f4385d03
+- ⏳ Not yet deployed to production
+- 📄 Full details: `docs/sessions/2026-01-26-COMPREHENSIVE-ACTION-PLAN.md`
+
+**Relationship to Other Issues**:
+- This explains WHY betting data was missing at 10 AM validation
+- Phase 3/4 failures are SEPARATE issues (SQLAlchemy, stale deps)
+- Both need to be fixed for full pipeline recovery
+
+---
+
+#### Issue #6: Low Prediction Coverage (32-48%)
 **Severity**: MEDIUM (P2) - Systemic problem
 **Expected Coverage**: ~90%
 **Actual Coverage**: 32-48% over last 7 days
@@ -165,7 +191,7 @@ Date       | Predicted | Expected | Coverage | Missing
 
 ---
 
-#### Issue #5: High Scraper Failure Rates
+#### Issue #7: High Scraper Failure Rates
 **Severity**: MEDIUM (P2) - Operational issue
 **Impact**: Reduced data availability, validation noise
 
@@ -226,12 +252,29 @@ Based on exploration of `docs/08-projects/current/` and `docs/09-handoff/`, rece
 
 | Today's Issue | Recent Work | Overlap Status | Action Needed |
 |--------------|-------------|----------------|---------------|
-| **Phase 4 SQLAlchemy** | Test infrastructure | ⚠️ NEW ISSUE | Immediate fix required |
+| **Phase 4 SQLAlchemy** | None | ⚠️ NEW ISSUE | Immediate fix required |
 | **Phase 3 stalled** | Validation framework testing | 🟡 Related | Investigate dependency logic |
+| **Betting timing** | Comprehensive Action Plan | ✅ FIX READY | Deploy commit f4385d03 |
 | **Low prediction coverage** | Spot check data quality fix | ✅ ADDRESSED | Monitor after regeneration |
 | **Low prediction coverage** | Betting timing fix | ✅ ADDRESSED | Verify tomorrow |
 | **Scraper failures** | Source-block tracking | 🟢 IN PROGRESS | Continue implementation |
 | **Scraper failures** | Play-by-play IP ban | 🔴 BLOCKED | Wait for IP clearance |
+
+### Understanding the Two Root Causes
+
+**There are TWO separate issues causing today's failures:**
+
+1. **Betting Timing (Configuration)** - Why validation at 10 AM showed 0 betting records
+   - Root cause: 6-hour window means workflow starts at 1 PM for 7 PM games
+   - Fix: Change to 12-hour window (commit f4385d03, needs deployment)
+   - Full analysis: `docs/sessions/2026-01-26-COMPREHENSIVE-ACTION-PLAN.md`
+
+2. **Phase 4 + Phase 3 (Infrastructure)** - Why predictions are 0 even now
+   - Root cause: SQLAlchemy missing in Phase 4, stale dependency false positives in Phase 3
+   - Fix: Add SQLAlchemy OR make import conditional, adjust dependency thresholds
+   - Full analysis: This document
+
+**Both must be fixed for complete recovery.**
 
 ### Key Insights
 
@@ -353,7 +396,33 @@ DEPENDENCIES = {
 
 ---
 
-#### 3. Manual Pipeline Recovery for Today (P0 - CRITICAL)
+#### 3. Deploy Betting Timing Fix (P0 - CRITICAL)
+**Owner**: DevOps/Platform Team
+**Estimated Time**: 15 minutes
+
+**Status**: Fix already implemented locally (commit f4385d03)
+
+**Deployment**:
+```bash
+# Verify the fix is in local config
+grep 'window_before_game_hours' config/workflows.yaml
+# Should show: window_before_game_hours: 12
+
+# Deploy to production
+git push origin main
+# OR manual copy if not using git-based deployment
+
+# Verify deployment
+ssh production "grep 'window_before_game_hours' /path/to/config/workflows.yaml"
+```
+
+**Verification** (Tomorrow, Jan 27):
+- Betting workflow should trigger at 7-8 AM ET (not 1 PM)
+- Full details in `docs/sessions/2026-01-26-COMPREHENSIVE-ACTION-PLAN.md`
+
+---
+
+#### 4. Manual Pipeline Recovery for Today (P0 - CRITICAL)
 **Owner**: Operations Team
 **Estimated Time**: 90 minutes (after Phase 4 fix)
 
@@ -409,7 +478,7 @@ WHERE game_date = CURRENT_DATE() AND is_active = TRUE"
 
 ### Short-Term Actions (Next 24-48 Hours)
 
-#### 4. Review Phase 3 Dependency Logic (P1 - HIGH)
+#### 5. Review Phase 3 Dependency Logic (P1 - HIGH)
 **Owner**: Analytics Team
 **Estimated Time**: 2 hours
 
@@ -423,7 +492,7 @@ WHERE game_date = CURRENT_DATE() AND is_active = TRUE"
 
 ---
 
-#### 5. Verify Prediction Coverage Improvements (P1 - HIGH)
+#### 6. Verify Prediction Coverage Improvements (P1 - HIGH)
 **Owner**: Analytics Team
 **Estimated Time**: 1 hour (tomorrow morning)
 
@@ -468,7 +537,7 @@ ORDER BY ppc.game_date DESC"
 
 ---
 
-#### 6. Continue Source-Block Tracking Implementation (P2 - MEDIUM)
+#### 7. Continue Source-Block Tracking Implementation (P2 - MEDIUM)
 **Owner**: Platform Team
 **Estimated Time**: 4-5 hours
 
@@ -489,7 +558,7 @@ ORDER BY ppc.game_date DESC"
 
 ### Medium-Term Actions (Next Week)
 
-#### 7. Complete Spot Check Data Regeneration (P2 - MEDIUM)
+#### 8. Complete Spot Check Data Regeneration (P2 - MEDIUM)
 **Owner**: Analytics Team
 **Estimated Time**: 4-8 hours
 
@@ -518,7 +587,7 @@ python scripts/regenerate_ml_features.py --start-date 2025-10-01 \
 
 ---
 
-#### 8. Reduce Scraper Failure Rates (P2 - MEDIUM)
+#### 9. Reduce Scraper Failure Rates (P2 - MEDIUM)
 **Owner**: Scraper Team
 **Estimated Time**: 2-3 hours investigation
 
@@ -624,7 +693,13 @@ nbac_gamebook_pdf:    80.0% failure (72 failed, 18 success)
    - Review dependency configuration in processor files
    - Consider adjusting thresholds or improving check logic
 
-3. **Manual Pipeline Recovery**
+3. **Deploy Betting Timing Fix**
+   - Commit f4385d03 is ready locally
+   - Changes `window_before_game_hours: 6 → 12`
+   - Deploy to production via git push or manual copy
+   - See `docs/sessions/2026-01-26-COMPREHENSIVE-ACTION-PLAN.md` for details
+
+4. **Manual Pipeline Recovery**
    - Follow the step-by-step recovery plan above
    - Document any issues encountered
    - Verify predictions generated before closing
@@ -712,9 +787,10 @@ bq query --use_legacy_sql=false "SELECT COUNT(*) FROM..."
 
 1. **Phase 4 Fix**: Which approach did you choose (SQLAlchemy add, conditional import, or remove)?
 2. **Phase 3 Investigation**: What did the logs reveal about stale dependency errors?
-3. **Pipeline Recovery**: Did manual recovery succeed? How many predictions generated?
-4. **Betting Timing**: Did tomorrow's verification show improvement (7-8 AM trigger)?
-5. **Prediction Coverage**: Did coverage improve after fixes?
+3. **Betting Timing Fix**: Was commit f4385d03 deployed to production?
+4. **Pipeline Recovery**: Did manual recovery succeed? How many predictions generated?
+5. **Betting Timing Verification** (Tomorrow): Did the workflow trigger at 7-8 AM ET (not 1 PM)?
+6. **Prediction Coverage**: Did coverage improve after fixes?
 
 ---
 
@@ -813,8 +889,32 @@ SUMMARY:
 
 **End of Handoff Document**
 
-**Next Session Should Focus On**: Phase 4 fix (immediate) → Phase 3 investigation → Manual recovery
+---
+
+## Summary: Two Root Causes, One Recovery Plan
+
+**Root Cause A: Betting Timing Configuration**
+- Problem: 6-hour window means workflow starts at 1 PM for 7 PM games
+- Fix: Commit f4385d03 changes to 12-hour window (starts at 8 AM)
+- Status: ✅ Fix ready, needs deployment
+- Details: `docs/sessions/2026-01-26-COMPREHENSIVE-ACTION-PLAN.md`
+
+**Root Cause B: Phase 4 + Phase 3 Infrastructure**
+- Problem: SQLAlchemy missing in Phase 4, stale dependency false positives in Phase 3
+- Fix: Conditional import for SQLAlchemy, adjust dependency thresholds
+- Status: ⏳ Needs implementation
+- Details: This document
+
+**Execution Order**:
+1. Fix Phase 4 SQLAlchemy (30 min)
+2. Investigate Phase 3 stale dependencies (30 min)
+3. Deploy betting timing fix (15 min)
+4. Manual pipeline recovery (90 min)
+
+**Next Session Should Focus On**: Phase 4 fix (immediate) → Phase 3 investigation → Deploy betting fix → Manual recovery
 
 **Estimated Time to Resolution**: 2-4 hours for immediate issues
 
 **Document Location**: `docs/09-handoff/2026-01-26-SESSION-33-ORCHESTRATION-VALIDATION-CRITICAL-FINDINGS.md`
+
+**Related Document**: `docs/sessions/2026-01-26-COMPREHENSIVE-ACTION-PLAN.md` (betting timing fix details)
