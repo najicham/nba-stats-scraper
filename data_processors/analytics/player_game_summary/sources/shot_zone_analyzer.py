@@ -46,13 +46,50 @@ class ShotZoneAnalyzer:
 
     def extract_shot_zones(self, start_date: str, end_date: str) -> None:
         """
-        Extract shot zone data from BigDataBall play-by-play.
+        Extract shot zone data with BigDataBall → NBAC fallback.
+
+        Attempts BigDataBall PBP first (primary source with coordinates),
+        falls back to NBAC PBP if BigDataBall fails or returns no data.
 
         Gracefully handles missing play-by-play data.
 
         Args:
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
+        """
+        # Try BigDataBall first (primary source - has shot coordinates)
+        try:
+            result = self._extract_from_bigdataball(start_date, end_date)
+            if result:
+                self.shot_zones_available = True
+                self.shot_zones_source = 'bigdataball_pbp'
+                logger.info(f"✅ Using BigDataBall PBP for shot zones: {len(self.shot_zone_data)} player-games")
+                return
+        except Exception as e:
+            logger.warning(f"⚠️ BigDataBall shot zone extraction failed: {e}")
+
+        # Fallback to NBAC PBP
+        try:
+            result = self._extract_from_nbac(start_date, end_date)
+            if result:
+                self.shot_zones_available = True
+                self.shot_zones_source = 'nbac_play_by_play'
+                logger.info(f"✅ Using NBAC fallback for shot zones: {len(self.shot_zone_data)} player-games")
+                return
+        except Exception as e:
+            logger.warning(f"⚠️ NBAC shot zone extraction also failed: {e}")
+
+        # Both failed
+        self.shot_zones_available = False
+        self.shot_zones_source = None
+        logger.warning("⚠️ Shot zone extraction failed from both BigDataBall and NBAC sources")
+
+    def _extract_from_bigdataball(self, start_date: str, end_date: str) -> bool:
+        """
+        Extract shot zones from BigDataBall PBP (primary source, has coordinates).
+
+        Returns:
+            True if extraction succeeded and returned data, False otherwise
         """
         try:
             # Query BigDataBall play-by-play for player shot zones, shot creation, and blocks
@@ -179,18 +216,95 @@ class ShotZoneAnalyzer:
                     if pd.notna(row['paint_blocks']) or pd.notna(row['mid_range_blocks']) or pd.notna(row['three_pt_blocks']):
                         blocks_found += 1
 
-                self.shot_zones_available = True
-                self.shot_zones_source = 'bigdataball_pbp'
-                logger.info(f"✅ Extracted shot zones + shot creation + blocks for {len(self.shot_zone_data)} player-games ({blocks_found} with blocks) from BigDataBall")
+                logger.debug(f"BigDataBall: Extracted {len(self.shot_zone_data)} player-games, {blocks_found} with blocks")
+                return True
             else:
-                logger.warning("⚠️ BigDataBall play-by-play query returned no shot zones")
-                self.shot_zones_available = False
-                self.shot_zones_source = None
+                logger.debug("BigDataBall query returned no shot zones")
+                return False
 
         except Exception as e:
-            logger.warning(f"⚠️ Failed to extract shot zones (non-critical): {e}")
-            self.shot_zones_available = False
-            self.shot_zones_source = None
+            logger.debug(f"BigDataBall extraction failed: {e}")
+            return False
+
+    def _extract_from_nbac(self, start_date: str, end_date: str) -> bool:
+        """
+        Extract shot zones from NBAC PBP (fallback source, simpler structure).
+
+        NBAC PBP uses:
+        - event_type = 'fieldgoal' (vs BigDataBall's 'shot')
+        - shot_type = '2PT'/'3PT' (vs BigDataBall's event_subtype)
+        - No player_2_role, so no assisted/unassisted tracking
+        - No blocks tracking
+
+        Returns:
+            True if extraction succeeded and returned data, False otherwise
+        """
+        try:
+            # Query NBAC play-by-play for basic shot zones only
+            # (no assisted/unassisted, no and1s, no blocks - those require richer data)
+            query = f"""
+            WITH player_shots AS (
+                SELECT
+                    game_id,
+                    -- NBAC uses different player ID format, extract player name/lookup
+                    LOWER(REGEXP_REPLACE(COALESCE(player_name, player_id), r'[^a-z]', '')) as player_lookup,
+                    -- Classify shot zone (NBAC has shot_type and shot_distance)
+                    CASE
+                        WHEN shot_type = '2PT' AND shot_distance <= 8.0 THEN 'paint'
+                        WHEN shot_type = '2PT' AND shot_distance > 8.0 THEN 'mid_range'
+                        WHEN shot_type = '3PT' THEN 'three'
+                        ELSE NULL
+                    END as zone,
+                    shot_made
+                FROM `{self.project_id}.nba_raw.nbac_play_by_play`
+                WHERE event_type = 'fieldgoal'
+                    AND shot_made IS NOT NULL
+                    AND shot_distance IS NOT NULL
+                    AND game_date BETWEEN '{start_date}' AND '{end_date}'
+            )
+            SELECT
+                game_id,
+                player_lookup,
+                -- Paint zone
+                COUNT(CASE WHEN zone = 'paint' THEN 1 END) as paint_attempts,
+                COUNT(CASE WHEN zone = 'paint' AND shot_made = TRUE THEN 1 END) as paint_makes,
+                -- Mid-range zone
+                COUNT(CASE WHEN zone = 'mid_range' THEN 1 END) as mid_range_attempts,
+                COUNT(CASE WHEN zone = 'mid_range' AND shot_made = TRUE THEN 1 END) as mid_range_makes
+            FROM player_shots
+            WHERE player_lookup IS NOT NULL
+            GROUP BY game_id, player_lookup
+            """
+
+            shot_zones_df = self.bq_client.query(query).to_dataframe()
+
+            if not shot_zones_df.empty:
+                # Convert to dict keyed by (game_id, player_lookup)
+                for _, row in shot_zones_df.iterrows():
+                    key = (row['game_id'], row['player_lookup'])
+                    self.shot_zone_data[key] = {
+                        'paint_attempts': int(row['paint_attempts']) if pd.notna(row['paint_attempts']) else None,
+                        'paint_makes': int(row['paint_makes']) if pd.notna(row['paint_makes']) else None,
+                        'mid_range_attempts': int(row['mid_range_attempts']) if pd.notna(row['mid_range_attempts']) else None,
+                        'mid_range_makes': int(row['mid_range_makes']) if pd.notna(row['mid_range_makes']) else None,
+                        # NBAC doesn't have these fields - set to None
+                        'assisted_fg_makes': None,
+                        'unassisted_fg_makes': None,
+                        'and1_count': None,
+                        'paint_blocks': None,
+                        'mid_range_blocks': None,
+                        'three_pt_blocks': None,
+                    }
+
+                logger.debug(f"NBAC: Extracted {len(self.shot_zone_data)} player-games (basic zones only)")
+                return True
+            else:
+                logger.debug("NBAC query returned no shot zones")
+                return False
+
+        except Exception as e:
+            logger.debug(f"NBAC extraction failed: {e}")
+            return False
 
     def get_shot_zone_data(self, game_id: str, player_lookup: str) -> Dict:
         """
