@@ -1,0 +1,189 @@
+<!-- Processor Heartbeat Timeline Component -->
+<div class="space-y-4">
+    <!-- Summary Stats -->
+    {% if summary %}
+    <div class="grid grid-cols-3 md:grid-cols-6 gap-3">
+        <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 text-center">
+            <div class="text-2xl font-bold text-gray-700">{{ summary.total }}</div>
+            <div class="text-xs text-gray-500">Total</div>
+        </div>
+        <div class="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
+            <div class="text-2xl font-bold text-green-700">{{ summary.healthy }}</div>
+            <div class="text-xs text-green-600">Healthy</div>
+        </div>
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-center">
+            <div class="text-2xl font-bold text-yellow-700">{{ summary.stale }}</div>
+            <div class="text-xs text-yellow-600">Stale</div>
+        </div>
+        <div class="bg-red-50 border border-red-200 rounded-lg p-3 text-center">
+            <div class="text-2xl font-bold text-red-700">{{ summary.dead }}</div>
+            <div class="text-xs text-red-600">Dead</div>
+        </div>
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
+            <div class="text-2xl font-bold text-blue-700">{{ summary.completed }}</div>
+            <div class="text-xs text-blue-600">Completed</div>
+        </div>
+        <div class="bg-orange-50 border border-orange-200 rounded-lg p-3 text-center">
+            <div class="text-2xl font-bold text-orange-700">{{ summary.failed }}</div>
+            <div class="text-xs text-orange-600">Failed</div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Legend -->
+    <div class="flex items-center justify-center space-x-4 text-xs text-gray-500">
+        <span class="flex items-center">
+            <span class="w-3 h-3 rounded-full bg-green-500 mr-1"></span> Healthy
+        </span>
+        <span class="flex items-center">
+            <span class="w-3 h-3 rounded-full bg-yellow-500 mr-1"></span> Stale (5-15 min)
+        </span>
+        <span class="flex items-center">
+            <span class="w-3 h-3 rounded-full bg-red-500 mr-1"></span> Dead (>15 min)
+        </span>
+        <span class="flex items-center">
+            <span class="w-3 h-3 rounded-full bg-blue-500 mr-1"></span> Completed
+        </span>
+        <span class="flex items-center">
+            <span class="w-3 h-3 rounded-full bg-orange-500 mr-1"></span> Failed
+        </span>
+    </div>
+
+    {% if processor_filter %}
+    <div class="bg-violet-50 border border-violet-200 rounded-lg px-3 py-2 text-sm text-violet-700">
+        Filtering by processor: <span class="font-mono font-bold">{{ processor_filter }}</span>
+        <button hx-get="/partials/heartbeat-timeline?hours={{ hours }}"
+                hx-target="#heartbeat-content"
+                hx-swap="innerHTML"
+                class="ml-2 text-violet-600 hover:text-violet-800 underline">
+            Clear filter
+        </button>
+    </div>
+    {% endif %}
+
+    {% if heartbeats %}
+    <!-- Timeline View -->
+    <div class="border border-gray-200 rounded-lg overflow-hidden">
+        <div class="overflow-x-auto max-h-96 overflow-y-auto">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
+                <thead class="bg-gray-50 sticky top-0">
+                    <tr>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Processor</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Data Date</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Started</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Last Heartbeat</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Age</th>
+                        <th class="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase">Progress</th>
+                        <th class="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Status Message</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% for hb in heartbeats %}
+                    <tr class="{% if hb.health == 'dead' %}bg-red-50{% elif hb.health == 'stale' %}bg-yellow-50{% elif hb.health == 'failed' %}bg-orange-50{% elif hb.health == 'healthy' %}bg-green-50{% endif %} hover:bg-gray-100">
+                        <td class="px-3 py-2">
+                            {% if hb.health == 'healthy' %}
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                                <span class="w-2 h-2 rounded-full bg-green-500 mr-1 animate-pulse"></span>
+                                Running
+                            </span>
+                            {% elif hb.health == 'stale' %}
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
+                                <span class="w-2 h-2 rounded-full bg-yellow-500 mr-1"></span>
+                                Stale
+                            </span>
+                            {% elif hb.health == 'dead' %}
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
+                                <span class="w-2 h-2 rounded-full bg-red-500 mr-1"></span>
+                                Dead
+                            </span>
+                            {% elif hb.health == 'completed' %}
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                                <span class="w-2 h-2 rounded-full bg-blue-500 mr-1"></span>
+                                Done
+                            </span>
+                            {% elif hb.health == 'failed' %}
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
+                                <span class="w-2 h-2 rounded-full bg-orange-500 mr-1"></span>
+                                Failed
+                            </span>
+                            {% else %}
+                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+                                {{ hb.health }}
+                            </span>
+                            {% endif %}
+                        </td>
+                        <td class="px-3 py-2">
+                            <button class="font-medium text-gray-900 hover:text-violet-600 hover:underline"
+                                    hx-get="/partials/heartbeat-timeline?hours={{ hours }}&processor={{ hb.processor_name }}"
+                                    hx-target="#heartbeat-content"
+                                    hx-swap="innerHTML">
+                                {{ hb.processor_name }}
+                            </button>
+                            <div class="text-xs text-gray-400 font-mono">{{ hb.run_id[:8] if hb.run_id else '' }}...</div>
+                        </td>
+                        <td class="px-3 py-2 text-center text-gray-600">
+                            {{ hb.data_date }}
+                        </td>
+                        <td class="px-3 py-2 text-center text-gray-500 text-xs">
+                            {{ hb.started_at[11:19] if hb.started_at else '-' }}
+                        </td>
+                        <td class="px-3 py-2 text-center text-gray-500 text-xs">
+                            {{ hb.last_heartbeat[11:19] if hb.last_heartbeat else '-' }}
+                        </td>
+                        <td class="px-3 py-2 text-center">
+                            {% if hb.age_seconds %}
+                            <span class="{% if hb.age_seconds > 900 %}text-red-600 font-bold{% elif hb.age_seconds > 300 %}text-yellow-600{% else %}text-gray-600{% endif %}">
+                                {% if hb.age_seconds >= 3600 %}
+                                    {{ (hb.age_seconds / 3600)|round(1) }}h
+                                {% elif hb.age_seconds >= 60 %}
+                                    {{ (hb.age_seconds / 60)|round(0)|int }}m
+                                {% else %}
+                                    {{ hb.age_seconds }}s
+                                {% endif %}
+                            </span>
+                            {% elif hb.duration_seconds %}
+                            <span class="text-gray-500">{{ hb.duration_seconds|round(1) }}s</span>
+                            {% else %}
+                            <span class="text-gray-400">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-3 py-2 text-center">
+                            {% if hb.total > 0 %}
+                            <div class="flex items-center space-x-2">
+                                <div class="flex-1 bg-gray-200 rounded-full h-2 w-16">
+                                    <div class="bg-blue-600 h-2 rounded-full" style="width: {{ (hb.progress / hb.total * 100)|round|int }}%"></div>
+                                </div>
+                                <span class="text-xs text-gray-500">{{ hb.progress }}/{{ hb.total }}</span>
+                            </div>
+                            {% else %}
+                            <span class="text-gray-400">-</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-3 py-2 text-xs text-gray-600 max-w-xs truncate" title="{{ hb.status_message }}">
+                            {{ hb.status_message[:50] if hb.status_message else '-' }}{% if hb.status_message and hb.status_message|length > 50 %}...{% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="text-center text-xs text-gray-500">
+        Showing {{ heartbeats|length }} heartbeat(s) from the last {{ hours }} hours
+    </div>
+
+    {% else %}
+    <!-- Empty state -->
+    <div class="text-center py-8">
+        <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-gray-100 mb-4">
+            <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"></path>
+            </svg>
+        </div>
+        <p class="text-gray-500">No processor heartbeats found</p>
+        <p class="text-sm text-gray-400 mt-1">in the last {{ hours }} hours</p>
+    </div>
+    {% endif %}
+</div>

@@ -266,3 +266,151 @@ class FirestoreService:
         state['is_complete'] = len(pending) == 0
 
         return state
+
+    # =========================================================================
+    # Processor Heartbeat Methods
+    # =========================================================================
+
+    def get_processor_heartbeats(self, hours: int = 24, include_completed: bool = True) -> List[Dict]:
+        """
+        Get processor heartbeats from the last N hours.
+
+        Args:
+            hours: How many hours back to look (default 24)
+            include_completed: Include completed/failed processors (default True)
+
+        Returns:
+            List of heartbeat records with status info
+        """
+        from datetime import timedelta, timezone
+
+        try:
+            now = datetime.now(timezone.utc)
+            cutoff = now - timedelta(hours=hours)
+
+            query = self.db.collection('processor_heartbeats')
+
+            if not include_completed:
+                query = query.where('status', '==', 'running')
+
+            # Filter by time
+            query = query.where('last_heartbeat', '>=', cutoff)
+            query = query.order_by('last_heartbeat', direction=firestore.Query.DESCENDING)
+            query = query.limit(100)
+
+            docs = query.stream()
+
+            heartbeats = []
+            for doc in docs:
+                data = doc.to_dict()
+
+                # Calculate age
+                last_hb = data.get('last_heartbeat')
+                age_seconds = None
+                if last_hb:
+                    if hasattr(last_hb, 'timestamp'):
+                        age_seconds = (now.timestamp() - last_hb.timestamp())
+                    elif isinstance(last_hb, datetime):
+                        age_seconds = (now - last_hb.replace(tzinfo=timezone.utc)).total_seconds()
+
+                # Determine health state
+                status = data.get('status', 'unknown')
+                if status == 'running' and age_seconds:
+                    if age_seconds > 900:  # 15 min
+                        health = 'dead'
+                    elif age_seconds > 300:  # 5 min
+                        health = 'stale'
+                    else:
+                        health = 'healthy'
+                elif status == 'completed':
+                    health = 'completed'
+                elif status == 'failed':
+                    health = 'failed'
+                else:
+                    health = status
+
+                heartbeats.append({
+                    'doc_id': doc.id,
+                    'processor_name': data.get('processor_name'),
+                    'run_id': data.get('run_id'),
+                    'data_date': data.get('data_date'),
+                    'status': status,
+                    'health': health,
+                    'last_heartbeat': last_hb.isoformat() if hasattr(last_hb, 'isoformat') else str(last_hb) if last_hb else None,
+                    'started_at': data.get('started_at').isoformat() if hasattr(data.get('started_at'), 'isoformat') else str(data.get('started_at')) if data.get('started_at') else None,
+                    'completed_at': data.get('completed_at').isoformat() if hasattr(data.get('completed_at'), 'isoformat') else str(data.get('completed_at')) if data.get('completed_at') else None,
+                    'age_seconds': int(age_seconds) if age_seconds else None,
+                    'progress': data.get('progress', 0),
+                    'total': data.get('total', 0),
+                    'status_message': data.get('status_message', ''),
+                    'duration_seconds': data.get('duration_seconds')
+                })
+
+            return heartbeats
+
+        except Exception as e:
+            logger.error(f"Error querying processor heartbeats: {e}", exc_info=True)
+            return []
+
+    def get_heartbeat_summary(self, hours: int = 24) -> Dict:
+        """
+        Get summary statistics for processor heartbeats.
+
+        Returns:
+            Dict with counts by status/health
+        """
+        heartbeats = self.get_processor_heartbeats(hours=hours, include_completed=True)
+
+        summary = {
+            'total': len(heartbeats),
+            'healthy': 0,
+            'stale': 0,
+            'dead': 0,
+            'completed': 0,
+            'failed': 0,
+            'unique_processors': set(),
+            'period_hours': hours
+        }
+
+        for hb in heartbeats:
+            health = hb.get('health', 'unknown')
+            if health in summary:
+                summary[health] += 1
+            summary['unique_processors'].add(hb.get('processor_name'))
+
+        summary['unique_processors'] = len(summary['unique_processors'])
+
+        return summary
+
+    def get_running_processors(self) -> List[Dict]:
+        """
+        Get all currently running processors.
+
+        Returns:
+            List of running processor heartbeats with health status
+        """
+        return [
+            hb for hb in self.get_processor_heartbeats(hours=24, include_completed=False)
+            if hb.get('status') == 'running'
+        ]
+
+    def get_processor_timeline(self, processor_name: str = None, hours: int = 24) -> List[Dict]:
+        """
+        Get processor activity timeline, optionally filtered by processor name.
+
+        Args:
+            processor_name: Optional filter by processor name
+            hours: How many hours back to look
+
+        Returns:
+            List of heartbeat events for timeline visualization
+        """
+        heartbeats = self.get_processor_heartbeats(hours=hours, include_completed=True)
+
+        if processor_name:
+            heartbeats = [hb for hb in heartbeats if hb.get('processor_name') == processor_name]
+
+        # Sort by start time for timeline
+        heartbeats.sort(key=lambda x: x.get('started_at') or '', reverse=True)
+
+        return heartbeats

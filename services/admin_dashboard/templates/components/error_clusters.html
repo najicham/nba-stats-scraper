@@ -1,0 +1,133 @@
+<!-- Error Clusters Component -->
+<div class="space-y-4">
+    <!-- Summary Stats -->
+    {% if summary %}
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+        <div class="bg-red-50 border border-red-200 rounded-lg p-3 text-center">
+            <div class="text-2xl font-bold text-red-700">{{ summary.total_errors }}</div>
+            <div class="text-xs text-red-600">Total Errors</div>
+        </div>
+        <div class="bg-orange-50 border border-orange-200 rounded-lg p-3 text-center">
+            <div class="text-2xl font-bold text-orange-700">{{ summary.unique_signatures }}</div>
+            <div class="text-xs text-orange-600">Unique Patterns</div>
+        </div>
+        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-center">
+            <div class="text-2xl font-bold text-yellow-700">{{ summary.affected_processors }}</div>
+            <div class="text-xs text-yellow-600">Affected Processors</div>
+        </div>
+        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
+            <div class="text-2xl font-bold text-blue-700">{{ summary.affected_phases }}</div>
+            <div class="text-xs text-blue-600">Affected Phases</div>
+        </div>
+        <div class="bg-gray-50 border border-gray-200 rounded-lg p-3 text-center">
+            <div class="text-2xl font-bold text-gray-700">{{ summary.days_with_errors }}</div>
+            <div class="text-xs text-gray-600">Days with Errors</div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Error Clusters List -->
+    {% if clusters %}
+    <div class="space-y-3">
+        <h4 class="text-sm font-semibold text-gray-700">Error Patterns (Last {{ days }} days)</h4>
+
+        {% for cluster in clusters %}
+        <div class="border border-gray-200 rounded-lg overflow-hidden" x-data="{ expanded: false }">
+            <!-- Cluster Header -->
+            <div class="bg-gray-50 px-4 py-3 cursor-pointer hover:bg-gray-100"
+                 @click="expanded = !expanded">
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center space-x-3 flex-1 min-w-0">
+                        <!-- Occurrence badge -->
+                        <span class="flex-shrink-0 px-2.5 py-1 rounded-full text-sm font-bold
+                            {% if cluster.occurrence_count >= 10 %}bg-red-100 text-red-800
+                            {% elif cluster.occurrence_count >= 5 %}bg-orange-100 text-orange-800
+                            {% else %}bg-yellow-100 text-yellow-800{% endif %}">
+                            {{ cluster.occurrence_count }}x
+                        </span>
+
+                        <!-- Error signature (truncated) -->
+                        <div class="flex-1 min-w-0">
+                            <p class="text-sm font-mono text-gray-800 truncate" title="{{ cluster.signature }}">
+                                {{ cluster.signature[:100] }}{% if cluster.signature|length > 100 %}...{% endif %}
+                            </p>
+                            <div class="flex items-center space-x-2 mt-1 text-xs text-gray-500">
+                                <span>{{ cluster.affected_processors }} processor{% if cluster.affected_processors != 1 %}s{% endif %}</span>
+                                <span>&bull;</span>
+                                <span>{{ cluster.phases|join(', ') }}</span>
+                                <span>&bull;</span>
+                                <span>Last: {{ cluster.last_occurrence[5:16] if cluster.last_occurrence else 'N/A' }}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Expand/Collapse arrow -->
+                    <svg class="w-5 h-5 text-gray-400 transform transition-transform"
+                         :class="{ 'rotate-180': expanded }"
+                         fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
+                </div>
+            </div>
+
+            <!-- Expanded Details -->
+            <div x-show="expanded" x-cloak class="border-t border-gray-200 bg-white">
+                <!-- Affected Processors -->
+                <div class="px-4 py-3 border-b border-gray-100">
+                    <div class="text-xs font-medium text-gray-500 mb-2">Affected Processors</div>
+                    <div class="flex flex-wrap gap-2">
+                        {% for processor in cluster.processor_list %}
+                        <span class="px-2 py-0.5 bg-gray-100 text-gray-700 rounded text-xs font-mono">{{ processor }}</span>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Timeline -->
+                <div class="px-4 py-3 border-b border-gray-100">
+                    <div class="flex justify-between text-xs">
+                        <div>
+                            <span class="text-gray-500">First seen:</span>
+                            <span class="text-gray-700">{{ cluster.first_occurrence[:16] if cluster.first_occurrence else 'N/A' }}</span>
+                        </div>
+                        <div>
+                            <span class="text-gray-500">Last seen:</span>
+                            <span class="text-gray-700">{{ cluster.last_occurrence[:16] if cluster.last_occurrence else 'N/A' }}</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Recent Examples -->
+                {% if cluster.recent_examples %}
+                <div class="px-4 py-3">
+                    <div class="text-xs font-medium text-gray-500 mb-2">Recent Examples</div>
+                    <div class="space-y-2">
+                        {% for example in cluster.recent_examples %}
+                        <div class="p-2 bg-red-50 border border-red-100 rounded text-xs">
+                            <div class="flex justify-between text-gray-500 mb-1">
+                                <span class="font-mono">{{ example.processor }}</span>
+                                <span>{{ example.timestamp[5:16] if example.timestamp else '' }} &bull; {{ example.game_date if example.game_date else 'N/A' }}</span>
+                            </div>
+                            <p class="text-red-700 font-mono break-all">{{ example.message[:300] }}{% if example.message and example.message|length > 300 %}...{% endif %}</p>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% else %}
+    <!-- No errors found -->
+    <div class="text-center py-8">
+        <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-green-100 mb-4">
+            <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+            </svg>
+        </div>
+        <p class="text-gray-600">No recurring error patterns found</p>
+        <p class="text-sm text-gray-400 mt-1">in the last {{ days }} days</p>
+    </div>
+    {% endif %}
+</div>

@@ -654,6 +654,32 @@ function showTraceMessage(message, type) {
     traceResult.classList.remove('hidden');
     traceResult.innerHTML = `<div class="text-center py-4 ${bgClass} rounded-lg">${message}</div>`;
 }
+
+// Heartbeat refresh handler
+document.addEventListener('DOMContentLoaded', function() {
+    const refreshHeartbeatsBtn = document.getElementById('refresh-heartbeats-btn');
+    const heartbeatHoursSelect = document.getElementById('heartbeat-hours-select');
+
+    if (refreshHeartbeatsBtn) {
+        refreshHeartbeatsBtn.addEventListener('click', function() {
+            const hours = heartbeatHoursSelect?.value || '24';
+            htmx.ajax('GET', `/partials/heartbeat-timeline?hours=${hours}`, {
+                target: '#heartbeat-content',
+                swap: 'innerHTML'
+            });
+        });
+    }
+
+    if (heartbeatHoursSelect) {
+        heartbeatHoursSelect.addEventListener('change', function() {
+            const hours = this.value;
+            htmx.ajax('GET', `/partials/heartbeat-timeline?hours=${hours}`, {
+                target: '#heartbeat-content',
+                swap: 'innerHTML'
+            });
+        });
+    }
+});
 </script>
 {% endblock %}
 

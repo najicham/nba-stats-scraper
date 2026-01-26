@@ -1507,6 +1507,152 @@ def partial_correlation_trace():
     )
 
 
+# =============================================================================
+# Error Signature Clustering Endpoints
+# =============================================================================
+
+@app.route('/api/error-clusters')
+@rate_limit
+def api_error_clusters():
+    """Get errors grouped by signature pattern."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    days = clamp_param(request.args.get('days', type=int, default=7), 1, 30)
+    min_occurrences = clamp_param(request.args.get('min', type=int, default=2), 1, 100)
+
+    try:
+        clusters = bq_service.get_error_clusters(days=days, min_occurrences=min_occurrences)
+        summary = bq_service.get_error_summary_stats(days=days)
+        return jsonify({
+            'clusters': clusters,
+            'summary': summary
+        })
+    except Exception as e:
+        logger.error(f"Error in api_error_clusters: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/error-trend')
+@rate_limit
+def api_error_trend():
+    """Get daily occurrence trend for a specific error signature."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    signature = request.args.get('signature', '').strip()
+    days = clamp_param(request.args.get('days', type=int, default=7), 1, 30)
+
+    if not signature:
+        return jsonify({'error': 'Missing signature parameter'}), 400
+
+    try:
+        trend = bq_service.get_error_trend_by_signature(signature, days=days)
+        return jsonify({'trend': trend, 'signature': signature})
+    except Exception as e:
+        logger.error(f"Error in api_error_trend: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/partials/error-clusters')
+@rate_limit
+def partial_error_clusters():
+    """HTMX partial: Error clusters display."""
+    if not check_auth():
+        return '<div class="text-red-500">Unauthorized</div>', 401
+
+    days = clamp_param(request.args.get('days', type=int, default=7), 1, 30)
+    min_occurrences = clamp_param(request.args.get('min', type=int, default=2), 1, 100)
+
+    try:
+        clusters = bq_service.get_error_clusters(days=days, min_occurrences=min_occurrences)
+        summary = bq_service.get_error_summary_stats(days=days)
+    except Exception as e:
+        return f'<div class="text-red-500">Error: {e}</div>', 500
+
+    return render_template(
+        'components/error_clusters.html',
+        clusters=clusters,
+        summary=summary,
+        days=days
+    )
+
+
+# =============================================================================
+# Processor Heartbeat Timeline Endpoints
+# =============================================================================
+
+@app.route('/api/processor-heartbeats')
+@rate_limit
+def api_processor_heartbeats():
+    """Get processor heartbeats from Firestore."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    hours = clamp_param(request.args.get('hours', type=int, default=24), 1, 168)
+    include_completed = request.args.get('include_completed', 'true').lower() == 'true'
+
+    try:
+        heartbeats = firestore_service.get_processor_heartbeats(
+            hours=hours,
+            include_completed=include_completed
+        )
+        summary = firestore_service.get_heartbeat_summary(hours=hours)
+        return jsonify({
+            'heartbeats': heartbeats,
+            'summary': summary
+        })
+    except Exception as e:
+        logger.error(f"Error in api_processor_heartbeats: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/running-processors')
+@rate_limit
+def api_running_processors():
+    """Get currently running processors."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    try:
+        running = firestore_service.get_running_processors()
+        return jsonify({
+            'running': running,
+            'count': len(running)
+        })
+    except Exception as e:
+        logger.error(f"Error in api_running_processors: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/partials/heartbeat-timeline')
+@rate_limit
+def partial_heartbeat_timeline():
+    """HTMX partial: Processor heartbeat timeline."""
+    if not check_auth():
+        return '<div class="text-red-500">Unauthorized</div>', 401
+
+    hours = clamp_param(request.args.get('hours', type=int, default=24), 1, 168)
+    processor_name = request.args.get('processor', '').strip() or None
+
+    try:
+        heartbeats = firestore_service.get_processor_timeline(
+            processor_name=processor_name,
+            hours=hours
+        )
+        summary = firestore_service.get_heartbeat_summary(hours=hours)
+    except Exception as e:
+        return f'<div class="text-red-500">Error: {e}</div>', 500
+
+    return render_template(
+        'components/heartbeat_timeline.html',
+        heartbeats=heartbeats,
+        summary=summary,
+        hours=hours,
+        processor_filter=processor_name
+    )
+
+
 @app.route('/partials/processor-failures')
 @rate_limit
 def partial_processor_failures():

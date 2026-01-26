@@ -1,5 +1,30 @@
 <!-- Processor Failures Component -->
 <div class="space-y-6">
+    <!-- Error Pattern Clustering Section -->
+    <div x-data="{ showClusters: false }">
+        <div class="flex justify-between items-center mb-3">
+            <button @click="showClusters = !showClusters"
+                    class="flex items-center space-x-2 text-sm font-semibold text-gray-700 hover:text-violet-600">
+                <svg class="w-4 h-4 transform transition-transform" :class="{ 'rotate-90': showClusters }"
+                     fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                </svg>
+                <span>Error Pattern Analysis</span>
+            </button>
+            <span class="text-xs text-gray-500">Group similar errors to identify patterns</span>
+        </div>
+
+        <div x-show="showClusters" x-cloak
+             id="error-clusters-container"
+             hx-get="/partials/error-clusters?days=7"
+             hx-trigger="intersect once"
+             class="bg-gray-50 rounded-lg p-4 border border-gray-200">
+            <div class="text-gray-500 text-center py-4">Loading error patterns...</div>
+        </div>
+    </div>
+
+    <hr class="border-gray-200">
+
     <!-- Retry Queue Section -->
     {% if retry_queue %}
     <div>

@@ -1,6 +1,46 @@
 <!-- Reliability Monitoring Component (R-006, R-007, R-008) -->
 <div class="space-y-6">
 
+    <!-- Processor Heartbeat Timeline -->
+    <div x-data="{ showHeartbeats: true }">
+        <div class="flex items-center justify-between mb-3">
+            <button @click="showHeartbeats = !showHeartbeats"
+                    class="flex items-center text-md font-semibold text-gray-800 hover:text-violet-600">
+                <svg class="w-4 h-4 mr-2 transform transition-transform" :class="{ 'rotate-90': showHeartbeats }"
+                     fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path>
+                </svg>
+                <span class="w-2 h-2 bg-violet-500 rounded-full mr-2"></span>
+                Processor Heartbeat Monitor
+            </button>
+            <div class="flex items-center space-x-2">
+                <select id="heartbeat-hours-select" class="text-xs border-gray-300 rounded">
+                    <option value="6">Last 6 hours</option>
+                    <option value="12">Last 12 hours</option>
+                    <option value="24" selected>Last 24 hours</option>
+                    <option value="48">Last 48 hours</option>
+                </select>
+                <button id="refresh-heartbeats-btn"
+                        class="text-xs text-blue-600 hover:text-blue-800">
+                    Refresh
+                </button>
+            </div>
+        </div>
+
+        <div x-show="showHeartbeats" x-cloak>
+            <p class="text-xs text-gray-500 mb-3">
+                Monitors processor health via heartbeat signals. Stale = 5-15 min since heartbeat, Dead = >15 min.
+            </p>
+            <div id="heartbeat-content"
+                 hx-get="/partials/heartbeat-timeline?hours=24"
+                 hx-trigger="load">
+                <div class="text-gray-500 text-center py-4">Loading heartbeats...</div>
+            </div>
+        </div>
+    </div>
+
+    <hr class="border-gray-200">
+
     <!-- R-007: Pipeline Data Reconciliation -->
     <div>
         <h4 class="text-md font-semibold text-gray-800 mb-3 flex items-center">

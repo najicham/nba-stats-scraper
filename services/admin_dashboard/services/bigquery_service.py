@@ -2257,3 +2257,276 @@ class BigQueryService:
         except Exception as e:
             logger.error(f"Error getting recent correlation IDs: {e}", exc_info=True)
             return []
+
+    # =========================================================================
+    # Error Signature Clustering Methods
+    # =========================================================================
+
+    def get_error_clusters(self, days: int = 7, min_occurrences: int = 2) -> List[Dict]:
+        """
+        Get errors grouped by signature pattern.
+
+        Creates error signatures by normalizing error messages:
+        - Removes UUIDs, dates, numbers, specific IDs
+        - Groups similar errors together
+        - Counts occurrences and affected processors
+
+        Args:
+            days: Number of days to look back (default 7)
+            min_occurrences: Minimum occurrences to include (default 2)
+
+        Returns:
+            List of error clusters with signature, count, and examples
+        """
+        days = max(1, min(30, days))
+        min_occurrences = max(1, min(100, min_occurrences))
+
+        # Use REGEXP_REPLACE to normalize error messages into signatures
+        query = f"""
+        WITH error_data AS (
+            SELECT
+                processor_name,
+                data_date,
+                error_message,
+                started_at,
+                phase,
+                run_id,
+                -- Create normalized signature by removing variable parts
+                REGEXP_REPLACE(
+                    REGEXP_REPLACE(
+                        REGEXP_REPLACE(
+                            REGEXP_REPLACE(
+                                REGEXP_REPLACE(
+                                    COALESCE(error_message, 'Unknown error'),
+                                    r'[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}',
+                                    '<UUID>'
+                                ),
+                                r'\\d{{4}}-\\d{{2}}-\\d{{2}}',
+                                '<DATE>'
+                            ),
+                            r'\\d{{10,}}',
+                            '<ID>'
+                        ),
+                        r'\\d+\\.\\d+',
+                        '<NUM>'
+                    ),
+                    r'\\b\\d{{1,6}}\\b',
+                    '<N>'
+                ) as error_signature
+            FROM `{PROJECT_ID}.nba_reference.processor_run_history`
+            WHERE started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {days} DAY)
+              AND status IN ('failed', 'error')
+              AND error_message IS NOT NULL
+        ),
+        clustered AS (
+            SELECT
+                error_signature,
+                COUNT(*) as occurrence_count,
+                COUNT(DISTINCT processor_name) as affected_processors,
+                ARRAY_AGG(DISTINCT processor_name) as processor_list,
+                ARRAY_AGG(DISTINCT phase IGNORE NULLS) as phases,
+                MIN(started_at) as first_occurrence,
+                MAX(started_at) as last_occurrence,
+                ARRAY_AGG(
+                    STRUCT(
+                        error_message as message,
+                        processor_name as processor,
+                        started_at as timestamp,
+                        data_date as game_date
+                    )
+                    ORDER BY started_at DESC
+                    LIMIT 3
+                ) as recent_examples
+            FROM error_data
+            GROUP BY error_signature
+            HAVING COUNT(*) >= {min_occurrences}
+        )
+        SELECT *
+        FROM clustered
+        ORDER BY occurrence_count DESC
+        LIMIT 50
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            return [
+                {
+                    'signature': row.error_signature[:200] if row.error_signature else 'Unknown',
+                    'occurrence_count': row.occurrence_count,
+                    'affected_processors': row.affected_processors,
+                    'processor_list': list(row.processor_list) if row.processor_list else [],
+                    'phases': list(row.phases) if row.phases else [],
+                    'first_occurrence': row.first_occurrence.isoformat() if row.first_occurrence else None,
+                    'last_occurrence': row.last_occurrence.isoformat() if row.last_occurrence else None,
+                    'recent_examples': [
+                        {
+                            'message': ex.message[:500] if ex.message else None,
+                            'processor': ex.processor,
+                            'timestamp': ex.timestamp.isoformat() if ex.timestamp else None,
+                            'game_date': ex.game_date.isoformat() if ex.game_date else None
+                        }
+                        for ex in (row.recent_examples or [])
+                    ]
+                }
+                for row in result
+            ]
+
+        except Exception as e:
+            logger.error(f"Error getting error clusters: {e}", exc_info=True)
+            return []
+
+    def get_error_trend_by_signature(self, signature: str, days: int = 7) -> List[Dict]:
+        """
+        Get daily occurrence trend for a specific error signature.
+
+        Args:
+            signature: The error signature to track
+            days: Number of days to look back
+
+        Returns:
+            List of daily counts for the error signature
+        """
+        days = max(1, min(30, days))
+
+        query = f"""
+        WITH error_data AS (
+            SELECT
+                DATE(started_at) as error_date,
+                processor_name,
+                -- Same normalization as get_error_clusters
+                REGEXP_REPLACE(
+                    REGEXP_REPLACE(
+                        REGEXP_REPLACE(
+                            REGEXP_REPLACE(
+                                REGEXP_REPLACE(
+                                    COALESCE(error_message, 'Unknown error'),
+                                    r'[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}',
+                                    '<UUID>'
+                                ),
+                                r'\\d{{4}}-\\d{{2}}-\\d{{2}}',
+                                '<DATE>'
+                            ),
+                            r'\\d{{10,}}',
+                            '<ID>'
+                        ),
+                        r'\\d+\\.\\d+',
+                        '<NUM>'
+                    ),
+                    r'\\b\\d{{1,6}}\\b',
+                    '<N>'
+                ) as error_signature
+            FROM `{PROJECT_ID}.nba_reference.processor_run_history`
+            WHERE started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {days} DAY)
+              AND status IN ('failed', 'error')
+        )
+        SELECT
+            error_date,
+            COUNT(*) as occurrences,
+            COUNT(DISTINCT processor_name) as affected_processors
+        FROM error_data
+        WHERE error_signature = @signature
+        GROUP BY error_date
+        ORDER BY error_date ASC
+        """
+
+        try:
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("signature", "STRING", signature)
+                ]
+            )
+            result = list(self.client.query(query, job_config=job_config).result(timeout=60))
+            return [
+                {
+                    'date': row.error_date.isoformat() if row.error_date else None,
+                    'occurrences': row.occurrences,
+                    'affected_processors': row.affected_processors
+                }
+                for row in result
+            ]
+
+        except Exception as e:
+            logger.error(f"Error getting error trend: {e}", exc_info=True)
+            return []
+
+    def get_error_summary_stats(self, days: int = 7) -> Dict:
+        """
+        Get summary statistics for errors.
+
+        Returns:
+            Dict with total errors, unique signatures, most affected processors
+        """
+        days = max(1, min(30, days))
+
+        query = f"""
+        WITH error_data AS (
+            SELECT
+                processor_name,
+                phase,
+                DATE(started_at) as error_date,
+                REGEXP_REPLACE(
+                    REGEXP_REPLACE(
+                        REGEXP_REPLACE(
+                            REGEXP_REPLACE(
+                                REGEXP_REPLACE(
+                                    COALESCE(error_message, 'Unknown error'),
+                                    r'[0-9a-f]{{8}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{4}}-[0-9a-f]{{12}}',
+                                    '<UUID>'
+                                ),
+                                r'\\d{{4}}-\\d{{2}}-\\d{{2}}',
+                                '<DATE>'
+                            ),
+                            r'\\d{{10,}}',
+                            '<ID>'
+                        ),
+                        r'\\d+\\.\\d+',
+                        '<NUM>'
+                    ),
+                    r'\\b\\d{{1,6}}\\b',
+                    '<N>'
+                ) as error_signature
+            FROM `{PROJECT_ID}.nba_reference.processor_run_history`
+            WHERE started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {days} DAY)
+              AND status IN ('failed', 'error')
+        )
+        SELECT
+            COUNT(*) as total_errors,
+            COUNT(DISTINCT error_signature) as unique_signatures,
+            COUNT(DISTINCT processor_name) as affected_processors,
+            COUNT(DISTINCT error_date) as days_with_errors,
+            COUNT(DISTINCT phase) as affected_phases
+        FROM error_data
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+            if result:
+                row = result[0]
+                return {
+                    'total_errors': row.total_errors,
+                    'unique_signatures': row.unique_signatures,
+                    'affected_processors': row.affected_processors,
+                    'days_with_errors': row.days_with_errors,
+                    'affected_phases': row.affected_phases,
+                    'period_days': days
+                }
+            return {
+                'total_errors': 0,
+                'unique_signatures': 0,
+                'affected_processors': 0,
+                'days_with_errors': 0,
+                'affected_phases': 0,
+                'period_days': days
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting error summary stats: {e}", exc_info=True)
+            return {
+                'total_errors': 0,
+                'unique_signatures': 0,
+                'affected_processors': 0,
+                'days_with_errors': 0,
+                'affected_phases': 0,
+                'period_days': days,
+                'error': str(e)
+            }

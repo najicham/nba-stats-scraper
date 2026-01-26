@@ -1,14 +1,14 @@
 # Session 20 Handoff: Dashboard Enhancements
 
 **Date:** 2026-01-25
-**Status:** Partial - 4/17 tasks complete
-**Duration:** ~60 minutes
+**Status:** Partial - 6/17 tasks complete
+**Duration:** ~90 minutes
 
 ---
 
 ## Quick Context
 
-Session 20 focused on enhancing the admin dashboard with new monitoring widgets. Created a comprehensive todo list of 17 tasks and completed the first 4 dashboard enhancement tasks.
+Session 20 focused on enhancing the admin dashboard with new monitoring widgets. Created a comprehensive todo list of 17 tasks and completed all 6 dashboard enhancement tasks.
 
 ---
 
@@ -72,15 +72,47 @@ Added correlation ID tracing to the Pipeline Timeline tab:
 - `services/admin_dashboard/templates/components/pipeline_timeline.html` - clickable correlation IDs
 - `services/admin_dashboard/templates/dashboard.html` - search UI and JavaScript handlers
 
+### 5. Error Signature Clustering (Task #5)
+Added error pattern analysis to the Processor Failures tab:
+- Groups similar errors by normalizing error messages (removing UUIDs, dates, numbers)
+- Summary stats: total errors, unique patterns, affected processors/phases
+- Expandable clusters showing: occurrence count, affected processors, timeline, recent examples
+- Color-coded severity by occurrence count
+
+**Features:**
+- Automatic pattern detection via regex normalization
+- Collapsible section in Processor Failures tab
+- Recent example errors with full messages
+- First/last occurrence timestamps
+
+**Files:**
+- `services/admin_dashboard/services/bigquery_service.py` - `get_error_clusters()`, `get_error_trend_by_signature()`, `get_error_summary_stats()`
+- `services/admin_dashboard/main.py` - `/api/error-clusters`, `/api/error-trend`, `/partials/error-clusters`
+- `services/admin_dashboard/templates/components/error_clusters.html` - new file (130 lines)
+- `services/admin_dashboard/templates/components/processor_failures.html` - integrated error patterns section
+
+### 6. Processor Heartbeat Timeline (Task #6)
+Added processor heartbeat monitoring to the Reliability tab:
+- Reads heartbeat data from Firestore `processor_heartbeats` collection
+- Shows health status: Healthy/Stale/Dead/Completed/Failed
+- Visual table with progress bars, age indicators, status messages
+- Filter by processor name with hours selector
+
+**Features:**
+- Summary cards: Healthy/Stale/Dead/Completed/Failed counts
+- Color-coded health indicators with animated pulses for running
+- Clickable processor names to filter timeline
+- Progress bars for running processors
+
+**Files:**
+- `services/admin_dashboard/services/firestore_service.py` - `get_processor_heartbeats()`, `get_heartbeat_summary()`, `get_running_processors()`, `get_processor_timeline()`
+- `services/admin_dashboard/main.py` - `/api/processor-heartbeats`, `/api/running-processors`, `/partials/heartbeat-timeline`
+- `services/admin_dashboard/templates/components/heartbeat_timeline.html` - new file (180 lines)
+- `services/admin_dashboard/templates/components/reliability_tab.html` - integrated heartbeat section
+
 ---
 
-## Remaining Tasks (13 of 17)
-
-### Dashboard Enhancements (2 remaining)
-| # | Task | Description |
-|---|------|-------------|
-| 5 | Error signature clustering | Group similar errors by pattern |
-| 6 | Processor heartbeat timeline | Visual timeline from Firestore heartbeats |
+## Remaining Tasks (11 of 17)
 
 ### Session 18 Test Completion (4 tasks)
 | # | Task | Remaining |
@@ -127,6 +159,12 @@ f6befa29 feat: Add dashboard widgets for grading coverage, retry queue, and pipe
 | `/api/correlation-search` | GET | Search correlation IDs by partial match |
 | `/api/recent-correlations` | GET | Recent correlation IDs for quick access |
 | `/partials/correlation-trace` | GET | HTMX partial for trace display |
+| `/api/error-clusters` | GET | Errors grouped by signature pattern |
+| `/api/error-trend` | GET | Daily trend for specific error signature |
+| `/partials/error-clusters` | GET | HTMX partial for error clusters |
+| `/api/processor-heartbeats` | GET | Processor heartbeats from Firestore |
+| `/api/running-processors` | GET | Currently running processors |
+| `/partials/heartbeat-timeline` | GET | HTMX partial for heartbeat timeline |
 
 ---
 
@@ -152,9 +190,7 @@ git log --oneline -5
 
 ## Priority Recommendations
 
-**If continuing dashboard work:**
-1. Task #5 (Error signature clustering) - helps identify error patterns
-2. Task #6 (Processor heartbeat timeline) - monitors processor health
+**Dashboard enhancements complete!** All 6 dashboard tasks finished.
 
 **If switching to code quality:**
 1. Task #11 (Hardcoded URLs) - deployment risk
@@ -168,13 +204,17 @@ git log --oneline -5
 ## Files Modified This Session
 
 ```
-services/admin_dashboard/main.py                          (+231 lines)
-services/admin_dashboard/services/bigquery_service.py     (+474 lines)
+services/admin_dashboard/main.py                          (+315 lines)
+services/admin_dashboard/services/bigquery_service.py     (+707 lines)
+services/admin_dashboard/services/firestore_service.py    (+120 lines)
 services/admin_dashboard/templates/components/coverage_metrics.html (+84 lines)
-services/admin_dashboard/templates/components/processor_failures.html (+140 lines)
+services/admin_dashboard/templates/components/processor_failures.html (+165 lines)
 services/admin_dashboard/templates/components/pipeline_timeline.html (new, 157 lines)
 services/admin_dashboard/templates/components/correlation_trace.html (new, 162 lines)
-services/admin_dashboard/templates/dashboard.html         (+239 lines)
+services/admin_dashboard/templates/components/error_clusters.html (new, 130 lines)
+services/admin_dashboard/templates/components/heartbeat_timeline.html (new, 180 lines)
+services/admin_dashboard/templates/components/reliability_tab.html (+35 lines)
+services/admin_dashboard/templates/dashboard.html         (+270 lines)
 ```
 
 ---
@@ -187,4 +227,4 @@ services/admin_dashboard/templates/dashboard.html         (+239 lines)
 
 ---
 
-**Session 20 Partial Complete.** 4 dashboard widgets added, 13 tasks remaining.
+**Session 20 Complete.** All 6 dashboard enhancement tasks finished, 11 tasks remaining.
