@@ -90,9 +90,11 @@ class AsyncUpcomingPlayerGameContextProcessor(
     ASYNC_QUERY_TIMEOUT = 300  # 5 minutes per query
 
     def __init__(self):
-        # Initialize both parent classes
+        # Initialize both parent classes explicitly
+        # CRITICAL: Must call AsyncAnalyticsProcessorBase.__init__ first to initialize
+        # _query_semaphore and _executor attributes needed for async operations
+        AsyncAnalyticsProcessorBase.__init__(self)
         UpcomingPlayerGameContextProcessor.__init__(self)
-        # Note: AsyncAnalyticsProcessorBase.__init__ called via super() chain
         # Initialize query builder
         self._query_builder = None  # Lazy init when project_id is available
 

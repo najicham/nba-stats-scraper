@@ -1,12 +1,80 @@
 # Daily Operations Runbook
 
-**Last Updated:** 2025-12-02
+**Last Updated:** 2026-01-26
 **Purpose:** Step-by-step guide for daily pipeline operations
 **Audience:** Anyone operating the NBA Props Pipeline
 
 ---
 
-## Quick Reference
+## Claude Code Skill: `/validate-daily` ⭐ RECOMMENDED
+
+**NEW (2026-01-26)**: Use the Claude Code skill for intelligent daily validation.
+
+### Quick Start
+
+```bash
+# In Claude Code, simply run:
+/validate-daily
+```
+
+This skill provides:
+- ✅ Comprehensive validation of all pipeline phases
+- ✅ Intelligent investigation of issues (not just command execution)
+- ✅ Severity classification (P1-P5) with actionable recommendations
+- ✅ Context-aware expectations (pre-game vs post-game timing)
+- ✅ Known issue pattern matching
+- ✅ Structured report with specific remediation steps
+
+### When to Use
+
+**Pre-game (5 PM ET)**: Verify data ready before games
+```
+/validate-daily
+```
+
+**Post-game (6 AM ET next day)**: Verify complete pipeline ran
+```
+/validate-daily
+```
+
+**After fixes**: Re-validate to confirm resolution
+```
+/validate-daily
+```
+
+### What You Get
+
+The skill produces a report like:
+
+```
+## Daily Orchestration Validation - 2026-01-26
+
+### Summary: ⚠️ NEEDS ATTENTION
+
+| Phase | Status | Details |
+|-------|--------|---------|
+| Phase 2 (Betting) | ✅ OK | 147 props, 28 lines |
+| Phase 3 (Analytics) | ⚠️ 80% | 4/5 processors complete |
+...
+
+### Issues Found
+🔴 P1 CRITICAL: BigQuery Quota Exceeded
+  - Impact: Phase 3 processors cannot write results
+  - Recommendation: [specific commands to run]
+
+### Recommended Actions
+1. IMMEDIATE: Investigate quota issue [commands]
+2. HIGH: Review stale dependencies [what to check]
+```
+
+**Learn More**: See `docs/02-operations/VALIDATE-DAILY-SKILL-CREATION-GUIDE.md`
+
+---
+
+## Quick Reference (Manual Validation)
+
+> **Note**: The `/validate-daily` skill (above) is recommended over manual validation.
+> Use these manual steps only if you need to run specific checks independently.
 
 ### Morning Health Check (5 min)
 

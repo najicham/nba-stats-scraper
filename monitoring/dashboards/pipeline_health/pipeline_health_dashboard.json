@@ -1,0 +1,290 @@
+{
+  "displayName": "NBA Pipeline Health Dashboard",
+  "mosaicLayout": {
+    "columns": 12,
+    "tiles": [
+      {
+        "width": 4,
+        "height": 4,
+        "widget": {
+          "title": "Phase 3 Completion Rate (24h)",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesFilter": {
+                "filter": "resource.type=\"bigquery_project\" AND metric.type=\"custom.googleapis.com/pipeline_health/phase3_completion\"",
+                "aggregation": {
+                  "alignmentPeriod": "3600s",
+                  "perSeriesAligner": "ALIGN_MEAN"
+                }
+              }
+            },
+            "sparkChartView": {
+              "sparkChartType": "SPARK_LINE"
+            },
+            "thresholds": [
+              {
+                "value": 90,
+                "color": "GREEN"
+              },
+              {
+                "value": 75,
+                "color": "YELLOW"
+              },
+              {
+                "value": 50,
+                "color": "RED"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "xPos": 4,
+        "width": 4,
+        "height": 4,
+        "widget": {
+          "title": "Phase 4 Completion Rate (24h)",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesFilter": {
+                "filter": "resource.type=\"bigquery_project\" AND metric.type=\"custom.googleapis.com/pipeline_health/phase4_completion\"",
+                "aggregation": {
+                  "alignmentPeriod": "3600s",
+                  "perSeriesAligner": "ALIGN_MEAN"
+                }
+              }
+            },
+            "sparkChartView": {
+              "sparkChartType": "SPARK_LINE"
+            },
+            "thresholds": [
+              {
+                "value": 90,
+                "color": "GREEN"
+              },
+              {
+                "value": 75,
+                "color": "YELLOW"
+              },
+              {
+                "value": 50,
+                "color": "RED"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "xPos": 8,
+        "width": 4,
+        "height": 4,
+        "widget": {
+          "title": "Phase 5 Completion Rate (24h)",
+          "scorecard": {
+            "timeSeriesQuery": {
+              "timeSeriesFilter": {
+                "filter": "resource.type=\"bigquery_project\" AND metric.type=\"custom.googleapis.com/pipeline_health/phase5_completion\"",
+                "aggregation": {
+                  "alignmentPeriod": "3600s",
+                  "perSeriesAligner": "ALIGN_MEAN"
+                }
+              }
+            },
+            "sparkChartView": {
+              "sparkChartType": "SPARK_LINE"
+            },
+            "thresholds": [
+              {
+                "value": 90,
+                "color": "GREEN"
+              },
+              {
+                "value": 75,
+                "color": "YELLOW"
+              },
+              {
+                "value": 50,
+                "color": "RED"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "yPos": 4,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Error Rate by Phase (7d)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"bigquery_project\" AND metric.type=\"custom.googleapis.com/pipeline_health/error_rate\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_MEAN",
+                      "groupByFields": ["metric.phase"]
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1"
+              }
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "Error Rate (%)",
+              "scale": "LINEAR"
+            },
+            "chartOptions": {
+              "mode": "COLOR"
+            }
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 4,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Prediction Coverage Trend (7d)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"bigquery_project\" AND metric.type=\"custom.googleapis.com/prediction_coverage/coverage_percentage\"",
+                    "aggregation": {
+                      "alignmentPeriod": "86400s",
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    }
+                  }
+                },
+                "plotType": "LINE",
+                "targetAxis": "Y1"
+              }
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "Coverage (%)",
+              "scale": "LINEAR"
+            },
+            "chartOptions": {
+              "mode": "COLOR"
+            },
+            "thresholds": [
+              {
+                "value": 90,
+                "color": "GREEN"
+              },
+              {
+                "value": 75,
+                "color": "YELLOW"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "yPos": 8,
+        "width": 12,
+        "height": 4,
+        "widget": {
+          "title": "Pipeline Latency Distribution (7d)",
+          "xyChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"bigquery_project\" AND metric.type=\"custom.googleapis.com/pipeline_latency/phase3_minutes\"",
+                    "aggregation": {
+                      "alignmentPeriod": "86400s",
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    }
+                  }
+                },
+                "plotType": "STACKED_BAR",
+                "targetAxis": "Y1"
+              },
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"bigquery_project\" AND metric.type=\"custom.googleapis.com/pipeline_latency/phase4_minutes\"",
+                    "aggregation": {
+                      "alignmentPeriod": "86400s",
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    }
+                  }
+                },
+                "plotType": "STACKED_BAR",
+                "targetAxis": "Y1"
+              },
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"bigquery_project\" AND metric.type=\"custom.googleapis.com/pipeline_latency/phase5_minutes\"",
+                    "aggregation": {
+                      "alignmentPeriod": "86400s",
+                      "perSeriesAligner": "ALIGN_MEAN"
+                    }
+                  }
+                },
+                "plotType": "STACKED_BAR",
+                "targetAxis": "Y1"
+              }
+            ],
+            "timeshiftDuration": "0s",
+            "yAxis": {
+              "label": "Latency (minutes)",
+              "scale": "LINEAR"
+            },
+            "chartOptions": {
+              "mode": "COLOR"
+            }
+          }
+        }
+      },
+      {
+        "yPos": 12,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Top 5 Failing Processors (24h)",
+          "text": {
+            "content": "Query: nba-props-platform.nba_monitoring.processor_error_summary",
+            "format": "MARKDOWN"
+          }
+        }
+      },
+      {
+        "xPos": 6,
+        "yPos": 12,
+        "width": 6,
+        "height": 4,
+        "widget": {
+          "title": "Coverage Gap Breakdown",
+          "pieChart": {
+            "dataSets": [
+              {
+                "timeSeriesQuery": {
+                  "timeSeriesFilter": {
+                    "filter": "resource.type=\"bigquery_project\" AND metric.type=\"custom.googleapis.com/prediction_coverage/gap_count\"",
+                    "aggregation": {
+                      "alignmentPeriod": "3600s",
+                      "perSeriesAligner": "ALIGN_SUM",
+                      "groupByFields": ["metric.gap_reason"]
+                    }
+                  }
+                }
+              }
+            ],
+            "chartType": "PIE"
+          }
+        }
+      }
+    ]
+  }
+}

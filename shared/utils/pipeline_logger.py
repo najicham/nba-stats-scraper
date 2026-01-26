@@ -98,6 +98,12 @@ class PipelineEventBuffer:
     - Prevents "403 Quota exceeded: partition modifications" errors
     - Automatic flushing on timeout (10s) or size (50 events)
     - Thread-safe for concurrent logging from multiple threads
+
+    Metrics tracked:
+    - events_buffered_count: Total events added to buffer
+    - batch_flush_count: Number of batch flushes performed
+    - flush_latency_ms: Time taken to flush batches
+    - failed_flush_count: Number of failed flush attempts
     """
 
     def __init__(self, batch_size: int = BATCH_SIZE, timeout: float = BATCH_TIMEOUT_SECONDS):
@@ -108,6 +114,13 @@ class PipelineEventBuffer:
         self.last_flush_time = time.time()
         self.table_id: Optional[str] = None
         self.project_id: Optional[str] = None
+
+        # Metrics tracking
+        self.events_buffered_count = 0
+        self.batch_flush_count = 0
+        self.failed_flush_count = 0
+        self.total_flush_latency_ms = 0.0
+        self.metrics_log_interval = 100  # Log metrics every N events
 
         # Start background flush thread
         self.flush_thread = threading.Thread(target=self._periodic_flush, daemon=True)
@@ -122,6 +135,13 @@ class PipelineEventBuffer:
             self.buffer.append(row)
             self.table_id = table_id
             self.project_id = project_id
+
+            # Track metrics
+            self.events_buffered_count += 1
+
+            # Log metrics periodically
+            if self.events_buffered_count % self.metrics_log_interval == 0:
+                self._log_metrics()
 
             # Flush if buffer is full
             if len(self.buffer) >= self.batch_size:
@@ -140,6 +160,9 @@ class PipelineEventBuffer:
         if not self.buffer:
             return True
 
+        flush_start_time = time.time()
+        batch_size = len(self.buffer)
+
         try:
             from shared.utils.bigquery_utils import insert_bigquery_rows
 
@@ -154,24 +177,99 @@ class PipelineEventBuffer:
 
         except Exception as e:
             logger.warning(f"Failed to prepare flush: {e}")
+            self.failed_flush_count += 1
             return False
 
         # Perform I/O outside lock
         try:
             success = insert_bigquery_rows(table_id, rows_to_flush, project_id=project_id)
+            flush_latency_ms = (time.time() - flush_start_time) * 1000
+
             if success:
-                logger.debug(f"Flushed {len(rows_to_flush)} events to {table_id}")
+                # Track successful flush metrics
+                self.batch_flush_count += 1
+                self.total_flush_latency_ms += flush_latency_ms
+
+                logger.info(
+                    f"Flushed {batch_size} events to {table_id} "
+                    f"(latency: {flush_latency_ms:.2f}ms, "
+                    f"total_flushes: {self.batch_flush_count}, "
+                    f"total_events: {self.events_buffered_count})"
+                )
             else:
-                logger.warning(f"Failed to flush {len(rows_to_flush)} events to {table_id}")
+                # Track failed flush
+                self.failed_flush_count += 1
+                logger.warning(
+                    f"Failed to flush {batch_size} events to {table_id} "
+                    f"(failures: {self.failed_flush_count})"
+                )
             return success
         except Exception as e:
-            logger.warning(f"Failed to flush events: {e}")
+            self.failed_flush_count += 1
+            logger.warning(f"Failed to flush events: {e} (failures: {self.failed_flush_count})")
             return False
 
     def flush(self) -> bool:
         """Manually flush all pending events."""
         with self.lock:
             return self._flush_internal()
+
+    def _log_metrics(self) -> None:
+        """Log buffer metrics at INFO level (called with lock held)."""
+        avg_flush_latency = (
+            self.total_flush_latency_ms / self.batch_flush_count
+            if self.batch_flush_count > 0
+            else 0.0
+        )
+        avg_batch_size = (
+            self.events_buffered_count / self.batch_flush_count
+            if self.batch_flush_count > 0
+            else 0
+        )
+
+        logger.info(
+            f"Pipeline Event Buffer Metrics: "
+            f"events_buffered={self.events_buffered_count}, "
+            f"batch_flushes={self.batch_flush_count}, "
+            f"failed_flushes={self.failed_flush_count}, "
+            f"avg_batch_size={avg_batch_size:.1f}, "
+            f"avg_flush_latency={avg_flush_latency:.2f}ms, "
+            f"current_buffer_size={len(self.buffer)}"
+        )
+
+    def get_metrics(self) -> Dict[str, Any]:
+        """
+        Get current buffer metrics for monitoring.
+
+        Returns:
+            dict: Metrics including:
+                - events_buffered_count: Total events buffered
+                - batch_flush_count: Number of successful flushes
+                - failed_flush_count: Number of failed flushes
+                - avg_flush_latency_ms: Average flush latency
+                - avg_batch_size: Average batch size
+                - current_buffer_size: Current buffer size
+        """
+        with self.lock:
+            avg_flush_latency = (
+                self.total_flush_latency_ms / self.batch_flush_count
+                if self.batch_flush_count > 0
+                else 0.0
+            )
+            avg_batch_size = (
+                self.events_buffered_count / self.batch_flush_count
+                if self.batch_flush_count > 0
+                else 0
+            )
+
+            return {
+                'events_buffered_count': self.events_buffered_count,
+                'batch_flush_count': self.batch_flush_count,
+                'failed_flush_count': self.failed_flush_count,
+                'avg_flush_latency_ms': round(avg_flush_latency, 2),
+                'avg_batch_size': round(avg_batch_size, 1),
+                'current_buffer_size': len(self.buffer),
+            }
 
 
 # Global event buffer instance
@@ -652,6 +750,27 @@ def flush_event_buffer() -> bool:
         >>> flush_event_buffer()  # Ensure written immediately
     """
     return _event_buffer.flush()
+
+
+def get_buffer_metrics() -> Dict[str, Any]:
+    """
+    Get current pipeline event buffer metrics.
+
+    Returns:
+        dict: Current buffer metrics for monitoring and alerting:
+            - events_buffered_count: Total events buffered since start
+            - batch_flush_count: Number of successful batch flushes
+            - failed_flush_count: Number of failed flush attempts
+            - avg_flush_latency_ms: Average time to flush a batch
+            - avg_batch_size: Average number of events per batch
+            - current_buffer_size: Current number of buffered events
+
+    Example:
+        >>> metrics = get_buffer_metrics()
+        >>> print(f"Buffer has {metrics['current_buffer_size']} pending events")
+        >>> print(f"Flush success rate: {metrics['batch_flush_count'] / (metrics['batch_flush_count'] + metrics['failed_flush_count']):.1%}")
+    """
+    return _event_buffer.get_metrics()
 
 
 def cleanup_stale_retrying_entries(max_age_hours: int = 2) -> int:
