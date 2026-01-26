@@ -40,7 +40,7 @@ from shared.clients.bigquery_pool import get_bigquery_client
 
 # Import notification system with fallback
 try:
-    from shared.utils.notification_system import notify_info, notify_warning
+    from orchestration.shared.utils.notification_system import notify_info, notify_warning
 except ImportError:
     # Fallback if shared module not available in Cloud Functions
     def notify_info(*args, **kwargs):

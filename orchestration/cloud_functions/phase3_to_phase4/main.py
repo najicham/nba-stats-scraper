@@ -44,11 +44,11 @@ import pytz
 import requests
 from shared.clients.bigquery_pool import get_bigquery_client
 from shared.validation.phase_boundary_validator import PhaseBoundaryValidator, ValidationMode
-from shared.utils.phase_execution_logger import log_phase_execution
+from orchestration.shared.utils.phase_execution_logger import log_phase_execution
 
 # Completion tracker for dual-write to Firestore and BigQuery
 try:
-    from shared.utils.completion_tracker import get_completion_tracker
+    from orchestration.shared.utils.completion_tracker import get_completion_tracker
     COMPLETION_TRACKER_ENABLED = True
 except ImportError:
     COMPLETION_TRACKER_ENABLED = False
@@ -661,7 +661,7 @@ def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_c
             }]
         }
 
-        from shared.utils.slack_retry import send_slack_webhook_with_retry
+        from orchestration.shared.utils.slack_retry import send_slack_webhook_with_retry
         success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
         if success:
             logger.info(f"Data freshness alert sent successfully for {game_date}")
@@ -760,7 +760,7 @@ def send_validation_blocking_alert(game_date: str, validation_result) -> bool:
                     "fields": metrics_fields
                 })
 
-        from shared.utils.slack_retry import send_slack_webhook_with_retry
+        from orchestration.shared.utils.slack_retry import send_slack_webhook_with_retry
         success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
         if success:
             logger.info(f"Validation blocking alert sent successfully for {game_date}")

@@ -41,7 +41,7 @@ from typing import Dict, List, Optional
 
 from google.cloud import bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
-from shared.utils.slack_retry import send_slack_webhook_with_retry
+from orchestration.shared.utils.slack_retry import send_slack_webhook_with_retry
 import functions_framework
 
 # Configure logging

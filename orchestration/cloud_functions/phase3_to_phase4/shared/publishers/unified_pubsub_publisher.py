@@ -332,7 +332,7 @@ class UnifiedPubSubPublisher:
             error: Exception that occurred
         """
         try:
-            from shared.utils.metrics_utils import send_metric, get_metrics_client
+            from orchestration.shared.utils.metrics_utils import send_metric, get_metrics_client
 
             # Initialize metrics client with project_id if not already done
             if get_metrics_client() is None:
@@ -382,7 +382,7 @@ class UnifiedPubSubPublisher:
 
         # Send alert via notification system
         try:
-            from shared.utils.notification_system import notify_warning
+            from orchestration.shared.utils.notification_system import notify_warning
 
             notify_warning(
                 title=f"Pub/Sub Publish Failed: {processor_name}",

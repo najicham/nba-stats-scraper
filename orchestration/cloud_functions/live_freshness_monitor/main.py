@@ -287,7 +287,7 @@ def send_alert(message: str, severity: str = "warning"):
 
     # Also try the internal notification system as backup
     try:
-        from shared.utils.notification_system import notify_warning, notify_error
+        from orchestration.shared.utils.notification_system import notify_warning, notify_error
 
         if severity in ("error", "critical"):
             notify_error(

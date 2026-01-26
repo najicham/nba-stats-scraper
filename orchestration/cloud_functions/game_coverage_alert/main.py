@@ -218,7 +218,7 @@ def send_coverage_alert(coverage: Dict) -> bool:
         True if alert sent successfully
     """
     try:
-        from shared.utils.slack_alerting import send_slack_alert
+        from orchestration.shared.utils.slack_alerting import send_slack_alert
 
         # Build alert message
         issues = coverage.get('issues', [])

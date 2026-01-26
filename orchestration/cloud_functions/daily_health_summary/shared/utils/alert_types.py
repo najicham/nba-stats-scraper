@@ -1,1 +1,0 @@
-../../../../../shared/utils/alert_types.py

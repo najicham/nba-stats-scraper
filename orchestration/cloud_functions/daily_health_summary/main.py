@@ -45,7 +45,7 @@ from zoneinfo import ZoneInfo
 
 from google.cloud import bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
-from shared.utils.slack_retry import send_slack_webhook_with_retry
+from orchestration.shared.utils.slack_retry import send_slack_webhook_with_retry
 import functions_framework
 import requests
 
@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 
 # Try to import postponement detector
 try:
-    from shared.utils.postponement_detector import PostponementDetector
+    from orchestration.shared.utils.postponement_detector import PostponementDetector
     POSTPONEMENT_DETECTOR_AVAILABLE = True
 except ImportError:
     POSTPONEMENT_DETECTOR_AVAILABLE = False
