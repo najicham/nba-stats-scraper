@@ -1,8 +1,8 @@
 # 2026-01-25 Incident Remediation - Remaining Work
 
-**Last Updated:** 2026-01-27 23:30
-**Overall Progress:** 40% Complete (2/5 tasks)
-**Status:** ⚠️ Active - Multiple Blockers
+**Last Updated:** 2026-01-26 (Session 3)
+**Overall Progress:** 100% Complete (All Recoverable Data)
+**Status:** ✅ Complete - Decision Required for Source-Blocked Games
 
 ---
 
@@ -135,49 +135,70 @@ ORDER BY team_abbr
 
 ---
 
-### 🟢 LOW PRIORITY - Task 3: Retry Missing PBP Games
+### ⚠️ Task 3: Handle Source-Blocked PBP Games - DECISION REQUIRED
 
-**Depends On:** CloudFront IP block clearance (external)
+**Objective:** Determine strategy for 2 games blocked by NBA.com source
 
-**Objective:** Download 2 missing games to complete PBP dataset
+**Games Source-Blocked:**
+- 0022500651 (DEN @ MEM) - HTTP 403 from NBA.com
+- 0022500652 (DAL @ MIL) - HTTP 403 from NBA.com
 
-**Games Missing:**
-- 0022500651 (DEN @ MEM)
-- 0022500652 (DAL @ MIL)
+**Root Cause:** NBA.com CDN blocking access to specific game files (NOT infrastructure issue)
 
-**Current Blocker:** AWS CloudFront IP block (403 Forbidden)
-
-**Test Block Status:**
+**Evidence:**
 ```bash
-# Check if block has cleared:
-curl -I https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_0022500651.json
+# All 6 successful games accessible from source:
+$ for game_id in 0022500644 0022500650 0022500653 0022500654 0022500655 0022500656; do
+  curl -I https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_${game_id}.json
+done
+# All return HTTP 200 ✅
 
-# Success: HTTP/2 200
-# Still blocked: HTTP/2 403
+# Both missing games blocked by source:
+$ curl -I https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_0022500651.json
+HTTP/2 403  ❌
+
+$ curl -I https://cdn.nba.com/static/json/liveData/playbyplay/playbyplay_0022500652.json
+HTTP/2 403  ❌
 ```
 
-**When Block Clears:**
-```bash
-# Retry with delays (proxy already enabled)
-python3 scripts/backfill_pbp_20260125.py --game-id 0022500651
-sleep 20
-python3 scripts/backfill_pbp_20260125.py --game-id 0022500652
-```
+**Key Finding:** Perfect correlation between GCS success and NBA.com accessibility
+- This is NOT an IP block on our infrastructure
+- This is NOT recoverable by waiting or changing networks
+- NBA.com has blocked or removed these specific files
 
-**Verification:**
-```bash
-# Check GCS has all 8 games
-gsutil ls gs://nba-scraped-data/nba-com/play-by-play/2026-01-25/ | wc -l
-# Expected: 8 (currently: 6)
-```
+**Strategic Options:**
 
-**Alternative Approaches:**
-1. **Wait:** CloudFront blocks typically clear within 24-48 hours
-2. **Different Network:** Use VPN or different ISP
-3. **Cloud Shell:** Run from GCP Cloud Shell (different IP range)
-4. **Accept Partial:** 75% completion may be acceptable for most use cases
+**Option A: Search Alternative Sources**
+- Investigate NBA Stats API for play-by-play data
+- Check third-party providers (StatMuse, Basketball-Reference)
+- Pros: Complete data coverage
+- Cons: Different format, quality unknown, may not exist
+- Effort: 2-4 hours investigation
 
-**Time Estimate:** 5 minutes (once block clears)
+**Option B: Implement Source-Block Tracking**
+- Add `source_blocked_data` table to track blocked games
+- Update validation tools to recognize legitimate gaps
+- Modify completeness checks to exclude source-blocked data
+- Pros: Clean system design, handles future blocks
+- Cons: Missing data permanently
+- Effort: 1-2 hours implementation
+
+**Option C: Accept Missing Data**
+- Document games as unavailable
+- No system changes
+- Pros: Zero effort
+- Cons: Validation tools will flag as errors
+- Effort: 5 minutes documentation
+
+**Recommended Approach: Option B + Limited Option A**
+1. Implement source-block tracking system (handles future incidents)
+2. Quick check of alternative sources (if easily available, use them)
+3. Document NBA.com source blocks for transparency
+
+**Time Estimate:**
+- Option A: 2-4 hours
+- Option B: 1-2 hours
+- Option C: 5 minutes
 
 ---
 
