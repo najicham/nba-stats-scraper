@@ -83,17 +83,62 @@ if [ -f "Dockerfile" ]; then
     mv Dockerfile Dockerfile.backup.$(date +%s)
 fi
 
-# Phase 1: Setup (matching your timing pattern)
+# Phase 1: Pre-deployment smoke tests
+echo ""
+echo "🧪 Running pre-deployment smoke tests..."
+echo "========================================="
+TEST_START=$(date +%s)
+
+# Run service import tests
+echo "📦 Testing service imports..."
+python -m pytest tests/smoke/test_service_imports.py -v --tb=short
+SMOKE_EXIT_CODE=$?
+
+# Run MRO validation tests
+echo ""
+echo "🔍 Testing MRO validation..."
+python -m pytest tests/smoke/test_mro_validation.py -v --tb=short
+MRO_EXIT_CODE=$?
+
+TEST_END=$(date +%s)
+TEST_DURATION=$((TEST_END - TEST_START))
+
+# Check if tests passed
+if [ $SMOKE_EXIT_CODE -ne 0 ] || [ $MRO_EXIT_CODE -ne 0 ]; then
+    echo ""
+    echo "❌ DEPLOYMENT BLOCKED: Pre-deployment tests failed!"
+    echo "=================================================="
+    echo "⏱️  Test duration: ${TEST_DURATION}s"
+    echo ""
+    if [ $SMOKE_EXIT_CODE -ne 0 ]; then
+        echo "Failed: Service import tests (exit code: $SMOKE_EXIT_CODE)"
+    fi
+    if [ $MRO_EXIT_CODE -ne 0 ]; then
+        echo "Failed: MRO validation tests (exit code: $MRO_EXIT_CODE)"
+    fi
+    echo ""
+    echo "Fix the errors above before deploying to production."
+    exit 1
+fi
+
+echo ""
+echo "✅ All pre-deployment tests passed!"
+echo "   Service imports: PASSED"
+echo "   MRO validation:  PASSED"
+echo "⏱️  Test duration: ${TEST_DURATION}s"
+echo ""
+
+# Phase 2: Setup
 SETUP_START=$(date +%s)
-echo "📋 Phase 1: Copying docker/analytics-processor.Dockerfile to root..."
+echo "📋 Phase 2: Copying docker/analytics-processor.Dockerfile to root..."
 cp docker/analytics-processor.Dockerfile ./Dockerfile
 SETUP_END=$(date +%s)
 SETUP_DURATION=$((SETUP_END - SETUP_START))
 echo "⏱️  Setup completed in ${SETUP_DURATION}s"
 
-# Phase 2: Deployment
+# Phase 3: Deployment
 DEPLOY_PHASE_START=$(date +%s)
-echo "📋 Phase 2: Deploying to Cloud Run..."
+echo "📋 Phase 3: Deploying to Cloud Run..."
 gcloud run deploy $SERVICE_NAME \
     --source=. \
     --region=$REGION \
@@ -116,9 +161,9 @@ DEPLOY_PHASE_END=$(date +%s)
 DEPLOY_PHASE_DURATION=$((DEPLOY_PHASE_END - DEPLOY_PHASE_START))
 echo "⏱️  Cloud Run deployment completed in ${DEPLOY_PHASE_DURATION}s"
 
-# Phase 3: Cleanup
+# Phase 4: Cleanup
 CLEANUP_START=$(date +%s)
-echo "📋 Phase 3: Cleaning up temporary Dockerfile..."
+echo "📋 Phase 4: Cleaning up temporary Dockerfile..."
 rm ./Dockerfile
 CLEANUP_END=$(date +%s)
 CLEANUP_DURATION=$((CLEANUP_END - CLEANUP_START))
@@ -151,6 +196,7 @@ echo "End:        $DEPLOY_END_DISPLAY"
 echo "Duration:   $DURATION_DISPLAY"
 echo ""
 echo "Phase Breakdown:"
+echo "  Tests:      ${TEST_DURATION}s"
 echo "  Setup:      ${SETUP_DURATION}s"
 echo "  Deployment: ${DEPLOY_PHASE_DURATION}s"
 echo "  Cleanup:    ${CLEANUP_DURATION}s"
@@ -175,9 +221,9 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
     echo ""
     echo "✅ Deployment completed successfully in $DURATION_DISPLAY!"
 
-    # Phase 4: Verify deployment
+    # Phase 5: Verify deployment
     VERIFY_START=$(date +%s)
-    echo "📋 Phase 4: Verifying deployment..."
+    echo "📋 Phase 5: Verifying deployment..."
     sleep 3
 
     # Get deployed revision info
@@ -203,10 +249,10 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
     VERIFY_DURATION=$((VERIFY_END - VERIFY_START))
     echo "⏱️  Verification completed in ${VERIFY_DURATION}s"
 
-    # Phase 5: Testing health endpoint
-    TEST_START=$(date +%s)
+    # Phase 6: Testing health endpoint
+    HEALTH_TEST_START=$(date +%s)
     echo ""
-    echo "📋 Phase 5: Testing health endpoint..."
+    echo "📋 Phase 6: Testing health endpoint..."
     SERVICE_URL=$(gcloud run services describe $SERVICE_NAME --region=$REGION --format="value(status.url)" 2>/dev/null)
     
     if [ ! -z "$SERVICE_URL" ]; then
@@ -222,13 +268,13 @@ if [ $DEPLOY_STATUS -eq 0 ]; then
         else
             echo "⚠️  Health check response unexpected"
         fi
-        
-        TEST_END=$(date +%s)
-        TEST_DURATION=$((TEST_END - TEST_START))
-        echo "⏱️  Health test completed in ${TEST_DURATION}s"
-        
+
+        HEALTH_TEST_END=$(date +%s)
+        HEALTH_TEST_DURATION=$((HEALTH_TEST_END - HEALTH_TEST_START))
+        echo "⏱️  Health test completed in ${HEALTH_TEST_DURATION}s"
+
         # Update total with test time
-        FINAL_TOTAL=$((TEST_END - DEPLOY_START_TIME))
+        FINAL_TOTAL=$((HEALTH_TEST_END - DEPLOY_START_TIME))
         if [ $FINAL_TOTAL -lt 60 ]; then
             FINAL_DURATION_DISPLAY="${FINAL_TOTAL}s"
         elif [ $FINAL_TOTAL -lt 3600 ]; then
