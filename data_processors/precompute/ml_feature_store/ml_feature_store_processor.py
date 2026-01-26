@@ -1175,11 +1175,17 @@ class MLFeatureStoreProcessor(
         features.append(1.0 if (phase3_data.get('season_phase') or '').lower() == 'playoffs' else 0.0)
         feature_sources[17] = 'phase3'
         
-        # Features 18-21: Shot Zones
-        features.append(self._get_feature_with_fallback(18, 'paint_rate_last_10', phase4_data, phase3_data, 30.0, feature_sources) / 100.0)  # Convert to decimal
-        features.append(self._get_feature_with_fallback(19, 'mid_range_rate_last_10', phase4_data, phase3_data, 20.0, feature_sources) / 100.0)
-        features.append(self._get_feature_with_fallback(20, 'three_pt_rate_last_10', phase4_data, phase3_data, 35.0, feature_sources) / 100.0)
-        
+        # Features 18-21: Shot Zones (NULLABLE - use NULL instead of defaults)
+        # Shot zone features - use NULL instead of defaults when data missing
+        paint_rate = self._get_feature_nullable(18, 'paint_rate_last_10', phase4_data, phase3_data, feature_sources)
+        mid_range_rate = self._get_feature_nullable(19, 'mid_range_rate_last_10', phase4_data, phase3_data, feature_sources)
+        three_pt_rate = self._get_feature_nullable(20, 'three_pt_rate_last_10', phase4_data, phase3_data, feature_sources)
+
+        # Convert to decimal if not None
+        features.append(paint_rate / 100.0 if paint_rate is not None else None)
+        features.append(mid_range_rate / 100.0 if mid_range_rate is not None else None)
+        features.append(three_pt_rate / 100.0 if three_pt_rate is not None else None)
+
         features.append(self.feature_calculator.calculate_pct_free_throw(phase3_data))
         feature_sources[21] = 'calculated'
         
@@ -1236,6 +1242,13 @@ class MLFeatureStoreProcessor(
         features.append(float(ppm_avg) if ppm_avg is not None else 0.4)
         feature_sources[32] = 'minutes_ppm' if minutes_ppm_data else 'fallback'
 
+        # Feature 33: Shot Zone Data Availability Indicator (NEW - Added 2026-01-25)
+        # Indicator flag: 1.0 if all shot zone data available, 0.0 if any missing
+        # Allows model to distinguish "average shooter" from "data missing"
+        has_shot_zone_data = 1.0 if all([paint_rate is not None, mid_range_rate is not None, three_pt_rate is not None]) else 0.0
+        features.append(has_shot_zone_data)
+        feature_sources[33] = 'calculated'
+
         return features, feature_sources
     
     def _get_feature_with_fallback(self, index: int, field_name: str, 
@@ -1264,10 +1277,47 @@ class MLFeatureStoreProcessor(
         if field_name in phase3_data and phase3_data[field_name] is not None:
             feature_sources[index] = 'phase3'
             return float(phase3_data[field_name])
-        
+
         # Last resort: default
         feature_sources[index] = 'default'
         return float(default)
+
+    def _get_feature_nullable(self, index: int, field_name: str,
+                              phase4_data: Dict, phase3_data: Dict,
+                              feature_sources: Dict) -> Optional[float]:
+        """
+        Get feature value, returning None if not available (no default fallback).
+
+        Used for features where NULL is meaningful (e.g., missing shot zone data).
+        Allows ML models to distinguish "average value" from "data unavailable".
+
+        Args:
+            index: Feature index
+            field_name: Field name in source dicts
+            phase4_data: Phase 4 data dict
+            phase3_data: Phase 3 data dict
+            feature_sources: Dict to track source (mutated)
+
+        Returns:
+            float or None: Feature value if available, None if missing
+
+        Example:
+            >>> paint_rate = self._get_feature_nullable(18, 'paint_rate_last_10', ...)
+            >>> # Returns None instead of 30.0 default when data unavailable
+        """
+        # Try Phase 4 first
+        if field_name in phase4_data and phase4_data[field_name] is not None:
+            feature_sources[index] = 'phase4'
+            return float(phase4_data[field_name])
+
+        # Fallback to Phase 3
+        if field_name in phase3_data and phase3_data[field_name] is not None:
+            feature_sources[index] = 'phase3'
+            return float(phase3_data[field_name])
+
+        # Data not available - return None instead of default
+        feature_sources[index] = 'missing'
+        return None
     
     def _get_feature_phase4_only(self, index: int, field_name: str,
                                  phase4_data: Dict, default: float,
