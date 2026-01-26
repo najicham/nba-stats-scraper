@@ -41,22 +41,28 @@ docs/
 ## 📁 Core Documentation Areas
 
 ### 1. Validation Framework ⭐ NEW
-**Location**: `docs/validation-framework/`
+**Location**: `docs/validation-framework/` and `docs/06-testing/`
 
 **Purpose**: Complete validation system documentation
 
 **Key Files**:
-- `README.md` - Documentation index
-- `VALIDATION-GUIDE.md` - User guide for running validations
-- `ULTRATHINK-RECOMMENDATIONS.md` - Improvement roadmap
+- `validation-framework/README.md` - Documentation index
+- `validation-framework/VALIDATION-GUIDE.md` - User guide for running validations
+- `validation-framework/ULTRATHINK-RECOMMENDATIONS.md` - Improvement roadmap
+- **`06-testing/SPOT-CHECK-SYSTEM.md`** ⭐ **NEW** - Data accuracy spot checks
 
-**Also See**: `shared/validation/README.md` (code-level docs)
+**Also See**:
+- `shared/validation/README.md` (code-level docs)
+- `scripts/spot_check_data_accuracy.py` - Automated data accuracy verification
+- `scripts/validate_tonight_data.py` - Daily validation with spot checks
 
 **Use When**:
 - Running backfill validations
 - Before ML training
 - Debugging data quality issues
 - Understanding validation failures
+- **Verifying calculated fields are accurate**
+- **Testing after schema changes or processor updates**
 
 ---
 
