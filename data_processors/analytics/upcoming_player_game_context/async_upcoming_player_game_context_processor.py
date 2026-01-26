@@ -56,6 +56,9 @@ from data_processors.analytics.async_analytics_base import (
 from data_processors.analytics.upcoming_player_game_context.upcoming_player_game_context_processor import (
     UpcomingPlayerGameContextProcessor
 )
+from data_processors.analytics.upcoming_player_game_context.queries import (
+    PlayerGameQueryBuilder
+)
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +93,8 @@ class AsyncUpcomingPlayerGameContextProcessor(
         # Initialize both parent classes
         UpcomingPlayerGameContextProcessor.__init__(self)
         # Note: AsyncAnalyticsProcessorBase.__init__ called via super() chain
+        # Initialize query builder
+        self._query_builder = None  # Lazy init when project_id is available
 
     async def extract_raw_data_async(self) -> None:
         """
@@ -272,171 +277,40 @@ class AsyncUpcomingPlayerGameContextProcessor(
             self.source_tracking['props']['rows_found'] = 0
             raise
 
-    def _build_daily_mode_query(self) -> str:
-        """Build the daily mode query string."""
-        roster_start = (self.target_date - timedelta(days=90)).isoformat()
-        roster_end = self.target_date.isoformat()
-
-        return f"""
-        WITH games_today AS (
-            SELECT
-                CONCAT(
-                    FORMAT_DATE('%Y%m%d', game_date),
-                    '_',
-                    away_team_tricode,
-                    '_',
-                    home_team_tricode
-                ) as game_id,
-                game_date,
-                home_team_tricode as home_team_abbr,
-                away_team_tricode as away_team_abbr
-            FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
-            WHERE game_date = @game_date
-        ),
-        teams_playing AS (
-            SELECT DISTINCT home_team_abbr as team_abbr FROM games_today
-            UNION DISTINCT
-            SELECT DISTINCT away_team_abbr as team_abbr FROM games_today
-        ),
-        latest_roster_per_team AS (
-            SELECT team_abbr, MAX(roster_date) as roster_date
-            FROM `{self.project_id}.nba_raw.espn_team_rosters`
-            WHERE roster_date >= @roster_start
-              AND roster_date <= @roster_end
-            GROUP BY team_abbr
-        ),
-        roster_players AS (
-            SELECT DISTINCT
-                r.player_lookup,
-                r.team_abbr
-            FROM `{self.project_id}.nba_raw.espn_team_rosters` r
-            INNER JOIN latest_roster_per_team lr
-                ON r.team_abbr = lr.team_abbr
-                AND r.roster_date = lr.roster_date
-            WHERE r.roster_date >= @roster_start
-              AND r.roster_date <= @roster_end
-              AND r.team_abbr IN (SELECT team_abbr FROM teams_playing)
-              AND r.player_lookup IS NOT NULL
-        ),
-        players_with_games AS (
-            SELECT DISTINCT
-                rp.player_lookup,
-                g.game_id,
-                rp.team_abbr,
-                g.home_team_abbr,
-                g.away_team_abbr
-            FROM roster_players rp
-            INNER JOIN games_today g
-                ON rp.team_abbr = g.home_team_abbr
-                OR rp.team_abbr = g.away_team_abbr
-        ),
-        injuries AS (
-            SELECT DISTINCT
-                player_lookup,
-                injury_status
-            FROM `{self.project_id}.nba_raw.nbac_injury_report`
-            WHERE report_date = @game_date
-              AND player_lookup IS NOT NULL
-        ),
-        props AS (
-            SELECT DISTINCT
-                player_lookup,
-                points_line,
-                'odds_api' as prop_source
-            FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE game_date = @game_date
-              AND player_lookup IS NOT NULL
-            UNION DISTINCT
-            SELECT DISTINCT
-                player_lookup,
-                points_line,
-                'bettingpros' as prop_source
-            FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
-            WHERE game_date = @game_date
-              AND is_active = TRUE
-              AND player_lookup IS NOT NULL
-        )
-        SELECT
-            p.player_lookup,
-            p.game_id,
-            p.team_abbr,
-            p.home_team_abbr,
-            p.away_team_abbr,
-            i.injury_status,
-            pr.points_line,
-            pr.prop_source,
-            CASE WHEN pr.player_lookup IS NOT NULL THEN TRUE ELSE FALSE END as has_prop_line
-        FROM players_with_games p
-        LEFT JOIN injuries i ON p.player_lookup = i.player_lookup
-        LEFT JOIN props pr ON p.player_lookup = pr.player_lookup
-        WHERE i.injury_status IS NULL
-           OR i.injury_status NOT IN ('Out', 'OUT', 'Doubtful', 'DOUBTFUL')
+    def _ensure_query_builder(self) -> PlayerGameQueryBuilder:
         """
+        Ensure query builder is initialized.
+
+        Returns:
+            Initialized PlayerGameQueryBuilder instance
+        """
+        if self._query_builder is None:
+            self._query_builder = PlayerGameQueryBuilder(self.project_id)
+        return self._query_builder
+
+    def _build_daily_mode_query(self) -> str:
+        """
+        Build the daily mode query string.
+
+        Delegates to PlayerGameQueryBuilder for query construction.
+
+        Returns:
+            SQL query string for daily mode player extraction
+        """
+        query_builder = self._ensure_query_builder()
+        return query_builder.build_daily_mode_query(self.target_date)
 
     def _build_backfill_mode_query(self) -> str:
-        """Build the backfill mode query string."""
-        return f"""
-        WITH schedule_data AS (
-            SELECT
-                game_id as nba_game_id,
-                CONCAT(
-                    FORMAT_DATE('%Y%m%d', game_date),
-                    '_',
-                    away_team_tricode,
-                    '_',
-                    home_team_tricode
-                ) as game_id,
-                home_team_tricode,
-                away_team_tricode
-            FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
-            WHERE game_date = @game_date
-        ),
-        players_with_games AS (
-            SELECT DISTINCT
-                g.player_lookup,
-                s.game_id,
-                g.team_abbr,
-                g.player_status,
-                COALESCE(s.home_team_tricode, g.team_abbr) as home_team_abbr,
-                COALESCE(s.away_team_tricode, g.team_abbr) as away_team_abbr
-            FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats` g
-            LEFT JOIN schedule_data s
-                ON g.game_id = s.nba_game_id
-            WHERE g.game_date = @game_date
-              AND g.player_lookup IS NOT NULL
-              AND (g.player_status IS NULL OR g.player_status NOT IN ('DNP', 'DND', 'NWT'))
-        ),
-        props AS (
-            SELECT DISTINCT
-                player_lookup,
-                points_line,
-                'odds_api' as prop_source
-            FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE game_date = @game_date
-              AND player_lookup IS NOT NULL
-            UNION DISTINCT
-            SELECT DISTINCT
-                player_lookup,
-                points_line,
-                'bettingpros' as prop_source
-            FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
-            WHERE game_date = @game_date
-              AND is_active = TRUE
-              AND player_lookup IS NOT NULL
-        )
-        SELECT
-            p.player_lookup,
-            p.game_id,
-            p.team_abbr,
-            p.home_team_abbr,
-            p.away_team_abbr,
-            p.player_status,
-            pr.points_line,
-            pr.prop_source,
-            CASE WHEN pr.player_lookup IS NOT NULL THEN TRUE ELSE FALSE END as has_prop_line
-        FROM players_with_games p
-        LEFT JOIN props pr ON p.player_lookup = pr.player_lookup
         """
+        Build the backfill mode query string.
+
+        Delegates to PlayerGameQueryBuilder for query construction.
+
+        Returns:
+            SQL query string for backfill mode player extraction
+        """
+        query_builder = self._ensure_query_builder()
+        return query_builder.build_backfill_mode_query()
 
     async def _extract_supporting_data_async(self) -> None:
         """

@@ -100,6 +100,9 @@ from .team_context import TeamContextCalculator
 from .travel_context import TravelContextCalculator
 from .betting_data import BettingDataExtractor
 
+# Calculator modules (Week 6 - Maintainability Refactor)
+from .calculators import QualityFlagsCalculator, ContextBuilder
+
 logger = logging.getLogger(__name__)
 
 
@@ -169,6 +172,8 @@ class UpcomingPlayerGameContextProcessor(
         self._team_context_calculator = None  # Lazy-loaded
         self._travel_context_calculator = None  # Lazy-loaded
         self._betting_data_extractor = None  # Lazy-loaded
+        self._quality_calculator = None  # Lazy-loaded (Week 6)
+        self._context_builder = None  # Lazy-loaded (Week 6)
 
         # Season start date (for completeness checking - Week 5)
         self.season_start_date = None
@@ -203,6 +208,22 @@ class UpcomingPlayerGameContextProcessor(
             self._betting_data_extractor = BettingDataExtractor(self.bq_client, self.project_id)
         return self._betting_data_extractor
 
+    def _get_quality_calculator(self) -> QualityFlagsCalculator:
+        """Lazy-load quality flags calculator."""
+        if self._quality_calculator is None:
+            self._quality_calculator = QualityFlagsCalculator(
+                min_games_for_high_quality=self.min_games_for_high_quality,
+                min_games_for_medium_quality=self.min_games_for_medium_quality
+            )
+        return self._quality_calculator
+
+    def _get_context_builder(self) -> ContextBuilder:
+        """Lazy-load context builder."""
+        if self._context_builder is None:
+            roster_ages = getattr(self, 'roster_ages', {})
+            self._context_builder = ContextBuilder(roster_ages=roster_ages)
+        return self._context_builder
+
     def get_upstream_data_check_query(self, start_date: str, end_date: str) -> str:
         """
         Return query to check if upstream data is available for circuit breaker auto-reset.
@@ -227,127 +248,7 @@ class UpcomingPlayerGameContextProcessor(
     # ============================================================
     # Pattern #3: Smart Reprocessing - Data Hash Fields
     # ============================================================
-    # Fields included in data_hash calculation (meaningful analytics output only)
-    # EXCLUDES: metadata (created_at, processed_at, etc.), source tracking, data quality
-    HASH_FIELDS = [
-        # Core identifiers
-        'player_lookup',
-        'universal_player_id',
-        'game_id',
-        'game_date',
-        'team_abbr',
-        'opponent_team_abbr',
-        'has_prop_line',
-
-        # Player prop betting context
-        'current_points_line',
-        'opening_points_line',
-        'line_movement',
-        'current_points_line_source',
-        'opening_points_line_source',
-
-        # Game spread context
-        'game_spread',
-        'opening_spread',
-        'spread_movement',
-        'game_spread_source',
-        'spread_public_betting_pct',
-
-        # Game total context
-        'game_total',
-        'opening_total',
-        'total_movement',
-        'game_total_source',
-        'total_public_betting_pct',
-
-        # Pre-game context
-        'pace_differential',
-        'opponent_pace_last_10',
-        'game_start_time_local',
-        'opponent_ft_rate_allowed',
-        'home_game',
-        'back_to_back',
-        'season_phase',
-        'projected_usage_rate',
-
-        # Player fatigue analysis
-        'days_rest',
-        'days_rest_before_last_game',
-        'days_since_2_plus_days_rest',
-        'games_in_last_7_days',
-        'games_in_last_14_days',
-        'minutes_in_last_7_days',
-        'minutes_in_last_14_days',
-        'avg_minutes_per_game_last_7',
-        'back_to_backs_last_14_days',
-        'avg_usage_rate_last_7_games',
-        'fourth_quarter_minutes_last_7',
-        'clutch_minutes_last_7_games',
-
-        # Travel context
-        'travel_miles',
-        'time_zone_changes',
-        'consecutive_road_games',
-        'miles_traveled_last_14_days',
-        'time_zones_crossed_last_14_days',
-
-        # Player characteristics
-        'player_age',
-
-        # Recent performance context
-        'points_avg_last_5',
-        'points_avg_last_10',
-        'prop_over_streak',
-        'prop_under_streak',
-        'star_teammates_out',
-        'opponent_def_rating_last_10',
-        'shooting_pct_decline_last_5',
-        'fourth_quarter_production_last_7',
-
-        # Forward-looking schedule context
-        'next_game_days_rest',
-        'games_in_next_7_days',
-        'next_opponent_win_pct',
-        'next_game_is_primetime',
-
-        # Opponent asymmetry context
-        'opponent_days_rest',
-        'opponent_games_in_next_7_days',
-        'opponent_next_game_days_rest',
-
-        # Real-time updates
-        'player_status',
-        'injury_report',
-        'questionable_teammates',
-        'probable_teammates',
-
-        # Completeness metrics
-        'expected_games_count',
-        'actual_games_count',
-        'completeness_percentage',
-        'missing_games_count',
-        'is_production_ready',
-        'manual_override_required',
-        'season_boundary_detected',
-        'backfill_bootstrap_mode',
-        'processing_decision_reason',
-
-        # Multi-window completeness
-        'l5_completeness_pct',
-        'l5_is_complete',
-        'l10_completeness_pct',
-        'l10_is_complete',
-        'l7d_completeness_pct',
-        'l7d_is_complete',
-        'l14d_completeness_pct',
-        'l14d_is_complete',
-        'l30d_completeness_pct',
-        'l30d_is_complete',
-        'all_windows_complete',
-
-        # Update tracking (context_version only - not timestamps)
-        'context_version',
-    ]
+    # HASH_FIELDS moved to calculators/context_builder.py (Week 6 Refactor)
 
     # ============================================================
     # Pattern #1: Smart Skip Configuration
@@ -2044,159 +1945,61 @@ class UpcomingPlayerGameContextProcessor(
             }
             self.registry_reader._log_unresolved_player(player_lookup, game_context)
 
-        # Build context record
-        context = {
-            # Core identifiers
-            'player_lookup': player_lookup,
-            'universal_player_id': universal_player_id,
-            'game_id': game_id,
-            'game_date': self.target_date.isoformat(),
-            'team_abbr': team_abbr,
-            'opponent_team_abbr': opponent_team_abbr,
-
-            # Has prop line flag (NEW - v3.2 All-Player Predictions)
-            'has_prop_line': has_prop_line,
-
-            # Prop betting context
-            'current_points_line': prop_info.get('current_line') or player_info.get('current_points_line'),
-            'opening_points_line': prop_info.get('opening_line'),
+        # Prepare prop_info with fallbacks from player_info
+        prepared_prop_info = {
+            'current_line': prop_info.get('current_line') or player_info.get('current_points_line'),
+            'opening_line': prop_info.get('opening_line'),
             'line_movement': prop_info.get('line_movement'),
-            'current_points_line_source': prop_info.get('current_source') or player_info.get('prop_source'),
-            'opening_points_line_source': prop_info.get('opening_source'),
-
-            # Game spread context
-            'game_spread': game_lines_info.get('game_spread'),
-            'opening_spread': game_lines_info.get('opening_spread'),
-            'spread_movement': game_lines_info.get('spread_movement'),
-            'game_spread_source': game_lines_info.get('spread_source'),
-            'spread_public_betting_pct': self._get_betting_data_extractor().get_spread_public_betting_pct(game_id),
-
-            # Game total context
-            'game_total': game_lines_info.get('game_total'),
-            'opening_total': game_lines_info.get('opening_total'),
-            'total_movement': game_lines_info.get('total_movement'),
-            'game_total_source': game_lines_info.get('total_source'),
-            'total_public_betting_pct': self._get_betting_data_extractor().get_total_public_betting_pct(game_id),
-
-            # Pre-game context
-            'pace_differential': pace_differential,
-            'opponent_pace_last_10': opponent_pace_last_10,
-            'game_start_time_local': self._extract_game_time(game_info),
-            'opponent_ft_rate_allowed': opponent_ft_rate_allowed,
-            'home_game': (team_abbr == game_info['home_team_abbr']),
-            'back_to_back': fatigue_metrics['back_to_back'],
-            'season_phase': self._determine_season_phase(self.target_date),
-            'projected_usage_rate': None,  # TODO: future
-
-            # Fatigue metrics
-            **fatigue_metrics,
-
-            # Travel context
-            'travel_miles': travel_context.get('travel_miles'),
-            'time_zone_changes': travel_context.get('time_zone_changes'),
-            'consecutive_road_games': travel_context.get('consecutive_road_games'),
-            'miles_traveled_last_14_days': travel_context.get('miles_traveled_last_14_days'),
-            'time_zones_crossed_last_14_days': travel_context.get('time_zones_crossed_last_14_days'),
-
-            # Player characteristics
-            'player_age': self.roster_ages.get(player_lookup) if hasattr(self, 'roster_ages') else None,
-
-            # Performance metrics
-            **performance_metrics,
-
-            # Override opponent metrics with calculated values
-            'opponent_def_rating_last_10': opponent_def_rating,
-            'opponent_off_rating_last_10': opponent_off_rating,
-            'opponent_rebounding_rate': opponent_rebounding_rate,
-            'opponent_pace_variance': opponent_pace_variance,
-            'opponent_ft_rate_variance': opponent_ft_rate_variance,
-            'opponent_def_rating_variance': opponent_def_rating_variance,
-            'opponent_off_rating_variance': opponent_off_rating_variance,
-            'opponent_rebounding_rate_variance': opponent_rebounding_rate_variance,
-
-            # Forward-looking schedule (TODO: future)
-            'next_game_days_rest': 0,
-            'games_in_next_7_days': 0,
-            'next_opponent_win_pct': None,
-            'next_game_is_primetime': False,
-
-            # Opponent asymmetry (TODO: future)
-            'opponent_days_rest': 0,
-            'opponent_games_in_next_7_days': 0,
-            'opponent_next_game_days_rest': 0,
-
-            # Real-time updates
-            'player_status': self.injuries.get(player_lookup, {}).get('status'),
-            'injury_report': self.injuries.get(player_lookup, {}).get('report'),
-            'star_teammates_out': star_teammates_out,
-            'questionable_star_teammates': questionable_star_teammates,
-            'star_tier_out': star_tier_out,
-            'probable_teammates': None,  # TODO: future
-
-            # Source tracking
-            **self._build_source_tracking_fields(),
-
-            # Data quality
-            **data_quality,
-
-            # Completeness Metadata (25 fields)
-            'expected_games_count': completeness_l30d['expected_count'],
-            'actual_games_count': completeness_l30d['actual_count'],
-            'completeness_percentage': completeness_l30d['completeness_pct'],
-            'missing_games_count': completeness_l30d['missing_count'],
-
-            # Production Readiness
-            'is_production_ready': is_season_boundary or is_bootstrap or (
-                completeness_l5['is_production_ready'] and
-                completeness_l10['is_production_ready'] and
-                completeness_l7d['is_production_ready'] and
-                completeness_l14d['is_production_ready'] and
-                completeness_l30d['is_production_ready']
-            ),
-            'data_quality_issues': [],
-
-            # Circuit Breaker
-            'last_reprocess_attempt_at': None,
-            'reprocess_attempt_count': circuit_breaker_status['attempts'],
-            'circuit_breaker_active': circuit_breaker_status['active'],
-            'circuit_breaker_until': (
-                circuit_breaker_status['until'].isoformat()
-                if circuit_breaker_status['until'] else None
-            ),
-
-            # Bootstrap/Override
-            'manual_override_required': False,
-            'season_boundary_detected': is_season_boundary,
-            'backfill_bootstrap_mode': is_bootstrap,
-            'processing_decision_reason': 'processed_successfully',
-
-            # Multi-Window Completeness (11 fields)
-            'l5_completeness_pct': completeness_l5['completeness_pct'],
-            'l5_is_complete': completeness_l5['is_complete'],
-            'l10_completeness_pct': completeness_l10['completeness_pct'],
-            'l10_is_complete': completeness_l10['is_complete'],
-            'l7d_completeness_pct': completeness_l7d['completeness_pct'],
-            'l7d_is_complete': completeness_l7d['is_complete'],
-            'l14d_completeness_pct': completeness_l14d['completeness_pct'],
-            'l14d_is_complete': completeness_l14d['is_complete'],
-            'l30d_completeness_pct': completeness_l30d['completeness_pct'],
-            'l30d_is_complete': completeness_l30d['is_complete'],
-            'all_windows_complete': (
-                completeness_l5['is_complete'] and
-                completeness_l10['is_complete'] and
-                completeness_l7d['is_complete'] and
-                completeness_l14d['is_complete'] and
-                completeness_l30d['is_complete']
-            ),
-
-            # Update tracking
-            'context_version': 1,
-            'created_at': datetime.now(timezone.utc).isoformat(),
-            'processed_at': datetime.now(timezone.utc).isoformat()
+            'current_source': prop_info.get('current_source') or player_info.get('prop_source'),
+            'opening_source': prop_info.get('opening_source'),
         }
 
-        # Calculate data_hash AFTER all fields are populated
-        context['data_hash'] = self._calculate_data_hash(context)
+        # Build context record using context builder
+        context_builder = self._get_context_builder()
+        context = context_builder.build_context_record(
+            player_lookup=player_lookup,
+            universal_player_id=universal_player_id,
+            game_id=game_id,
+            target_date=self.target_date,
+            team_abbr=team_abbr,
+            opponent_team_abbr=opponent_team_abbr,
+            game_info=game_info,
+            has_prop_line=has_prop_line,
+            prop_info=prepared_prop_info,
+            game_lines_info=game_lines_info,
+            fatigue_metrics=fatigue_metrics,
+            performance_metrics=performance_metrics,
+            pace_differential=pace_differential,
+            opponent_pace_last_10=opponent_pace_last_10,
+            opponent_ft_rate_allowed=opponent_ft_rate_allowed,
+            opponent_def_rating=opponent_def_rating,
+            opponent_off_rating=opponent_off_rating,
+            opponent_rebounding_rate=opponent_rebounding_rate,
+            opponent_pace_variance=opponent_pace_variance,
+            opponent_ft_rate_variance=opponent_ft_rate_variance,
+            opponent_def_rating_variance=opponent_def_rating_variance,
+            opponent_off_rating_variance=opponent_off_rating_variance,
+            opponent_rebounding_rate_variance=opponent_rebounding_rate_variance,
+            star_teammates_out=star_teammates_out,
+            questionable_star_teammates=questionable_star_teammates,
+            star_tier_out=star_tier_out,
+            travel_context=travel_context,
+            injury_info=self.injuries.get(player_lookup, {}),
+            source_tracking_fields=self._build_source_tracking_fields(),
+            data_quality=data_quality,
+            completeness_l5=completeness_l5,
+            completeness_l10=completeness_l10,
+            completeness_l7d=completeness_l7d,
+            completeness_l14d=completeness_l14d,
+            completeness_l30d=completeness_l30d,
+            circuit_breaker_status=circuit_breaker_status,
+            is_bootstrap=is_bootstrap,
+            is_season_boundary=is_season_boundary,
+            season_phase=self._determine_season_phase(self.target_date),
+            game_start_time_local=self._extract_game_time(game_info),
+            spread_public_betting_pct=self._get_betting_data_extractor().get_spread_public_betting_pct(game_id),
+            total_public_betting_pct=self._get_betting_data_extractor().get_total_public_betting_pct(game_id)
+        )
 
         return context
 
@@ -2223,47 +2026,9 @@ class UpcomingPlayerGameContextProcessor(
 
     def _calculate_data_quality(self, historical_data: pd.DataFrame,
                                 game_lines_info: Dict) -> Dict:
-        """Calculate data quality metrics using centralized helper."""
-        # Sample size determines tier
-        games_count = len(historical_data)
-        if games_count >= self.min_games_for_high_quality:
-            tier = 'gold'
-            score = 95.0
-        elif games_count >= self.min_games_for_medium_quality:
-            tier = 'silver'
-            score = 75.0
-        else:
-            tier = 'bronze'
-            score = 50.0
-
-        # Build quality issues list
-        issues = []
-        if game_lines_info.get('game_spread') is None:
-            issues.append('missing_game_spread')
-        if game_lines_info.get('game_total') is None:
-            issues.append('missing_game_total')
-        if games_count < 3:
-            issues.append(f'thin_sample:{games_count}/3')
-
-        primary_source = 'bdl_player_boxscores'
-
-        quality_cols = build_quality_columns_with_legacy(
-            tier=tier,
-            score=score,
-            issues=issues,
-            sources=[primary_source],
-        )
-
-        quality_cols['primary_source_used'] = primary_source
-        quality_cols['processed_with_issues'] = len(issues) > 0
-
-        return quality_cols
-
-    def _calculate_data_hash(self, record: Dict) -> str:
-        """Calculate SHA256 hash of meaningful analytics fields."""
-        hash_data = {field: record.get(field) for field in self.HASH_FIELDS}
-        sorted_data = json.dumps(hash_data, sort_keys=True, default=str)
-        return hashlib.sha256(sorted_data.encode()).hexdigest()[:16]
+        """Calculate data quality metrics using quality calculator."""
+        quality_calc = self._get_quality_calculator()
+        return quality_calc.calculate_data_quality(historical_data, game_lines_info)
 
     def _build_source_tracking_fields(self) -> Dict:
         """Build source tracking fields for output record."""
