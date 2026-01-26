@@ -320,9 +320,9 @@ class TestCleanupProcessor:
 
     @patch('orchestration.cleanup_processor.execute_bigquery')
     @patch('orchestration.cleanup_processor.insert_bigquery_rows')
-    @patch('orchestration.cleanup_processor.pubsub_v1.PublisherClient')
+    @patch('shared.clients.get_pubsub_publisher')
     def test_run_complete_workflow_with_missing_files(
-        self, mock_publisher_class, mock_insert_bq, mock_execute_bq
+        self, mock_get_publisher, mock_insert_bq, mock_execute_bq
     ):
         """Test complete cleanup workflow when files are missing"""
         # Mock BigQuery responses
@@ -343,10 +343,12 @@ class TestCleanupProcessor:
 
         # Mock Pub/Sub publisher
         mock_publisher = Mock()
-        mock_publisher_class.return_value = mock_publisher
+        mock_get_publisher.return_value = mock_publisher
         mock_future = Mock()
         mock_future.result.return_value = "message-id-123"
         mock_publisher.publish.return_value = mock_future
+        # Mock topic_path method
+        mock_publisher.topic_path.return_value = "projects/test-project/topics/nba-phase1-scrapers-complete"
 
         processor = CleanupProcessor(project_id="test-project")
         result = processor.run()

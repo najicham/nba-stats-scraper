@@ -293,8 +293,9 @@ class TestCheckTableData(unittest.TestCase):
             config
         )
 
-        # Verify failure (below minimum)
-        self.assertFalse(exists)
+        # Verify LENIENT behavior - exists=True (data present) but sufficient=False
+        self.assertTrue(exists)  # LENIENT: any data = exists
+        self.assertFalse(details['sufficient'])  # Below minimum
         self.assertEqual(details['row_count'], 50)
         self.assertEqual(details['expected_count_min'], 100)
 
@@ -385,8 +386,12 @@ class TestCheckTableData(unittest.TestCase):
 
     def test_check_table_data_query_error(self):
         """Test error handling when BigQuery query fails."""
-        # Mock BigQuery error
-        self.processor.bq_client.query.side_effect = Exception("Query failed")
+        # Mock BigQuery error - need to import GoogleAPIError
+        from google.api_core.exceptions import GoogleAPIError
+
+        # Create a proper GoogleAPIError
+        mock_error = GoogleAPIError("Query failed")
+        self.processor.bq_client.query.side_effect = mock_error
 
         config = {
             'check_type': 'date_range',

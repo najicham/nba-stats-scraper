@@ -88,8 +88,12 @@ class TestSmartReprocessing(unittest.TestCase):
 
     def test_get_previous_source_hashes_query_error(self):
         """Test handling of query errors."""
-        # Mock BigQuery error
-        self.processor.bq_client.query.side_effect = Exception("Query failed")
+        # Mock BigQuery error - need to import GoogleAPIError
+        from google.api_core.exceptions import GoogleAPIError
+
+        # Create a proper GoogleAPIError
+        mock_error = GoogleAPIError("Query failed")
+        self.processor.bq_client.query.side_effect = mock_error
 
         # Test
         hashes = self.processor.get_previous_source_hashes('2024-11-20')
