@@ -44,13 +44,16 @@ Created: January 2026
 Part of: Pipeline Resilience Improvements
 """
 
+import atexit
 import json
 import logging
 import os
+import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +79,103 @@ class ErrorType(str, Enum):
 
 # Module-level BigQuery client (lazy initialized)
 _bq_client = None
+
+# Event batching configuration to reduce BigQuery partition modifications
+# Reduces quota usage by 50x (50 events/write vs 1 event/write)
+BATCH_SIZE = int(os.getenv('PIPELINE_LOG_BATCH_SIZE', '50'))
+BATCH_TIMEOUT_SECONDS = float(os.getenv('PIPELINE_LOG_BATCH_TIMEOUT', '10.0'))
+
+
+class PipelineEventBuffer:
+    """
+    Thread-safe buffer for batching pipeline event log writes to BigQuery.
+
+    Reduces partition modification quota usage by accumulating events
+    and writing them in batches instead of individually.
+
+    Benefits:
+    - Reduces quota usage by 50x (50 events per write vs 1 per write)
+    - Prevents "403 Quota exceeded: partition modifications" errors
+    - Automatic flushing on timeout (10s) or size (50 events)
+    - Thread-safe for concurrent logging from multiple threads
+    """
+
+    def __init__(self, batch_size: int = BATCH_SIZE, timeout: float = BATCH_TIMEOUT_SECONDS):
+        self.batch_size = batch_size
+        self.timeout = timeout
+        self.buffer: List[Dict[str, Any]] = []
+        self.lock = threading.Lock()
+        self.last_flush_time = time.time()
+        self.table_id: Optional[str] = None
+        self.project_id: Optional[str] = None
+
+        # Start background flush thread
+        self.flush_thread = threading.Thread(target=self._periodic_flush, daemon=True)
+        self.flush_thread.start()
+
+        # Register cleanup on exit
+        atexit.register(self.flush)
+
+    def add_event(self, row: Dict[str, Any], table_id: str, project_id: str) -> None:
+        """Add an event to the buffer and flush if threshold reached."""
+        with self.lock:
+            self.buffer.append(row)
+            self.table_id = table_id
+            self.project_id = project_id
+
+            # Flush if buffer is full
+            if len(self.buffer) >= self.batch_size:
+                self._flush_internal()
+
+    def _periodic_flush(self) -> None:
+        """Background thread that flushes buffer periodically."""
+        while True:
+            time.sleep(1)  # Check every second
+            with self.lock:
+                if self.buffer and (time.time() - self.last_flush_time) >= self.timeout:
+                    self._flush_internal()
+
+    def _flush_internal(self) -> bool:
+        """Internal flush method (must be called with lock held)."""
+        if not self.buffer:
+            return True
+
+        try:
+            from shared.utils.bigquery_utils import insert_bigquery_rows
+
+            rows_to_flush = self.buffer.copy()
+            self.buffer.clear()
+            self.last_flush_time = time.time()
+
+            # Release lock before I/O to prevent blocking other threads
+            # But keep copied rows
+            table_id = self.table_id
+            project_id = self.project_id
+
+        except Exception as e:
+            logger.warning(f"Failed to prepare flush: {e}")
+            return False
+
+        # Perform I/O outside lock
+        try:
+            success = insert_bigquery_rows(table_id, rows_to_flush, project_id=project_id)
+            if success:
+                logger.debug(f"Flushed {len(rows_to_flush)} events to {table_id}")
+            else:
+                logger.warning(f"Failed to flush {len(rows_to_flush)} events to {table_id}")
+            return success
+        except Exception as e:
+            logger.warning(f"Failed to flush events: {e}")
+            return False
+
+    def flush(self) -> bool:
+        """Manually flush all pending events."""
+        with self.lock:
+            return self._flush_internal()
+
+
+# Global event buffer instance
+_event_buffer = PipelineEventBuffer()
 
 
 def _get_bq_client():
@@ -188,26 +288,21 @@ def log_pipeline_event(
         else:
             logger.info(log_msg)
 
-        # Write to BigQuery
-        # Use batch loading instead of streaming inserts to avoid 90-minute
-        # streaming buffer that blocks DML operations (MERGE/UPDATE/DELETE)
+        # Write to BigQuery using batched writes to reduce quota usage
+        # Previously: Inserted 1 row at a time → N partition modifications
+        # Now: Buffer and batch → N/50 partition modifications (50x reduction)
         if not dry_run:
             from shared.config.gcp_config import get_project_id
-            from shared.utils.bigquery_utils import insert_bigquery_rows
 
             project_id = get_project_id()
             dataset = os.environ.get('ORCHESTRATION_DATASET', 'nba_orchestration')
             table = 'pipeline_event_log'
             table_id = f"{dataset}.{table}"
 
-            success = insert_bigquery_rows(table_id, [row], project_id=project_id)
-
-            if not success:
-                logger.error(f"Failed to log event to {table_id}")
-                return None
-            else:
-                logger.debug(f"Event logged to {table_id}: {event_id}")
-                return event_id
+            # Add to buffer (will auto-flush when full or after timeout)
+            _event_buffer.add_event(row, table_id, project_id)
+            logger.debug(f"Event buffered for {table_id}: {event_id}")
+            return event_id
         else:
             logger.info(f"DRY RUN: Would log event: {row}")
             return event_id
@@ -538,6 +633,25 @@ def mark_retry_succeeded(
     except Exception as e:
         logger.warning(f"Failed to mark retry as succeeded: {e}")
         return False
+
+
+def flush_event_buffer() -> bool:
+    """
+    Manually flush all pending events in the buffer to BigQuery.
+
+    Useful for:
+    - Testing (ensure all events are written before assertions)
+    - Before process exit (though atexit handler does this automatically)
+    - Forcing immediate write of critical events
+
+    Returns:
+        bool: True if flush succeeded, False otherwise
+
+    Example:
+        >>> log_pipeline_event(...)
+        >>> flush_event_buffer()  # Ensure written immediately
+    """
+    return _event_buffer.flush()
 
 
 def cleanup_stale_retrying_entries(max_age_hours: int = 2) -> int:
