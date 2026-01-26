@@ -12,8 +12,8 @@ from flask import Blueprint, jsonify, request
 
 from google.cloud import bigquery
 
-from ..services.rate_limiter import rate_limit
-from ..services.auth import check_auth
+from services.admin_dashboard.services.rate_limiter import rate_limit
+from services.admin_dashboard.services.auth import check_auth
 
 logger = logging.getLogger(__name__)
 

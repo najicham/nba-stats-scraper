@@ -16,9 +16,9 @@ from google.cloud import pubsub_v1
 import google.auth.transport.requests
 import google.oauth2.id_token
 
-from ..services.rate_limiter import rate_limit
-from ..services.auth import check_auth
-from ..services.audit_logger import get_audit_logger
+from services.admin_dashboard.services.rate_limiter import rate_limit
+from services.admin_dashboard.services.auth import check_auth
+from services.admin_dashboard.services.audit_logger import get_audit_logger
 from shared.config.service_urls import get_service_url, Services
 
 logger = logging.getLogger(__name__)

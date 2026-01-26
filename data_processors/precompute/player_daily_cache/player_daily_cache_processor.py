@@ -56,398 +56,17 @@ from shared.utils.completeness_checker import CompletenessChecker
 from shared.config.nba_season_dates import is_early_season, get_season_year_from_date
 from shared.validation.config import BOOTSTRAP_DAYS
 
+# Module components (extracted for better organization)
+from .worker import _process_single_player_worker
+from .aggregators import StatsAggregator, TeamAggregator, ContextAggregator, ShotZoneAggregator
+from .builders import CacheBuilder, MultiWindowCompletenessChecker
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-
-# ============================================================
-# Module-level worker function for ProcessPoolExecutor
-# ============================================================
-def _process_single_player_worker(
-    player_lookup: str,
-    upcoming_context_data: pd.DataFrame,
-    player_game_data: pd.DataFrame,
-    team_offense_data: pd.DataFrame,
-    shot_zone_data: pd.DataFrame,
-    completeness_l5: dict,
-    completeness_l10: dict,
-    completeness_l7d: dict,
-    completeness_l14d: dict,
-    is_bootstrap: bool,
-    is_season_boundary: bool,
-    analysis_date: date,
-    circuit_breaker_status: dict,
-    min_games_required: int,
-    absolute_min_games: int,
-    cache_version: str,
-    source_tracking_fields: Dict,
-    source_hashes: Dict
-) -> tuple:
-    """
-    Module-level worker function for ProcessPoolExecutor.
-
-    Must be at module level (not instance method) to be picklable.
-    All required data passed as parameters (no self references).
-
-    Returns (success: bool, data: dict).
-    """
-    try:
-        # ============================================================
-        # Get completeness for all windows
-        # ============================================================
-        comp_l5 = completeness_l5.get(player_lookup, {
-            'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
-            'missing_count': 0, 'is_complete': False, 'is_production_ready': False
-        })
-        comp_l10 = completeness_l10.get(player_lookup, {
-            'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
-            'missing_count': 0, 'is_complete': False, 'is_production_ready': False
-        })
-        comp_l7d = completeness_l7d.get(player_lookup, {
-            'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
-            'missing_count': 0, 'is_complete': False, 'is_production_ready': False
-        })
-        comp_l14d = completeness_l14d.get(player_lookup, {
-            'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0,
-            'missing_count': 0, 'is_complete': False, 'is_production_ready': False
-        })
-
-        # ALL windows must be production-ready for overall production readiness
-        all_windows_complete = (
-            comp_l5['is_production_ready'] and
-            comp_l10['is_production_ready'] and
-            comp_l7d['is_production_ready'] and
-            comp_l14d['is_production_ready']
-        )
-
-        # Use L10 as primary completeness metric
-        completeness = comp_l10
-
-        # Check circuit breaker (already fetched, passed as parameter)
-        if circuit_breaker_status['active']:
-            return (False, {
-                'entity_id': player_lookup,
-                'reason': f"Circuit breaker active until {circuit_breaker_status['until']}",
-                'category': 'CIRCUIT_BREAKER_ACTIVE',
-                'can_retry': False
-            })
-
-        # Check production readiness (skip if any window incomplete, unless in bootstrap mode or season boundary)
-        if not all_windows_complete and not is_bootstrap and not is_season_boundary:
-            # DON'T increment reprocess count here (requires BQ client)
-            # Main thread will handle this after collecting all results
-            return (False, {
-                'entity_id': player_lookup,
-                'reason': f"Incomplete data across windows",
-                'category': 'INCOMPLETE_DATA',
-                'can_retry': True,
-                'completeness_pct': completeness['completeness_pct']  # Include for main thread
-            })
-
-        # Get player's context data
-        context_rows = upcoming_context_data[
-            upcoming_context_data['player_lookup'] == player_lookup
-        ]
-        if context_rows.empty:
-            return (False, {
-                'entity_id': player_lookup,
-                'reason': 'No upcoming context data found',
-                'category': 'PROCESSING_ERROR',
-                'can_retry': False
-            })
-        context_row = context_rows.iloc[0]
-
-        # Get player's game history
-        player_games = player_game_data[
-            player_game_data['player_lookup'] == player_lookup
-        ].copy()
-
-        # Check minimum games requirement
-        games_count = len(player_games)
-        if games_count < absolute_min_games:
-            return (False, {
-                'entity_id': player_lookup,
-                'reason': f"Only {games_count} games played, need {absolute_min_games} minimum",
-                'category': 'INSUFFICIENT_DATA',
-                'can_retry': True
-            })
-
-        # Flag if below preferred minimum
-        is_early_season = games_count < min_games_required
-
-        # Get team context
-        current_team = context_row['team_abbr']
-        team_games = team_offense_data[
-            team_offense_data['team_abbr'] == current_team
-        ].copy()
-
-        # Get shot zone data (optional - proceeds with nulls if missing)
-        shot_zone_rows = shot_zone_data[
-            shot_zone_data['player_lookup'] == player_lookup
-        ]
-
-        # Track shot zone availability for state tracking
-        shot_zone_available = not shot_zone_rows.empty
-        if shot_zone_rows.empty:
-            # Create placeholder with null values - shot zone is optional enrichment
-            shot_zone_row = pd.Series({
-                'primary_scoring_zone': None,
-                'paint_rate_last_10': None,
-                'three_pt_rate_last_10': None
-            })
-        else:
-            shot_zone_row = shot_zone_rows.iloc[0]
-
-        # Calculate all metrics (using helper function defined below)
-        cache_record = _calculate_player_cache_worker(
-            player_lookup=player_lookup,
-            context_row=context_row,
-            player_games=player_games,
-            team_games=team_games,
-            shot_zone_row=shot_zone_row,
-            analysis_date=analysis_date,
-            is_early_season=is_early_season,
-            completeness_data={
-                'comp_l5': comp_l5,
-                'comp_l10': comp_l10,
-                'comp_l7d': comp_l7d,
-                'comp_l14d': comp_l14d,
-                'all_windows_complete': all_windows_complete,
-                'is_bootstrap': is_bootstrap,
-                'is_season_boundary': is_season_boundary,
-                'circuit_breaker_status': circuit_breaker_status,
-            },
-            shot_zone_available=shot_zone_available,
-            min_games_required=min_games_required,
-            cache_version=cache_version,
-            source_tracking_fields=source_tracking_fields,
-            source_hashes=source_hashes
-        )
-
-        return (True, cache_record)
-
-    except Exception as e:
-        logger.error(f"Failed to process {player_lookup}: {e}", exc_info=True)
-        return (False, {
-            'entity_id': player_lookup,
-            'reason': str(e),
-            'category': 'PROCESSING_ERROR',
-            'can_retry': False
-        })
-
-
-def _calculate_player_cache_worker(
-    player_lookup: str,
-    context_row: pd.Series,
-    player_games: pd.DataFrame,
-    team_games: pd.DataFrame,
-    shot_zone_row: pd.Series,
-    analysis_date: date,
-    is_early_season: bool,
-    completeness_data: Dict,
-    shot_zone_available: bool,
-    min_games_required: int,
-    cache_version: str,
-    source_tracking_fields: Dict,
-    source_hashes: Dict
-) -> Dict:
-    """
-    Calculate complete cache record for a single player (module-level helper).
-
-    This is a copy of the instance method _calculate_player_cache but as a
-    module-level function for use by ProcessPoolExecutor workers.
-    """
-    from shared.config.source_coverage import get_tier_from_score
-
-    # Extract completeness data
-    comp_l5 = completeness_data.get('comp_l5', {'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0, 'missing_count': 0, 'is_production_ready': False})
-    comp_l10 = completeness_data.get('comp_l10', {'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0, 'missing_count': 0, 'is_production_ready': False})
-    comp_l7d = completeness_data.get('comp_l7d', {'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0, 'missing_count': 0, 'is_production_ready': False})
-    comp_l14d = completeness_data.get('comp_l14d', {'expected_count': 0, 'actual_count': 0, 'completeness_pct': 0.0, 'missing_count': 0, 'is_production_ready': False})
-    all_windows_complete = completeness_data.get('all_windows_complete', False)
-    is_bootstrap = completeness_data.get('is_bootstrap', False)
-    is_season_boundary = completeness_data.get('is_season_boundary', False)
-    circuit_breaker_status = completeness_data.get('circuit_breaker_status', {'active': False, 'until': None, 'attempts': 0})
-
-    # Recent performance (last 5, last 10, season)
-    last_5_games = player_games.head(5)
-    last_10_games = player_games.head(10)
-
-    # Round all floats to 4 decimal places for BigQuery NUMERIC compatibility
-    points_avg_last_5 = round(float(last_5_games['points'].mean()), 4) if len(last_5_games) > 0 else None
-    points_avg_last_10 = round(float(last_10_games['points'].mean()), 4) if len(last_10_games) > 0 else None
-    points_avg_season = round(float(player_games['points'].mean()), 4)
-    points_std_last_10 = round(float(last_10_games['points'].std()), 4) if len(last_10_games) > 1 else None
-
-    minutes_avg_last_10 = round(float(last_10_games['minutes_played'].mean()), 4) if len(last_10_games) > 0 else None
-    usage_rate_last_10 = round(float(last_10_games['usage_rate'].mean()), 4) if len(last_10_games) > 0 else None
-    ts_pct_last_10 = round(float(last_10_games['ts_pct'].mean()), 4) if len(last_10_games) > 0 else None
-
-    games_played_season = int(len(player_games))
-    player_usage_rate_season = round(float(player_games['usage_rate'].mean()), 4)
-
-    # Team context (last 10 games)
-    team_pace_last_10 = round(float(team_games['pace'].mean()), 4) if len(team_games) > 0 else None
-    team_off_rating_last_10 = round(float(team_games['offensive_rating'].mean()), 4) if len(team_games) > 0 else None
-
-    # Fatigue metrics (direct copy from context)
-    games_in_last_7_days = int(context_row['games_in_last_7_days']) if pd.notna(context_row['games_in_last_7_days']) else None
-    games_in_last_14_days = int(context_row['games_in_last_14_days']) if pd.notna(context_row['games_in_last_14_days']) else None
-    minutes_in_last_7_days = int(context_row['minutes_in_last_7_days']) if pd.notna(context_row['minutes_in_last_7_days']) else None
-    minutes_in_last_14_days = int(context_row['minutes_in_last_14_days']) if pd.notna(context_row['minutes_in_last_14_days']) else None
-    back_to_backs_last_14_days = int(context_row['back_to_backs_last_14_days']) if pd.notna(context_row['back_to_backs_last_14_days']) else None
-    avg_minutes_per_game_last_7 = round(float(context_row['avg_minutes_per_game_last_7']), 4) if pd.notna(context_row['avg_minutes_per_game_last_7']) else None
-    fourth_quarter_minutes_last_7 = int(context_row['fourth_quarter_minutes_last_7']) if pd.notna(context_row['fourth_quarter_minutes_last_7']) else None
-
-    # Player demographics
-    player_age = int(context_row['player_age']) if pd.notna(context_row['player_age']) else None
-
-    # Shot zone tendencies (direct copy from shot_zone_analysis)
-    primary_scoring_zone = str(shot_zone_row['primary_scoring_zone']) if pd.notna(shot_zone_row['primary_scoring_zone']) else None
-    paint_rate_last_10 = float(shot_zone_row['paint_rate_last_10']) if pd.notna(shot_zone_row['paint_rate_last_10']) else None
-    three_pt_rate_last_10 = float(shot_zone_row['three_pt_rate_last_10']) if pd.notna(shot_zone_row['three_pt_rate_last_10']) else None
-
-    # Calculate assisted rate (from last 10 games)
-    # Round to 9 decimal places for BigQuery NUMERIC compatibility
-    assisted_rate_last_10 = None
-    if len(last_10_games) > 0:
-        total_fg_makes = last_10_games['fg_makes'].sum()
-        total_assisted = last_10_games['assisted_fg_makes'].sum()
-        if total_fg_makes > 0:
-            assisted_rate_last_10 = round(float(total_assisted / total_fg_makes), 9)
-
-    # Build complete record
-    record = {
-        # Identifiers
-        'player_lookup': player_lookup,
-        'universal_player_id': str(context_row['universal_player_id']) if pd.notna(context_row['universal_player_id']) else None,
-        'cache_date': analysis_date.isoformat(),
-
-        # Recent performance
-        'points_avg_last_5': points_avg_last_5,
-        'points_avg_last_10': points_avg_last_10,
-        'points_avg_season': points_avg_season,
-        'points_std_last_10': points_std_last_10,
-        'minutes_avg_last_10': minutes_avg_last_10,
-        'usage_rate_last_10': usage_rate_last_10,
-        'ts_pct_last_10': ts_pct_last_10,
-        'games_played_season': games_played_season,
-
-        # Team context
-        'team_pace_last_10': team_pace_last_10,
-        'team_off_rating_last_10': team_off_rating_last_10,
-        'player_usage_rate_season': player_usage_rate_season,
-
-        # Fatigue metrics
-        'games_in_last_7_days': games_in_last_7_days,
-        'games_in_last_14_days': games_in_last_14_days,
-        'minutes_in_last_7_days': minutes_in_last_7_days,
-        'minutes_in_last_14_days': minutes_in_last_14_days,
-        'back_to_backs_last_14_days': back_to_backs_last_14_days,
-        'avg_minutes_per_game_last_7': avg_minutes_per_game_last_7,
-        'fourth_quarter_minutes_last_7': fourth_quarter_minutes_last_7,
-
-        # Shot zone tendencies
-        'primary_scoring_zone': primary_scoring_zone,
-        'paint_rate_last_10': paint_rate_last_10,
-        'three_pt_rate_last_10': three_pt_rate_last_10,
-        'assisted_rate_last_10': assisted_rate_last_10,
-
-        # Demographics
-        'player_age': player_age,
-
-        # Source tracking (passed as parameter)
-        **source_tracking_fields,
-
-        # Early season flag
-        'early_season_flag': is_early_season,
-        'insufficient_data_reason': f"Only {games_played_season} games played, need {min_games_required} minimum" if is_early_season else None,
-
-        # Shot zone availability tracking (for re-run when data becomes available)
-        'shot_zone_data_available': shot_zone_available,
-
-        # Completeness Checking Metadata (23 fields)
-        'expected_games_count': comp_l5['expected_count'],
-        'actual_games_count': comp_l5['actual_count'],
-        'completeness_percentage': comp_l5['completeness_pct'],
-        'missing_games_count': comp_l5['missing_count'],
-
-        # Quality tier based on completeness (L5 window)
-        'quality_tier': get_tier_from_score(comp_l5['completeness_pct']).value,
-        'cache_quality_score': comp_l5['completeness_pct'],
-
-        # Production Readiness
-        'is_production_ready': all_windows_complete,
-        'data_quality_issues': [],
-
-        # Circuit Breaker (queried per entity)
-        'last_reprocess_attempt_at': None,
-        'reprocess_attempt_count': circuit_breaker_status['attempts'],
-        'circuit_breaker_active': circuit_breaker_status['active'],
-        'circuit_breaker_until': (
-            circuit_breaker_status['until'].isoformat()
-            if circuit_breaker_status['until'] else None
-        ),
-
-        # Bootstrap/Override
-        'manual_override_required': False,
-        'season_boundary_detected': is_season_boundary,
-        'backfill_bootstrap_mode': is_bootstrap,
-        'processing_decision_reason': 'processed_successfully',
-
-        # Multi-Window Completeness (9 fields)
-        'l5_completeness_pct': comp_l5['completeness_pct'],
-        'l5_is_complete': comp_l5['is_production_ready'],
-        'l10_completeness_pct': comp_l10['completeness_pct'],
-        'l10_is_complete': comp_l10['is_production_ready'],
-        'l7d_completeness_pct': comp_l7d['completeness_pct'],
-        'l7d_is_complete': comp_l7d['is_production_ready'],
-        'l14d_completeness_pct': comp_l14d['completeness_pct'],
-        'l14d_is_complete': comp_l14d['is_production_ready'],
-        'all_windows_complete': all_windows_complete,
-
-        # Metadata
-        'cache_version': cache_version,
-        'created_at': datetime.now(timezone.utc).isoformat(),
-        'processed_at': datetime.now(timezone.utc).isoformat()
-    }
-
-    # Add source hashes (passed as parameter)
-    record['source_player_game_hash'] = source_hashes.get('player_game')
-    record['source_team_offense_hash'] = source_hashes.get('team_offense')
-    record['source_upcoming_context_hash'] = source_hashes.get('upcoming_context')
-    record['source_shot_zone_hash'] = source_hashes.get('shot_zone')
-
-    # Compute data hash (need to import SmartIdempotencyMixin.compute_data_hash logic)
-    from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
-    # Create a temporary instance just to use the hash computation
-    hash_fields = [
-        'player_lookup', 'universal_player_id', 'cache_date',
-        'points_avg_last_5', 'points_avg_last_10', 'points_avg_season',
-        'points_std_last_10', 'minutes_avg_last_10', 'usage_rate_last_10',
-        'ts_pct_last_10', 'games_played_season',
-        'team_pace_last_10', 'team_off_rating_last_10', 'player_usage_rate_season',
-        'games_in_last_7_days', 'games_in_last_14_days',
-        'minutes_in_last_7_days', 'minutes_in_last_14_days',
-        'back_to_backs_last_14_days', 'avg_minutes_per_game_last_7',
-        'fourth_quarter_minutes_last_7',
-        'primary_scoring_zone', 'paint_rate_last_10', 'three_pt_rate_last_10',
-        'assisted_rate_last_10', 'player_age', 'cache_quality_score',
-        'cache_version'
-    ]
-
-    # Simple hash computation (mimics SmartIdempotencyMixin logic)
-    import hashlib
-    import json
-    hash_data = {k: record.get(k) for k in hash_fields if k in record}
-    hash_str = json.dumps(hash_data, sort_keys=True, default=str)
-    record['data_hash'] = hashlib.sha256(hash_str.encode()).hexdigest()
-
-    return record
 
 
 class PlayerDailyCacheProcessor(
@@ -522,6 +141,7 @@ class PlayerDailyCacheProcessor(
 
         # Initialize completeness checker (Week 3 - Multi-Window Completeness Checking)
         self.completeness_checker = CompletenessChecker(self.bq_client, self.project_id)
+        self.multi_window_checker = MultiWindowCompletenessChecker(self.completeness_checker)
 
         # Data containers
         self.player_game_data = None
@@ -1371,56 +991,22 @@ class PlayerDailyCacheProcessor(
         completeness_start = time.time()
         logger.info(f"Checking completeness for {len(all_players)} players across 4 windows...")
 
-        # Define all completeness check configurations
-        completeness_windows = [
-            ('l5', 5, 'games'),      # Window 1: L5 games
-            ('l10', 10, 'games'),    # Window 2: L10 games
-            ('l7d', 7, 'days'),      # Window 3: L7 days
-            ('l14d', 14, 'days'),    # Window 4: L14 days
-        ]
-
-        # Helper function to run single completeness check
-        # DNP-aware mode excludes Did Not Play games (0 minutes) from expected count
-        # This prevents penalizing players for legitimate absences (injury, rest, etc.)
-        def run_completeness_check(window_config):
-            name, lookback, window_type = window_config
-            return (name, self.completeness_checker.check_completeness_batch(
-                entity_ids=list(all_players),
-                entity_type='player',
-                analysis_date=analysis_date,
-                upstream_table='nba_analytics.player_game_summary',
-                upstream_entity_field='player_lookup',
-                lookback_window=lookback,
-                window_type=window_type,
-                season_start_date=self.season_start_date,
-                dnp_aware=True  # Exclude DNP games from expected count
-            ))
-
-        # Run all 4 completeness checks in parallel
-        completeness_results = {}
-        with ThreadPoolExecutor(max_workers=4) as executor:
-            futures = {executor.submit(run_completeness_check, config): config[0]
-                      for config in completeness_windows}
-            for future in as_completed(futures):
-                window_name = futures[future]
-                try:
-                    name, result = future.result()
-                    completeness_results[name] = result
-                except Exception as e:
-                    logger.warning(f"Completeness check for {window_name} failed: {e}")
-                    completeness_results[window_name] = {}
+        # Use MultiWindowCompletenessChecker to orchestrate parallel checks
+        completeness_results = self.multi_window_checker.check_all_windows(
+            player_ids=list(all_players),
+            analysis_date=analysis_date,
+            season_start_date=self.season_start_date
+        )
+        is_bootstrap, is_season_boundary = self.multi_window_checker.check_bootstrap_and_boundary(
+            analysis_date=analysis_date,
+            season_start_date=self.season_start_date
+        )
 
         # Extract results with defaults
-        completeness_l5 = completeness_results.get('l5', {})
-        completeness_l10 = completeness_results.get('l10', {})
-        completeness_l7d = completeness_results.get('l7d', {})
-        completeness_l14d = completeness_results.get('l14d', {})
-
-        # Check bootstrap mode
-        is_bootstrap = self.completeness_checker.is_bootstrap_mode(
-            analysis_date, self.season_start_date
-        )
-        is_season_boundary = self.completeness_checker.is_season_boundary(analysis_date)
+        completeness_l5 = completeness_results.get('L5', {})
+        completeness_l10 = completeness_results.get('L10', {})
+        completeness_l7d = completeness_results.get('L7d', {})
+        completeness_l14d = completeness_results.get('L14d', {})
 
         # Check for same-day/future predictions mode
         # For same-day predictions, games haven't been played yet so player_game_summary
@@ -2056,158 +1642,49 @@ class PlayerDailyCacheProcessor(
             is_season_boundary = False
             circuit_breaker_status = {'active': False, 'until': None, 'attempts': 0}
 
-        # Recent performance (last 5, last 10, season)
-        last_5_games = player_games.head(5)
-        last_10_games = player_games.head(10)
-        
-        # Round all floats to 4 decimal places for BigQuery NUMERIC compatibility
-        points_avg_last_5 = round(float(last_5_games['points'].mean()), 4) if len(last_5_games) > 0 else None
-        points_avg_last_10 = round(float(last_10_games['points'].mean()), 4) if len(last_10_games) > 0 else None
-        points_avg_season = round(float(player_games['points'].mean()), 4)
-        points_std_last_10 = round(float(last_10_games['points'].std()), 4) if len(last_10_games) > 1 else None
+        # Aggregate data from all sources using specialized aggregators
+        stats_data = StatsAggregator.aggregate(player_games)
+        team_data = TeamAggregator.aggregate(team_games)
+        context_data = ContextAggregator.aggregate(context_row)
+        shot_zone_data = ShotZoneAggregator.aggregate(shot_zone_row)
 
-        minutes_avg_last_10 = round(float(last_10_games['minutes_played'].mean()), 4) if len(last_10_games) > 0 else None
-        usage_rate_last_10 = round(float(last_10_games['usage_rate'].mean()), 4) if len(last_10_games) > 0 else None
-        ts_pct_last_10 = round(float(last_10_games['ts_pct'].mean()), 4) if len(last_10_games) > 0 else None
-
-        games_played_season = int(len(player_games))
-        player_usage_rate_season = round(float(player_games['usage_rate'].mean()), 4)
-
-        # Team context (last 10 games)
-        team_pace_last_10 = round(float(team_games['pace'].mean()), 4) if len(team_games) > 0 else None
-        team_off_rating_last_10 = round(float(team_games['offensive_rating'].mean()), 4) if len(team_games) > 0 else None
-        
-        # Fatigue metrics (direct copy from context)
-        games_in_last_7_days = int(context_row['games_in_last_7_days']) if pd.notna(context_row['games_in_last_7_days']) else None
-        games_in_last_14_days = int(context_row['games_in_last_14_days']) if pd.notna(context_row['games_in_last_14_days']) else None
-        minutes_in_last_7_days = int(context_row['minutes_in_last_7_days']) if pd.notna(context_row['minutes_in_last_7_days']) else None
-        minutes_in_last_14_days = int(context_row['minutes_in_last_14_days']) if pd.notna(context_row['minutes_in_last_14_days']) else None
-        back_to_backs_last_14_days = int(context_row['back_to_backs_last_14_days']) if pd.notna(context_row['back_to_backs_last_14_days']) else None
-        avg_minutes_per_game_last_7 = round(float(context_row['avg_minutes_per_game_last_7']), 4) if pd.notna(context_row['avg_minutes_per_game_last_7']) else None
-        fourth_quarter_minutes_last_7 = int(context_row['fourth_quarter_minutes_last_7']) if pd.notna(context_row['fourth_quarter_minutes_last_7']) else None
-        
-        # Player demographics
-        player_age = int(context_row['player_age']) if pd.notna(context_row['player_age']) else None
-        
-        # Shot zone tendencies (direct copy from shot_zone_analysis)
-        primary_scoring_zone = str(shot_zone_row['primary_scoring_zone']) if pd.notna(shot_zone_row['primary_scoring_zone']) else None
-        paint_rate_last_10 = float(shot_zone_row['paint_rate_last_10']) if pd.notna(shot_zone_row['paint_rate_last_10']) else None
-        three_pt_rate_last_10 = float(shot_zone_row['three_pt_rate_last_10']) if pd.notna(shot_zone_row['three_pt_rate_last_10']) else None
-        
-        # Calculate assisted rate (from last 10 games)
-        # Round to 9 decimal places for BigQuery NUMERIC compatibility
-        assisted_rate_last_10 = None
-        if len(last_10_games) > 0:
-            total_fg_makes = last_10_games['fg_makes'].sum()
-            total_assisted = last_10_games['assisted_fg_makes'].sum()
-            if total_fg_makes > 0:
-                assisted_rate_last_10 = round(float(total_assisted / total_fg_makes), 9)
-
-        # Build complete record
-        record = {
-            # Identifiers
-            'player_lookup': player_lookup,
-            'universal_player_id': str(context_row['universal_player_id']) if pd.notna(context_row['universal_player_id']) else None,
-            'cache_date': analysis_date.isoformat(),
-            
-            # Recent performance
-            'points_avg_last_5': points_avg_last_5,
-            'points_avg_last_10': points_avg_last_10,
-            'points_avg_season': points_avg_season,
-            'points_std_last_10': points_std_last_10,
-            'minutes_avg_last_10': minutes_avg_last_10,
-            'usage_rate_last_10': usage_rate_last_10,
-            'ts_pct_last_10': ts_pct_last_10,
-            'games_played_season': games_played_season,
-            
-            # Team context
-            'team_pace_last_10': team_pace_last_10,
-            'team_off_rating_last_10': team_off_rating_last_10,
-            'player_usage_rate_season': player_usage_rate_season,
-            
-            # Fatigue metrics
-            'games_in_last_7_days': games_in_last_7_days,
-            'games_in_last_14_days': games_in_last_14_days,
-            'minutes_in_last_7_days': minutes_in_last_7_days,
-            'minutes_in_last_14_days': minutes_in_last_14_days,
-            'back_to_backs_last_14_days': back_to_backs_last_14_days,
-            'avg_minutes_per_game_last_7': avg_minutes_per_game_last_7,
-            'fourth_quarter_minutes_last_7': fourth_quarter_minutes_last_7,
-            
-            # Shot zone tendencies
-            'primary_scoring_zone': primary_scoring_zone,
-            'paint_rate_last_10': paint_rate_last_10,
-            'three_pt_rate_last_10': three_pt_rate_last_10,
-            'assisted_rate_last_10': assisted_rate_last_10,
-            
-            # Demographics
-            'player_age': player_age,
-            
-            # Source tracking (one-liner!)
-            **self.build_source_tracking_fields(),
-            
-            # Early season flag
-            'early_season_flag': is_early_season,
-            'insufficient_data_reason': f"Only {games_played_season} games played, need {self.min_games_required} minimum" if is_early_season else None,
-
-            # Shot zone availability tracking (for re-run when data becomes available)
-            'shot_zone_data_available': shot_zone_available,
-
-            # ============================================================
-            # NEW (Week 3): Completeness Checking Metadata (23 fields)
-            # ============================================================
-            # Standard Completeness Metrics (14 fields) - using L5 as primary
-            'expected_games_count': comp_l5['expected_count'],
-            'actual_games_count': comp_l5['actual_count'],
-            'completeness_percentage': comp_l5['completeness_pct'],
-            'missing_games_count': comp_l5['missing_count'],
-
-            # Quality tier based on completeness (L5 window)
-            'quality_tier': get_tier_from_score(comp_l5['completeness_pct']).value,
-            'cache_quality_score': comp_l5['completeness_pct'],  # Named to match hash_fields
-
-            # Production Readiness
-            'is_production_ready': all_windows_complete,
-            'data_quality_issues': [],  # Populate if specific issues found
-
-            # Circuit Breaker (queried per entity)
-            'last_reprocess_attempt_at': None,  # Would need separate query
-            'reprocess_attempt_count': circuit_breaker_status['attempts'],
-            'circuit_breaker_active': circuit_breaker_status['active'],
-            'circuit_breaker_until': (
-                circuit_breaker_status['until'].isoformat()
-                if circuit_breaker_status['until'] else None
-            ),
-
-            # Bootstrap/Override
-            'manual_override_required': False,
-            'season_boundary_detected': is_season_boundary,
-            'backfill_bootstrap_mode': is_bootstrap,
-            'processing_decision_reason': 'processed_successfully',
-
-            # Multi-Window Completeness (9 fields)
-            'l5_completeness_pct': comp_l5['completeness_pct'],
-            'l5_is_complete': comp_l5['is_production_ready'],
-            'l10_completeness_pct': comp_l10['completeness_pct'],
-            'l10_is_complete': comp_l10['is_production_ready'],
-            'l7d_completeness_pct': comp_l7d['completeness_pct'],
-            'l7d_is_complete': comp_l7d['is_production_ready'],
-            'l14d_completeness_pct': comp_l14d['completeness_pct'],
-            'l14d_is_complete': comp_l14d['is_production_ready'],
-            'all_windows_complete': all_windows_complete,
-            # ============================================================
-
-            # Metadata
-            'cache_version': self.cache_version,
-            'created_at': datetime.now(timezone.utc).isoformat(),
-            'processed_at': datetime.now(timezone.utc).isoformat()
+        # Build completeness results dict
+        completeness_results = {
+            'L5': comp_l5,
+            'L10': comp_l10,
+            'L7d': comp_l7d,
+            'L14d': comp_l14d,
         }
 
-        # Add source hashes (Smart Reprocessing - Pattern #3)
-        record['source_player_game_hash'] = self.source_player_game_hash
-        record['source_team_offense_hash'] = self.source_team_offense_hash
-        record['source_upcoming_context_hash'] = self.source_upcoming_context_hash
-        record['source_shot_zone_hash'] = self.source_shot_zone_hash
+        # Build source tracking fields and hashes
+        source_tracking_fields = self.build_source_tracking_fields()
+        source_hashes = {
+            'player_game': self.source_player_game_hash,
+            'team_offense': self.source_team_offense_hash,
+            'upcoming_context': self.source_upcoming_context_hash,
+            'shot_zone': self.source_shot_zone_hash
+        }
+
+        # Build complete cache record using CacheBuilder
+        record = CacheBuilder.build_record(
+            player_lookup=player_lookup,
+            analysis_date=analysis_date,
+            stats_data=stats_data,
+            team_data=team_data,
+            context_data=context_data,
+            shot_zone_data=shot_zone_data,
+            completeness_results=completeness_results,
+            circuit_breaker_status=circuit_breaker_status,
+            source_tracking=source_tracking_fields,
+            source_hashes=source_hashes,
+            is_early_season=is_early_season,
+            is_season_boundary=is_season_boundary,
+            is_bootstrap=is_bootstrap,
+            shot_zone_available=shot_zone_available,
+            min_games_required=self.min_games_required,
+            cache_version=self.cache_version,
+            context_row=context_row
+        )
 
         # Compute and add data hash (Smart Idempotency - Pattern #1)
         record['data_hash'] = self.compute_data_hash(record)

@@ -12,9 +12,9 @@ from flask import Blueprint, render_template, request
 
 from google.cloud import bigquery
 
-from ..services.rate_limiter import rate_limit
-from ..services.auth import check_auth
-from ..services.client_pool import get_bigquery_client as get_shared_bq_client
+from services.admin_dashboard.services.rate_limiter import rate_limit
+from services.admin_dashboard.services.auth import check_auth
+from services.admin_dashboard.services.client_pool import get_bigquery_client as get_shared_bq_client
 
 logger = logging.getLogger(__name__)
 
