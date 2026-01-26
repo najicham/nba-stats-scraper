@@ -33,7 +33,7 @@ def _get_schedule_service():
     global _schedule_service
     if _schedule_service is None:
         try:
-            from orchestration.shared.utils.schedule.service import NBAScheduleService
+            from shared.utils.schedule.service import NBAScheduleService
             _schedule_service = NBAScheduleService()
             logger.debug("NBAScheduleService initialized for season dates")
         except Exception as e:

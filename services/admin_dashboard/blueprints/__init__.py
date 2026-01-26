@@ -11,6 +11,7 @@
 # - actions: Admin actions (POST endpoints)
 # - audit: Audit logs and summary
 # - partials: HTMX partial views
+# - source_blocks: Source-blocked resources monitoring
 
 from .status import status_bp
 from .grading import grading_bp
@@ -22,6 +23,7 @@ from .reliability import reliability_bp
 from .actions import actions_bp
 from .audit import audit_bp
 from .partials import partials_bp
+from .source_blocks import source_blocks_bp
 
 
 def register_blueprints(app):
@@ -36,6 +38,7 @@ def register_blueprints(app):
     app.register_blueprint(actions_bp, url_prefix='/api/actions')
     app.register_blueprint(audit_bp, url_prefix='/api/audit-logs')
     app.register_blueprint(partials_bp, url_prefix='/partials')
+    app.register_blueprint(source_blocks_bp)  # Source blocks (includes /api/source-blocks and /source-blocks)
 
 
 __all__ = [
@@ -49,5 +52,6 @@ __all__ = [
     'actions_bp',
     'audit_bp',
     'partials_bp',
+    'source_blocks_bp',
     'register_blueprints',
 ]

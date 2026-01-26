@@ -75,8 +75,7 @@ class PlayerDailyCacheProcessor(
     SmartSkipMixin,
     EarlyExitMixin,
     CircuitBreakerMixin,
-    BackfillModeMixin,
-    PrecomputeProcessorBase
+    PrecomputeProcessorBase  # Already includes BackfillModeMixin
 ):
     """
     Cache static daily player data for fast Phase 5 real-time updates.

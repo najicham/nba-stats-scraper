@@ -524,7 +524,7 @@ class PhaseBoundaryValidator:
 
             if rows_to_insert:
                 # Use batch loading to avoid streaming buffer issues
-                from orchestration.shared.utils.bigquery_utils import insert_bigquery_rows
+                from shared.utils.bigquery_utils import insert_bigquery_rows
                 from shared.config.gcp_config import get_project_id
                 short_table_id = table_id.replace(f"{get_project_id()}.", "")
                 success = insert_bigquery_rows(short_table_id, rows_to_insert)

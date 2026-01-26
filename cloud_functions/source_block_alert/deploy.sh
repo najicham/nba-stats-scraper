@@ -7,15 +7,10 @@ set -e
 FUNCTION_NAME="source-block-alert"
 REGION="us-west2"
 PROJECT_ID="nba-props-platform"
-SLACK_WEBHOOK_URL="${SLACK_WEBHOOK_URL}"  # Set in environment or pass as arg
-
-if [ -z "$SLACK_WEBHOOK_URL" ]; then
-    echo "ERROR: SLACK_WEBHOOK_URL environment variable not set"
-    echo "Usage: SLACK_WEBHOOK_URL=https://hooks.slack.com/... ./deploy.sh"
-    exit 1
-fi
+SECRET_NAME="slack-webhook-monitoring-warning"  # Use existing Secret Manager secret
 
 echo "Deploying $FUNCTION_NAME to $PROJECT_ID..."
+echo "Using Slack webhook from Secret Manager: $SECRET_NAME"
 
 gcloud functions deploy $FUNCTION_NAME \
     --gen2 \
@@ -25,7 +20,7 @@ gcloud functions deploy $FUNCTION_NAME \
     --entry-point=source_block_alert \
     --trigger-http \
     --allow-unauthenticated \
-    --set-env-vars="SLACK_WEBHOOK_URL=$SLACK_WEBHOOK_URL" \
+    --set-secrets="SLACK_WEBHOOK_URL=${SECRET_NAME}:latest" \
     --memory=256MB \
     --timeout=60s \
     --max-instances=1 \
