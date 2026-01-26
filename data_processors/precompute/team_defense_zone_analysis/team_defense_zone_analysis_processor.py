@@ -28,7 +28,7 @@ import pandas as pd
 from google.cloud import bigquery
 
 # Import base class
-from data_processors.precompute.precompute_base import PrecomputeProcessorBase
+from data_processors.precompute.base import PrecomputeProcessorBase
 
 # Pattern imports (Week 1 - Foundation Patterns)
 from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin

@@ -31,7 +31,7 @@ from google.cloud import bigquery
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 import time
 
-from data_processors.precompute.precompute_base import PrecomputeProcessorBase
+from data_processors.precompute.base import PrecomputeProcessorBase
 
 # Pattern imports (Week 1 - Foundation Patterns)
 from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin

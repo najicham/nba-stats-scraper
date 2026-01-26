@@ -40,7 +40,7 @@ import pandas as pd
 import numpy as np
 from google.cloud import bigquery
 
-from data_processors.precompute.precompute_base import PrecomputeProcessorBase
+from data_processors.precompute.base import PrecomputeProcessorBase
 from data_processors.precompute.mixins.backfill_mode_mixin import BackfillModeMixin
 
 # Pattern imports (Week 1 - Foundation Patterns)

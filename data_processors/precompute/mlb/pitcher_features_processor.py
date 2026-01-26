@@ -21,7 +21,7 @@ from typing import Dict, List, Optional, Any
 from google.cloud import bigquery
 import hashlib
 
-from data_processors.precompute.precompute_base import PrecomputeProcessorBase
+from data_processors.precompute.base import PrecomputeProcessorBase
 
 logger = logging.getLogger(__name__)
 

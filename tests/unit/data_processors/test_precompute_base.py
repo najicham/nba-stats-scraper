@@ -990,6 +990,110 @@ class TestFailureCategorization:
         category = _categorize_failure(error, "transform")
         assert category == "processing_error"
 
+    def test_categorize_no_data_available_success_exception(self):
+        """Test categorizing NoDataAvailableSuccess exception type"""
+        # Import the actual exception class
+        from scrapers.utils.exceptions import NoDataAvailableSuccess
+        error = NoDataAvailableSuccess("No data for this date")
+        category = _categorize_failure(error, "load")
+        assert category == "no_data_available"
+
+    def test_categorize_dependency_error_exception(self):
+        """Test categorizing DependencyError exception type"""
+        # Import the actual exception class
+        from shared.utils.completeness_checker import DependencyError
+        error = DependencyError("Missing upstream table")
+        category = _categorize_failure(error, "load")
+        assert category == "upstream_failure"
+
+    def test_categorize_data_too_stale_error(self):
+        """Test categorizing DataTooStaleError exception type"""
+        # Create a mock DataTooStaleError class (defined in some processors)
+        class DataTooStaleError(Exception):
+            pass
+        error = DataTooStaleError("Data is too old")
+        category = _categorize_failure(error, "load")
+        assert category == "upstream_failure"
+
+    def test_categorize_upstream_dependency_error(self):
+        """Test categorizing UpstreamDependencyError exception type"""
+        # Create a mock UpstreamDependencyError class
+        class UpstreamDependencyError(Exception):
+            pass
+        error = UpstreamDependencyError("Upstream dependency failed")
+        category = _categorize_failure(error, "load")
+        assert category == "upstream_failure"
+
+    def test_categorize_timeout_error_by_type(self):
+        """Test categorizing TimeoutError by exception type name"""
+        # Use the built-in TimeoutError
+        error = TimeoutError("Request timed out")
+        category = _categorize_failure(error, "load")
+        assert category == "timeout"
+
+    def test_categorize_no_data_available_error_type(self):
+        """Test categorizing NoDataAvailableError exception type"""
+        # Create a mock NoDataAvailableError class
+        class NoDataAvailableError(Exception):
+            pass
+        error = NoDataAvailableError("No data found")
+        category = _categorize_failure(error, "load")
+        assert category == "no_data_available"
+
+    def test_categorize_timeout_by_type_without_message_match(self):
+        """Test categorizing TimeoutError by type when message doesn't match pattern"""
+        # Use TimeoutError with a message that doesn't contain timeout keywords
+        error = TimeoutError("Connection failed")
+        category = _categorize_failure(error, "load")
+        assert category == "timeout"
+
+    def test_categorize_deadline_exceeded_by_type_without_message_match(self):
+        """Test categorizing DeadlineExceeded by type when message doesn't match pattern"""
+        # Create a mock DeadlineExceeded class
+        class DeadlineExceeded(Exception):
+            pass
+        error = DeadlineExceeded("Request failed")
+        category = _categorize_failure(error, "load")
+        assert category == "timeout"
+
+
+# ============================================================================
+# Test Format Missing Dependencies
+# ============================================================================
+
+class TestFormatMissingDeps:
+    """Test suite for _format_missing_deps method"""
+
+    @patch('data_processors.precompute.precompute_base.get_bigquery_client')
+    @patch('data_processors.precompute.precompute_base.get_precompute_dataset')
+    @patch('data_processors.precompute.precompute_base.get_project_id')
+    def test_format_missing_deps_returns_none_when_empty(self, mock_project, mock_dataset, mock_bq):
+        """Test _format_missing_deps returns None when no missing dependencies"""
+        mock_project.return_value = 'test-project'
+        mock_dataset.return_value = 'precompute_dataset'
+        mock_bq.return_value = Mock()
+
+        processor = ConcretePrecomputeProcessor()
+        processor.missing_dependencies_list = []
+
+        result = processor._format_missing_deps()
+        assert result is None
+
+    @patch('data_processors.precompute.precompute_base.get_bigquery_client')
+    @patch('data_processors.precompute.precompute_base.get_precompute_dataset')
+    @patch('data_processors.precompute.precompute_base.get_project_id')
+    def test_format_missing_deps_joins_dependencies(self, mock_project, mock_dataset, mock_bq):
+        """Test _format_missing_deps joins multiple dependencies with comma"""
+        mock_project.return_value = 'test-project'
+        mock_dataset.return_value = 'precompute_dataset'
+        mock_bq.return_value = Mock()
+
+        processor = ConcretePrecomputeProcessor()
+        processor.missing_dependencies_list = ['table1', 'table2', 'table3']
+
+        result = processor._format_missing_deps()
+        assert result == "table1, table2, table3"
+
 
 # ============================================================================
 # Test Additional Option Methods

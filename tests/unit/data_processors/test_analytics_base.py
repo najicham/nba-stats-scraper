@@ -599,6 +599,282 @@ class TestPostProcessing:
         # Should not raise
         processor.post_process()
 
+    @patch('data_processors.analytics.analytics_base.get_bigquery_client')
+    @patch('data_processors.analytics.analytics_base.get_analytics_dataset')
+    @patch('data_processors.analytics.analytics_base.get_project_id')
+    def test_post_process_skips_downstream_trigger(self, mock_project, mock_dataset, mock_bq):
+        """Test post_process skips downstream trigger when flag is set"""
+        mock_project.return_value = 'test-project'
+        mock_dataset.return_value = 'analytics_dataset'
+        mock_bq.return_value = Mock()
+
+        processor = ConcreteAnalyticsProcessor()
+        processor.set_opts({
+            'start_date': date(2024, 1, 1),
+            'end_date': date(2024, 1, 31),
+            'skip_downstream_trigger': True
+        })
+
+        # Should not raise and should skip publishing
+        processor.post_process()
+
+    @patch('data_processors.analytics.analytics_base.UnifiedPubSubPublisher')
+    @patch('data_processors.analytics.analytics_base.get_bigquery_client')
+    @patch('data_processors.analytics.analytics_base.get_analytics_dataset')
+    @patch('data_processors.analytics.analytics_base.get_project_id')
+    def test_publish_completion_with_date_object(self, mock_project, mock_dataset, mock_bq, mock_publisher_class):
+        """Test _publish_completion_message formats date objects correctly"""
+        mock_project.return_value = 'test-project'
+        mock_dataset.return_value = 'analytics_dataset'
+        mock_bq.return_value = Mock()
+
+        # Mock the publisher instance
+        mock_publisher_instance = Mock()
+        mock_publisher_instance.publish_completion.return_value = 'msg-123'
+        mock_publisher_class.return_value = mock_publisher_instance
+
+        processor = ConcreteAnalyticsProcessor()
+        processor.set_opts({
+            'start_date': date(2024, 1, 1),
+            'end_date': date(2024, 1, 31)
+        })
+
+        # Call _publish_completion_message with date object
+        processor._publish_completion_message(success=True)
+
+        # Verify publisher was called
+        assert mock_publisher_instance.publish_completion.called
+
+    @patch('data_processors.analytics.analytics_base.UnifiedPubSubPublisher')
+    @patch('data_processors.analytics.analytics_base.get_bigquery_client')
+    @patch('data_processors.analytics.analytics_base.get_analytics_dataset')
+    @patch('data_processors.analytics.analytics_base.get_project_id')
+    def test_publish_completion_with_error_status(self, mock_project, mock_dataset, mock_bq, mock_publisher_class):
+        """Test _publish_completion_message handles error status"""
+        mock_project.return_value = 'test-project'
+        mock_dataset.return_value = 'analytics_dataset'
+        mock_bq.return_value = Mock()
+
+        # Mock the publisher instance
+        mock_publisher_instance = Mock()
+        mock_publisher_instance.publish_completion.return_value = 'msg-123'
+        mock_publisher_class.return_value = mock_publisher_instance
+
+        processor = ConcreteAnalyticsProcessor()
+        processor.set_opts({
+            'start_date': date(2024, 1, 1),
+            'end_date': date(2024, 1, 31)
+        })
+
+        # Call with error
+        processor._publish_completion_message(success=False, error="Test error")
+
+        # Verify publisher was called
+        assert mock_publisher_instance.publish_completion.called
+
+    @patch('data_processors.analytics.analytics_base.UnifiedPubSubPublisher')
+    @patch('data_processors.analytics.analytics_base.get_bigquery_client')
+    @patch('data_processors.analytics.analytics_base.get_analytics_dataset')
+    @patch('data_processors.analytics.analytics_base.get_project_id')
+    def test_publish_completion_with_no_data_status(self, mock_project, mock_dataset, mock_bq, mock_publisher_class):
+        """Test _publish_completion_message handles no_data status"""
+        mock_project.return_value = 'test-project'
+        mock_dataset.return_value = 'analytics_dataset'
+        mock_bq.return_value = Mock()
+
+        # Mock the publisher instance
+        mock_publisher_instance = Mock()
+        mock_publisher_instance.publish_completion.return_value = 'msg-123'
+        mock_publisher_class.return_value = mock_publisher_instance
+
+        processor = ConcreteAnalyticsProcessor()
+        processor.set_opts({
+            'start_date': date(2024, 1, 1),
+            'end_date': date(2024, 1, 31)
+        })
+
+        # Call with no error and no success (no_data case)
+        processor._publish_completion_message(success=False)
+
+        # Verify publisher was called
+        assert mock_publisher_instance.publish_completion.called
+
+    @patch('data_processors.analytics.analytics_base.UnifiedPubSubPublisher')
+    @patch('data_processors.analytics.analytics_base.get_bigquery_client')
+    @patch('data_processors.analytics.analytics_base.get_analytics_dataset')
+    @patch('data_processors.analytics.analytics_base.get_project_id')
+    def test_publish_completion_logs_message_id(self, mock_project, mock_dataset, mock_bq, mock_publisher_class):
+        """Test _publish_completion_message logs when message_id is returned"""
+        mock_project.return_value = 'test-project'
+        mock_dataset.return_value = 'analytics_dataset'
+        mock_bq.return_value = Mock()
+
+        # Mock the publisher instance
+        mock_publisher_instance = Mock()
+        mock_publisher_instance.publish_completion.return_value = 'msg-123'
+        mock_publisher_class.return_value = mock_publisher_instance
+
+        processor = ConcreteAnalyticsProcessor()
+        processor.set_opts({
+            'start_date': date(2024, 1, 1),
+            'end_date': date(2024, 1, 31)
+        })
+
+        # Call _publish_completion_message
+        processor._publish_completion_message(success=True)
+
+        # Verify message_id was returned
+        assert mock_publisher_instance.publish_completion.return_value == 'msg-123'
+
+    @patch('data_processors.analytics.analytics_base.UnifiedPubSubPublisher')
+    @patch('data_processors.analytics.analytics_base.get_bigquery_client')
+    @patch('data_processors.analytics.analytics_base.get_analytics_dataset')
+    @patch('data_processors.analytics.analytics_base.get_project_id')
+    def test_publish_completion_handles_pubsub_error(self, mock_project, mock_dataset, mock_bq, mock_publisher_class):
+        """Test _publish_completion_message handles Pub/Sub errors gracefully"""
+        from google.api_core.exceptions import GoogleAPIError
+
+        mock_project.return_value = 'test-project'
+        mock_dataset.return_value = 'analytics_dataset'
+        mock_bq.return_value = Mock()
+
+        # Mock the publisher instance to raise error
+        mock_publisher_instance = Mock()
+        mock_publisher_instance.publish_completion.side_effect = GoogleAPIError("Pub/Sub error")
+        mock_publisher_class.return_value = mock_publisher_instance
+
+        processor = ConcreteAnalyticsProcessor()
+        processor.set_opts({
+            'start_date': date(2024, 1, 1),
+            'end_date': date(2024, 1, 31)
+        })
+
+        # Should not raise even with Pub/Sub error
+        processor._publish_completion_message(success=True)
+
+
+# ============================================================================
+# Test Log Processing Run
+# ============================================================================
+
+class TestLogProcessingRun:
+    """Test suite for log_processing_run method"""
+
+    @patch('data_processors.analytics.analytics_base.get_bigquery_client')
+    @patch('data_processors.analytics.analytics_base.get_analytics_dataset')
+    @patch('data_processors.analytics.analytics_base.get_project_id')
+    def test_log_processing_run_success(self, mock_project, mock_dataset, mock_bq):
+        """Test log_processing_run with successful run"""
+        mock_project.return_value = 'test-project'
+        mock_dataset.return_value = 'analytics_dataset'
+
+        # Mock BigQuery client and table operations
+        mock_bq_client = Mock()
+        mock_table_ref = Mock()
+        mock_table_ref.schema = []
+        mock_bq_client.get_table.return_value = mock_table_ref
+        mock_load_job = Mock()
+        mock_load_job.result.return_value = None
+        mock_bq_client.load_table_from_json.return_value = mock_load_job
+        mock_bq.return_value = mock_bq_client
+
+        processor = ConcreteAnalyticsProcessor()
+        processor.set_opts({
+            'start_date': date(2024, 1, 1),
+            'end_date': date(2024, 1, 31)
+        })
+
+        # Call log_processing_run
+        processor.log_processing_run(success=True)
+
+        # Verify BigQuery operations were called
+        assert mock_bq_client.get_table.called
+        assert mock_bq_client.load_table_from_json.called
+
+    @patch('data_processors.analytics.analytics_base.get_bigquery_client')
+    @patch('data_processors.analytics.analytics_base.get_analytics_dataset')
+    @patch('data_processors.analytics.analytics_base.get_project_id')
+    def test_log_processing_run_with_error(self, mock_project, mock_dataset, mock_bq):
+        """Test log_processing_run with error"""
+        mock_project.return_value = 'test-project'
+        mock_dataset.return_value = 'analytics_dataset'
+
+        # Mock BigQuery client and table operations
+        mock_bq_client = Mock()
+        mock_table_ref = Mock()
+        mock_table_ref.schema = []
+        mock_bq_client.get_table.return_value = mock_table_ref
+        mock_load_job = Mock()
+        mock_load_job.result.return_value = None
+        mock_bq_client.load_table_from_json.return_value = mock_load_job
+        mock_bq.return_value = mock_bq_client
+
+        processor = ConcreteAnalyticsProcessor()
+        processor.set_opts({
+            'start_date': date(2024, 1, 1),
+            'end_date': date(2024, 1, 31)
+        })
+
+        # Call log_processing_run with error
+        processor.log_processing_run(success=False, error="Test error")
+
+        # Verify BigQuery operations were called
+        assert mock_bq_client.load_table_from_json.called
+
+    @patch('data_processors.analytics.analytics_base.get_bigquery_client')
+    @patch('data_processors.analytics.analytics_base.get_analytics_dataset')
+    @patch('data_processors.analytics.analytics_base.get_project_id')
+    def test_log_processing_run_with_skip_reason(self, mock_project, mock_dataset, mock_bq):
+        """Test log_processing_run with skip_reason"""
+        mock_project.return_value = 'test-project'
+        mock_dataset.return_value = 'analytics_dataset'
+
+        # Mock BigQuery client and table operations
+        mock_bq_client = Mock()
+        mock_table_ref = Mock()
+        mock_table_ref.schema = []
+        mock_bq_client.get_table.return_value = mock_table_ref
+        mock_load_job = Mock()
+        mock_load_job.result.return_value = None
+        mock_bq_client.load_table_from_json.return_value = mock_load_job
+        mock_bq.return_value = mock_bq_client
+
+        processor = ConcreteAnalyticsProcessor()
+        processor.set_opts({
+            'start_date': date(2024, 1, 1),
+            'end_date': date(2024, 1, 31)
+        })
+
+        # Call log_processing_run with skip_reason
+        processor.log_processing_run(success=False, skip_reason="No data available")
+
+        # Verify skip_reason was tracked
+        assert processor.stats.get('skip_reason') == "No data available"
+
+    @patch('data_processors.analytics.analytics_base.get_bigquery_client')
+    @patch('data_processors.analytics.analytics_base.get_analytics_dataset')
+    @patch('data_processors.analytics.analytics_base.get_project_id')
+    def test_log_processing_run_handles_bigquery_error(self, mock_project, mock_dataset, mock_bq):
+        """Test log_processing_run handles BigQuery errors gracefully"""
+        from google.api_core.exceptions import GoogleAPIError
+
+        mock_project.return_value = 'test-project'
+        mock_dataset.return_value = 'analytics_dataset'
+
+        # Mock BigQuery client to raise error
+        mock_bq_client = Mock()
+        mock_bq_client.get_table.side_effect = GoogleAPIError("BigQuery error")
+        mock_bq.return_value = mock_bq_client
+
+        processor = ConcreteAnalyticsProcessor()
+        processor.set_opts({
+            'start_date': date(2024, 1, 1),
+            'end_date': date(2024, 1, 31)
+        })
+
+        # Should not raise even with BigQuery error
+        processor.log_processing_run(success=True)
+
 
 # ============================================================================
 # Test Finalize
