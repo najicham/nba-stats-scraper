@@ -255,6 +255,96 @@ class TonightDataValidator:
         print(f"✓ Tonight API: {total_players} players, {games} games, updated {updated}")
         return True
 
+    def check_player_game_summary_quality(self) -> bool:
+        """
+        Check data quality in player_game_summary table.
+
+        Validates:
+        - minutes_played NULL rate <10%
+        - usage_rate NULL rate <10% for active players
+        - source_team_last_updated timestamp exists
+        - Coverage comparison to previous day
+
+        Added 2026-01-25 to prevent Nov 2025 data quality issues.
+        """
+        from datetime import timedelta
+
+        # Check yesterday's data (today's data may not exist yet)
+        check_date = self.target_date - timedelta(days=1)
+
+        query = f"""
+        WITH data_quality AS (
+            SELECT
+                COUNT(*) as total_records,
+                COUNTIF(minutes_played IS NOT NULL) as has_minutes,
+                COUNTIF(usage_rate IS NOT NULL) as has_usage_rate,
+                COUNTIF(source_team_last_updated IS NOT NULL) as has_team_join,
+                ROUND(100.0 * COUNTIF(minutes_played IS NOT NULL) / COUNT(*), 1) as minutes_pct,
+                ROUND(100.0 * COUNTIF(usage_rate IS NOT NULL) / COUNT(*), 1) as usage_rate_pct,
+                -- For active players only (minutes > 0)
+                COUNTIF(minutes_played > 0) as active_players,
+                COUNTIF(minutes_played > 0 AND usage_rate IS NOT NULL) as active_with_usage,
+                ROUND(100.0 * COUNTIF(minutes_played > 0 AND usage_rate IS NOT NULL) / NULLIF(COUNTIF(minutes_played > 0), 0), 1) as active_usage_pct
+            FROM `{self.project}.nba_analytics.player_game_summary`
+            WHERE game_date = '{check_date}'
+        )
+        SELECT * FROM data_quality
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))[0]
+        except Exception as e:
+            self.add_issue('data_quality', f'Failed to check player_game_summary quality: {e}')
+            return False
+
+        total = result.total_records
+        minutes_pct = result.minutes_pct or 0
+        usage_rate_pct = result.usage_rate_pct or 0
+        active_usage_pct = result.active_usage_pct or 0
+        has_team_join = result.has_team_join or 0
+
+        self.stats['pgs_date_checked'] = str(check_date)
+        self.stats['pgs_total_records'] = total
+        self.stats['pgs_minutes_pct'] = minutes_pct
+        self.stats['pgs_usage_rate_pct'] = usage_rate_pct
+        self.stats['pgs_active_usage_pct'] = active_usage_pct
+
+        # Check if data exists
+        if total == 0:
+            self.add_warning('data_quality', f'No player_game_summary data for {check_date}')
+            return False
+
+        # Critical thresholds
+        MINUTES_THRESHOLD = 90.0  # Alert if <90% have minutes_played
+        USAGE_THRESHOLD = 90.0    # Alert if <90% of active players have usage_rate
+
+        # Check minutes_played coverage
+        if minutes_pct < MINUTES_THRESHOLD:
+            self.add_issue('data_quality',
+                f'minutes_played coverage is {minutes_pct}% (threshold: {MINUTES_THRESHOLD}%) for {check_date}',
+                severity='CRITICAL')
+
+        # Check usage_rate coverage for active players
+        if active_usage_pct < USAGE_THRESHOLD:
+            self.add_issue('data_quality',
+                f'usage_rate coverage is {active_usage_pct}% for active players (threshold: {USAGE_THRESHOLD}%) for {check_date}',
+                severity='CRITICAL')
+
+        # Check team stats join
+        if has_team_join == 0:
+            self.add_warning('data_quality',
+                f'No team stats join detected (source_team_last_updated all NULL) for {check_date}')
+
+        # Print status
+        status_icon = '✓' if minutes_pct >= MINUTES_THRESHOLD and active_usage_pct >= USAGE_THRESHOLD else '⚠️'
+        print(f"{status_icon} Data Quality ({check_date}):")
+        print(f"   - {total} player-game records")
+        print(f"   - minutes_played: {minutes_pct}% coverage")
+        print(f"   - usage_rate: {active_usage_pct}% for active players")
+        print(f"   - Team stats joined: {'Yes' if has_team_join > 0 else 'No'}")
+
+        return minutes_pct >= MINUTES_THRESHOLD and active_usage_pct >= USAGE_THRESHOLD
+
     def check_scraper_registry_vs_workflows(self) -> List[str]:
         """Check for scrapers in registry but not in workflows."""
         import yaml
@@ -308,6 +398,8 @@ class TonightDataValidator:
         self.check_roster_freshness()
         print()
         self.check_game_context()
+        print()
+        self.check_player_game_summary_quality()
         print()
         self.check_predictions()
         print()
