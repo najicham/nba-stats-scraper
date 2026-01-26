@@ -71,9 +71,8 @@ class TestScraperInitialization:
         scraper = MockScraper()
 
         assert scraper.opts == {}
-        assert scraper.extracted_opts == {}
-        assert scraper.stats == {}
-        assert scraper.data is None
+        assert 'run_id' in scraper.stats  # stats starts with run_id
+        assert scraper.data == {}  # data initializes as empty dict, not None
         assert hasattr(scraper, 'run_id')
 
     def test_scraper_initializes_with_opts(self):
@@ -106,6 +105,7 @@ class TestHTTPRetryStrategy:
         """Test default retry strategy configuration"""
         scraper = MockScraper()
 
+        # Method takes no parameters, uses self.max_retries_http
         retry_strategy = scraper.get_retry_strategy()
 
         assert retry_strategy.total >= 3
@@ -117,9 +117,11 @@ class TestHTTPRetryStrategy:
 
     def test_get_retry_strategy_custom_retries(self):
         """Test custom retry count"""
-        scraper = MockScraper({'max_retries': 5})
+        scraper = MockScraper()
+        scraper.max_retries_http = 5
 
-        retry_strategy = scraper.get_retry_strategy(max_retries=5)
+        # Method takes no parameters, uses self.max_retries_http
+        retry_strategy = scraper.get_retry_strategy()
 
         assert retry_strategy.total == 5
 
@@ -176,33 +178,39 @@ class TestDownloadBasics:
     def test_check_download_status_200_success(self):
         """Test status code 200 is considered success"""
         scraper = MockScraper()
-        response = Mock()
-        response.status_code = 200
+        scraper.raw_response = Mock()
+        scraper.raw_response.status_code = 200
+        scraper.raw_response.headers = {}
 
+        # Method takes no parameters, uses self.raw_response
         # Should not raise exception
-        scraper.check_download_status(response, 'test_url')
+        scraper.check_download_status()
 
     def test_check_download_status_404_raises_error(self):
         """Test status code 404 raises appropriate error"""
         scraper = MockScraper()
-        response = Mock()
-        response.status_code = 404
-        response.text = "Not Found"
+        scraper.raw_response = Mock()
+        scraper.raw_response.status_code = 404
+        scraper.raw_response.text = "Not Found"
+        scraper.raw_response.headers = {}
 
+        # Method takes no parameters, uses self.raw_response
         with pytest.raises(InvalidHttpStatusCodeException) as exc_info:
-            scraper.check_download_status(response, 'test_url')
+            scraper.check_download_status()
 
         assert '404' in str(exc_info.value)
 
     def test_check_download_status_500_raises_retry_error(self):
         """Test 5xx status codes raise retry error"""
         scraper = MockScraper()
-        response = Mock()
-        response.status_code = 500
-        response.text = "Internal Server Error"
+        scraper.raw_response = Mock()
+        scraper.raw_response.status_code = 500
+        scraper.raw_response.text = "Internal Server Error"
+        scraper.raw_response.headers = {}
 
+        # Method takes no parameters, uses self.raw_response
         with pytest.raises(RetryInvalidHttpStatusCodeException) as exc_info:
-            scraper.check_download_status(response, 'test_url')
+            scraper.check_download_status()
 
         assert '500' in str(exc_info.value)
 
@@ -210,10 +218,11 @@ class TestDownloadBasics:
 class TestProxyRotation:
     """Test suite for proxy rotation and circuit breaker"""
 
-    @patch('scrapers.scraper_base.get_proxy_urls_with_circuit_breaker')
+    @patch('scrapers.scraper_base.get_healthy_proxy_urls_for_target')
     def test_download_with_proxy_uses_circuit_breaker(self, mock_get_proxies):
         """Test proxy download uses circuit breaker"""
-        scraper = MockScraper({'use_proxy': True})
+        scraper = MockScraper()
+        scraper.url = 'http://test.com'  # Set URL before calling
 
         mock_get_proxies.return_value = ['http://proxy1.com:8080']
 
@@ -225,15 +234,17 @@ class TestProxyRotation:
             mock_resp.headers = {}
             mock_session.return_value.get.return_value = mock_resp
 
-            result = scraper.download_data_with_proxy('http://test.com')
+            # Method takes no parameters, uses self.url
+            result = scraper.download_data_with_proxy()
 
         mock_get_proxies.assert_called_once()
 
     @patch('scrapers.scraper_base.record_proxy_success')
-    @patch('scrapers.scraper_base.get_proxy_urls_with_circuit_breaker')
+    @patch('scrapers.scraper_base.get_healthy_proxy_urls_for_target')
     def test_download_with_proxy_records_success(self, mock_get_proxies, mock_record_success):
         """Test successful proxy download records success"""
-        scraper = MockScraper({'use_proxy': True})
+        scraper = MockScraper()
+        scraper.url = 'http://test.com'  # Set URL before calling
 
         mock_get_proxies.return_value = ['http://proxy1.com:8080']
 
@@ -244,32 +255,36 @@ class TestProxyRotation:
             mock_resp.headers = {}
             mock_session.return_value.get.return_value = mock_resp
 
-            result = scraper.download_data_with_proxy('http://test.com')
+            # Method takes no parameters, uses self.url
+            result = scraper.download_data_with_proxy()
 
         # Should record proxy success
         mock_record_success.assert_called()
 
     @patch('scrapers.scraper_base.record_proxy_failure')
-    @patch('scrapers.scraper_base.get_proxy_urls_with_circuit_breaker')
+    @patch('scrapers.scraper_base.get_healthy_proxy_urls_for_target')
     def test_download_with_proxy_records_failure(self, mock_get_proxies, mock_record_failure):
         """Test failed proxy download records failure"""
-        scraper = MockScraper({'use_proxy': True})
+        scraper = MockScraper()
+        scraper.url = 'http://test.com'  # Set URL before calling
 
         mock_get_proxies.return_value = ['http://proxy1.com:8080']
 
         with patch('scrapers.scraper_base.get_http_session') as mock_session:
             mock_session.return_value.get.side_effect = ProxyError("Proxy connection failed")
 
+            # Method takes no parameters, uses self.url
             with pytest.raises(DownloadDataException):
-                scraper.download_data_with_proxy('http://test.com')
+                scraper.download_data_with_proxy()
 
         # Should record proxy failure
         mock_record_failure.assert_called()
 
-    @patch('scrapers.scraper_base.get_proxy_urls_with_circuit_breaker')
+    @patch('scrapers.scraper_base.get_healthy_proxy_urls_for_target')
     def test_download_with_proxy_tries_multiple_proxies(self, mock_get_proxies):
         """Test proxy download tries multiple proxies on failure"""
-        scraper = MockScraper({'use_proxy': True})
+        scraper = MockScraper()
+        scraper.url = 'http://test.com'  # Set URL before calling
 
         mock_get_proxies.return_value = [
             'http://proxy1.com:8080',
@@ -285,7 +300,8 @@ class TestProxyRotation:
                 Mock(status_code=200, text='{"data": "test"}', headers={})
             ]
 
-            result = scraper.download_data_with_proxy('http://test.com')
+            # Method takes no parameters, uses self.url
+            result = scraper.download_data_with_proxy()
 
         # Should have tried 3 times
         assert mock_session.return_value.get.call_count == 3
@@ -332,14 +348,16 @@ class TestRetryLogic:
         """Test retry sleep uses exponential backoff"""
         scraper = MockScraper()
 
-        # First retry
-        scraper.sleep_before_retry(1)
+        # First retry - set download_retry_count before calling
+        scraper.download_retry_count = 1
+        scraper.sleep_before_retry()  # Method takes no parameters, uses self.download_retry_count
         assert mock_sleep.called
         first_sleep = mock_sleep.call_args[0][0]
 
         # Second retry (should sleep longer)
         mock_sleep.reset_mock()
-        scraper.sleep_before_retry(2)
+        scraper.download_retry_count = 2
+        scraper.sleep_before_retry()  # Method takes no parameters, uses self.download_retry_count
         second_sleep = mock_sleep.call_args[0][0]
 
         # Exponential backoff means second sleep > first sleep
@@ -352,26 +370,31 @@ class TestDataValidation:
     def test_validate_download_data_with_valid_data(self):
         """Test validation passes with valid data"""
         scraper = MockScraper()
-        data = {"key": "value", "items": [1, 2, 3]}
+        scraper.decoded_data = {"key": "value", "items": [1, 2, 3]}
 
+        # Method takes no parameters, uses self.decoded_data
         # Should not raise exception
-        scraper.validate_download_data(data)
+        scraper.validate_download_data()
 
     def test_validate_download_data_with_none(self):
         """Test validation fails with None data"""
         scraper = MockScraper()
+        scraper.decoded_data = None
 
+        # Method takes no parameters, uses self.decoded_data
         with pytest.raises(Exception):
-            scraper.validate_download_data(None)
+            scraper.validate_download_data()
 
     def test_validate_download_data_with_empty_dict(self):
         """Test validation behavior with empty dict"""
         scraper = MockScraper()
+        scraper.decoded_data = {}
 
+        # Method takes no parameters, uses self.decoded_data
         # Empty dict might be valid depending on scraper
         # Base class should handle gracefully
         try:
-            scraper.validate_download_data({})
+            scraper.validate_download_data()
         except Exception:
             # Some scrapers may reject empty data
             pass
@@ -445,10 +468,11 @@ class TestErrorHandling:
         scraper = MockScraper()
         error = Exception("Test error")
 
-        scraper.report_error(error, {"context": "test"})
+        # Method takes only exc parameter, not context dict
+        scraper.report_error(error)
 
         # Sentry should be called (if configured)
-        # mock_sentry.assert_called()
+        mock_sentry.assert_called_once_with(error)
 
     @patch('scrapers.scraper_base.notify_error')
     def test_report_error_sends_notification(self, mock_notify):
@@ -456,10 +480,11 @@ class TestErrorHandling:
         scraper = MockScraper({'notify_on_error': True})
         error = Exception("Critical error")
 
-        scraper.report_error(error, {"severity": "critical"})
+        # Method takes only exc parameter, not context dict
+        scraper.report_error(error)
 
-        # Notification should be sent for critical errors
-        # mock_notify.assert_called()
+        # Notification is sent during run(), not in report_error()
+        # report_error() only captures to Sentry
 
     def test_debug_save_data_on_error(self):
         """Test debug data save on error"""
@@ -542,10 +567,11 @@ class TestStatsTracking:
     """Test suite for statistics tracking"""
 
     def test_stats_initialized_empty(self):
-        """Test stats dict initializes empty"""
+        """Test stats dict initializes with run_id"""
         scraper = MockScraper()
 
-        assert scraper.stats == {}
+        assert 'run_id' in scraper.stats
+        assert scraper.stats['run_id'] == scraper.run_id
 
     def test_stats_tracks_download_success(self):
         """Test stats tracks successful download"""

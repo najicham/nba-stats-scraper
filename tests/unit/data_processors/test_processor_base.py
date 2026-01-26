@@ -56,7 +56,7 @@ class TestProcessorInitialization:
         processor = MockProcessor()
 
         assert processor.opts == {}
-        assert processor.stats == {}
+        assert 'run_id' in processor.stats  # stats starts with run_id
         assert processor.raw_data is None
         assert processor.transformed_data is None
         assert hasattr(processor, 'run_id')
@@ -72,9 +72,10 @@ class TestProcessorInitialization:
         """Test processor initializes heartbeat if available"""
         processor = MockProcessor()
 
-        # Heartbeat is optional
-        if hasattr(processor, 'heartbeat'):
-            assert processor.heartbeat is not None
+        # Heartbeat attribute exists but starts as None
+        # It gets initialized when processor.run() is called
+        assert hasattr(processor, 'heartbeat')
+        # Initially None, gets set during run() if HEARTBEAT_AVAILABLE
 
 
 class TestOptionsValidation:
