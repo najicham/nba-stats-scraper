@@ -1,0 +1,162 @@
+<!-- Correlation Trace Component -->
+<div class="space-y-4">
+    {% if trace and trace.summary and trace.summary.found %}
+    <!-- Trace Summary Card -->
+    <div class="bg-gradient-to-r {% if trace.summary.status == 'error' %}from-red-50 to-red-100 border-red-200{% elif trace.summary.status == 'completed' %}from-green-50 to-green-100 border-green-200{% else %}from-blue-50 to-blue-100 border-blue-200{% endif %} border rounded-lg p-4">
+        <div class="flex justify-between items-start mb-3">
+            <div>
+                <h4 class="text-lg font-semibold text-gray-800">Correlation Trace</h4>
+                <p class="text-sm font-mono text-gray-600 mt-1">{{ trace.correlation_id }}</p>
+            </div>
+            <div class="text-right">
+                {% if trace.summary.status == 'error' %}
+                <span class="px-3 py-1 bg-red-200 text-red-800 rounded-full text-sm font-medium">Error</span>
+                {% elif trace.summary.status == 'completed' %}
+                <span class="px-3 py-1 bg-green-200 text-green-800 rounded-full text-sm font-medium">Completed</span>
+                {% else %}
+                <span class="px-3 py-1 bg-blue-200 text-blue-800 rounded-full text-sm font-medium">In Progress</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+                <span class="text-gray-500">Events:</span>
+                <span class="ml-1 font-medium text-gray-800">{{ trace.summary.event_count }}</span>
+            </div>
+            <div>
+                <span class="text-gray-500">Game Date:</span>
+                <span class="ml-1 font-medium text-gray-800">{{ trace.summary.game_date or 'N/A' }}</span>
+            </div>
+            <div>
+                <span class="text-gray-500">Duration:</span>
+                <span class="ml-1 font-medium text-gray-800">
+                    {% if trace.summary.total_duration_seconds %}
+                        {{ "%.1f"|format(trace.summary.total_duration_seconds) }}s
+                    {% else %}
+                        N/A
+                    {% endif %}
+                </span>
+            </div>
+            <div>
+                <span class="text-gray-500">Phases:</span>
+                <span class="ml-1 font-medium text-gray-800">{{ trace.summary.phases|join(', ') }}</span>
+            </div>
+        </div>
+
+        {% if trace.summary.processors %}
+        <div class="mt-3 pt-3 border-t border-gray-200">
+            <span class="text-sm text-gray-500">Processors:</span>
+            <div class="flex flex-wrap gap-2 mt-1">
+                {% for processor in trace.summary.processors %}
+                <span class="px-2 py-0.5 bg-gray-200 text-gray-700 rounded text-xs font-mono">{{ processor }}</span>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Event Timeline -->
+    <div class="border border-gray-200 rounded-lg overflow-hidden">
+        <div class="bg-gray-100 px-4 py-2">
+            <h5 class="text-sm font-semibold text-gray-700">Event Timeline</h5>
+        </div>
+
+        <div class="relative">
+            <!-- Timeline line -->
+            <div class="absolute left-6 top-0 bottom-0 w-0.5 bg-gray-200"></div>
+
+            <div class="divide-y divide-gray-100">
+                {% for event in trace.events %}
+                <div class="relative pl-12 pr-4 py-3 hover:bg-gray-50">
+                    <!-- Timeline dot -->
+                    <div class="absolute left-4 top-4 w-4 h-4 rounded-full border-2
+                        {% if event.event_type == 'error' %}bg-red-100 border-red-500
+                        {% elif event.event_type == 'processor_complete' %}bg-green-100 border-green-500
+                        {% elif event.event_type == 'processor_start' %}bg-blue-100 border-blue-500
+                        {% else %}bg-gray-100 border-gray-400{% endif %}">
+                    </div>
+
+                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                        <div class="flex-1">
+                            <div class="flex items-center gap-2">
+                                <!-- Event type badge -->
+                                {% if event.event_type == 'processor_start' %}
+                                <span class="px-2 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-medium">START</span>
+                                {% elif event.event_type == 'processor_complete' %}
+                                <span class="px-2 py-0.5 bg-green-100 text-green-700 rounded text-xs font-medium">COMPLETE</span>
+                                {% elif event.event_type == 'error' %}
+                                <span class="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs font-medium">ERROR</span>
+                                {% else %}
+                                <span class="px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs font-medium">{{ event.event_type|upper }}</span>
+                                {% endif %}
+
+                                <!-- Processor name -->
+                                <span class="font-medium text-gray-900 text-sm">{{ event.processor_name or 'Unknown' }}</span>
+
+                                <!-- Phase badge -->
+                                {% if event.phase %}
+                                <span class="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded text-xs">{{ event.phase }}</span>
+                                {% endif %}
+                            </div>
+
+                            <!-- Event details -->
+                            <div class="mt-1 text-xs text-gray-500 flex items-center gap-3">
+                                <span>{{ event.timestamp[11:19] if event.timestamp else '-' }}</span>
+                                {% if event.duration_seconds %}
+                                <span class="{% if event.duration_seconds > 60 %}text-yellow-600{% endif %}">
+                                    {{ "%.1f"|format(event.duration_seconds) }}s
+                                </span>
+                                {% endif %}
+                                {% if event.records_processed %}
+                                <span>{{ event.records_processed }} records</span>
+                                {% endif %}
+                            </div>
+
+                            <!-- Error message if present -->
+                            {% if event.error_message %}
+                            <div class="mt-2 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700 font-mono overflow-x-auto">
+                                {{ event.error_message }}
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- Event ID (truncated) -->
+                        <div class="text-xs text-gray-400 font-mono">
+                            {{ event.event_id[:8] if event.event_id else '' }}...
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    {% elif trace and trace.summary %}
+    <!-- Not found message -->
+    <div class="text-center py-8">
+        <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-yellow-100 mb-4">
+            <svg class="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+            </svg>
+        </div>
+        <p class="text-gray-600">{{ trace.summary.message or 'No events found for this correlation ID' }}</p>
+        <p class="text-sm text-gray-400 mt-2">Correlation ID: <span class="font-mono">{{ trace.correlation_id }}</span></p>
+        {% if trace.summary.error %}
+        <p class="text-sm text-red-500 mt-2">Error: {{ trace.summary.error }}</p>
+        {% endif %}
+    </div>
+
+    {% else %}
+    <!-- Empty state -->
+    <div class="text-center py-8">
+        <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-gray-100 mb-4">
+            <svg class="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+            </svg>
+        </div>
+        <p class="text-gray-500">Enter a correlation ID above to trace its journey through the pipeline</p>
+        <p class="text-sm text-gray-400 mt-2">You can find correlation IDs in the Pipeline Timeline table</p>
+    </div>
+    {% endif %}
+</div>

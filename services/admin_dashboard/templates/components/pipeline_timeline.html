@@ -67,7 +67,11 @@
                         <td class="px-3 py-2">
                             <div class="font-medium text-gray-900">{{ event.processor_name }}</div>
                             {% if event.correlation_id %}
-                            <div class="text-gray-400">{{ event.correlation_id[:8] }}</div>
+                            <div class="text-violet-600 hover:text-violet-800 cursor-pointer hover:underline"
+                                 data-correlation-id="{{ event.correlation_id }}"
+                                 title="Click to trace this correlation ID">
+                                {{ event.correlation_id[:8] }}...
+                            </div>
                             {% endif %}
                         </td>
                         <td class="px-3 py-2 text-center text-gray-600">{{ event.game_date }}</td>

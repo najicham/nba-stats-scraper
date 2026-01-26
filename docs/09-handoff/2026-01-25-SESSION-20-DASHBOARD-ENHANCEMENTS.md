@@ -1,14 +1,14 @@
 # Session 20 Handoff: Dashboard Enhancements
 
 **Date:** 2026-01-25
-**Status:** Partial - 3/17 tasks complete
-**Duration:** ~45 minutes
+**Status:** Partial - 4/17 tasks complete
+**Duration:** ~60 minutes
 
 ---
 
 ## Quick Context
 
-Session 20 focused on enhancing the admin dashboard with new monitoring widgets. Created a comprehensive todo list of 17 tasks and completed the first 3 dashboard enhancement tasks.
+Session 20 focused on enhancing the admin dashboard with new monitoring widgets. Created a comprehensive todo list of 17 tasks and completed the first 4 dashboard enhancement tasks.
 
 ---
 
@@ -51,14 +51,34 @@ Added new "Pipeline Timeline" tab to dashboard:
 - `services/admin_dashboard/templates/components/pipeline_timeline.html` - new file
 - `services/admin_dashboard/templates/dashboard.html` - new tab
 
+### 4. Correlation ID Tracing (Task #4)
+Added correlation ID tracing to the Pipeline Timeline tab:
+- Search box with autocomplete for correlation IDs
+- Full event trace display with timeline visualization
+- Summary card showing status (completed/error/in_progress), duration, phases
+- Clickable correlation IDs in timeline table
+- Event details with timestamps, processors, errors
+
+**Features:**
+- Search for correlation ID with autocomplete suggestions
+- Click any correlation ID in timeline to trace it
+- Visual timeline with color-coded status dots
+- Error messages displayed inline
+
+**Files:**
+- `services/admin_dashboard/services/bigquery_service.py` - `get_correlation_trace()`, `search_correlation_ids()`, `get_recent_correlation_ids()`
+- `services/admin_dashboard/main.py` - `/api/correlation-trace/<id>`, `/api/correlation-search`, `/api/recent-correlations`, `/partials/correlation-trace`
+- `services/admin_dashboard/templates/components/correlation_trace.html` - new file (162 lines)
+- `services/admin_dashboard/templates/components/pipeline_timeline.html` - clickable correlation IDs
+- `services/admin_dashboard/templates/dashboard.html` - search UI and JavaScript handlers
+
 ---
 
-## Remaining Tasks (14 of 17)
+## Remaining Tasks (13 of 17)
 
-### Dashboard Enhancements (3 remaining)
+### Dashboard Enhancements (2 remaining)
 | # | Task | Description |
 |---|------|-------------|
-| 4 | Correlation ID tracing | Search box to trace requests end-to-end |
 | 5 | Error signature clustering | Group similar errors by pattern |
 | 6 | Processor heartbeat timeline | Visual timeline from Firestore heartbeats |
 
@@ -103,6 +123,10 @@ f6befa29 feat: Add dashboard widgets for grading coverage, retry queue, and pipe
 | `/api/failed-processor-queue` | GET | Retry queue with status counts |
 | `/api/pipeline-timeline` | GET | Pipeline events for timeline |
 | `/partials/pipeline-timeline` | GET | HTMX partial for dashboard |
+| `/api/correlation-trace/<id>` | GET | Full event trace for a correlation ID |
+| `/api/correlation-search` | GET | Search correlation IDs by partial match |
+| `/api/recent-correlations` | GET | Recent correlation IDs for quick access |
+| `/partials/correlation-trace` | GET | HTMX partial for trace display |
 
 ---
 
@@ -129,8 +153,8 @@ git log --oneline -5
 ## Priority Recommendations
 
 **If continuing dashboard work:**
-1. Task #4 (Correlation ID tracing) - high value for debugging
-2. Task #5 (Error signature clustering) - helps identify patterns
+1. Task #5 (Error signature clustering) - helps identify error patterns
+2. Task #6 (Processor heartbeat timeline) - monitors processor health
 
 **If switching to code quality:**
 1. Task #11 (Hardcoded URLs) - deployment risk
@@ -144,12 +168,13 @@ git log --oneline -5
 ## Files Modified This Session
 
 ```
-services/admin_dashboard/main.py                          (+147 lines)
-services/admin_dashboard/services/bigquery_service.py     (+241 lines)
+services/admin_dashboard/main.py                          (+231 lines)
+services/admin_dashboard/services/bigquery_service.py     (+474 lines)
 services/admin_dashboard/templates/components/coverage_metrics.html (+84 lines)
 services/admin_dashboard/templates/components/processor_failures.html (+140 lines)
-services/admin_dashboard/templates/components/pipeline_timeline.html (new, 150 lines)
-services/admin_dashboard/templates/dashboard.html         (+62 lines)
+services/admin_dashboard/templates/components/pipeline_timeline.html (new, 157 lines)
+services/admin_dashboard/templates/components/correlation_trace.html (new, 162 lines)
+services/admin_dashboard/templates/dashboard.html         (+239 lines)
 ```
 
 ---
@@ -162,4 +187,4 @@ services/admin_dashboard/templates/dashboard.html         (+62 lines)
 
 ---
 
-**Session 20 Partial Complete.** 3 dashboard widgets added, 14 tasks remaining.
+**Session 20 Partial Complete.** 4 dashboard widgets added, 13 tasks remaining.

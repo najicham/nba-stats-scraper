@@ -1423,6 +1423,90 @@ def partial_pipeline_timeline():
     )
 
 
+# =============================================================================
+# Correlation ID Tracing Endpoints
+# =============================================================================
+
+@app.route('/api/correlation-trace/<correlation_id>')
+@rate_limit
+def api_correlation_trace(correlation_id):
+    """Get full event trace for a correlation ID."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    if not correlation_id or len(correlation_id) < 8:
+        return jsonify({'error': 'Invalid correlation ID (minimum 8 characters)'}), 400
+
+    try:
+        trace = bq_service.get_correlation_trace(correlation_id)
+        return jsonify(trace)
+    except Exception as e:
+        logger.error(f"Error in api_correlation_trace: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/correlation-search')
+@rate_limit
+def api_correlation_search():
+    """Search for correlation IDs by partial match."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    search_term = request.args.get('q', '').strip()
+    limit = clamp_param(request.args.get('limit', type=int, default=20), 1, 50)
+
+    if not search_term or len(search_term) < 4:
+        return jsonify({'error': 'Search term must be at least 4 characters', 'results': []}), 400
+
+    try:
+        results = bq_service.search_correlation_ids(search_term, limit=limit)
+        return jsonify({'results': results, 'count': len(results)})
+    except Exception as e:
+        logger.error(f"Error in api_correlation_search: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/recent-correlations')
+@rate_limit
+def api_recent_correlations():
+    """Get recent correlation IDs for quick access."""
+    if not check_auth():
+        return jsonify({'error': 'Unauthorized'}), 401
+
+    hours = clamp_param(request.args.get('hours', type=int, default=24), 1, 168)
+    limit = clamp_param(request.args.get('limit', type=int, default=50), 1, 100)
+
+    try:
+        correlations = bq_service.get_recent_correlation_ids(hours=hours, limit=limit)
+        return jsonify({'correlations': correlations, 'count': len(correlations)})
+    except Exception as e:
+        logger.error(f"Error in api_recent_correlations: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/partials/correlation-trace')
+@rate_limit
+def partial_correlation_trace():
+    """HTMX partial: Correlation trace display."""
+    if not check_auth():
+        return '<div class="text-red-500">Unauthorized</div>', 401
+
+    correlation_id = request.args.get('id', '').strip()
+
+    if not correlation_id or len(correlation_id) < 8:
+        return '<div class="text-yellow-600 text-center py-4">Enter a correlation ID (at least 8 characters) to trace</div>'
+
+    try:
+        trace = bq_service.get_correlation_trace(correlation_id)
+    except Exception as e:
+        return f'<div class="text-red-500">Error: {e}</div>', 500
+
+    return render_template(
+        'components/correlation_trace.html',
+        trace=trace
+    )
+
+
 @app.route('/partials/processor-failures')
 @rate_limit
 def partial_processor_failures():

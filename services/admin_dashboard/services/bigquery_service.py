@@ -2024,3 +2024,236 @@ class BigQueryService:
         except Exception as e:
             logger.error(f"Error querying accuracy by system trend: {e}")
             return []
+
+    # =========================================================================
+    # Correlation ID Tracing Methods
+    # =========================================================================
+
+    def get_correlation_trace(self, correlation_id: str) -> Dict:
+        """
+        Get the full event trace for a correlation ID.
+
+        Returns all pipeline events associated with a correlation_id,
+        enabling end-to-end request tracing across phases.
+
+        Args:
+            correlation_id: The correlation ID to trace
+
+        Returns:
+            Dict with events list, summary, and timeline info
+        """
+        if not correlation_id or len(correlation_id) < 8:
+            return {'error': 'Invalid correlation_id', 'events': []}
+
+        query = f"""
+        SELECT
+            event_id,
+            timestamp,
+            event_type,
+            phase,
+            processor_name,
+            game_date,
+            correlation_id,
+            duration_seconds,
+            records_processed,
+            error_message,
+            metadata
+        FROM `{PROJECT_ID}.{self.datasets['orchestration']}.pipeline_event_log`
+        WHERE correlation_id = @correlation_id
+        ORDER BY timestamp ASC
+        """
+
+        try:
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("correlation_id", "STRING", correlation_id)
+                ]
+            )
+            result = list(self.client.query(query, job_config=job_config).result(timeout=60))
+
+            if not result:
+                return {
+                    'correlation_id': correlation_id,
+                    'events': [],
+                    'summary': {
+                        'found': False,
+                        'message': 'No events found for this correlation ID'
+                    }
+                }
+
+            events = []
+            for row in result:
+                events.append({
+                    'event_id': row.event_id,
+                    'timestamp': row.timestamp.isoformat() if row.timestamp else None,
+                    'event_type': row.event_type,
+                    'phase': row.phase,
+                    'processor_name': row.processor_name,
+                    'game_date': row.game_date.isoformat() if row.game_date else None,
+                    'correlation_id': row.correlation_id,
+                    'duration_seconds': row.duration_seconds,
+                    'records_processed': row.records_processed,
+                    'error_message': row.error_message[:500] if row.error_message else None,
+                    'metadata': row.metadata if hasattr(row, 'metadata') else None
+                })
+
+            # Build summary
+            first_event = events[0]
+            last_event = events[-1]
+            has_error = any(e['event_type'] == 'error' for e in events)
+            has_complete = any(e['event_type'] == 'processor_complete' for e in events)
+
+            # Calculate total duration from first to last event
+            if first_event['timestamp'] and last_event['timestamp']:
+                from datetime import datetime as dt
+                start = dt.fromisoformat(first_event['timestamp'].replace('Z', '+00:00'))
+                end = dt.fromisoformat(last_event['timestamp'].replace('Z', '+00:00'))
+                total_duration = (end - start).total_seconds()
+            else:
+                total_duration = None
+
+            summary = {
+                'found': True,
+                'event_count': len(events),
+                'phases': list(set(e['phase'] for e in events if e['phase'])),
+                'processors': list(set(e['processor_name'] for e in events if e['processor_name'])),
+                'game_date': first_event['game_date'],
+                'first_event_time': first_event['timestamp'],
+                'last_event_time': last_event['timestamp'],
+                'total_duration_seconds': total_duration,
+                'status': 'error' if has_error else ('completed' if has_complete else 'in_progress'),
+                'has_error': has_error
+            }
+
+            return {
+                'correlation_id': correlation_id,
+                'events': events,
+                'summary': summary
+            }
+
+        except Exception as e:
+            logger.error(f"Error querying correlation trace: {e}", exc_info=True)
+            return {
+                'correlation_id': correlation_id,
+                'events': [],
+                'summary': {
+                    'found': False,
+                    'error': str(e)
+                }
+            }
+
+    def search_correlation_ids(self, search_term: str, limit: int = 20) -> List[Dict]:
+        """
+        Search for correlation IDs matching a partial string.
+
+        Useful for autocomplete or when user only knows partial ID.
+
+        Args:
+            search_term: Partial correlation ID to search for
+            limit: Maximum results to return (default 20)
+
+        Returns:
+            List of matching correlation IDs with basic info
+        """
+        if not search_term or len(search_term) < 4:
+            return []
+
+        limit = max(1, min(50, limit))
+
+        query = f"""
+        SELECT
+            correlation_id,
+            MIN(timestamp) as first_event,
+            MAX(timestamp) as last_event,
+            COUNT(*) as event_count,
+            ARRAY_AGG(DISTINCT processor_name IGNORE NULLS) as processors,
+            ARRAY_AGG(DISTINCT phase IGNORE NULLS) as phases,
+            MAX(game_date) as game_date,
+            MAX(CASE WHEN event_type = 'error' THEN 1 ELSE 0 END) as has_error
+        FROM `{PROJECT_ID}.{self.datasets['orchestration']}.pipeline_event_log`
+        WHERE correlation_id LIKE @search_pattern
+          AND timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+        GROUP BY correlation_id
+        ORDER BY first_event DESC
+        LIMIT {limit}
+        """
+
+        try:
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("search_pattern", "STRING", f"%{search_term}%")
+                ]
+            )
+            result = list(self.client.query(query, job_config=job_config).result(timeout=60))
+
+            return [
+                {
+                    'correlation_id': row.correlation_id,
+                    'first_event': row.first_event.isoformat() if row.first_event else None,
+                    'last_event': row.last_event.isoformat() if row.last_event else None,
+                    'event_count': row.event_count,
+                    'processors': list(row.processors) if row.processors else [],
+                    'phases': list(row.phases) if row.phases else [],
+                    'game_date': row.game_date.isoformat() if row.game_date else None,
+                    'has_error': row.has_error == 1
+                }
+                for row in result
+            ]
+
+        except Exception as e:
+            logger.error(f"Error searching correlation IDs: {e}", exc_info=True)
+            return []
+
+    def get_recent_correlation_ids(self, hours: int = 24, limit: int = 50) -> List[Dict]:
+        """
+        Get recent correlation IDs for quick access.
+
+        Args:
+            hours: How many hours back to look (default 24)
+            limit: Maximum results to return (default 50)
+
+        Returns:
+            List of recent correlation IDs with summary info
+        """
+        hours = max(1, min(168, hours))
+        limit = max(1, min(100, limit))
+
+        query = f"""
+        SELECT
+            correlation_id,
+            MIN(timestamp) as first_event,
+            MAX(timestamp) as last_event,
+            COUNT(*) as event_count,
+            ARRAY_AGG(DISTINCT processor_name IGNORE NULLS) as processors,
+            ARRAY_AGG(DISTINCT phase IGNORE NULLS) as phases,
+            MAX(game_date) as game_date,
+            MAX(CASE WHEN event_type = 'error' THEN 1 ELSE 0 END) as has_error,
+            MAX(CASE WHEN event_type = 'processor_complete' THEN 1 ELSE 0 END) as has_complete
+        FROM `{PROJECT_ID}.{self.datasets['orchestration']}.pipeline_event_log`
+        WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {hours} HOUR)
+          AND correlation_id IS NOT NULL
+        GROUP BY correlation_id
+        ORDER BY first_event DESC
+        LIMIT {limit}
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+
+            return [
+                {
+                    'correlation_id': row.correlation_id,
+                    'first_event': row.first_event.isoformat() if row.first_event else None,
+                    'last_event': row.last_event.isoformat() if row.last_event else None,
+                    'event_count': row.event_count,
+                    'processors': list(row.processors) if row.processors else [],
+                    'phases': list(row.phases) if row.phases else [],
+                    'game_date': row.game_date.isoformat() if row.game_date else None,
+                    'status': 'error' if row.has_error == 1 else ('completed' if row.has_complete == 1 else 'in_progress')
+                }
+                for row in result
+            ]
+
+        except Exception as e:
+            logger.error(f"Error getting recent correlation IDs: {e}", exc_info=True)
+            return []

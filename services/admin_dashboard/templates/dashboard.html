@@ -448,6 +448,45 @@
                         </button>
                     </div>
                 </div>
+
+                <!-- Correlation ID Trace Section -->
+                <div class="mb-6 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+                    <div class="flex items-center justify-between mb-3">
+                        <h4 class="text-sm font-semibold text-gray-700">Correlation ID Trace</h4>
+                        <span class="text-xs text-gray-500">Trace a request through the pipeline</span>
+                    </div>
+                    <div class="flex space-x-3">
+                        <div class="flex-1 relative">
+                            <input
+                                type="text"
+                                id="correlation-id-input"
+                                placeholder="Enter correlation ID (e.g., abc12345-6789-...)"
+                                class="w-full px-3 py-2 text-sm border border-gray-300 rounded-md font-mono focus:ring-2 focus:ring-violet-500 focus:border-violet-500"
+                                minlength="8"
+                            >
+                            <div id="correlation-suggestions" class="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg hidden max-h-48 overflow-y-auto"></div>
+                        </div>
+                        <button
+                            id="trace-correlation-btn"
+                            class="px-4 py-2 bg-violet-600 text-white text-sm font-medium rounded-md hover:bg-violet-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-violet-500"
+                        >
+                            Trace
+                        </button>
+                        <button
+                            id="clear-trace-btn"
+                            class="px-3 py-2 bg-gray-200 text-gray-700 text-sm rounded-md hover:bg-gray-300"
+                            title="Clear trace"
+                        >
+                            Clear
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Correlation Trace Results -->
+                <div id="correlation-trace-result" class="mb-6 hidden">
+                    <!-- Results will be loaded here via HTMX -->
+                </div>
+
                 <div id="pipeline-timeline"
                      hx-get="/partials/pipeline-timeline?hours=24"
                      hx-trigger="load">
@@ -476,7 +515,145 @@ document.addEventListener('DOMContentLoaded', function() {
             htmx.ajax('GET', url, {target: '#pipeline-timeline', swap: 'innerHTML'});
         });
     }
+
+    // Correlation ID Trace handlers
+    const correlationInput = document.getElementById('correlation-id-input');
+    const traceBtn = document.getElementById('trace-correlation-btn');
+    const clearBtn = document.getElementById('clear-trace-btn');
+    const traceResult = document.getElementById('correlation-trace-result');
+    const suggestions = document.getElementById('correlation-suggestions');
+
+    if (traceBtn && correlationInput) {
+        // Trace button click
+        traceBtn.addEventListener('click', function() {
+            const correlationId = correlationInput.value.trim();
+            if (correlationId.length >= 8) {
+                loadCorrelationTrace(correlationId);
+            } else {
+                showTraceMessage('Please enter at least 8 characters', 'warning');
+            }
+        });
+
+        // Enter key in input
+        correlationInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                traceBtn.click();
+            }
+        });
+
+        // Clear button
+        clearBtn?.addEventListener('click', function() {
+            correlationInput.value = '';
+            traceResult.classList.add('hidden');
+            traceResult.innerHTML = '';
+            suggestions.classList.add('hidden');
+        });
+
+        // Autocomplete/suggestions on input
+        let searchTimeout;
+        correlationInput.addEventListener('input', function() {
+            clearTimeout(searchTimeout);
+            const query = this.value.trim();
+
+            if (query.length >= 4) {
+                searchTimeout = setTimeout(() => {
+                    searchCorrelationIds(query);
+                }, 300);
+            } else {
+                suggestions.classList.add('hidden');
+            }
+        });
+
+        // Click on suggestion
+        suggestions.addEventListener('click', function(e) {
+            const item = e.target.closest('.correlation-suggestion');
+            if (item) {
+                const correlationId = item.dataset.correlationId;
+                correlationInput.value = correlationId;
+                suggestions.classList.add('hidden');
+                loadCorrelationTrace(correlationId);
+            }
+        });
+
+        // Close suggestions when clicking outside
+        document.addEventListener('click', function(e) {
+            if (!correlationInput.contains(e.target) && !suggestions.contains(e.target)) {
+                suggestions.classList.add('hidden');
+            }
+        });
+    }
+
+    // Make correlation IDs in timeline clickable
+    document.body.addEventListener('click', function(e) {
+        const target = e.target.closest('[data-correlation-id]');
+        if (target && correlationInput) {
+            const correlationId = target.dataset.correlationId;
+            correlationInput.value = correlationId;
+            loadCorrelationTrace(correlationId);
+            // Scroll to trace result
+            traceResult?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    });
 });
+
+function loadCorrelationTrace(correlationId) {
+    const traceResult = document.getElementById('correlation-trace-result');
+    if (!traceResult) return;
+
+    traceResult.classList.remove('hidden');
+    traceResult.innerHTML = '<div class="text-gray-500 text-center py-8">Loading trace...</div>';
+
+    htmx.ajax('GET', `/partials/correlation-trace?id=${encodeURIComponent(correlationId)}`, {
+        target: '#correlation-trace-result',
+        swap: 'innerHTML'
+    });
+}
+
+function searchCorrelationIds(query) {
+    const suggestions = document.getElementById('correlation-suggestions');
+    if (!suggestions) return;
+
+    fetch(`/api/correlation-search?q=${encodeURIComponent(query)}&limit=10`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.results && data.results.length > 0) {
+                let html = '';
+                data.results.forEach(item => {
+                    const statusClass = item.has_error ? 'text-red-600' : 'text-green-600';
+                    const statusIcon = item.has_error ? '!' : '&#10003;';
+                    html += `
+                        <div class="correlation-suggestion px-3 py-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-0"
+                             data-correlation-id="${item.correlation_id}">
+                            <div class="flex items-center justify-between">
+                                <span class="font-mono text-sm text-gray-800">${item.correlation_id.substring(0, 20)}...</span>
+                                <span class="${statusClass} text-xs">${statusIcon}</span>
+                            </div>
+                            <div class="text-xs text-gray-500 mt-0.5">
+                                ${item.event_count} events &bull; ${item.phases.join(', ')}
+                            </div>
+                        </div>
+                    `;
+                });
+                suggestions.innerHTML = html;
+                suggestions.classList.remove('hidden');
+            } else {
+                suggestions.classList.add('hidden');
+            }
+        })
+        .catch(err => {
+            console.error('Search error:', err);
+            suggestions.classList.add('hidden');
+        });
+}
+
+function showTraceMessage(message, type) {
+    const traceResult = document.getElementById('correlation-trace-result');
+    if (!traceResult) return;
+
+    const bgClass = type === 'warning' ? 'bg-yellow-50 text-yellow-700' : 'bg-gray-50 text-gray-600';
+    traceResult.classList.remove('hidden');
+    traceResult.innerHTML = `<div class="text-center py-4 ${bgClass} rounded-lg">${message}</div>`;
+}
 </script>
 {% endblock %}
 
