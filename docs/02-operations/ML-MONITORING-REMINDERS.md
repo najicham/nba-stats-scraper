@@ -150,6 +150,85 @@ WHERE system_id = 'xgboost_v1'
 
 ## Operational Reminders
 
+### 📅 2026-01-27 @ 8:00 AM ET - Betting Workflow Config Fix Verification
+**Status:** ⏳ Pending
+**Priority:** 🔴 HIGH
+**Incident:** 2026-01-26 Orchestration Timing Fix
+
+**What happened:**
+- betting_lines workflow was configured with 6-hour window (triggered at 1 PM)
+- Validation scripts expected morning data (10 AM checks)
+- Created false alarm: "0 records" was actually "too early"
+- Fixed: Changed window_before_game_hours from 6 to 12
+- Deployed to production on 2026-01-26 at 9:07 AM ET
+
+**What to verify:**
+- Betting workflow triggers in morning (7-8 AM) instead of afternoon (1 PM)
+- Betting data collected by 8-9 AM
+- Phase 3 analytics can run with betting data present by 10 AM
+
+**Quick verification command:**
+```bash
+cd ~/code/nba-stats-scraper
+python scripts/verify_betting_workflow_fix.py --date 2026-01-27
+```
+
+**Expected output:**
+```
+✅ VERIFICATION PASSED
+   The configuration fix is working correctly!
+   - First betting workflow trigger at 7-8 AM ✅
+   - Betting data collected in morning ✅
+```
+
+**Manual BigQuery check (if needed):**
+```sql
+-- Check workflow decisions (should show RUN at 7-8 AM)
+SELECT
+  FORMAT_TIMESTAMP('%H:%M', decision_time, 'America/New_York') as time_et,
+  action,
+  reason
+FROM `nba-props-platform.nba_orchestration.workflow_decisions`
+WHERE DATE(decision_time, 'America/New_York') = '2026-01-27'
+  AND workflow_name = 'betting_lines'
+ORDER BY decision_time;
+
+-- Check betting data collected
+SELECT COUNT(*) as props, COUNT(DISTINCT player_lookup) as players
+FROM `nba-props-platform.nba_raw.odds_api_player_points_props`
+WHERE game_date = '2026-01-27';
+```
+
+**Success criteria:**
+- ✅ First RUN decision at 07:XX or 08:XX ET (not 13:XX)
+- ✅ 80-120 player props collected
+- ✅ 40-60 unique players
+- ✅ 7-14 game lines collected
+
+**If verification passes:**
+- Update `docs/08-projects/current/2026-01-25-incident-remediation/REMEDIATION-COMPLETE-SUMMARY.md`
+- Add verification results section
+- Mark incident as CLOSED - Verified Resolved
+- Mark this reminder as ✅ COMPLETE
+
+**If verification fails (unlikely):**
+- Check Cloud Run logs for errors
+- Run `python scripts/detect_config_drift.py` to verify deployment
+- See troubleshooting in `docs/08-projects/current/2026-01-25-incident-remediation/2026-01-27-MORNING-VERIFICATION-PLAN.md`
+- Create follow-up incident report if needed
+
+**Reference:**
+- Full verification plan: `docs/08-projects/current/2026-01-25-incident-remediation/2026-01-27-MORNING-VERIFICATION-PLAN.md`
+- Remediation summary: `docs/08-projects/current/2026-01-25-incident-remediation/REMEDIATION-COMPLETE-SUMMARY.md`
+- Deployment report: `docs/08-projects/current/2026-01-25-incident-remediation/2026-01-26-DEPLOYMENT-FIX-COMPLETE.md`
+- Root cause analysis: `docs/incidents/2026-01-26-BETTING-DATA-TIMING-ISSUE-ROOT-CAUSE.md`
+
+**Time required:** 5-10 minutes
+
+**Confidence level:** Very High (fix is simple, well-tested, rollback available)
+
+---
+
 ### 📅 PERIODIC CHECK - CloudFront IP Block Recovery
 **Status:** ⏳ Pending (Check every 6-12 hours until cleared)
 **Priority:** 🟡 MEDIUM
@@ -276,6 +355,7 @@ python3 scripts/backfill_pbp_20260125.py --game-id 0022500652
 **Reminder Dates:**
 - **2026-01-19** (Day 1 post-fix): Phase 3 Fix Verification
 - **2026-01-24** (7 days): XGBoost V1 Initial Performance Check
+- **2026-01-27** @ 8:00 AM: Betting Workflow Config Fix Verification 🔴 HIGH
 - **2026-01-31** (14 days): Head-to-Head Comparison Start
 - **2026-02-16** (30 days): Champion Decision Point
 - **2026-03-17** (60 days): Ensemble Optimization
@@ -391,5 +471,6 @@ export $(grep -v '^#' .env | xargs)
 
 ---
 
-**Last Updated:** 2026-01-17
+**Last Updated:** 2026-01-26
 **Created by:** Session 94
+**Last Reminder Added:** 2026-01-27 Betting Workflow Verification (Session 115)
