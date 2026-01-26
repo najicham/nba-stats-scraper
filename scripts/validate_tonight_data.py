@@ -382,6 +382,97 @@ class TonightDataValidator:
 
         return list(unscheduled)
 
+    def run_spot_checks(self, sample_size: int = 5) -> bool:
+        """
+        Run spot checks on data accuracy.
+
+        Samples random player-date combinations from recent days and verifies
+        calculations are correct. This helps detect data quality issues early.
+
+        Args:
+            sample_size: Number of random samples to check (default: 5)
+
+        Returns:
+            True if accuracy is >= 95%, False otherwise
+        """
+        from datetime import timedelta
+
+        # Import spot check functions
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__)))
+        try:
+            from spot_check_data_accuracy import (
+                get_random_samples,
+                run_spot_check
+            )
+        except ImportError as e:
+            self.add_warning('spot_check', f'Could not import spot check module: {e}')
+            return True  # Don't fail validation if spot check unavailable
+
+        # Sample from last 7 days (excluding today)
+        end_date = self.target_date - timedelta(days=1)
+        start_date = end_date - timedelta(days=7)
+
+        try:
+            # Get random samples
+            samples = get_random_samples(self.client, start_date, end_date, sample_size)
+
+            if not samples:
+                self.add_warning('spot_check', f'No data found for spot checking in range {start_date} to {end_date}')
+                return True
+
+            # Run spot checks with core checks only (faster)
+            checks_to_run = ['rolling_avg', 'usage_rate']
+
+            all_results = []
+            for player_lookup, universal_player_id, game_date in samples:
+                result = run_spot_check(
+                    self.client,
+                    player_lookup,
+                    universal_player_id,
+                    game_date,
+                    checks_to_run,
+                    verbose=False
+                )
+                all_results.append(result)
+
+            # Calculate accuracy
+            total_passed = sum(r['passed_count'] for r in all_results)
+            total_failed = sum(r['failed_count'] for r in all_results)
+            total_checks = total_passed + total_failed
+
+            if total_checks == 0:
+                self.add_warning('spot_check', 'No checks could be performed (insufficient data)')
+                return True
+
+            accuracy_pct = total_passed / total_checks * 100
+
+            self.stats['spot_check_samples'] = len(samples)
+            self.stats['spot_check_accuracy'] = f'{accuracy_pct:.1f}%'
+            self.stats['spot_check_passed'] = total_passed
+            self.stats['spot_check_failed'] = total_failed
+
+            # Report results
+            if accuracy_pct >= 95.0:
+                print(f"✓ Spot Checks: {accuracy_pct:.1f}% accuracy ({total_passed}/{total_checks} checks passed)")
+                return True
+            else:
+                print(f"⚠️ Spot Checks: {accuracy_pct:.1f}% accuracy ({total_passed}/{total_checks} checks passed)")
+                self.add_warning('spot_check',
+                    f'Spot check accuracy is {accuracy_pct:.1f}% (threshold: 95%)')
+
+                # Report specific failures
+                failures = [r for r in all_results if r['overall_status'] == 'FAIL']
+                for result in failures[:3]:  # Show first 3 failures
+                    failed_checks = [c['check_name'] for c in result['checks'] if c['status'] == 'FAIL']
+                    self.add_warning('spot_check',
+                        f'{result["player_lookup"]} ({result["game_date"]}): Failed {", ".join(failed_checks)}')
+
+                return accuracy_pct >= 95.0
+
+        except Exception as e:
+            self.add_warning('spot_check', f'Spot check failed with error: {e}')
+            return True  # Don't fail validation on spot check errors
+
     def run_all_checks(self) -> bool:
         """Run all validation checks."""
         print(f"\n{'='*60}")
@@ -408,6 +499,8 @@ class TonightDataValidator:
         self.check_tonight_api()
         print()
         self.check_scraper_registry_vs_workflows()
+        print()
+        self.run_spot_checks(sample_size=5)
 
         # Print summary
         print(f"\n{'='*60}")
