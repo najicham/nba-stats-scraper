@@ -61,7 +61,7 @@ REQUIRED_TABLES = [
 REQUIRED_TOPICS = [
     'nba-phase2-raw-complete',
     'nba-phase3-analytics-complete',
-    'nba-phase4-features-complete',
+    'nba-phase4-precompute-complete',  # Fixed: was nba-phase4-features-complete
     'nba-phase5-predictions-complete',
 ]
 

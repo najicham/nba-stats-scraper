@@ -57,8 +57,16 @@ tests/
 │   └── conftest.py
 ├── services/                      # Service layer tests
 │   └── conftest.py
-└── tools/                         # CLI tool tests
-    └── conftest.py
+├── tools/                         # CLI tool tests
+│   └── conftest.py
+└── performance/                   # Performance and load tests
+    ├── __init__.py
+    ├── conftest.py                # Performance test fixtures
+    ├── README.md                  # Performance testing guide
+    ├── test_scraper_benchmarks.py
+    ├── test_processor_throughput.py
+    ├── test_query_performance.py
+    └── test_pipeline_e2e_performance.py
 ```
 
 ---
@@ -224,6 +232,50 @@ def test_parse_pubsub_message(sample_cloud_event, sample_phase2_message):
     assert result == sample_phase2_message
 ```
 
+### Performance Tests (`tests/performance/`)
+
+**Purpose**: Benchmark system performance and detect regressions.
+
+**Characteristics**:
+- Use `pytest-benchmark` for accurate measurements
+- Test scraper throughput, processor performance, query latency
+- Track performance trends over time
+- Gate deployments on performance regression
+
+**Example** (`tests/performance/test_scraper_benchmarks.py`):
+```python
+def test_benchmark_full_scraper_run_no_export(self, mock_registry, benchmark, mock_scraper):
+    """Benchmark full scraper run without export (TARGET: <5s)"""
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.text = json.dumps({
+        "data": [{"id": i, "value": f"test_{i}"} for i in range(100)]
+    })
+
+    def scraper_run():
+        mock_scraper.raw_response = mock_response
+        mock_scraper.check_download_status()
+        mock_scraper.decode_download_content()
+        mock_scraper.validate_download_data()
+        mock_scraper.transform_data()
+        return mock_scraper.data
+
+    result = benchmark(scraper_run)
+
+    # Verify performance target
+    stats = benchmark.stats
+    mean_time = stats['mean']
+    assert mean_time < 5.0, f"Scraper run took {mean_time:.2f}s, target is <5s"
+```
+
+**Performance Targets**:
+- Scraper operations: <5s per scrape
+- Processor throughput: >1000 records/sec
+- Query latency: <2s cached, <10s complex
+- Full pipeline: <30 minutes
+
+See [Performance Testing README](../tests/performance/README.md) and [Performance Targets](../docs/performance/PERFORMANCE_TARGETS.md) for details.
+
 ---
 
 ## Running Tests
@@ -250,6 +302,7 @@ pytest tests/unit/patterns/test_circuit_breaker_mixin.py::TestCircuitKeyGenerati
 pytest -m unit          # Unit tests only
 pytest -m integration   # Integration tests only
 pytest -m smoke         # Smoke tests for deployment validation
+pytest -m benchmark     # Performance benchmark tests
 ```
 
 ### Coverage Reports
@@ -265,6 +318,30 @@ pytest tests/unit/publishing/ --cov=data_processors/publishing --cov-report=html
 pytest tests/cloud_functions/test_phase2_orchestrator.py \
     --cov=orchestration.cloud_functions.phase2_to_phase3 \
     --cov-report=html
+```
+
+### Performance Benchmarks
+
+```bash
+# Run all performance benchmarks
+pytest tests/performance/ --benchmark-only
+
+# Run with detailed statistics
+pytest tests/performance/ --benchmark-only \
+  --benchmark-columns=min,max,mean,stddev,median
+
+# Save baseline
+pytest tests/performance/ --benchmark-save=baseline --benchmark-autosave
+
+# Compare with baseline
+pytest tests/performance/ --benchmark-compare=baseline
+
+# Fail on regression (>20% slower)
+pytest tests/performance/ --benchmark-compare=baseline --benchmark-compare-fail=mean:20%
+
+# Use benchmark runner script
+./scripts/run_benchmarks.sh --save-baseline
+./scripts/run_benchmarks.sh --compare
 ```
 
 ### Test Output Formats

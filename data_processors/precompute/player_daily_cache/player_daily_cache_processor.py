@@ -41,6 +41,7 @@ import numpy as np
 from google.cloud import bigquery
 
 from data_processors.precompute.precompute_base import PrecomputeProcessorBase
+from data_processors.precompute.mixins.backfill_mode_mixin import BackfillModeMixin
 
 # Pattern imports (Week 1 - Foundation Patterns)
 from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
@@ -74,6 +75,7 @@ class PlayerDailyCacheProcessor(
     SmartSkipMixin,
     EarlyExitMixin,
     CircuitBreakerMixin,
+    BackfillModeMixin,
     PrecomputeProcessorBase
 ):
     """
@@ -611,32 +613,33 @@ class PlayerDailyCacheProcessor(
         """
         try:
             # Consolidated query - fetches all 4 hashes in ONE query using UNION ALL
+            # Note: Each subquery must be wrapped in parentheses for BigQuery UNION syntax
             query = f"""
-            SELECT 'player_game_summary' as source, data_hash
-            FROM `{self.project_id}.nba_analytics.player_game_summary`
-            WHERE game_date <= '{analysis_date}' AND data_hash IS NOT NULL
-            ORDER BY processed_at DESC LIMIT 1
+            (SELECT 'player_game_summary' as source, data_hash
+             FROM `{self.project_id}.nba_analytics.player_game_summary`
+             WHERE game_date <= '{analysis_date}' AND data_hash IS NOT NULL
+             ORDER BY processed_at DESC LIMIT 1)
 
             UNION ALL
 
-            SELECT 'team_offense_game_summary' as source, data_hash
-            FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
-            WHERE game_date <= '{analysis_date}' AND data_hash IS NOT NULL
-            ORDER BY processed_at DESC LIMIT 1
+            (SELECT 'team_offense_game_summary' as source, data_hash
+             FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+             WHERE game_date <= '{analysis_date}' AND data_hash IS NOT NULL
+             ORDER BY processed_at DESC LIMIT 1)
 
             UNION ALL
 
-            SELECT 'upcoming_player_game_context' as source, data_hash
-            FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
-            WHERE game_date = '{analysis_date}' AND data_hash IS NOT NULL
-            ORDER BY processed_at DESC LIMIT 1
+            (SELECT 'upcoming_player_game_context' as source, data_hash
+             FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
+             WHERE game_date = '{analysis_date}' AND data_hash IS NOT NULL
+             ORDER BY processed_at DESC LIMIT 1)
 
             UNION ALL
 
-            SELECT 'player_shot_zone_analysis' as source, data_hash
-            FROM `{self.project_id}.nba_precompute.player_shot_zone_analysis`
-            WHERE analysis_date = '{analysis_date}' AND data_hash IS NOT NULL
-            ORDER BY processed_at DESC LIMIT 1
+            (SELECT 'player_shot_zone_analysis' as source, data_hash
+             FROM `{self.project_id}.nba_precompute.player_shot_zone_analysis`
+             WHERE analysis_date = '{analysis_date}' AND data_hash IS NOT NULL
+             ORDER BY processed_at DESC LIMIT 1)
             """
 
             # Execute single consolidated query
