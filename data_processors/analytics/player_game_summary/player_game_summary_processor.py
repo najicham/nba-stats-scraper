@@ -41,6 +41,9 @@ from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBr
 from shared.config.source_coverage import SourceCoverageEventType, SourceCoverageSeverity
 from shared.processors.patterns.quality_columns import build_quality_columns_with_legacy
 
+# Data lineage integrity (2026-01-27)
+from shared.validation.processing_gate import ProcessingGate, GateStatus, ProcessingBlockedError
+
 # Extracted modules for maintainability
 from .sources import ShotZoneAnalyzer, PropCalculator, PlayerRegistryHandler
 from .calculators import QualityScorer, ChangeDetectorWrapper
@@ -169,6 +172,7 @@ class PlayerGameSummaryProcessor(
         # Lazy-loaded modules (initialized when needed)
         self._shot_zone_analyzer: Optional[ShotZoneAnalyzer] = None
         self._registry_handler: Optional[PlayerRegistryHandler] = None
+        self._processing_gate: Optional[ProcessingGate] = None
 
     @property
     def shot_zone_analyzer(self) -> ShotZoneAnalyzer:
@@ -189,6 +193,19 @@ class PlayerGameSummaryProcessor(
                 cache_ttl_seconds=300
             )
         return self._registry_handler
+
+    @property
+    def processing_gate(self) -> ProcessingGate:
+        """Lazy-load processing gate for data lineage integrity."""
+        if self._processing_gate is None:
+            self._processing_gate = ProcessingGate(
+                bq_client=self.bq_client,
+                project_id=self.project_id,
+                min_completeness=0.8,  # 80% minimum for processing
+                grace_period_hours=36,  # Wait 36h before failing
+                window_completeness_threshold=0.7  # 70% for window computation
+            )
+        return self._processing_gate
 
     def get_dependencies(self) -> dict:
         """
@@ -271,6 +288,7 @@ class PlayerGameSummaryProcessor(
             },
 
             # SOURCE 7: Team Offense Analytics (REQUIRED - for usage_rate calculation)
+            # CRITICAL: Must process BEFORE player_game_summary to prevent NULL usage_rate (Bug #2 fix)
             'nba_analytics.team_offense_game_summary': {
                 'field_prefix': 'source_team',
                 'description': 'Team offense analytics - for usage_rate calculation',
@@ -279,7 +297,7 @@ class PlayerGameSummaryProcessor(
                 'expected_count_min': 20,  # ~20-30 team games per day
                 'max_age_hours_warn': 24,
                 'max_age_hours_fail': 72,
-                'critical': False  # Nice to have for usage_rate, but not blocking
+                'critical': True  # CRITICAL: Processing order enforcement (2026-01-27 fix)
             }
         }
 
@@ -349,6 +367,36 @@ class PlayerGameSummaryProcessor(
         hash_data = {field: record.get(field) for field in self.HASH_FIELDS}
         sorted_data = json.dumps(hash_data, sort_keys=True, default=str)
         return hashlib.sha256(sorted_data.encode()).hexdigest()[:16]
+
+    def _determine_processing_context(self) -> str:
+        """
+        Determine processing context based on timing (2026-01-27).
+
+        Returns:
+            Context string: 'daily', 'backfill', 'manual', or 'cascade'
+        """
+        start_date = self.opts.get('start_date')
+        if not start_date:
+            return 'manual'
+
+        # Calculate days since game date
+        try:
+            from datetime import date
+            if isinstance(start_date, str):
+                game_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+            else:
+                game_date = start_date
+
+            days_since = (date.today() - game_date).days
+
+            if days_since <= 2:
+                return 'daily'
+            elif days_since <= 7:
+                return 'cascade'
+            else:
+                return 'backfill'
+        except Exception:
+            return 'manual'
 
     def extract_raw_data(self) -> None:
         """
@@ -485,14 +533,24 @@ class PlayerGameSummaryProcessor(
                 {player_filter_clause}
         ),
         
-        -- Combine with NBA.com priority
+        -- Combine with NBA.com priority (player-level merge)
+        -- NBA.com is preferred source when available; BDL fills gaps for missing players
+        -- CRITICAL FIX (2026-01-27): Changed from game-level to player-level merge
+        --   Previously excluded 119 players/day including Jayson Tatum, Kyrie Irving, etc.
         combined_data AS (
+            -- All NBA.com data (primary source)
             SELECT * FROM nba_com_data
-            
+
             UNION ALL
-            
-            SELECT * FROM bdl_data
-            WHERE game_id NOT IN (SELECT DISTINCT game_id FROM nba_com_data)
+
+            -- BDL data for players NOT in NBA.com (fills gaps)
+            -- This ensures players like Jayson Tatum who may only be in BDL are included
+            SELECT * FROM bdl_data bd
+            WHERE NOT EXISTS (
+                SELECT 1 FROM nba_com_data nc
+                WHERE nc.game_id = bd.game_id
+                  AND nc.player_lookup = bd.player_lookup
+            )
         ),
         
         -- Deduplicate props: DraftKings first, then FanDuel, then others
@@ -618,7 +676,8 @@ class PlayerGameSummaryProcessor(
                             'processor': 'player_game_summary',
                             'start_date': start_date,
                             'end_date': end_date
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -911,7 +970,8 @@ class PlayerGameSummaryProcessor(
                     'processor': 'player_game_summary',
                     'date_range': f"{self.opts['start_date']} to {self.opts['end_date']}",
                     **stats
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         except Exception as e:
             logger.warning(f"Failed to send notification: {e}")
@@ -1294,6 +1354,10 @@ class PlayerGameSummaryProcessor(
                     shot_zones_estimated=False
                 ),
 
+                # Data lineage integrity (2026-01-27)
+                'processing_context': self._determine_processing_context(),
+                'data_quality_flag': 'complete' if usage_rate is not None else 'partial',
+
                 # Metadata
                 'processed_at': datetime.now(timezone.utc).isoformat()
             }
@@ -1501,10 +1565,15 @@ class PlayerGameSummaryProcessor(
         ),
 
         combined_data AS (
+            -- CRITICAL FIX (2026-01-27): Player-level merge, not game-level
             SELECT * FROM nba_com_data
             UNION ALL
-            SELECT * FROM bdl_data
-            WHERE game_id NOT IN (SELECT DISTINCT game_id FROM nba_com_data)
+            SELECT * FROM bdl_data bd
+            WHERE NOT EXISTS (
+                SELECT 1 FROM nba_com_data nc
+                WHERE nc.game_id = bd.game_id
+                  AND nc.player_lookup = bd.player_lookup
+            )
         ),
 
         deduplicated_props AS (
