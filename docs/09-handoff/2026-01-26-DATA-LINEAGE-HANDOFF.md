@@ -1,236 +1,153 @@
-# Handoff: Data Lineage Integrity Project
+# Handoff: Data Lineage Design Complete + Player Spot Check
 
-**Date**: 2026-01-26 ~11:30 PM ET
-**Previous Session**: Opus 4.5
-**Context**: Context window low, need handoff
+**Date**: 2026-01-26 (Late Evening)
+**Previous**: External review synthesis session
+**Status**: Design complete, skills created, ready for testing
 
 ---
 
 ## Quick Summary
 
-We discovered that 81% of this season's game data was backfilled late, potentially contaminating downstream computed values. We've built a validation system and are seeking external review.
+External reviews processed and synthesized. Prevention layer design complete. Created `/spot-check-player` skill for verifying injury data quality. Ready for implementation and testing.
 
 ---
 
-## Current State
+## What Was Done This Session
 
-### Pipeline Status
-- ✅ BigQuery quota fix deployed (batching reduces quota from 164% to 2%)
-- ✅ `MONITORING_WRITES_DISABLED=true` set on Phase 2, 3, 4 services
-- ✅ Self-healing logic added (auto-enables monitoring after midnight PT)
-- ⏳ Pipeline ready to run - may need to trigger manually
+### 1. External Review Synthesis (DONE)
 
-### Data Lineage Project
-- ✅ Problem identified (cascade contamination from backfills)
-- ✅ `/validate-lineage` skill created
-- ✅ External review document written
-- ⏳ Awaiting external review responses (Opus + Sonnet web chats)
+Received reviews from Opus and Sonnet web chats on data lineage integrity.
 
----
+**Key Agreement**: Both reviewers agreed - "**NULL > Wrong Value**" - if you can't compute a correct rolling average, don't compute one at all.
 
-## Files to Read (Priority Order)
+**Created Files**:
+```
+docs/08-projects/current/data-lineage-integrity/
+├── DESIGN-DECISIONS.md          # Synthesized design with trade-offs (NEW)
+├── IMPLEMENTATION-REQUEST.md    # For Sonnet web chat to implement (NEW)
+└── reviews/
+    ├── opus-review.md           # Full Opus review (NEW)
+    └── sonnet-review.md         # Full Sonnet review (NEW)
+```
 
-### 1. Tonight's Pipeline Recovery
-```
-docs/09-handoff/2026-01-26-SONNET-SESSION-HANDOFF.md
-```
-- Commands to trigger pipeline
-- Validation queries
-- Troubleshooting steps
+**Key Design Decisions**:
+- 4-layer architecture: Prevention → Quality Tracking → Validation → Remediation
+- 80% completeness threshold for processing gates
+- 70% window completeness threshold (below = return NULL)
+- 36-hour grace period before failing on incomplete data
+- Simple quality columns (not complex STRUCTs)
 
-### 2. BigQuery Quota Fix (Background)
-```
-docs/08-projects/current/bigquery-quota-fix/README.md
-```
-- What was fixed
-- Self-healing mechanism
-- Operations guide
+### 2. Player Spot Check Skill (DONE)
 
-### 3. Data Lineage Integrity Project
-```
-docs/08-projects/current/data-lineage-integrity/README.md
-```
-- The cascade contamination problem
-- Validation methodology
-- Initial findings (81% of dates backfilled)
-- Implementation plan
+Created `/spot-check-player` to verify injury flags and game history.
 
-### 4. External Review Request (Send to Web Chats)
-```
-docs/08-projects/current/data-lineage-integrity/EXTERNAL-REVIEW-REQUEST.md
-```
-- Full system architecture
-- Current validation skills
-- Open questions for reviewers
-- Scenarios we want to handle
+**File**: `.claude/skills/spot-check-player.md`
 
-### 5. New Validate-Lineage Skill
-```
-.claude/skills/validate-lineage.md
-```
-- Tiered validation approach
-- Sample size guidelines
-- Usage examples
+**Purpose**:
+- Verify NBA.com injury flags are being captured
+- Detect DNP records without injury flags
+- Find data gaps in player game history
+- Cross-validate NBA.com vs BDL injury data
 
 ---
 
 ## Pending Tasks
 
-### Task 1: Pipeline Recovery (Tonight)
+### 1. TEST: `/spot-check-player` skill (HIGH)
 
-The pipeline should run. Either:
-- Wait for quota reset at 3 AM ET (self-healing)
-- Or trigger manually now (monitoring disabled)
-
-**Verify with**:
-```bash
-bq query --use_legacy_sql=false "
-SELECT COUNT(*) as predictions
-FROM nba_predictions.player_prop_predictions
-WHERE game_date = CURRENT_DATE() AND is_active = TRUE"
+Run on a few players to verify queries work:
+```
+/spot-check-player lebron_james
+/spot-check-player anthony_davis 20
 ```
 
-### Task 2: Process External Reviews
+**Good test cases**:
+- Player with recent injury
+- Player traded mid-season
+- Star who plays every game (should have no gaps)
 
-User is sending the external review request to Opus and Sonnet web chats. When they return with responses:
+### 2. Share IMPLEMENTATION-REQUEST.md with Sonnet web chat (MEDIUM)
 
-1. **Read both reviews carefully**
-2. **Compare recommendations** - what do they agree on? disagree on?
-3. **Identify actionable items** - what can we implement?
-4. **Update the data lineage project** with new ideas
-5. **Prioritize** next steps
+The file `docs/08-projects/current/data-lineage-integrity/IMPLEMENTATION-REQUEST.md` contains:
+- Existing infrastructure context (CompletenessChecker, QualityMixin, etc.)
+- Components to build (ProcessingGate, WindowCompletenessValidator)
+- Design decisions and thresholds
+- Integration patterns
 
-### Task 3: Run Initial Validation
+Share with a Sonnet web chat to get implementation code.
 
-After processing reviews, run:
-```bash
-/validate-lineage quick --season 2025-26
-```
+### 3. Run `/validate-lineage quick` (MEDIUM)
 
-This will:
-- Check all 96 game dates (aggregate validation)
-- Identify which dates have discrepancies
-- Determine scope of reprocessing needed
+Get baseline contamination data for the season.
 
----
+### 4. Verify today's pipeline ran (LOW)
 
-## Key Context
-
-### The Problem in One Sentence
-
-When raw game data arrives late (backfilled), any rolling averages/ML features computed before the backfill are wrong, but the system doesn't know they're wrong.
-
-### What We've Built
-
-| Skill | Purpose | Status |
-|-------|---------|--------|
-| `/validate-daily` | Is today's pipeline healthy? | Existing |
-| `/validate-historical` | Is data present for date range? | Existing |
-| `/validate-lineage` | Is data CORRECT (not contaminated)? | NEW |
-
-### Initial Findings
-
-```
-Backfill Scope (2025-26 Season):
-- 78 dates: SEVERE delay (>7 days late) - 81%
-- 8 dates: MODERATE delay (3-7 days)
-- 3 dates: MINOR delay (2-3 days)
-- 7 dates: NORMAL (<2 days)
-
-Two major backfill waves detected:
-- Dec 20, 2025
-- Jan 23, 2026
-```
-
-### Open Questions for Reviewers
-
-1. Are we missing any validation approaches?
-2. How should we structure ongoing monitoring?
-3. What prevention mechanisms catch issues earlier?
-4. Better ways to detect cascade contamination?
-5. What do mature data platforms do?
-
----
-
-## Architecture Quick Reference
-
-```
-Phase 1 (Scraping) → Phase 2 (Raw) → Phase 3 (Analytics) → Phase 4 (Precompute) → Phase 5 (Predictions)
-                                            ↓
-                                    Rolling averages here
-                                    (vulnerable to gaps)
-```
-
-**Key Tables**:
-- `nba_raw.bdl_player_boxscores` - Source of truth
-- `nba_analytics.player_game_summary` - Per-game stats
-- `nba_precompute.player_composite_factors` - Rolling averages, composites
-- `nba_predictions.player_prop_predictions` - Model output
-
----
-
-## Commands Reference
-
-### Check Pipeline Status
-```bash
-gcloud run services logs read nba-phase3-analytics-processors \
-  --region=us-west2 --limit=30 | grep -iE "complete|success|error"
-```
-
-### Check Predictions
-```bash
-bq query --use_legacy_sql=false "
+Check if predictions exist:
+```sql
 SELECT COUNT(*) FROM nba_predictions.player_prop_predictions
-WHERE game_date = CURRENT_DATE() AND is_active = TRUE"
-```
-
-### Trigger Pipeline Manually
-```bash
-gcloud scheduler jobs run same-day-phase3 --location=us-west2
-```
-
-### Check Backfill Scope
-```bash
-bq query --use_legacy_sql=false "
-SELECT
-  CASE
-    WHEN TIMESTAMP_DIFF(MIN(processed_at), TIMESTAMP(game_date), HOUR) > 168 THEN 'SEVERE'
-    WHEN TIMESTAMP_DIFF(MIN(processed_at), TIMESTAMP(game_date), HOUR) > 72 THEN 'MODERATE'
-    WHEN TIMESTAMP_DIFF(MIN(processed_at), TIMESTAMP(game_date), HOUR) > 48 THEN 'MINOR'
-    ELSE 'NORMAL'
-  END as delay,
-  COUNT(*) as dates
-FROM nba_raw.bdl_player_boxscores
-WHERE game_date >= '2025-10-01'
-GROUP BY 1"
+WHERE game_date = CURRENT_DATE() AND is_active = TRUE
 ```
 
 ---
 
-## Session Summary (What Was Done)
+## Quick Reference
 
-1. **Read handoff** from previous session about BigQuery quota issue
-2. **Reviewed external opinions** (Opus and Sonnet) on storage architecture
-3. **Decided on approach**: BigQuery with batching + optional Firestore later
-4. **Added disable feature**: `MONITORING_WRITES_DISABLED` env var
-5. **Added self-healing**: Auto-enables monitoring after midnight PT
-6. **Deployed services**: Phase 2, 3, 4 with monitoring disabled
-7. **Created docs**: BigQuery quota fix documentation
-8. **Discovered data lineage issue**: 81% of season backfilled late
-9. **Created `/validate-lineage` skill**: Tiered validation approach
-10. **Wrote external review request**: For web chat analysis
+### Validation Skills
+
+| Skill | Purpose |
+|-------|---------|
+| `/validate-daily` | Is today's pipeline healthy? |
+| `/validate-historical` | Is data present for date range? |
+| `/validate-lineage` | Is data CORRECT? (recomputation check) |
+| `/spot-check-player` | Verify player game history & injuries (NEW) |
+
+### Key Tables for Spot Check
+
+| Table | Purpose |
+|-------|---------|
+| `nba_analytics.player_game_summary` | Player game records |
+| `nba_raw.nbac_injury_report` | NBA.com injury reports (PRIMARY) |
+| `nba_raw.bdl_injuries` | BDL injury backup |
+| `nba_raw.bdl_player_boxscores` | Raw boxscores (check for 0-min DNP) |
+
+### Prevention Layer Components (To Be Implemented)
+
+| Component | Purpose |
+|-----------|---------|
+| `ProcessingGate` | Block processing when dependencies incomplete |
+| `WindowCompletenessValidator` | Verify N games exist before computing rolling avg |
+| Quality metadata columns | Track completeness scores on records |
 
 ---
 
-## What to Tell the Next Session
+## Context for Next Session
 
-> Read the handoff at `docs/09-handoff/2026-01-26-DATA-LINEAGE-HANDOFF.md`.
->
-> We have two active threads:
-> 1. Pipeline recovery - may need to verify predictions generated
-> 2. Data lineage project - awaiting external review responses
->
-> The user will share responses from Opus and Sonnet web chats reviewing our data validation architecture. Process those and determine next steps.
+### Why Player Spot Check Matters
+
+The website shows "last 10 games" with an "I" icon for injured games. If:
+- NBA.com scraper fails → injury flags missing
+- BDL used as fallback → no injury data in BDL boxscores
+- Player appears missing with no explanation → bad user experience
+
+The `/spot-check-player` skill helps catch these issues proactively.
+
+### Why Prevention Layer Matters
+
+81% of this season's game data was backfilled late. When raw data arrives late:
+1. Rolling averages computed before backfill are WRONG
+2. Predictions using those averages are WRONG
+3. System doesn't know they're wrong
+
+**Solution**: Don't compute values when data is incomplete. Store NULL instead.
+
+---
+
+## Pipeline Status
+
+- `MONITORING_WRITES_DISABLED=true` on Phase 2, 3, 4 services
+- Self-healing auto-enables after midnight PT
+- Batching fix deployed (2% quota usage vs 164% before)
+- Pipeline should work fine, just no monitoring data written
 
 ---
 
@@ -238,21 +155,20 @@ GROUP BY 1"
 
 | File | Change |
 |------|--------|
-| `shared/utils/bigquery_batch_writer.py` | Added MONITORING_WRITES_DISABLED + self-healing |
-| `docs/08-projects/current/bigquery-quota-fix/*` | New project docs |
-| `docs/08-projects/current/data-lineage-integrity/*` | New project docs |
-| `.claude/skills/validate-lineage.md` | New skill |
-| `docs/09-handoff/2026-01-26-*.md` | Multiple handoffs |
+| `docs/08-projects/.../DESIGN-DECISIONS.md` | NEW - Synthesized design |
+| `docs/08-projects/.../IMPLEMENTATION-REQUEST.md` | NEW - For Sonnet implementation |
+| `docs/08-projects/.../reviews/opus-review.md` | NEW - Full Opus review |
+| `docs/08-projects/.../reviews/sonnet-review.md` | NEW - Full Sonnet review |
+| `.claude/skills/spot-check-player.md` | NEW - Player verification skill |
 
 ---
 
 ## Success Criteria for Next Session
 
-- [ ] Pipeline verified running (predictions exist)
-- [ ] External reviews processed
-- [ ] Actionable items identified from reviews
-- [ ] Decision made on next steps for data lineage validation
-- [ ] (Optional) Initial `/validate-lineage quick` run
+- [ ] `/spot-check-player` tested and working
+- [ ] Any query issues in the skill fixed
+- [ ] (Optional) Implementation from Sonnet web chat reviewed
+- [ ] (Optional) `/validate-lineage quick` run for baseline
 
 ---
 
