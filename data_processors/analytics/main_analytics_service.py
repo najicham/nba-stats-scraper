@@ -356,7 +356,7 @@ ANALYTICS_TRIGGERS = {
     'nbac_schedule': [UpcomingTeamGameContextProcessor],
     'bdl_standings': [],  # No analytics dependencies yet
     'nbac_injury_report': [PlayerGameSummaryProcessor],  # Updates player context
-    'odds_api_player_points_props': [PlayerGameSummaryProcessor],  # Updates prop context
+    'odds_api_player_points_props': [UpcomingPlayerGameContextProcessor],  # Re-trigger Phase 3 when betting lines arrive
 }
 
 @app.route('/', methods=['GET'])
