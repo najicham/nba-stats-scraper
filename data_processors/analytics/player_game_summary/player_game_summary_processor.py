@@ -618,9 +618,20 @@ class PlayerGameSummaryProcessor(
         ),
 
         -- Team stats for usage_rate calculation
+        -- Note: game_id format may differ (Away_Home vs Home_Away), so we add reversed format for matching
         team_stats AS (
             SELECT
                 game_id,
+                -- Also compute reversed game_id for matching (handles format mismatch)
+                CASE
+                    WHEN game_id LIKE '%_%_%' THEN
+                        CONCAT(
+                            SUBSTR(game_id, 1, 9),  -- date prefix (YYYYMMDD_)
+                            SPLIT(game_id, '_')[OFFSET(2)], '_',  -- swap team positions
+                            SPLIT(game_id, '_')[OFFSET(1)]
+                        )
+                    ELSE game_id
+                END as game_id_reversed,
                 team_abbr,
                 fg_attempts as team_fg_attempts,
                 ft_attempts as team_ft_attempts,
@@ -653,7 +664,9 @@ class PlayerGameSummaryProcessor(
 
         FROM with_props wp
         LEFT JOIN games_context gc ON wp.game_id = gc.game_id
-        LEFT JOIN team_stats ts ON wp.game_id = ts.game_id AND wp.team_abbr = ts.team_abbr
+        -- Join on either exact game_id OR reversed format (handles Away_Home vs Home_Away mismatch)
+        LEFT JOIN team_stats ts ON (wp.game_id = ts.game_id OR wp.game_id = ts.game_id_reversed)
+            AND wp.team_abbr = ts.team_abbr
         ORDER BY wp.game_date DESC, wp.game_id, wp.player_lookup
         """
         
@@ -1630,17 +1643,31 @@ class PlayerGameSummaryProcessor(
             FROM combined_data
         ),
 
+        -- Team stats - check both game_id and reversed format (handles Away_Home vs Home_Away mismatch)
         team_stats AS (
             SELECT
                 game_id,
+                CASE
+                    WHEN game_id LIKE '%_%_%' THEN
+                        CONCAT(
+                            SUBSTR(game_id, 1, 9),
+                            SPLIT(game_id, '_')[OFFSET(2)], '_',
+                            SPLIT(game_id, '_')[OFFSET(1)]
+                        )
+                    ELSE game_id
+                END as game_id_reversed,
                 team_abbr,
                 fg_attempts as team_fg_attempts,
                 ft_attempts as team_ft_attempts,
                 turnovers as team_turnovers,
                 possessions as team_possessions
             FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
-            WHERE game_id = @game_id
-                AND game_date = @game_date
+            WHERE game_date = @game_date
+              AND (game_id = @game_id OR game_id = CONCAT(
+                    SUBSTR(@game_id, 1, 9),
+                    SPLIT(@game_id, '_')[OFFSET(2)], '_',
+                    SPLIT(@game_id, '_')[OFFSET(1)]
+                ))
         )
 
         SELECT
@@ -1664,7 +1691,8 @@ class PlayerGameSummaryProcessor(
             END as home_game
         FROM with_props wp
         LEFT JOIN games_context gc ON wp.game_id = gc.game_id
-        LEFT JOIN team_stats ts ON wp.game_id = ts.game_id AND wp.team_abbr = ts.team_abbr
+        LEFT JOIN team_stats ts ON (wp.game_id = ts.game_id OR wp.game_id = ts.game_id_reversed)
+            AND wp.team_abbr = ts.team_abbr
         ORDER BY wp.player_lookup
         """
 
