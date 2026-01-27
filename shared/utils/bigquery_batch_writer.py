@@ -53,6 +53,11 @@ DEFAULT_TIMEOUT_SECONDS = float(os.getenv('BQ_BATCH_WRITER_TIMEOUT', '30.0'))
 # Global flag to disable batching (for emergency quota relief)
 BATCHING_ENABLED = os.getenv('BQ_BATCH_WRITER_ENABLED', 'true').lower() == 'true'
 
+# Global flag to COMPLETELY disable monitoring writes (for quota exceeded emergencies)
+# When true, all writes are silently skipped - use only when quota is already exceeded
+# Set via: MONITORING_WRITES_DISABLED=true
+MONITORING_WRITES_DISABLED = os.getenv('MONITORING_WRITES_DISABLED', 'false').lower() == 'true'
+
 
 class BigQueryBatchWriter:
     """
@@ -143,6 +148,13 @@ class BigQueryBatchWriter:
         Args:
             record: Dictionary of field_name -> value
         """
+        # Emergency mode: completely skip all writes when quota exceeded
+        if MONITORING_WRITES_DISABLED:
+            logger.debug(
+                f"Monitoring writes disabled - skipping record for {self.table_id}"
+            )
+            return
+
         if not BATCHING_ENABLED:
             # Emergency fallback: write directly (no batching)
             self._write_single_record(record)
@@ -361,7 +373,8 @@ class BigQueryBatchWriter:
                 'avg_flush_latency_ms': round(avg_flush_latency, 2),
                 'avg_batch_size': round(avg_batch_size, 1),
                 'current_buffer_size': len(self.buffer),
-                'batching_enabled': BATCHING_ENABLED
+                'batching_enabled': BATCHING_ENABLED,
+                'monitoring_writes_disabled': MONITORING_WRITES_DISABLED
             }
 
 
