@@ -64,8 +64,12 @@ try:
 except ImportError:
     NOTIFICATIONS_AVAILABLE = False
     def notify_error(*args, **kwargs): pass
-    def notify_info(*args, **kwargs): pass
-    def notify_warning(*args, **kwargs): pass
+    def notify_info(*args, **kwargs,
+    processor_name=self.__class__.__name__
+    ): pass
+    def notify_warning(*args, **kwargs,
+    processor_name=self.__class__.__name__
+    ): pass
 
 # Configure logging
 logging.basicConfig(
@@ -330,7 +334,8 @@ class EspnRosterCoordinator:
                     'total_players': sum(r['player_count'] for r in self.results['success']),
                     'duration_seconds': (self.end_time - self.start_time).total_seconds(),
                     'teams': [r['team'] for r in self.results['success']]
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         elif success_count == 0:
             # Complete failure
@@ -353,7 +358,8 @@ class EspnRosterCoordinator:
                     'failed_count': failed_count,
                     'successful_teams': [r['team'] for r in self.results['success']],
                     'failed_teams': [r['team'] for r in self.results['failed']]
-                }
+                },
+                processor_name=self.__class__.__name__
             )
 
 

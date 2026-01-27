@@ -268,7 +268,8 @@ class ZeroRecordMonitor:
                     'affected_dates': analysis['affected_dates'],
                     'blocked_dates': analysis['blocked_dates'][:10],  # First 10
                     'affected_processors': [p['name'] for p in analysis['affected_processors']]
-                }
+                },
+                processor_name=self.__class__.__name__
             )
             logger.info("Alert sent successfully")
 

@@ -209,7 +209,8 @@ class BoxscoreCompletenessMonitor:
                     context={
                         'warning_teams': analysis['warning_teams'],
                         'missing_dates': analysis['missing_dates']
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
 
         elif analysis['status'] == 'MINOR':

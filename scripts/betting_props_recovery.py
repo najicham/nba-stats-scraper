@@ -195,7 +195,8 @@ class BettingPropsRecovery:
                     'props_found': props_count,
                     'min_expected': min_expected,
                     'market_types': MARKET_TYPES
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         except Exception as e:
             logger.warning(f"Failed to send notification: {e}")
@@ -226,7 +227,8 @@ class BettingPropsRecovery:
                 notify_info(
                     title="BettingPros Recovery Complete",
                     message=f"Successfully recovered all {len(MARKET_TYPES)} market types for {target_date}",
-                    details={'date': target_date, 'successes': successes}
+                    details={'date': target_date, 'successes': successes},
+                    processor_name=self.__class__.__name__
                 )
         except Exception as e:
             logger.warning(f"Failed to send notification: {e}")
