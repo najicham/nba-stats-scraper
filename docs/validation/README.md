@@ -11,6 +11,7 @@
 | **Daily orchestration** | [../02-operations/MORNING-VALIDATION-GUIDE.md](../02-operations/MORNING-VALIDATION-GUIDE.md) | Today's or yesterday's pipeline runs |
 | **Season completeness** | [../08-projects/current/historical-backfill-audit/](../08-projects/current/historical-backfill-audit/) | Entire season data coverage |
 | **Backfill validation** | [../02-operations/backfill/backfill-validation-checklist.md](../02-operations/backfill/backfill-validation-checklist.md) | Pre/during/post backfill checks |
+| **Player spot check** | [guides/PLAYER-SPOT-CHECK-GUIDE.md](./guides/PLAYER-SPOT-CHECK-GUIDE.md) | Verify player absences (injury, trade, etc.) |
 | **Framework design** | [framework/](./framework/) | Validation system architecture |
 | **Daily tasks** | [operational/](./operational/) | Current priorities and findings |
 
@@ -82,7 +83,8 @@ validation/
 │   └── JAN_*_REPORT.md
 └── guides/             # User guides and references
     ├── VALIDATION-GUIDE.md
-    └── VALIDATION-COMMANDS-REFERENCE.md
+    ├── VALIDATION-COMMANDS-REFERENCE.md
+    └── PLAYER-SPOT-CHECK-GUIDE.md
 ```
 
 ---

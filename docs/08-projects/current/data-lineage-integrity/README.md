@@ -12,9 +12,37 @@
 | Document | Purpose |
 |----------|---------|
 | [DESIGN-DECISIONS.md](./DESIGN-DECISIONS.md) | Synthesized design from external reviews |
+| [SPOT-CHECK-INTEGRATION.md](./SPOT-CHECK-INTEGRATION.md) | Spot check skills + cascade tracking |
 | [reviews/opus-review.md](./reviews/opus-review.md) | External review from Opus web chat |
 | [reviews/sonnet-review.md](./reviews/sonnet-review.md) | External review from Sonnet web chat |
 | [EXTERNAL-REVIEW-REQUEST.md](./EXTERNAL-REVIEW-REQUEST.md) | Original request sent to reviewers |
+
+## Spot Check Skills (NEW - Jan 2026)
+
+| Skill | Purpose | When to Use |
+|-------|---------|-------------|
+| `/spot-check-player` | Deep dive on one player | Investigating specific player issues |
+| `/spot-check-gaps` | System-wide gap detection | Weekly audit, post-backfill |
+| `/spot-check-date` | Check all players for one date | After reports of missing data |
+| `/spot-check-team` | Team roster audit | After trades, team-specific issues |
+| `/spot-check-cascade` | Downstream impact analysis | Before/after backfilling |
+
+## Contamination Tracking Schema (NEW - Jan 2026)
+
+**File**: `migrations/backfill_tracking_schema.sql`
+
+Three-table architecture:
+- `backfill_events` - Immutable log of backfills
+- `contamination_records` - Affected downstream records + remediation status
+- `remediation_log` - Audit trail of fixes
+
+See [SPOT-CHECK-INTEGRATION.md](./SPOT-CHECK-INTEGRATION.md) for full details.
+
+## Current Investigation: Phase 3 Processor Bug
+
+**Finding**: ~10-15 players/day with actual minutes are missing from `player_game_summary`.
+
+**Details**: [PLAYER-GAPS-INVESTIGATION.md](./PLAYER-GAPS-INVESTIGATION.md)
 
 ---
 
