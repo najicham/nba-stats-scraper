@@ -150,3 +150,20 @@ class PlayerRegistryHandler:
             List of registry failure records
         """
         return self.registry_failures
+
+    def flush_unresolved_players(self) -> None:
+        """
+        Flush unresolved players to BigQuery.
+
+        Delegates to underlying RegistryReader.
+        """
+        self.registry.flush_unresolved_players()
+
+    def get_cache_stats(self) -> Dict:
+        """
+        Get cache statistics from the registry.
+
+        Returns:
+            Dictionary with cache stats including hit_rate
+        """
+        return self.registry.get_cache_stats()

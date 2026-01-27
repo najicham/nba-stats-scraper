@@ -400,7 +400,7 @@ class CircuitBreakerMixin:
             # Add record to batch (will auto-flush when full)
             writer.add_record(state_record)
 
-            logger.debug(f"Queued circuit breaker state: {circuit_key} - {new_state}")
+            logger.debug(f"Queued circuit breaker state: {circuit_key} - {state}")
 
         except Exception as e:
             logger.warning(f"Failed to write circuit state to BigQuery: {e}")
