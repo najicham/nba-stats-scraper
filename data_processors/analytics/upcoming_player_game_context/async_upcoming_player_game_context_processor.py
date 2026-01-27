@@ -59,6 +59,7 @@ from data_processors.analytics.upcoming_player_game_context.upcoming_player_game
 from data_processors.analytics.upcoming_player_game_context.queries import (
     PlayerGameQueryBuilder
 )
+from data_processors.analytics.upcoming_player_game_context.player_stats import parse_minutes
 
 logger = logging.getLogger(__name__)
 
@@ -474,7 +475,7 @@ class AsyncUpcomingPlayerGameContextProcessor(
             df = pd.DataFrame(results)
 
             if not df.empty and 'minutes' in df.columns:
-                df['minutes_decimal'] = df['minutes'].apply(self._parse_minutes)
+                df['minutes_decimal'] = df['minutes'].apply(parse_minutes)
             else:
                 df['minutes_decimal'] = 0.0
 
