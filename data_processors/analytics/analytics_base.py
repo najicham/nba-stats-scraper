@@ -329,6 +329,27 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
                 if not dep_check['all_critical_present']:
                     error_msg = f"Missing critical dependencies: {dep_check['missing']}"
 
+                    # Structured logging for dependency failures (added 2026-01-27)
+                    # Enables post-mortem analysis of which deps failed and why
+                    logger.error("dependency_check_failed", extra={
+                        "event": "dependency_check_failed",
+                        "processor": self.processor_name,
+                        "game_date": str(analysis_date),
+                        "missing_critical": dep_check['missing'],
+                        "stale_fail": dep_check.get('stale_fail', []),
+                        "dependency_details": {
+                            table: {
+                                "status": details.get('status'),
+                                "last_update": str(details.get('last_update', '')),
+                                "expected_update": str(details.get('expected_update', '')),
+                                "staleness_hours": details.get('staleness_hours'),
+                                "is_critical": details.get('is_critical', True)
+                            }
+                            for table, details in dep_check.get('details', {}).items()
+                            if details.get('status') != 'available'
+                        }
+                    })
+
                     # In backfill mode, warn but allow processing to continue
                     # The processor can handle missing data gracefully in extract_raw_data()
                     if self.is_backfill_mode:
@@ -394,6 +415,25 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
 
                 self.step_info("dependency_check_complete",
                               f"Dependencies validated in {dep_check_seconds:.1f}s")
+
+                # Structured logging for processor start with dependency status (added 2026-01-27)
+                # Enables diagnosis of "why did X run before Y?" by showing when deps became available
+                logger.info("processor_started", extra={
+                    "event": "processor_started",
+                    "processor": self.processor_name,
+                    "game_date": str(analysis_date),
+                    "start_time": datetime.now(timezone.utc).isoformat(),
+                    "dependencies_status": {
+                        dep_table: {
+                            "status": dep_check['details'][dep_table].get('status', 'unknown'),
+                            "last_update": str(dep_check['details'][dep_table].get('last_update', '')),
+                            "staleness_hours": dep_check['details'][dep_table].get('staleness_hours')
+                        }
+                        for dep_table in dep_check.get('details', {})
+                    },
+                    "dependency_check_seconds": dep_check_seconds,
+                    "all_dependencies_ready": dep_check['all_critical_present']
+                })
             else:
                 logger.info("No dependency checking configured for this processor")
 
@@ -608,6 +648,23 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             self.stats["total_runtime"] = total_seconds
             self.step_info("finish",
                           f"Analytics processor completed in {total_seconds:.1f}s")
+
+            # Structured logging for phase timing (added 2026-01-27)
+            # Enables timing correlation across processors and phases
+            logger.info("phase_timing", extra={
+                "event": "phase_timing",
+                "phase": "phase_3",
+                "processor": self.processor_name,
+                "game_date": str(analysis_date),
+                "completed_at": datetime.now(timezone.utc).isoformat(),
+                "duration_seconds": total_seconds,
+                "records_processed": self.stats.get('rows_processed', 0),
+                "extract_time": extract_seconds,
+                "transform_time": transform_seconds,
+                "save_time": save_seconds,
+                "is_incremental": self.stats.get('is_incremental', False),
+                "entities_changed_count": self.stats.get('entities_changed_count', 0)
+            })
 
             # Log processing run
             self.log_processing_run(success=True)

@@ -471,6 +471,31 @@ class BigQuerySaveOpsMixin:
             if merge_query:
                 logger.error(f"Failed MERGE query:\n{merge_query}")
 
+            # Structured logging for MERGE fallback (added 2026-01-27)
+            # Enables post-mortem diagnosis of why MERGEs fail
+            fallback_reason = "unknown"
+            if "syntax error" in error_msg.lower():
+                fallback_reason = "syntax_error"
+            elif "400" in error_msg:
+                fallback_reason = "bad_request"
+            elif "streaming buffer" in error_msg.lower():
+                fallback_reason = "streaming_buffer"
+            elif "not found" in error_msg.lower():
+                fallback_reason = "table_not_found"
+
+            logger.error("merge_fallback", extra={
+                "event": "merge_fallback",
+                "processor": self.__class__.__name__,
+                "table": table_id,
+                "reason": fallback_reason,
+                "error_message": error_msg[:500],
+                "rows_affected": len(rows),
+                "primary_keys": primary_keys,
+                "update_fields_count": len(update_fields),
+                "fallback_strategy": "DELETE_INSERT",
+                "will_retry": False
+            })
+
             # Auto-fallback: If syntax error, use DELETE+INSERT
             if "syntax error" in error_msg.lower() or "400" in error_msg:
                 logger.warning("MERGE syntax error detected - falling back to DELETE + INSERT")
@@ -588,6 +613,19 @@ class BigQuerySaveOpsMixin:
                 if "not found" in error_str or "404" in error_str:
                     logger.info("Table doesn't exist yet - will be created on INSERT")
                 elif "streaming buffer" in error_str:
+                    # Structured logging for streaming buffer conflicts (added 2026-01-27)
+                    # Enables diagnosis of why DELETEs fail and when retries will succeed
+                    logger.warning("streaming_buffer_active", extra={
+                        "event": "streaming_buffer_active",
+                        "processor": self.__class__.__name__,
+                        "table": table_id,
+                        "operation": "DELETE",
+                        "game_dates": game_dates,
+                        "records_affected": len(rows),
+                        "will_retry": True,
+                        "retry_behavior": "Next trigger will process after buffer flushes (90 min max)",
+                        "resolution": "Wait for streaming buffer to flush or use MERGE strategy instead"
+                    })
                     logger.warning(
                         "Delete blocked by streaming buffer. "
                         "Aborting to prevent duplicates. Will retry on next trigger."

@@ -12,6 +12,8 @@
 
 | Task | Document |
 |------|----------|
+| **Deploy Services** | [DEPLOYMENT.md](./DEPLOYMENT.md) - Comprehensive deployment runbook for all services |
+| **Deploy Quick Reference** | [DEPLOYMENT-QUICK-REFERENCE.md](./DEPLOYMENT-QUICK-REFERENCE.md) - One-page cheat sheet |
 | **Morning Validation** | [MORNING-VALIDATION-GUIDE.md](./MORNING-VALIDATION-GUIDE.md) - Validate today's or yesterday's orchestration |
 | **Daily Operations** | [daily-operations-runbook.md](./daily-operations-runbook.md) |
 | **ML Monitoring Reminders** | [ML-MONITORING-REMINDERS.md](./ML-MONITORING-REMINDERS.md) - Automated Slack reminders for XGBoost V1 monitoring |
@@ -24,6 +26,7 @@
 ## 🎯 Overview
 
 **This directory contains:**
+- ✅ **Deployment Runbook** (NEW - complete guide for deploying all services, rollback procedures)
 - ✅ **Daily Operations Runbook** (NEW - daily health checks, common operations)
 - ✅ **ML Monitoring Reminders** (Automated Slack reminders for XGBoost V1 performance tracking)
 - ✅ **Incident Response Guide** (NEW - severity levels, troubleshooting)
@@ -40,6 +43,88 @@
 ---
 
 ## 📖 Documents in This Directory
+
+### **DEPLOYMENT.md** 🚀 DEPLOYMENT RUNBOOK (30 min read)
+**Created:** 2026-01-27
+**Purpose:** Comprehensive guide for deploying all NBA platform services
+
+**What's Inside:**
+- ✅ Prerequisites and authentication setup
+- ✅ Quick start commands for common deployments
+- ✅ Deployment architecture explanation (Container Registry vs Artifact Registry)
+- ✅ Service-by-service deployment procedures
+- ✅ Rollback procedures with examples
+- ✅ Verification steps for each service
+- ✅ Common issues and solutions
+- ✅ Emergency procedures
+
+**Key Features:**
+- Analytics processor deployment (Phase 3)
+- Prediction coordinator deployment (Phase 5)
+- All processor deployments (Phase 1-4)
+- Source deploy vs pre-built image methods
+- Complete resource configuration details
+
+**Quick Scripts:** `/scripts/deploy/deploy-analytics.sh` and `/scripts/deploy/deploy-predictions.sh`
+
+**Read This:**
+- Before any deployment
+- When deployment fails
+- When service shows warning status
+- For rollback procedures
+
+---
+
+### **DEPLOYMENT-QUICK-REFERENCE.md** 📋 ONE-PAGE CHEAT SHEET (5 min read)
+**Created:** 2026-01-27
+**Purpose:** Quick reference card for common deployment tasks
+
+**What's Inside:**
+- ✅ Prerequisites check commands
+- ✅ Quick deploy commands
+- ✅ Verification steps
+- ✅ Rollback commands
+- ✅ Common issues table
+- ✅ Service configuration summary
+
+**Read This:**
+- For quick command lookup
+- During deployment
+- For emergency rollback
+- Print and keep at desk
+
+---
+
+### **DEPLOYMENT-TROUBLESHOOTING.md** 🔧 TROUBLESHOOTING GUIDE (20 min read)
+**Created:** 2026-01-27
+**Purpose:** Resolve common deployment issues quickly
+
+**What's Inside:**
+- ✅ Quick diagnosis commands
+- ✅ 12 common deployment issues with solutions
+- ✅ Debugging workflow
+- ✅ Emergency contacts and resources
+
+**Issues Covered:**
+1. Image not found (gcr.io vs Artifact Registry)
+2. Build hangs at "Building using Buildpacks"
+3. Service shows yellow warning icon
+4. Permission denied errors
+5. Dockerfile not found
+6. Import errors after deployment
+7. Environment variables not set
+8. Endpoints return 404
+9. Cannot pull image from Artifact Registry
+10. Pre-deployment tests fail
+11. Service scales to zero too quickly
+12. Rollback doesn't work
+
+**Read This:**
+- When deployment fails
+- When service is unhealthy
+- Before asking for help
+
+---
 
 ### **ML Monitoring Reminders** 🔔 AUTOMATED REMINDERS (5 min setup)
 **Created:** 2026-01-17
