@@ -386,27 +386,21 @@ class CircuitBreakerMixin:
             state_record['last_error_type'] = type(last_error).__name__
 
         try:
-            # Use batch loading instead of streaming inserts to avoid the 90-minute
-            # streaming buffer that blocks DML operations (MERGE/UPDATE/DELETE)
-            # Reference: docs/05-development/guides/bigquery-best-practices.md
-            table_id = f"{self.project_id}.nba_orchestration.circuit_breaker_state"
+            # Use batched writes to reduce quota usage by 50x
+            # Batches ~50 state changes into 1 load job instead of 1 state = 1 job
+            from shared.utils.bigquery_batch_writer import get_batch_writer
 
-            # Get table reference for schema
-            table_ref = self.bq_client.get_table(table_id)
-
-            job_config = bigquery.LoadJobConfig(
-                schema=table_ref.schema,
-                autodetect=False,
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                ignore_unknown_values=True
+            writer = get_batch_writer(
+                table_id='nba_orchestration.circuit_breaker_state',
+                project_id=self.project_id,
+                batch_size=50,  # Batch 50 state changes per write
+                timeout_seconds=20.0  # Flush every 20 seconds
             )
 
-            load_job = self.bq_client.load_table_from_json([state_record], table_id, job_config=job_config)
-            load_job.result(timeout=60)
+            # Add record to batch (will auto-flush when full)
+            writer.add_record(state_record)
 
-            if load_job.errors:
-                logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
+            logger.debug(f"Queued circuit breaker state: {circuit_key} - {new_state}")
 
         except Exception as e:
             logger.warning(f"Failed to write circuit state to BigQuery: {e}")

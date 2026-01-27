@@ -970,29 +970,23 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             run_record['skip_reason'] = skip_reason
 
         try:
-            table_id = f"{self.project_id}.nba_processing.analytics_processor_runs"
+            # Use batched writes to reduce quota usage by 100x
+            # Batches ~100 runs into 1 load job instead of 1 run = 1 job
+            from shared.utils.bigquery_batch_writer import get_batch_writer
 
-            # Get table reference for schema
-            table_ref = self.bq_client.get_table(table_id)
-
-            # Use batch loading instead of streaming inserts
-            # This avoids the 90-minute streaming buffer that blocks DML operations
-            # See: docs/05-development/guides/bigquery-best-practices.md
-            job_config = bigquery.LoadJobConfig(
-                schema=table_ref.schema,
-                autodetect=False,
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                ignore_unknown_values=True
+            writer = get_batch_writer(
+                table_id='nba_processing.analytics_processor_runs',
+                project_id=self.project_id,
+                batch_size=100,  # Batch 100 runs per write
+                timeout_seconds=30.0  # Flush every 30 seconds
             )
 
-            load_job = self.bq_client.load_table_from_json(
-                [run_record],
-                table_id,
-                job_config=job_config
-            )
-            load_job.result(timeout=60)  # Wait for completion
-        except GoogleAPIError as e:
+            # Add record to batch (will auto-flush when full)
+            writer.add_record(run_record)
+
+            logger.debug(f"Queued analytics run: {run_record.get('processor_type')} - {run_record.get('status')}")
+
+        except Exception as e:
             logger.warning(f"Failed to log processing run: {e}")
     
     def post_process(self) -> None:

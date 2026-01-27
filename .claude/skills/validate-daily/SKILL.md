@@ -11,6 +11,92 @@ You are performing a comprehensive daily validation of the NBA stats scraper pip
 
 Validate that the daily orchestration pipeline is healthy and ready for predictions. Check all phases (2-5), run data quality spot checks, investigate any issues found, and provide a clear, actionable summary.
 
+## Key Concept: Game Date vs Processing Date
+
+**Important**: For yesterday's results validation, data spans TWO calendar dates:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Jan 25th (GAME_DATE)           │ Jan 26th (PROCESSING_DATE) │
+├────────────────────────────────┼────────────────────────────┤
+│ • Games played (7-11 PM)       │ • Box score scrapers run   │
+│ • Player performances          │ • Phase 3 analytics run    │
+│ • Predictions made (pre-game)  │ • Predictions graded       │
+│                                │ • Cache updated            │
+│                                │ • YOU RUN VALIDATION       │
+└────────────────────────────────┴────────────────────────────┘
+```
+
+**Use the correct date for each query:**
+- Game data (box scores, stats, predictions): Use `GAME_DATE`
+- Processing status (scraper runs, Phase 3 completion): Use `PROCESSING_DATE`
+
+## Interactive Mode (User Preference Gathering)
+
+**If the user invoked the skill without specific parameters**, ask them what they want to check:
+
+Use the AskUserQuestion tool to gather preferences:
+
+```
+Question 1: "What would you like to validate?"
+Options:
+  - "Today's pipeline (pre-game check)" - Check if today's data is ready before games start
+  - "Yesterday's results (post-game check)" - Verify yesterday's games processed correctly
+  - "Specific date" - Validate a custom date
+  - "Quick health check only" - Just run health check script, no deep investigation
+
+Question 2: "How thorough should the validation be?"
+Options:
+  - "Standard (Recommended)" - Priority 1 + Priority 2 checks
+  - "Quick" - Priority 1 only (critical checks)
+  - "Comprehensive" - All priorities including spot checks
+```
+
+Based on their answers, determine scope:
+
+| Mode | Thoroughness | Checks Run |
+|------|--------------|------------|
+| Today pre-game | Standard | Health check + validation + spot checks |
+| Today pre-game | Quick | Health check only |
+| Yesterday results | Standard | P1 (box scores, grading) + P2 (analytics, cache) |
+| Yesterday results | Quick | P1 only (box scores, grading) |
+| Yesterday results | Comprehensive | P1 + P2 + P3 (spot checks, accuracy) |
+
+- **Today pre-game**: Run standard workflow, note predictions may not exist yet
+- **Yesterday post-game**: Run Yesterday's Results Validation Workflow
+- **Specific date**: Ask for date, then run validation for that date
+- **Quick health check**: Run Phase 1 only (health check script)
+
+**If the user already provided parameters** (e.g., specific date in their message), skip the questions and proceed with those parameters.
+
+## Date Determination
+
+After determining what to validate, set the target dates:
+
+**If "Today's pipeline (pre-game check)"**:
+- `GAME_DATE` = TODAY (games scheduled for tonight)
+- `PROCESSING_DATE` = TODAY (data should be ready now)
+
+**If "Yesterday's results (post-game check)"**:
+- `GAME_DATE` = YESTERDAY (games that were played)
+- `PROCESSING_DATE` = TODAY (scrapers ran after midnight)
+
+**If "Specific date"**:
+- `GAME_DATE` = USER_PROVIDED_DATE
+- `PROCESSING_DATE` = DAY_AFTER(USER_PROVIDED_DATE)
+
+```bash
+# Set dates in bash for queries
+GAME_DATE=$(date -d "yesterday" +%Y-%m-%d)      # For yesterday's results
+PROCESSING_DATE=$(date +%Y-%m-%d)               # Today (when processing ran)
+
+# Or for pre-game check
+GAME_DATE=$(date +%Y-%m-%d)                     # Today's games
+PROCESSING_DATE=$(date +%Y-%m-%d)               # Today
+```
+
+**Critical**: Use `GAME_DATE` for game data queries, `PROCESSING_DATE` for processing status queries.
+
 ## Current Context & Timing Awareness
 
 **First**: Determine current time and game schedule context
@@ -24,6 +110,26 @@ Validate that the daily orchestration pipeline is healthy and ready for predicti
 - **Off-day**: No games scheduled is normal, not an error.
 
 ## Standard Validation Workflow
+
+### Phase 0: Proactive Quota Check (NEW)
+
+**IMPORTANT**: Check BigQuery quotas FIRST to prevent cascading failures.
+
+```bash
+# Check current quota usage for partition modifications
+bq show --format=prettyjson nba-props-platform | grep -A 10 "quotaUsed"
+
+# Or check recent quota errors in logs
+gcloud logging read "resource.type=bigquery_resource AND protoPayload.status.message:quota" \
+  --limit=10 --format="table(timestamp,protoPayload.status.message)"
+```
+
+**What to look for**:
+- Partition modification quota: Should be < 5000/day (limit varies by project)
+- Recent "Quota exceeded" errors in logs
+- If quota issues detected → Mark as P1 CRITICAL and recommend batching writes
+
+**Common cause**: `pipeline_logger` writing too many events to partitioned `run_history` table
 
 ### Phase 1: Run Baseline Health Check
 
@@ -76,14 +182,16 @@ python scripts/spot_check_data_accuracy.py --samples 5 --checks rolling_avg,usag
 python3 << 'EOF'
 from google.cloud import firestore
 from datetime import datetime
+import os
 db = firestore.Client()
-today = datetime.now().strftime('%Y-%m-%d')
-doc = db.collection('phase3_completion').document(today).get()
+# Use PROCESSING_DATE for completion status (processing happens after midnight)
+processing_date = os.environ.get('PROCESSING_DATE', datetime.now().strftime('%Y-%m-%d'))
+doc = db.collection('phase3_completion').document(processing_date).get()
 if doc.exists:
     data = doc.to_dict()
-    print(f"Phase 3 Status: {data}")
+    print(f"Phase 3 Status for {processing_date}: {data}")
 else:
-    print(f"No Phase 3 completion record for {today}")
+    print(f"No Phase 3 completion record for {processing_date}")
 EOF
 ```
 
@@ -92,7 +200,7 @@ EOF
 bq query --use_legacy_sql=false "
 SELECT COUNT(*) as features, COUNT(DISTINCT game_id) as games
 FROM nba_predictions.ml_feature_store_v2
-WHERE game_date = CURRENT_DATE()"
+WHERE game_date = DATE('${GAME_DATE}')"
 ```
 
 **Phase 5 Predictions (BigQuery)**:
@@ -100,7 +208,7 @@ WHERE game_date = CURRENT_DATE()"
 bq query --use_legacy_sql=false "
 SELECT COUNT(*) as predictions, COUNT(DISTINCT game_id) as games
 FROM nba_predictions.player_prop_predictions
-WHERE game_date = CURRENT_DATE() AND is_active = TRUE"
+WHERE game_date = DATE('${GAME_DATE}') AND is_active = TRUE"
 ```
 
 ### Phase 5: Investigate Any Issues Found
@@ -126,6 +234,174 @@ WHERE game_date = CURRENT_DATE() AND is_active = TRUE"
 3. Look for errors (ModuleNotFoundError, timeout, quota exceeded)
 4. Determine if can retry or needs code fix
 
+## Yesterday's Results Validation Workflow
+
+When user selects "Yesterday's results (post-game check)", follow this prioritized workflow:
+
+### Priority 1: Critical Checks (Always Run)
+
+#### 1A. Box Scores Complete
+
+Verify all games from yesterday have complete box score data:
+
+```bash
+GAME_DATE=$(date -d "yesterday" +%Y-%m-%d)
+
+bq query --use_legacy_sql=false "
+SELECT
+  COUNT(DISTINCT game_id) as games_with_data,
+  COUNT(*) as player_records,
+  COUNTIF(points IS NOT NULL) as has_points,
+  COUNTIF(minutes_played IS NOT NULL) as has_minutes
+FROM \`nba-props-platform.nba_analytics.player_game_summary\`
+WHERE game_date = DATE('${GAME_DATE}')"
+```
+
+**Expected**:
+- `games_with_data` matches scheduled games for that date
+- `player_records` ~= games × 25-30 players per game
+- `has_points` and `has_minutes` = 100% of records
+
+#### 1B. Prediction Grading Complete
+
+Verify predictions were graded against actual results:
+
+```bash
+bq query --use_legacy_sql=false "
+SELECT
+  COUNT(*) as total_predictions,
+  COUNTIF(actual_value IS NOT NULL) as graded,
+  COUNTIF(actual_value IS NULL) as ungraded,
+  ROUND(COUNTIF(actual_value IS NOT NULL) * 100.0 / COUNT(*), 1) as graded_pct
+FROM \`nba-props-platform.nba_predictions.player_prop_predictions\`
+WHERE game_date = DATE('${GAME_DATE}')
+  AND is_active = TRUE"
+```
+
+**Expected**:
+- `graded_pct` = 100% (all predictions should have actual values)
+- If `ungraded` > 0, check if games were postponed or data source blocked
+
+#### 1C. Scraper Runs Completed
+
+Verify box score scrapers ran successfully (they run after midnight):
+
+```bash
+PROCESSING_DATE=$(date +%Y-%m-%d)
+
+bq query --use_legacy_sql=false "
+SELECT
+  scraper_name,
+  status,
+  records_processed,
+  completed_at
+FROM \`nba-props-platform.nba_orchestration.scraper_run_history\`
+WHERE DATE(started_at) = DATE('${PROCESSING_DATE}')
+  AND scraper_name IN ('nbac_gamebook', 'bdl_player_boxscores')
+ORDER BY completed_at DESC"
+```
+
+**Expected**: Both scrapers show `status = 'success'`
+
+### Priority 2: Pipeline Completeness (Run if P1 passes)
+
+#### 2A. Analytics Generated
+
+```bash
+bq query --use_legacy_sql=false "
+SELECT
+  'player_game_summary' as table_name,
+  COUNT(*) as records
+FROM \`nba-props-platform.nba_analytics.player_game_summary\`
+WHERE game_date = DATE('${GAME_DATE}')
+UNION ALL
+SELECT
+  'team_offense_game_summary',
+  COUNT(*)
+FROM \`nba-props-platform.nba_analytics.team_offense_game_summary\`
+WHERE game_date = DATE('${GAME_DATE}')"
+```
+
+**Expected**:
+- `player_game_summary`: ~200-300 records per night (varies by games)
+- `team_offense_game_summary`: 2 × number of games (home + away)
+
+#### 2B. Phase 3 Completion Status
+
+Check that Phase 3 processors completed (they run after midnight, so check today's date):
+
+```bash
+python3 << 'EOF'
+from google.cloud import firestore
+from datetime import datetime
+db = firestore.Client()
+# Phase 3 runs after midnight, so check TODAY's completion record
+processing_date = datetime.now().strftime('%Y-%m-%d')
+doc = db.collection('phase3_completion').document(processing_date).get()
+if doc.exists:
+    data = doc.to_dict()
+    print(f"Phase 3 Status for {processing_date}:")
+    for processor, status in sorted(data.items()):
+        print(f"  {processor}: {status.get('status', 'unknown')}")
+else:
+    print(f"No Phase 3 completion record for {processing_date}")
+EOF
+```
+
+#### 2C. Cache Updated
+
+Verify player_daily_cache was refreshed (needed for today's predictions):
+
+```bash
+bq query --use_legacy_sql=false "
+SELECT
+  COUNT(DISTINCT player_lookup) as players_cached,
+  MAX(updated_at) as last_update
+FROM \`nba-props-platform.nba_precompute.player_daily_cache\`
+WHERE cache_date = DATE('${GAME_DATE}')"
+```
+
+**Expected**: `last_update` should be within last 12 hours
+
+### Priority 3: Quality Verification (Run if issues suspected)
+
+#### 3A. Spot Check Accuracy
+
+```bash
+python scripts/spot_check_data_accuracy.py \
+  --start-date ${GAME_DATE} \
+  --end-date ${GAME_DATE} \
+  --samples 10 \
+  --checks rolling_avg,usage_rate
+```
+
+**Expected**: ≥95% accuracy
+
+#### 3B. Prediction Accuracy Summary
+
+```bash
+bq query --use_legacy_sql=false "
+SELECT
+  prop_type,
+  COUNT(*) as predictions,
+  COUNTIF(
+    (predicted_value > line_value AND actual_value > line_value) OR
+    (predicted_value < line_value AND actual_value < line_value)
+  ) as correct,
+  ROUND(COUNTIF(
+    (predicted_value > line_value AND actual_value > line_value) OR
+    (predicted_value < line_value AND actual_value < line_value)
+  ) * 100.0 / COUNT(*), 1) as accuracy_pct
+FROM \`nba-props-platform.nba_predictions.player_prop_predictions\`
+WHERE game_date = DATE('${GAME_DATE}')
+  AND is_active = TRUE
+  AND actual_value IS NOT NULL
+GROUP BY prop_type
+ORDER BY predictions DESC"
+```
+
+**Note**: This is informational, not pass/fail. Prediction accuracy varies.
+
 ## Investigation Tools
 
 **Cloud Run Logs** (if needed):
@@ -145,15 +421,66 @@ bq query --use_legacy_sql=false "
 -- Example: Validate rolling average for specific player
 SELECT
   game_date,
-  player_name,
+  player_lookup,
   points,
   points_avg_last_5
 FROM nba_analytics.player_game_summary
-WHERE player_name = 'lebron_james'
+WHERE player_lookup = 'lebronjames'
   AND game_date >= '2026-01-01'
 ORDER BY game_date DESC
 LIMIT 10"
 ```
+
+## BigQuery Schema Reference (NEW)
+
+**Key Tables and Fields** - Use these for manual validation queries:
+
+### `nba_analytics.player_game_summary`
+```
+Key fields:
+- player_lookup (STRING) - NOT player_name! (e.g., 'lebronjames')
+- game_id (STRING)
+- game_date (DATE)
+- points, assists, rebounds (INT64)
+- minutes_played (INT64) - decimal format, NOT "MM:SS"
+- usage_rate (FLOAT64) - can be NULL if team stats missing
+- points_avg_last_5, points_avg_last_10 (FLOAT64)
+```
+
+### `nba_precompute.player_daily_cache`
+```
+Key fields:
+- player_lookup (STRING)
+- cache_date (DATE) - the "as of" date for cached features
+- game_date (DATE) - upcoming game date
+- points_avg_last_5, points_avg_last_10 (FLOAT64)
+- minutes_avg_last_10 (FLOAT64)
+```
+
+### `nba_predictions.ml_feature_store_v2`
+```
+Key fields:
+- player_lookup (STRING)
+- game_id (STRING)
+- game_date (DATE)
+- features (ARRAY<FLOAT64>) - ML feature vector
+```
+
+### `nba_analytics.team_offense_game_summary`
+```
+Key fields:
+- game_id (STRING)
+- team_abbr (STRING)
+- game_date (DATE)
+- fg_attempts, ft_attempts, turnovers (INT64)
+- possessions (INT64) - needed for usage_rate calculation
+```
+
+**Common Schema Gotchas**:
+- Use `player_lookup` NOT `player_name` (lookup is normalized: 'lebronjames' not 'LeBron James')
+- `cache_date` in player_daily_cache is the "as of" date (game_date - 1)
+- `minutes_played` is INT64 decimal (32), NOT string "32:00"
+- `usage_rate` can be NULL if team_offense_game_summary is missing
 
 ## Known Issues & Context
 
@@ -184,6 +511,20 @@ LIMIT 10"
    - Symptom: No betting data at 5 PM ET
    - Expected: Workflow starts at 8 AM ET (not 1 PM)
    - Fix: Check workflow schedule in orchestrator
+
+6. **PlayerGameSummaryProcessor Registry Bug** ✅ FIXED 2026-01-26
+   - Symptom: `'PlayerGameSummaryProcessor' object has no attribute 'registry'`
+   - Impact: Phase 3 processor fails during finalize()
+   - Root cause: Code referenced `self.registry` instead of `self.registry_handler`
+   - Fix: Fixed in player_game_summary_processor.py (lines 1066, 1067, 1667)
+   - Status: Deployed 2026-01-26
+
+7. **BigQuery Quota Exceeded** ⚠️ WATCH FOR THIS
+   - Symptom: `403 Quota exceeded: Number of partition modifications`
+   - Impact: Blocks all Phase 3 processors from writing results
+   - Root cause: Too many inserts to partitioned `run_history` table
+   - Fix: Batching writes in pipeline_logger (commit c07d5433)
+   - Action: Check quota proactively in Phase 0
 
 ### Expected Behaviors (Not Errors)
 
@@ -273,6 +614,46 @@ Provide a clear, concise summary structured like this:
 [Numbered list of specific next steps]
 1. [Action with command if applicable]
 2. [Action with reference to runbook if complex]
+```
+
+### Output Format (Yesterday's Results)
+
+When validating yesterday's results, use this format:
+
+```
+## Yesterday's Results Validation - [GAME_DATE]
+
+### Summary: [STATUS]
+Processing date: [PROCESSING_DATE] (scrapers/analytics ran after midnight)
+
+### Priority 1: Critical Checks
+
+| Check | Status | Details |
+|-------|--------|---------|
+| Box Scores | ✅/❌ | [X] games, [Y] player records |
+| Prediction Grading | ✅/❌ | [X]% graded ([Y] predictions) |
+| Scraper Runs | ✅/❌ | nbac_gamebook: [status], bdl: [status] |
+
+### Priority 2: Pipeline Completeness
+
+| Check | Status | Details |
+|-------|--------|---------|
+| Analytics | ✅/❌ | player_game_summary: [X] records |
+| Phase 3 | ✅/❌ | [X]/5 processors complete |
+| Cache Updated | ✅/❌ | Last update: [timestamp] |
+
+### Priority 3: Quality (if run)
+
+| Check | Status | Details |
+|-------|--------|---------|
+| Spot Check Accuracy | ✅/⚠️/❌ | [X]% |
+| Prediction Accuracy | ℹ️ | Points: [X]%, Rebounds: [Y]%, ... |
+
+### Issues Found
+[List any issues with severity]
+
+### Recommended Actions
+[Prioritized list of fixes]
 ```
 
 ## Important Guidelines

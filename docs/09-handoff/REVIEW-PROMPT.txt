@@ -1,0 +1,24 @@
+Please review the `/validate-daily` Claude Code skill that was just created.
+
+Read these documents in order:
+
+1. docs/09-handoff/2026-01-26-VALIDATE-DAILY-SKILL-COMPLETE.md - Quick summary
+2. docs/02-operations/VALIDATE-DAILY-SKILL-CREATION-GUIDE.md - Full technical documentation
+3. .claude/skills/validate-daily/SKILL.md - The actual skill
+
+Then:
+
+1. Test the skill by running: /validate-daily
+
+2. Provide feedback on:
+   - Is the skill effective? Does it provide value over manual validation?
+   - Is the investigation depth sufficient for novel issues?
+   - Is the output format clear and actionable?
+   - Are there validation aspects missing?
+   - Is the documentation quality sufficient for future maintenance?
+   - Is the P1-P5 severity classification appropriate?
+   - Which future enhancements should be prioritized?
+
+3. Note any issues or improvements needed
+
+The skill was tested manually (before discovery) and successfully detected 3 P1 critical issues with proper root cause analysis. This is the first real test of the `/validate-daily` command invocation.

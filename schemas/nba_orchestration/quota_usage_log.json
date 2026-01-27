@@ -1,0 +1,50 @@
+[
+  {
+    "name": "check_timestamp",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When the quota check was performed"
+  },
+  {
+    "name": "total_tables_monitored",
+    "type": "INTEGER",
+    "mode": "REQUIRED",
+    "description": "Total number of tables with load jobs"
+  },
+  {
+    "name": "critical_count",
+    "type": "INTEGER",
+    "mode": "REQUIRED",
+    "description": "Number of tables exceeding critical threshold (95%)"
+  },
+  {
+    "name": "warning_count",
+    "type": "INTEGER",
+    "mode": "REQUIRED",
+    "description": "Number of tables exceeding warning threshold (80%)"
+  },
+  {
+    "name": "max_usage_pct",
+    "type": "FLOAT",
+    "mode": "REQUIRED",
+    "description": "Maximum quota usage percentage across all tables"
+  },
+  {
+    "name": "table_usage",
+    "type": "JSON",
+    "mode": "NULLABLE",
+    "description": "JSON map of table_id -> load job count"
+  },
+  {
+    "name": "critical_tables",
+    "type": "JSON",
+    "mode": "NULLABLE",
+    "description": "JSON array of critical table IDs"
+  },
+  {
+    "name": "warning_tables",
+    "type": "JSON",
+    "mode": "NULLABLE",
+    "description": "JSON array of warning table IDs"
+  }
+]

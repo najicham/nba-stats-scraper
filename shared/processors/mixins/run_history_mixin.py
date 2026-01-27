@@ -435,58 +435,44 @@ class RunHistoryMixin:
 
     def _insert_run_history(self, record: Dict) -> None:
         """
-        Insert run history record to BigQuery.
+        Insert run history record to BigQuery using batched writes.
+
+        Uses BigQueryBatchWriter to reduce quota usage by 100x.
+        Records are automatically flushed when batch is full or on timeout.
 
         Args:
             record: Record dictionary to insert
         """
         try:
-            # Get BigQuery client - check various attribute names
-            bq_client = getattr(self, 'bq_client', None)
-            if bq_client is None:
-                bq_client = bigquery.Client()
+            # Use batch writer to reduce quota usage
+            # This batches ~100 records into 1 load job instead of 1 record = 1 job
+            from shared.utils.bigquery_batch_writer import get_batch_writer
 
-            project_id = getattr(self, 'project_id', None) or bq_client.project
-            table_id = f"{project_id}.{self.RUN_HISTORY_TABLE}"
+            project_id = getattr(self, 'project_id', None)
+            if project_id is None:
+                bq_client = getattr(self, 'bq_client', None) or bigquery.Client()
+                project_id = bq_client.project
 
-            # Get table schema to filter out fields not yet added
-            try:
-                table = bq_client.get_table(table_id)
-                valid_fields = {field.name for field in table.schema}
-                filtered_record = {k: v for k, v in record.items() if k in valid_fields}
-            except Exception as e:
-                # If we can't get schema, try with all fields
-                logger.debug(f"Could not get table schema (using all fields): {e}")
-                filtered_record = record
+            # Get batch writer (singleton per table)
+            writer = get_batch_writer(
+                table_id=self.RUN_HISTORY_TABLE,
+                project_id=project_id,
+                batch_size=100,  # Batch 100 records per write
+                timeout_seconds=30.0  # Flush every 30 seconds
+            )
 
-            # Use batch loading instead of streaming inserts to avoid the 90-minute
-            # streaming buffer that blocks DML operations (MERGE/UPDATE/DELETE)
-            # Reference: docs/05-development/guides/bigquery-best-practices.md
-            try:
-                table_ref = bq_client.get_table(table_id)
+            # Add record to batch (will auto-flush when full)
+            writer.add_record(record)
 
-                job_config = bigquery.LoadJobConfig(
-                    schema=table_ref.schema,
-                    autodetect=False,
-                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                    write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                    ignore_unknown_values=True
-                )
-
-                load_job = bq_client.load_table_from_json([filtered_record], table_id, job_config=job_config)
-                load_job.result(timeout=60)
-
-                if load_job.errors:
-                    logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
-                    logger.warning(f"Errors inserting run history: {load_job.errors}")
-                else:
-                    logger.info(f"Recorded run history: {record.get('run_id')} - {record.get('status')} ({record.get('duration_seconds', 0):.1f}s)")
-            except Exception as load_error:
-                logger.warning(f"Errors inserting run history: {load_error}")
+            # Log at debug level (batch writer logs at info when flushing)
+            logger.debug(
+                f"Queued run history: {record.get('run_id')} - "
+                f"{record.get('status')} ({record.get('duration_seconds', 0):.1f}s)"
+            )
 
         except Exception as e:
             # Don't fail the processor if logging fails
-            logger.error(f"Failed to insert run history (non-fatal): {e}", exc_info=True)
+            logger.error(f"Failed to queue run history (non-fatal): {e}", exc_info=True)
 
     # =========================================================================
     # CONVENIENCE METHODS

@@ -1063,8 +1063,8 @@ class PlayerGameSummaryProcessor(
         logger.info("Flushing unresolved players...")
 
         try:
-            self.registry.flush_unresolved_players()
-            cache_stats = self.registry.get_cache_stats()
+            self.registry_handler.flush_unresolved_players()
+            cache_stats = self.registry_handler.get_cache_stats()
             logger.info(f"Registry cache: {cache_stats['hit_rate']:.1%} hit rate")
         except Exception as e:
             logger.error(f"Failed to flush registry: {e}")
@@ -1664,7 +1664,7 @@ class PlayerGameSummaryProcessor(
                         'team_abbr': row['team_abbr'] if pd.notna(row['team_abbr']) else None,
                         'source': 'player_game_summary'
                     }
-                    self.registry._log_unresolved_player(player_lookup, game_context)
+                    self.registry_handler._log_unresolved_player(player_lookup, game_context)
                     self.registry_stats['records_skipped'] += 1
 
                     # Track failure for observability (v2.1 feature)
