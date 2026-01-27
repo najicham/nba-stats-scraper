@@ -271,7 +271,8 @@ def check_boxscore_completeness():
                 notify_warning(
                     title=f"WARNING: Boxscore Coverage Below 90% ({date_range})",
                     message=f"Teams below 90%: {warning_msg}. Missing {missing_count} games total.",
-                    details={'warning_teams': warning_teams, 'missing_count': missing_count}
+                    details={'warning_teams': warning_teams, 'missing_count': missing_count},
+                processor_name="Main Processor Service"
                 )
 
         status = 'critical' if critical_teams else ('warning' if warning_teams else 'ok')

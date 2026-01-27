@@ -60,8 +60,12 @@ try:
 except ImportError:
     # Graceful fallback if notification system not available
     def notify_error(*args, **kwargs): pass
-    def notify_warning(*args, **kwargs): pass
-    def notify_info(*args, **kwargs): pass
+    def notify_warning(*args, **kwargs,
+    processor_name=self.__class__.__name__
+    ): pass
+    def notify_info(*args, **kwargs,
+    processor_name=self.__class__.__name__
+    ): pass
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +262,8 @@ class BdlActivePlayersScraper(ScraperBase, ScraperFlaskMixin):
                             'teamId': self.opts.get('teamId'),
                             'playerId': self.opts.get('playerId'),
                             'search': self.opts.get('search')
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send empty data warning: {notify_ex}")
@@ -273,7 +278,8 @@ class BdlActivePlayersScraper(ScraperBase, ScraperFlaskMixin):
                             'ident': 'league',
                             'player_count': len(players),
                             'expected_minimum': 400
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send low count warning: {notify_ex}")
@@ -288,7 +294,8 @@ class BdlActivePlayersScraper(ScraperBase, ScraperFlaskMixin):
                             'ident': self.opts.get('ident'),
                             'player_count': len(players),
                             'pages_fetched': pages_fetched
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send success notification: {notify_ex}")

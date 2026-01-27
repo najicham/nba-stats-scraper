@@ -235,7 +235,8 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
                             'search_query': self.opts['search_query'],
                             'game_id': self.opts.get('game_id'),
                             'teams': self.opts.get('teams')
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -344,7 +345,8 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
                         'selected_file': target_file['name'],
                         'game_id': self.opts.get('game_id'),
                         'teams': self.opts.get('teams')
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -634,7 +636,8 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
                     'teams': f"{game_info.get('away_team')}@{game_info.get('home_team')}",
                     'total_plays': len(plays),
                     'final_score': f"{game_info.get('final_away_score', 0)}-{game_info.get('final_home_score', 0)}"
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")

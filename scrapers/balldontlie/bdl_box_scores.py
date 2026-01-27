@@ -69,8 +69,12 @@ try:
 except ImportError:
     # Graceful fallback if notification system not available
     def notify_error(*args, **kwargs): pass
-    def notify_warning(*args, **kwargs): pass
-    def notify_info(*args, **kwargs): pass
+    def notify_warning(*args, **kwargs,
+    processor_name=self.__class__.__name__
+    ): pass
+    def notify_info(*args, **kwargs,
+    processor_name=self.__class__.__name__
+    ): pass
 
 # BDL availability logger for per-game tracking (legacy - BDL specific)
 try:
@@ -292,7 +296,8 @@ class BdlBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
                             'scraper': 'bdl_box_scores',
                             'date': self.opts.get('date'),
                             'note': 'This may be normal for off-days or future dates'
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send empty data warning: {notify_ex}")
@@ -307,7 +312,8 @@ class BdlBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
                             'date': self.opts.get('date'),
                             'row_count': len(rows),
                             'note': 'May indicate incomplete data or few games played'
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send low count warning: {notify_ex}")
@@ -323,7 +329,8 @@ class BdlBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
                             'row_count': len(rows),
                             'pages_fetched': pages_fetched,
                             'estimated_games': len(rows) // 26 if len(rows) > 0 else 0
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send success notification: {notify_ex}")

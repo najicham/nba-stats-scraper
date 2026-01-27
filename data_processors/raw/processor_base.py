@@ -654,7 +654,8 @@ class ProcessorBase(RunHistoryMixin):
                         'run_id': self.run_id,
                         'table': self.table_name,
                         'opts': self.opts
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -720,6 +721,7 @@ class ProcessorBase(RunHistoryMixin):
                     title=f"{self.__class__.__name__}: Partial Data Loss",
                     message=f"Expected {expected_rows} rows but only saved {actual_rows}",
                     details=validation_result
+                    processor_name=self.__class__.__name__
                 )
 
             # Log all validations to monitoring table (for trending)
@@ -900,7 +902,8 @@ class ProcessorBase(RunHistoryMixin):
                     'run_id': getattr(self, 'run_id', None),
                     'detection_layer': 'Layer 5: Processor Output Validation',
                     'detection_time': datetime.now(timezone.utc).isoformat()
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         except Exception as e:
             logger.warning(f"Failed to send zero-row alert: {e}")
@@ -1222,7 +1225,8 @@ class ProcessorBase(RunHistoryMixin):
                         'table': self.table_name,
                         'raw_data_exists': bool(self.raw_data),
                         'opts': self.opts
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")

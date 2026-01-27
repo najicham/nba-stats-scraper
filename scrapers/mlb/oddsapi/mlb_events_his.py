@@ -188,7 +188,8 @@ class MlbEventsHistoricalScraper(ScraperBase, ScraperFlaskMixin):
                     'scraper': 'mlb_events_his',
                     'game_date': self.opts.get('game_date'),
                     'snapshot_timestamp': self.opts.get('snapshot_timestamp'),
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         else:
             notify_info(
@@ -199,7 +200,8 @@ class MlbEventsHistoricalScraper(ScraperBase, ScraperFlaskMixin):
                     'game_date': self.opts.get('game_date'),
                     'snapshot_timestamp': wrapper.get('timestamp'),
                     'event_count': len(events),
-                }
+                },
+                processor_name=self.__class__.__name__
             )
 
         logger.info("Fetched %d historical events @ %s", len(events), self.data["snapshot_timestamp"])

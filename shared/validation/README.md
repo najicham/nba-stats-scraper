@@ -471,6 +471,174 @@ For questions or issues:
 
 ---
 
-**Last Updated**: January 4, 2026
-**Version**: 2.0 (Production)
+**Last Updated**: January 26, 2026
+**Version**: 2.1 (Production - with Data Lineage Integrity)
 **Status**: Active
+
+---
+
+## 🆕 NEW: Data Lineage Integrity Prevention Layer (Jan 2026)
+
+### Overview
+
+Added processing gates and window validators to prevent **cascade contamination** from late-arriving backfill data.
+
+**Problem**: 81% of this season's game data was backfilled late, causing rolling averages and ML features to be computed with incomplete data windows.
+
+**Solution**: Check completeness before computing. Store NULL for incomplete windows instead of contaminated values.
+
+### New Components
+
+#### ProcessingGate (`processing_gate.py`)
+
+Unified gate that decides whether processing can proceed:
+
+```python
+from shared.validation.processing_gate import ProcessingGate, GateStatus
+
+gate = ProcessingGate(bq_client, project_id)
+
+result = gate.check_can_process(
+    processor_name='PlayerCompositeFactorsProcessor',
+    game_date=date(2026, 1, 26),
+    entity_ids=['lebron_james', 'stephen_curry'],
+    window_size=10
+)
+
+if result.status == GateStatus.FAIL:
+    raise ProcessingBlockedError(result.message)
+
+# Attach quality metadata to output
+for record in records:
+    record.update(result.quality_metadata)
+```
+
+**Gate Statuses**:
+- `PROCEED`: All checks passed
+- `PROCEED_WITH_WARNING`: Minor issues, proceed with flags
+- `WAIT`: Data not ready, retry later
+- `FAIL`: Critical issue, cannot proceed
+
+#### WindowCompletenessValidator (`window_completeness.py`)
+
+Validates rolling window completeness before computation:
+
+```python
+from shared.validation.window_completeness import WindowCompletenessValidator
+
+validator = WindowCompletenessValidator(completeness_checker)
+
+# Check which players have complete windows
+computable, skip = validator.get_computable_players(
+    player_ids=['lebron_james', 'stephen_curry'],
+    game_date=date(2026, 1, 26),
+    window_size=10
+)
+
+# Check multiple windows for a player
+window_results = validator.check_player_windows(
+    player_id='lebron_james',
+    game_date=date(2026, 1, 26),
+    window_sizes=[5, 10, 15, 20]
+)
+
+for window_size, result in window_results.items():
+    if result.recommendation == 'skip':
+        # Don't compute - store NULL
+        record[f'points_last_{window_size}_avg'] = None
+    else:
+        # Safe to compute
+        record[f'points_last_{window_size}_avg'] = compute_avg(...)
+```
+
+**Recommendations**:
+- `compute`: Full window (100% complete), compute normally
+- `compute_with_flag`: Partial window (70-99%), compute but flag as incomplete
+- `skip`: Too incomplete (<70%), return NULL
+
+### Quality Metadata Schema
+
+New columns added to track data quality:
+
+**Analytics Tables** (`nba_analytics.*`):
+- `data_quality_flag`: 'complete' | 'partial' | 'incomplete' | 'corrected'
+- `quality_score`: 0-1 scale based on completeness
+- `processing_context`: 'daily' | 'backfill' | 'manual' | 'cascade'
+
+**Precompute Tables** (`nba_precompute.*`):
+- `quality_score`: Overall quality (0-1)
+- `window_completeness`: Primary window completeness ratio
+- `points_last_N_complete`: Boolean flags for each window (L5, L10, L15, L20)
+- `upstream_quality_min`: Minimum quality from upstream sources (weakest link)
+- `processing_context`: Context of processing
+
+Migration: `migrations/add_quality_metadata.sql`
+
+### Enhanced /validate-lineage Skill
+
+New validation capabilities:
+- **Quality Score Distribution**: Track quality trends over time
+- **Incomplete Window Detection**: Find records with incomplete rolling windows
+- **Stored vs Recomputed Comparison**: Detect late-arriving data
+- **Processing Context Analysis**: Distribution of daily vs backfill vs cascade
+- **Remediation Recommendations**: Targeted reprocessing commands
+
+```bash
+/validate-lineage quality-trends --start-date 2025-11-01 --end-date 2025-11-30
+/validate-lineage incomplete-windows --days 7
+/validate-lineage quality-metadata 2025-11-10
+/validate-lineage remediate --start-date 2025-11-01 --end-date 2025-11-30
+```
+
+### Quick Start
+
+```python
+class MyProcessor(PrecomputeProcessorBase):
+    def __init__(self):
+        super().__init__()
+        self.processing_gate = ProcessingGate(self.bq_client, self.project_id)
+        self.window_validator = WindowCompletenessValidator(self.completeness_checker)
+
+    def process(self):
+        # Gate check
+        gate_result = self.processing_gate.check_can_process(
+            processor_name=self.__class__.__name__,
+            game_date=self.game_date,
+            entity_ids=self.get_players(),
+            window_size=10
+        )
+
+        if gate_result.status == GateStatus.FAIL:
+            raise ProcessingBlockedError(gate_result.message)
+
+        # Validate windows and compute
+        for player in self.get_players():
+            window_results = self.window_validator.check_player_windows(
+                player_id=player,
+                game_date=self.game_date,
+                window_sizes=[5, 10, 15, 20]
+            )
+
+            record = {}
+            for window_size, result in window_results.items():
+                if result.recommendation == 'skip':
+                    record[f'avg_{window_size}'] = None  # Store NULL
+                else:
+                    record[f'avg_{window_size}'] = self.compute(player, window_size)
+
+            # Add quality metadata
+            record.update(gate_result.quality_metadata)
+```
+
+### Documentation
+
+- [Implementation Summary](../../docs/08-projects/current/data-lineage-integrity/IMPLEMENTATION-SUMMARY.md)
+- [Integration Example](../../docs/08-projects/current/data-lineage-integrity/INTEGRATION-EXAMPLE.md)
+- [Implementation Request](../../docs/08-projects/current/data-lineage-integrity/IMPLEMENTATION-REQUEST.md)
+
+### Tests
+
+```bash
+pytest tests/unit/validation/test_processing_gate.py
+pytest tests/unit/validation/test_window_completeness.py
+```

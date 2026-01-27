@@ -394,7 +394,8 @@ class UnifiedPubSubPublisher:
                     "error_type": type(error).__name__,
                     "error_message": str(error)[:500],
                     "impact": "Downstream phases may be delayed by up to scheduler interval"
-                }
+                },
+                processor_name=processor_name
             )
         except ImportError:
             logger.debug("Notification system not available")

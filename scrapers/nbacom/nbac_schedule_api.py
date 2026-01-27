@@ -299,7 +299,8 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
                             'game_date_count': len(game_dates),
                             'threshold': min_game_dates,
                             'url': self.url
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -405,7 +406,8 @@ class GetNbaComScheduleApi(ScraperBase, ScraperFlaskMixin):
                             'game_count': len(all_games),
                             'threshold': min_games,
                             'metadata': metadata
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")

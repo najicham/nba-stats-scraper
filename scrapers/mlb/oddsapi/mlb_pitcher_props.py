@@ -225,7 +225,8 @@ class MlbPitcherPropsScraper(ScraperBase, ScraperFlaskMixin):
                     'scraper': 'mlb_pitcher_props',
                     'event_id': self.opts.get('event_id'),
                     'game_date': self.opts.get('game_date'),
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         else:
             notify_info(
@@ -238,7 +239,8 @@ class MlbPitcherPropsScraper(ScraperBase, ScraperFlaskMixin):
                     'total_outcomes': row_count,
                     'strikeout_lines': len(strikeout_lines),
                     'sample_lines': strikeout_lines[:4],
-                }
+                },
+                processor_name=self.__class__.__name__
             )
 
         logger.info(

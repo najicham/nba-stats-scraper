@@ -406,7 +406,8 @@ def process_pub_sub_message(message_data: Dict[str, Any]) -> Dict[str, Any]:
                         'trigger_type': trigger_type,
                         'valid_types': ['gamebook_processed', 'roster_scraped', 'manual_refresh'],
                         'action': 'Check message format or add new trigger handler'
-                    }
+                    },
+                processor_name="Main Reference Service"
                 )
             except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -728,7 +729,8 @@ def registry_health_check():
                 notify_warning(
                     title="Registry Health: WARNING",
                     message="Registry health check found warnings",
-                    details=results
+                    details=results,
+                processor_name="Main Reference Service"
                 )
             except (RequestException, Timeout, RequestsConnectionError) as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")

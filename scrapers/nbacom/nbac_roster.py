@@ -404,7 +404,8 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
                             'teamId': self.opts.get('teamId'),
                             'invalid_positions_sample': invalid_positions[:3],
                             'total_invalid': len(invalid_positions)
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -423,7 +424,8 @@ class GetNbaTeamRoster(ScraperBase, ScraperFlaskMixin):
                             'requested_team': expected_abbr,
                             'returned_team': team_abbr,
                             'teamId': self.opts.get('teamId')
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")

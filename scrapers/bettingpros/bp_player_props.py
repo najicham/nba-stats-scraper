@@ -403,7 +403,8 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
                                     'market_type': self.opts.get('market_type', 'points'),
                                     'event_ids_count': len(self.opts.get('event_ids_list', [])),
                                     'page': page
-                                }
+                                },
+                                processor_name=self.__class__.__name__
                             )
                         except Exception as notify_ex:
                             logger.warning(f"Failed to send notification: {notify_ex}")
@@ -492,7 +493,8 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
                             'pages_fetched': page - 1,
                             'offers_fetched': len(all_offers),
                             'note': 'Increase limit if more pages expected'
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -538,7 +540,8 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
                             'date': self.opts.get('date', 'unknown'),
                             'error': str(e),
                             'note': 'May indicate unusual characters in response'
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -650,7 +653,8 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
                         'requested_market_id': self.opts['market_id'],
                         'response_markets': markets,
                         'offers_count': len(all_offers)
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -668,7 +672,8 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
                         'event_ids_count': len(self.opts.get('event_ids_list', [])),
                         'pages_fetched': self.decoded_data.get('pages_fetched', 0),
                         'note': 'May be expected if no props available for these events'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -735,7 +740,8 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
                         'failed_offers': failed_offers,
                         'success_rate': f"{((len(all_offers) - failed_offers) / len(all_offers) * 100):.1f}%",
                         'successfully_processed': len(processed_props)
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -762,7 +768,8 @@ class BettingProsPlayerProps(ScraperBase, ScraperFlaskMixin):
                         'failed_offers': failed_offers,
                         'top_players': [f"{name} ({info['props_count']} props)" 
                                        for name, info in top_players]
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")

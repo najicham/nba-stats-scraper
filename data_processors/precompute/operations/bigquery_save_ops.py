@@ -72,7 +72,8 @@ class BigQuerySaveOpsMixin:
                             'table': self.table_name,
                             'raw_data_exists': self.raw_data is not None,
                             'analysis_date': str(self.opts.get('analysis_date'))
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")

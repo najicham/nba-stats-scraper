@@ -193,7 +193,8 @@ class GetNbaComPlayerList(ScraperBase, ScraperFlaskMixin):
                         'season': self.opts.get('season'),
                         'players_found': player_count,
                         'url': self.url
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")

@@ -330,7 +330,8 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'data_source': data_source,
                             'error_count': len(errors),
                             'errors': errors[:5]  # First 5 errors
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -615,7 +616,8 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'table': self.table_name,
                         'strategy': 'batch_append',
                         'data_source': rows[0].get('data_source') if rows else None
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -629,7 +631,8 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                         details={
                             'processor': 'OddsApiPropsProcessor',
                             'unknown_teams': list(self.unknown_teams)
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -656,7 +659,8 @@ class OddsApiPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'table': self.table_name,
                             'rows_skipped': len(rows),
                             'note': 'Should not happen with batch loading - investigate'
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")

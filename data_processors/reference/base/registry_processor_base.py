@@ -145,7 +145,8 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
                         'strategy': 'REPLACE',
                         'confirm_full_delete': True,
                         'impact': 'Complete table rebuild'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")
@@ -831,7 +832,8 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
                         'team_abbr': team_abbr,
                         'error': str(e),
                         'error_type': type(e).__name__
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")

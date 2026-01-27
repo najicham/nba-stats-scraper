@@ -327,7 +327,8 @@ class GetNbaComPlayerBoxscore(ScraperBase, ScraperFlaskMixin):
                             'player_count': player_count,
                             'threshold': min_players,
                             'url': self.url
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")

@@ -117,7 +117,8 @@ class MlbBatterGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase)
                         'total_at_bats': total_abs,
                         'overall_k_rate': round(k_rate, 3),
                         'processor': 'MlbBatterGameSummaryProcessor'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_e:
                 logger.debug(f"Failed to send success notification: {notify_e}")

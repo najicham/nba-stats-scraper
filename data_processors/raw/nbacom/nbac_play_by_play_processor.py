@@ -244,7 +244,8 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'has_playByPlay': 'playByPlay' in data,
                         'has_game': 'game' in data.get('playByPlay', {}),
                         'game_id': data.get('playByPlay', {}).get('game', {}).get('gameId')
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -268,7 +269,8 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'errors': errors[:5],  # First 5 errors
                         'total_errors': len(errors),
                         'total_actions': len(actions)
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -309,7 +311,8 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                         details={
                             'file_path': file_path,
                             'nba_game_id': nba_game_id
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -352,7 +355,8 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'nba_game_id': nba_game_id,
                             'file_path': file_path,
                             'total_actions': len(actions)
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -556,7 +560,8 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                         details={
                             'file_path': file_path,
                             'validation_passed': len(validation_errors) == 0
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -576,7 +581,8 @@ class NbacPlayByPlayProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'file_path': file_path,
                             'events_processed': len(rows),
                             'game_id': rows[0].get('game_id') if rows else None
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")

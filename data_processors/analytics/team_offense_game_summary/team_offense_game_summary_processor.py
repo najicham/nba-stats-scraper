@@ -774,7 +774,8 @@ class TeamOffenseGameSummaryProcessor(
                     'start_date': self.opts['start_date'],
                     'end_date': self.opts['end_date'],
                     'handling': 'graceful_skip'
-                }
+                },
+                processor_name=self.__class__.__name__
             )
             # Mark as handled - transform will check this
             self._no_data_available = True
@@ -1003,7 +1004,8 @@ class TeamOffenseGameSummaryProcessor(
                         'error_rate_pct': round(error_rate, 2),
                         'successful_records': len(records),
                         'sample_errors': processing_errors[:5]
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
     
     def _process_teams_parallel(
@@ -1437,7 +1439,8 @@ class TeamOffenseGameSummaryProcessor(
                         'production_ready_records': analytics_stats.get('production_ready_records', 0),
                         'source_completeness': analytics_stats.get('source_completeness', {})
                     }
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send success notification: {notify_ex}")

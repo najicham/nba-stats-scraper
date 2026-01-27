@@ -307,7 +307,8 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'has_game_count': 'game_count' in data,
                             'game_count_value': data.get('game_count'),
                             'data_source': self.data_source
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -335,7 +336,8 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'difference': abs(expected_count - actual_count),
                             'season': data.get('season'),
                             'data_source': self.data_source
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -351,7 +353,8 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'total_errors': len(errors),
                         'season': data.get('season'),
                         'data_source': self.data_source
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -557,7 +560,8 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                                 'failure_rate': f"{failure_rate:.1%}",
                                 'season': season,
                                 'data_source': self.data_source
-                            }
+                            },
+                            processor_name=self.__class__.__name__
                         )
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
@@ -808,7 +812,8 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'games_failed': self.games_failed,
                             'season': self.transformed_data[0].get('season') if self.transformed_data else None,
                             'data_source': self.data_source
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")

@@ -332,7 +332,8 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
                         'markets': self.opts.get('markets', 'player_points'),
                         'impact': 'GCS path will not include team suffix',
                         'available_keys': list(event_data.keys()) if event_data else []
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -366,7 +367,8 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
                         'bookmakers_count': len(bookmakers),
                         'teams': teams_suffix or 'unknown',
                         'note': 'May be expected if game has not opened for betting yet'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -387,7 +389,8 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
                         'bookmakers_count': len(bookmakers),
                         'teams': teams_suffix or 'unknown',
                         'snap_time': snap_hour
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")

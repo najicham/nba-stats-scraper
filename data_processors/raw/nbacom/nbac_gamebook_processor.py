@@ -253,7 +253,8 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'season_year': season_year,
                             'processing_run_id': self.processing_run_id,
                             'impact': 'Player name resolution may fail for this season'
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -551,7 +552,8 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
                                 'inactive_total': inactive_needing_resolution,
                                 'not_found': resolution_stats['not_found'],
                                 'multiple_matches': resolution_stats['multiple_matches']
-                            }
+                            },
+                            processor_name=self.__class__.__name__
                         )
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
@@ -709,7 +711,8 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
                     'files_processed': self.files_processed,
                     'duration_minutes': round((datetime.now() - self.processing_start_time).total_seconds() / 60, 2),
                     'date_range': f"{getattr(self, 'processing_date_range_start', 'N/A')} to {getattr(self, 'processing_date_range_end', 'N/A')}"
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
@@ -1219,7 +1222,8 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
                 details={
                     'team_name': team_name,
                     'processing_run_id': self.processing_run_id
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")

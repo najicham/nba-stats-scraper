@@ -390,7 +390,8 @@ class GetNbaComPlayByPlay(ScraperBase, ScraperFlaskMixin):
                             'season': self.opts.get('season'),
                             'expected_game_id': expected_game_id,
                             'actual_game_id': game_id_from_data
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")

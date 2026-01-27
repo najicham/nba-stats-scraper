@@ -66,9 +66,13 @@ except ImportError:
     # Fallback if notification system not available
     def notify_error(*args, **kwargs):
         pass
-    def notify_warning(*args, **kwargs):
+    def notify_warning(*args, **kwargs,
+    processor_name=self.__class__.__name__
+    ):
         pass
-    def notify_info(*args, **kwargs):
+    def notify_info(*args, **kwargs,
+    processor_name=self.__class__.__name__
+    ):
         pass
 
 # Pub/Sub imports for publishing completion messages (added after Jan 23 incident)
@@ -218,7 +222,8 @@ class GetEspnTeamRoster(ScraperBase, ScraperFlaskMixin):
                         'team_slug': self.opts['teamSlug'],
                         'selector': ROW_SELECTOR,
                         'html_length': len(self.decoded_data)
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -296,7 +301,8 @@ class GetEspnTeamRoster(ScraperBase, ScraperFlaskMixin):
                         'unparsed_count': len(unparsed_rows),
                         'total_rows': len(players),
                         'unparsed_rows': unparsed_rows[:5]  # Include first 5 for inspection
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -323,7 +329,8 @@ class GetEspnTeamRoster(ScraperBase, ScraperFlaskMixin):
                     'season': self.opts['season'],
                     'player_count': len(players),
                     'unparsed_count': len(unparsed_rows)
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")

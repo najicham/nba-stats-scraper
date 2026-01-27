@@ -58,8 +58,12 @@ try:
 except ImportError:
     # Graceful fallback if notification system not available
     def notify_error(*args, **kwargs): pass
-    def notify_warning(*args, **kwargs): pass
-    def notify_info(*args, **kwargs): pass
+    def notify_warning(*args, **kwargs,
+    processor_name=self.__class__.__name__
+    ): pass
+    def notify_info(*args, **kwargs,
+    processor_name=self.__class__.__name__
+    ): pass
 
 logger = logging.getLogger(__name__)
 
@@ -203,7 +207,8 @@ class BdlGameDetailScraper(ScraperBase, ScraperFlaskMixin):
                         'home_team': self.decoded_data.get('home_team', {}).get('full_name', 'unknown'),
                         'visitor_team': self.decoded_data.get('visitor_team', {}).get('full_name', 'unknown'),
                         'status': self.decoded_data.get('status', 'unknown')
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send success notification: {notify_ex}")

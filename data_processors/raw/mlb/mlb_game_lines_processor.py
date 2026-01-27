@@ -342,7 +342,8 @@ class MlbGameLinesProcessor(ProcessorBase):
                     'unique_games': unique_games,
                     'avg_total': round(avg_total, 1) if avg_total else None,
                     'table': f"{self.dataset_id}.{self.table_name}",
-                }
+                },
+                processor_name=self.__class__.__name__
             )
 
         except Exception as e:

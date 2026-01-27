@@ -258,7 +258,8 @@ class MlbScheduleProcessor(ProcessorBase):
                     'games_with_both_starters': games_with_both_pitchers,
                     'dates': list(game_dates),
                     'processor': 'MlbScheduleProcessor'
-                }
+                },
+                processor_name=self.__class__.__name__
             )
 
         except Exception as e:

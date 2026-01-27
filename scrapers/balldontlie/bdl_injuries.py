@@ -57,8 +57,12 @@ try:
 except ImportError:
     # Graceful fallback if notification system not available
     def notify_error(*args, **kwargs): pass
-    def notify_warning(*args, **kwargs): pass
-    def notify_info(*args, **kwargs): pass
+    def notify_warning(*args, **kwargs,
+    processor_name=self.__class__.__name__
+    ): pass
+    def notify_info(*args, **kwargs,
+    processor_name=self.__class__.__name__
+    ): pass
 
 logger = logging.getLogger(__name__)
 
@@ -250,7 +254,8 @@ class BdlInjuriesScraper(ScraperBase, ScraperFlaskMixin):
                             'ident': 'league',
                             'injury_count': len(injuries),
                             'note': 'Verify if this is accurate or a data quality issue'
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send high count warning: {notify_ex}")
@@ -266,7 +271,8 @@ class BdlInjuriesScraper(ScraperBase, ScraperFlaskMixin):
                         'injury_count': len(injuries),
                         'pages_fetched': pages_fetched,
                         'note': 'Zero injuries is normal if no players are currently injured'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send success notification: {notify_ex}")

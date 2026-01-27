@@ -268,7 +268,8 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'date_recorded': date_recorded.isoformat(),
                         'season_year': season_year,
                         'processor': 'BDL Standings'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
@@ -283,7 +284,8 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'failure_count': len(parse_failures),
                         'sample_failures': parse_failures[:5],
                         'processor': 'BDL Standings'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
@@ -302,7 +304,8 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
                     message="BDL standings data is empty",
                     details={
                         'processor': 'BDL Standings'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
@@ -412,7 +415,8 @@ class BdlStandingsProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'west_leader': f"{west_leader['team_abbr']} ({west_leader['wins']}-{west_leader['losses']})" if west_leader else 'N/A',
                         'table': self.table_name,
                         'processor': 'BDL Standings'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")

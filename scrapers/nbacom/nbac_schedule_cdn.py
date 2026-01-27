@@ -242,7 +242,8 @@ class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
                             'game_dates_count': len(game_dates),
                             'season': league_schedule.get('seasonYear', 'Unknown'),
                             'url': self.url
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -279,7 +280,8 @@ class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
                             'game_dates_count': len(game_dates),
                             'season': self.decoded_data.get('seasonYear', 'Unknown'),
                             'url': self.url
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -440,7 +442,8 @@ class GetNbaComScheduleCdn(ScraperBase, ScraperFlaskMixin):
                         'date_count': len(game_dates),
                         'season': self.opts['actual_season_nba_format'],
                         'threshold_min': min_games
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")

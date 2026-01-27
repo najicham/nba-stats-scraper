@@ -465,7 +465,8 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
                         'total_records': len(records),
                         'unparsed_count': parser_stats['parsing_stats']['unparsed_count'],
                         'confidence_distribution': confidence_distribution
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -488,7 +489,8 @@ class GetNbaComInjuryReport(ScraperBase, ScraperFlaskMixin):
                         'total_lines': parser_stats['parsing_stats']['total_lines'],
                         'total_records': len(records),
                         'unparsed_sample': parser_stats.get('unparsed_lines_sample', [])[:5]
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")

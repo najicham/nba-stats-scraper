@@ -274,7 +274,8 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
                         'sport': self.opts.get('sport', 'unknown'),
                         'participant_id': self.opts.get('participant_id', 'unknown'),
                         'note': 'Team may not exist or roster data not available yet'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -289,7 +290,8 @@ class GetOddsApiTeamPlayers(ScraperBase, ScraperFlaskMixin):
                         'sport': self.opts.get('sport', 'unknown'),
                         'participant_id': self.opts.get('participant_id', 'unknown'),
                         'player_count': len(players)
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")

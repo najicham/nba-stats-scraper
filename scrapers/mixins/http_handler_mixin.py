@@ -542,7 +542,8 @@ class HttpHandlerMixin:
                         'run_id': self.run_id,
                         'harvest_url': harvest_url,
                         'warning': 'No cookies harvested from browser'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -831,7 +832,8 @@ class HttpHandlerMixin:
                         'max_retries_per_proxy': MAX_RETRIES_PER_PROXY,
                         'failures': proxy_errors,
                         'proxy_health': health_summary
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -992,7 +994,8 @@ class HttpHandlerMixin:
                                 'url': getattr(self, 'url', 'unknown'),
                                 'error': str(e2),
                                 'content_preview': content[:200].decode('utf-8', errors='replace')
-                            }
+                            },
+                            processor_name=self.__class__.__name__
                         )
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
@@ -1008,7 +1011,8 @@ class HttpHandlerMixin:
                             'url': getattr(self, 'url', 'unknown'),
                             'retry_count': self.download_retry_count,
                             'content_preview': content[:200].decode('utf-8', errors='ignore')
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")

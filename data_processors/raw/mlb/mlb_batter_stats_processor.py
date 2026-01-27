@@ -410,7 +410,8 @@ class MlbBatterStatsProcessor(ProcessorBase):
                         'k_rate': round(k_rate, 3),
                         'table': f"{self.dataset_id}.{self.table_name}",
                         'processor': 'MlbBatterStatsProcessor'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")

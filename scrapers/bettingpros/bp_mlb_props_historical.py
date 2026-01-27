@@ -485,7 +485,8 @@ class BettingProsMLBHistoricalProps(ScraperBase, ScraperFlaskMixin):
                         'total_props': len(processed_props),
                         'scored': scored_count,
                         'pages': self.decoded_data.get('pages_fetched', 1),
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             else:
                 notify_warning(
@@ -495,7 +496,8 @@ class BettingProsMLBHistoricalProps(ScraperBase, ScraperFlaskMixin):
                         'scraper': self.scraper_name,
                         'market': self.opts['market_name'],
                         'date': self.opts['date'],
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
         except Exception as e:
             logger.warning("Failed to send notification: %s", e)

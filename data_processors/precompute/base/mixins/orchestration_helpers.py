@@ -128,7 +128,8 @@ class OrchestrationHelpersMixin:
                 'run_id': self.run_id,
                 'analysis_date': str(self.opts['analysis_date']),
                 'stale_sources': self.dep_check['stale']
-            }
+            },
+            processor_name=self.__class__.__name__
         )
         self.set_alert_sent('warning')
 

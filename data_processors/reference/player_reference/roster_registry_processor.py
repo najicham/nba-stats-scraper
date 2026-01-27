@@ -368,7 +368,8 @@ class RosterRegistryProcessor(RegistryProcessorBase, NameChangeDetectionMixin, D
                                 'season': season_str,
                                 'unknown_count': len(unknown_players),
                                 'sample': list(unknown_players)[:20]
-                            }
+                            },
+                            processor_name=self.__class__.__name__
                         )
                     except Exception as e:
                         logger.warning(f"Failed to send notification: {e}")

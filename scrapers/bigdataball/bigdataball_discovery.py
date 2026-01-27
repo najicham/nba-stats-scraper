@@ -211,7 +211,8 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
                             'scraper': 'bigdataball_discovery',
                             'date': date_str,
                             'teams_filter': self.opts.get('teams')
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -510,7 +511,8 @@ class BigDataBallDiscoveryScraper(ScraperBase, ScraperFlaskMixin):
                     'total_games': total_games,
                     'teams_filter': self.opts.get('teams'),
                     'games': discovery_results.get('games', [])
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")

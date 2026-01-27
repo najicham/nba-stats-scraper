@@ -163,7 +163,8 @@ class NbacPlayerMovementProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'has_metadata': 'metadata' in data,
                         'has_rows': 'rows' in data,
                         'record_count': metadata.get('recordCount') if 'metadata' in data else None
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -188,7 +189,8 @@ class NbacPlayerMovementProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'file_path': file_path,
                             'has_metadata': 'metadata' in raw_data,
                             'record_count': raw_data.get('metadata', {}).get('recordCount')
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -300,7 +302,8 @@ class NbacPlayerMovementProcessor(SmartIdempotencyMixin, ProcessorBase):
                                 'skipped_count': skipped_count,
                                 'skip_rate': f"{skip_rate:.1%}",
                                 'new_records': len(rows)
-                            }
+                            },
+                            processor_name=self.__class__.__name__
                         )
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
@@ -318,7 +321,8 @@ class NbacPlayerMovementProcessor(SmartIdempotencyMixin, ProcessorBase):
                                 'transactions_failed': self.transactions_failed,
                                 'transactions_processed': self.transactions_processed,
                                 'failure_rate': f"{failure_rate:.1%}"
-                            }
+                            },
+                            processor_name=self.__class__.__name__
                         )
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
@@ -416,7 +420,8 @@ class NbacPlayerMovementProcessor(SmartIdempotencyMixin, ProcessorBase):
                     details={
                         'rows_processed': len(rows),
                         'transactions_failed': self.transactions_failed
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")

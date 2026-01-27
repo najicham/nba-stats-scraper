@@ -119,7 +119,8 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'errors': errors,
                         'has_refereeAssignments': 'refereeAssignments' in data,
                         'has_nba': 'nba' in data.get('refereeAssignments', {})
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
@@ -434,7 +435,8 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'table_id': table_id,
                             'rows_skipped': len(rows),
                             'reason': 'streaming_buffer_conflict'
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logging.warning(f"Failed to send notification: {notify_ex}")
@@ -561,7 +563,8 @@ class NbacRefereeProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'file_path': file_path,
                             'game_assignments': game_processed,
                             'replay_center': replay_processed
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logging.warning(f"Failed to send notification: {notify_ex}")

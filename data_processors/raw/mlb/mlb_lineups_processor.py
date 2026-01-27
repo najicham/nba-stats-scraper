@@ -285,7 +285,8 @@ class MlbLineupsProcessor(ProcessorBase):
                     'batters': len(batter_rows),
                     'lineups_available': lineups_available,
                     'processor': 'MlbLineupsProcessor'
-                }
+                },
+                processor_name=self.__class__.__name__
             )
 
         except Exception as e:

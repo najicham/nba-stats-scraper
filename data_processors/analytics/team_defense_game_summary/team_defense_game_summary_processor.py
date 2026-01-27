@@ -1256,7 +1256,8 @@ class TeamDefenseGameSummaryProcessor(
                             'error_rate_pct': round(error_rate, 2),
                             'successful_records': len(records),
                             'sample_errors': processing_errors[:5]
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -1581,7 +1582,8 @@ class TeamDefenseGameSummaryProcessor(
                         'bronze_quality_records': analytics_stats.get('bronze_quality_records', 0),
                         'production_ready_records': analytics_stats.get('production_ready_records', 0),
                     }
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send success notification: {notify_ex}")

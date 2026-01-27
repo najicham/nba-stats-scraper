@@ -261,7 +261,8 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'file_path': file_path,
                         'error_count': len(validation_errors),
                         'errors': validation_errors[:5]  # First 5 errors
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
@@ -318,7 +319,8 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'game_id': game_id,
                             'game_date': game_date,
                             'espn_game_id': espn_game_id
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as e:
                     logging.warning(f"Failed to send notification: {e}")
@@ -418,7 +420,8 @@ class EspnBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'failed_players': failed_players,
                             'success_players': len(rows),
                             'failure_rate': f"{(failed_players/total_players)*100:.1f}%"
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as e:
                     logging.warning(f"Failed to send notification: {e}")

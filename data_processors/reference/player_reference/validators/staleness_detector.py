@@ -109,7 +109,8 @@ class StalenessDetector:
                                 'action': 'Skipping validation - processing ESPN-only',
                                 'recommendation': 'Check NBA.com scraper status',
                                 'processor': 'roster_registry'
-                            }
+                            },
+                            processor_name=self.__class__.__name__
                         )
                     except Exception as e:
                         logger.warning(f"Failed to send notification: {e}")
@@ -190,7 +191,8 @@ class StalenessDetector:
                                 'canonical_combos_count': len(canonical_combos),
                                 'fallback_mode': True,
                                 'processor': 'roster_registry'
-                            }
+                            },
+                            processor_name=self.__class__.__name__
                         )
                     except Exception as e:
                         logger.warning(f"Failed to send notification: {e}")

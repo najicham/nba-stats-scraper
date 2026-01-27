@@ -433,14 +433,16 @@ class MlbBatterPropsProcessor(ProcessorBase):
                     'unique_batters': unique_batters,
                     'total_expected_ks': round(total_expected_ks, 1),
                     'table': f"{self.dataset_id}.{self.table_name}",
-                }
+                },
+                processor_name=self.__class__.__name__
             )
 
             if self.unknown_teams:
                 notify_warning(
                     title="Unknown MLB Teams Detected",
                     message=f"Found {len(self.unknown_teams)} unknown team names",
-                    details={'unknown_teams': list(self.unknown_teams)}
+                    details={'unknown_teams': list(self.unknown_teams)},
+                    processor_name=self.__class__.__name__
                 )
 
         except Exception as e:

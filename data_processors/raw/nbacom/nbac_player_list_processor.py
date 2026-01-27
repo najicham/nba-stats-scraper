@@ -203,7 +203,8 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
                 notify_warning(
                     title="Player List Data Validation Failed",
                     message=f"Found {len(errors)} validation errors",
-                    details={'errors': errors}
+                    details={'errors': errors},
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -287,7 +288,8 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
                                         'player_1': f"{full_name} ({team_abbr})",
                                         'player_2': seen_lookups[player_lookup],
                                         'season_year': season_year
-                                    }
+                                    },
+                                    processor_name=self.__class__.__name__
                                 )
                             except Exception as notify_ex:
                                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -367,7 +369,8 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'total_players': total_players,
                             'unique_players': len(seen_lookups),
                             'season_year': season_year
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -386,7 +389,8 @@ class NbacPlayerListProcessor(SmartIdempotencyMixin, ProcessorBase):
                                 'players_processed': self.players_processed,
                                 'failure_rate': f"{failure_rate:.1%}",
                                 'season_year': season_year
-                            }
+                            },
+                            processor_name=self.__class__.__name__
                         )
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")

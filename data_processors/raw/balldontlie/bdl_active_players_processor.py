@@ -167,7 +167,8 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'expected_minimum': 400,
                             'processor': 'BDL Active Players',
                             'impact': 'validation_may_be_incomplete'
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as e:
                     logging.warning(f"Failed to send notification: {e}")
@@ -186,7 +187,8 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'error_type': type(e).__name__,
                         'processor': 'BDL Active Players',
                         'impact': 'validation_disabled'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
@@ -360,7 +362,8 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                     details={
                         'processor': 'BDL Active Players',
                         'expected_minimum': 400
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
@@ -449,7 +452,8 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'team_mismatches': team_mismatches,
                             'issue_rate_pct': round(validation_issue_rate, 1),
                             'processor': 'BDL Active Players'
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as e:
                     logging.warning(f"Failed to send notification: {e}")
@@ -467,7 +471,8 @@ class BdlActivePlayersProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'validated_clean': len(rows) - total_issues,
                         'table': self.table_name,
                         'processor': 'BDL Active Players'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")

@@ -1326,7 +1326,8 @@ class TeamDefenseZoneAnalysisProcessor(
                     'analysis_date': str(self.opts['analysis_date']),
                     'teams': len(placeholders),
                     'days_since_season_start': (self.opts['analysis_date'] - self.season_start_date).days
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")

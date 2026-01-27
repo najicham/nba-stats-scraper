@@ -176,7 +176,8 @@ def get_json(
                                 'wait_time_seconds': wait_time,
                                 'circuit_breaker_failures': rate_limiter.circuit_breakers[domain].consecutive_failures if domain in rate_limiter.circuit_breakers else 0,
                                 'action': 'Check API quota usage or reduce scraper frequency'
-                            }
+                            },
+                        processor_name="Bdl Utils"
                         )
                         # Reset counter after notifying
                         _rate_limit_counter = 0

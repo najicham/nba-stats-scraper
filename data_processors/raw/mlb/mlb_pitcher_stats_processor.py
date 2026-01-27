@@ -385,7 +385,8 @@ class MlbPitcherStatsProcessor(ProcessorBase):
                         'avg_strikeouts': round(avg_ks, 2),
                         'table': f"{self.dataset_id}.{self.table_name}",
                         'processor': 'MlbPitcherStatsProcessor'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")

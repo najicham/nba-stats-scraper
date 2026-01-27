@@ -221,7 +221,8 @@ class NbacPlayerBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
                 'game_date': game_date,
                 'season_type': season_type,
                 'context': context
-            }
+            },
+            processor_name=self.__class__.__name__
         )
         return False
 

@@ -102,7 +102,8 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'team_name': team_name,
                         'fallback_abbrev': fallback_abbrev,
                         'processor': 'BDL Box Scores'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")
@@ -369,7 +370,8 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'upcoming_games': upcoming_games,
                             'reason': 'Games not yet played - player data not available',
                             'processor': 'BDL Box Scores'
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send notification: {e}")
@@ -391,7 +393,8 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'total_games': len(box_scores),
                         'skip_reasons': [g['reason'] for g in skipped_games[:5]],
                         'sample_games': skipped_games[:3]
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")
@@ -542,7 +545,8 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
                                 'recent_rows': check_result.recent_rows,
                                 'total_rows': check_result.total_rows,
                                 'processor': 'BDL Box Scores'
-                            }
+                            },
+                            processor_name=self.__class__.__name__
                         )
                     except Exception as e:
                         logger.warning(f"Failed to send notification: {e}")
@@ -703,7 +707,8 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
                                     'action_taken': 'partial_processing',
                                     'hint': 'Conflicting games will be retried in next window',
                                     'processor': 'BDL Box Scores'
-                                }
+                                },
+                                processor_name=self.__class__.__name__
                             )
                         except Exception as e:
                             logger.warning(f"Failed to send notification: {e}")
@@ -754,7 +759,8 @@ class BdlBoxscoresProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'sample_game_ids': sample_game_ids,
                         'table': self.table_name,
                         'processor': 'BDL Box Scores'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")

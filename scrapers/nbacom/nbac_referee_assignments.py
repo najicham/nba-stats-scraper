@@ -288,7 +288,8 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
                             'date': self.opts['formatted_date'],
                             'season': self.opts['season'],
                             'game_count': 0
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -416,7 +417,8 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
                             'date': expected_date,
                             'mismatches': date_mismatches,
                             'sample_size': sample_size
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -434,7 +436,8 @@ class GetNbaComRefereeAssignments(ScraperBase, ScraperFlaskMixin):
                         'season': self.opts['season'],
                         'game_count': game_count,
                         'url': self.url
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")

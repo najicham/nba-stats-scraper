@@ -234,7 +234,8 @@ class EspnScoreboardProcessor(SmartIdempotencyMixin, ProcessorBase):
                     details={
                         'file_path': file_path,
                         'processor': 'ESPN Scoreboard'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
@@ -385,7 +386,8 @@ class EspnScoreboardProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'skip_rate': f"{(skipped_games/games_in_file)*100:.1f}%",
                         'game_date': game_date.isoformat(),
                         'file_path': file_path
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logging.warning(f"Failed to send notification: {e}")
@@ -530,7 +532,8 @@ class EspnScoreboardProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'rows_attempted': len(rows),
                             'game_date': rows[0].get('game_date') if rows else 'unknown',
                             'resolution': 'Will retry on next run (self-healing)'
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logging.warning(f"Failed to send notification: {notify_ex}")
@@ -604,7 +607,8 @@ class EspnScoreboardProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'file_path': file_path,
                             'error_count': len(errors),
                             'errors': errors[:5]  # First 5 errors
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as e:
                     logging.warning(f"Failed to send notification: {e}")

@@ -363,7 +363,8 @@ class BdlLiveBoxscoresProcessor(ProcessorBase):
                         'player_id': player.get('id', 'unknown') if player else 'unknown',
                         'game_id': kwargs.get('game_id', 'unknown'),
                         'error_type': type(e).__name__
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception:
                 pass  # Don't fail on notification errors

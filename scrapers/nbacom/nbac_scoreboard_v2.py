@@ -572,7 +572,8 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
                                     'gamedate': self.opts['gamedate'],
                                     'day_of_week': ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][day_of_week],
                                     'url': self.url
-                                }
+                                },
+                                processor_name=self.__class__.__name__
                             )
                         except Exception as notify_ex:
                             logger.warning(f"Failed to send notification: {notify_ex}")

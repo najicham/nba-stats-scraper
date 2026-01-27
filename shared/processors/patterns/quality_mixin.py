@@ -428,7 +428,8 @@ class QualityMixin:
                 details={
                     'game_id': event_data.get('game_id'),
                     'event_id': event_data['event_id'],
-                }
+                },
+                processor_name=event_data.get('processor_name', 'SourceCoverage')
             )
 
     # ==========================================================================

@@ -316,7 +316,8 @@ class ValidationMixin:
                     'validation_status': validation_result['validation_status'],
                     'detection_layer': 'Layer 1: Scraper Output Validation',
                     'detection_time': validation_result['timestamp']
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         except Exception as e:
             logger.warning(f"Failed to send scraper alert: {e}")
@@ -399,7 +400,8 @@ class ValidationMixin:
                             'detection_layer': 'Phase 1→2 Boundary Validation',
                             'severity': 'warning',
                             'action': 'Data exported to Phase 2, but may cause processing issues'
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_error:
                     logger.warning(f"Failed to send Phase 1 boundary validation notification: {notify_error}")
@@ -447,7 +449,8 @@ class ValidationMixin:
                         'run_id': self.run_id,
                         'url': getattr(self, 'url', 'unknown'),
                         'decoded_data': str(self.decoded_data)[:200]
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")

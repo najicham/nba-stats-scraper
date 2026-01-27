@@ -147,7 +147,8 @@ class NameChangeDetectionMixin:
                         'similarity': round(similar_players[0]['similarity_score'], 2) if similar_players else None,
                         'evidence': evidence_notes,
                         'action': 'Review investigation report and create alias if needed'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -317,7 +318,8 @@ class NameChangeDetectionMixin:
                                 'high_confidence_count': high_confidence,
                                 'report_location': f"gs://{self._get_investigation_bucket_name()}/{filename}",
                                 'action': 'Review high-confidence cases in investigation report'
-                            }
+                            },
+                            processor_name=self.__class__.__name__
                         )
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")

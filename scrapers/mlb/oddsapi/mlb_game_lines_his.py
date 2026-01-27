@@ -207,7 +207,8 @@ class MlbGameLinesHistoricalScraper(ScraperBase, ScraperFlaskMixin):
                     'scraper': 'mlb_game_lines_his',
                     'game_date': self.opts.get('game_date'),
                     'snapshot_timestamp': self.opts.get('snapshot_timestamp'),
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         else:
             notify_info(
@@ -219,7 +220,8 @@ class MlbGameLinesHistoricalScraper(ScraperBase, ScraperFlaskMixin):
                     'snapshot_timestamp': wrapper.get('timestamp'),
                     'games': len(games),
                     'outcomes': total_outcomes,
-                }
+                },
+                processor_name=self.__class__.__name__
             )
 
         logger.info("Fetched historical lines for %d games @ %s", len(games), self.data["snapshot_timestamp"])

@@ -61,8 +61,12 @@ try:
 except ImportError:
     # Graceful fallback if notification system not available
     def notify_error(*args, **kwargs): pass
-    def notify_warning(*args, **kwargs): pass
-    def notify_info(*args, **kwargs): pass
+    def notify_warning(*args, **kwargs,
+    processor_name=self.__class__.__name__
+    ): pass
+    def notify_info(*args, **kwargs,
+    processor_name=self.__class__.__name__
+    ): pass
 
 # Rate limit handler import
 try:
@@ -358,7 +362,8 @@ class BdlGamesScraper(ScraperBase, ScraperFlaskMixin):
                         'end_date': self.opts.get('endDate'),
                         'game_count': len(games),
                         'pages_fetched': pages_fetched
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send success notification: {notify_ex}")

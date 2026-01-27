@@ -333,7 +333,8 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
                         'commence_time_from': self.opts.get('commenceTimeFrom', 'not specified'),
                         'commence_time_to': self.opts.get('commenceTimeTo', 'not specified'),
                         'note': 'May be expected if no games scheduled in specified time range'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -356,7 +357,8 @@ class GetOddsApiEvents(ScraperBase, ScraperFlaskMixin):
                         'latest_commence_time': latest_time,
                         'commence_time_from': self.opts.get('commenceTimeFrom', 'not specified'),
                         'commence_time_to': self.opts.get('commenceTimeTo', 'not specified')
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")

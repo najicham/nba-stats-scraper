@@ -89,7 +89,8 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'has_metadata': 'metadata' in data,
                         'has_records': 'records' in data,
                         'record_count': len(data.get('records', []))
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -203,7 +204,8 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'file_path': file_path,
                             'has_records': 'records' in raw_data,
                             'record_count': len(raw_data.get('records', []))
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -234,7 +236,8 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'report_date': report_date,
                             'file_path': file_path,
                             'fallback_date': report_date_obj.isoformat()
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -256,7 +259,8 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'file_path': file_path,
                             'report_date': report_date,
                             'record_count': len(raw_data.get('records', []))
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -345,7 +349,8 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                                 'records_failed': self.records_failed,
                                 'records_processed': self.records_processed,
                                 'failure_rate': f"{failure_rate:.1%}"
-                            }
+                            },
+                            processor_name=self.__class__.__name__
                         )
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
@@ -461,7 +466,8 @@ class NbacInjuryReportProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'records_inserted': len(rows),
                             'records_failed': self.records_failed,
                             'table': 'nba_raw.nbac_injury_report'
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")

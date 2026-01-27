@@ -112,7 +112,8 @@ class NbacScoreboardV2Processor(SmartIdempotencyMixin, ProcessorBase):
                     details={
                         'gamedate': data.get('gamedate'),
                         'has_games_field': 'games' in data
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
@@ -164,7 +165,8 @@ class NbacScoreboardV2Processor(SmartIdempotencyMixin, ProcessorBase):
                         'total_errors': len(errors),
                         'gamedate': data.get('gamedate'),
                         'games_count': len(data.get('games', []))
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")
@@ -206,7 +208,8 @@ class NbacScoreboardV2Processor(SmartIdempotencyMixin, ProcessorBase):
                             details={
                                 'gamedate': gamedate,
                                 'file_path': file_path
-                            }
+                            },
+                            processor_name=self.__class__.__name__
                         )
                     except Exception as notify_ex:
                         logging.warning(f"Failed to send notification: {notify_ex}")
@@ -238,7 +241,8 @@ class NbacScoreboardV2Processor(SmartIdempotencyMixin, ProcessorBase):
                                         'has_home_team': bool(home_team),
                                         'has_away_team': bool(away_team),
                                         'gamedate': gamedate
-                                    }
+                                    },
+                                    processor_name=self.__class__.__name__
                                 )
                             except Exception as notify_ex:
                                 logging.warning(f"Failed to send notification: {notify_ex}")
@@ -341,7 +345,8 @@ class NbacScoreboardV2Processor(SmartIdempotencyMixin, ProcessorBase):
                                 'games_processed': self.games_processed,
                                 'failure_rate': f"{failure_rate:.1%}",
                                 'gamedate': gamedate
-                            }
+                            },
+                            processor_name=self.__class__.__name__
                         )
                     except Exception as notify_ex:
                         logging.warning(f"Failed to send notification: {notify_ex}")
@@ -506,7 +511,8 @@ class NbacScoreboardV2Processor(SmartIdempotencyMixin, ProcessorBase):
                         'games_failed': self.games_failed,
                         'game_date': rows[0].get('game_date') if rows else None,
                         'rows_affected': merge_job.num_dml_affected_rows
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logging.warning(f"Failed to send notification: {notify_ex}")

@@ -495,7 +495,8 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'table': self.table_name,
                             'strategy': 'CHECK_BEFORE_INSERT (Batch Loading)',
                             'dates_processed': sorted(game_dates)
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -508,7 +509,8 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                             details={
                                 'processor': 'BettingPropsProcessor',
                                 'unknown_bookmakers': list(self.unknown_bookmakers)
-                            }
+                            },
+                            processor_name=self.__class__.__name__
                         )
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")
@@ -584,7 +586,8 @@ class BettingPropsProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'file_path': file_path,
                             'error_count': len(validation_errors),
                             'errors': validation_errors
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")

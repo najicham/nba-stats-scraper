@@ -165,7 +165,8 @@ class BasketballRefRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'season_year': self.opts.get('season_year'),
                         'player_count': len(players),
                         'issues': warnings
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")
@@ -277,7 +278,8 @@ class BasketballRefRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'season_year': season_year,
                         'skipped_count': skipped_count,
                         'total_players': len(rows)
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")
@@ -401,7 +403,8 @@ class BasketballRefRosterProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'new_players': self.stats['new_players'],
                         'rows_affected': rows_affected,
                         'method': 'MERGE (atomic upsert)'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")

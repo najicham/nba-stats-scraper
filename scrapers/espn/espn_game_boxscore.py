@@ -80,9 +80,13 @@ except ImportError:
     # Fallback if notification system not available
     def notify_error(*args, **kwargs):
         pass
-    def notify_warning(*args, **kwargs):
+    def notify_warning(*args, **kwargs,
+    processor_name=self.__class__.__name__
+    ):
         pass
-    def notify_info(*args, **kwargs):
+    def notify_info(*args, **kwargs,
+    processor_name=self.__class__.__name__
+    ):
         pass
 
 logger = logging.getLogger("scraper_base")
@@ -217,7 +221,8 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
                             'game_id': self.opts['game_id'],
                             'gamedate': self.opts.get('gamedate'),
                             'skip_json': self.skip_json
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -252,7 +257,8 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
                     'player_count': player_structure['playerCount'],
                     'teams': player_structure['teams'],
                     'used_json': bool(embedded_data)
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
@@ -318,7 +324,8 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
                         'gamedate': self.opts.get('gamedate'),
                         'error_type': type(e).__name__,
                         'error': str(e)
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -443,7 +450,8 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
                             'team': abbr,
                             'tables_found': len(all_tables),
                             'tables_expected': 2
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")

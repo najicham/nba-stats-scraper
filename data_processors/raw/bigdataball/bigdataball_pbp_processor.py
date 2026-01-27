@@ -497,7 +497,8 @@ class BigDataBallPbpProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'game_date': game_date,
                             'existing_rows': existing_rows,
                             'attempted_rows': len(rows)
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logging.warning(f"Failed to send notification: {notify_ex}")
@@ -550,7 +551,8 @@ class BigDataBallPbpProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'rows_processed': len(rows),
                             'away_team': rows[0]['away_team_abbr'],
                             'home_team': rows[0]['home_team_abbr']
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logging.warning(f"Failed to send notification: {notify_ex}")

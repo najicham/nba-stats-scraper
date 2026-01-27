@@ -283,7 +283,8 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
                         'snapshot_timestamp': self.opts.get('snapshot_timestamp', 'unknown'),
                         'status_code': 404,
                         'note': 'Snapshot may be outside available historical range'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -340,7 +341,8 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
                         'snapshot_timestamp': self.opts.get('snapshot_timestamp', 'unknown'),
                         'status_code': 204,
                         'note': 'May indicate no games scheduled or snapshot outside available range'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -421,7 +423,8 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
                         'game_date': self.opts.get('game_date', 'unknown'),
                         'snapshot_timestamp': wrapper.get('timestamp', self.opts.get('snapshot_timestamp', 'unknown')),
                         'note': 'May indicate no games scheduled for this date or events already removed'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -447,7 +450,8 @@ class GetOddsApiHistoricalEvents(ScraperBase, ScraperFlaskMixin):
                         'next_snapshot': wrapper.get('next_timestamp'),
                         'commence_time_from': self.opts.get('commenceTimeFrom', 'not specified'),
                         'commence_time_to': self.opts.get('commenceTimeTo', 'not specified')
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")

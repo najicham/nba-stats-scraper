@@ -186,7 +186,8 @@ class MlbEventsOddsScraper(ScraperBase, ScraperFlaskMixin):
                 details={
                     'scraper': 'mlb_events',
                     'game_date': self.opts.get('game_date'),
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         else:
             notify_info(
@@ -197,7 +198,8 @@ class MlbEventsOddsScraper(ScraperBase, ScraperFlaskMixin):
                     'game_date': self.opts.get('game_date'),
                     'event_count': len(events),
                     'matchups': [f"{e.get('away_team')} @ {e.get('home_team')}" for e in events[:5]]
-                }
+                },
+                processor_name=self.__class__.__name__
             )
 
         logger.info("Fetched %d MLB events for %s", len(events), self.opts.get("game_date"))

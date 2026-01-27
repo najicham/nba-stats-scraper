@@ -335,7 +335,8 @@ class BettingProsMLBPlayerProps(BettingProsPlayerProps):
                                     'event_count': len(event_ids),
                                     'attempt': attempt,
                                     'event_ids_preview': event_ids[:5]
-                                }
+                                },
+                                processor_name=self.__class__.__name__
                             )
                         except Exception as notify_ex:
                             logger.warning(f"Failed to send notification: {notify_ex}")
@@ -453,7 +454,8 @@ class BettingProsMLBPlayerProps(BettingProsPlayerProps):
                         'market': self.opts['market_name'],
                         'market_id': self.opts['market_id'],
                         'props_count': len(processed_props),
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")

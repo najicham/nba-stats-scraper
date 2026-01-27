@@ -308,7 +308,8 @@ class BdlInjuriesProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'file_path': file_path,
                         'processor': 'BDL Injuries',
                         'impact': 'using_current_date_as_fallback'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")
@@ -414,7 +415,8 @@ class BdlInjuriesProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'sample_records': unknown_teams[:5],
                         'file_path': file_path,
                         'processor': 'BDL Injuries'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")
@@ -432,7 +434,8 @@ class BdlInjuriesProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'sample_records': low_confidence_records[:3],
                         'file_path': file_path,
                         'processor': 'BDL Injuries'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")
@@ -454,7 +457,8 @@ class BdlInjuriesProcessor(SmartIdempotencyMixin, ProcessorBase):
                     message="BDL injuries data is empty",
                     details={
                         'processor': 'BDL Injuries'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")
@@ -533,7 +537,8 @@ class BdlInjuriesProcessor(SmartIdempotencyMixin, ProcessorBase):
                             'status_distribution': status_counts,
                             'table': self.table_name,
                             'processor': 'BDL Injuries'
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send notification: {e}")

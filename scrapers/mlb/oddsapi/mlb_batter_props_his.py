@@ -248,7 +248,8 @@ class MlbBatterPropsHistoricalScraper(ScraperBase, ScraperFlaskMixin):
                     'event_id': self.opts.get('event_id'),
                     'game_date': self.opts.get('game_date'),
                     'snapshot_timestamp': snapshot_timestamp,
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         else:
             notify_info(
@@ -262,7 +263,8 @@ class MlbBatterPropsHistoricalScraper(ScraperBase, ScraperFlaskMixin):
                     'total_outcomes': row_count,
                     'batter_k_lines': len(strikeout_lines),
                     'implied_total_ks': round(total_implied_ks, 1),
-                }
+                },
+                processor_name=self.__class__.__name__
             )
 
         logger.info("Fetched %d historical batter prop outcomes (%d strikeout lines, ~%.1f implied K's)",

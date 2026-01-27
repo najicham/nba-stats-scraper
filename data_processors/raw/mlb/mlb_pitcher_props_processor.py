@@ -610,7 +610,8 @@ class MlbPitcherPropsProcessor(ProcessorBase):
                     'strikeout_lines': strikeout_count,
                     'unique_pitchers': unique_pitchers,
                     'table': f"{self.dataset_id}.{self.table_name}",
-                }
+                },
+                processor_name=self.__class__.__name__
             )
 
             # Warn about unknown teams
@@ -618,7 +619,8 @@ class MlbPitcherPropsProcessor(ProcessorBase):
                 notify_warning(
                     title="Unknown MLB Teams Detected",
                     message=f"Found {len(self.unknown_teams)} unknown team names",
-                    details={'unknown_teams': list(self.unknown_teams)}
+                    details={'unknown_teams': list(self.unknown_teams)},
+                    processor_name=self.__class__.__name__
                 )
 
         except Exception as e:

@@ -757,27 +757,129 @@ def notify_error(title: str, message: str, details: Dict = None, processor_name:
     )
 
 
-def notify_warning(title: str, message: str, details: Dict = None):
-    """Quick function to send warning notification."""
+def notify_warning(
+    title: str,
+    message: str,
+    details: Dict = None,
+    processor_name: str = "NBA Platform"
+):
+    """
+    Send warning notification with rate limiting.
+
+    Rate limiting prevents notification floods.
+    Default: Max 5 warnings per hour per unique signature.
+
+    Args:
+        title: Alert title
+        message: Alert message
+        details: Additional context
+        processor_name: Name of processor sending alert (for rate limit signature)
+
+    Returns:
+        Dict with channel success status, or None if rate limited
+    """
+    error_type = 'warning'
+
+    # Apply rate limiting
+    if ALERT_MANAGER_AVAILABLE:
+        alert_mgr = get_alert_manager()
+        should_send, metadata = alert_mgr.should_send(processor_name, error_type, message)
+
+        if not should_send:
+            logger.info(
+                f"Rate limited warning notification: {processor_name}/{error_type} "
+                f"(check logs for rate limit stats)"
+            )
+            return None
+
+        # Modify title if this is an aggregated summary
+        if metadata and metadata.get('is_summary'):
+            count = metadata.get('occurrence_count', 0)
+            suppressed = metadata.get('suppressed_count', 0)
+            title = f"[AGGREGATED x{count}] {title}"
+
+            if details is None:
+                details = {}
+            details['_aggregated'] = True
+            details['_occurrence_count'] = count
+            details['_suppressed_count'] = suppressed
+            details['_first_seen'] = metadata.get('first_seen')
+            details['_rate_limit_note'] = (
+                f"This warning occurred {count} times. "
+                f"Further occurrences will be suppressed for 60 minutes."
+            )
+
     router = _get_router()
     return router.send_notification(
         level=NotificationLevel.WARNING,
         notification_type=NotificationType.CUSTOM,
         title=title,
         message=message,
-        details=details
+        details=details,
+        processor_name=processor_name
     )
 
 
-def notify_info(title: str, message: str, details: Dict = None):
-    """Quick function to send info notification."""
+def notify_info(
+    title: str,
+    message: str,
+    details: Dict = None,
+    processor_name: str = "NBA Platform"
+):
+    """
+    Send info notification with rate limiting.
+
+    Rate limiting prevents notification floods.
+    Default: Max 5 info notifications per hour per unique signature.
+
+    Args:
+        title: Alert title
+        message: Alert message
+        details: Additional context
+        processor_name: Name of processor sending alert (for rate limit signature)
+
+    Returns:
+        Dict with channel success status, or None if rate limited
+    """
+    error_type = 'info'
+
+    # Apply rate limiting
+    if ALERT_MANAGER_AVAILABLE:
+        alert_mgr = get_alert_manager()
+        should_send, metadata = alert_mgr.should_send(processor_name, error_type, message)
+
+        if not should_send:
+            logger.info(
+                f"Rate limited info notification: {processor_name}/{error_type} "
+                f"(check logs for rate limit stats)"
+            )
+            return None
+
+        # Modify title if this is an aggregated summary
+        if metadata and metadata.get('is_summary'):
+            count = metadata.get('occurrence_count', 0)
+            suppressed = metadata.get('suppressed_count', 0)
+            title = f"[AGGREGATED x{count}] {title}"
+
+            if details is None:
+                details = {}
+            details['_aggregated'] = True
+            details['_occurrence_count'] = count
+            details['_suppressed_count'] = suppressed
+            details['_first_seen'] = metadata.get('first_seen')
+            details['_rate_limit_note'] = (
+                f"This info notification occurred {count} times. "
+                f"Further occurrences will be suppressed for 60 minutes."
+            )
+
     router = _get_router()
     return router.send_notification(
         level=NotificationLevel.INFO,
         notification_type=NotificationType.CUSTOM,
         title=title,
         message=message,
-        details=details
+        details=details,
+        processor_name=processor_name
     )
 
 

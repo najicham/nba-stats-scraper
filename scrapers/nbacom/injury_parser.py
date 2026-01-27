@@ -38,9 +38,13 @@ except ImportError:
         # If still fails, create stub functions
         def notify_error(*args, **kwargs):
             pass
-        def notify_warning(*args, **kwargs):
+        def notify_warning(*args, **kwargs,
+        processor_name=self.__class__.__name__
+        ):
             pass
-        def notify_info(*args, **kwargs):
+        def notify_info(*args, **kwargs,
+        processor_name=self.__class__.__name__
+        ):
             pass
 
 
@@ -142,7 +146,8 @@ class InjuryReportParser:
                             'parser': 'injury_parser',
                             'text_length': len(text_content),
                             'total_lines': self.parsing_stats['total_lines']
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     self.logger.warning(f"Failed to send notification: {notify_ex}")
@@ -157,7 +162,8 @@ class InjuryReportParser:
                             'low_confidence_count': low_confidence_count,
                             'avg_confidence': round(avg_confidence, 2),
                             'merged_multiline': self.parsing_stats['merged_multiline']
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     self.logger.warning(f"Failed to send notification: {notify_ex}")
@@ -174,7 +180,8 @@ class InjuryReportParser:
                             'low_confidence_count': low_confidence_count,
                             'merged_multiline': self.parsing_stats['merged_multiline'],
                             'total_lines': self.parsing_stats['total_lines']
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     self.logger.warning(f"Failed to send notification: {notify_ex}")

@@ -407,7 +407,8 @@ class BdlPlayerBoxScoresProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'sample_game_ids': list(game_ids)[:3],
                         'table': self.table_name,
                         'processor': 'BdlPlayerBoxScoresProcessor'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as e:
                 logger.warning(f"Failed to send notification: {e}")

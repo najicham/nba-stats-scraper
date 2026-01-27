@@ -182,7 +182,8 @@ class MlbGameLinesScraper(ScraperBase, ScraperFlaskMixin):
             notify_warning(
                 title="No MLB Game Lines Available",
                 message=f"No game lines found for {self.opts.get('game_date')}",
-                details={'scraper': 'mlb_game_lines', 'game_date': self.opts.get('game_date')}
+                details={'scraper': 'mlb_game_lines', 'game_date': self.opts.get('game_date')},
+                processor_name=self.__class__.__name__
             )
         else:
             # Extract sample totals for logging
@@ -206,7 +207,8 @@ class MlbGameLinesScraper(ScraperBase, ScraperFlaskMixin):
                     'games': len(games),
                     'outcomes': total_outcomes,
                     'sample_totals': sample_totals[:3]
-                }
+                },
+                processor_name=self.__class__.__name__
             )
 
         logger.info("Fetched game lines for %d MLB games", len(games))

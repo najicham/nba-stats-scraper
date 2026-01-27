@@ -413,7 +413,8 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
                         'season': self.opts['season'],
                         'year': self.opts['year'],
                         'url': self.url
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -488,7 +489,8 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
                         'season': self.opts['season'],
                         'player_count': len(players),
                         'sample_player': sample.get('full_name')
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -504,7 +506,8 @@ class BasketballRefSeasonRoster(ScraperBase, ScraperFlaskMixin):
                         'season': self.opts['season'],
                         'rows_found': len(rows),
                         'url': self.url
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")

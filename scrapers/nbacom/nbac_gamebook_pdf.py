@@ -447,7 +447,8 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                             'matchup': self.opts['matchup'],
                             'gcs_path': gcs_pdf_path,
                             'bucket': self.opts['bucket_name']
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -745,7 +746,8 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                         'inactive_count': len(inactive_players),
                         'parsing_issues': total_issues,
                         'arena': game_info.get('arena', 'unknown')
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -767,7 +769,8 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                         'active_count': len(active_players),
                         'dnp_count': len(dnp_players),
                         'inactive_count': len(inactive_players)
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")

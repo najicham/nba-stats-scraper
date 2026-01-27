@@ -300,7 +300,8 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
                         'markets': self.opts.get('markets', 'spreads,totals'),
                         'status_code': 404,
                         'note': 'Events disappear when games start. Use earlier timestamp or check event availability first.'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -359,7 +360,8 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
                         'markets': self.opts.get('markets', 'spreads,totals'),
                         'status_code': 204,
                         'note': 'May indicate lines not yet available or already removed'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -453,7 +455,8 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
                         'markets': self.opts.get('markets', 'spreads,totals'),
                         'impact': 'GCS path will not include team suffix',
                         'available_keys': list(event_odds.keys()) if event_odds else []
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -496,7 +499,8 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
                         'teams': teams_suffix or 'unknown',
                         'bookmakers_count': len(event_odds.get("bookmakers", [])),
                         'note': 'Lines may not have been available at this timestamp'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -526,7 +530,8 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
                             'totals_count': totals_count,
                             'total_rows': row_count,
                             'teams': teams_suffix or 'unknown'
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -552,7 +557,8 @@ class GetOddsApiHistoricalGameLines(ScraperBase, ScraperFlaskMixin):
                         'snap_time': self.opts.get('snap', 'unknown'),
                         'previous_snapshot': wrapper.get('previous_timestamp'),
                         'next_snapshot': wrapper.get('next_timestamp')
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")

@@ -111,7 +111,8 @@ class MlbPitcherGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase
                         'pitchers_processed': len(rows),
                         'total_strikeouts': total_ks,
                         'processor': 'MlbPitcherGameSummaryProcessor'
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_e:
                 logger.debug(f"Failed to send success notification: {notify_e}")
