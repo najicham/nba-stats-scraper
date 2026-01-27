@@ -1,8 +1,20 @@
 # Data Lineage Integrity Validation
 
-**Status**: Planning
+**Status**: Design Complete, Ready for Implementation
 **Priority**: P1 - Data Quality
 **Scope**: Full 2025-26 NBA Season
+**Last Updated**: 2026-01-26
+
+---
+
+## Quick Links
+
+| Document | Purpose |
+|----------|---------|
+| [DESIGN-DECISIONS.md](./DESIGN-DECISIONS.md) | Synthesized design from external reviews |
+| [reviews/opus-review.md](./reviews/opus-review.md) | External review from Opus web chat |
+| [reviews/sonnet-review.md](./reviews/sonnet-review.md) | External review from Sonnet web chat |
+| [EXTERNAL-REVIEW-REQUEST.md](./EXTERNAL-REVIEW-REQUEST.md) | Original request sent to reviewers |
 
 ---
 
