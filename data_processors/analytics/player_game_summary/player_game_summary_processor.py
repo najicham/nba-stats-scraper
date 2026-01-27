@@ -174,6 +174,9 @@ class PlayerGameSummaryProcessor(
         self._registry_handler: Optional[PlayerRegistryHandler] = None
         self._processing_gate: Optional[ProcessingGate] = None
 
+        # Team stats availability flag (2026-01-27: Bug #2 fix)
+        self._team_stats_available: bool = False
+
     @property
     def shot_zone_analyzer(self) -> ShotZoneAnalyzer:
         """Lazy-load shot zone analyzer."""
@@ -313,6 +316,41 @@ class PlayerGameSummaryProcessor(
         """
         return ChangeDetectorWrapper.create_detector(project_id=self.project_id)
 
+    def _check_team_stats_available(self, start_date: str, end_date: str) -> tuple[bool, int]:
+        """
+        Check if team_offense_game_summary has data for the target dates.
+
+        This prevents NULL usage_rate by ensuring team stats exist before
+        player_game_summary calculates usage_rate (Bug #2 fix, 2026-01-27).
+
+        Args:
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
+
+        Returns:
+            (is_available, record_count)
+        """
+        query = f"""
+        SELECT COUNT(DISTINCT CONCAT(game_id, '_', team_abbr)) as team_game_count
+        FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+        WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+        """
+        result = self.bq_client.query(query).result()
+        count = next(result).team_game_count
+
+        # Expect ~14 team-games per day (7 games × 2 teams)
+        # Allow some flexibility for partial days
+        expected_min = 10
+        is_available = count >= expected_min
+
+        if not is_available:
+            logger.warning(
+                f"Team stats not ready: {count} records found (expected >= {expected_min}). "
+                f"Usage rate will be NULL for this run."
+            )
+
+        return is_available, count
+
     def get_upstream_data_check_query(self, start_date: str, end_date: str) -> Optional[str]:
         """
         Check if upstream data is available for circuit breaker auto-reset.
@@ -413,6 +451,21 @@ class PlayerGameSummaryProcessor(
         # DEPENDENCY CHECKING: Already done in base class run() method!
         # Base class calls check_dependencies() and track_source_usage()
         # before calling this method, so all source_* attributes are populated.
+
+        # TEAM STATS AVAILABILITY CHECK (2026-01-27: Bug #2 fix)
+        # Check if team stats exist before processing to prevent NULL usage_rate
+        team_stats_available, team_stats_count = self._check_team_stats_available(start_date, end_date)
+        self._team_stats_available = team_stats_available
+
+        if not team_stats_available:
+            # Log and track for monitoring
+            self.track_source_coverage_event(
+                event_type=SourceCoverageEventType.DEPENDENCY_STALE,
+                severity=SourceCoverageSeverity.WARNING,
+                source='team_offense_game_summary',
+                message=f"Team stats not available, usage_rate will be NULL",
+                details={'team_stats_count': team_stats_count}
+            )
 
         # SMART REPROCESSING: Check if we can skip processing
         skip, reason = self.should_skip_processing(start_date)
@@ -552,10 +605,23 @@ class PlayerGameSummaryProcessor(
                   AND nc.player_lookup = bd.player_lookup
             )
         ),
-        
+
+        -- Deduplicate combined data (prevents duplicates from source overlap)
+        -- Keeps most recent record by source_processed_at timestamp
+        deduplicated_combined AS (
+            SELECT * EXCEPT(rn) FROM (
+                SELECT *,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY game_id, player_lookup
+                        ORDER BY source_processed_at DESC
+                    ) as rn
+                FROM combined_data
+            ) WHERE rn = 1
+        ),
+
         -- Deduplicate props: DraftKings first, then FanDuel, then others
         deduplicated_props AS (
-            SELECT 
+            SELECT
                 game_id,
                 player_lookup,
                 points_line,
@@ -563,8 +629,8 @@ class PlayerGameSummaryProcessor(
                 under_price_american,
                 bookmaker,
                 ROW_NUMBER() OVER (
-                    PARTITION BY game_id, player_lookup 
-                    ORDER BY 
+                    PARTITION BY game_id, player_lookup
+                    ORDER BY
                         CASE bookmaker
                             WHEN 'draftkings' THEN 1
                             WHEN 'fanduel' THEN 2
@@ -573,20 +639,20 @@ class PlayerGameSummaryProcessor(
                         bookmaker
                 ) as rn
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE game_id IN (SELECT DISTINCT game_id FROM combined_data)
+            WHERE game_id IN (SELECT DISTINCT game_id FROM deduplicated_combined)
         ),
-        
+
         -- Add props context
         with_props AS (
-            SELECT 
+            SELECT
                 c.*,
                 p.points_line,
                 p.over_price_american,
                 p.under_price_american,
                 p.bookmaker as points_line_source
-            FROM combined_data c
+            FROM deduplicated_combined c
             LEFT JOIN deduplicated_props p
-                ON c.game_id = p.game_id 
+                ON c.game_id = p.game_id
                 AND c.player_lookup = p.player_lookup
                 AND p.rn = 1
         ),
@@ -614,7 +680,7 @@ class PlayerGameSummaryProcessor(
                     source_home_team,
                     CASE WHEN game_id LIKE '%_%_%' THEN SPLIT(game_id, '_')[SAFE_OFFSET(2)] END
                 ) as home_team_abbr
-            FROM combined_data
+            FROM deduplicated_combined
         ),
 
         -- Team stats for usage_rate calculation
@@ -1270,8 +1336,10 @@ class PlayerGameSummaryProcessor(
                         ts_pct = row['points'] / (2 * total_shots)
 
             # Calculate usage_rate (requires team stats)
+            # Only calculate if team stats were available at processing time (Bug #2 fix)
             usage_rate = None
-            if (pd.notna(row.get('team_fg_attempts')) and
+            if (self._team_stats_available and
+                pd.notna(row.get('team_fg_attempts')) and
                 pd.notna(row.get('team_ft_attempts')) and
                 pd.notna(row.get('team_turnovers')) and
                 pd.notna(row['field_goals_attempted']) and
@@ -1369,7 +1437,8 @@ class PlayerGameSummaryProcessor(
 
                 # Data lineage integrity (2026-01-27)
                 'processing_context': self._determine_processing_context(),
-                'data_quality_flag': 'complete' if usage_rate is not None else 'partial',
+                'data_quality_flag': 'complete' if (usage_rate is not None and self._team_stats_available) else ('partial_no_team_stats' if not self._team_stats_available else 'partial'),
+                'team_stats_available_at_processing': self._team_stats_available,
 
                 # Metadata
                 'processed_at': datetime.now(timezone.utc).isoformat()
@@ -1590,6 +1659,19 @@ class PlayerGameSummaryProcessor(
             )
         ),
 
+        -- Deduplicate combined data (prevents duplicates from source overlap)
+        -- Keeps most recent record by source_processed_at timestamp
+        deduplicated_combined AS (
+            SELECT * EXCEPT(rn) FROM (
+                SELECT *,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY game_id, player_lookup
+                        ORDER BY source_processed_at DESC
+                    ) as rn
+                FROM combined_data
+            ) WHERE rn = 1
+        ),
+
         deduplicated_props AS (
             SELECT
                 game_id,
@@ -1619,7 +1701,7 @@ class PlayerGameSummaryProcessor(
                 p.over_price_american,
                 p.under_price_american,
                 p.bookmaker as points_line_source
-            FROM combined_data c
+            FROM deduplicated_combined c
             LEFT JOIN deduplicated_props p
                 ON c.game_id = p.game_id
                 AND c.player_lookup = p.player_lookup
@@ -1640,7 +1722,7 @@ class PlayerGameSummaryProcessor(
                     source_home_team,
                     CASE WHEN game_id LIKE '%_%_%' THEN SPLIT(game_id, '_')[SAFE_OFFSET(2)] END
                 ) as home_team_abbr
-            FROM combined_data
+            FROM deduplicated_combined
         ),
 
         -- Team stats - check both game_id and reversed format (handles Away_Home vs Home_Away mismatch)
@@ -1808,8 +1890,10 @@ class PlayerGameSummaryProcessor(
                             ts_pct = row['points'] / (2 * total_shots)
 
                 # Calculate usage_rate (requires team stats)
+                # Only calculate if team stats were available at processing time (Bug #2 fix)
                 usage_rate = None
-                if (pd.notna(row.get('team_fg_attempts')) and
+                if (self._team_stats_available and
+                    pd.notna(row.get('team_fg_attempts')) and
                     pd.notna(row.get('team_ft_attempts')) and
                     pd.notna(row.get('team_turnovers')) and
                     pd.notna(row['field_goals_attempted']) and
@@ -1910,6 +1994,11 @@ class PlayerGameSummaryProcessor(
                     'quality_reconstructed': False,
                     'quality_calculated_at': datetime.now(timezone.utc).isoformat(),
                     'quality_metadata': {'sources_used': [row['primary_source']], 'early_season': False},
+
+                    # Data lineage integrity (2026-01-27)
+                    'processing_context': self._determine_processing_context(),
+                    'data_quality_flag': 'complete' if (usage_rate is not None and self._team_stats_available) else ('partial_no_team_stats' if not self._team_stats_available else 'partial'),
+                    'team_stats_available_at_processing': self._team_stats_available,
 
                     # Metadata
                     'processed_at': datetime.now(timezone.utc).isoformat()
