@@ -169,11 +169,12 @@ class BackfillValidator:
             COUNTIF(minutes_played > 0) as active_players,
 
             -- Source field completeness for active players
-            ROUND(100.0 * COUNTIF(minutes_played > 0 AND field_goals_attempted IS NOT NULL) /
+            -- Note: Schema uses fg_attempts, ft_attempts, three_pt_attempts (not field_goals_attempted etc.)
+            ROUND(100.0 * COUNTIF(minutes_played > 0 AND fg_attempts IS NOT NULL) /
                   NULLIF(COUNTIF(minutes_played > 0), 0), 1) as fg_attempts_pct,
-            ROUND(100.0 * COUNTIF(minutes_played > 0 AND free_throws_attempted IS NOT NULL) /
+            ROUND(100.0 * COUNTIF(minutes_played > 0 AND ft_attempts IS NOT NULL) /
                   NULLIF(COUNTIF(minutes_played > 0), 0), 1) as ft_attempts_pct,
-            ROUND(100.0 * COUNTIF(minutes_played > 0 AND three_pointers_attempted IS NOT NULL) /
+            ROUND(100.0 * COUNTIF(minutes_played > 0 AND three_pt_attempts IS NOT NULL) /
                   NULLIF(COUNTIF(minutes_played > 0), 0), 1) as three_attempts_pct,
 
             -- Derived metric completeness for active players
