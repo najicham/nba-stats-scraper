@@ -43,9 +43,13 @@ try:
     from orchestration.shared.utils.notification_system import notify_info, notify_warning
 except ImportError:
     # Fallback if shared module not available in Cloud Functions
-    def notify_info(*args, **kwargs):
+    def notify_info(*args, **kwargs,
+    processor_name="Main"
+    ):
         logging.info(f"NOTIFY_INFO: {args}, {kwargs}")
-    def notify_warning(*args, **kwargs):
+    def notify_warning(*args, **kwargs,
+    processor_name="Main"
+    ):
         logging.warning(f"NOTIFY_WARNING: {args}, {kwargs}")
 
 # Configure logging
@@ -130,7 +134,8 @@ def cleanup_upcoming_tables(request) -> Dict[str, Any]:
             notify_warning(
                 title="Upcoming Tables Cleanup Failed",
                 message=f"Daily TTL cleanup encountered error: {str(e)}",
-                details=summary
+                details=summary,
+            processor_name="Main"
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
@@ -264,7 +269,8 @@ def _send_unusual_cleanup_notification(summary: Dict[str, Any]) -> None:
                 'ttl_days': summary['ttl_days'],
                 'tables': summary['tables_cleaned'],
                 'recommendation': 'Review if this seems excessive. May indicate backlog or incorrect data.'
-            }
+            },
+        processor_name="Main"
         )
         logger.info("📨 Sent unusual cleanup notification")
     except Exception as e:

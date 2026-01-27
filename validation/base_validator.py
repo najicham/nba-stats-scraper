@@ -1180,7 +1180,8 @@ class BaseValidator:
                         'date_range': f"{report.date_range_start} to {report.date_range_end}",
                         'warnings': [r.message for r in report.results if not r.passed and r.severity == 'warning'][:5],
                         'duration': f"{report.execution_duration:.2f}s"
-                    }
+                    },
+                    processor_name=self.__class__.__name__
                 )
         except Exception as e:
             logger.error(f"Failed to send notification: {e}")

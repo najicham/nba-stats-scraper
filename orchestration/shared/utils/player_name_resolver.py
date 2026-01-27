@@ -752,7 +752,8 @@ class PlayerNameResolver:
                                 'unresolved_count': len(result_df),
                                 'total_occurrences': int(total_unresolved),
                                 'action': 'Review and resolve pending player names'
-                            }
+                            },
+                            processor_name=self.__class__.__name__
                         )
                     except Exception as notify_ex:
                         logger.warning(f"Failed to send notification: {notify_ex}")

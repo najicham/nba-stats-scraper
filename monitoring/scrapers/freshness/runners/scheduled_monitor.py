@@ -201,6 +201,7 @@ class FreshnessMonitor:
                     title=title,
                     message=message,
                     details=details
+                    processor_name=self.__class__.__name__
                 )
                 logger.info("Sent warning alert")
             
@@ -210,6 +211,7 @@ class FreshnessMonitor:
                     title=title,
                     message=message,
                     details=details
+                    processor_name=self.__class__.__name__
                 )
                 logger.info("Sent info notification")
         

@@ -676,7 +676,8 @@ class BatchResolver:
                             'games_succeeded': results['games_succeeded'],
                             'games_failed': results['games_failed'],
                             'recent_failures': results['failures'][-5:] if results['failures'] else []
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
         except Exception as e:
             logger.warning(f"Could not send reprocessing alert: {e}")

@@ -942,7 +942,8 @@ class WorkflowExecutor:
                             'consecutive_failures': WorkflowExecutor._logging_failure_count,
                             'error': str(e)[:500],
                             'error_type': type(e).__name__
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                     # Reset after alerting to avoid alert spam
                     WorkflowExecutor._logging_failure_count = 0

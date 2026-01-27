@@ -324,6 +324,7 @@ class PredictionCoverageMonitor:
                     title=title,
                     message=message,
                     details=details
+                    processor_name=self.__class__.__name__
                 )
                 logger.info("Warning coverage alert sent via notification system")
             except Exception as e:

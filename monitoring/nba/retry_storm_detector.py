@@ -300,6 +300,7 @@ class RetryStormDetector:
                 notify_warning(
                     title="NBA Retry Storm Alert - WARNING",
                     message=f"{message}\n\nDetails: {alert}"
+                    processor_name=self.__class__.__name__
                 )
 
 

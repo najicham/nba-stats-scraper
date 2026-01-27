@@ -299,7 +299,8 @@ def send_alert(message: str, severity: str = "warning"):
             notify_warning(
                 title="Live Data Freshness Warning",
                 message=message,
-                details={"component": "live_freshness_monitor"}
+                details={"component": "live_freshness_monitor"},
+            processor_name="Main"
             )
     except Exception as e:
         # Just log if notification fails

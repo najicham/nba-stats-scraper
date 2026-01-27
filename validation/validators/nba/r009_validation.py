@@ -505,11 +505,13 @@ class R009Validator:
             notify_warning(
                 title=f"R-009 Validation - Warnings - {game_date}",
                 message=f"Found {len(warning_issues)} warnings: {', '.join([i['message'] for i in warning_issues[:3]])}"
+                processor_name=self.__class__.__name__
             )
         else:
             notify_info(
                 title=f"R-009 Validation PASSED - {game_date}",
                 message="All checks passed successfully"
+                processor_name=self.__class__.__name__
             )
 
         return summary

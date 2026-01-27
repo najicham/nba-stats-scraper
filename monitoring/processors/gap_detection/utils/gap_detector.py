@@ -116,7 +116,8 @@ class ProcessingGapDetector:
             notify_info(
                 title=f"Processing Gap Check Complete: {check_date}",
                 message=f"All {results['total_processors_checked']} processor(s) validated successfully",
-                details={'check_date': check_date.isoformat()}
+                details={'check_date': check_date.isoformat()},
+                processor_name=self.__class__.__name__
             )
         
         return results
@@ -374,7 +375,8 @@ class ProcessingGapDetector:
                     'high_priority_gaps': len(high_priority),
                     'affected_processors': [p['display_name'] for p in gap_processors],
                     'action_needed': 'Review individual processor alerts for retry information'
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         except Exception as e:
             logger.error(f"Failed to send summary alert: {e}")

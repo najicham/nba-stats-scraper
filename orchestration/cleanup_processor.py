@@ -165,7 +165,8 @@ class CleanupProcessor:
                             'republished': republished_count,
                             'notification_threshold': self.notification_threshold,
                             'scrapers_affected': list(set(f['scraper_name'] for f in missing_files))
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
