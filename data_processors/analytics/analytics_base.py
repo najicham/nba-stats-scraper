@@ -924,6 +924,61 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
                 self.transformed_data = results
         """
         raise NotImplementedError("Child classes must implement calculate_analytics()")
+
+    def _deduplicate_records(self, records: List[Dict]) -> List[Dict]:
+        """
+        Deduplicate records by PRIMARY_KEY_FIELDS before saving.
+
+        Keeps the record with the latest processed_at timestamp.
+        This prevents duplicate records from being inserted when the same
+        data is processed multiple times (e.g., streaming buffer conflicts).
+
+        Args:
+            records: List of record dictionaries to deduplicate
+
+        Returns:
+            Deduplicated list of records
+        """
+        if not records:
+            return records
+
+        # Check if PRIMARY_KEY_FIELDS is defined
+        if not hasattr(self.__class__, 'PRIMARY_KEY_FIELDS'):
+            logger.debug("PRIMARY_KEY_FIELDS not defined, skipping deduplication")
+            return records
+
+        primary_keys = self.__class__.PRIMARY_KEY_FIELDS
+        if not primary_keys or len(primary_keys) == 0:
+            logger.debug("PRIMARY_KEY_FIELDS is empty, skipping deduplication")
+            return records
+
+        # Group by primary key
+        from collections import defaultdict
+        grouped = defaultdict(list)
+
+        for record in records:
+            key = tuple(record.get(f) for f in primary_keys)
+            grouped[key].append(record)
+
+        # Keep latest by processed_at
+        deduplicated = []
+        duplicates_removed = 0
+
+        for key, group in grouped.items():
+            if len(group) > 1:
+                duplicates_removed += len(group) - 1
+                # Sort by processed_at descending, take first
+                group.sort(key=lambda r: r.get('processed_at', ''), reverse=True)
+
+            deduplicated.append(group[0])
+
+        if duplicates_removed > 0:
+            logger.warning(
+                f"Pre-save deduplication: removed {duplicates_removed} duplicate records "
+                f"(keys: {primary_keys})"
+            )
+
+        return deduplicated
     
     # =========================================================================
     # BigQuery save operations extracted to operations/bigquery_save_ops.py

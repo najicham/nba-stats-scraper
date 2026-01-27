@@ -43,6 +43,11 @@ from shared.utils.notification_system import notify_error, notify_warning
 logger = logging.getLogger(__name__)
 
 
+class StreamingBufferActiveError(Exception):
+    """Raised when streaming buffer prevents safe DELETE operation."""
+    pass
+
+
 class BigQuerySaveOpsMixin:
     """
     Mixin providing BigQuery save operations for analytics processors.
@@ -122,6 +127,9 @@ class BigQuerySaveOpsMixin:
         if not rows:
             logger.warning("No rows to insert")
             return False
+
+        # Deduplicate before save (prevents duplicates from multiple processing)
+        rows = self._deduplicate_records(rows)
 
         # Get target table schema (needed for both MERGE and INSERT strategies)
         try:
@@ -580,7 +588,14 @@ class BigQuerySaveOpsMixin:
                 if "not found" in error_str or "404" in error_str:
                     logger.info("Table doesn't exist yet - will be created on INSERT")
                 elif "streaming buffer" in error_str:
-                    logger.warning("Delete blocked by streaming buffer - proceeding with INSERT")
+                    logger.warning(
+                        "Delete blocked by streaming buffer. "
+                        "Aborting to prevent duplicates. Will retry on next trigger."
+                    )
+                    raise StreamingBufferActiveError(
+                        f"Cannot delete due to streaming buffer for {table_id}. "
+                        "Data will be processed on next trigger when buffer flushes."
+                    )
                 else:
                     logger.error(f"DELETE failed: {e}")
                     raise
