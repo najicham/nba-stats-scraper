@@ -59,6 +59,56 @@ BATCHING_ENABLED = os.getenv('BQ_BATCH_WRITER_ENABLED', 'true').lower() == 'true
 MONITORING_WRITES_DISABLED = os.getenv('MONITORING_WRITES_DISABLED', 'false').lower() == 'true'
 
 
+def _is_after_quota_reset() -> bool:
+    """
+    Check if we're in the "safe window" after quota reset.
+
+    BigQuery quota resets at midnight Pacific Time.
+    If it's between 12:00 AM and 12:30 AM Pacific, we're in the safe window
+    and should ALWAYS allow writes (ignore MONITORING_WRITES_DISABLED).
+
+    This provides automatic self-healing after quota reset.
+    """
+    try:
+        # Get current time in Pacific
+        from zoneinfo import ZoneInfo
+        pacific = ZoneInfo('America/Los_Angeles')
+        now_pacific = datetime.now(pacific)
+
+        # Safe window: 12:00 AM to 12:30 AM Pacific (first 30 min after reset)
+        if now_pacific.hour == 0 and now_pacific.minute < 30:
+            return True
+        return False
+    except Exception:
+        # If timezone handling fails, don't block writes
+        return False
+
+
+def should_skip_monitoring_writes() -> bool:
+    """
+    Determine if monitoring writes should be skipped.
+
+    Returns True if:
+    - MONITORING_WRITES_DISABLED=true AND
+    - NOT in the safe window after quota reset (12:00-12:30 AM Pacific)
+
+    The safe window provides automatic self-healing - even if someone
+    forgets to re-enable monitoring, it auto-enables after midnight.
+    """
+    if not MONITORING_WRITES_DISABLED:
+        return False  # Normal operation
+
+    # Check if we're in the safe window (auto-enable after reset)
+    if _is_after_quota_reset():
+        logger.info(
+            "Quota reset window detected (12:00-12:30 AM Pacific) - "
+            "auto-enabling monitoring writes despite MONITORING_WRITES_DISABLED=true"
+        )
+        return False  # Allow writes in safe window
+
+    return True  # Disabled and not in safe window
+
+
 class BigQueryBatchWriter:
     """
     Thread-safe batching buffer for BigQuery writes.
@@ -148,8 +198,8 @@ class BigQueryBatchWriter:
         Args:
             record: Dictionary of field_name -> value
         """
-        # Emergency mode: completely skip all writes when quota exceeded
-        if MONITORING_WRITES_DISABLED:
+        # Emergency mode: skip writes when quota exceeded (with self-healing)
+        if should_skip_monitoring_writes():
             logger.debug(
                 f"Monitoring writes disabled - skipping record for {self.table_id}"
             )
