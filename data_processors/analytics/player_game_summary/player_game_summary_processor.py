@@ -512,13 +512,13 @@ class PlayerGameSummaryProcessor(
                 turnovers,
                 personal_fouls,
 
-                -- Shooting stats
+                -- Shooting stats (BDL now has all these fields as of 2024)
                 field_goals_made,
-                NULL as field_goals_attempted,
+                field_goals_attempted,
                 three_pointers_made,
-                NULL as three_pointers_attempted,
+                three_pointers_attempted,
                 free_throws_made,
-                NULL as free_throws_attempted,
+                free_throws_attempted,
 
                 -- Game context
                 minutes,
@@ -1549,12 +1549,13 @@ class PlayerGameSummaryProcessor(
                 blocks,
                 turnovers,
                 personal_fouls,
+                -- Shooting stats (BDL now has all these fields as of 2024)
                 field_goals_made,
-                NULL as field_goals_attempted,
+                field_goals_attempted,
                 three_pointers_made,
-                NULL as three_pointers_attempted,
+                three_pointers_attempted,
                 free_throws_made,
-                NULL as free_throws_attempted,
+                free_throws_attempted,
                 minutes,
                 NULL as plus_minus,
                 processed_at as source_processed_at,
