@@ -523,6 +523,97 @@ class TonightDataValidator:
 
         return minutes_pct >= MINUTES_THRESHOLD and active_usage_pct >= USAGE_THRESHOLD
 
+    def check_field_completeness(self, check_date: date) -> bool:
+        """
+        Check NULL rates for critical source fields.
+
+        These are the SOURCE fields needed for calculations like usage_rate.
+        If these are NULL, downstream calculations will fail.
+
+        This check would have caught the Jan 2026 BDL extraction bug where
+        field_goals_attempted was extracted as NULL even though BDL has the data.
+
+        Args:
+            check_date: Date to check field completeness for
+
+        Returns:
+            True if all fields meet thresholds, False otherwise
+        """
+        query = f"""
+        SELECT
+            COUNT(*) as total,
+            COUNTIF(minutes_played > 0) as active_players,
+            -- Source fields (from raw data extraction)
+            ROUND(100.0 * COUNTIF(field_goals_attempted IS NOT NULL) / NULLIF(COUNT(*), 0), 1) as fg_attempts_pct,
+            ROUND(100.0 * COUNTIF(free_throws_attempted IS NOT NULL) / NULLIF(COUNT(*), 0), 1) as ft_attempts_pct,
+            ROUND(100.0 * COUNTIF(three_pointers_attempted IS NOT NULL) / NULLIF(COUNT(*), 0), 1) as three_attempts_pct,
+            -- For active players only
+            ROUND(100.0 * COUNTIF(minutes_played > 0 AND field_goals_attempted IS NOT NULL) /
+                  NULLIF(COUNTIF(minutes_played > 0), 0), 1) as active_fg_pct,
+            ROUND(100.0 * COUNTIF(minutes_played > 0 AND free_throws_attempted IS NOT NULL) /
+                  NULLIF(COUNTIF(minutes_played > 0), 0), 1) as active_ft_pct,
+            ROUND(100.0 * COUNTIF(minutes_played > 0 AND three_pointers_attempted IS NOT NULL) /
+                  NULLIF(COUNTIF(minutes_played > 0), 0), 1) as active_three_pct
+        FROM `{self.project}.nba_analytics.player_game_summary`
+        WHERE game_date = '{check_date}'
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))[0]
+        except Exception as e:
+            self.add_issue('field_completeness', f'Failed to check field completeness: {e}')
+            return False
+
+        # Check if data exists
+        if result.total == 0:
+            self.add_warning('field_completeness', f'No data for {check_date}')
+            return False
+
+        # Thresholds for active players
+        FG_THRESHOLD = 90.0  # At least 90% of active players should have field_goals_attempted
+        FT_THRESHOLD = 90.0  # At least 90% should have free_throws_attempted
+        THREE_THRESHOLD = 90.0  # At least 90% should have three_pointers_attempted
+
+        passed = True
+
+        # Check field_goals_attempted (most critical - used for usage_rate)
+        if result.active_fg_pct and result.active_fg_pct < FG_THRESHOLD:
+            self.add_issue('field_completeness',
+                f'field_goals_attempted coverage is {result.active_fg_pct}% for active players (threshold: {FG_THRESHOLD}%)',
+                severity='CRITICAL')
+            passed = False
+
+        # Check free_throws_attempted
+        if result.active_ft_pct and result.active_ft_pct < FT_THRESHOLD:
+            self.add_issue('field_completeness',
+                f'free_throws_attempted coverage is {result.active_ft_pct}% for active players (threshold: {FT_THRESHOLD}%)',
+                severity='CRITICAL')
+            passed = False
+
+        # Check three_pointers_attempted
+        if result.active_three_pct and result.active_three_pct < THREE_THRESHOLD:
+            self.add_issue('field_completeness',
+                f'three_pointers_attempted coverage is {result.active_three_pct}% for active players (threshold: {THREE_THRESHOLD}%)',
+                severity='WARNING')  # Less critical than FG and FT
+
+        # Add to stats for reporting
+        self.stats['field_check_date'] = str(check_date)
+        self.stats['field_total_records'] = result.total
+        self.stats['field_active_players'] = result.active_players
+        self.stats['field_fg_attempts_pct'] = result.active_fg_pct
+        self.stats['field_ft_attempts_pct'] = result.active_ft_pct
+        self.stats['field_three_attempts_pct'] = result.active_three_pct
+
+        # Print status
+        status_icon = '✓' if passed else '❌'
+        print(f"{status_icon} Field Completeness ({check_date}):")
+        print(f"   - {result.active_players} active players (out of {result.total} total)")
+        print(f"   - field_goals_attempted: {result.active_fg_pct}% for active players")
+        print(f"   - free_throws_attempted: {result.active_ft_pct}% for active players")
+        print(f"   - three_pointers_attempted: {result.active_three_pct}% for active players")
+
+        return passed
+
     def check_scraper_registry_vs_workflows(self) -> List[str]:
         """Check for scrapers in registry but not in workflows."""
         import yaml
@@ -690,6 +781,10 @@ class TonightDataValidator:
         self.check_game_context()
         print()
         self.check_player_game_summary_quality()
+        print()
+        # Check field-level completeness (would have caught Jan 2026 BDL extraction bug)
+        check_date = self.target_date - timedelta(days=1)  # Check yesterday's data
+        self.check_field_completeness(check_date)
         print()
         self.check_predictions()
         print()

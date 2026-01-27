@@ -371,9 +371,36 @@ class PlayerGameSummaryBackfill:
                 failed_days.append(current_date)
                 checkpoint.mark_date_failed(current_date, error=str(e))
                 processed_days += 1
-        
+
+        # Validate processed dates (post-backfill quality check)
+        if not dry_run and successful_days > 0:
+            logger.info("\n" + "=" * 80)
+            logger.info("POST-BACKFILL VALIDATION")
+            logger.info("=" * 80)
+
+            from shared.validation.backfill_validator import BackfillValidator
+
+            # Collect successfully processed dates
+            successfully_processed_dates = [d for d in dates_to_process if d not in failed_days]
+
+            try:
+                validator = BackfillValidator(self.processor.bq_client, 'nba-props-platform')
+                report = validator.validate_dates(successfully_processed_dates)
+                validator.log_report(report, detailed=False)
+
+                if not report.passed:
+                    logger.warning("⚠️  Backfill completed but validation found data quality issues")
+                    logger.warning("    Review the validation report above before proceeding")
+                else:
+                    logger.info("✅ All processed dates passed validation")
+            except Exception as e:
+                logger.error(f"Post-backfill validation failed with error: {e}")
+                logger.warning("Continuing without validation - manual review recommended")
+
+            logger.info("=" * 80)
+
         # Final summary
-        logger.info("=" * 80)
+        logger.info("\n" + "=" * 80)
         logger.info(f"DAY-BY-DAY BACKFILL SUMMARY:")
         logger.info(f"  Date range: {start_date} to {end_date}")
         logger.info(f"  Total days: {total_days}")
@@ -575,11 +602,40 @@ class PlayerGameSummaryBackfill:
                     logger.info(f"  ETA: {remaining:.1f} hours remaining")
                     logger.info("=" * 80)
 
+        # Post-backfill validation
+        if not dry_run and stats['successful'] > 0:
+            logger.info("\n" + "=" * 80)
+            logger.info("POST-BACKFILL VALIDATION")
+            logger.info("=" * 80)
+
+            from shared.validation.backfill_validator import BackfillValidator
+
+            # Collect successfully processed dates
+            successfully_processed_dates = [d for d in dates_to_process if d not in failed_days]
+
+            try:
+                # Create new processor instance for validation
+                validation_processor = PlayerGameSummaryProcessor()
+                validator = BackfillValidator(validation_processor.bq_client, 'nba-props-platform')
+                report = validator.validate_dates(successfully_processed_dates)
+                validator.log_report(report, detailed=False)
+
+                if not report.passed:
+                    logger.warning("⚠️  Backfill completed but validation found data quality issues")
+                    logger.warning("    Review the validation report above before proceeding")
+                else:
+                    logger.info("✅ All processed dates passed validation")
+            except Exception as e:
+                logger.error(f"Post-backfill validation failed with error: {e}")
+                logger.warning("Continuing without validation - manual review recommended")
+
+            logger.info("=" * 80)
+
         # Final summary
         stats = progress.get_stats()
         elapsed_total = (datetime.now() - start_time).total_seconds() / 3600
 
-        logger.info("=" * 80)
+        logger.info("\n" + "=" * 80)
         logger.info("PARALLEL BACKFILL COMPLETE")
         logger.info("=" * 80)
         logger.info(f"  Total days: {total_days}")
@@ -639,9 +695,35 @@ class PlayerGameSummaryBackfill:
             except Exception as e:
                 logger.error(f"Exception processing {single_date}: {e}", exc_info=True)
                 failed.append(single_date)
-        
+
+        # Post-backfill validation
+        if not dry_run and successful > 0:
+            logger.info("\n" + "=" * 80)
+            logger.info("POST-BACKFILL VALIDATION")
+            logger.info("=" * 80)
+
+            from shared.validation.backfill_validator import BackfillValidator
+
+            # Collect successfully processed dates
+            successfully_processed_dates = [d for d in dates if d not in failed]
+
+            try:
+                validator = BackfillValidator(self.processor.bq_client, 'nba-props-platform')
+                report = validator.validate_dates(successfully_processed_dates)
+                validator.log_report(report, detailed=True)  # Show detailed results for specific dates
+
+                if not report.passed:
+                    logger.warning("⚠️  Processing completed but validation found data quality issues")
+                else:
+                    logger.info("✅ All processed dates passed validation")
+            except Exception as e:
+                logger.error(f"Post-backfill validation failed with error: {e}")
+                logger.warning("Continuing without validation - manual review recommended")
+
+            logger.info("=" * 80)
+
         # Summary
-        logger.info("=" * 80)
+        logger.info("\n" + "=" * 80)
         logger.info(f"SPECIFIC DATES PROCESSING SUMMARY:")
         logger.info(f"  Total dates: {len(dates)}")
         logger.info(f"  Successful: {successful}")
