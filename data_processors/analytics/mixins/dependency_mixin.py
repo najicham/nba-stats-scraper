@@ -137,14 +137,23 @@ class DependencyMixin:
             if exists and details.get('age_hours') is not None:
                 max_age_warn = config.get('max_age_hours_warn', 24)
                 max_age_fail = config.get('max_age_hours_fail', 72)
+                is_critical = config.get('critical', True)  # Default to critical if not specified
 
                 if details['age_hours'] > max_age_fail:
                     results['all_fresh'] = False
-                    results['has_stale_fail'] = True
                     stale_msg = (f"{table_name}: {details['age_hours']:.1f}h old "
                                f"(max: {max_age_fail}h)")
-                    results['stale_fail'].append(stale_msg)
-                    logger.error(f"Stale dependency (FAIL threshold): {stale_msg}")
+
+                    # Only block for CRITICAL dependencies
+                    if is_critical:
+                        results['has_stale_fail'] = True
+                        results['stale_fail'].append(stale_msg)
+                        logger.error(f"Stale dependency (FAIL threshold): {stale_msg}")
+                    else:
+                        # Non-critical: treat as warning, not failure
+                        results['has_stale_warn'] = True
+                        results['stale_warn'].append(f"{stale_msg} [non-critical, continuing]")
+                        logger.warning(f"Stale non-critical dependency (converted to WARN): {stale_msg}")
 
                 elif details['age_hours'] > max_age_warn:
                     results['has_stale_warn'] = True
