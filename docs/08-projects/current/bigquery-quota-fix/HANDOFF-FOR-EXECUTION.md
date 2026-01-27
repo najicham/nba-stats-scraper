@@ -8,31 +8,34 @@
 
 ## What You Need To Do
 
-### If Running Pipeline Tonight (Before 3 AM ET)
+### Monitoring Already Disabled - Just Trigger Pipeline
 
-Execute these commands in order:
+Monitoring is already disabled on all phase services. Just trigger the pipeline:
 
 ```bash
-# Step 1: Disable monitoring to avoid quota errors
+# Trigger Phase 3
+gcloud scheduler jobs run same-day-phase3 --location=us-west2
+
+# Wait 5-10 minutes, then check completion
+gcloud run services logs read nba-phase3-analytics-processors \
+  --region=us-west2 --limit=20 | grep -i "complete\|success"
+
+# Verify predictions
+bq query --use_legacy_sql=false "
+SELECT COUNT(*) as predictions
+FROM nba_predictions.player_prop_predictions
+WHERE game_date = CURRENT_DATE() AND is_active = TRUE"
+```
+
+### If You Need To Re-disable Monitoring (shouldn't be needed)
+
+```bash
 for SERVICE in nba-phase2-raw-processors nba-phase3-analytics-processors nba-phase4-precompute-processors; do
   gcloud run services update $SERVICE \
     --region=us-west2 \
     --set-env-vars="MONITORING_WRITES_DISABLED=true" \
     --quiet
 done
-
-# Step 2: Trigger Phase 3
-gcloud scheduler jobs run same-day-phase3 --location=us-west2
-
-# Step 3: Wait 5-10 minutes, then check completion
-gcloud run services logs read nba-phase3-analytics-processors \
-  --region=us-west2 --limit=20 | grep -i "complete\|success"
-
-# Step 4: Verify predictions
-bq query --use_legacy_sql=false "
-SELECT COUNT(*) as predictions
-FROM nba_predictions.player_prop_predictions
-WHERE game_date = CURRENT_DATE() AND is_active = TRUE"
 ```
 
 ### After 3:00 AM ET (Quota Reset)
@@ -78,9 +81,15 @@ done
 
 1. ✅ Batching fix implemented (`shared/utils/bigquery_batch_writer.py`)
 2. ✅ `MONITORING_WRITES_DISABLED` env var added
-3. ✅ Code pushed to origin/main
-4. ✅ Phase 3 and Phase 4 Cloud Run services deployed with new code
-5. ❌ Monitoring not yet disabled (needs execution above)
+3. ✅ Self-healing logic added (auto-enables after midnight Pacific)
+4. ✅ Code pushed to origin/main
+5. ✅ Phase 2, 3, and 4 services deployed with `MONITORING_WRITES_DISABLED=true`
+6. ✅ Services ready to run without hitting quota errors
+
+**Deployed Revisions**:
+- `nba-phase2-raw-processors-00105-4g2`
+- `nba-phase3-analytics-processors-00111-wlv`
+- `nba-phase4-precompute-processors-00058-gvl`
 
 ---
 
