@@ -348,7 +348,8 @@ class BdlBoxscoresBackfill:
                             'end_date': str(end_date) if end_date else None,
                             'specific_dates': specific_dates,
                             'bucket': self.bucket_name
-                        }
+                        },
+                        processor_name=self.__class__.__name__
                     )
                 except Exception as e:
                     logger.warning(f"Failed to send notification: {e}")
@@ -511,6 +512,7 @@ class BdlBoxscoresBackfill:
                     title="BDL Boxscore Processing Complete with Issues",
                     message=f"Processed {self.successful} files. {self.skipped} skipped, {self.streaming_conflicts} streaming conflicts.",
                     details=details
+                    processor_name=self.__class__.__name__
                 )
             elif error_rate > 0:
                 # Some errors but acceptable = INFO with note
@@ -518,6 +520,7 @@ class BdlBoxscoresBackfill:
                     title="BDL Boxscore Processing Complete",
                     message=f"Processed {self.successful}/{self.total_files} files, {total_rows} player records. {self.errors} files failed - review logs.",
                     details=details
+                    processor_name=self.__class__.__name__
                 )
             else:
                 # Perfect success = INFO
@@ -525,6 +528,7 @@ class BdlBoxscoresBackfill:
                     title="BDL Boxscore Processing Complete",
                     message=f"Successfully processed all {self.successful} files, loaded {total_rows} player records",
                     details=details
+                    processor_name=self.__class__.__name__
                 )
         except Exception as e:
             logger.warning(f"Failed to send completion notification: {e}")

@@ -178,7 +178,8 @@ class OddsApiLinesBackfillJob:
                     'limit': self.limit,
                     'dry_run': dry_run,
                     'reprocess_all': self.reprocess_all
-                }
+                },
+                processor_name=self.__class__.__name__
             )
         except Exception as e:
             logger.warning(f"Failed to send start notification: {e}")

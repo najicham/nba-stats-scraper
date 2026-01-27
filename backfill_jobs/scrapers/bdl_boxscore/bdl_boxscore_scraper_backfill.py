@@ -663,6 +663,7 @@ class BdlBoxscoreBackfillJob:
                     title="BDL Boxscore Scraping Complete with High Failure Rate",
                     message=f"Processed {self.processed_dates}/{self.total_dates} dates, but {len(self.failed_dates)} failed ({failure_rate:.1f}%)",
                     details=details
+                    processor_name=self.__class__.__name__
                 )
             elif failure_rate > 0:
                 # Some failures but acceptable = INFO with note
@@ -670,6 +671,7 @@ class BdlBoxscoreBackfillJob:
                     title="BDL Boxscore Scraping Complete",
                     message=f"Successfully processed {self.processed_dates}/{self.total_dates} dates. {len(self.failed_dates)} dates failed - review logs.",
                     details=details
+                    processor_name=self.__class__.__name__
                 )
             else:
                 # Perfect success = INFO
@@ -677,6 +679,7 @@ class BdlBoxscoreBackfillJob:
                     title="BDL Boxscore Scraping Complete",
                     message=f"Successfully processed all {self.processed_dates} dates in {int(duration.total_seconds()/60)} minutes",
                     details=details
+                    processor_name=self.__class__.__name__
                 )
         except Exception as e:
             logger.warning(f"Failed to send completion notification: {e}")
