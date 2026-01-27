@@ -175,6 +175,49 @@ python scripts/spot_check_data_accuracy.py --samples 5 --checks rolling_avg,usag
 - Usage rate failures: Missing team stats or join issues
 - Specific players failing: Check if known issues (Mo Bamba, Josh Giddey historically)
 
+### Phase 3B: Player Game Coverage Spot Check (NEW)
+
+Check that all players who played yesterday have analytics records:
+
+```bash
+GAME_DATE=$(date -d "yesterday" +%Y-%m-%d)
+
+bq query --use_legacy_sql=false "
+-- Find players who played (have boxscore minutes) but missing from analytics
+WITH boxscore_players AS (
+    SELECT DISTINCT player_lookup, game_date, team_abbr, minutes
+    FROM \`nba-props-platform.nba_raw.bdl_player_boxscores\`
+    WHERE game_date = DATE('${GAME_DATE}')
+      AND minutes NOT IN ('00', '0')
+),
+analytics_players AS (
+    SELECT DISTINCT player_lookup, game_date
+    FROM \`nba-props-platform.nba_analytics.player_game_summary\`
+    WHERE game_date = DATE('${GAME_DATE}')
+)
+SELECT
+    b.player_lookup,
+    b.team_abbr,
+    b.minutes,
+    'ERROR: In boxscore but missing from analytics' as status
+FROM boxscore_players b
+LEFT JOIN analytics_players a ON b.player_lookup = a.player_lookup AND b.game_date = a.game_date
+WHERE a.player_lookup IS NULL
+ORDER BY b.team_abbr, b.player_lookup"
+```
+
+**Expected**: Zero results (all players who played should have analytics records)
+
+**If issues found**:
+- Check if player was recently traded (name lookup mismatch)
+- Check if player is new call-up (not in registry)
+- Run `/spot-check-player <name>` for deep investigation
+
+**Related skills for deeper investigation**:
+- `/spot-check-player <name>` - Deep dive on one player
+- `/spot-check-date <date>` - Check all players for a date
+- `/spot-check-gaps` - System-wide audit
+
 ### Phase 4: Check Phase Completion Status
 
 **Phase 3 Analytics (Firestore)**:
@@ -698,6 +741,23 @@ gcloud scheduler jobs run same-day-phase5
 # Check specific date
 python scripts/validate_tonight_data.py --date 2026-01-26
 ```
+
+## Player Spot Check Skills Reference
+
+For investigating player-level data issues:
+
+| Skill | Command | Use Case |
+|-------|---------|----------|
+| `/spot-check-player` | `/spot-check-player lebron_james 20` | Deep dive on one player |
+| `/spot-check-date` | `/spot-check-date 2026-01-25` | Check all players for one date |
+| `/spot-check-team` | `/spot-check-team LAL 15` | Check team roster completeness |
+| `/spot-check-gaps` | `/spot-check-gaps 2025-12-19 2026-01-26` | System-wide gap audit |
+
+**When to use**:
+- ERROR_HAS_MINUTES found in daily check → `/spot-check-player` for deep dive
+- Multiple players missing for one date → `/spot-check-date` for that day
+- Team with roster changes → `/spot-check-team` to verify coverage
+- Weekly audit → `/spot-check-gaps` for comprehensive review
 
 ---
 

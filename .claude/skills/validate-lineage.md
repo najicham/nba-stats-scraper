@@ -13,19 +13,179 @@ Validate data lineage integrity - ensure computed data was calculated with compl
 
 ## Usage
 
-```
+```bash
+# Interactive mode (recommended for first time)
+/validate-lineage interactive
+
+# Quick modes
 /validate-lineage [mode] [options]
+```
+
+### Quick Examples
+
+```bash
+# Guided workflow with questions
+/validate-lineage interactive
+
+# Quick health check
+/validate-lineage quick
+
+# Validate after backfill
+/validate-lineage standard --start-date 2025-11-01 --end-date 2025-11-30
+
+# Investigate specific date
+/validate-lineage investigate 2025-11-10
+
+# Check quality metadata
+/validate-lineage quality-trends --start-date 2025-11-01 --end-date 2025-11-30
+
+# Find incomplete windows
+/validate-lineage incomplete-windows --days 7
+
+# Get remediation plan
+/validate-lineage remediate --start-date 2025-11-01 --end-date 2025-11-30
 ```
 
 ### Modes
 
 | Mode | Description | Speed |
 |------|-------------|-------|
+| `interactive` | **Guided workflow with questions** | Variable |
 | `quick` | Aggregate validation only (Tier 1) | Fast (~2 min) |
 | `standard` | Aggregate + sample validation (Tier 1-2) | Medium (~10 min) |
 | `thorough` | Full validation with spot checks (Tier 1-3) | Slow (~30 min) |
 | `investigate <date>` | Deep dive on specific date | Variable |
 | `recompute <date>` | Recompute and compare all records for date | Slow |
+
+### Interactive Mode
+
+**Usage**: `/validate-lineage interactive`
+
+The interactive mode guides you through validation with questions:
+
+#### Question Flow
+
+1. **What do you want to validate?**
+   - Recent data (last 7 days)
+   - Specific date range
+   - After backfill operation
+   - Full season quality audit
+   - Investigate specific issue
+
+2. **Which layer?**
+   - Analytics (Phase 3: player_game_summary, team stats)
+   - Precompute (Phase 4: composite factors, rolling windows)
+   - Predictions (Phase 5: model outputs)
+   - All layers (full pipeline)
+
+3. **What level of detail?**
+   - Quick check (aggregate only, ~2 min)
+   - Standard validation (with sampling, ~10 min)
+   - Thorough audit (full analysis, ~30 min)
+
+4. **Quality focus?** (if new quality metadata available)
+   - Check quality score trends
+   - Find incomplete windows
+   - Detect late-arriving data
+   - Compare processing contexts
+
+5. **Date range?** (based on your choice in #1)
+   - Auto-suggests based on context
+   - Recent: Last 7 days
+   - Backfill: You specify dates
+   - Season: Current season dates
+
+6. **Execute validation**
+   - Shows what will run
+   - Asks for confirmation
+   - Runs validation
+   - Shows results
+
+7. **Remediation?** (if issues found)
+   - View contaminated dates
+   - Generate reprocessing commands
+   - Execute fixes (with confirmation)
+   - Validate fixes
+
+#### Example Interactive Session
+
+```
+/validate-lineage interactive
+
+> What do you want to validate?
+  1. Recent data (last 7 days) - Quick health check
+  2. Specific date range - Custom validation
+  3. After backfill operation - Verify backfill quality
+  4. Full season quality audit - Comprehensive check
+  5. Investigate specific issue - Deep dive
+
+Your choice: 3
+
+> You ran a backfill. What date range did you backfill?
+Start date (YYYY-MM-DD): 2025-11-01
+End date (YYYY-MM-DD): 2025-11-30
+
+> Which layer did you backfill?
+  1. Analytics (Phase 3)
+  2. Precompute (Phase 4) - Recommended
+  3. Predictions (Phase 5)
+  4. All layers
+
+Your choice: 2
+
+> What level of detail?
+  1. Quick check - Aggregate validation (~2 min)
+  2. Standard validation - With sampling (~10 min) - Recommended
+  3. Thorough audit - Full analysis (~30 min)
+
+Your choice: 2
+
+> Include quality metadata checks? (New feature - tracks incomplete windows)
+  Yes / No: Yes
+
+=== Running Validation ===
+Layer: Precompute (Phase 4)
+Date Range: 2025-11-01 to 2025-11-30
+Mode: Standard (with sampling)
+Quality Checks: Enabled
+
+[Progress bar...]
+
+=== Results ===
+✓ Tier 1: Aggregate validation passed
+⚠ Tier 2: Found issues in 3 dates
+
+Flagged Dates:
+  2025-11-10: 78% quality score (16% incomplete windows)
+  2025-11-15: 82% quality score (6% incomplete windows)
+  2025-11-20: 91% quality score (2% incomplete windows)
+
+> What would you like to do?
+  1. View detailed breakdown
+  2. Generate remediation commands
+  3. Execute fixes now
+  4. Save report and exit
+
+Your choice: 2
+
+=== Remediation Commands ===
+
+Priority 1: Critical (quality < 80%)
+  Date: 2025-11-10
+  Command: python scripts/backfill_phase4.py --start-date 2025-11-10 --end-date 2025-11-10
+
+Priority 2: Review (quality 80-90%)
+  Date: 2025-11-15
+  Command: python scripts/backfill_phase4.py --start-date 2025-11-15 --end-date 2025-11-15
+
+> Execute Priority 1 commands now?
+  Yes / No: No
+
+Commands saved to: /tmp/lineage_remediation_20260126.sh
+Run manually: bash /tmp/lineage_remediation_20260126.sh
+
+✓ Validation complete
+```
 
 ### Options
 
@@ -200,8 +360,339 @@ python scripts/backfill_phase4.py --start-date 2025-11-10 --end-date 2025-11-15
 /validate-lineage investigate 2025-11-10
 ```
 
+## New Capabilities (2026-01-26)
+
+### Quality Metadata Analysis
+
+With the new quality metadata columns, the skill now supports:
+
+#### 1. Quality Score Distribution
+
+Check quality_score distribution by date to identify degraded data:
+
+```sql
+SELECT
+  game_date,
+  processing_context,
+  COUNT(*) as record_count,
+  AVG(quality_score) as avg_quality,
+  MIN(quality_score) as min_quality,
+  COUNTIF(quality_score < 0.7) as low_quality_count,
+  COUNTIF(quality_score >= 1.0) as perfect_count
+FROM `nba_precompute.player_daily_cache`
+WHERE game_date BETWEEN @start_date AND @end_date
+GROUP BY game_date, processing_context
+HAVING avg_quality < 0.9 OR low_quality_count > 0
+ORDER BY avg_quality ASC, game_date DESC;
+```
+
+**Usage**:
+```
+/validate-lineage quality-trends --start-date 2025-10-22 --end-date 2026-01-26
+```
+
+**Output**:
+```
+=== Quality Score Trends ===
+Date        Context    Avg Quality  Low Quality Count  Status
+2025-11-10  backfill   0.78        23                  DEGRADED
+2025-11-15  cascade    0.82        15                  DEGRADED
+2025-12-03  daily      0.91        3                   OK
+2026-01-20  daily      0.95        0                   GOOD
+```
+
+#### 2. Incomplete Window Detection
+
+Find records with incomplete rolling windows:
+
+```sql
+SELECT
+  player_lookup,
+  game_date,
+  quality_score,
+  window_completeness,
+  -- List incomplete windows
+  CONCAT(
+    IF(NOT points_l5_complete, 'L5,', ''),
+    IF(NOT points_l10_complete, 'L10,', ''),
+    IF(NOT points_l7d_complete, 'L7d,', ''),
+    IF(NOT points_l14d_complete, 'L14d,', '')
+  ) as incomplete_windows,
+  -- Count NULL rolling averages
+  COUNTIF(points_l5_avg IS NULL) + COUNTIF(points_l10_avg IS NULL) as null_count
+FROM `nba_precompute.player_daily_cache`
+WHERE game_date BETWEEN @start_date AND @end_date
+  AND (
+    NOT points_l5_complete
+    OR NOT points_l10_complete
+    OR NOT points_l7d_complete
+    OR NOT points_l14d_complete
+  )
+ORDER BY game_date DESC, quality_score ASC
+LIMIT 100;
+```
+
+**Usage**:
+```
+/validate-lineage incomplete-windows --start-date 2025-11-01 --end-date 2025-11-30
+```
+
+**Output**:
+```
+=== Incomplete Windows Report ===
+Found 47 players with incomplete windows in November 2025
+
+Player              Date        Quality  Incomplete Windows  NULL Count
+lebron_james        2025-11-10  0.70     L10,L7d            2
+stephen_curry       2025-11-10  0.65     L10,L7d,L14d       3
+kevin_durant        2025-11-15  0.75     L10                1
+
+Summary:
+  Total records affected: 47
+  Dates with issues: 3
+  Most common: L10 (40 records), L7d (25 records)
+
+Action: These records were correctly marked incomplete. NULLs prevent
+        contaminated averages. If data is now available, reprocess:
+        python scripts/backfill_phase4.py --start-date 2025-11-10 --end-date 2025-11-15
+```
+
+#### 3. Stored vs Recomputed Comparison
+
+Compare stored quality_score to freshly recomputed completeness:
+
+```python
+def validate_quality_metadata(date_range):
+    """
+    Validate that stored quality scores match current completeness.
+    Detects if data arrived late after initial processing.
+    """
+    for date in date_range:
+        # Get stored quality scores
+        stored = query_stored_quality(date)
+
+        # Recompute completeness now
+        recomputed = recompute_completeness(date)
+
+        # Compare
+        for player in stored:
+            stored_quality = stored[player]['quality_score']
+            current_completeness = recomputed[player]['completeness_pct']
+
+            if current_completeness - stored_quality > 0.1:  # 10% improvement
+                flag_late_arrival(player, date, stored_quality, current_completeness)
+```
+
+**Usage**:
+```
+/validate-lineage quality-metadata 2025-11-10
+```
+
+**Output**:
+```
+=== Quality Metadata Validation: 2025-11-10 ===
+
+Late Data Arrivals (quality improved since processing):
+Player              Stored Quality  Current Completeness  Delta
+lebron_james        0.70           0.90                  +0.20  LATE DATA
+stephen_curry       0.80           1.00                  +0.20  LATE DATA
+kevin_durant        0.75           0.85                  +0.10  MARGINAL
+
+Summary: 2 players had significant late data (>10% improvement)
+  - These records were correctly computed with partial data at the time
+  - Current completeness is higher, suggesting data arrived late
+  - Records are flagged with processing_context='cascade' or 'backfill'
+
+Recommendation: If these records need perfect data, reprocess:
+  python scripts/backfill_phase4.py --start-date 2025-11-10 --end-date 2025-11-10 --force
+```
+
+#### 4. Processing Context Analysis
+
+Analyze distribution of processing contexts:
+
+```sql
+SELECT
+  processing_context,
+  COUNT(*) as record_count,
+  AVG(quality_score) as avg_quality,
+  COUNT(DISTINCT game_date) as date_count,
+  MIN(game_date) as first_date,
+  MAX(game_date) as last_date
+FROM `nba_precompute.player_daily_cache`
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+GROUP BY processing_context
+ORDER BY processing_context;
+```
+
+**Usage**:
+```
+/validate-lineage processing-context --days 90
+```
+
+**Output**:
+```
+=== Processing Context Distribution (Last 90 Days) ===
+
+Context     Records   Avg Quality  Dates  Date Range
+daily       8,452     0.97        85     2025-10-28 to 2026-01-26
+backfill    1,234     0.82        23     2025-10-22 to 2025-11-15
+cascade     456       0.88        8      2025-11-10 to 2025-11-20
+manual      12        0.95        2      2025-12-15 to 2025-12-16
+
+Analysis:
+  ✓ Daily processing is dominant (87% of records) with high quality
+  ⚠ Backfill records have lower quality (0.82) - expected for historical data
+  ⚠ 8 dates triggered cascade reprocessing - investigate root cause
+
+Quality by Context:
+  daily:    97% avg (excellent)
+  cascade:  88% avg (acceptable, data was late)
+  backfill: 82% avg (acceptable, bootstrap period)
+```
+
+#### 5. Remediation Recommendations
+
+Generate targeted remediation based on quality metadata:
+
+**Usage**:
+```
+/validate-lineage remediate --start-date 2025-11-01 --end-date 2025-11-30
+```
+
+**Output**:
+```
+=== Remediation Recommendations: November 2025 ===
+
+Priority 1: Critical Quality Issues (quality_score < 0.7)
+───────────────────────────────────────────────────────
+Date        Records  Avg Quality  Action
+2025-11-10  45       0.68        REPROCESS REQUIRED
+2025-11-15  23       0.65        REPROCESS REQUIRED
+
+Commands:
+  python scripts/backfill_phase3.py --start-date 2025-11-10 --end-date 2025-11-15
+  python scripts/backfill_phase4.py --start-date 2025-11-10 --end-date 2025-11-15
+
+Priority 2: Incomplete Windows (quality_score 0.7-0.9)
+──────────────────────────────────────────────────────
+Date        Records  Action
+2025-11-12  18       Review - may improve with time
+2025-11-18  12       Review - may improve with time
+
+Priority 3: Monitoring (quality_score > 0.9)
+────────────────────────────────────────────
+Date        Records  Status
+2025-11-20  156      GOOD
+2025-11-25  142      GOOD
+
+Summary:
+  - 68 records need immediate reprocessing
+  - 30 records to monitor (data may arrive late)
+  - 298 records in good state
+
+Estimated Impact:
+  - Reprocessing 2 dates will fix ~68 contaminated records
+  - Downstream predictions for these players should be regenerated
+```
+
+### Enhanced Validation Modes
+
+The skill now includes quality-aware validation:
+
+**New Mode: `quality-aware`**
+```
+/validate-lineage quality-aware --start-date 2025-11-01 --end-date 2025-11-30
+```
+
+This mode:
+1. Checks stored quality_score against thresholds
+2. Validates that NULL values exist where quality_score < 0.7
+3. Ensures processing_context matches actual timing
+4. Verifies gate_status is appropriate for quality_score
+
+## Implementation Notes
+
+### Interactive Mode Implementation
+
+The interactive mode uses Claude's `AskUserQuestion` tool to create a guided workflow:
+
+```python
+# Step 1: Ask what to validate
+response = ask_user_question(
+    question="What do you want to validate?",
+    options=[
+        {"label": "Recent data (last 7 days)", "description": "Quick health check"},
+        {"label": "Specific date range", "description": "Custom validation"},
+        {"label": "After backfill operation", "description": "Verify backfill quality"},
+        {"label": "Full season audit", "description": "Comprehensive check"},
+    ]
+)
+
+validation_type = response["answer"]
+
+# Step 2: Ask which layer
+if validation_type == "After backfill operation":
+    layer_response = ask_user_question(
+        question="Which layer did you backfill?",
+        options=[
+            {"label": "Analytics (Phase 3)", "description": "Game summaries"},
+            {"label": "Precompute (Phase 4)", "description": "Rolling windows - Recommended"},
+            {"label": "Predictions (Phase 5)", "description": "Model outputs"},
+        ]
+    )
+
+# Step 3-7: Continue guided flow...
+
+# Execute validation based on collected answers
+run_validation(
+    layer=layer,
+    date_range=date_range,
+    mode=mode,
+    quality_checks=quality_checks
+)
+
+# Step 8: Offer remediation
+if issues_found:
+    action_response = ask_user_question(
+        question="What would you like to do?",
+        options=[
+            {"label": "View detailed breakdown", "description": "See per-date analysis"},
+            {"label": "Generate remediation commands", "description": "Get reprocessing scripts"},
+            {"label": "Execute fixes now", "description": "Run backfill immediately"},
+            {"label": "Save report and exit", "description": "Export results"},
+        ]
+    )
+```
+
+### Benefits of Interactive Mode
+
+1. **Guided Workflow**: Users don't need to remember all options/flags
+2. **Context-Aware**: Questions adapt based on previous answers
+3. **Validation**: Input validation at each step
+4. **Defaults**: Recommends best practices
+5. **Safe**: Asks confirmation before executing fixes
+6. **Educational**: Descriptions explain what each option does
+
+### When to Use Interactive Mode
+
+- **New users**: Don't know validation options yet
+- **Infrequent use**: Haven't memorized command syntax
+- **Complex scenarios**: Multiple decisions needed
+- **Exploratory**: Not sure what to check
+- **Safe execution**: Want guidance and confirmations
+
+### When to Use Command Mode
+
+- **Scripts/CI**: Automated validation
+- **Power users**: Know exactly what they want
+- **Speed**: No interaction needed
+- **Documentation**: Clear command shows what was run
+
 ## Related
 
 - `/validate-daily` - Daily pipeline health checks
 - `/validate-historical` - Historical data completeness
 - Project docs: `docs/08-projects/current/data-lineage-integrity/`
+- Implementation: `shared/validation/processing_gate.py`
+- Implementation: `shared/validation/window_completeness.py`
