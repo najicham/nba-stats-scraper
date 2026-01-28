@@ -1225,6 +1225,25 @@ class TeamDefenseGameSummaryProcessor(
         fallback_issues = getattr(self, '_fallback_quality_issues', [])
         source_used = getattr(self, '_source_used', None)
 
+        # FIX: Deduplicate records by (game_date, team_abbr) to handle game_id format mismatches
+        # Issue: _reconstruct_team_from_players() uses source game_id format (HOME_AWAY)
+        # while _extract_from_nbac_team_boxscore() uses standardized format (AWAY_HOME)
+        # This causes duplicate records for the same team-game combination
+        # Keep the record with more opponent_fg_attempted (indicates more complete data)
+        if 'game_date' in self.raw_data.columns and 'team_abbr' in self.raw_data.columns:
+            original_count = len(self.raw_data)
+            # Sort by opponent_fg_attempted if available, otherwise fg_attempted
+            sort_col = 'opponent_fg_attempted' if 'opponent_fg_attempted' in self.raw_data.columns else 'fg_attempted'
+            if sort_col in self.raw_data.columns:
+                self.raw_data = self.raw_data.sort_values(sort_col, ascending=False)
+            self.raw_data = self.raw_data.drop_duplicates(subset=['game_date', 'team_abbr'], keep='first')
+            deduped_count = len(self.raw_data)
+            if original_count != deduped_count:
+                logger.warning(
+                    f"⚠️ Deduplicated {original_count - deduped_count} duplicate team-game records "
+                    f"(kept records with highest {sort_col}). {deduped_count} records remaining."
+                )
+
         # ============================================================
         # Parallelization: Process teams in parallel or serial mode
         # ============================================================

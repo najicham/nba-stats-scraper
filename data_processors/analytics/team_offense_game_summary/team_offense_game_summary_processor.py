@@ -838,6 +838,22 @@ class TeamOffenseGameSummaryProcessor(
         fallback_issues = getattr(self, '_fallback_quality_issues', [])
         source_used = getattr(self, '_source_used', None)
 
+        # FIX: Deduplicate records by (game_date, team_abbr) to handle game_id format mismatches
+        # Issue: _reconstruct_team_from_players() uses source game_id format (HOME_AWAY)
+        # while _extract_from_nbac_team_boxscore() uses standardized format (AWAY_HOME)
+        # This causes duplicate records for the same team-game combination
+        # Keep the record with more fg_attempted (indicates more complete data)
+        if not self.raw_data.empty and 'game_date' in self.raw_data.columns and 'team_abbr' in self.raw_data.columns:
+            original_count = len(self.raw_data)
+            self.raw_data = self.raw_data.sort_values('fg_attempted', ascending=False)
+            self.raw_data = self.raw_data.drop_duplicates(subset=['game_date', 'team_abbr'], keep='first')
+            deduped_count = len(self.raw_data)
+            if original_count != deduped_count:
+                logger.warning(
+                    f"⚠️ Deduplicated {original_count - deduped_count} duplicate team-game records "
+                    f"(kept records with highest fg_attempted). {deduped_count} records remaining."
+                )
+
         for _, row in self.raw_data.iterrows():
             try:
                 # Parse overtime periods
