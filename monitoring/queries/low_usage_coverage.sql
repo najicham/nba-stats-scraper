@@ -26,10 +26,10 @@ game_completion AS (
     SELECT
         game_date,
         COUNT(*) as total_games,
-        COUNTIF(game_status = 'Final') as completed_games,
+        COUNTIF(game_status_text = 'Final') as completed_games,
         MIN(last_updated_utc) as earliest_final,
         MAX(last_updated_utc) as latest_final
-    FROM `nba-props-platform.nba_raw.nbacom_schedule`
+    FROM `nba-props-platform.nba_raw.nbac_schedule`
     WHERE game_date = @game_date
     GROUP BY game_date
 )

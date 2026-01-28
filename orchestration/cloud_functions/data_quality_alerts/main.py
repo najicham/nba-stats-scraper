@@ -154,8 +154,8 @@ class DataQualityMonitor:
         game_completion AS (
             SELECT
                 COUNT(*) as total_games,
-                COUNTIF(game_status = 'Final') as completed_games
-            FROM `{self.project_id}.nba_raw.nbacom_schedule`
+                COUNTIF(game_status_text = 'Final') as completed_games
+            FROM `{self.project_id}.nba_raw.nbac_schedule`
             WHERE game_date = @game_date
         )
         SELECT
