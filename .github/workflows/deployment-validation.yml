@@ -35,6 +35,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install google-cloud-bigquery google-cloud-pubsub
 
+      - name: Validate Cloud Function imports
+        run: |
+          python bin/validation/validate_cloud_function_imports.py
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+
       - name: Authenticate to Google Cloud
         uses: google-github-actions/auth@v2
         with:
