@@ -323,7 +323,7 @@ class PredictionCoverageMonitor:
                 notify_warning(
                     title=title,
                     message=message,
-                    details=details
+                    details=details,
                     processor_name=self.__class__.__name__
                 )
                 logger.info("Warning coverage alert sent via notification system")
