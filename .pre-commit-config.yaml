@@ -33,6 +33,15 @@ repos:
         files: ^(orchestration/cloud_functions/|shared/utils/).*\.py$
         verbose: true
 
+      - id: validate-schema-fields
+        name: Validate BigQuery schema alignment
+        description: Ensures worker.py writes only fields that exist in the BigQuery schema
+        entry: python .pre-commit-hooks/validate_schema_fields.py
+        language: python
+        pass_filenames: false
+        always_run: true
+        verbose: true
+
   # Standard pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0

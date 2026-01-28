@@ -27,6 +27,7 @@ from shared.utils.notification_system import (
     notify_warning,
     notify_info
 )
+from shared.utils.bigquery_batch_writer import get_batch_writer
 
 logger = logging.getLogger(__name__)
 
@@ -451,31 +452,14 @@ class RegistryProcessorBase(ProcessorBase, UpdateSourceTrackingMixin):
         # Convert types for BigQuery
         converted_record = self._convert_pandas_types_for_json(record)
         
-        # Single INSERT - no UPDATE, no streaming buffer issues
+        # Use BigQueryBatchWriter for efficient writes (bypasses load job quota)
+        # See: shared/utils/bigquery_batch_writer.py
         table_id = f"{self.project_id}.{self.run_history_table}"
 
         try:
-            # Get table reference for schema
-            table_ref = self.bq_client.get_table(table_id)
-
-            # Use batch loading instead of streaming inserts
-            # This avoids the 90-minute streaming buffer that blocks DML operations
-            # See: docs/05-development/guides/bigquery-best-practices.md
-            job_config = bigquery.LoadJobConfig(
-                schema=table_ref.schema,
-                autodetect=False,
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                ignore_unknown_values=True
-            )
-
-            load_job = self.bq_client.load_table_from_json([converted_record], table_id, job_config=job_config)
-            load_job.result(timeout=60)
-
-            if load_job.errors:
-                logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
-            else:
-                logger.info(f"✓ Recorded run completion: {self.current_run_id} - {status} ({duration_seconds:.1f}s)")
+            writer = get_batch_writer(table_id)
+            writer.add_record(converted_record)
+            logger.info(f"Recorded run completion: {self.current_run_id} - {status} ({duration_seconds:.1f}s)")
 
             # Clear run tracking
             self.current_run_id = None

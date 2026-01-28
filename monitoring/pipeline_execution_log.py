@@ -70,6 +70,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from shared.config.gcp_config import get_project_id
+from shared.utils.bigquery_batch_writer import get_batch_writer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -347,28 +348,16 @@ class PipelineExecutionLogger:
             # Remove None values
             record = {k: v for k, v in record.items() if v is not None}
 
-            # Insert using batch load (avoids streaming buffer issues)
+            # Use BigQueryBatchWriter for efficient writes (bypasses load job quota)
+            # See: shared/utils/bigquery_batch_writer.py
             table_ref = f"{self.project_id}.{EXECUTION_LOG_TABLE}"
 
             try:
-                table = self.bq_client.get_table(table_ref)
+                writer = get_batch_writer(table_ref)
+                writer.add_record(record)
 
-                job_config = bigquery.LoadJobConfig(
-                    schema=table.schema,
-                    autodetect=False,
-                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                    write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                    ignore_unknown_values=True
-                )
-
-                load_job = self.bq_client.load_table_from_json([record], table_ref, job_config=job_config)
-                load_job.result(timeout=60)
-
-                if load_job.errors:
-                    logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
-
-            except Exception as load_error:
-                logger.warning(f"Error inserting execution log: {load_error}")
+            except Exception as insert_error:
+                logger.warning(f"Error inserting execution log: {insert_error}")
 
         except Exception as e:
             # Don't fail the pipeline if logging fails
