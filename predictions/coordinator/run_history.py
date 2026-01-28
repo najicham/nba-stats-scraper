@@ -294,22 +294,16 @@ class CoordinatorRunHistory:
                 logger.debug(f"Could not get table schema (using record as-is): {e}")
                 filtered_record = {k: v for k, v in record.items() if v is not None}
 
-            # Use batch loading instead of streaming inserts
-            # This avoids the 90-minute streaming buffer that blocks DML operations
-            # See: docs/05-development/guides/bigquery-best-practices.md
-            job_config = bigquery.LoadJobConfig(
-                schema=table_ref.schema,
-                autodetect=False,
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                ignore_unknown_values=True
-            )
+            # Use streaming inserts to bypass load job quota limits
+            # load_table_from_json has a limit of ~1500 jobs/table/day which can be hit
+            # under high retry scenarios. Streaming inserts have no such limit.
+            # The 90-minute DML delay is acceptable for run history since we don't
+            # typically run DML operations on this table.
+            # Updated 2026-01-28: Fixed quota issue from high retry frequency
+            errors = self.bq_client.insert_rows_json(table_id, [filtered_record])
 
-            load_job = self.bq_client.load_table_from_json([filtered_record], table_id, job_config=job_config)
-            load_job.result(timeout=60)
-
-            if load_job.errors:
-                logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
+            if errors:
+                logger.warning(f"BigQuery streaming insert had errors: {errors[:3]}")
             else:
                 logger.debug(f"Inserted run history: {record.get('run_id')} - {record.get('status')}")
 

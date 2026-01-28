@@ -90,9 +90,14 @@ class MetricsClient:
             series.resource.type = 'global'
             series.resource.labels['project_id'] = self.project_id
 
-            # Create data point
-            point = monitoring.Point()
-            point.interval.end_time.seconds = int(time.time())
+            # Create data point with properly initialized interval
+            now = int(time.time())
+            interval = monitoring.TimeInterval(
+                end_time={"seconds": now}
+            )
+            point = monitoring.Point(
+                interval=interval
+            )
 
             if metric_type == "GAUGE":
                 point.value.double_value = float(value)

@@ -68,12 +68,14 @@ from shared.validation.historical_completeness import (
 logger = logging.getLogger(__name__)
 
 # Feature version and names
+# v2_34features: Added shot zone data availability indicator (Jan 28, 2026)
 # v2_33features: Added 8 new features for V8 CatBoost model (Jan 2026)
 # - Vegas lines (4): betting context for value detection
 # - Opponent history (2): player performance vs specific opponent
 # - Minutes/efficiency (2): playing time and scoring rate trends
-FEATURE_VERSION = 'v2_33features'
-FEATURE_COUNT = 33
+# - Shot zone availability (1): indicator for missing shot zone data
+FEATURE_VERSION = 'v2_34features'
+FEATURE_COUNT = 34
 
 FEATURE_NAMES = [
     # Recent Performance (0-4)
@@ -102,7 +104,11 @@ FEATURE_NAMES = [
     'avg_points_vs_opponent', 'games_vs_opponent',
 
     # NEW: Minutes/Efficiency (31-32) - V8 Model Features (14.6% + 10.9% importance)
-    'minutes_avg_last_10', 'ppm_avg_last_10'
+    'minutes_avg_last_10', 'ppm_avg_last_10',
+
+    # Shot Zone Availability (33) - Added 2026-01-25
+    # 1.0 = all shot zone data available, 0.0 = some/all missing
+    'has_shot_zone_data'
 ]
 
 
@@ -114,7 +120,7 @@ class MLFeatureStoreProcessor(
     PrecomputeProcessorBase
 ):
     """
-    Generate and cache 33 ML features for all active NBA players.
+    Generate and cache 34 ML features for all active NBA players.
 
     This is a Phase 4 processor that:
     1. Checks Phase 4 dependencies (hard requirements)
