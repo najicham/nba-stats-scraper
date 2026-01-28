@@ -13,6 +13,8 @@ import os
 import json
 import hashlib
 import uuid
+import threading
+import atexit
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
 from google.cloud import storage
@@ -20,6 +22,13 @@ from google.cloud import bigquery
 import logging
 
 logger = logging.getLogger(__name__)
+
+# Buffer configuration for BigQuery writes
+BUFFER_FLUSH_THRESHOLD = 20  # Flush when buffer reaches this size
+
+# Global buffer for audit log entries (thread-safe)
+_audit_buffer: List[Dict] = []
+_audit_buffer_lock = threading.Lock()
 
 
 class EnvVarMonitor:
@@ -52,6 +61,73 @@ class EnvVarMonitor:
         from shared.clients import get_storage_client, get_bigquery_client
         self.storage_client = get_storage_client(project_id)
         self.bigquery_client = get_bigquery_client(project_id)
+
+        # Register cleanup handler to flush buffer on exit
+        atexit.register(self._flush_on_exit)
+
+    def _flush_on_exit(self):
+        """Flush any remaining buffered entries on process exit."""
+        try:
+            self.flush_buffer()
+        except Exception as e:
+            logger.error(f"Error flushing audit buffer on exit: {e}")
+
+    def flush_buffer(self) -> int:
+        """
+        Flush all buffered audit log entries to BigQuery.
+
+        Returns:
+            Number of entries flushed
+        """
+        global _audit_buffer
+
+        with _audit_buffer_lock:
+            if not _audit_buffer:
+                return 0
+            entries_to_flush = _audit_buffer.copy()
+            _audit_buffer = []
+
+        if not entries_to_flush:
+            return 0
+
+        try:
+            table_id = f"{self.project_id}.nba_orchestration.env_var_audit"
+            errors = self.bigquery_client.insert_rows_json(table_id, entries_to_flush)
+
+            if errors:
+                logger.error(f"Failed to flush audit buffer to BigQuery: {errors}")
+                # Re-add entries to buffer on failure (best effort)
+                with _audit_buffer_lock:
+                    _audit_buffer = entries_to_flush + _audit_buffer
+                return 0
+            else:
+                logger.info(f"Flushed {len(entries_to_flush)} audit entries to BigQuery")
+                return len(entries_to_flush)
+
+        except Exception as e:
+            logger.error(f"Error flushing audit buffer: {e}", exc_info=True)
+            # Re-add entries to buffer on failure (best effort)
+            with _audit_buffer_lock:
+                _audit_buffer = entries_to_flush + _audit_buffer
+            return 0
+
+    def _add_to_buffer(self, row: Dict) -> None:
+        """
+        Add an audit log entry to the buffer and flush if threshold reached.
+
+        Args:
+            row: The audit log entry dictionary
+        """
+        global _audit_buffer
+
+        with _audit_buffer_lock:
+            _audit_buffer.append(row)
+            buffer_size = len(_audit_buffer)
+
+        # Flush if we've reached the threshold
+        if buffer_size >= BUFFER_FLUSH_THRESHOLD:
+            logger.debug(f"Audit buffer reached threshold ({buffer_size}), flushing...")
+            self.flush_buffer()
 
     def get_current_env_vars(self) -> Dict[str, Optional[str]]:
         """
@@ -251,13 +327,11 @@ class EnvVarMonitor:
                 "alert_reason": alert_reason
             }
 
-            # Insert row
-            errors = self.bigquery_client.insert_rows_json(table_id, [row])
-
-            if errors:
-                logger.error(f"❌ Failed to log to BigQuery: {errors}", exc_info=True)
-            else:
-                logger.info(f"✓ Logged change to BigQuery audit table: {change_type}")
+            # Add to buffer instead of writing directly
+            # This avoids BigQuery partition modification quota limits
+            # Buffer will auto-flush when it reaches BUFFER_FLUSH_THRESHOLD
+            self._add_to_buffer(row)
+            logger.info(f"Buffered change to BigQuery audit table: {change_type}")
 
         except Exception as e:
             # Don't fail the whole check if BigQuery logging fails
