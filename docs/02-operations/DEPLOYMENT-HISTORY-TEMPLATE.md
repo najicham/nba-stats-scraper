@@ -63,6 +63,58 @@ Track all production deployments here for audit and troubleshooting purposes.
 
 ## Deployment History
 
+### 2026-01-27 16:11 - nba-phase3-analytics-processors
+
+**Deployed By:** Claude Sonnet 4.5 / nchammas@gmail.com
+**Commit SHA:** 075fab1e
+**Branch:** main
+**Environment:** prod
+
+**Reason for Deployment:**
+- Deploy 3 critical analytics fixes that were committed but not yet deployed
+- Fix: Re-trigger upcoming_player_game_context when betting lines arrive (3d77ecaa)
+- Fix: Add team stats availability check to prevent NULL usage_rate (3c1b8fdb)
+- Fix: Prevent duplicate records via streaming buffer handling and pre-save dedup (217c5541)
+
+**Files Changed:**
+- Multiple analytics processor files related to the 3 fixes above
+- Changes span upstream_player_game_context, team stats validation, and duplicate prevention
+
+**Pre-Deployment Checks:**
+- [x] Tests passing locally
+- [x] Code reviewed
+- [x] Backup plan documented (rollback procedure available)
+- [x] Stakeholders notified (via deployment runbook)
+
+**Deployment Method:**
+- [x] Manual gcloud commands (following DEPLOYMENT.md runbook)
+
+**Deployment Duration:** ~11 minutes
+
+**Post-Deployment Verification:**
+- [x] Service status healthy (green checkmark)
+- [x] Health endpoint returns 200 OK: {"service":"analytics-processor","status":"healthy"}
+- [x] Logs reviewed (expected scraper trigger errors present, no deployment errors)
+- [x] New revision deployed: nba-phase3-analytics-processors-00125-42w
+- [x] Commit SHA verified: 075fab1e
+- [x] Environment variables set correctly
+
+**Issues Encountered:**
+- None - deployment completed successfully
+- Expected errors in logs related to missing nba-scraper-trigger resource (pre-existing issue)
+
+**Rollback Required:** No
+
+**Notes:**
+- Previous revision: nba-phase3-analytics-processors-00124-hfl
+- New revision: nba-phase3-analytics-processors-00125-42w
+- All 3 pending fixes from notes in previous deployment are now deployed
+- Service configuration: 8Gi memory, 4 CPU, 3600s timeout, concurrency=1
+- Deployment used source deploy method with Artifact Registry
+- This deployment includes all commits up to 075fab1e including the 3 specific fixes
+
+---
+
 ### 2026-01-27 22:39 - nba-phase3-analytics-processors
 
 **Deployed By:** nchammas@gmail.com
