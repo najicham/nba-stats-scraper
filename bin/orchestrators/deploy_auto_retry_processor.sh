@@ -139,6 +139,30 @@ gcloud functions describe $FUNCTION_NAME \
     --format="table(name,state,updateTime)"
 
 echo ""
+
+# Post-deployment health check
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}Running Post-Deployment Health Check...${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo ""
+
+if python bin/validation/post_deployment_health_check.py "$FUNCTION_NAME" --region "$REGION" --project "$PROJECT_ID" --timeout 60; then
+    echo ""
+    echo -e "${GREEN}✓ Post-deployment health check PASSED${NC}"
+else
+    HEALTH_EXIT_CODE=$?
+    echo ""
+    if [ $HEALTH_EXIT_CODE -eq 1 ]; then
+        echo -e "${RED}✗ Post-deployment health check FAILED - Function may not have started correctly${NC}"
+        echo -e "${YELLOW}Check logs: gcloud functions logs read $FUNCTION_NAME --region $REGION --limit 50${NC}"
+        exit 1
+    else
+        echo -e "${YELLOW}⚠ Post-deployment health check returned unknown status${NC}"
+        echo -e "${YELLOW}Manually verify: gcloud functions describe $FUNCTION_NAME --region $REGION --gen2${NC}"
+    fi
+fi
+
+echo ""
 echo -e "${YELLOW}Next Steps:${NC}"
 echo "1. View logs:"
 echo "   ${BLUE}gcloud functions logs read $FUNCTION_NAME --region $REGION --limit 50${NC}"

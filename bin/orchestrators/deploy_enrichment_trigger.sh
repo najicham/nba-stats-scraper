@@ -100,6 +100,23 @@ fi
 
 echo -e "${GREEN}Cloud Scheduler job configured!${NC}"
 
+# Post-deployment health check
+echo -e "\n${YELLOW}Running Post-Deployment Health Check...${NC}"
+
+if python bin/validation/post_deployment_health_check.py "$FUNCTION_NAME" --region "$REGION" --project "$PROJECT_ID" --timeout 60; then
+    echo -e "${GREEN}Post-deployment health check PASSED${NC}"
+else
+    HEALTH_EXIT_CODE=$?
+    if [ $HEALTH_EXIT_CODE -eq 1 ]; then
+        echo -e "${RED}Post-deployment health check FAILED - Function may not have started correctly${NC}"
+        echo -e "${YELLOW}Check logs: gcloud functions logs read $FUNCTION_NAME --region $REGION --limit 50${NC}"
+        exit 1
+    else
+        echo -e "${YELLOW}Post-deployment health check returned unknown status${NC}"
+        echo -e "${YELLOW}Manually verify: gcloud functions describe $FUNCTION_NAME --region $REGION --gen2${NC}"
+    fi
+fi
+
 # Summary
 echo -e "\n${GREEN}========================================${NC}"
 echo -e "${GREEN}Deployment Complete!${NC}"
