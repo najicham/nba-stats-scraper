@@ -42,12 +42,12 @@ from typing import Dict, List, Optional, Set, Tuple
 
 from google.cloud import firestore, pubsub_v1, bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
-from orchestration.shared.utils.phase_execution_logger import log_phase_execution
+from shared.utils.phase_execution_logger import log_phase_execution
 import functions_framework
 
 # Completion tracker for dual-write to Firestore and BigQuery
 try:
-    from orchestration.shared.utils.completion_tracker import get_completion_tracker
+    from shared.utils.completion_tracker import get_completion_tracker
     COMPLETION_TRACKER_ENABLED = True
 except ImportError:
     COMPLETION_TRACKER_ENABLED = False
@@ -263,7 +263,7 @@ def send_timeout_alert(game_date: str, completed_count: int, expected_count: int
             }]
         }
 
-        from orchestration.shared.utils.slack_retry import send_slack_webhook_with_retry
+        from shared.utils.slack_retry import send_slack_webhook_with_retry
         success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
         if success:
             logger.info(f"Timeout alert sent successfully for {game_date}")
@@ -413,7 +413,7 @@ def send_execution_timeout_alert(game_date: str, elapsed_minutes: float,
             }]
         }
 
-        from orchestration.shared.utils.slack_retry import send_slack_webhook_with_retry
+        from shared.utils.slack_retry import send_slack_webhook_with_retry
         success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
         if success:
             logger.info(f"Execution timeout alert sent successfully for {game_date}")
@@ -722,7 +722,7 @@ def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_c
                 }]
             }
 
-        from orchestration.shared.utils.slack_retry import send_slack_webhook_with_retry
+        from shared.utils.slack_retry import send_slack_webhook_with_retry
         success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
         if success:
             logger.info(f"Data freshness alert sent successfully for {game_date}")
