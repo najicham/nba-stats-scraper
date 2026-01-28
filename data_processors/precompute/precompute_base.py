@@ -33,6 +33,9 @@ from shared.utils.retry_with_jitter import retry_with_jitter
 # Import BigQuery connection pooling
 from shared.clients.bigquery_pool import get_bigquery_client
 
+# Import BigQuery batch writer for quota-efficient writes
+from shared.utils.bigquery_batch_writer import get_batch_writer
+
 # Import notification system
 from shared.utils.notification_system import (
     notify_error,
@@ -991,27 +994,13 @@ class PrecomputeProcessorBase(
                 'created_at': datetime.now(timezone.utc).isoformat()
             }
 
-            # Get table reference for schema
-            table_ref = self.bq_client.get_table(table_id)
-
-            # Use batch loading instead of streaming inserts
-            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # Use BigQueryBatchWriter for quota-efficient writes
+            # This uses streaming inserts to bypass load job quota limits
             # See docs/05-development/guides/bigquery-best-practices.md
-            job_config = bigquery.LoadJobConfig(
-                schema=table_ref.schema,
-                autodetect=False,
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                ignore_unknown_values=True
-            )
+            writer = get_batch_writer(table_id)
+            writer.add_record(failure_record)
 
-            load_job = self.bq_client.load_table_from_json([failure_record], table_id, job_config=job_config)
-            load_job.result(timeout=60)
-
-            if load_job.errors:
-                logger.warning(f"Error recording date-level failure: {load_job.errors}")
-            else:
-                logger.info(f"Recorded date-level failure: {category} - {reason[:50]}...")
+            logger.info(f"Recorded date-level failure: {category} - {reason[:50]}...")
 
         except GoogleAPIError as e:
             logger.warning(f"Failed to record date-level failure: {e}")

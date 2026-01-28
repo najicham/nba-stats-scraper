@@ -40,6 +40,7 @@ from shared.utils.notification_system import (
     notify_info
 )
 from shared.monitoring.processor_heartbeat import ProcessorHeartbeat
+from shared.utils.bigquery_batch_writer import get_batch_writer
 
 # Support both module execution and direct execution
 try:
@@ -628,44 +629,16 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
                 'created_at': datetime.now().isoformat()
             }
             
-            # Log to BigQuery
+            # Log to BigQuery using batch writer for quota efficiency
             table_id = f"{self.project_id}.nba_processing.resolution_performance"
 
-            # Get table reference for schema
-            table_ref = self.bq_client.get_table(table_id)
-
-            # Use batch loading instead of streaming inserts
-            # This avoids the 90-minute streaming buffer that blocks DML operations
+            # Use BigQueryBatchWriter for quota-efficient writes
+            # This uses streaming inserts to bypass load job quota limits
             # See: docs/05-development/guides/bigquery-best-practices.md
-            job_config = bigquery.LoadJobConfig(
-                schema=table_ref.schema,
-                autodetect=False,
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                ignore_unknown_values=True
-            )
+            writer = get_batch_writer(table_id)
+            writer.add_record(performance_summary)
 
-            load_job = self.bq_client.load_table_from_json([performance_summary], table_id, job_config=job_config)
-            load_job.result(timeout=60)
-
-            if load_job.errors:
-                logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
-
-                # Notify about performance logging failure
-                try:
-                    notify_error(
-                        title="Performance Summary Insert Failed",
-                        message=f"Failed to log performance summary to BigQuery",
-                        details={
-                            'processing_run_id': self.processing_run_id,
-                            'errors': str(load_job.errors[:3])
-                        },
-                        processor_name="NBA.com Gamebook Processor"
-                    )
-                except Exception as notify_ex:
-                    logger.warning(f"Failed to send notification: {notify_ex}")
-            else:
-                logger.info(f"Logged performance summary for run {self.processing_run_id}")
+            logger.info(f"Logged performance summary for run {self.processing_run_id}")
                 logger.info(f"Total players processed: {performance_summary['total_players_processed']}")
                 logger.info(f"Active: {resolution_stats['active_total']}, Inactive: {resolution_stats['inactive_total']}, DNP: {resolution_stats['dnp_total']}")
                 logger.info(f"Inactive resolution rate: {resolution_rate:.2%} ({inactive_resolved}/{inactive_needing_resolution})")

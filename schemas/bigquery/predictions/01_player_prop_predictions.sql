@@ -212,6 +212,26 @@ ADD COLUMN IF NOT EXISTS invalidation_reason STRING
 ADD COLUMN IF NOT EXISTS invalidated_at TIMESTAMP
   OPTIONS (description='When prediction was invalidated');
 
+-- v4.0: Add teammate impact and model metadata fields (Session 4 fix)
+-- These fields exist in BigQuery (added at runtime) but were missing from schema SQL
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS feature_importance JSON
+  OPTIONS (description='Feature importance scores from ML model'),
+ADD COLUMN IF NOT EXISTS filter_reason STRING
+  OPTIONS (description='Reason prediction was filtered out if applicable'),
+ADD COLUMN IF NOT EXISTS is_actionable BOOLEAN
+  OPTIONS (description='TRUE if prediction meets actionability thresholds'),
+ADD COLUMN IF NOT EXISTS line_minutes_before_game INT64
+  OPTIONS (description='Minutes before game when line was captured'),
+ADD COLUMN IF NOT EXISTS model_version STRING
+  OPTIONS (description='Version of the ML model used for prediction'),
+ADD COLUMN IF NOT EXISTS teammate_opportunity_score FLOAT64
+  OPTIONS (description='Score indicating opportunity from teammate absences'),
+ADD COLUMN IF NOT EXISTS teammate_out_starters STRING
+  OPTIONS (description='Comma-separated list of starters who are out'),
+ADD COLUMN IF NOT EXISTS teammate_usage_boost FLOAT64
+  OPTIONS (description='Expected usage boost from teammate absences');
+
 -- ============================================================================
 -- VERSION HISTORY
 -- ============================================================================
@@ -231,7 +251,11 @@ ADD COLUMN IF NOT EXISTS invalidated_at TIMESTAMP
 -- v3.5 (+invalidation): Added invalidation_reason, invalidated_at
 --                       Tracks predictions invalidated due to postponed/cancelled games
 --                       Ensures invalidated predictions are excluded from grading
+-- v4.0 (+teammate):     Added feature_importance, filter_reason, is_actionable,
+--                       line_minutes_before_game, model_version, teammate_opportunity_score,
+--                       teammate_out_starters, teammate_usage_boost
+--                       These fields existed in BigQuery (runtime) but were missing from SQL
 --
--- Last Updated: January 2026
+-- Last Updated: January 28, 2026
 -- Status: Production Ready
 -- ============================================================================

@@ -34,6 +34,9 @@ import time
 # Notification system integration
 from shared.utils.notification_system import notify_warning, notify_info, notify_error
 
+# BigQuery batch writer for quota-efficient writes
+from shared.utils.bigquery_batch_writer import get_batch_writer
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -1270,24 +1273,12 @@ class BaseValidator:
             else:
                 logger.info(f"✅ Saved {len(result_rows)} validation results to BigQuery")
 
-            # Insert run metadata using batch loading
-            runs_table_ref = self.bq_client.get_table(runs_table_id)
+            # Insert run metadata using batch writer for quota efficiency
+            # This uses streaming inserts to bypass load job quota limits
+            writer = get_batch_writer(runs_table_id)
+            writer.add_record(run_row)
 
-            job_config_runs = bigquery.LoadJobConfig(
-                schema=runs_table_ref.schema,
-                autodetect=False,
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                ignore_unknown_values=True
-            )
-
-            load_job_runs = self.bq_client.load_table_from_json([run_row], runs_table_id, job_config=job_config_runs)
-            load_job_runs.result()
-
-            if load_job_runs.errors:
-                logger.warning(f"BigQuery load had errors: {load_job_runs.errors[:3]}")
-            else:
-                logger.info(f"✅ Saved validation run metadata to BigQuery")
+            logger.info(f"✅ Saved validation run metadata to BigQuery")
                 
         except Exception as e:
             logger.error(f"Failed to save results to BigQuery: {e}")
