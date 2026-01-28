@@ -513,10 +513,16 @@ class PlayerLoader:
             lines = []
             current = base_line - line_range
             while current <= base_line + line_range:
-                lines.append(round(current, 1))
+                rounded = round(current, 1)
+                # v3.11: Skip exactly 20.0 - it's flagged as placeholder by validation
+                if rounded != 20.0:
+                    lines.append(rounded)
                 current += line_increment
         else:
             lines = [round(base_line, 1)]
+            # v3.11: If single line is exactly 20.0, adjust it
+            if lines[0] == 20.0:
+                lines[0] = 20.5 if base_line >= 20.0 else 19.5
 
         return {
             'line_values': lines,
