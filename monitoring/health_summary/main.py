@@ -50,8 +50,9 @@ PHASE_CONFIG = {
     },
     'Phase 3 (Analytics)': {
         'phase_filter': """(
-            processor_name LIKE '%GameSummaryProcessor'
-            OR processor_name LIKE '%GameContextProcessor'
+            (processor_name LIKE '%GameSummaryProcessor'
+             OR processor_name LIKE '%GameContextProcessor')
+            AND processor_name NOT LIKE 'Async%'
         )""",
         'expected_count': 5
     },

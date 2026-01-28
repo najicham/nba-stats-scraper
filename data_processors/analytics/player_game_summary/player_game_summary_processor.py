@@ -685,7 +685,8 @@ class PlayerGameSummaryProcessor(
 
         -- Team stats for usage_rate calculation
         -- Note: game_id format may differ (Away_Home vs Home_Away), so we add reversed format for matching
-        team_stats AS (
+        -- IMPORTANT: Use ROW_NUMBER to prefer gold > silver quality when duplicates exist with different game_ids
+        team_stats_raw AS (
             SELECT
                 game_id,
                 -- Also compute reversed game_id for matching (handles format mismatch)
@@ -702,9 +703,31 @@ class PlayerGameSummaryProcessor(
                 fg_attempts as team_fg_attempts,
                 ft_attempts as team_ft_attempts,
                 turnovers as team_turnovers,
-                possessions as team_possessions
+                possessions as team_possessions,
+                quality_tier,
+                -- Rank by quality tier (gold > silver > bronze) to pick best when duplicates exist
+                ROW_NUMBER() OVER (
+                    PARTITION BY
+                        game_date,
+                        -- Normalize game_id by sorting team abbrs alphabetically
+                        CASE
+                            WHEN SPLIT(game_id, '_')[SAFE_OFFSET(1)] < SPLIT(game_id, '_')[SAFE_OFFSET(2)]
+                            THEN CONCAT(SUBSTR(game_id, 1, 9), SPLIT(game_id, '_')[SAFE_OFFSET(1)], '_', SPLIT(game_id, '_')[SAFE_OFFSET(2)])
+                            ELSE CONCAT(SUBSTR(game_id, 1, 9), SPLIT(game_id, '_')[SAFE_OFFSET(2)], '_', SPLIT(game_id, '_')[SAFE_OFFSET(1)])
+                        END,
+                        team_abbr
+                    ORDER BY
+                        CASE quality_tier WHEN 'gold' THEN 1 WHEN 'silver' THEN 2 WHEN 'bronze' THEN 3 ELSE 4 END,
+                        possessions DESC  -- Prefer higher possession count (more complete data)
+                ) as quality_rank
             FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
             WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+        ),
+        -- Only keep the best quality record for each game+team combination
+        team_stats AS (
+            SELECT game_id, game_id_reversed, team_abbr, team_fg_attempts, team_ft_attempts, team_turnovers, team_possessions
+            FROM team_stats_raw
+            WHERE quality_rank = 1
         )
 
         SELECT
@@ -1365,6 +1388,14 @@ class PlayerGameSummaryProcessor(
                 # Approximation: Tm Min ≈ 240 (48 min × 5 players)
                 if team_poss_used > 0:
                     usage_rate = 100.0 * player_poss_used * 48.0 / (minutes_decimal * team_poss_used)
+                    # Sanity check: usage_rate > 100% indicates data quality issue (e.g., incomplete team stats)
+                    # Log warning but don't reject - set to None so downstream can handle gracefully
+                    if usage_rate > 100.0:
+                        logger.warning(
+                            f"Impossible usage_rate {usage_rate:.1f}% for {player_lookup} in {row['game_id']} - "
+                            f"likely incomplete team stats (team_poss={team_poss_used:.1f}, player_poss={player_poss_used:.1f})"
+                        )
+                        usage_rate = None  # Set to None rather than store invalid value
 
             # Build record with source tracking
             record = {
@@ -1918,6 +1949,13 @@ class PlayerGameSummaryProcessor(
                     # Approximation: Tm Min ≈ 240 (48 min × 5 players)
                     if team_poss_used > 0:
                         usage_rate = 100.0 * player_poss_used * 48.0 / (minutes_decimal * team_poss_used)
+                        # Sanity check: usage_rate > 100% indicates data quality issue
+                        if usage_rate > 100.0:
+                            logger.warning(
+                                f"Impossible usage_rate {usage_rate:.1f}% for {player_lookup} in {row['game_id']} - "
+                                f"likely incomplete team stats (team_poss={team_poss_used:.1f})"
+                            )
+                            usage_rate = None
 
                 # Build record with source tracking
                 record = {
