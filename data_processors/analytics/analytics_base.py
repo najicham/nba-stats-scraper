@@ -418,10 +418,12 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
 
                 # Structured logging for processor start with dependency status (added 2026-01-27)
                 # Enables diagnosis of "why did X run before Y?" by showing when deps became available
+                # Get analysis_date for logging (use end_date as primary, fall back to start_date)
+                analysis_date = self.opts.get('end_date') or self.opts.get('start_date')
                 logger.info("processor_started", extra={
                     "event": "processor_started",
                     "processor": self.processor_name,
-                    "game_date": str(analysis_date),
+                    "game_date": str(analysis_date) if analysis_date else None,
                     "start_time": datetime.now(timezone.utc).isoformat(),
                     "dependencies_status": {
                         dep_table: {
