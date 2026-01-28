@@ -106,36 +106,135 @@ def check_shared_modules(cf_dir: Path) -> list[dict]:
                 # Check if it's a from . import
                 pass  # These are harder to validate without running
 
-    # Check specific known problematic imports
+    # Dynamically extract ALL imports from shared/utils/__init__.py
+    # This catches any module imported at load time or via lazy loading
     utils_init = cf_shared / "utils" / "__init__.py"
     if utils_init.exists():
-        with open(utils_init) as f:
-            content = f.read()
+        try:
+            with open(utils_init) as f:
+                tree = ast.parse(f.read())
 
-        # Check for imports that might fail
-        problematic_imports = [
-            ("rate_limiter", "shared/utils/rate_limiter.py"),
-            ("prometheus_metrics", "shared/utils/prometheus_metrics.py"),
-            ("roster_manager", "shared/utils/roster_manager.py"),
-            ("completion_tracker", "shared/utils/completion_tracker.py"),
-            ("proxy_manager", "shared/utils/proxy_manager.py"),
-        ]
+            # Extract all relative imports (from .module import ...)
+            required_modules = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    # Check for relative imports like "from .bigquery_client import ..."
+                    if node.level == 1 and node.module:  # level=1 means "from ."
+                        required_modules.add(node.module)
+                    # Also check for "from . import X" style imports
+                    elif node.level == 1 and node.module is None:
+                        for alias in node.names:
+                            required_modules.add(alias.name)
 
-        for module_name, expected_path in problematic_imports:
-            if f"from .{module_name}" in content or f"import {module_name}" in content:
+            # Also check __getattr__ lazy loading for modules that are loaded on access
+            with open(utils_init) as f:
+                content = f.read()
+
+            # Look for lazy import patterns like: from .rate_limiter import ...
+            import re
+            lazy_patterns = re.findall(r"from\s+\.(\w+)\s+import", content)
+            required_modules.update(lazy_patterns)
+
+            # Check each required module exists
+            for module_name in required_modules:
                 module_file = cf_shared / "utils" / f"{module_name}.py"
-                if not module_file.exists():
+                module_dir = cf_shared / "utils" / module_name
+
+                if not module_file.exists() and not module_dir.exists():
                     issues.append({
                         "type": "MISSING_MODULE",
                         "path": f"shared/utils/{module_name}.py",
                         "message": f"Module imported in __init__.py but file missing",
-                        "fix": f"cp shared/utils/{module_name}.py {cf_dir}/shared/utils/"
+                        "fix": f"ln -sf ../../../../../shared/utils/{module_name}.py {cf_dir}/shared/utils/{module_name}.py"
                     })
+        except SyntaxError as e:
+            issues.append({
+                "type": "SYNTAX_ERROR",
+                "path": "shared/utils/__init__.py",
+                "message": f"Could not parse __init__.py: {e}"
+            })
 
     return issues
 
 
-def validate_cloud_function(cf_name: str, cf_dir: Path) -> bool:
+def test_actual_import(cf_dir: Path) -> list[dict]:
+    """
+    Actually try to import the shared.utils module to catch any missing dependencies.
+
+    This is the most reliable check - if Python can import it, it will work in production.
+    """
+    import subprocess
+    import tempfile
+
+    issues = []
+
+    # Create a test script that imports shared.utils
+    test_code = '''
+import sys
+sys.path.insert(0, "{cf_dir}")
+try:
+    # This will trigger __init__.py which imports all modules
+    import shared.utils
+    print("SUCCESS: shared.utils imported successfully")
+    sys.exit(0)
+except ModuleNotFoundError as e:
+    print(f"IMPORT_ERROR: {{e}}")
+    sys.exit(1)
+except Exception as e:
+    print(f"OTHER_ERROR: {{e}}")
+    sys.exit(2)
+'''.format(cf_dir=cf_dir)
+
+    # Run in subprocess to isolate from current Python environment
+    try:
+        result = subprocess.run(
+            [sys.executable, "-c", test_code],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=str(cf_dir)
+        )
+
+        if result.returncode != 0:
+            error_output = result.stdout + result.stderr
+            if "IMPORT_ERROR:" in error_output:
+                # Extract the module that failed
+                for line in error_output.split('\n'):
+                    if "IMPORT_ERROR:" in line:
+                        issues.append({
+                            "type": "IMPORT_FAILURE",
+                            "path": "shared/utils",
+                            "message": line.replace("IMPORT_ERROR: ", "")
+                        })
+            elif "OTHER_ERROR:" in error_output:
+                issues.append({
+                    "type": "IMPORT_ERROR",
+                    "path": "shared/utils",
+                    "message": error_output.strip()
+                })
+            else:
+                issues.append({
+                    "type": "IMPORT_ERROR",
+                    "path": "shared/utils",
+                    "message": f"Import failed: {error_output.strip()}"
+                })
+    except subprocess.TimeoutExpired:
+        issues.append({
+            "type": "TIMEOUT",
+            "path": "shared/utils",
+            "message": "Import test timed out after 30 seconds"
+        })
+    except Exception as e:
+        issues.append({
+            "type": "TEST_ERROR",
+            "path": "shared/utils",
+            "message": f"Could not run import test: {e}"
+        })
+
+    return issues
+
+
+def validate_cloud_function(cf_name: str, cf_dir: Path, run_import_test: bool = True) -> bool:
     """Validate a single Cloud Function."""
     print(f"\nValidating: {cf_name}")
     print("-" * 40)
@@ -144,7 +243,14 @@ def validate_cloud_function(cf_name: str, cf_dir: Path) -> bool:
         print(f"  ERROR: Directory not found: {cf_dir}")
         return False
 
+    # Static analysis check
     issues = check_shared_modules(cf_dir)
+
+    # Runtime import test (most reliable)
+    if run_import_test and not issues:
+        print("  Running import test...")
+        import_issues = test_actual_import(cf_dir)
+        issues.extend(import_issues)
 
     if issues:
         print(f"  FAILED - {len(issues)} issues found:")
