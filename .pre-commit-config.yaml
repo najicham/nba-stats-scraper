@@ -24,6 +24,15 @@ repos:
         always_run: true
         verbose: true
 
+      - id: validate-cloud-function-imports
+        name: Validate Cloud Function imports
+        description: Ensures Cloud Functions have all required shared modules before deployment
+        entry: python bin/validation/validate_cloud_function_imports.py
+        language: python
+        pass_filenames: false
+        files: ^(orchestration/cloud_functions/|shared/utils/).*\.py$
+        verbose: true
+
   # Standard pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
