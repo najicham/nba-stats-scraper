@@ -92,6 +92,12 @@ def process():
         analysis_date = message.get('analysis_date') or message.get('game_date')
         success = message.get('success', True)
 
+        # Extract orchestration metadata for lineage tracking
+        trigger_source = message.get('trigger_source', 'pubsub')
+        correlation_id = message.get('correlation_id')
+        triggered_by = message.get('triggered_by')
+        trigger_message_id = pubsub_message.get('messageId')
+
         if not success:
             logger.info(f"Phase 3 processing failed for {source_table}, skipping precompute")
             return jsonify({"status": "skipped", "reason": "Phase 3 processing failed"}), 200
@@ -124,7 +130,10 @@ def process():
                 opts = {
                     'analysis_date': analysis_date_obj,
                     'project_id': get_project_id(),
-                    'triggered_by': source_table
+                    'trigger_source': trigger_source,
+                    'correlation_id': correlation_id,
+                    'triggered_by': triggered_by or source_table,
+                    'trigger_message_id': trigger_message_id,
                 }
 
                 success = processor.run(opts)
@@ -259,10 +268,15 @@ def process_date():
                 logger.info(f"Running {processor_class.__name__} for {analysis_date}")
 
                 processor = processor_class()
+                # Extract trigger_source from request if provided (e.g., from orchestrator)
+                trigger_source = data.get('trigger_source', 'manual')
+                correlation_id = data.get('correlation_id')
                 opts = {
                     'analysis_date': analysis_date,
                     'project_id': get_project_id(),
-                    'triggered_by': 'manual',
+                    'trigger_source': trigger_source,
+                    'correlation_id': correlation_id,
+                    'triggered_by': data.get('triggered_by', 'manual'),
                     'backfill_mode': backfill_mode,
                     'strict_mode': strict_mode,
                     'skip_dependency_check': skip_dependency_check,

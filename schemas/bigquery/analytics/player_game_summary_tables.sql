@@ -172,7 +172,40 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.player_game_summary
   primary_source_used STRING,                       -- Primary data source: 'nbac_gamebook', 'bdl_boxscores', 'nbac_bdl_combined'
   processed_with_issues BOOLEAN,                    -- Quality issues flag
   shot_zones_estimated BOOLEAN,                     -- TRUE if shot zones estimated (no play-by-play data)
-  
+
+  -- ============================================================================
+  -- DNP (DID NOT PLAY) VISIBILITY (3 fields)
+  -- Added 2026-01-27: Enables tracking of DNP players instead of filtering them out
+  -- ============================================================================
+  is_dnp BOOLEAN,                                   -- TRUE if player was on roster but did not play
+  dnp_reason STRING,                                -- Raw DNP reason text from gamebook
+  dnp_reason_category STRING,                       -- Categorized: 'coach_decision', 'injury', 'rest', 'other'
+
+  -- ============================================================================
+  -- PARTIAL GAME DATA DETECTION (3 fields)
+  -- Added 2026-01-27: Flags incomplete data to prevent invalid usage_rate calculations
+  -- ============================================================================
+  is_partial_game_data BOOLEAN DEFAULT FALSE,       -- TRUE if game data was incomplete at processing time
+  game_completeness_pct NUMERIC(5,2),              -- % of expected data available (based on team FG attempts)
+  game_status_at_processing STRING,                 -- 'scheduled', 'in_progress', 'final' at time of processing
+
+  -- ============================================================================
+  -- USAGE RATE VALIDATION (4 fields)
+  -- Added 2026-01-27: Tracks anomalous usage_rate values to prevent downstream issues
+  -- ============================================================================
+  usage_rate_valid BOOLEAN,                         -- FALSE if usage_rate > 50% or team data incomplete
+  usage_rate_capped NUMERIC(5,2),                  -- Usage rate capped at 50% for safety
+  usage_rate_raw NUMERIC(6,2),                     -- Original uncapped usage rate (for debugging)
+  usage_rate_anomaly_reason STRING,                 -- 'partial_team_data', 'exceeds_max', NULL if valid
+
+  -- ============================================================================
+  -- DUPLICATE PREVENTION (3 fields)
+  -- Added 2026-01-27: Enables deduplication and version tracking
+  -- ============================================================================
+  dedup_key STRING,                                 -- CONCAT(game_id, '|', player_lookup) for unique identification
+  record_version INT64 DEFAULT 1,                   -- Increments on each re-process of same record
+  first_processed_at TIMESTAMP,                     -- When record was first created (never updated)
+
   -- ============================================================================
   -- SMART REPROCESSING (1 field)
   -- Pattern #3: Phase 4 processors compare this hash to detect meaningful changes
@@ -203,10 +236,14 @@ OPTIONS(
 -- Player availability:        2 fields
 -- Source tracking:           28 fields (7 sources × 4 fields - includes smart idempotency hashes)
 -- Data quality:               4 fields
--- Smart reprocessing:         1 field  (data_hash for Phase 4 optimization)
+-- DNP visibility:             3 fields  (is_dnp, dnp_reason, dnp_reason_category)
+-- Partial game detection:     3 fields  (is_partial_game_data, game_completeness_pct, game_status_at_processing)
+-- Usage rate validation:      4 fields  (usage_rate_valid, usage_rate_capped, usage_rate_raw, usage_rate_anomaly_reason)
+-- Duplicate prevention:       3 fields  (dedup_key, record_version, first_processed_at)
+-- Smart reprocessing:         1 field   (data_hash for Phase 4 optimization)
 -- Processing metadata:        2 fields
 -- -------------------------
--- TOTAL:                     79 fields
+-- TOTAL:                     92 fields
 
 -- ============================================================================
 -- SOURCE TRACKING FIELD SEMANTICS

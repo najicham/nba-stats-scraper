@@ -108,7 +108,16 @@ CREATE TABLE IF NOT EXISTS `nba_analytics.team_offense_game_summary` (
   shot_zones_source    STRING,            -- 'nbac_pbp', 'bigdataball', or NULL
   primary_source_used  STRING,            -- 'nbac_team_boxscore' (always)
   processed_with_issues BOOLEAN,          -- TRUE if validation issues logged
-  
+
+  -- ============================================================================
+  -- PARTIAL GAME DATA DETECTION (3 fields)
+  -- Added 2026-01-27: Flags incomplete data to help downstream processors
+  -- Detection: game_status != 'Final' OR fg_attempts < 50
+  -- ============================================================================
+  is_partial_game_data BOOLEAN DEFAULT FALSE,  -- TRUE if game data was incomplete at processing time
+  game_completeness_pct NUMERIC(5,2),          -- % of expected data available
+  game_status_at_processing STRING,            -- 'scheduled', 'in_progress', 'final' at time of processing
+
   -- ============================================================================
   -- SMART REPROCESSING (1 field)
   -- Pattern #3: Phase 4 processors compare this hash to detect meaningful changes
@@ -140,9 +149,10 @@ OPTIONS (
 -- Referee:                  1 field
 -- Source tracking:          8 fields (2 sources × 4 fields - includes smart idempotency hashes)
 -- Data quality:             5 fields
+-- Partial game detection:   3 fields (is_partial_game_data, game_completeness_pct, game_status_at_processing)
 -- Processing metadata:      2 fields
 -- -------------------------
--- TOTAL:                   49 fields
+-- TOTAL:                   52 fields
 
 -- ============================================================================
 -- SOURCE TRACKING FIELD SEMANTICS

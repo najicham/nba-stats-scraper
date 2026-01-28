@@ -518,7 +518,7 @@ Output: Simple table, no investigation, fast execution.
 ### Anomalies to Flag
 
 ```bash
-# Statistical outliers
+# Statistical outliers (Enhanced 2026-01-27 with new data quality fields)
 bq query --use_legacy_sql=false "
 SELECT
   game_date,
@@ -526,12 +526,18 @@ SELECT
   points,
   minutes_played,
   usage_rate,
+  usage_rate_valid,
+  usage_rate_anomaly_reason,
+  is_partial_game_data,
+  game_completeness_pct,
   CASE
     WHEN points > 60 THEN 'Suspiciously high points (>60)'
     WHEN points < 0 THEN 'Negative points (corruption)'
     WHEN minutes_played = 0 AND points > 0 THEN 'Points without minutes (join issue)'
+    WHEN usage_rate > 100 THEN 'INVALID usage rate (>100%) - partial team data'
     WHEN usage_rate > 50 THEN 'Excessive usage rate (>50%)'
     WHEN usage_rate < 0 THEN 'Negative usage rate (corruption)'
+    WHEN is_partial_game_data = TRUE THEN 'Partial game data flag set'
   END as anomaly_type
 FROM \`nba-props-platform.nba_analytics.player_game_summary\`
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
@@ -540,10 +546,64 @@ WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
     points < 0 OR
     (minutes_played = 0 AND points > 0) OR
     usage_rate > 50 OR
-    usage_rate < 0
+    usage_rate < 0 OR
+    is_partial_game_data = TRUE
   )
 ORDER BY game_date DESC"
 ```
+
+### Usage Rate Anomaly Deep Dive (Added 2026-01-27)
+
+For investigating usage_rate > 100% issues specifically:
+
+```bash
+# Find all invalid usage_rate records
+bq query --use_legacy_sql=false "
+SELECT
+  game_date,
+  game_id,
+  player_lookup,
+  team_abbr,
+  usage_rate,
+  usage_rate_raw,
+  usage_rate_anomaly_reason,
+  -- Team data context
+  source_team_completeness_pct,
+  game_status_at_processing,
+  is_partial_game_data
+FROM \`nba-props-platform.nba_analytics.player_game_summary\`
+WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+  AND usage_rate > 100
+ORDER BY usage_rate DESC"
+```
+
+**Root Cause Analysis**:
+- usage_rate > 100% typically indicates team stats had incomplete data
+- Check `source_team_completeness_pct` - should be 100% for valid usage_rate
+- Check `game_status_at_processing` - should be 'Final'
+- If `is_partial_game_data = TRUE`, the record was correctly flagged
+
+### DNP (Did Not Play) Visibility (Added 2026-01-27)
+
+Check for DNP players in historical data:
+
+```bash
+bq query --use_legacy_sql=false "
+SELECT
+  game_date,
+  team_abbr,
+  COUNT(*) as total_roster,
+  COUNTIF(is_dnp = TRUE) as dnp_count,
+  COUNTIF(is_active = TRUE) as active_count,
+  ARRAY_AGG(CASE WHEN is_dnp = TRUE THEN CONCAT(player_lookup, ' (', dnp_reason_category, ')') END IGNORE NULLS) as dnp_players
+FROM \`nba-props-platform.nba_analytics.player_game_summary\`
+WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+GROUP BY game_date, team_abbr
+HAVING COUNTIF(is_dnp = TRUE) > 0
+ORDER BY game_date DESC, dnp_count DESC"
+```
+
+**Note**: DNPs are now visible in the data (previously filtered out). Use `is_dnp = TRUE` to identify them.
 
 ---
 

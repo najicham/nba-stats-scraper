@@ -198,6 +198,91 @@ bigquery_validations:
     severity: "critical"
     message: "Duplicate player-game records detected"
 
+  # Usage rate anomaly detection (Added 2026-01-27)
+  usage_rate_anomaly_detection:
+    enabled: true
+    query: |
+      SELECT
+        player_lookup,
+        game_id,
+        usage_rate,
+        CASE
+          WHEN usage_rate > 100 THEN 'INVALID (>100%)'
+          WHEN usage_rate > 50 THEN 'SUSPICIOUS (>50%)'
+        END as anomaly_type
+      FROM `{project_id}.nba_analytics.player_game_summary`
+      WHERE game_date = '{date}'
+        AND usage_rate > 50
+      ORDER BY usage_rate DESC
+    severity: "critical"
+    message: "Usage rate anomalies detected - values > 100% indicate partial team data"
+    thresholds:
+      suspicious: 50  # Flag for investigation
+      invalid: 100    # Definitely wrong, should be NULL
+
+  # Partial game detection (Added 2026-01-27)
+  partial_game_detection:
+    enabled: true
+    query: |
+      SELECT
+        game_id,
+        team_abbr,
+        SUM(CAST(minutes_played AS FLOAT64)) as total_minutes,
+        COUNT(*) as player_count,
+        CASE
+          WHEN SUM(CAST(minutes_played AS FLOAT64)) < 180 THEN 'PARTIAL (< 180 team minutes)'
+          WHEN SUM(CAST(minutes_played AS FLOAT64)) < 200 THEN 'WARNING (< 200 team minutes)'
+          ELSE 'OK'
+        END as status
+      FROM `{project_id}.nba_analytics.player_game_summary`
+      WHERE game_date = '{date}'
+        AND is_active = TRUE
+      GROUP BY game_id, team_abbr
+      HAVING SUM(CAST(minutes_played AS FLOAT64)) < 200
+      ORDER BY total_minutes ASC
+    severity: "warning"
+    message: "Partial game data detected - team total minutes less than expected"
+
+  # Phase transition SLA check (Added 2026-01-27)
+  phase_transition_sla:
+    enabled: true
+    query: |
+      WITH phase3_completion AS (
+        SELECT
+          data_date,
+          MAX(completed_at) as phase3_completed
+        FROM `{project_id}.nba_orchestration.processor_run_history`
+        WHERE phase = 'phase_3_analytics'
+          AND data_date = '{date}'
+          AND status = 'success'
+        GROUP BY data_date
+      ),
+      phase4_start AS (
+        SELECT
+          data_date,
+          MIN(started_at) as phase4_started
+        FROM `{project_id}.nba_orchestration.processor_run_history`
+        WHERE phase = 'phase_4_precompute'
+          AND data_date = '{date}'
+        GROUP BY data_date
+      )
+      SELECT
+        p3.data_date,
+        p3.phase3_completed,
+        p4.phase4_started,
+        TIMESTAMP_DIFF(p4.phase4_started, p3.phase3_completed, MINUTE) as transition_minutes,
+        CASE
+          WHEN p4.phase4_started IS NULL THEN 'PHASE_4_NOT_TRIGGERED'
+          WHEN TIMESTAMP_DIFF(p4.phase4_started, p3.phase3_completed, MINUTE) > 15 THEN 'SLA_BREACH (>15 min)'
+          ELSE 'OK'
+        END as status
+      FROM phase3_completion p3
+      LEFT JOIN phase4_start p4 ON p3.data_date = p4.data_date
+      WHERE p4.phase4_started IS NULL
+         OR TIMESTAMP_DIFF(p4.phase4_started, p3.phase3_completed, MINUTE) > 15
+    severity: "warning"
+    message: "Phase 3 to Phase 4 transition SLA breach or Phase 4 not triggered"
+
 # Schedule Validations
 schedule_validations:
   enabled: true

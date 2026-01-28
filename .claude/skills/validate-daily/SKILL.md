@@ -420,7 +420,75 @@ python scripts/spot_check_data_accuracy.py \
 
 **Expected**: ≥95% accuracy
 
-#### 3B. Prediction Accuracy Summary
+#### 3B. Usage Rate Anomaly Check (Added 2026-01-27)
+
+Check for invalid usage_rate values that indicate partial game data issues:
+
+```bash
+bq query --use_legacy_sql=false "
+SELECT
+  player_lookup,
+  game_id,
+  usage_rate,
+  CASE
+    WHEN usage_rate > 100 THEN 'INVALID (>100%)'
+    WHEN usage_rate > 50 THEN 'SUSPICIOUS (>50%)'
+    ELSE 'OK'
+  END as status
+FROM \`nba-props-platform.nba_analytics.player_game_summary\`
+WHERE game_date = DATE('${GAME_DATE}')
+  AND usage_rate > 50
+ORDER BY usage_rate DESC
+LIMIT 20"
+```
+
+**Expected**: Zero records with usage_rate > 100% (indicates partial team data was processed)
+**Investigate if**: Any usage_rate > 50% (typical max is ~40-45% for high-usage players)
+
+#### 3C. Partial Game Detection (Added 2026-01-27)
+
+Check for games that may have incomplete data:
+
+```bash
+bq query --use_legacy_sql=false "
+SELECT
+  game_id,
+  team_abbr,
+  SUM(CAST(minutes_played AS FLOAT64)) as total_minutes,
+  COUNT(*) as players,
+  CASE WHEN SUM(CAST(minutes_played AS FLOAT64)) < 200 THEN 'PARTIAL' ELSE 'OK' END as status
+FROM \`nba-props-platform.nba_analytics.player_game_summary\`
+WHERE game_date = DATE('${GAME_DATE}')
+  AND is_active = TRUE
+GROUP BY game_id, team_abbr
+HAVING SUM(CAST(minutes_played AS FLOAT64)) < 200
+ORDER BY total_minutes ASC"
+```
+
+**Expected**: Zero partial games (all teams should have ~240 total minutes per game)
+**Note**: Total team minutes < 200 indicates incomplete data
+
+#### 3D. Phase Transition SLA Check (Added 2026-01-27)
+
+Verify Phase 4 was auto-triggered by orchestrator (not manual):
+
+```bash
+bq query --use_legacy_sql=false "
+SELECT
+  data_date,
+  trigger_source,
+  COUNT(*) as runs,
+  MIN(started_at) as first_run
+FROM \`nba-props-platform.nba_orchestration.processor_run_history\`
+WHERE phase = 'phase_4_precompute'
+  AND data_date = DATE('${GAME_DATE}')
+GROUP BY data_date, trigger_source"
+```
+
+**Expected**: `trigger_source = 'orchestrator'` (not 'manual')
+**Issue if**: All Phase 4 runs show 'manual' - indicates Pub/Sub trigger not working
+
+#### 3E. Prediction Accuracy Summary
 
 ```bash
 bq query --use_legacy_sql=false "
@@ -488,6 +556,14 @@ Key fields:
 - minutes_played (INT64) - decimal format, NOT "MM:SS"
 - usage_rate (FLOAT64) - can be NULL if team stats missing
 - points_avg_last_5, points_avg_last_10 (FLOAT64)
+
+Data quality fields (added 2026-01-27):
+- is_dnp (BOOLEAN) - Did Not Play flag
+- dnp_reason (STRING) - Raw DNP reason text
+- is_partial_game_data (BOOLEAN) - TRUE if incomplete data at processing
+- game_completeness_pct (NUMERIC) - % of expected data available
+- usage_rate_valid (BOOLEAN) - FALSE if usage_rate > 50% or team data incomplete
+- usage_rate_anomaly_reason (STRING) - 'partial_team_data', 'exceeds_max'
 ```
 
 ### `nba_precompute.player_daily_cache`
