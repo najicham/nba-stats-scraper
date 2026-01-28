@@ -843,7 +843,7 @@ def start_prediction_batch():
                 # Use heartbeat logger to track long-running data load (5-min intervals)
                 with HeartbeatLogger(f"Loading historical games for {len(player_lookups)} players", interval=300):
                     # Import PredictionDataLoader to use batch loading method
-                    from data_loaders import PredictionDataLoader
+                    from predictions.worker.data_loaders import PredictionDataLoader
 
                     data_loader = PredictionDataLoader(project_id=PROJECT_ID, dataset_prefix=dataset_prefix)
                     batch_historical_games = data_loader.load_historical_games_batch(
