@@ -131,6 +131,177 @@ gcloud logging read "resource.type=bigquery_resource AND protoPayload.status.mes
 
 **Common cause**: `pipeline_logger` writing too many events to partitioned `run_history` table
 
+### Phase 0.5: Orchestrator Health (CRITICAL)
+
+**IMPORTANT**: Check orchestrator health BEFORE other validations. If ANY Phase 0.5 check fails, this is a P1 CRITICAL issue - STOP and report immediately.
+
+**Why this matters**: Orchestrator failures can cause 2+ day silent data gaps. The orchestrator transitions data between phases (2→3, 3→4, 4→5) after all processors complete. If it fails, new data stops flowing even though scrapers keep running.
+
+**What to check**:
+
+#### Check 1: Missing Phase Logs
+
+Verify all expected phase transitions happened yesterday:
+
+```bash
+GAME_DATE=$(date -d "yesterday" +%Y-%m-%d)
+
+bq query --use_legacy_sql=false "
+WITH expected AS (
+  SELECT 'phase2_to_phase3' as phase_name UNION ALL
+  SELECT 'phase3_to_phase4' UNION ALL
+  SELECT 'phase4_to_phase5'
+),
+actual AS (
+  SELECT DISTINCT phase_name
+  FROM nba_orchestration.phase_execution_log
+  WHERE game_date = DATE('${GAME_DATE}')
+)
+SELECT e.phase_name,
+  CASE WHEN a.phase_name IS NULL THEN 'MISSING' ELSE 'OK' END as status
+FROM expected e LEFT JOIN actual a USING (phase_name)"
+```
+
+**Expected**: All phases show 'OK'
+
+**If MISSING**:
+- 🔴 P1 CRITICAL: Orchestrator did not run or failed silently
+- Impact: Data pipeline stalled, new data not flowing to downstream phases
+- Action: Check Cloud Function logs for phase orchestrator errors
+
+#### Check 2: Stalled Orchestrators
+
+Check for orchestrators stuck in 'started' or 'running' state:
+
+```bash
+bq query --use_legacy_sql=false "
+SELECT phase_name, game_date, start_time,
+  TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), start_time, MINUTE) as minutes_stalled,
+  status
+FROM nba_orchestration.phase_execution_log
+WHERE status IN ('started', 'running')
+  AND TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), start_time, MINUTE) > 30
+ORDER BY minutes_stalled DESC"
+```
+
+**Expected**: Zero results (no stalled orchestrators)
+
+**If stalled**:
+- 🔴 P1 CRITICAL: Orchestrator started but never completed
+- Threshold: >30 minutes in 'started' or 'running' state
+- Impact: Downstream phases blocked, data not progressing
+- Action: Check for timeout, deadlock, or Cloud Function timeout issues
+
+#### Check 3: Phase Timing Gaps
+
+Check for abnormal delays between phase completions:
+
+```bash
+bq query --use_legacy_sql=false "
+WITH phase_times AS (
+  SELECT game_date, phase_name, MAX(execution_timestamp) as completed_at
+  FROM nba_orchestration.phase_execution_log
+  WHERE status = 'complete'
+    AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
+  GROUP BY game_date, phase_name
+)
+SELECT p1.game_date,
+  p1.phase_name as from_phase,
+  p2.phase_name as to_phase,
+  TIMESTAMP_DIFF(p2.completed_at, p1.completed_at, MINUTE) as gap_minutes,
+  CASE
+    WHEN TIMESTAMP_DIFF(p2.completed_at, p1.completed_at, MINUTE) > 120 THEN '🔴 CRITICAL'
+    WHEN TIMESTAMP_DIFF(p2.completed_at, p1.completed_at, MINUTE) > 60 THEN '🟡 WARNING'
+    ELSE 'OK'
+  END as status
+FROM phase_times p1
+JOIN phase_times p2 ON p1.game_date = p2.game_date
+WHERE (p1.phase_name = 'phase2_to_phase3' AND p2.phase_name = 'phase3_to_phase4')
+   OR (p1.phase_name = 'phase3_to_phase4' AND p2.phase_name = 'phase4_to_phase5')
+HAVING gap_minutes > 60
+ORDER BY p1.game_date DESC, gap_minutes DESC"
+```
+
+**Expected**: Zero results with gap_minutes > 60
+
+**If gaps detected**:
+- 🔴 CRITICAL (>120 min): Major orchestration failure
+- 🟡 WARNING (60-120 min): Performance degradation
+- Typical timing:
+  - Phase 2→3: 5-10 minutes
+  - Phase 3→4: 10-20 minutes (overnight mode)
+  - Phase 4→5: 15-30 minutes
+- Action: Investigate Cloud Function performance, check for processor deadlocks
+
+**Firestore Completion State** (Optional Deep Dive):
+
+If orchestrator issues detected, check Firestore completion tracking:
+
+```bash
+python3 << 'EOF'
+from google.cloud import firestore
+from datetime import datetime, timedelta
+db = firestore.Client()
+
+# Check yesterday's completion records
+game_date = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+processing_date = datetime.now().strftime('%Y-%m-%d')
+
+print(f"\nPhase 2 Completion ({game_date}):")
+doc = db.collection('phase2_completion').document(game_date).get()
+if doc.exists:
+    data = doc.to_dict()
+    print(f"  Triggered: {data.get('_triggered', False)}")
+    print(f"  Trigger reason: {data.get('_trigger_reason', 'N/A')}")
+    print(f"  Processors complete: {len([k for k in data.keys() if not k.startswith('_')])}/6")
+else:
+    print("  ❌ No completion record found")
+
+print(f"\nPhase 3 Completion ({processing_date}):")
+doc = db.collection('phase3_completion').document(processing_date).get()
+if doc.exists:
+    data = doc.to_dict()
+    print(f"  Triggered: {data.get('_triggered', False)}")
+    print(f"  Trigger reason: {data.get('_trigger_reason', 'N/A')}")
+    print(f"  Processors complete: {len([k for k in data.keys() if not k.startswith('_')])}/5")
+else:
+    print("  ❌ No completion record found")
+EOF
+```
+
+**Critical Alerts**:
+
+If ANY Phase 0.5 check fails, send alert to critical error channel:
+
+```bash
+# Use the critical error Slack webhook
+SLACK_WEBHOOK_URL_ERROR="<use env var from GCP Secret Manager>"
+
+curl -X POST "$SLACK_WEBHOOK_URL_ERROR" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "text": "🚨 P1 CRITICAL: Orchestrator Health Check Failed",
+    "blocks": [
+      {
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": "*Orchestrator Health Check Failed*\n\n*Issue:* [describe issue]\n*Impact:* Data pipeline stalled\n*Action Required:* Immediate investigation"
+        }
+      }
+    ]
+  }'
+```
+
+**Slack Webhook Configuration**:
+- Primary alerts: `SLACK_WEBHOOK_URL` → #daily-orchestration
+- Critical errors: `SLACK_WEBHOOK_URL_ERROR` → #app-error-alerts ⚠️ **Use this for Phase 0.5 failures**
+- Warnings: `SLACK_WEBHOOK_URL_WARNING` → #nba-alerts
+
+**If ALL Phase 0.5 checks pass**: Continue to Phase 1
+
+**If ANY Phase 0.5 check fails**: STOP, report issue with P1 CRITICAL severity, do NOT continue to Phase 1
+
 ### Phase 1: Run Baseline Health Check
 
 ```bash
@@ -217,6 +388,79 @@ ORDER BY b.team_abbr, b.player_lookup"
 - `/spot-check-player <name>` - Deep dive on one player
 - `/spot-check-date <date>` - Check all players for a date
 - `/spot-check-gaps` - System-wide audit
+
+### Phase 3C: Cross-Source Reconciliation (NEW)
+
+Check data consistency between NBA.com (official source) and BDL stats for yesterday:
+
+```bash
+GAME_DATE=$(date -d "yesterday" +%Y-%m-%d)
+
+bq query --use_legacy_sql=false "
+-- Summary of reconciliation health
+SELECT
+  health_status,
+  COUNT(*) as player_count,
+  ROUND(COUNT(*) * 100.0 / SUM(COUNT(*)) OVER(), 1) as pct
+FROM \`nba-props-platform.nba_monitoring.source_reconciliation_daily\`
+GROUP BY health_status
+ORDER BY FIELD(health_status, 'CRITICAL', 'WARNING', 'MINOR_DIFF', 'MATCH')
+"
+
+# If CRITICAL or WARNING found, get details
+bq query --use_legacy_sql=false "
+SELECT
+  player_name,
+  team_abbr,
+  health_status,
+  discrepancy_summary,
+  stat_comparison
+FROM \`nba-props-platform.nba_monitoring.source_reconciliation_daily\`
+WHERE health_status IN ('CRITICAL', 'WARNING')
+ORDER BY health_status, point_diff DESC
+LIMIT 20
+"
+```
+
+**Expected Results**:
+- **MATCH**: ≥95% of players (stats identical across sources)
+- **MINOR_DIFF**: <5% (acceptable differences of 1-2 points)
+- **WARNING**: <1% (assists/rebounds difference >2)
+- **CRITICAL**: 0% (point difference >2)
+
+**Health Status Levels**:
+- **MATCH**: Stats match exactly (expected behavior)
+- **MINOR_DIFF**: Difference of 1-2 points in any stat (acceptable)
+- **WARNING**: Difference >2 in assists/rebounds (investigate)
+- **CRITICAL**: Difference >2 points (immediate investigation)
+
+**If CRITICAL issues found**:
+1. Check which source is correct by spot-checking game footage/play-by-play
+2. Determine if systematic issue (all games) or specific team/game
+3. Check if NBA.com or BDL had data correction/update
+4. Remember: **NBA.com is source of truth** when discrepancies exist
+5. Consider if issue affects prop settlement (points more critical than assists)
+
+**If WARNING issues found**:
+1. Review assist/rebound scoring differences (judgment calls by official scorers)
+2. Check if pattern exists (specific teams, arenas, scorers)
+3. Document but likely not blocking issue
+
+**If match rate <95%**:
+1. Check if one source had delayed/incomplete data
+2. Verify both scrapers ran successfully overnight
+3. Check for systematic player name mapping issues
+4. Review recent player_lookup normalization changes
+
+**Source Priority**:
+1. **NBA.com** - Official, authoritative (source of truth for disputes)
+2. **BDL** - Primary real-time source (faster updates)
+3. Use reconciliation to validate BDL reliability
+
+**Related Infrastructure**:
+- View: `nba_monitoring.source_reconciliation_daily` (always checks yesterday)
+- Scheduled Query: `monitoring/scheduled_queries/source_reconciliation.sql` (runs 8 AM daily)
+- Results Table: `nba_monitoring.source_reconciliation_results` (historical tracking)
 
 ### Phase 4: Check Phase Completion Status
 
@@ -419,6 +663,40 @@ python scripts/spot_check_data_accuracy.py \
 ```
 
 **Expected**: ≥95% accuracy
+
+#### 3A2. Golden Dataset Verification (Added 2026-01-27)
+
+Verify rolling averages against manually verified golden dataset records:
+
+```bash
+python scripts/verify_golden_dataset.py
+```
+
+**Purpose**:
+- Verifies calculation correctness against known-good values
+- Catches regression in rolling average calculation logic
+- Higher confidence than spot checks (uses manually verified expected values)
+
+**Exit Code Interpretation**:
+- `0` = All golden dataset verifications passed
+- `1` = At least one verification failed or error occurred
+
+**Accuracy Threshold**: 100% expected (these are manually verified)
+- **100%**: PASS - All golden dataset records match expected values
+- **<100%**: FAIL - Calculation logic error or data corruption
+
+**When to run**:
+- After cache regeneration (to verify correctness)
+- Weekly as part of comprehensive validation
+- When spot check accuracy is borderline (90-95%)
+- After code changes to stats_aggregator.py or player_daily_cache logic
+
+**Verbose mode** (for investigation):
+```bash
+python scripts/verify_golden_dataset.py --verbose
+```
+
+**Note**: Golden dataset is small (10-20 player-date combinations) but high-confidence. If this fails, it's a strong signal of calculation issues.
 
 #### 3B. Usage Rate Anomaly Check (Added 2026-01-27)
 
@@ -808,6 +1086,10 @@ python scripts/spot_check_data_accuracy.py --samples 5 --checks rolling_avg,usag
 
 # Comprehensive spot checks (slower)
 python scripts/spot_check_data_accuracy.py --samples 10
+
+# Golden dataset verification (high-confidence validation)
+python scripts/verify_golden_dataset.py
+python scripts/verify_golden_dataset.py --verbose  # With detailed calculations
 
 # Manual triggers (if needed)
 gcloud scheduler jobs run same-day-phase3

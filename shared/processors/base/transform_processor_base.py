@@ -339,12 +339,38 @@ class TransformProcessorBase(ABC):
 
     def report_error(self, exc: Exception) -> None:
         """
-        Report error to Sentry for monitoring.
+        Report error to Sentry and BigQuery for monitoring.
+
+        Logs error to:
+        1. Sentry - For exception tracking and alerting
+        2. BigQuery service_errors table - For centralized error persistence
 
         Args:
             exc: Exception to report
         """
+        # Report to Sentry
         sentry_sdk.capture_exception(exc)
+
+        # Report to BigQuery service_errors table
+        try:
+            from shared.utils.service_error_logger import ServiceErrorLogger
+
+            error_logger = ServiceErrorLogger()
+            error_logger.log_error(
+                service_name=self.processor_name,
+                error=exc,
+                context={
+                    "game_date": self.opts.get("game_date"),
+                    "phase": self.PHASE,
+                    "processor_name": self.processor_name,
+                    "correlation_id": self.correlation_id,
+                    "stats": self.stats,
+                },
+                step=self._get_current_step()
+            )
+        except Exception as e:
+            # Don't fail the main process if error logging fails
+            logger.warning(f"Failed to log error to BigQuery: {e}")
 
     def _save_partial_data(self, exc: Exception) -> None:
         """

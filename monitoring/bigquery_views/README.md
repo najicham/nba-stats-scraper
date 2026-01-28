@@ -4,7 +4,50 @@ This directory contains BigQuery views that power the Pipeline Health Dashboard,
 
 ## Views
 
-### 1. `pipeline_health_summary.sql`
+### 1. `pipeline_processor_health.sql`
+**Purpose**: Unified processor health monitoring across all pipeline phases
+
+**Metrics Provided**:
+- Per-processor health status (HEALTHY, DEGRADED, UNHEALTHY, STALE, NEVER_RAN)
+- Failure tracking (24h, 7d, 30d windows)
+- Last success tracking per processor
+- Success rate trends
+- Performance metrics (avg/max duration)
+- Latest error messages
+- Alert priority classification
+
+**Key Columns**:
+- `health_status`: Processor health classification
+- `failures_24h`: Failure count in last 24 hours
+- `days_since_success`: Days since last successful run
+- `success_rate_7d`: 7-day success rate percentage
+- `alert_priority`: CRITICAL, HIGH, MEDIUM, LOW
+
+**Coverage**:
+- Phase 1: Scrapers (scraper_execution_log)
+- Phase 2: Raw Processing (processor_run_history)
+- Phase 3: Analytics (processor_run_history)
+- Phase 4: Precompute (processor_run_history + precompute_processor_runs)
+- Orchestrators: Phase execution orchestrators
+
+**Usage**:
+```sql
+-- Processors requiring attention
+SELECT * FROM `nba-props-platform.nba_monitoring.pipeline_processor_health`
+WHERE health_status IN ('UNHEALTHY', 'STALE', 'NEVER_RAN')
+ORDER BY alert_priority, failures_24h DESC;
+
+-- Phase-level health overview
+SELECT
+  phase,
+  COUNT(*) as total_processors,
+  COUNTIF(health_status = 'HEALTHY') as healthy_count,
+  COUNTIF(health_status = 'UNHEALTHY') as unhealthy_count
+FROM `nba-props-platform.nba_monitoring.pipeline_processor_health`
+GROUP BY phase;
+```
+
+### 2. `pipeline_health_summary.sql`
 **Purpose**: High-level phase completion metrics
 
 **Metrics Provided**:
@@ -26,7 +69,7 @@ WHERE time_window = 'last_24h'
 ORDER BY phase_name;
 ```
 
-### 2. `processor_error_summary.sql`
+### 3. `processor_error_summary.sql`
 **Purpose**: Detailed error analysis and retry tracking
 
 **Metrics Provided**:
@@ -51,7 +94,7 @@ WHERE time_window = 'last_24h'
 ORDER BY error_count DESC;
 ```
 
-### 3. `prediction_coverage_metrics.sql`
+### 4. `prediction_coverage_metrics.sql`
 **Purpose**: Track prediction coverage and gaps
 
 **Metrics Provided**:
@@ -76,7 +119,7 @@ WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 ORDER BY game_date DESC;
 ```
 
-### 4. `pipeline_latency_metrics.sql`
+### 5. `pipeline_latency_metrics.sql`
 **Purpose**: End-to-end pipeline timing analysis
 
 **Metrics Provided**:
@@ -117,6 +160,7 @@ bq mk --dataset \
 cd monitoring/bigquery_views
 
 # Deploy each view
+bq query --use_legacy_sql=false < pipeline_processor_health.sql
 bq query --use_legacy_sql=false < pipeline_health_summary.sql
 bq query --use_legacy_sql=false < processor_error_summary.sql
 bq query --use_legacy_sql=false < prediction_coverage_metrics.sql
@@ -145,6 +189,7 @@ cd scheduled_queries
 ```
 
 This creates hourly scheduled queries that populate:
+- `nba_monitoring.pipeline_processor_health_materialized`
 - `nba_monitoring.pipeline_health_summary_materialized`
 - `nba_monitoring.processor_error_summary_materialized`
 - `nba_monitoring.prediction_coverage_metrics_materialized`
@@ -154,7 +199,20 @@ This creates hourly scheduled queries that populate:
 
 ### Health Check
 ```sql
--- Overall system health
+-- Per-processor health status
+SELECT
+  phase,
+  COUNT(*) as total_processors,
+  COUNTIF(health_status = 'HEALTHY') as healthy,
+  COUNTIF(health_status = 'DEGRADED') as degraded,
+  COUNTIF(health_status = 'UNHEALTHY') as unhealthy,
+  COUNTIF(health_status = 'STALE') as stale,
+  COUNTIF(health_status = 'NEVER_RAN') as never_ran
+FROM `nba-props-platform.nba_monitoring.pipeline_processor_health`
+GROUP BY phase
+ORDER BY phase;
+
+-- Overall phase health (aggregate view)
 SELECT
   'Pipeline Health' as metric,
   CASE
@@ -168,7 +226,21 @@ WHERE time_window = 'last_24h';
 
 ### Alert Triggers
 ```sql
--- Processors requiring immediate attention
+-- Processors requiring immediate attention (from health view)
+SELECT
+  phase,
+  processor_name,
+  health_status,
+  failures_24h,
+  days_since_success,
+  alert_priority,
+  last_error_message
+FROM `nba-props-platform.nba_monitoring.pipeline_processor_health`
+WHERE health_status IN ('UNHEALTHY', 'STALE', 'NEVER_RAN')
+ORDER BY alert_priority, failures_24h DESC
+LIMIT 20;
+
+-- Error detail analysis (from error summary)
 SELECT
   processor_name,
   error_count,
