@@ -864,10 +864,19 @@ class PredictionDataLoader:
         )
 
         try:
+            # Debug logging for query parameters
+            logger.info(f"Executing features batch query for {len(player_lookups)} players on {game_date}, feature_version={feature_version}")
+            logger.debug(f"Sample player_lookups: {player_lookups[:5] if player_lookups else []}")
+
             # Retry on transient errors (ServiceUnavailable, DeadlineExceeded)
+            query_job = self.client.query(query, job_config=job_config)
+            logger.info(f"Query job ID: {query_job.job_id}")
             results = TRANSIENT_RETRY(
-                lambda: self.client.query(query, job_config=job_config).result(timeout=QUERY_TIMEOUT_SECONDS)
+                lambda: query_job.result(timeout=QUERY_TIMEOUT_SECONDS)
             )()
+
+            # Log result info
+            logger.info(f"Query completed, iterating results...")
 
             player_features: Dict[str, Dict] = {}
 
@@ -876,9 +885,17 @@ class PredictionDataLoader:
                 feature_array = row.features
                 feature_names = row.feature_names
 
+                # Handle length mismatch gracefully - truncate to shorter length
+                # This can happen if feature generation adds extra elements
                 if len(feature_array) != len(feature_names):
-                    logger.warning(f"Feature array length mismatch for {row.player_lookup}")
-                    continue
+                    min_len = min(len(feature_array), len(feature_names))
+                    logger.warning(
+                        f"Feature array length mismatch for {row.player_lookup}: "
+                        f"features={len(feature_array)}, names={len(feature_names)}. "
+                        f"Truncating to {min_len} elements."
+                    )
+                    feature_array = feature_array[:min_len]
+                    feature_names = feature_names[:min_len]
 
                 # Build feature dict
                 features = dict(zip(feature_names, feature_array))
@@ -930,10 +947,15 @@ class PredictionDataLoader:
 
             logger.info(f"Batch loaded features for {len(player_features)}/{len(player_lookups)} players")
 
-            # Cache the result with TTL based on data freshness
-            # Same-day data uses shorter TTL (may be updated), historical uses longer
-            cache_ttl = self._query_cache.get_ttl_for_date(game_date)
-            self._query_cache.set(cache_key, player_features, ttl_seconds=cache_ttl)
+            # Only cache if we got results - don't cache empty results as they may be transient
+            # (e.g., data not yet loaded, temporary query issues)
+            if player_features:
+                # Cache the result with TTL based on data freshness
+                # Same-day data uses shorter TTL (may be updated), historical uses longer
+                cache_ttl = self._query_cache.get_ttl_for_date(game_date)
+                self._query_cache.set(cache_key, player_features, ttl_seconds=cache_ttl)
+            else:
+                logger.warning(f"Not caching empty result for features batch on {game_date}")
 
             return player_features
 
