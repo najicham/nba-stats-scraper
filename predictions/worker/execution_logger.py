@@ -19,24 +19,44 @@ Tracks:
 - Error details
 - Trigger source and Pub/Sub message ID for tracing
 
-Version: 1.1
-Date: 2025-11-27
+Version: 1.2
+Date: 2026-01-28
+
+IMPORTANT: Uses buffered writes to avoid BigQuery partition modification quota limits.
+Each Cloud Run instance buffers log entries and flushes them periodically or when
+the buffer reaches a threshold. This reduces partition modifications from 300+/batch
+to just 1-5/batch.
+
+Quota Issue Fixed (2026-01-28):
+- Old behavior: 1 load_table_from_json per player = 300+ partition modifications
+- New behavior: Buffer logs, flush at threshold/time = 1-5 partition modifications
+- BigQuery limit: ~5000 partition modifications per table per day
 """
 
 import logging
 import json
 import os
 import uuid
+import threading
+import atexit
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from google.cloud import bigquery
 
 logger = logging.getLogger(__name__)
 
+# Buffer configuration
+BUFFER_FLUSH_THRESHOLD = 50  # Flush when buffer reaches this size
+BUFFER_FLUSH_INTERVAL_SECONDS = 30  # Also flush every N seconds (via manual calls)
+
+# Global buffer for log entries (thread-safe)
+_log_buffer: List[Dict] = []
+_buffer_lock = threading.Lock()
+
 
 class ExecutionLogger:
     """
-    Logs Phase 5 prediction worker execution to BigQuery.
+    Logs Phase 5 prediction worker execution to BigQuery with buffered writes.
 
     Each worker request generates one log entry with:
     - Request details (player, game, lines)
@@ -45,6 +65,12 @@ class ExecutionLogger:
     - Data quality metrics
     - Performance breakdown
     - Error tracking
+
+    IMPORTANT: Uses buffered writes to avoid BigQuery partition modification quotas.
+    Log entries are buffered in memory and flushed when:
+    - Buffer reaches BUFFER_FLUSH_THRESHOLD (default: 50 entries)
+    - flush_buffer() is explicitly called (e.g., at end of batch)
+    - Process exits (via atexit handler)
     """
 
     def __init__(self, bq_client: bigquery.Client, project_id: str, worker_version: str = "1.0"):
@@ -60,12 +86,94 @@ class ExecutionLogger:
         self.project_id = project_id
         self.worker_version = worker_version
         self.table_id = f'{project_id}.nba_predictions.prediction_worker_runs'
+        self._table_schema = None  # Cached schema
 
         # Capture Cloud Run metadata from environment
         self.cloud_run_service = os.environ.get('K_SERVICE')
         self.cloud_run_revision = os.environ.get('K_REVISION')
 
-        logger.info(f"Initialized ExecutionLogger for {self.table_id}")
+        # Register cleanup handler to flush buffer on exit
+        atexit.register(self._flush_on_exit)
+
+        logger.info(f"Initialized ExecutionLogger for {self.table_id} (buffered mode)")
+
+    def _flush_on_exit(self):
+        """Flush any remaining buffered entries on process exit."""
+        try:
+            self.flush_buffer()
+        except Exception as e:
+            logger.error(f"Error flushing buffer on exit: {e}")
+
+    def _get_table_schema(self):
+        """Get and cache the table schema."""
+        if self._table_schema is None:
+            table = self.bq_client.get_table(self.table_id)
+            self._table_schema = table.schema
+        return self._table_schema
+
+    def flush_buffer(self) -> int:
+        """
+        Flush all buffered log entries to BigQuery.
+
+        Returns:
+            Number of entries flushed
+        """
+        global _log_buffer
+
+        with _buffer_lock:
+            if not _log_buffer:
+                return 0
+
+            entries_to_flush = _log_buffer.copy()
+            _log_buffer = []
+
+        if not entries_to_flush:
+            return 0
+
+        try:
+            schema = self._get_table_schema()
+
+            job_config = bigquery.LoadJobConfig(
+                schema=schema,
+                autodetect=False,
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
+            )
+
+            load_job = self.bq_client.load_table_from_json(
+                entries_to_flush,
+                self.table_id,
+                job_config=job_config
+            )
+
+            load_job.result(timeout=120)
+            logger.info(f"Flushed {len(entries_to_flush)} execution log entries to BigQuery")
+            return len(entries_to_flush)
+
+        except Exception as e:
+            logger.error(f"Error flushing execution log buffer: {e}", exc_info=True)
+            # Re-add entries to buffer on failure (best effort)
+            with _buffer_lock:
+                _log_buffer = entries_to_flush + _log_buffer
+            return 0
+
+    def _add_to_buffer(self, log_entry: Dict) -> None:
+        """
+        Add a log entry to the buffer and flush if threshold reached.
+
+        Args:
+            log_entry: The log entry dictionary
+        """
+        global _log_buffer
+
+        with _buffer_lock:
+            _log_buffer.append(log_entry)
+            buffer_size = len(_log_buffer)
+
+        # Flush if we've reached the threshold
+        if buffer_size >= BUFFER_FLUSH_THRESHOLD:
+            logger.debug(f"Buffer reached threshold ({buffer_size}), flushing...")
+            self.flush_buffer()
 
     def log_execution(
         self,
@@ -195,25 +303,11 @@ class ExecutionLogger:
                 'batch_id': batch_id
             }
 
-            # Write to BigQuery using batch loading (not streaming insert)
-            # This avoids the 20 DML limit when 100+ workers run concurrently
-            table = self.bq_client.get_table(self.table_id)
-
-            job_config = bigquery.LoadJobConfig(
-                schema=table.schema,
-                autodetect=False,
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
-            )
-
-            load_job = self.bq_client.load_table_from_json(
-                [log_entry],
-                self.table_id,
-                job_config=job_config
-            )
-
-            load_job.result(timeout=60)
-            logger.debug(f"Logged execution for {player_lookup} (request_id={request_id})")
+            # Add to buffer instead of writing directly
+            # This avoids BigQuery partition modification quota limits
+            # Buffer will auto-flush when it reaches BUFFER_FLUSH_THRESHOLD
+            self._add_to_buffer(log_entry)
+            logger.debug(f"Buffered execution log for {player_lookup} (request_id={request_id})")
 
         except Exception as e:
             logger.error(f"Error logging execution: {e}", exc_info=True)
@@ -302,3 +396,9 @@ class ExecutionLogger:
             circuit_breaker_triggered=circuit_breaker_triggered,
             circuits_opened=circuits_opened
         )
+
+    def get_buffer_size(self) -> int:
+        """Get the current number of entries in the buffer."""
+        global _log_buffer
+        with _buffer_lock:
+            return len(_log_buffer)

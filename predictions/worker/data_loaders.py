@@ -1195,17 +1195,18 @@ def validate_features(features: Dict, min_quality_score: float = None) -> tuple:
         return False, errors
     
     # Check 4: Values in reasonable ranges
+    # Note: -1.0 is allowed as a sentinel value for "unknown" in some fields
     range_checks = [
         ('points_avg_season', 0, 60),
         ('points_avg_last_5', 0, 80),
         ('points_avg_last_10', 0, 80),
-        ('fatigue_score', 0, 100),
+        ('fatigue_score', -1, 100),  # -1 allowed as "unknown" sentinel
         ('opponent_def_rating', 95, 125),
         ('home_away', 0, 1),
         ('back_to_back', 0, 1),
         ('playoff_game', 0, 1),
     ]
-    
+
     for field, min_val, max_val in range_checks:
         value = features.get(field)
         if value is not None and (value < min_val or value > max_val):
