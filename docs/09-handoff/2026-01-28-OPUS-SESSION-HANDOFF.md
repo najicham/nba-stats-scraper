@@ -289,4 +289,124 @@ git push origin main
 
 ---
 
+---
+
+## Lessons Learned: Systematic Gap Analysis
+
+### Discovery Method
+
+When we found the missing NBA odds scheduler, we asked: **"What else might be missing?"**
+
+**Analysis approach:**
+```bash
+# Compare MLB schedulers vs NBA schedulers
+gcloud scheduler jobs list --location=us-west2 --format="value(name)" | grep -i mlb | sort
+gcloud scheduler jobs list --location=us-west2 --format="value(name)" | grep -i nba | sort
+```
+
+### MLB vs NBA Scheduler Coverage Gap
+
+| Category | MLB Scheduler | NBA Equivalent | Status |
+|----------|--------------|----------------|--------|
+| **Props/Odds** | `mlb-props-morning`, `mlb-props-pregame` | NONE | 🔴 **CRITICAL GAP** |
+| **Lineups** | `mlb-lineups-morning`, `mlb-lineups-pregame` | NONE visible | 🟡 **NEEDS CHECK** |
+| **Schedule** | `mlb-schedule-daily` | NONE visible | 🟡 **NEEDS CHECK** |
+| **Schedule Validation** | `mlb-schedule-validator-daily` | NONE | 🟠 **MISSING** |
+| **Freshness Check** | `mlb-freshness-checker-hourly` | `nba-feature-staleness-monitor` | ✅ Similar |
+| **Stall Detection** | `mlb-stall-detector-hourly` | `stale-processor-monitor` | ✅ Similar |
+| **Gap Detection** | `mlb-gap-detection-daily` | NONE | 🟠 **MISSING** |
+| **Predictions** | `mlb-predictions-generate` | `morning-predictions`, `same-day-predictions` | ✅ Covered |
+| **Grading** | `mlb-grading-daily` | `grading-daily`, `grading-morning` | ✅ Covered |
+| **Live Boxscores** | `mlb-live-boxscores` | `bdl-live-boxscores-evening/late` | ✅ Covered |
+
+### Identified Gaps to Investigate
+
+#### 🔴 Critical (Blocking Production)
+1. **NBA Props/Odds Scheduler** - Root cause of has_prop_line issues
+   - Create: `nba-props-morning`, `nba-props-midday`, `nba-props-pregame`
+
+#### 🟡 High Priority (Potential Issues)
+2. **NBA Lineups Scheduler** - Check if lineups are being scraped
+   - Verify: Do we have recent lineup data in BigQuery?
+   - Query: `SELECT MAX(scraped_at) FROM nba_raw.* WHERE table has lineups`
+
+3. **NBA Schedule Scheduler** - Check how schedule updates work
+   - Verify: Is schedule being updated daily?
+   - Query: Check `nba_raw.schedule` for recent updates
+
+#### 🟠 Medium Priority (Monitoring Gaps)
+4. **NBA Schedule Validator** - MLB validates schedule daily
+   - Create equivalent to catch schedule issues early
+
+5. **NBA Gap Detection** - MLB detects data gaps daily
+   - Create equivalent to catch missing data proactively
+
+### Prevention Framework
+
+**For every new scraper/processor, verify:**
+1. ✅ Cloud Run service deployed
+2. ✅ Pub/Sub trigger configured (if event-driven)
+3. ✅ **Cloud Scheduler job created** (if time-based) ← THIS WAS MISSING
+4. ✅ Monitoring/alerting configured
+5. ✅ Listed in operational runbook
+
+**Checklist for scheduler parity:**
+```bash
+# Run this periodically to check for scheduler gaps
+diff <(gcloud scheduler jobs list --format="value(name)" | grep mlb | sed 's/mlb-//' | sort) \
+     <(gcloud scheduler jobs list --format="value(name)" | grep nba | sed 's/nba-//' | sort)
+```
+
+### Investigation Tasks for New Chat
+
+```
+TASK: Audit NBA scheduler coverage against MLB
+
+1. Check lineups:
+   - Does NBA have lineup scraping?
+   - Is it scheduled or triggered differently?
+   - bq query "SELECT table_id FROM nba_raw.__TABLES__ WHERE table_id LIKE '%lineup%'"
+
+2. Check schedule updates:
+   - How does NBA schedule get updated?
+   - Is there a scheduler or is it manual?
+   - bq query "SELECT MAX(_PARTITIONTIME) FROM nba_raw.schedule"
+
+3. Check for any orphaned scrapers:
+   - List all scraper endpoints on nba-phase1-scrapers
+   - Compare to scheduled jobs
+   - curl https://nba-phase1-scrapers-756957797294.us-west2.run.app/
+
+4. Create missing schedulers following MLB pattern:
+   - Morning scrape (early availability)
+   - Midday scrape (catch updates)
+   - Pregame scrape (final values)
+
+5. Document all schedulers in operational runbook
+```
+
+---
+
+## Regarding Opus vs Sonnet Chat Management
+
+**Recommendation: User should create separate Sonnet chats manually**
+
+Reasons:
+1. **Parallel execution** - Multiple Sonnet chats can run simultaneously
+2. **Independent context** - Each chat has full context window for its task
+3. **Persistence** - Chats persist independently, can be resumed
+4. **Cost efficiency** - Sonnet is cheaper for straightforward execution tasks
+
+**When to use Opus agents (Task tool):**
+- Deep research requiring synthesis across many files
+- Complex debugging that needs extensive context
+- Architecture decisions requiring broad codebase understanding
+
+**When to use separate Sonnet chats:**
+- Well-defined execution tasks with clear steps
+- Independent parallel workstreams
+- Tasks that don't need to share context
+
+---
+
 **End of Handoff**
