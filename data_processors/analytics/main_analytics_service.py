@@ -347,10 +347,23 @@ def run_single_analytics_processor(processor_class, opts, prefer_async=None):
         }
 
 # Analytics processor registry - maps source tables to dependent analytics processors
+# IMPORTANT: All 5 Phase 3 processors must have at least one trigger path for
+# Firestore completion tracking to work correctly. The Phase 3->4 orchestrator
+# expects completion messages from all 5 processors.
 ANALYTICS_TRIGGERS = {
     'nbac_gamebook_player_stats': [PlayerGameSummaryProcessor],
-    'bdl_player_boxscores': [PlayerGameSummaryProcessor, TeamOffenseGameSummaryProcessor, UpcomingPlayerGameContextProcessor],
+    # bdl_player_boxscores is the primary trigger for most Phase 3 processors
+    # Added TeamDefenseGameSummaryProcessor since nbac_scoreboard_v2 is not being scraped
+    'bdl_player_boxscores': [
+        PlayerGameSummaryProcessor,
+        TeamOffenseGameSummaryProcessor,
+        TeamDefenseGameSummaryProcessor,  # Added: uses player boxscores for defensive actions
+        UpcomingPlayerGameContextProcessor,
+    ],
+    # nbac_scoreboard_v2 is kept for completeness but note it's not currently being scraped
     'nbac_scoreboard_v2': [TeamOffenseGameSummaryProcessor, TeamDefenseGameSummaryProcessor, UpcomingTeamGameContextProcessor],
+    # nbac_team_boxscore is the primary source for team defense data
+    'nbac_team_boxscore': [TeamDefenseGameSummaryProcessor, TeamOffenseGameSummaryProcessor],
     # nbac_schedule triggers team context generation (uses schedule data, not scoreboard)
     # This is the primary trigger since nbac_scoreboard_v2 is not currently being scraped
     'nbac_schedule': [UpcomingTeamGameContextProcessor],

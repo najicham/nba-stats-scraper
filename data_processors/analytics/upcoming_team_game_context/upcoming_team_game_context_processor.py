@@ -162,7 +162,9 @@ class UpcomingTeamGameContextProcessor(
 
     def __init__(self):
         super().__init__()
-        self.table_name = 'nba_analytics.upcoming_team_game_context'
+        # Note: Use just the table name without dataset prefix for consistency
+        # with other Phase 3 processors. The dataset is set via dataset_id.
+        self.table_name = 'upcoming_team_game_context'
         self.entity_type = 'team_game'
         self.entity_field = 'team_abbr'
 

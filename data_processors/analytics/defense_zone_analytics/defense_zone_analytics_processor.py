@@ -86,7 +86,9 @@ class DefenseZoneAnalyticsProcessor(
 
     def __init__(self):
         super().__init__()
-        self.table_name = 'nba_analytics.defense_zone_analytics'
+        # Note: Use just the table name without dataset prefix for consistency
+        # with other Phase 3 processors. The dataset is set via dataset_id.
+        self.table_name = 'defense_zone_analytics'
         self.processing_strategy = 'MERGE_UPDATE'
         self.entity_type = 'team'
         self.entity_field = 'team_abbr'

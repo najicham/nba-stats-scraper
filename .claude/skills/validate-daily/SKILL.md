@@ -141,12 +141,35 @@ gcloud logging read "resource.type=bigquery_resource AND protoPayload.status.mes
 
 #### Check 1: Missing Phase Logs
 
-Verify all expected phase transitions happened yesterday:
+Verify all expected phase transitions happened yesterday.
+
+**IMPORTANT**: This check handles gracefully when `phase_execution_log` table is empty or doesn't have data for the date.
 
 ```bash
 GAME_DATE=$(date -d "yesterday" +%Y-%m-%d)
 
-bq query --use_legacy_sql=false "
+# First check if the table has any data for this date
+TABLE_CHECK=$(bq query --use_legacy_sql=false --format=csv --quiet "
+SELECT COUNT(*) as count
+FROM nba_orchestration.phase_execution_log
+WHERE game_date = DATE('${GAME_DATE}')" 2>&1)
+
+if echo "$TABLE_CHECK" | grep -q "Not found"; then
+    echo "INFO: phase_execution_log table does not exist yet"
+    echo "This is expected for new deployments. Use alternative checks below."
+else
+    ROW_COUNT=$(echo "$TABLE_CHECK" | tail -1)
+    if [ "$ROW_COUNT" = "0" ]; then
+        echo "WARNING: No phase_execution_log entries for ${GAME_DATE}"
+        echo "Possible causes:"
+        echo "  - Orchestrators haven't run yet (check timing)"
+        echo "  - Logging not enabled in orchestrators"
+        echo "  - Cloud Functions failed before logging"
+        echo ""
+        echo "Fallback: Check Firestore completion records and processor_run_history instead"
+    else
+        # Table has data, run the full check
+        bq query --use_legacy_sql=false "
 WITH expected AS (
   SELECT 'phase2_to_phase3' as phase_name UNION ALL
   SELECT 'phase3_to_phase4' UNION ALL
@@ -160,6 +183,26 @@ actual AS (
 SELECT e.phase_name,
   CASE WHEN a.phase_name IS NULL THEN 'MISSING' ELSE 'OK' END as status
 FROM expected e LEFT JOIN actual a USING (phase_name)"
+    fi
+fi
+```
+
+**Fallback Check (if phase_execution_log is empty)**:
+
+Use `processor_run_history` to verify phases ran:
+
+```bash
+bq query --use_legacy_sql=false "
+SELECT
+  phase,
+  COUNT(DISTINCT processor_name) as processors_run,
+  MIN(started_at) as first_run,
+  MAX(completed_at) as last_complete
+FROM nba_orchestration.processor_run_history
+WHERE data_date = DATE('${GAME_DATE}')
+  AND phase IN ('phase_3_analytics', 'phase_4_precompute', 'phase_5_predictions')
+GROUP BY phase
+ORDER BY phase" 2>/dev/null || echo "INFO: processor_run_history also unavailable"
 ```
 
 **Expected**: All phases show 'OK'
@@ -168,6 +211,11 @@ FROM expected e LEFT JOIN actual a USING (phase_name)"
 - 🔴 P1 CRITICAL: Orchestrator did not run or failed silently
 - Impact: Data pipeline stalled, new data not flowing to downstream phases
 - Action: Check Cloud Function logs for phase orchestrator errors
+
+**If Table Empty/Missing**:
+- Use Firestore completion tracking as fallback
+- Check `phase2_completion`, `phase3_completion` documents
+- Verify processor_run_history has entries
 
 #### Check 2: Stalled Orchestrators
 
@@ -549,6 +597,47 @@ WHERE game_date = DATE('${GAME_DATE}')"
 - `player_records` ~= games × 25-30 players per game
 - `has_points` and `has_minutes` = 100% of records
 
+#### 1A2. Minutes Played Coverage Check (CRITICAL)
+
+**IMPORTANT**: This check validates that minutes_played field is populated for most players. Coverage below 90% is a CRITICAL issue indicating data extraction failures.
+
+```bash
+GAME_DATE=$(date -d "yesterday" +%Y-%m-%d)
+
+bq query --use_legacy_sql=false "
+SELECT
+  COUNT(*) as total_players,
+  COUNTIF(minutes_played IS NOT NULL AND minutes_played > 0) as has_minutes,
+  ROUND(100.0 * COUNTIF(minutes_played IS NOT NULL AND minutes_played > 0) / NULLIF(COUNT(*), 0), 1) as minutes_coverage_pct,
+  CASE
+    WHEN ROUND(100.0 * COUNTIF(minutes_played IS NOT NULL AND minutes_played > 0) / NULLIF(COUNT(*), 0), 1) >= 90 THEN 'OK'
+    WHEN ROUND(100.0 * COUNTIF(minutes_played IS NOT NULL AND minutes_played > 0) / NULLIF(COUNT(*), 0), 1) >= 80 THEN 'WARNING'
+    ELSE 'CRITICAL'
+  END as status
+FROM \`nba-props-platform.nba_analytics.player_game_summary\`
+WHERE game_date = DATE('${GAME_DATE}')"
+```
+
+**Thresholds**:
+- **≥90%**: OK - Expected coverage level
+- **80-89%**: WARNING - Some data gaps, investigate
+- **<80%**: CRITICAL - Major data extraction failure
+
+**Severity Classification**:
+- Coverage 63% → **P1 CRITICAL** - Stop and investigate immediately
+- Coverage 85% → **P2 WARNING** - Investigate but not blocking
+
+**If CRITICAL**:
+1. Check if BDL scraper ran successfully: `bq query "SELECT * FROM nba_orchestration.scraper_execution_log WHERE scraper_name='bdl_player_boxscores' AND DATE(started_at) = CURRENT_DATE()"`
+2. Check if minutes field was extracted: `bq query "SELECT minutes, COUNT(*) FROM nba_raw.bdl_player_boxscores WHERE game_date = '${GAME_DATE}' GROUP BY 1"`
+3. Verify BDL API response contains minutes data
+4. Check for field extraction bugs in the processor
+
+**Root Cause Investigation**:
+- If raw data has minutes but analytics doesn't → Processor bug
+- If raw data missing minutes → Scraper extraction bug
+- If API not returning minutes → Source data issue
+
 #### 1B. Prediction Grading Complete
 
 Verify predictions were graded against actual results:
@@ -571,12 +660,16 @@ WHERE game_date = DATE('${GAME_DATE}')
 
 #### 1C. Scraper Runs Completed
 
-Verify box score scrapers ran successfully (they run after midnight):
+Verify box score scrapers ran successfully (they run after midnight).
+
+**IMPORTANT**: The `scraper_run_history` table may not exist. This check gracefully falls back to checking raw data tables directly.
 
 ```bash
 PROCESSING_DATE=$(date +%Y-%m-%d)
+GAME_DATE=$(date -d "yesterday" +%Y-%m-%d)
 
-bq query --use_legacy_sql=false "
+# Try scraper_run_history first
+SCRAPER_CHECK=$(bq query --use_legacy_sql=false --format=csv --quiet "
 SELECT
   scraper_name,
   status,
@@ -585,10 +678,51 @@ SELECT
 FROM \`nba-props-platform.nba_orchestration.scraper_run_history\`
 WHERE DATE(started_at) = DATE('${PROCESSING_DATE}')
   AND scraper_name IN ('nbac_gamebook', 'bdl_player_boxscores')
-ORDER BY completed_at DESC"
+ORDER BY completed_at DESC" 2>&1)
+
+if echo "$SCRAPER_CHECK" | grep -q "Not found"; then
+    echo "INFO: scraper_run_history table does not exist"
+    echo "Using fallback: checking raw data tables directly"
+    echo ""
+
+    # Fallback: Check raw data tables have data
+    echo "=== Fallback: Raw Data Verification ==="
+
+    # Check BDL boxscores
+    BDL_COUNT=$(bq query --use_legacy_sql=false --format=csv --quiet "
+    SELECT COUNT(*) FROM nba_raw.bdl_player_boxscores
+    WHERE game_date = DATE('${GAME_DATE}')" 2>/dev/null | tail -1)
+    echo "bdl_player_boxscores for ${GAME_DATE}: ${BDL_COUNT:-0} records"
+
+    # Check NBAC gamebook
+    NBAC_COUNT=$(bq query --use_legacy_sql=false --format=csv --quiet "
+    SELECT COUNT(*) FROM nba_raw.nbac_gamebook_player_boxscores
+    WHERE game_date = DATE('${GAME_DATE}')" 2>/dev/null | tail -1)
+    echo "nbac_gamebook_player_boxscores for ${GAME_DATE}: ${NBAC_COUNT:-0} records"
+
+    # Determine status based on data presence
+    if [ "${BDL_COUNT:-0}" -gt 0 ] && [ "${NBAC_COUNT:-0}" -gt 0 ]; then
+        echo ""
+        echo "STATUS: OK - Both data sources have records (scrapers likely ran)"
+    elif [ "${BDL_COUNT:-0}" -gt 0 ] || [ "${NBAC_COUNT:-0}" -gt 0 ]; then
+        echo ""
+        echo "STATUS: WARNING - Only one data source has records"
+    else
+        echo ""
+        echo "STATUS: CRITICAL - No raw data found for ${GAME_DATE}"
+    fi
+else
+    echo "$SCRAPER_CHECK"
+fi
 ```
 
-**Expected**: Both scrapers show `status = 'success'`
+**Expected**: Both scrapers show `status = 'success'`, OR fallback shows both raw tables have records
+
+**Fallback Logic**:
+- If `scraper_run_history` doesn't exist → Check raw data tables directly
+- BDL records > 0 AND NBAC records > 0 → Scrapers ran successfully
+- Only one source has data → WARNING, investigate
+- No data in either → CRITICAL, scrapers failed
 
 ### Priority 2: Pipeline Completeness (Run if P1 passes)
 
@@ -613,27 +747,82 @@ WHERE game_date = DATE('${GAME_DATE}')"
 - `player_game_summary`: ~200-300 records per night (varies by games)
 - `team_offense_game_summary`: 2 × number of games (home + away)
 
-#### 2B. Phase 3 Completion Status
+#### 2B. Phase 3 Completion Status (MUST BE 5/5)
 
-Check that Phase 3 processors completed (they run after midnight, so check today's date):
+Check that Phase 3 processors completed (they run after midnight, so check today's date).
+
+**CRITICAL**: Phase 3 has **5 expected processors**. Anything less than 5/5 is a WARNING or CRITICAL.
 
 ```bash
 python3 << 'EOF'
 from google.cloud import firestore
 from datetime import datetime
+import sys
+
+EXPECTED_PROCESSORS = 5  # Phase 3 has 5 processors
+EXPECTED_PROCESSOR_NAMES = [
+    'player_game_summary',
+    'team_offense_game_summary',
+    'team_defense_game_summary',
+    'upcoming_player_game_context',
+    'upcoming_team_game_context'
+]
+
 db = firestore.Client()
 # Phase 3 runs after midnight, so check TODAY's completion record
 processing_date = datetime.now().strftime('%Y-%m-%d')
 doc = db.collection('phase3_completion').document(processing_date).get()
+
 if doc.exists:
     data = doc.to_dict()
+    # Count completed processors (exclude metadata fields starting with _)
+    completed = [k for k in data.keys() if not k.startswith('_')]
+    completed_count = len(completed)
+    triggered = data.get('_triggered', False)
+
     print(f"Phase 3 Status for {processing_date}:")
-    for processor, status in sorted(data.items()):
-        print(f"  {processor}: {status.get('status', 'unknown')}")
+    print(f"  Processors complete: {completed_count}/{EXPECTED_PROCESSORS}")
+    print(f"  Phase 4 triggered: {triggered}")
+
+    # Show completed processors
+    for proc in completed:
+        status_info = data.get(proc, {})
+        status = status_info.get('status', 'unknown') if isinstance(status_info, dict) else str(status_info)
+        print(f"    - {proc}: {status}")
+
+    # Check for missing processors
+    missing = set(EXPECTED_PROCESSOR_NAMES) - set(completed)
+    if missing:
+        print(f"\n  MISSING PROCESSORS: {', '.join(missing)}")
+
+    # Severity classification
+    if completed_count < EXPECTED_PROCESSORS:
+        if completed_count <= 2:
+            print(f"\n  STATUS: CRITICAL - Only {completed_count}/{EXPECTED_PROCESSORS} processors complete")
+            sys.exit(1)
+        else:
+            print(f"\n  STATUS: WARNING - {completed_count}/{EXPECTED_PROCESSORS} processors complete")
+    else:
+        print(f"\n  STATUS: OK - All {EXPECTED_PROCESSORS} processors complete")
 else:
     print(f"No Phase 3 completion record for {processing_date}")
+    print("  STATUS: CRITICAL - No completion record found")
+    sys.exit(1)
 EOF
 ```
+
+**Expected**: **5/5 processors complete** and `_triggered = True`
+
+**Severity Thresholds**:
+- **5/5 complete**: OK
+- **3-4/5 complete**: WARNING - Phase 4 may have incomplete data
+- **0-2/5 complete**: CRITICAL - Major pipeline failure
+
+**If incomplete (e.g., 2/5)**:
+1. Check which processors are missing from the list
+2. Check Cloud Run logs for those processors: `gcloud run services logs read nba-phase3-analytics-processors --limit=50`
+3. Look for errors: timeout, quota exceeded, ModuleNotFoundError
+4. If processors failed, check if they need manual retry
 
 #### 2C. Cache Updated
 
@@ -790,6 +979,76 @@ ORDER BY predictions DESC"
 ```
 
 **Note**: This is informational, not pass/fail. Prediction accuracy varies.
+
+#### 3F. Deployment Drift Detection (Added 2026-01-28)
+
+**PURPOSE**: Detect when data was processed BEFORE the latest code deployment. This helps identify cases where:
+- A bug fix was deployed but data was already processed with the buggy code
+- Data may need reprocessing with the corrected code
+
+```bash
+# Get deployment times for key services
+echo "=== Service Deployment Times ==="
+
+# Phase 3 Analytics Processors
+PHASE3_DEPLOY=$(gcloud run revisions list --service="nba-phase3-analytics-processors" \
+  --region=us-west2 --limit=1 --format='value(metadata.creationTimestamp)' 2>/dev/null)
+echo "Phase 3 Processors deployed: ${PHASE3_DEPLOY:-UNKNOWN}"
+
+# Phase 4 Precompute Processors
+PHASE4_DEPLOY=$(gcloud run revisions list --service="nba-phase4-precompute-processors" \
+  --region=us-west2 --limit=1 --format='value(metadata.creationTimestamp)' 2>/dev/null)
+echo "Phase 4 Processors deployed: ${PHASE4_DEPLOY:-UNKNOWN}"
+
+# Prediction Worker
+PRED_DEPLOY=$(gcloud run revisions list --service="prediction-worker" \
+  --region=us-west2 --limit=1 --format='value(metadata.creationTimestamp)' 2>/dev/null)
+echo "Prediction Worker deployed: ${PRED_DEPLOY:-UNKNOWN}"
+
+echo ""
+echo "=== Data Processing Times ==="
+
+# Get latest data processing time for yesterday's data
+GAME_DATE=$(date -d "yesterday" +%Y-%m-%d)
+
+bq query --use_legacy_sql=false "
+SELECT
+  'player_game_summary' as table_name,
+  MAX(processed_at) as last_processed
+FROM \`nba-props-platform.nba_analytics.player_game_summary\`
+WHERE game_date = DATE('${GAME_DATE}')
+  AND processed_at IS NOT NULL
+UNION ALL
+SELECT
+  'player_daily_cache',
+  MAX(updated_at)
+FROM \`nba-props-platform.nba_precompute.player_daily_cache\`
+WHERE cache_date = DATE('${GAME_DATE}')" 2>/dev/null
+
+echo ""
+echo "=== Full Drift Check ==="
+./bin/check-deployment-drift.sh 2>/dev/null || echo "Drift check script not available - run manually"
+```
+
+**Interpretation**:
+- If `last_processed < deployment_time` → Data was processed with NEW code (good)
+- If `last_processed > deployment_time` → Data was processed BEFORE deployment (may need reprocessing)
+
+**If Drift Detected**:
+1. Compare the bug fix commit date vs data processing date
+2. Determine if the bug affected the data
+3. If affected, consider reprocessing: `./bin/maintenance/reprocess_date.sh ${GAME_DATE}`
+4. Document in handoff which dates may need reprocessing
+
+**Common Scenario**:
+- Bug fix deployed at 10:00 AM
+- Data was processed at 7:00 AM (before fix)
+- Resolution: Reprocess data with the fixed code
+
+**When to Run**:
+- After deploying bug fixes
+- When investigating data quality issues
+- As part of comprehensive validation
 
 ## Investigation Tools
 
@@ -948,6 +1207,13 @@ Key fields:
 | **Usage Rate Coverage** | ≥90% | 80-89% | <80% |
 | **Prediction Coverage** | ≥90% | 70-89% | <70% |
 | **Game Context Coverage** | 100% | 95-99% | <95% |
+| **Phase 3 Completion** | 5/5 | 3-4/5 | 0-2/5 |
+| **Phase Execution Logs** | All phases logged | 1-2 missing | No logs found |
+
+**Key Thresholds to Remember**:
+- **63% minutes coverage** → CRITICAL (not WARNING!)
+- **2/5 Phase 3 processors** → CRITICAL (not just incomplete)
+- **Missing phase_execution_log** → Investigate, may need fallback checks
 
 ## Severity Classification
 
@@ -955,7 +1221,9 @@ Key fields:
 - All predictions missing for entire day
 - Data corruption detected (spot checks <90%)
 - Pipeline completely stuck (no phases completing)
-- Minutes/usage coverage <80%
+- Minutes/usage coverage <80% (e.g., 63% is CRITICAL)
+- Phase 3 completion 0-2/5 processors
+- Phase execution log completely empty for a date
 
 **🟡 P2 HIGH** (Within 1 Hour):
 - Data quality issue 70-89% coverage

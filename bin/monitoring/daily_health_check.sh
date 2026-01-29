@@ -54,23 +54,59 @@ JOIN (
 WHERE ppc.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 ORDER BY ppc.game_date DESC" 2>/dev/null
 
-# 4. Check Phase 3 completion state (Firestore)
+# 4. Check Phase 3 completion state (Firestore) with 5/5 validation
 echo ""
 echo "PHASE 3 COMPLETION STATE:"
 python3 << EOF
 from google.cloud import firestore
+import sys
+
+EXPECTED_PROCESSORS = 5  # Phase 3 has 5 processors
+EXPECTED_NAMES = [
+    'player_game_summary',
+    'team_offense_game_summary',
+    'team_defense_game_summary',
+    'upcoming_player_game_context',
+    'upcoming_team_game_context'
+]
+
 db = firestore.Client()
 doc = db.collection('phase3_completion').document('$DATE').get()
 if doc.exists:
     data = doc.to_dict()
     completed = [k for k in data if not k.startswith('_')]
     triggered = data.get('_triggered', False)
-    print(f"   Processors complete: {len(completed)}/5")
+    count = len(completed)
+
+    # Determine status
+    if count == EXPECTED_PROCESSORS:
+        status = "OK"
+        icon = "✅"
+    elif count >= 3:
+        status = "WARNING"
+        icon = "⚠️"
+    else:
+        status = "CRITICAL"
+        icon = "❌"
+
+    print(f"   {icon} Processors complete: {count}/{EXPECTED_PROCESSORS} ({status})")
     print(f"   Phase 4 triggered: {triggered}")
+
+    # Show completed processors
     for k in completed:
         print(f"     - {k}")
+
+    # Show missing processors
+    missing = set(EXPECTED_NAMES) - set(completed)
+    if missing:
+        print(f"   ⚠️  MISSING: {', '.join(missing)}")
+
+    # Exit with error if incomplete
+    if count < EXPECTED_PROCESSORS:
+        print(f"\n   ACTION REQUIRED: {EXPECTED_PROCESSORS - count} processor(s) did not complete!")
 else:
-    print("   No completion data yet")
+    print("   ❌ No completion data yet (CRITICAL)")
+    print("   Phase 3 processors may not have run!")
 EOF
 
 # 5. Check ML Feature Store
@@ -127,10 +163,59 @@ FROM raw_counts r
 LEFT JOIN analytics_counts a ON r.game_date = a.game_date
 ORDER BY r.game_date DESC" 2>/dev/null
 
-# 8. Workflow execution check
+# 7B. Minutes coverage check (CRITICAL threshold: 80%, WARNING: 90%)
+echo ""
+echo "MINUTES COVERAGE (Last 7 Days):"
+MINUTES_RESULT=$(bq query --use_legacy_sql=false --format=csv --quiet "
+SELECT
+  game_date,
+  COUNT(*) as total,
+  COUNTIF(minutes_played IS NOT NULL AND minutes_played > 0) as has_minutes,
+  ROUND(100.0 * COUNTIF(minutes_played IS NOT NULL AND minutes_played > 0) / NULLIF(COUNT(*), 0), 1) as pct
+FROM nba_analytics.player_game_summary
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+GROUP BY game_date
+ORDER BY game_date DESC" 2>/dev/null)
+
+if [ -n "$MINUTES_RESULT" ]; then
+  # Print header
+  printf "   %-12s %8s %12s %8s %10s\n" "game_date" "total" "has_minutes" "pct" "status"
+  printf "   %-12s %8s %12s %8s %10s\n" "-----------" "-------" "-----------" "------" "--------"
+
+  # Parse and print results with status
+  echo "$MINUTES_RESULT" | tail -n +2 | while IFS=, read -r game_date total has_minutes pct; do
+    pct_int=${pct%.*}
+    if [ "${pct_int:-0}" -lt 80 ]; then
+      status="❌ CRITICAL"
+    elif [ "${pct_int:-0}" -lt 90 ]; then
+      status="⚠️ WARNING"
+    else
+      status="✅ OK"
+    fi
+    printf "   %-12s %8s %12s %7s%% %10s\n" "$game_date" "$total" "$has_minutes" "$pct" "$status"
+  done
+
+  # Check yesterday specifically and alert if critical
+  YESTERDAY_PCT=$(echo "$MINUTES_RESULT" | grep "$YESTERDAY" | cut -d',' -f4)
+  if [ -n "$YESTERDAY_PCT" ]; then
+    YESTERDAY_INT=${YESTERDAY_PCT%.*}
+    if [ "${YESTERDAY_INT:-100}" -lt 80 ]; then
+      echo ""
+      echo "   ❌ CRITICAL: Yesterday's minutes coverage is ${YESTERDAY_PCT}% (threshold: 80%)"
+      echo "   ACTION REQUIRED: Investigate data extraction issues!"
+    elif [ "${YESTERDAY_INT:-100}" -lt 90 ]; then
+      echo ""
+      echo "   ⚠️  WARNING: Yesterday's minutes coverage is ${YESTERDAY_PCT}% (threshold: 90%)"
+    fi
+  fi
+else
+  echo "   Could not retrieve minutes coverage data"
+fi
+
+# 8. Workflow execution check (with graceful fallback)
 echo ""
 echo "WORKFLOW EXECUTION (Last 24h):"
-bq query --use_legacy_sql=false --format=pretty "
+WORKFLOW_RESULT=$(bq query --use_legacy_sql=false --format=pretty "
 SELECT
   workflow_name,
   COUNTIF(action = 'RUN') as runs,
@@ -140,7 +225,23 @@ FROM nba_orchestration.workflow_decisions
 WHERE decision_time >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
   AND workflow_name LIKE 'post_game%'
 GROUP BY 1
-ORDER BY 1" 2>/dev/null
+ORDER BY 1" 2>&1)
+
+if echo "$WORKFLOW_RESULT" | grep -q "Not found"; then
+  echo "   INFO: workflow_decisions table not found"
+  echo "   Fallback: Check processor_run_history for phase executions"
+  bq query --use_legacy_sql=false --format=pretty "
+SELECT
+  phase,
+  COUNT(DISTINCT processor_name) as processors_run,
+  COUNT(*) as total_runs
+FROM nba_orchestration.processor_run_history
+WHERE started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+GROUP BY phase
+ORDER BY phase" 2>/dev/null || echo "   processor_run_history also unavailable"
+else
+  echo "$WORKFLOW_RESULT"
+fi
 
 # 9. Schedule staleness check and auto-fix
 echo ""

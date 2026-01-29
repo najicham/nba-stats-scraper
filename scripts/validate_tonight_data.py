@@ -492,36 +492,56 @@ class TonightDataValidator:
             self.add_warning('data_quality', f'No player_game_summary data for {check_date}')
             return False
 
-        # Critical thresholds
-        MINUTES_THRESHOLD = 90.0  # Alert if <90% have minutes_played
-        USAGE_THRESHOLD = 90.0    # Alert if <90% of active players have usage_rate
+        # Critical thresholds - two levels
+        MINUTES_WARNING_THRESHOLD = 90.0   # WARNING if 80-90%
+        MINUTES_CRITICAL_THRESHOLD = 80.0  # CRITICAL if <80%
+        USAGE_WARNING_THRESHOLD = 90.0     # WARNING if 80-90%
+        USAGE_CRITICAL_THRESHOLD = 80.0    # CRITICAL if <80%
 
-        # Check minutes_played coverage
-        if minutes_pct < MINUTES_THRESHOLD:
+        # Check minutes_played coverage with two-level threshold
+        if minutes_pct < MINUTES_CRITICAL_THRESHOLD:
             self.add_issue('data_quality',
-                f'minutes_played coverage is {minutes_pct}% (threshold: {MINUTES_THRESHOLD}%) for {check_date}',
+                f'minutes_played coverage is {minutes_pct}% (CRITICAL threshold: {MINUTES_CRITICAL_THRESHOLD}%) for {check_date}',
                 severity='CRITICAL')
+        elif minutes_pct < MINUTES_WARNING_THRESHOLD:
+            self.add_issue('data_quality',
+                f'minutes_played coverage is {minutes_pct}% (WARNING threshold: {MINUTES_WARNING_THRESHOLD}%) for {check_date}',
+                severity='WARNING')
 
-        # Check usage_rate coverage for active players
-        if active_usage_pct < USAGE_THRESHOLD:
+        # Check usage_rate coverage for active players with two-level threshold
+        if active_usage_pct < USAGE_CRITICAL_THRESHOLD:
             self.add_issue('data_quality',
-                f'usage_rate coverage is {active_usage_pct}% for active players (threshold: {USAGE_THRESHOLD}%) for {check_date}',
+                f'usage_rate coverage is {active_usage_pct}% for active players (CRITICAL threshold: {USAGE_CRITICAL_THRESHOLD}%) for {check_date}',
                 severity='CRITICAL')
+        elif active_usage_pct < USAGE_WARNING_THRESHOLD:
+            self.add_issue('data_quality',
+                f'usage_rate coverage is {active_usage_pct}% for active players (WARNING threshold: {USAGE_WARNING_THRESHOLD}%) for {check_date}',
+                severity='WARNING')
 
         # Check team stats join
         if has_team_join == 0:
             self.add_warning('data_quality',
                 f'No team stats join detected (source_team_last_updated all NULL) for {check_date}')
 
+        # Determine status icon and message
+        if minutes_pct < MINUTES_CRITICAL_THRESHOLD or active_usage_pct < USAGE_CRITICAL_THRESHOLD:
+            status_icon = '❌'
+            status_text = 'CRITICAL'
+        elif minutes_pct < MINUTES_WARNING_THRESHOLD or active_usage_pct < USAGE_WARNING_THRESHOLD:
+            status_icon = '⚠️'
+            status_text = 'WARNING'
+        else:
+            status_icon = '✓'
+            status_text = 'OK'
+
         # Print status
-        status_icon = '✓' if minutes_pct >= MINUTES_THRESHOLD and active_usage_pct >= USAGE_THRESHOLD else '⚠️'
-        print(f"{status_icon} Data Quality ({check_date}):")
+        print(f"{status_icon} Data Quality ({check_date}): {status_text}")
         print(f"   - {total} player-game records")
-        print(f"   - minutes_played: {minutes_pct}% coverage")
-        print(f"   - usage_rate: {active_usage_pct}% for active players")
+        print(f"   - minutes_played: {minutes_pct}% coverage (warning: {MINUTES_WARNING_THRESHOLD}%, critical: {MINUTES_CRITICAL_THRESHOLD}%)")
+        print(f"   - usage_rate: {active_usage_pct}% for active players (warning: {USAGE_WARNING_THRESHOLD}%, critical: {USAGE_CRITICAL_THRESHOLD}%)")
         print(f"   - Team stats joined: {'Yes' if has_team_join > 0 else 'No'}")
 
-        return minutes_pct >= MINUTES_THRESHOLD and active_usage_pct >= USAGE_THRESHOLD
+        return minutes_pct >= MINUTES_CRITICAL_THRESHOLD and active_usage_pct >= USAGE_CRITICAL_THRESHOLD
 
     def check_field_completeness(self, check_date: date) -> bool:
         """
