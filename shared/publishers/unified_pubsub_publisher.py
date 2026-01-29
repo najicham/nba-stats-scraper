@@ -27,6 +27,8 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, Any
 
 from google.cloud import pubsub_v1
+from google.api_core import retry
+from google.api_core.exceptions import ServiceUnavailable, DeadlineExceeded
 
 logger = logging.getLogger(__name__)
 
@@ -255,10 +257,16 @@ class UnifiedPubSubPublisher:
 
     def _publish(self, topic: str, message: Dict) -> Optional[str]:
         """
-        Publish message to Pub/Sub topic.
+        Publish message to Pub/Sub topic with retry logic for transient errors.
 
         CRITICAL: Non-blocking - failures are logged but don't raise exceptions.
         This ensures processors don't fail if Pub/Sub is unavailable.
+
+        Retry strategy for transient errors (ServiceUnavailable, DeadlineExceeded):
+        - Initial delay: 1 second
+        - Maximum delay: 30 seconds
+        - Multiplier: 2.0 (exponential backoff)
+        - Total deadline: 60 seconds
 
         Args:
             topic: Topic name (not full path)
@@ -275,9 +283,26 @@ class UnifiedPubSubPublisher:
             message_json = json.dumps(message, default=str)
             message_bytes = message_json.encode('utf-8')
 
-            # Publish
-            future = self.client.publish(topic_path, message_bytes)
-            message_id = future.result(timeout=10.0)  # 10 second timeout
+            # Define retry predicate for transient Pub/Sub errors
+            def is_transient_pubsub_error(exc):
+                return isinstance(exc, (ServiceUnavailable, DeadlineExceeded))
+
+            # Retry configuration for transient errors
+            pubsub_retry = retry.Retry(
+                predicate=is_transient_pubsub_error,
+                initial=1.0,      # 1 second initial delay
+                maximum=30.0,     # 30 seconds maximum delay
+                multiplier=2.0,   # Exponential backoff
+                deadline=60.0     # 60 second total timeout
+            )
+
+            # Publish with retry
+            @pubsub_retry
+            def _do_publish():
+                future = self.client.publish(topic_path, message_bytes)
+                return future.result(timeout=10.0)
+
+            message_id = _do_publish()
 
             logger.info(
                 f"Published to {topic}: {message['processor_name']} "

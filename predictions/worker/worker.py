@@ -136,6 +136,7 @@ if TYPE_CHECKING:
     from predictions.shared.injury_filter import InjuryFilter, InjuryStatus
 
 from predictions.worker.write_metrics import PredictionWriteMetrics
+from shared.utils.bigquery_retry import retry_on_quota_exceeded
 
 logger.info("✓ Heavy imports deferred (will lazy-load on first request)")
 
@@ -1552,6 +1553,7 @@ def format_prediction_for_bigquery(
     return record
 
 
+@retry_on_quota_exceeded
 def write_predictions_to_bigquery(predictions: List[Dict], batch_id: Optional[str] = None, dataset_prefix: str = '') -> bool:
     """
     Write predictions to a batch staging table for later consolidation.

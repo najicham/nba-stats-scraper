@@ -46,7 +46,10 @@ from shared.processors.mixins import RunHistoryMixin, ProcessorVersionMixin, Dep
 from shared.utils.bigquery_retry import (
     is_serialization_error,
     SERIALIZATION_RETRY,
-    QUOTA_RETRY
+    QUOTA_RETRY,
+    retry_on_quota_exceeded,
+    retry_on_serialization,
+    retry_on_transient,
 )
 from shared.clients.bigquery_pool import get_bigquery_client
 
@@ -1291,17 +1294,19 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
 
         return None
 
+    @retry_on_quota_exceeded
+    @retry_on_serialization
     def save_data(self) -> None:
         """
         Save self.transformed_data to BigQuery using batch loading (not streaming).
-        
+
         Default implementation uses load_table_from_json with schema enforcement.
-        
+
         Override for custom save strategies:
         - MERGE operations (upserts)
         - DELETE operations
         - Query-based transformations
-        
+
         If overriding, set self.stats["rows_inserted"] for tracking.
         """
         if not self.transformed_data:

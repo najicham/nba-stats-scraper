@@ -32,6 +32,7 @@ import os
 # Add parent path for shared imports
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from shared.config.orchestration_config import get_orchestration_config
+from shared.utils.bigquery_retry import retry_on_transient
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,7 @@ class PlayerLoader:
     # MAIN API
     # ========================================================================
     
+    @retry_on_transient
     def create_prediction_requests(
         self,
         game_date: date,
@@ -144,6 +146,7 @@ class PlayerLoader:
 
         return requests
     
+    @retry_on_transient
     def get_summary_stats(self, game_date: date, dataset_prefix: str = None) -> Dict:
         """
         Get summary statistics for games on given date
@@ -253,6 +256,7 @@ class PlayerLoader:
     # INTERNAL METHODS
     # ========================================================================
     
+    @retry_on_transient
     def _query_players_for_date(
         self,
         game_date: date,

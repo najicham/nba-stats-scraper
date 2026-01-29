@@ -5,6 +5,7 @@ Logs administrative actions to BigQuery for compliance and debugging.
 """
 
 import os
+import sys
 import logging
 import hashlib
 from datetime import datetime, timedelta
@@ -12,6 +13,11 @@ from typing import Optional
 from zoneinfo import ZoneInfo
 
 from google.cloud import bigquery
+
+# Add project root to path for shared imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+
+from shared.utils.bigquery_batch_writer import get_batch_writer
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +69,7 @@ class AuditLogger:
         user_agent: Optional[str] = None,
     ) -> bool:
         """
-        Log an administrative action to BigQuery.
+        Log an administrative action to BigQuery using BigQueryBatchWriter.
 
         Args:
             action_type: Type of action (e.g., 'force_predictions', 'retry_phase')
@@ -80,7 +86,7 @@ class AuditLogger:
             from flask import request
             import json
 
-            table_ref = f"{self.project_id}.{self.dataset}.{self.table}"
+            table_id = f"{self.dataset}.{self.table}"
 
             row = {
                 'timestamp': datetime.now(ZoneInfo('UTC')).isoformat(),
@@ -93,11 +99,11 @@ class AuditLogger:
                 'user_agent': user_agent or request.headers.get('User-Agent', 'unknown'),
             }
 
-            errors = self.client.insert_rows_json(table_ref, [row])
-
-            if errors:
-                logger.error(f"Failed to write audit log: {errors}")
-                return False
+            # Use BigQueryBatchWriter for efficient batched writes
+            writer = get_batch_writer(table_id, project_id=self.project_id)
+            writer.add_record(row)
+            # Flush immediately for audit logs to ensure immediate visibility
+            writer.flush()
 
             logger.info(f"Audit log: {action_type} - success={success}")
             return True

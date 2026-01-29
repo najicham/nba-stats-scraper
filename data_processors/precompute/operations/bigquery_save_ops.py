@@ -41,6 +41,10 @@ from google.cloud import bigquery
 from google.api_core.exceptions import GoogleAPIError, NotFound
 
 from shared.utils.notification_system import notify_error, notify_warning
+from shared.utils.bigquery_retry import (
+    retry_on_quota_exceeded,
+    retry_on_serialization,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +57,8 @@ class BigQuerySaveOpsMixin:
     See module docstring for complete dependency list.
     """
 
+    @retry_on_quota_exceeded
+    @retry_on_serialization
     def save_precompute(self) -> None:
         """
         Save to precompute BigQuery table using batch INSERT.
@@ -232,6 +238,7 @@ class BigQuerySaveOpsMixin:
                 logger.warning(f"Failed to send notification: {notify_ex}")
             raise
 
+    @retry_on_serialization
     def _save_with_proper_merge(self, rows: List[Dict], table_id: str, table_schema) -> None:
         """
         Save data using proper SQL MERGE statement (not DELETE + INSERT).

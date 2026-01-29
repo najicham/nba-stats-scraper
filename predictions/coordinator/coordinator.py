@@ -56,6 +56,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
 from shared.config.orchestration_config import get_orchestration_config
 from shared.utils.env_validation import validate_required_env_vars
+from shared.utils.bigquery_retry import retry_on_transient
 from shared.utils.auth_utils import get_api_key
 from shared.endpoints.health import create_health_blueprint, HealthChecker
 
@@ -183,6 +184,7 @@ logger.info("Health check endpoints registered: /health, /ready, /health/deep")
 # Prevents predictions when historical data is incomplete
 # =============================================================================
 
+@retry_on_transient
 def _check_data_completeness_for_predictions(
     game_date: date,
     dataset_prefix: str = '',

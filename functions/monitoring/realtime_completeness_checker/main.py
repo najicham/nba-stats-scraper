@@ -13,6 +13,13 @@ from datetime import datetime
 import json
 import base64
 import uuid
+import sys
+import os
+
+# Add project root to path for shared imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+
+from shared.utils.bigquery_batch_writer import get_batch_writer
 
 
 @functions_framework.cloud_event
@@ -95,9 +102,8 @@ def get_expected_processors_for_date(game_date):
 
 
 def track_processor_completion(processor_name, game_date, status, rows_processed):
-    """Record processor completion."""
-    bq_client = bigquery.Client()
-    table_id = "nba-props-platform.nba_orchestration.processor_completions"
+    """Record processor completion using BigQueryBatchWriter."""
+    table_id = "nba_orchestration.processor_completions"
 
     row = {
         'processor_name': processor_name,
@@ -107,9 +113,11 @@ def track_processor_completion(processor_name, game_date, status, rows_processed
         'rows_processed': rows_processed
     }
 
-    errors = bq_client.insert_rows_json(table_id, [row])
-    if errors:
-        print(f"❌ Error tracking completion: {errors}")
+    # Use BigQueryBatchWriter for efficient batched writes
+    writer = get_batch_writer(table_id)
+    writer.add_record(row)
+    # Flush immediately since this is a Cloud Function that may terminate
+    writer.flush()
 
 
 def get_completed_processors(game_date):

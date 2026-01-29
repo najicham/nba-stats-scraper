@@ -56,6 +56,7 @@ logger = logging.getLogger(__name__)
 
 # Constants
 from shared.config.gcp_config import get_project_id
+from shared.utils.bigquery_batch_writer import get_batch_writer
 PROJECT_ID = get_project_id()
 LATENCY_METRICS_TABLE = 'nba_analytics.pipeline_latency_metrics'
 
@@ -372,13 +373,11 @@ class PipelineLatencyTracker:
             # Ensure table exists
             self._ensure_table_exists()
 
-            # Insert row using streaming insert
-            table_ref = f"{self.project_id}.{LATENCY_METRICS_TABLE}"
-            errors = self.bq_client.insert_rows_json(table_ref, [row])
-
-            if errors:
-                logger.error(f"Error inserting metrics: {errors}")
-                return False
+            # Use BigQueryBatchWriter for efficient batched writes
+            writer = get_batch_writer(LATENCY_METRICS_TABLE, project_id=self.project_id)
+            writer.add_record(row)
+            # Flush immediately to ensure metrics are visible for monitoring
+            writer.flush()
 
             logger.info(f"Stored latency metrics for {game_date} (total: {total_latency}s)")
             return True

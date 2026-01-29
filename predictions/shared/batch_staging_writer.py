@@ -47,6 +47,9 @@ from google.api_core import exceptions as gcp_exceptions
 # Import distributed lock to prevent race conditions
 from predictions.shared.distributed_lock import DistributedLock, LockAcquisitionError
 
+# Import retry decorators for resilience
+from shared.utils.bigquery_retry import retry_on_quota_exceeded, retry_on_serialization
+
 logger = logging.getLogger(__name__)
 
 # Constants
@@ -138,6 +141,7 @@ class BatchStagingWriter:
         table_name = f"_staging_{safe_batch_id}_{safe_worker_id}"
         return f"{self.project_id}.{self.staging_dataset}.{table_name}"
 
+    @retry_on_quota_exceeded
     def write_to_staging(
         self,
         predictions: List[Dict[str, Any]],
@@ -652,6 +656,7 @@ class BatchConsolidator:
                 start_time=start_time
             )
 
+    @retry_on_serialization
     def _consolidate_with_lock(
         self,
         batch_id: str,

@@ -32,6 +32,12 @@ from collections import defaultdict
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from google.cloud import bigquery
+from config.validation_config import (
+    get_minutes_coverage_threshold,
+    get_usage_rate_coverage_threshold,
+    get_spot_check_threshold,
+    get_threshold,
+)
 
 
 class TonightDataValidator:
@@ -497,11 +503,11 @@ class TonightDataValidator:
             self.add_warning('data_quality', f'No player_game_summary data for {check_date}')
             return False
 
-        # Critical thresholds - two levels
-        MINUTES_WARNING_THRESHOLD = 90.0   # WARNING if 80-90%
-        MINUTES_CRITICAL_THRESHOLD = 80.0  # CRITICAL if <80%
-        USAGE_WARNING_THRESHOLD = 90.0     # WARNING if 80-90%
-        USAGE_CRITICAL_THRESHOLD = 80.0    # CRITICAL if <80%
+        # Get thresholds from centralized config
+        MINUTES_WARNING_THRESHOLD = float(get_minutes_coverage_threshold('warning'))
+        MINUTES_CRITICAL_THRESHOLD = float(get_minutes_coverage_threshold('critical'))
+        USAGE_WARNING_THRESHOLD = float(get_usage_rate_coverage_threshold('warning'))
+        USAGE_CRITICAL_THRESHOLD = float(get_usage_rate_coverage_threshold('critical'))
 
         # Check minutes_played coverage with two-level threshold
         if minutes_pct < MINUTES_CRITICAL_THRESHOLD:
@@ -594,10 +600,10 @@ class TonightDataValidator:
             self.add_warning('field_completeness', f'No data for {check_date}')
             return False
 
-        # Thresholds for active players
-        FG_THRESHOLD = 90.0  # At least 90% of active players should have field_goals_attempted
-        FT_THRESHOLD = 90.0  # At least 90% should have free_throws_attempted
-        THREE_THRESHOLD = 90.0  # At least 90% should have three_pointers_attempted
+        # Get field completeness thresholds from centralized config
+        FG_THRESHOLD = float(get_threshold('fg_attempts', 'pass', section='field_completeness', default=90))
+        FT_THRESHOLD = float(get_threshold('ft_attempts', 'pass', section='field_completeness', default=90))
+        THREE_THRESHOLD = float(get_threshold('three_pt_attempts', 'pass', section='field_completeness', default=90))
 
         passed = True
 
@@ -745,14 +751,17 @@ class TonightDataValidator:
             self.stats['spot_check_passed'] = total_passed
             self.stats['spot_check_failed'] = total_failed
 
+            # Get spot check threshold from centralized config
+            spot_check_pass_threshold = float(get_spot_check_threshold('pass'))
+
             # Report results
-            if accuracy_pct >= 95.0:
+            if accuracy_pct >= spot_check_pass_threshold:
                 print(f"✓ Spot Checks: {accuracy_pct:.1f}% accuracy ({total_passed}/{total_checks} checks passed)")
                 return True
             else:
                 print(f"⚠️ Spot Checks: {accuracy_pct:.1f}% accuracy ({total_passed}/{total_checks} checks passed)")
                 self.add_warning('spot_check',
-                    f'Spot check accuracy is {accuracy_pct:.1f}% (threshold: 95%)')
+                    f'Spot check accuracy is {accuracy_pct:.1f}% (threshold: {spot_check_pass_threshold}%)')
 
                 # Report specific failures
                 failures = [r for r in all_results if r['overall_status'] == 'FAIL']
@@ -761,7 +770,7 @@ class TonightDataValidator:
                     self.add_warning('spot_check',
                         f'{result["player_lookup"]} ({result["game_date"]}): Failed {", ".join(failed_checks)}')
 
-                return accuracy_pct >= 95.0
+                return accuracy_pct >= spot_check_pass_threshold
 
         except Exception as e:
             self.add_warning('spot_check', f'Spot check failed with error: {e}')

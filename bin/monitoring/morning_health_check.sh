@@ -17,6 +17,11 @@ NC='\033[0m' # No Color
 GAME_DATE=${1:-$(TZ=America/New_York date -d "yesterday" +%Y-%m-%d)}
 PROCESSING_DATE=$(TZ=America/New_York date +%Y-%m-%d)
 
+# Source thresholds from centralized config
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+eval "$(python3 "${SCRIPT_DIR}/get_thresholds.py" --section coverage)"
+eval "$(python3 "${SCRIPT_DIR}/get_thresholds.py" --section phase)"
+
 echo -e "${BLUE}================================================${NC}"
 echo -e "${BLUE}Morning Health Check - ${PROCESSING_DATE}${NC}"
 echo -e "${BLUE}Validating data for games on: ${GAME_DATE}${NC}"
@@ -94,20 +99,21 @@ else
     echo ""
 
     # Phase 3 - Analytics (check minutes and usage coverage)
+    # Thresholds sourced from centralized config: MINUTES_WARNING, MINUTES_CRITICAL, USAGE_WARNING, USAGE_CRITICAL
     MINUTES_INT=${MINUTES_PCT%.*}
     USAGE_INT=${USAGE_PCT%.*}
 
-    if [ "${MINUTES_INT:-0}" -ge 90 ]; then
+    if [ "${MINUTES_INT:-0}" -ge "${MINUTES_WARNING}" ]; then
       MINUTES_STATUS="${GREEN}✅ ${MINUTES_PCT}%${NC}"
-    elif [ "${MINUTES_INT:-0}" -ge 80 ]; then
+    elif [ "${MINUTES_INT:-0}" -ge "${MINUTES_CRITICAL}" ]; then
       MINUTES_STATUS="${YELLOW}⚠️  ${MINUTES_PCT}% (WARNING)${NC}"
     else
       MINUTES_STATUS="${RED}❌ ${MINUTES_PCT}% (CRITICAL)${NC}"
     fi
 
-    if [ "${USAGE_INT:-0}" -ge 90 ]; then
+    if [ "${USAGE_INT:-0}" -ge "${USAGE_WARNING}" ]; then
       USAGE_STATUS="${GREEN}✅ ${USAGE_PCT}%${NC}"
-    elif [ "${USAGE_INT:-0}" -ge 80 ]; then
+    elif [ "${USAGE_INT:-0}" -ge "${USAGE_CRITICAL}" ]; then
       USAGE_STATUS="${YELLOW}⚠️  ${USAGE_PCT}% (WARNING)${NC}"
     else
       USAGE_STATUS="${RED}❌ ${USAGE_PCT}% (CRITICAL)${NC}"
@@ -143,13 +149,14 @@ fi
 # ==============================================================================
 echo -e "${BLUE}[2] PHASE 3 PROCESSOR COMPLETION${NC}"
 
-PHASE3_CHECK=$(PROCESSING_DATE="${PROCESSING_DATE}" python3 << 'EOF'
+PHASE3_CHECK=$(PROCESSING_DATE="${PROCESSING_DATE}" EXPECTED_PHASE3_PROCESSORS="${EXPECTED_PHASE3_PROCESSORS}" python3 << 'EOF'
 from google.cloud import firestore
 import sys
 import os
 from datetime import datetime
 
-EXPECTED_PROCESSORS = 5
+# Get expected processors from environment (set from centralized config)
+EXPECTED_PROCESSORS = int(os.environ.get('EXPECTED_PHASE3_PROCESSORS', 5))
 EXPECTED_NAMES = [
     'player_game_summary',
     'team_offense_game_summary',
@@ -180,7 +187,7 @@ if doc.exists:
 
     sys.exit(0 if count == EXPECTED_PROCESSORS else 1)
 else:
-    print("0/5")
+    print(f"0/{EXPECTED_PROCESSORS}")
     print("no_record")
     print("all")
     sys.exit(1)
@@ -340,11 +347,11 @@ echo -e "${BLUE}================================================${NC}"
 # Determine overall health
 ISSUES=0
 
-# Check minutes coverage
+# Check minutes coverage (using threshold from centralized config)
 MINUTES_INT_CHECK=${MINUTES_PCT%.*}
-if [ "${MINUTES_INT_CHECK:-100}" -lt 80 ]; then
+if [ "${MINUTES_INT_CHECK:-100}" -lt "${MINUTES_CRITICAL}" ]; then
   ISSUES=$((ISSUES + 1))
-  echo -e "${RED}❌ CRITICAL: Minutes coverage is ${MINUTES_PCT}% (threshold: 80%)${NC}"
+  echo -e "${RED}❌ CRITICAL: Minutes coverage is ${MINUTES_PCT}% (threshold: ${MINUTES_CRITICAL}%)${NC}"
 fi
 
 # Check Phase 3 completion

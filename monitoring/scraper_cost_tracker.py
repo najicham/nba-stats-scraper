@@ -54,6 +54,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+from shared.utils.bigquery_batch_writer import get_batch_writer
+
 # Cost constants (USD)
 # Cloud Run pricing (us-west1)
 COST_PER_VCPU_SECOND = 0.00002400  # per vCPU-second
@@ -377,7 +379,7 @@ class ScraperCostTracker:
 
     def save_to_bigquery(self) -> bool:
         """
-        Save metrics to BigQuery.
+        Save metrics to BigQuery using BigQueryBatchWriter.
 
         Returns:
             True if successful, False otherwise
@@ -386,18 +388,15 @@ class ScraperCostTracker:
             logger.warning("No metrics to save")
             return False
 
-        if not self.bq_client:
-            logger.warning("BigQuery client not available")
-            return False
-
         try:
-            table_id = f"{self.project_id}.nba_orchestration.scraper_cost_metrics"
+            table_id = "nba_orchestration.scraper_cost_metrics"
             row = self.metrics.to_dict()
 
-            errors = self.bq_client.insert_rows_json(table_id, [row])
-            if errors:
-                logger.error(f"Failed to insert scraper cost metrics: {errors}")
-                return False
+            # Use BigQueryBatchWriter for efficient batched writes
+            writer = get_batch_writer(table_id, project_id=self.project_id)
+            writer.add_record(row)
+            # Flush immediately to ensure metrics are persisted before process exits
+            writer.flush()
 
             logger.info(f"Saved cost metrics for {self.scraper_name} (run_id: {self.run_id})")
             return True

@@ -31,7 +31,7 @@ import random
 import time
 
 from shared.utils.query_cache import QueryCache, get_query_cache
-from shared.utils.bigquery_retry import TRANSIENT_RETRY
+from shared.utils.bigquery_retry import TRANSIENT_RETRY, retry_on_transient
 from shared.utils.retry_with_jitter import retry_with_jitter
 
 logger = logging.getLogger(__name__)
@@ -133,6 +133,7 @@ class PredictionDataLoader:
     # FEATURES LOADING (Required by ALL systems)
     # ========================================================================
     
+    @retry_on_transient
     def load_features(
         self,
         player_lookup: str,
@@ -229,6 +230,7 @@ class PredictionDataLoader:
     # HISTORICAL GAMES LOADING (Required by Similarity system)
     # ========================================================================
     
+    @retry_on_transient
     def load_historical_games(
         self,
         player_lookup: str,
@@ -482,6 +484,7 @@ class PredictionDataLoader:
     # GAME CONTEXT LOADING (Optional metadata)
     # ========================================================================
     
+    @retry_on_transient
     def load_game_context(
         self,
         player_lookup: str,
@@ -787,6 +790,7 @@ class PredictionDataLoader:
             # Fallback to empty results (caller should handle gracefully)
             return {p: [] for p in player_lookups}
 
+    @retry_on_transient
     def load_features_batch_for_date(
         self,
         player_lookups: List[str],

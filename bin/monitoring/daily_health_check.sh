@@ -6,6 +6,11 @@ set -euo pipefail
 DATE=${1:-$(TZ=America/New_York date +%Y-%m-%d)}
 YESTERDAY=$(TZ=America/New_York date -d "$DATE - 1 day" +%Y-%m-%d)
 
+# Source thresholds from centralized config
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+eval "$(python3 "${SCRIPT_DIR}/get_thresholds.py" --section coverage)"
+eval "$(python3 "${SCRIPT_DIR}/get_thresholds.py" --section phase)"
+
 echo "================================================"
 echo "DAILY HEALTH CHECK: $DATE"
 echo "================================================"
@@ -57,11 +62,13 @@ ORDER BY ppc.game_date DESC" 2>/dev/null
 # 4. Check Phase 3 completion state (Firestore) with 5/5 validation
 echo ""
 echo "PHASE 3 COMPLETION STATE:"
-python3 << EOF
+EXPECTED_PHASE3="${EXPECTED_PHASE3_PROCESSORS}" python3 << EOF
 from google.cloud import firestore
 import sys
+import os
 
-EXPECTED_PROCESSORS = 5  # Phase 3 has 5 processors
+# Get expected processors from environment (set from centralized config)
+EXPECTED_PROCESSORS = int(os.environ.get('EXPECTED_PHASE3', 5))
 EXPECTED_NAMES = [
     'player_game_summary',
     'team_offense_game_summary',
@@ -182,12 +189,12 @@ if [ -n "$MINUTES_RESULT" ]; then
   printf "   %-12s %8s %12s %8s %10s\n" "game_date" "total" "has_minutes" "pct" "status"
   printf "   %-12s %8s %12s %8s %10s\n" "-----------" "-------" "-----------" "------" "--------"
 
-  # Parse and print results with status
+  # Parse and print results with status (using thresholds from centralized config)
   echo "$MINUTES_RESULT" | tail -n +2 | while IFS=, read -r game_date total has_minutes pct; do
     pct_int=${pct%.*}
-    if [ "${pct_int:-0}" -lt 80 ]; then
+    if [ "${pct_int:-0}" -lt "${MINUTES_CRITICAL}" ]; then
       status="❌ CRITICAL"
-    elif [ "${pct_int:-0}" -lt 90 ]; then
+    elif [ "${pct_int:-0}" -lt "${MINUTES_WARNING}" ]; then
       status="⚠️ WARNING"
     else
       status="✅ OK"
@@ -199,13 +206,13 @@ if [ -n "$MINUTES_RESULT" ]; then
   YESTERDAY_PCT=$(echo "$MINUTES_RESULT" | grep "$YESTERDAY" | cut -d',' -f4)
   if [ -n "$YESTERDAY_PCT" ]; then
     YESTERDAY_INT=${YESTERDAY_PCT%.*}
-    if [ "${YESTERDAY_INT:-100}" -lt 80 ]; then
+    if [ "${YESTERDAY_INT:-100}" -lt "${MINUTES_CRITICAL}" ]; then
       echo ""
-      echo "   ❌ CRITICAL: Yesterday's minutes coverage is ${YESTERDAY_PCT}% (threshold: 80%)"
+      echo "   ❌ CRITICAL: Yesterday's minutes coverage is ${YESTERDAY_PCT}% (threshold: ${MINUTES_CRITICAL}%)"
       echo "   ACTION REQUIRED: Investigate data extraction issues!"
-    elif [ "${YESTERDAY_INT:-100}" -lt 90 ]; then
+    elif [ "${YESTERDAY_INT:-100}" -lt "${MINUTES_WARNING}" ]; then
       echo ""
-      echo "   ⚠️  WARNING: Yesterday's minutes coverage is ${YESTERDAY_PCT}% (threshold: 90%)"
+      echo "   ⚠️  WARNING: Yesterday's minutes coverage is ${YESTERDAY_PCT}% (threshold: ${MINUTES_WARNING}%)"
     fi
   fi
 else
