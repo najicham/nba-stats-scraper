@@ -1,0 +1,257 @@
+{% extends "base.html" %}
+
+{% block title %}Data Quality - {{ sport|upper }} Pipeline Admin{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-6">
+  <div class="flex justify-between items-center mb-6">
+    <h1 class="text-3xl font-bold">Data Quality Prevention</h1>
+    <div class="text-sm text-gray-500">
+      Sport: <strong>{{ sport|upper }}</strong>
+    </div>
+  </div>
+
+  <!-- Quality Score Card -->
+  <div class="bg-white rounded-lg shadow-lg p-6 mb-6" x-data="qualityScore">
+    <div class="flex justify-between items-start">
+      <div>
+        <h2 class="text-xl font-semibold mb-4">Overall Data Quality Score</h2>
+        <p class="text-sm text-gray-600">Combines version currency, deployment freshness, and cleanup effectiveness</p>
+      </div>
+      <button @click="refreshScore" class="text-blue-600 hover:text-blue-800 text-sm">
+        Refresh
+      </button>
+    </div>
+
+    <div class="flex items-center gap-8 mt-6">
+      <!-- Score Display -->
+      <div class="text-center">
+        <div class="text-6xl font-bold"
+             :class="{
+               'text-green-600': score >= 95,
+               'text-blue-600': score >= 85 && score < 95,
+               'text-yellow-600': score >= 70 && score < 85,
+               'text-red-600': score < 70
+             }"
+             x-text="score">
+          --
+        </div>
+        <div class="text-gray-500 text-sm mt-2">/ 100</div>
+        <div class="mt-2 px-3 py-1 rounded-full text-sm font-semibold"
+             :class="{
+               'bg-green-100 text-green-700': score >= 95,
+               'bg-blue-100 text-blue-700': score >= 85 && score < 95,
+               'bg-yellow-100 text-yellow-700': score >= 70 && score < 85,
+               'bg-red-100 text-red-700': score < 70
+             }"
+             x-text="status">
+        </div>
+      </div>
+
+      <!-- Breakdown -->
+      <div class="flex-1 space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="text-sm font-medium">Version Currency</span>
+          <div class="flex items-center gap-2">
+            <div class="w-32 bg-gray-200 rounded-full h-2">
+              <div class="bg-blue-600 h-2 rounded-full"
+                   :style="`width: ${(breakdown.version_currency / 25) * 100}%`"></div>
+            </div>
+            <span class="text-sm font-semibold w-12 text-right"
+                  x-text="`${breakdown.version_currency}/25`">--/25</span>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <span class="text-sm font-medium">Deployment Freshness</span>
+          <div class="flex items-center gap-2">
+            <div class="w-32 bg-gray-200 rounded-full h-2">
+              <div class="bg-green-600 h-2 rounded-full"
+                   :style="`width: ${(breakdown.deployment_freshness / 25) * 100}%`"></div>
+            </div>
+            <span class="text-sm font-semibold w-12 text-right"
+                  x-text="`${breakdown.deployment_freshness}/25`">--/25</span>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <span class="text-sm font-medium">Data Completeness</span>
+          <div class="flex items-center gap-2">
+            <div class="w-32 bg-gray-200 rounded-full h-2">
+              <div class="bg-purple-600 h-2 rounded-full"
+                   :style="`width: ${(breakdown.data_completeness / 25) * 100}%`"></div>
+            </div>
+            <span class="text-sm font-semibold w-12 text-right"
+                  x-text="`${breakdown.data_completeness}/25`">--/25</span>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between">
+          <span class="text-sm font-medium">Cleanup Effectiveness</span>
+          <div class="flex items-center gap-2">
+            <div class="w-32 bg-gray-200 rounded-full h-2">
+              <div class="bg-orange-600 h-2 rounded-full"
+                   :style="`width: ${(breakdown.cleanup_effectiveness / 25) * 100}%`"></div>
+            </div>
+            <span class="text-sm font-semibold w-12 text-right"
+                  x-text="`${breakdown.cleanup_effectiveness}/25`">--/25</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Two column layout for metrics -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <!-- Version Distribution -->
+    <div class="bg-white rounded-lg shadow-lg p-6" x-data="versionDistribution">
+      <h2 class="text-xl font-semibold mb-4">Processor Version Distribution</h2>
+      <div x-show="loading" class="text-center py-4">Loading...</div>
+      <div x-show="!loading">
+        <template x-if="versions.length === 0">
+          <p class="text-gray-500">No version data available</p>
+        </template>
+        <template x-if="versions.length > 0">
+          <div class="space-y-2">
+            <template x-for="version in versions" :key="version.version">
+              <div class="border-l-4 p-3 rounded"
+                   :class="version.version.includes('2.') ? 'border-green-500 bg-green-50' : 'border-yellow-500 bg-yellow-50'">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <span class="font-semibold" x-text="`Version ${version.version}`"></span>
+                    <span class="text-sm text-gray-500 ml-2" x-text="`${version.record_count.toLocaleString()} records`"></span>
+                  </div>
+                  <span class="text-xs text-gray-400" x-text="`Last: ${new Date(version.last_seen).toLocaleDateString()}`"></span>
+                </div>
+                <div class="text-xs text-gray-600 mt-1">
+                  <span x-text="`${version.dates_processed} dates processed`"></span>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!-- Scraper Cleanup Stats -->
+    <div class="bg-white rounded-lg shadow-lg p-6" x-data="cleanupStats">
+      <h2 class="text-xl font-semibold mb-4">Scraper Failure Cleanup</h2>
+      <div x-show="loading" class="text-center py-4">Loading...</div>
+      <div x-show="!loading">
+        <div class="grid grid-cols-3 gap-4 mb-4">
+          <div class="text-center">
+            <div class="text-3xl font-bold text-green-600" x-text="summary.total_cleaned">--</div>
+            <div class="text-sm text-gray-600">Cleaned</div>
+          </div>
+          <div class="text-center">
+            <div class="text-3xl font-bold text-yellow-600" x-text="summary.total_pending">--</div>
+            <div class="text-sm text-gray-600">Pending</div>
+          </div>
+          <div class="text-center">
+            <div class="text-3xl font-bold text-blue-600" x-text="`${summary.cleanup_rate}%`">--</div>
+            <div class="text-sm text-gray-600">Rate</div>
+          </div>
+        </div>
+
+        <template x-if="pendingFailures.length > 0">
+          <div class="mt-4">
+            <h3 class="font-semibold text-sm mb-2">Pending Failures by Scraper:</h3>
+            <div class="space-y-1">
+              <template x-for="failure in pendingFailures.slice(0, 5)" :key="failure.scraper">
+                <div class="flex justify-between text-sm bg-yellow-50 p-2 rounded">
+                  <span x-text="failure.scraper"></span>
+                  <span class="font-semibold" x-text="failure.count"></span>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+document.addEventListener('alpine:init', () => {
+  // Quality Score
+  Alpine.data('qualityScore', () => ({
+    score: 0,
+    status: 'Loading...',
+    breakdown: {
+      version_currency: 0,
+      deployment_freshness: 0,
+      data_completeness: 0,
+      cleanup_effectiveness: 0
+    },
+
+    init() {
+      this.refreshScore();
+    },
+
+    async refreshScore() {
+      try {
+        const response = await fetch('/api/data-quality/score?sport={{ sport }}');
+        const data = await response.json();
+        this.score = data.overall_score;
+        this.status = data.status;
+        this.breakdown = data.breakdown;
+      } catch (error) {
+        console.error('Failed to load quality score:', error);
+      }
+    }
+  }));
+
+  // Version Distribution
+  Alpine.data('versionDistribution', () => ({
+    versions: [],
+    loading: true,
+
+    init() {
+      this.loadVersions();
+    },
+
+    async loadVersions() {
+      try {
+        const response = await fetch('/api/data-quality/version-distribution?sport={{ sport }}');
+        const data = await response.json();
+        this.versions = data.versions || [];
+      } catch (error) {
+        console.error('Failed to load versions:', error);
+      } finally {
+        this.loading = false;
+      }
+    }
+  }));
+
+  // Cleanup Stats
+  Alpine.data('cleanupStats', () => ({
+    cleanupHistory: [],
+    pendingFailures: [],
+    summary: {
+      total_cleaned: 0,
+      total_pending: 0,
+      cleanup_rate: 0
+    },
+    loading: true,
+
+    init() {
+      this.loadStats();
+    },
+
+    async loadStats() {
+      try {
+        const response = await fetch('/api/data-quality/scraper-cleanup-stats?sport={{ sport }}');
+        const data = await response.json();
+        this.cleanupHistory = data.cleanup_history || [];
+        this.pendingFailures = data.pending_failures || [];
+        this.summary = data.summary;
+      } catch (error) {
+        console.error('Failed to load cleanup stats:', error);
+      } finally {
+        this.loading = false;
+      }
+    }
+  }));
+});
+</script>
+{% endblock %}

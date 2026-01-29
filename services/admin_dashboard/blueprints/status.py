@@ -42,12 +42,13 @@ def get_bq_client():
 
 
 def get_et_dates():
-    """Get current and previous dates in ET timezone."""
+    """Get current, previous, and next dates in ET timezone."""
     et = ZoneInfo('America/New_York')
     now = datetime.now(et)
     today = now.strftime('%Y-%m-%d')
     yesterday = (now - timedelta(days=1)).strftime('%Y-%m-%d')
-    return today, yesterday
+    tomorrow = (now + timedelta(days=1)).strftime('%Y-%m-%d')
+    return today, yesterday, tomorrow
 
 
 def clamp_param(value: int, min_val: int, max_val: int, default: int) -> int:
@@ -67,10 +68,13 @@ def index():
     if not is_valid:
         return error
 
-    today, yesterday = get_et_dates()
+    sport = request.args.get('sport', 'nba')
+    today, yesterday, tomorrow = get_et_dates()
     return render_template('dashboard.html',
-                          today_date=today,
-                          yesterday_date=yesterday)
+                          sport=sport,
+                          today=today,
+                          tomorrow=tomorrow,
+                          yesterday=yesterday)
 
 
 @status_bp.route('/dashboard')
@@ -81,14 +85,17 @@ def dashboard():
     if not is_valid:
         return error
 
-    today, yesterday = get_et_dates()
+    sport = request.args.get('sport', 'nba')
+    today, yesterday, tomorrow = get_et_dates()
 
     # Get optional date parameter
     date_param = request.args.get('date', today)
 
     return render_template('dashboard.html',
-                          today_date=today,
-                          yesterday_date=yesterday,
+                          sport=sport,
+                          today=today,
+                          tomorrow=tomorrow,
+                          yesterday=yesterday,
                           selected_date=date_param)
 
 

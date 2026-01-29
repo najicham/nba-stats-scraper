@@ -1,45 +1,77 @@
-<!-- Error Feed Component -->
-{% if errors %}
-<div class="space-y-3">
-    {% for error in errors %}
-    <div class="border border-red-200 rounded-lg p-4 bg-red-50">
-        <div class="flex items-start justify-between">
-            <div class="flex-1">
-                <div class="flex items-center space-x-2 mb-2">
-                    <span class="px-2 py-0.5 bg-red-100 text-red-800 text-xs font-medium rounded">
-                        {{ error.severity }}
-                    </span>
-                    <span class="text-xs text-gray-500 font-mono">
-                        {{ error.service }}
-                    </span>
-                </div>
-                <p class="text-sm text-gray-800 font-mono break-all">
-                    {{ error.message }}
-                </p>
-            </div>
-            <span class="text-xs text-gray-400 whitespace-nowrap ml-4">
-                {% if error.timestamp %}
-                    {{ error.timestamp[:19].replace('T', ' ') }}
-                {% endif %}
-            </span>
+<!-- Enhanced Error Feed with Categorization -->
+<div x-data="{ showExpected: false }">
+  <!-- Real Errors Section -->
+  <div class="mb-6">
+    <div class="flex items-center gap-2 mb-2">
+      <span class="text-2xl">🔴</span>
+      <h4 class="font-semibold text-red-600">Real Errors ({{ real_errors|length }})</h4>
+    </div>
+    <p class="text-sm text-gray-600 mb-3">These require immediate attention</p>
+
+    {% if real_errors|length == 0 %}
+    <div class="text-green-600 bg-green-50 p-3 rounded">
+      ✅ No real errors detected
+    </div>
+    {% else %}
+    <div class="space-y-2">
+      {% for error in real_errors %}
+      <div class="border-l-4 border-red-500 bg-red-50 p-3 rounded">
+        <div class="flex justify-between items-start">
+          <div>
+            <span class="font-semibold">{{ error.processor_name }}</span>
+            <span class="text-sm text-gray-500 ml-2">{{ error.data_date if error.data_date else 'N/A' }}</span>
+          </div>
+          <span class="text-xs text-gray-400">
+            {% if error.started_at %}
+              {{ error.started_at.strftime('%Y-%m-%d %H:%M') if error.started_at.strftime else error.started_at }}
+            {% endif %}
+          </span>
         </div>
+        <p class="text-sm mt-1">{{ error.error_message if error.error_message else 'No error message' }}</p>
+      </div>
+      {% endfor %}
     </div>
-    {% endfor %}
-</div>
+    {% endif %}
+  </div>
 
-<div class="mt-4 text-center">
-    <p class="text-sm text-gray-500">
-        Showing {{ errors|length }} most recent errors
-    </p>
-</div>
+  <!-- Expected No-Data Section (Collapsible) -->
+  <div>
+    <button @click="showExpected = !showExpected"
+            class="flex items-center gap-2 w-full text-left mb-2 hover:bg-gray-50 p-2 rounded">
+      <span x-show="!showExpected">▶</span>
+      <span x-show="showExpected">▼</span>
+      <span class="text-xl">✅</span>
+      <h4 class="font-semibold text-green-600">Expected No-Data ({{ expected_errors|length }})</h4>
+    </button>
+    <p class="text-sm text-gray-600 mb-3 ml-8">Filtered - No games scheduled on these dates</p>
 
-{% else %}
-<div class="text-center py-8">
-    <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-green-100 mb-4">
-        <svg class="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-        </svg>
+    <div x-show="showExpected" class="ml-8 space-y-2" x-cloak>
+      {% if expected_errors|length == 0 %}
+      <div class="text-gray-500 text-sm italic">None detected</div>
+      {% else %}
+      <div class="space-y-1">
+        {% for error in expected_errors[:5] %}
+        <div class="bg-gray-50 p-2 rounded text-sm">
+          <span class="font-medium">{{ error.processor_name }}</span>
+          <span class="text-gray-500 ml-2">{{ error.data_date if error.data_date else 'N/A' }}</span>
+        </div>
+        {% endfor %}
+        {% if expected_errors|length > 5 %}
+        <div class="text-xs text-gray-500 italic">
+          ... and {{ expected_errors|length - 5 }} more
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
     </div>
-    <p class="text-gray-500">No errors in the last 6 hours</p>
+  </div>
+
+  <!-- Noise Reduction Metric -->
+  <div class="mt-4 p-3 bg-blue-50 rounded">
+    <div class="flex items-center gap-2">
+      <span class="text-blue-600 font-semibold">Alert Noise Reduction:</span>
+      <span class="text-2xl font-bold text-blue-700">{{ noise_reduction }}</span>
+      <span class="text-sm text-gray-600">false positives filtered</span>
+    </div>
+  </div>
 </div>
-{% endif %}

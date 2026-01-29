@@ -117,31 +117,66 @@ def partial_games_table(date):
 @partials_bp.route('/error-feed')
 @rate_limit
 def partial_error_feed():
-    """Error feed partial."""
+    """Error feed partial with categorization."""
     is_valid, error = check_auth()
     if not is_valid:
         return error
 
+    sport = request.args.get('sport', 'nba')
+
     try:
+        # Import the helper function from status blueprint
+        from services.admin_dashboard.blueprints.status import (
+            _get_game_dates_with_games,
+            _is_expected_no_data_error
+        )
+
         client = get_bq_client()
         project_id = os.environ.get('GCP_PROJECT_ID')
+        hours = 24
 
+        # Get game dates with scheduled games
+        game_dates = _get_game_dates_with_games(hours)
+
+        # Query all errors
         query = f"""
-            SELECT
-                processor_name,
-                error_message,
-                started_at,
-                phase
+            SELECT *
             FROM `{project_id}.nba_pipeline.processor_run_history`
             WHERE status = 'failed'
+              AND started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @hours HOUR)
             ORDER BY started_at DESC
-            LIMIT 10
+            LIMIT 100
         """
 
-        results = client.query(query).result()
-        errors = [dict(row) for row in results]
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("hours", "INT64", hours)
+            ]
+        )
 
-        return render_template('partials/error_feed.html', errors=errors)
+        results = client.query(query, job_config=job_config).result()
+        all_errors = [dict(row) for row in results]
+
+        # Categorize errors
+        real_errors = []
+        expected_errors = []
+
+        for error in all_errors:
+            if _is_expected_no_data_error(
+                error.get('error_message'),
+                error.get('data_date'),
+                game_dates
+            ):
+                expected_errors.append(error)
+            else:
+                real_errors.append(error)
+
+        return render_template(
+            'components/error_feed.html',
+            real_errors=real_errors,
+            expected_errors=expected_errors,
+            noise_reduction=len(expected_errors)
+        )
 
     except Exception as e:
         logger.error(f"Error fetching error feed: {e}", exc_info=True)

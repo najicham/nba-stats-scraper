@@ -73,6 +73,20 @@
                     </div>
                 </div>
                 <div class="flex items-center space-x-4">
+                    <!-- Navigation Links -->
+                    <a href="/?sport={{ sport or 'nba' }}"
+                       class="text-sm text-gray-700 hover:text-gray-900 {{ 'font-semibold text-blue-600' if request.path == '/' else '' }}">
+                        Status
+                    </a>
+                    <a href="/data-quality?sport={{ sport or 'nba' }}"
+                       class="text-sm text-gray-700 hover:text-gray-900 {{ 'font-semibold text-blue-600' if request.path == '/data-quality' else '' }}">
+                        Data Quality
+                    </a>
+                    <a href="/source-blocks?sport={{ sport or 'nba' }}"
+                       class="text-sm text-gray-700 hover:text-gray-900 {{ 'font-semibold text-blue-600' if request.path == '/source-blocks' else '' }}">
+                        Source Blocks
+                    </a>
+
                     <span id="current-time" class="text-sm text-gray-500"></span>
                     <button
                         hx-get="/partials/status-cards?sport={{ sport or 'nba' }}"

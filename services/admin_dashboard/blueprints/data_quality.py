@@ -9,16 +9,19 @@ Tracks:
 - Data quality score
 
 Routes:
+- GET /data-quality: Data quality dashboard page
 - GET /api/data-quality/version-distribution: Processor version distribution
 - GET /api/data-quality/deployment-freshness: Deployment freshness check
 - GET /api/data-quality/scraper-cleanup-stats: Scraper cleanup effectiveness
 - GET /api/data-quality/score: Overall data quality score
+- GET /api/errors: Error feed with categorization (real vs expected)
 """
 
 import os
 import logging
 from datetime import datetime, timedelta
-from flask import Blueprint, jsonify, request
+from zoneinfo import ZoneInfo
+from flask import Blueprint, jsonify, request, render_template
 
 from google.cloud import bigquery
 
@@ -43,6 +46,25 @@ def clamp_param(value: int, min_val: int, max_val: int, default: int) -> int:
         return max(min_val, min(max_val, val))
     except (TypeError, ValueError):
         return default
+
+
+@data_quality_bp.route('/data-quality')
+@rate_limit
+def data_quality_page():
+    """Data quality dashboard page."""
+    is_valid, error = check_auth()
+    if not is_valid:
+        return error
+
+    sport = request.args.get('sport', 'nba')
+
+    # Get today's date in ET
+    et = ZoneInfo('America/New_York')
+    today = datetime.now(et).strftime('%Y-%m-%d')
+
+    return render_template('data_quality.html', sport=sport, today=today)
+
+
 
 
 @data_quality_bp.route('/api/data-quality/version-distribution')
