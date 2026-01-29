@@ -212,7 +212,7 @@ class TonightDataValidator:
             COUNT(DISTINCT game_id) as games
         FROM `{self.project}.nba_predictions.player_prop_predictions`
         WHERE game_date = '{self.target_date}'
-          AND system_id = 'ensemble_v1'
+          AND system_id = 'ensemble_v1_1'  -- Updated to match current model
           AND is_active = TRUE
         """
         result = list(self.client.query(query).result(timeout=60))[0]
