@@ -868,18 +868,18 @@ class NbacScheduleProcessor(SmartIdempotencyMixin, ProcessorBase):
 if __name__ == '__main__':
     import sys
 
-    if len(sys.argv) < 2:
-        print("Usage: python nbac_schedule_processor.py <gcs_file_path>")
-        print("Example: python nbac_schedule_processor.py gs://nba-scraped-data/nba-com/schedule/2024/schedule_2024.json")
-        sys.exit(1)
-
-    file_path = sys.argv[1]
-
-    # Setup logging
+    # Setup logging first
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
+
+    if len(sys.argv) < 2:
+        logger.error("Usage: python nbac_schedule_processor.py <gcs_file_path>")
+        logger.error("Example: python nbac_schedule_processor.py gs://nba-scraped-data/nba-com/schedule/2024/schedule_2024.json")
+        sys.exit(1)
+
+    file_path = sys.argv[1]
 
     # Initialize processor
     processor = NbacScheduleProcessor()
@@ -887,18 +887,18 @@ if __name__ == '__main__':
     # Process file
     result = processor.process_file(file_path, dry_run=False)
 
-    # Print results
-    print("\n" + "="*70)
-    print("SCHEDULE PROCESSING RESULTS")
-    print("="*70)
-    print(f"File: {result['file_path']}")
-    print(f"Status: {result['status']}")
-    print(f"Rows Processed: {result['rows_processed']}")
-    print(f"Data Source: {result.get('data_source', 'unknown')}")
+    # Log results
+    logger.info("=" * 70)
+    logger.info("SCHEDULE PROCESSING RESULTS")
+    logger.info("=" * 70)
+    logger.info("File: %s", result['file_path'])
+    logger.info("Status: %s", result['status'])
+    logger.info("Rows Processed: %s", result['rows_processed'])
+    logger.info("Data Source: %s", result.get('data_source', 'unknown'))
 
     if result.get('errors'):
-        print(f"\nErrors ({len(result['errors'])}):")
+        logger.warning("Errors (%d):", len(result['errors']))
         for error in result['errors'][:10]:  # Show first 10
-            print(f"  - {error}")
+            logger.warning("  - %s", error)
 
-    print("="*70)
+    logger.info("=" * 70)

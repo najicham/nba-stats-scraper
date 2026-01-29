@@ -639,12 +639,12 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
             writer.add_record(performance_summary)
 
             logger.info(f"Logged performance summary for run {self.processing_run_id}")
-                logger.info(f"Total players processed: {performance_summary['total_players_processed']}")
-                logger.info(f"Active: {resolution_stats['active_total']}, Inactive: {resolution_stats['inactive_total']}, DNP: {resolution_stats['dnp_total']}")
-                logger.info(f"Inactive resolution rate: {resolution_rate:.2%} ({inactive_resolved}/{inactive_needing_resolution})")
-                
-                if resolution_stats['injury_database_resolved'] > 0:
-                    logger.info(f"Injury database resolutions: {resolution_stats['injury_database_resolved']}")
+            logger.info(f"Total players processed: {performance_summary['total_players_processed']}")
+            logger.info(f"Active: {resolution_stats['active_total']}, Inactive: {resolution_stats['inactive_total']}, DNP: {resolution_stats['dnp_total']}")
+            logger.info(f"Inactive resolution rate: {resolution_rate:.2%} ({inactive_resolved}/{inactive_needing_resolution})")
+
+            if resolution_stats['injury_database_resolved'] > 0:
+                logger.info(f"Injury database resolutions: {resolution_stats['injury_database_resolved']}")
                     
         except Exception as e:
             logger.error(f"Error logging performance: {e}")
@@ -1761,19 +1761,18 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
 if __name__ == '__main__':
     import sys
 
-    if len(sys.argv) < 2:
-        print("Usage: python nbac_gamebook_processor.py <gcs_file_path>")
-        print("Example: python nbac_gamebook_processor.py gs://nba-scraped-data/nba-com/gamebook/20250115/0022400561/20250115_123045.json")
-        sys.exit(1)
-
-    file_path = sys.argv[1]
-
-    # Setup logging
-    import logging
+    # Setup logging first
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
+
+    if len(sys.argv) < 2:
+        logger.error("Usage: python nbac_gamebook_processor.py <gcs_file_path>")
+        logger.error("Example: python nbac_gamebook_processor.py gs://nba-scraped-data/nba-com/gamebook/20250115/0022400561/20250115_123045.json")
+        sys.exit(1)
+
+    file_path = sys.argv[1]
 
     # Initialize processor
     processor = NbacGamebookProcessor()
@@ -1781,17 +1780,17 @@ if __name__ == '__main__':
     # Process file
     result = processor.process_file(file_path, dry_run=False)
 
-    # Print results
-    print("\n" + "="*70)
-    print("GAMEBOOK PROCESSING RESULTS")
-    print("="*70)
-    print(f"File: {result['file_path']}")
-    print(f"Status: {result['status']}")
-    print(f"Rows Processed: {result['rows_processed']}")
+    # Log results
+    logger.info("=" * 70)
+    logger.info("GAMEBOOK PROCESSING RESULTS")
+    logger.info("=" * 70)
+    logger.info("File: %s", result['file_path'])
+    logger.info("Status: %s", result['status'])
+    logger.info("Rows Processed: %s", result['rows_processed'])
 
     if result.get('errors'):
-        print(f"\nErrors ({len(result['errors'])}):")
+        logger.warning("Errors (%d):", len(result['errors']))
         for error in result['errors'][:10]:  # Show first 10
-            print(f"  - {error}")
+            logger.warning("  - %s", error)
 
-    print("="*70)
+    logger.info("=" * 70)

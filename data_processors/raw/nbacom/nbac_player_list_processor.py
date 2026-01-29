@@ -667,8 +667,11 @@ if __name__ == "__main__":
     processor = NbacPlayerListProcessor()
     success = processor.run(opts)
     
-    print(f"\n{'='*60}")
-    print(f"{'✅ SUCCESS' if success else '❌ FAILED'}")
-    print(f"{'='*60}")
-    print(f"Stats: {processor.get_processor_stats()}")
-    print(f"{'='*60}")
+    logger.info("=" * 60)
+    if success:
+        logger.info("SUCCESS")
+    else:
+        logger.error("FAILED")
+    logger.info("=" * 60)
+    logger.info("Stats: %s", processor.get_processor_stats())
+    logger.info("=" * 60)
