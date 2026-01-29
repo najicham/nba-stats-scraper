@@ -26,8 +26,9 @@ WORKDIR /app
 # Copy shared module from repository root (relative to build context)
 COPY shared/ ./shared/
 
-# Copy data_processors modules (precompute depends on raw for SmartIdempotencyMixin)
+# Copy data_processors modules (precompute depends on raw and analytics)
 COPY data_processors/raw/ ./data_processors/raw/
+COPY data_processors/analytics/ ./data_processors/analytics/
 COPY data_processors/precompute/ ./data_processors/precompute/
 
 # Copy analytics requirements (precompute uses same dependencies)
