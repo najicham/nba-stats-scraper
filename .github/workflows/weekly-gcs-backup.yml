@@ -1,0 +1,90 @@
+name: Weekly GCS Data Backup
+
+# Run weekly on Sundays at 6 AM UTC
+on:
+  schedule:
+    - cron: '0 6 * * 0'
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  backup-data:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install google-cloud-storage nba_api basketball-reference-web-scraper
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+      - name: Run NBA API Backups
+        run: |
+          python -c "
+          from scrapers.nba_api_backup.gcs_backup_scrapers import (
+              NBAApiScheduleScraper,
+              NBAApiStandingsScraper,
+              NBAApiRosterScraper
+          )
+          import time
+
+          # Schedule backup
+          print('Backing up NBA schedule...')
+          NBAApiScheduleScraper().scrape_full_season()
+          time.sleep(2)
+
+          # Standings backup
+          print('Backing up standings...')
+          NBAApiStandingsScraper().scrape_current()
+          time.sleep(2)
+
+          # Roster backup
+          print('Backing up rosters...')
+          NBAApiRosterScraper().scrape_all_teams()
+
+          print('NBA API backups complete!')
+          "
+        env:
+          GCP_PROJECT: nba-props-platform
+
+      - name: Run Basketball Reference Backups
+        run: |
+          python -c "
+          from scrapers.nba_api_backup.gcs_backup_scrapers import (
+              BRefSeasonTotalsScraper,
+              BRefAdvancedStatsScraper,
+              BRefStandingsScraper
+          )
+          import time
+
+          # Season totals
+          print('Backing up BRef season totals...')
+          BRefSeasonTotalsScraper().scrape_current_season()
+          time.sleep(5)  # Respectful delay for BRef
+
+          # Advanced stats
+          print('Backing up BRef advanced stats...')
+          BRefAdvancedStatsScraper().scrape_current_season()
+          time.sleep(5)
+
+          # Standings
+          print('Backing up BRef standings...')
+          BRefStandingsScraper().scrape_current()
+
+          print('Basketball Reference backups complete!')
+          "
+        env:
+          GCP_PROJECT: nba-props-platform
+
+      - name: Verify backups
+        run: |
+          gsutil ls -l gs://nba-props-platform-backup-data/** | tail -20

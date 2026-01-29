@@ -1,0 +1,63 @@
+name: BigDataBall PBP Monitor
+
+# Run every 30 minutes to check for missing PBP data
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Date to check (YYYY-MM-DD), default: yesterday'
+        required: false
+      days:
+        description: 'Number of days to check'
+        required: false
+        default: '1'
+
+jobs:
+  check-pbp-availability:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install google-cloud-bigquery requests
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+
+      - name: Run BDB PBP Monitor
+        env:
+          GCP_PROJECT: nba-props-platform
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            python bin/monitoring/bdb_pbp_monitor.py \
+              --date ${{ github.event.inputs.date }} \
+              --days ${{ github.event.inputs.days || '1' }}
+          else
+            python bin/monitoring/bdb_pbp_monitor.py --days 2
+          fi
+        continue-on-error: true  # Don't fail workflow on critical gaps
+
+      - name: Check for critical gaps
+        run: |
+          # Query for critical gaps in last 48 hours
+          CRITICAL_COUNT=$(bq query --use_legacy_sql=false --format=csv \
+            "SELECT COUNT(*) as cnt FROM nba_orchestration.data_gaps WHERE status = 'open' AND severity = 'critical' AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 2 DAY)" \
+            | tail -1)
+
+          if [ "$CRITICAL_COUNT" -gt "0" ]; then
+            echo "::warning::$CRITICAL_COUNT critical BDB PBP gaps found"
+          else
+            echo "No critical gaps"
+          fi

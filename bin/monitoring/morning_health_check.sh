@@ -250,7 +250,88 @@ fi
 echo ""
 
 # ==============================================================================
-# SECTION 5: Summary & Actions
+# SECTION 5: Data Source Health
+# ==============================================================================
+echo -e "${BLUE}[5] DATA SOURCE HEALTH${NC}"
+
+# Check cross-source validation discrepancies
+DISCREPANCY_COUNT=$(bq query --use_legacy_sql=false --format=csv --quiet "
+SELECT
+  COALESCE(SUM(CASE WHEN severity = 'major' THEN 1 ELSE 0 END), 0) as major_discrepancies,
+  COALESCE(SUM(CASE WHEN severity = 'minor' THEN 1 ELSE 0 END), 0) as minor_discrepancies
+FROM nba_orchestration.source_discrepancies
+WHERE game_date = DATE('${GAME_DATE}')
+" 2>&1)
+
+if echo "$DISCREPANCY_COUNT" | grep -q "Not found\|Error"; then
+  echo -e "  ${YELLOW}ℹ️  Source validation data not available${NC}"
+else
+  MAJOR_DISC=$(echo "$DISCREPANCY_COUNT" | tail -1 | cut -d',' -f1)
+  MINOR_DISC=$(echo "$DISCREPANCY_COUNT" | tail -1 | cut -d',' -f2)
+
+  if [ "${MAJOR_DISC:-0}" -eq 0 ]; then
+    echo -e "  ${GREEN}✅ Cross-source validation: No major discrepancies${NC}"
+  else
+    echo -e "  ${YELLOW}⚠️  Cross-source validation: ${MAJOR_DISC} major, ${MINOR_DISC} minor discrepancies${NC}"
+  fi
+fi
+
+# Check BDB PBP data gaps
+BDB_GAPS=$(bq query --use_legacy_sql=false --format=csv --quiet "
+SELECT
+  COUNT(*) as gap_count,
+  COUNTIF(severity = 'critical') as critical_gaps
+FROM nba_orchestration.data_gaps
+WHERE source = 'bigdataball_pbp'
+  AND status = 'open'
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
+" 2>&1)
+
+if echo "$BDB_GAPS" | grep -q "Not found\|Error"; then
+  echo -e "  ${YELLOW}ℹ️  BDB PBP gap tracking not available${NC}"
+else
+  GAP_COUNT=$(echo "$BDB_GAPS" | tail -1 | cut -d',' -f1)
+  CRITICAL_GAPS=$(echo "$BDB_GAPS" | tail -1 | cut -d',' -f2)
+
+  if [ "${GAP_COUNT:-0}" -eq 0 ]; then
+    echo -e "  ${GREEN}✅ BigDataBall PBP: All games have data${NC}"
+  elif [ "${CRITICAL_GAPS:-0}" -gt 0 ]; then
+    echo -e "  ${RED}❌ BigDataBall PBP: ${CRITICAL_GAPS} critical gaps (>24h missing)${NC}"
+  else
+    echo -e "  ${YELLOW}⚠️  BigDataBall PBP: ${GAP_COUNT} games waiting for data${NC}"
+  fi
+fi
+
+# Check backup source coverage
+BACKUP_COVERAGE=$(bq query --use_legacy_sql=false --format=csv --quiet "
+SELECT
+  'bref' as source, COUNT(*) as records
+FROM nba_raw.bref_player_boxscores
+WHERE game_date = DATE('${GAME_DATE}')
+UNION ALL
+SELECT
+  'nba_api' as source, COUNT(*) as records
+FROM nba_raw.nba_api_player_boxscores
+WHERE game_date = DATE('${GAME_DATE}')
+" 2>&1)
+
+if echo "$BACKUP_COVERAGE" | grep -q "Not found\|Error"; then
+  echo -e "  ${YELLOW}ℹ️  Backup sources not yet scraped for ${GAME_DATE}${NC}"
+else
+  BREF_COUNT=$(echo "$BACKUP_COVERAGE" | grep "bref" | cut -d',' -f2)
+  NBAAPI_COUNT=$(echo "$BACKUP_COVERAGE" | grep "nba_api" | cut -d',' -f2)
+
+  if [ "${BREF_COUNT:-0}" -gt 0 ] && [ "${NBAAPI_COUNT:-0}" -gt 0 ]; then
+    echo -e "  ${GREEN}✅ Backup sources: BRef (${BREF_COUNT}), NBA API (${NBAAPI_COUNT})${NC}"
+  else
+    echo -e "  ${YELLOW}ℹ️  Backup sources: BRef (${BREF_COUNT:-0}), NBA API (${NBAAPI_COUNT:-0})${NC}"
+  fi
+fi
+
+echo ""
+
+# ==============================================================================
+# SECTION 6: Summary & Actions
 # ==============================================================================
 echo -e "${BLUE}================================================${NC}"
 echo -e "${BLUE}SUMMARY${NC}"
@@ -276,6 +357,12 @@ fi
 if [ "${PREDICTIONS:-0}" -eq 0 ] && [ "${GAMES:-0}" -gt 0 ]; then
   ISSUES=$((ISSUES + 1))
   echo -e "${RED}❌ ERROR: No predictions generated${NC}"
+fi
+
+# Check BDB critical gaps
+if [ "${CRITICAL_GAPS:-0}" -gt 0 ]; then
+  ISSUES=$((ISSUES + 1))
+  echo -e "${RED}❌ WARNING: ${CRITICAL_GAPS} BigDataBall PBP gaps >24 hours${NC}"
 fi
 
 # Overall status
