@@ -264,7 +264,6 @@ def send_timeout_alert(game_date: str, completed_count: int, expected_count: int
             }]
         }
 
-        from shared.utils.slack_retry import send_slack_webhook_with_retry
         success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
         if success:
             logger.info(f"Timeout alert sent successfully for {game_date}")
@@ -414,7 +413,6 @@ def send_execution_timeout_alert(game_date: str, elapsed_minutes: float,
             }]
         }
 
-        from shared.utils.slack_retry import send_slack_webhook_with_retry
         success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
         if success:
             logger.info(f"Execution timeout alert sent successfully for {game_date}")
@@ -723,7 +721,6 @@ def send_data_freshness_alert(game_date: str, missing_tables: List[str], table_c
                 }]
             }
 
-        from shared.utils.slack_retry import send_slack_webhook_with_retry
         success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
         if success:
             logger.info(f"Data freshness alert sent successfully for {game_date}")
