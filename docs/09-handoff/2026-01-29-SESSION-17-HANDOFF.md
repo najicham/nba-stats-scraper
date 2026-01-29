@@ -78,12 +78,22 @@ Added Feature 33: `dnp_rate` to capture historical DNP patterns:
   - `data_processors/precompute/ml_feature_store/feature_extractor.py`
   - `data_processors/precompute/ml_feature_store/ml_feature_store_processor.py`
 
-### Deployment Status
+### Deployment Status ✅ COMPLETE
 
-| Service | Status | Notes |
-|---------|--------|-------|
-| prediction-worker | Deploying | DNP history integration |
-| nba-phase4-precompute-processors | Deploying | dnp_rate feature |
+| Service | Old Rev | New Rev | Status |
+|---------|---------|---------|--------|
+| prediction-worker | 00020-mwv | **00022-f7b** | ✅ Deployed |
+| prediction-coordinator | 00101-dtr | **00102-m28** | ✅ Deployed |
+| nba-phase4-precompute-processors | 00073-tg4 | **00075-vhh** | ✅ Deployed |
+
+### Testing Added (Session 17)
+
+| File | Purpose |
+|------|---------|
+| `.pre-commit-hooks/validate_all_schemas.py` | Multi-table BigQuery schema validation |
+| `predictions/worker/tests/test_execution_logger.py` | Unit tests for execution logging |
+
+Run tests with: `pytest predictions/worker/tests/ -v`
 
 ### Remaining Items
 
@@ -228,15 +238,15 @@ When triggering ML Feature Store for today's games, had to use `skip_dependency_
 
 ---
 
-## Current Deployment Versions
+## Current Deployment Versions (Updated Session 17)
 
 ```
 nba-phase1-scrapers:              00017-q85
 nba-phase2-raw-processors:        00122-q5z
 nba-phase3-analytics-processors:  00138-ql2
-nba-phase4-precompute-processors: 00073-tg4 (root endpoint fix)
-prediction-worker:                00020-mwv
-prediction-coordinator:           00101-dtr (GCP_PROJECT_ID fix)
+nba-phase4-precompute-processors: 00075-vhh (DNP rate feature v3.1)
+prediction-worker:                00022-f7b (DNP history v4.1)
+prediction-coordinator:           00102-m28 (InjuryFilter v2.1)
 ```
 
 ---
@@ -265,10 +275,12 @@ prediction-coordinator:           00101-dtr (GCP_PROJECT_ID fix)
 
 ## Session 18 TODO
 
-- [ ] Verify deployment completed successfully
+- [x] ~~Verify deployment completed successfully~~ ✅ All 3 services deployed
+- [ ] Run `/validate-daily` to confirm pipeline health
 - [ ] Monitor DNP data accumulation over coming days
 - [ ] Check completion event delivery issue
-- [ ] Run `/validate-daily` to confirm pipeline health
+- [ ] Investigate execution_logger JSON parse error (low priority - logging only)
+- [ ] Check prediction_grades table (stale since Jan 16)
 
 ---
 
@@ -300,5 +312,18 @@ GROUP BY 1"
 
 ---
 
+## Session 17 Commits
+
+| Commit | Description |
+|--------|-------------|
+| `c1d90122` | feat: Add InjuryFilter v2.1 with historical DNP pattern detection |
+| `76af278f` | feat: Integrate DNP history into worker and add dnp_rate ML feature |
+| `835dc9b6` | docs: Update Session 17 handoff with completed DNP integration |
+| `80523c84` | docs: Add DNP tracking improvements project documentation |
+| `6998e21b` | test: Add schema validation and unit tests for execution_logger |
+
+---
+
 *Created: 2026-01-29 12:35 PM PST*
+*Updated: 2026-01-29 2:30 PM PST*
 *Author: Claude Opus 4.5*
