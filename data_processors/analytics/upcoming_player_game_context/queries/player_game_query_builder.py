@@ -229,7 +229,7 @@ class PlayerGameQueryBuilder:
 
     def _gamebook_players_with_games_cte(self) -> str:
         """Build players_with_games CTE for backfill mode (gamebook-based)."""
-        return """players_with_games AS (
+        return f"""players_with_games AS (
             SELECT DISTINCT
                 g.player_lookup,
                 s.game_id,

@@ -217,6 +217,11 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
         # Track dependency check results for run history
         dep_check_results = None
 
+        # Define analysis_date early so it's available for all logging throughout the run
+        # INCLUDING exception handlers. This MUST be outside the try block.
+        # This prevents "cannot access local variable 'analysis_date'" errors.
+        analysis_date = opts.get('end_date') or opts.get('start_date') if opts else None
+
         try:
             # Re-init but preserve run_id
             saved_run_id = self.run_id
@@ -243,8 +248,8 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             self.OUTPUT_TABLE = self.table_name
             self.OUTPUT_DATASET = self.dataset_id
             data_date = opts.get('end_date') or opts.get('start_date')
-            # Define analysis_date early so it's available for all logging throughout the run
-            # This prevents "cannot access local variable 'analysis_date'" errors in exception handlers
+            # Update analysis_date with validated data_date
+            # (Initial definition is outside try block to ensure availability in exception handlers)
             analysis_date = data_date
             self.start_run_tracking(
                 data_date=data_date,
