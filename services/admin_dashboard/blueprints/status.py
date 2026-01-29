@@ -176,30 +176,120 @@ def api_games(date):
         return jsonify({'error': str(e)}), 500
 
 
+def _get_game_dates_with_games(hours: int = 24) -> set:
+    """
+    Get dates that had games scheduled.
+
+    Args:
+        hours: Number of hours to look back
+
+    Returns:
+        Set of date objects that had scheduled games
+    """
+    query = """
+    SELECT DISTINCT game_date
+    FROM `nba-props-platform.nba_raw.nbac_schedule`
+    WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL @days DAY)
+      AND game_date <= CURRENT_DATE()
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("days", "INT64", (hours // 24) + 2)
+        ]
+    )
+
+    try:
+        client = bigquery.Client()
+        result = client.query(query, job_config=job_config).result()
+        return {row.game_date for row in result}
+    except Exception as e:
+        logger.warning(f"Failed to query game schedule: {e}")
+        return set()
+
+
+def _is_expected_no_data_error(error_message: str, game_date, game_dates: set) -> bool:
+    """
+    Check if a 'no data' error is expected (no games that day).
+
+    Args:
+        error_message: The error message text
+        game_date: The date of the error
+        game_dates: Set of dates with scheduled games
+
+    Returns:
+        True if expected no-data error (should be filtered)
+    """
+    # Must be a "no data" error
+    if not error_message or 'No data extracted' not in error_message:
+        return False
+
+    # Need valid game_date
+    if game_date is None:
+        return False
+
+    # Expected if no games on this date
+    return game_date not in game_dates
+
+
 @status_bp.route('/api/errors')
 @rate_limit
 def api_errors():
-    """Recent errors."""
+    """Recent errors with categorization."""
     is_valid, error = check_auth()
     if not is_valid:
         return error
+
+    hours = clamp_param(request.args.get('hours', 24), 1, 168, 24)
 
     try:
         client = get_bq_client()
         project_id = os.environ.get('GCP_PROJECT_ID')
 
+        # Get game dates with scheduled games
+        game_dates = _get_game_dates_with_games(hours)
+
+        # Query all errors
         query = f"""
             SELECT *
             FROM `{project_id}.nba_pipeline.processor_run_history`
             WHERE status = 'failed'
+              AND started_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL @hours HOUR)
             ORDER BY started_at DESC
-            LIMIT 50
+            LIMIT 100
         """
 
-        results = client.query(query).result()
-        errors = [dict(row) for row in results]
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("hours", "INT64", hours)
+            ]
+        )
 
-        return jsonify({'errors': errors, 'count': len(errors)})
+        results = client.query(query, job_config=job_config).result()
+        all_errors = [dict(row) for row in results]
+
+        # Categorize errors
+        real_errors = []
+        expected_errors = []
+
+        for error in all_errors:
+            if _is_expected_no_data_error(
+                error.get('error_message'),
+                error.get('data_date'),
+                game_dates
+            ):
+                expected_errors.append(error)
+            else:
+                real_errors.append(error)
+
+        return jsonify({
+            'errors': all_errors,  # Backward compatibility
+            'real_errors': real_errors,
+            'expected_errors': expected_errors,
+            'noise_reduction': len(expected_errors),
+            'total': len(all_errors),
+            'count': len(all_errors)  # Backward compatibility
+        })
 
     except Exception as e:
         logger.error(f"Error fetching errors: {e}", exc_info=True)
