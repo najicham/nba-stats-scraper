@@ -34,6 +34,7 @@ Created: 2025-12-02
 import argparse
 import json
 import logging
+import os
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, asdict, field
@@ -43,8 +44,9 @@ from enum import Enum
 
 from google.cloud import storage, bigquery
 
-# Add project root to path
-sys.path.insert(0, '/home/naji/code/nba-stats-scraper')
+# Add project root to path using relative path from this file
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_current_dir, '..', '..'))
 
 from shared.validation.chain_config import GCS_PATH_MAPPING, GCS_BUCKET, SEASON_BASED_GCS_SOURCES
 

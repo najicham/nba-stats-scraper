@@ -15,7 +15,9 @@ import pytz
 
 # Import validation modules
 import sys
-sys.path.insert(0, '/home/naji/code/nba-stats-scraper')
+import os
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_current_dir, '..', '..'))
 
 from shared.validation.chain_config import (
     load_chain_configs,

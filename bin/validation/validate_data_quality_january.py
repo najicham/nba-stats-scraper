@@ -19,6 +19,7 @@ Usage:
 """
 
 import sys
+import os
 import argparse
 from datetime import date, datetime, timedelta
 from typing import Dict, List, Tuple
@@ -27,8 +28,9 @@ from collections import defaultdict
 from google.cloud import bigquery
 import pandas as pd
 
-# Add project root to path
-sys.path.insert(0, '/home/naji/code/nba-stats-scraper')
+# Add project root to path using relative path from this file
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_current_dir, '..', '..'))
 
 from shared.validation.config import PROJECT_ID
 

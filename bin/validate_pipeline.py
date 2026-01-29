@@ -28,6 +28,7 @@ Examples:
 """
 
 import sys
+import os
 import argparse
 import logging
 from dataclasses import dataclass
@@ -36,8 +37,9 @@ from typing import Optional, List
 
 from google.cloud import bigquery
 
-# Add project root to path
-sys.path.insert(0, '/home/naji/code/nba-stats-scraper')
+# Add project root to path using relative path from this file
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_current_dir, '..'))
 
 from shared.validation.config import PROJECT_ID
 from shared.validation.context.schedule_context import get_schedule_context, ScheduleContext

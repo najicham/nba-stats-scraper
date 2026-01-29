@@ -17,12 +17,14 @@ is automatically integrated into TransformProcessorBase.report_error().
 Created: 2026-01-28
 """
 
+import os
 import sys
 from datetime import datetime, date
 from typing import Dict, Any
 
-# Add project root to path for imports
-sys.path.insert(0, '/home/naji/code/nba-stats-scraper')
+# Add project root to path using relative path from this file
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_current_dir, '..'))
 
 from shared.utils.service_error_logger import ServiceErrorLogger
 

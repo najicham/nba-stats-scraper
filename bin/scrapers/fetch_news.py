@@ -21,11 +21,13 @@ Usage:
 
 import argparse
 import logging
+import os
 import sys
 from datetime import datetime
 
-# Add project root to path
-sys.path.insert(0, '/home/naji/code/nba-stats-scraper')
+# Add project root to path using relative path from this file
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_current_dir, '..', '..'))
 
 from scrapers.news.rss_fetcher import RSSFetcher
 from scrapers.news.storage import NewsStorage

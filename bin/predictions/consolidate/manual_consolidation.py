@@ -15,8 +15,12 @@ Usage:
 """
 
 import argparse
+import os
 import sys
-sys.path.insert(0, '/home/naji/code/nba-stats-scraper/predictions/worker')
+
+# Add predictions/worker to path using relative path from this file
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(_current_dir, '..', '..', '..', 'predictions', 'worker'))
 
 from batch_staging_writer import BatchConsolidator
 from google.cloud import bigquery
