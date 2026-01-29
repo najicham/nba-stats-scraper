@@ -357,11 +357,22 @@ GROUP BY 1,2,3 ORDER BY 1 DESC, 3"
 
 ## Related Documentation
 
-- [Data Source Redundancy Project Plan](../08-projects/current/data-source-redundancy/PROJECT-PLAN.md)
-- [BigDataBall PBP Monitor Design](../08-projects/current/data-source-redundancy/BIGDATABALL-PBP-MONITOR.md)
-- [Quick Reference](../08-projects/current/data-source-redundancy/QUICK-REFERENCE.md)
+### Project Documentation (Primary Reference)
+All implementation details are documented in the project directory:
+**`docs/08-projects/current/data-source-redundancy/`**
+
+| Document | Purpose |
+|----------|---------|
+| [README.md](../08-projects/current/data-source-redundancy/README.md) | Project overview and quick status |
+| [PROJECT-PLAN.md](../08-projects/current/data-source-redundancy/PROJECT-PLAN.md) | Full multi-phase project plan |
+| [IMPLEMENTATION-COMPLETE.md](../08-projects/current/data-source-redundancy/IMPLEMENTATION-COMPLETE.md) | **What was built and how to use it** |
+| [BIGDATABALL-PBP-MONITOR.md](../08-projects/current/data-source-redundancy/BIGDATABALL-PBP-MONITOR.md) | BDB monitor technical design |
+| [QUICK-REFERENCE.md](../08-projects/current/data-source-redundancy/QUICK-REFERENCE.md) | Commands cheat sheet |
+
+### Session Handoffs
 - [Session 8 Main Handoff](./2026-01-28-SESSION-8-HANDOFF.md)
-- [Workstream Completion Docs](./2026-01-28-SESSION-8-WORKSTREAM-1-COMPLETE.md)
+- [Workstream 1 Complete](./2026-01-28-SESSION-8-WORKSTREAM-1-COMPLETE.md)
+- [Workstream 2 Complete](./2026-01-28-SESSION-8-WORKSTREAM-2-COMPLETE.md)
 
 ---
 
