@@ -185,6 +185,48 @@ def check_array_json_serialization(content: str, file_path: str) -> List[TypeIss
     return issues
 
 
+def check_json_field_serialization(content: str, file_path: str) -> List[TypeIssue]:
+    """
+    Check for JSON fields being serialized with json.dumps().
+
+    JSON type fields should be passed as Python dicts/lists directly,
+    not as serialized JSON strings.
+
+    Note: Some fields like 'feature_importance' are STRING type (storing JSON
+    as string for portability), not native JSON type. This check only covers
+    fields that are actual BigQuery JSON type columns.
+    """
+    issues = []
+
+    # Known JSON type fields (BigQuery JSON columns - not STRING columns!)
+    # Excludes: feature_importance (STRING), metadata (STRING in some tables)
+    json_fields = {
+        'system_errors',  # prediction_worker_runs.system_errors is JSON type
+    }
+
+    lines = content.split('\n')
+    for i, line in enumerate(lines, 1):
+        # Skip comments
+        if line.strip().startswith('#'):
+            continue
+
+        for field in json_fields:
+            # Pattern: 'field_name': json.dumps(...) - dict assignment
+            pattern = rf"['\"]({field})['\"]:\s*json\.dumps\("
+            match = re.search(pattern, line)
+            if match:
+                issues.append(TypeIssue(
+                    file=file_path,
+                    line=i,
+                    field=field,
+                    issue_type='JSON_AS_STRING',
+                    message=f"JSON field '{field}' assigned json.dumps(). Pass dict/list directly for JSON type.",
+                    severity='ERROR'
+                ))
+
+    return issues
+
+
 def check_required_null_handling(content: str, file_path: str) -> List[TypeIssue]:
     """
     Check for REQUIRED fields that might receive NULL.
@@ -262,6 +304,7 @@ def validate_schema_types() -> Tuple[bool, List[str]]:
             # Run all checks
             all_issues.extend(check_date_fallbacks(content, rel_path))
             all_issues.extend(check_array_json_serialization(content, rel_path))
+            all_issues.extend(check_json_field_serialization(content, rel_path))
             all_issues.extend(check_required_null_handling(content, rel_path))
 
         except Exception as e:
