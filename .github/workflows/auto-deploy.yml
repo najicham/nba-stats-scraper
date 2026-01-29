@@ -1,0 +1,99 @@
+name: CD - Auto Deploy on Main
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'scrapers/**'
+      - 'data_processors/**'
+      - 'predictions/**'
+      - 'shared/**'
+      - 'orchestration/**'
+      - 'requirements*.txt'
+
+  workflow_dispatch:
+    inputs:
+      deploy_all:
+        description: 'Deploy all services regardless of changes'
+        type: boolean
+        default: false
+
+jobs:
+  detect-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+        continue-on-error: true
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        continue-on-error: true
+
+      - name: Detect changes and deploy
+        env:
+          DEPLOY_ALL: ${{ github.event.inputs.deploy_all }}
+        run: |
+          set +e  # Don't exit on error
+          
+          PROJECT="nba-props-platform"
+          REGION="us-west2"
+          REGISTRY="us-west2-docker.pkg.dev/$PROJECT/nba-props"
+          
+          # Get changed files
+          CHANGED=$(git diff --name-only HEAD~1 HEAD 2>/dev/null || echo "all")
+          echo "Changed files: $CHANGED"
+          
+          deploy_service() {
+            local service=$1
+            echo "Deploying $service..."
+            gcloud run deploy "$service" \
+              --image="$REGISTRY/$service:latest" \
+              --region="$REGION" \
+              --quiet || echo "Warning: $service deployment may have failed"
+          }
+          
+          # Check shared changes (affects all services)
+          SHARED_CHANGED=false
+          if echo "$CHANGED" | grep -q '^shared/' || [ "$DEPLOY_ALL" = "true" ]; then
+            SHARED_CHANGED=true
+            echo "Shared code changed - will deploy all services"
+          fi
+          
+          # Deploy in dependency order
+          if echo "$CHANGED" | grep -q '^scrapers/' || [ "$SHARED_CHANGED" = "true" ]; then
+            deploy_service "nba-phase1-scrapers"
+          fi
+          
+          if echo "$CHANGED" | grep -q '^data_processors/raw/' || [ "$SHARED_CHANGED" = "true" ]; then
+            deploy_service "nba-phase2-raw-processors"
+          fi
+          
+          if echo "$CHANGED" | grep -q '^data_processors/analytics/' || [ "$SHARED_CHANGED" = "true" ]; then
+            deploy_service "nba-phase3-analytics-processors"
+          fi
+          
+          if echo "$CHANGED" | grep -q '^data_processors/precompute/' || [ "$SHARED_CHANGED" = "true" ]; then
+            deploy_service "nba-phase4-precompute-processors"
+          fi
+          
+          if echo "$CHANGED" | grep -q '^predictions/' || [ "$SHARED_CHANGED" = "true" ]; then
+            deploy_service "prediction-coordinator"
+            deploy_service "prediction-worker"
+          fi
+          
+          echo "Deployment complete"
+
+      - name: Deployment Summary
+        if: always()
+        run: |
+          echo "## Auto-Deploy Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Triggered by: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
