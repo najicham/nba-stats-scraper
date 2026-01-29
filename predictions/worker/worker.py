@@ -465,8 +465,7 @@ def handle_prediction_request():
         # BATCH OPTIMIZATION: Extract pre-loaded historical games if available
         historical_games_batch = request_data.get('historical_games_batch')
         if historical_games_batch:
-            print(f"✅ Worker using pre-loaded historical games ({len(historical_games_batch)} games) from coordinator", flush=True)
-            logger.info(f"Using pre-loaded historical games ({len(historical_games_batch)} games) from coordinator")
+            logger.info(f"Worker using pre-loaded historical games ({len(historical_games_batch)} games) from coordinator")
 
         # DATASET ISOLATION: Create new data_loader with dataset_prefix if specified
         # Otherwise use the cached global loader for production

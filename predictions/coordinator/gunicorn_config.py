@@ -84,8 +84,11 @@ logconfig_dict = {
     },
 }
 
-# Print startup info
-print("🚀 Gunicorn starting with proper logging configuration", flush=True)
-print(f"   Workers: {workers}, Threads: {threads}, Timeout: {timeout}s", flush=True)
-print(f"   Log level: {loglevel}", flush=True)
-print(f"   Python logging: Configured to forward to stdout/stderr", flush=True)
+# Create module-level logger for startup messages
+_startup_logger = logging.getLogger('gunicorn.config')
+
+# Log startup info
+_startup_logger.info("Gunicorn starting with proper logging configuration")
+_startup_logger.info(f"Workers: {workers}, Threads: {threads}, Timeout: {timeout}s")
+_startup_logger.info(f"Log level: {loglevel}")
+_startup_logger.info(f"Python logging: Configured to forward to stdout/stderr")

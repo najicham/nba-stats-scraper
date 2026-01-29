@@ -176,8 +176,8 @@ def main():
         )
         current_commit = result.stdout.strip()
         print(f"   Current HEAD: {current_commit}")
-    except:
-        print("❌ Could not determine current commit")
+    except subprocess.SubprocessError as e:
+        print(f"❌ Could not determine current commit: {e}")
         sys.exit(1)
 
     print()
@@ -207,7 +207,8 @@ def main():
             if len(commits) > 5:
                 print(f"      ... and {len(commits) - 5} more")
             print()
-        except:
+        except subprocess.SubprocessError:
+            # Non-critical: just skip showing commit history if git fails
             pass
 
     # Step 4: Check config differences
