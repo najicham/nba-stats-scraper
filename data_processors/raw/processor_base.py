@@ -39,8 +39,8 @@ from shared.utils.notification_system import (
     notify_info
 )
 
-# Import run history mixin
-from shared.processors.mixins import RunHistoryMixin
+# Import processor mixins
+from shared.processors.mixins import RunHistoryMixin, ProcessorVersionMixin, DeploymentFreshnessMixin
 
 # Import BigQuery retry utilities and connection pooling
 from shared.utils.bigquery_retry import (
@@ -169,7 +169,7 @@ def _categorize_failure(error: Exception, step: str, stats: Dict = None) -> str:
     return 'processing_error'
 
 
-class ProcessorBase(RunHistoryMixin):
+class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryMixin):
     """
     Base class for data processors - matches ScraperBase patterns.
 
@@ -268,6 +268,9 @@ class ProcessorBase(RunHistoryMixin):
             self.run_id = saved_run_id
             self.stats["run_id"] = saved_run_id
 
+            # Add version tracking to stats
+            self.add_version_to_stats()
+
             self.mark_time("total")
             self.step_info("start", "Processor run starting", extra={"opts": opts})
 
@@ -324,6 +327,9 @@ class ProcessorBase(RunHistoryMixin):
                 except Exception as hb_e:
                     logger.warning(f"Failed to start heartbeat: {hb_e}")
                     self.heartbeat = None
+
+            # Check deployment freshness to detect stale code
+            self.check_deployment_freshness()
 
             # Load from source
             self.mark_time("load")
@@ -720,7 +726,7 @@ class ProcessorBase(RunHistoryMixin):
                 notify_warning(
                     title=f"{self.__class__.__name__}: Partial Data Loss",
                     message=f"Expected {expected_rows} rows but only saved {actual_rows}",
-                    details=validation_result
+                    details=validation_result,
                     processor_name=self.__class__.__name__
                 )
 
