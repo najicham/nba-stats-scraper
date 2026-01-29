@@ -95,17 +95,17 @@ try:
     logger.info(f"Loaded {EXPECTED_PROCESSOR_COUNT} expected Phase 2 processors from config")
 except ImportError:
     # Fallback for Cloud Functions where shared module may not be available
-    # This is a realistic list of processors that actually run daily
+    # This list MUST match orchestration_config.py phase2_expected_processors
     # NOTE: In monitoring mode, this is used for tracking completeness
     logger.warning("Could not import orchestration_config, using fallback list")
     EXPECTED_PROCESSORS: List[str] = [
-        # Core daily processors
-        'bdl_player_boxscores',      # Daily box scores from balldontlie
-        'bigdataball_play_by_play',  # Per-game play-by-play
-        'odds_api_game_lines',       # Per-game odds
-        'nbac_schedule',             # Schedule updates
-        'nbac_gamebook_player_stats', # Post-game player stats
-        'br_rosters_current',        # Basketball-ref rosters
+        # Core daily processors - names must match normalize_processor_name() output
+        'p2_bdl_box_scores',          # Daily box scores from balldontlie
+        'p2_bigdataball_pbp',         # Per-game play-by-play
+        'p2_odds_game_lines',         # Per-game odds
+        'p2_nbacom_schedule',         # Schedule updates
+        'p2_nbacom_gamebook_pdf',     # Post-game player stats
+        'p2_br_season_roster',        # Basketball-ref rosters
     ]
     EXPECTED_PROCESSOR_COUNT: int = len(EXPECTED_PROCESSORS)
     EXPECTED_PROCESSOR_SET: Set[str] = set(EXPECTED_PROCESSORS)
@@ -119,10 +119,10 @@ def normalize_processor_name(raw_name: str, output_table: Optional[str] = None) 
     Normalize processor name to match config format.
 
     Phase 2 processors may publish:
-    - Class names: BdlPlayerBoxscoresProcessor
+    - Class names: BdlPlayerBoxScoresProcessor
     - Table names: bdl_player_boxscores
 
-    This function normalizes to config format: bdl_player_boxscores
+    This function normalizes to config format with p2_ prefix: p2_bdl_box_scores
 
     Args:
         raw_name: Raw processor name from message
@@ -131,28 +131,56 @@ def normalize_processor_name(raw_name: str, output_table: Optional[str] = None) 
     Returns:
         Normalized processor name matching config
     """
-    import re
-
     # If raw_name is already in expected set, use it
     if raw_name in EXPECTED_PROCESSOR_SET:
         return raw_name
 
     # If output_table matches expected, use it (strip dataset prefix first)
-    # Example: "nba_raw.bdl_player_boxscores" -> "bdl_player_boxscores"
+    # Example: "nba_raw.bdl_player_boxscores" -> check against expected
     if output_table:
         table_name = output_table.split('.')[-1] if '.' in output_table else output_table
         if table_name in EXPECTED_PROCESSOR_SET:
             logger.debug(f"Matched via output_table: '{output_table}' -> '{table_name}'")
             return table_name
 
-    # Convert CamelCase to snake_case and strip "Processor" suffix
-    name = raw_name.replace('Processor', '')
-    # Insert underscore before capitals and lowercase
-    name = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
-    name = re.sub('([a-z0-9])([A-Z])', r'\1_\2', name).lower()
+    # Explicit mapping from class names to config names
+    # These must match the processor_name values in config/orchestration_config.py
+    CLASS_TO_CONFIG_MAP = {
+        # BDL processors
+        'BdlPlayerBoxScoresProcessor': 'p2_bdl_box_scores',
+        'BdlPlayerBoxscoresProcessor': 'p2_bdl_box_scores',  # Alternative casing
+        # BigDataBall processors
+        'BigDataBallPbpProcessor': 'p2_bigdataball_pbp',
+        'BigdataballPbpProcessor': 'p2_bigdataball_pbp',
+        # Odds API processors
+        'OddsGameLinesProcessor': 'p2_odds_game_lines',
+        'OddsApiGameLinesProcessor': 'p2_odds_game_lines',
+        # NBA.com processors
+        'NbacScheduleProcessor': 'p2_nbacom_schedule',
+        'NbacomScheduleProcessor': 'p2_nbacom_schedule',
+        'NbacGambookProcessor': 'p2_nbacom_gamebook_pdf',
+        'NbacGamébookProcessor': 'p2_nbacom_gamebook_pdf',
+        'NbacGamébookPlayerStatsProcessor': 'p2_nbacom_gamebook_pdf',
+        # Basketball Reference processors
+        'BrRosterProcessor': 'p2_br_season_roster',
+        'BrRostersProcessor': 'p2_br_season_roster',
+        'BrRostersCurrentProcessor': 'p2_br_season_roster',
+    }
 
-    logger.debug(f"Normalized '{raw_name}' -> '{name}'")
-    return name
+    # Try explicit mapping first
+    if raw_name in CLASS_TO_CONFIG_MAP:
+        result = CLASS_TO_CONFIG_MAP[raw_name]
+        logger.debug(f"Mapped via explicit mapping: '{raw_name}' -> '{result}'")
+        return result
+
+    # Fallback: Log warning for unmapped processor names
+    # This helps identify new processors that need to be added to the mapping
+    logger.warning(
+        f"Processor name '{raw_name}' not in explicit mapping. "
+        f"Expected one of: {list(CLASS_TO_CONFIG_MAP.keys())}. "
+        f"Using raw name - may not match config."
+    )
+    return raw_name
 
 
 # ============================================================================

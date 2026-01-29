@@ -838,10 +838,10 @@ class TeamOffenseGameSummaryProcessor(
         fallback_issues = getattr(self, '_fallback_quality_issues', [])
         source_used = getattr(self, '_source_used', None)
 
-        # FIX: Deduplicate records by (game_date, team_abbr) to handle game_id format mismatches
-        # Issue: _reconstruct_team_from_players() uses source game_id format (HOME_AWAY)
-        # while _extract_from_nbac_team_boxscore() uses standardized format (AWAY_HOME)
-        # This causes duplicate records for the same team-game combination
+        # Deduplicate records by (game_date, team_abbr) to handle potential duplicate loads
+        # Both _reconstruct_team_from_players() and _extract_from_nbac_team_boxscore()
+        # use standardized AWAY_HOME format (raw tables write YYYYMMDD_AWAY_HOME).
+        # Duplicates may occur from bulk load operations or multiple source queries.
         # Keep the record with more fg_attempted (indicates more complete data)
         if not self.raw_data.empty and 'game_date' in self.raw_data.columns and 'team_abbr' in self.raw_data.columns:
             original_count = len(self.raw_data)
