@@ -151,9 +151,36 @@ class CleanupProcessor:
                 republished_count
             )
             
+            # CRITICAL: Detect retry storm (likely bug in table name or config)
+            # If >80% of files are "missing", something is wrong with our detection
+            missing_percentage = (len(missing_files) / len(scraper_files) * 100) if scraper_files else 0
+            if missing_percentage > 80 and len(missing_files) > 50:
+                logger.critical(
+                    f"🚨 RETRY STORM DETECTED: {missing_percentage:.1f}% of files ({len(missing_files)}/{len(scraper_files)}) "
+                    f"appear missing. This likely indicates a bug in CleanupProcessor table names or config. "
+                    f"Check that all table names in phase2_tables match actual BigQuery tables."
+                )
+                try:
+                    notify_error(
+                        title="🚨 CRITICAL: CleanupProcessor Retry Storm Detected",
+                        message=f"{missing_percentage:.1f}% of files appear missing - likely a bug causing excessive republishes",
+                        details={
+                            'cleanup_id': cleanup_id,
+                            'files_checked': len(scraper_files),
+                            'missing_files': len(missing_files),
+                            'missing_percentage': f"{missing_percentage:.1f}%",
+                            'likely_cause': 'Table name mismatch in phase2_tables list',
+                            'fix': 'Verify all table names in cleanup_processor.py match actual BigQuery tables',
+                            'scrapers_affected': list(set(f['scraper_name'] for f in missing_files))[:10]  # Limit to 10
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send retry storm notification: {notify_ex}")
+
             # Send notification if significant cleanup needed (configurable threshold)
             # This prevents noisy alerts for occasional missed files
-            if len(missing_files) >= self.notification_threshold:
+            elif len(missing_files) >= self.notification_threshold:
                 try:
                     notify_warning(
                         title="Phase 1 Cleanup: Multiple Files Republished",
