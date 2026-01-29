@@ -52,10 +52,17 @@ jobs:
           
           deploy_service() {
             local service=$1
-            echo "Deploying $service..."
+            local dockerfile=$2
+            echo "Building and deploying $service from source..."
+            # Use --source=. to build from current code, NOT pre-built image
+            # This ensures the deployed container includes the latest code changes
+            # Previously used --image=...:latest which could deploy stale code
             gcloud run deploy "$service" \
-              --image="$REGISTRY/$service:latest" \
+              --source=. \
               --region="$REGION" \
+              --memory=2Gi \
+              --timeout=540 \
+              --set-env-vars="BUILD_COMMIT=${{ github.sha }},BUILD_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
               --quiet || echo "Warning: $service deployment may have failed"
           }
           

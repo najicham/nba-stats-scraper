@@ -8,6 +8,18 @@
 
 FROM python:3.11-slim
 
+# Build-time arguments for tracking what code is in this image
+ARG BUILD_COMMIT=unknown
+ARG BUILD_TIMESTAMP=unknown
+
+# Store build info as environment variables (queryable at runtime)
+ENV BUILD_COMMIT=${BUILD_COMMIT}
+ENV BUILD_TIMESTAMP=${BUILD_TIMESTAMP}
+
+# Add labels for image inspection
+LABEL build.commit="${BUILD_COMMIT}"
+LABEL build.timestamp="${BUILD_TIMESTAMP}"
+
 # Set working directory
 WORKDIR /app
 

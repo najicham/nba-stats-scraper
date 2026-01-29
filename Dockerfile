@@ -2,6 +2,21 @@
 # Analytics processors Dockerfile
 FROM python:3.11-slim
 
+# Build-time arguments for tracking what code is in this image
+ARG BUILD_COMMIT=unknown
+ARG BUILD_TIMESTAMP=unknown
+ARG BUILD_REF=unknown
+
+# Store build info as environment variables (queryable at runtime)
+ENV BUILD_COMMIT=${BUILD_COMMIT}
+ENV BUILD_TIMESTAMP=${BUILD_TIMESTAMP}
+ENV BUILD_REF=${BUILD_REF}
+
+# Add labels for image inspection
+LABEL build.commit="${BUILD_COMMIT}"
+LABEL build.timestamp="${BUILD_TIMESTAMP}"
+LABEL build.ref="${BUILD_REF}"
+
 WORKDIR /app
 
 # Install system dependencies

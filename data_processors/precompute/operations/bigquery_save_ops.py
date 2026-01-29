@@ -123,8 +123,10 @@ class BigQuerySaveOpsMixin:
             # Use proper SQL MERGE (prevents duplicates, no streaming buffer issues)
             self._save_with_proper_merge(rows, table_id, table_schema)
 
-            # Check for duplicates after successful merge
-            self._check_for_duplicates_post_save()
+            # Check for duplicates after successful merge (if method exists)
+            # Fixed 2026-01-29: Some processors don't have QualityMixin
+            if hasattr(self, '_check_for_duplicates_post_save'):
+                self._check_for_duplicates_post_save()
             return  # MERGE handles everything, we're done
 
         # For non-MERGE strategies, use batch INSERT via BigQuery load job
@@ -191,8 +193,10 @@ class BigQuerySaveOpsMixin:
                 logger.info(f"✅ Successfully loaded {len(rows)} rows")
                 self.stats["rows_processed"] = len(rows)
 
-                # Check for duplicates after successful save
-                self._check_for_duplicates_post_save()
+                # Check for duplicates after successful save (if method exists)
+                # Fixed 2026-01-29: Some processors don't have QualityMixin
+                if hasattr(self, '_check_for_duplicates_post_save'):
+                    self._check_for_duplicates_post_save()
 
             except Exception as load_e:
                 if "streaming buffer" in str(load_e).lower():

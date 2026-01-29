@@ -153,8 +153,9 @@ class CleanupProcessor:
             
             # CRITICAL: Detect retry storm (likely bug in table name or config)
             # If >80% of files are "missing", something is wrong with our detection
+            # NOTE: Lowered threshold from 50 to 10 to catch small scrapers at 100% missing
             missing_percentage = (len(missing_files) / len(scraper_files) * 100) if scraper_files else 0
-            if missing_percentage > 80 and len(missing_files) > 50:
+            if missing_percentage > 80 and len(missing_files) > 10:
                 logger.critical(
                     f"🚨 RETRY STORM DETECTED: {missing_percentage:.1f}% of files ({len(missing_files)}/{len(scraper_files)}) "
                     f"appear missing. This likely indicates a bug in CleanupProcessor table names or config. "

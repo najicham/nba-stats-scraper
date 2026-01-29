@@ -68,6 +68,23 @@ except ImportError:
     ProcessorHeartbeat = None
     HEARTBEAT_AVAILABLE = False
 
+# Import pipeline_event_log logging (added Jan 29, 2026 to fix Phase 2 visibility gap)
+# Phase 3 had this, but Phase 2 was missing - couldn't see WHY files weren't processed
+try:
+    from shared.utils.pipeline_logger import (
+        log_processor_start,
+        log_processor_complete,
+        log_processor_error,
+        classify_error,
+    )
+    PIPELINE_LOGGING_AVAILABLE = True
+except ImportError:
+    log_processor_start = None
+    log_processor_complete = None
+    log_processor_error = None
+    classify_error = None
+    PIPELINE_LOGGING_AVAILABLE = False
+
 # Configure logging to match scraper_base pattern
 logging.basicConfig(
     level=logging.INFO,
@@ -313,6 +330,26 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
                 parent_processor=opts.get('parent_processor')
             )
 
+            # Log to pipeline_event_log for unified visibility (added Jan 29, 2026)
+            # This was missing from Phase 2, causing major visibility gap
+            self._pipeline_event_id = None
+            if PIPELINE_LOGGING_AVAILABLE and log_processor_start:
+                try:
+                    self._pipeline_event_id = log_processor_start(
+                        phase=self.PHASE,
+                        processor_name=self.__class__.__name__,
+                        game_date=str(data_date) if data_date else None,
+                        correlation_id=opts.get('correlation_id') or self.run_id,
+                        trigger_source=opts.get('trigger_source', 'pubsub'),
+                        metadata={
+                            'table_name': self.table_name,
+                            'file_path': opts.get('file_path'),
+                            'run_id': self.run_id,
+                        }
+                    )
+                except Exception as log_ex:
+                    logger.warning(f"Failed to log processor start to pipeline_event_log: {log_ex}")
+
             # Start heartbeat for stale processor detection (added after Jan 23 incident)
             # This enables 15-minute detection of stuck processors vs 4-hour timeout
             if HEARTBEAT_AVAILABLE:
@@ -374,6 +411,26 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
                 records_created=self.stats.get('rows_inserted', 0),
                 summary=self.stats
             )
+
+            # Log completion to pipeline_event_log (added Jan 29, 2026)
+            if PIPELINE_LOGGING_AVAILABLE and log_processor_complete:
+                try:
+                    log_processor_complete(
+                        phase=self.PHASE,
+                        processor_name=self.__class__.__name__,
+                        game_date=str(data_date) if data_date else None,
+                        duration_seconds=self.stats.get('total_runtime', 0),
+                        records_processed=self.stats.get('rows_inserted', 0),
+                        correlation_id=opts.get('correlation_id') or self.run_id,
+                        parent_event_id=self._pipeline_event_id,
+                        metadata={
+                            'table_name': self.table_name,
+                            'rows_updated': self.stats.get('rows_updated', 0),
+                            'run_id': self.run_id,
+                        }
+                    )
+                except Exception as log_ex:
+                    logger.warning(f"Failed to log processor complete to pipeline_event_log: {log_ex}")
 
             # Stop heartbeat on successful completion
             if self.heartbeat:
@@ -450,6 +507,34 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
                 summary=self.stats,
                 failure_category=failure_category
             )
+
+            # Log error to pipeline_event_log (added Jan 29, 2026)
+            # This enables retry queue and unified error tracking
+            if PIPELINE_LOGGING_AVAILABLE and log_processor_error:
+                try:
+                    import traceback
+                    error_type_for_log = 'transient' if failure_category in ['timeout', 'upstream_failure'] else 'permanent'
+                    if failure_category == 'no_data_available':
+                        error_type_for_log = 'permanent'  # Don't retry no-data scenarios
+
+                    log_processor_error(
+                        phase=self.PHASE,
+                        processor_name=self.__class__.__name__,
+                        game_date=str(data_date) if data_date else None,
+                        error_message=str(e)[:4000],
+                        error_type=error_type_for_log,
+                        stack_trace=traceback.format_exc()[:8000],
+                        correlation_id=opts.get('correlation_id') or self.run_id,
+                        parent_event_id=getattr(self, '_pipeline_event_id', None),
+                        metadata={
+                            'failure_category': failure_category,
+                            'table_name': self.table_name,
+                            'run_id': self.run_id,
+                            'error_type_original': type(e).__name__,
+                        }
+                    )
+                except Exception as log_ex:
+                    logger.warning(f"Failed to log processor error to pipeline_event_log: {log_ex}")
 
             # Stop heartbeat on failure
             if self.heartbeat:

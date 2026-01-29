@@ -2,11 +2,12 @@
 # File: backfill_jobs/raw/bigdataball_pbp/bigdataball_pbp_raw_backfill.py
 # Description: Backfill job for processing BigDataBall play-by-play data from GCS to BigQuery
 # UPDATED: Uses Schedule Service for efficiency (only processes actual game dates)
+# UPDATED: 2026-01-29 - Now marks data_gaps as resolved after successful backfill
 
 import os, sys, argparse, logging
-from datetime import datetime, date, timedelta
-from typing import List
-from google.cloud import storage
+from datetime import datetime, date, timedelta, timezone
+from typing import List, Set
+from google.cloud import storage, bigquery
 
 # Add parent directories to path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
@@ -22,13 +23,15 @@ class BigDataBallPbpBackfill:
     def __init__(self, bucket_name: str = 'nba-scraped-data', use_schedule: bool = True):
         self.bucket_name = bucket_name
         self.storage_client = storage.Client()
+        self.bq_client = bigquery.Client()
         self.processor = BigDataBallPbpProcessor()
         self.use_schedule = use_schedule
-        
+        self.processed_dates: Set[date] = set()  # Track dates for gap resolution
+
         # Initialize schedule service if enabled (GCS-only for backfills)
         if use_schedule:
             self.schedule = NBAScheduleService.from_gcs_only(bucket_name=bucket_name)
-        
+
         # Set up logging
         logging.basicConfig(
             level=logging.INFO,
@@ -137,6 +140,57 @@ class BigDataBallPbpBackfill:
         all_files.sort(key=lambda x: x['date'])
         return [f['path'] for f in all_files]
     
+    def resolve_data_gaps(self, dates: Set[date]) -> int:
+        """
+        Mark data_gaps entries as resolved for successfully backfilled dates.
+
+        Added 2026-01-29 to fix issue where backfills completed but gaps stayed "open".
+
+        Args:
+            dates: Set of dates that were successfully backfilled
+
+        Returns:
+            int: Number of gaps marked as resolved
+        """
+        if not dates:
+            return 0
+
+        self.logger.info(f"Marking data_gaps as resolved for {len(dates)} dates...")
+
+        resolved_count = 0
+        for game_date in dates:
+            try:
+                # Update gaps for this date
+                query = """
+                UPDATE `nba-props-platform.nba_orchestration.data_gaps`
+                SET
+                    status = 'resolved',
+                    resolved_at = CURRENT_TIMESTAMP(),
+                    resolution_type = 'manual_backfill',
+                    resolution_notes = 'Resolved by bigdataball_pbp_raw_backfill.py',
+                    updated_at = CURRENT_TIMESTAMP()
+                WHERE game_date = @game_date
+                  AND source = 'bigdataball_pbp'
+                  AND status = 'open'
+                """
+
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                    ]
+                )
+
+                result = self.bq_client.query(query, job_config=job_config).result()
+                # Note: BigQuery DML doesn't easily return affected rows
+                resolved_count += 1
+                self.logger.debug(f"Marked gaps resolved for {game_date}")
+
+            except Exception as e:
+                self.logger.warning(f"Failed to resolve gaps for {game_date}: {e}")
+
+        self.logger.info(f"✅ Marked gaps as resolved for {resolved_count} dates")
+        return resolved_count
+
     def process_file(self, file_path: str) -> dict:
         """Process a single BigDataBall CSV file."""
         self.logger.info(f"Processing file: {file_path}")
@@ -276,10 +330,25 @@ class BigDataBallPbpBackfill:
                     success_count += 1
                     total_rows += result['rows_processed']
                     self.logger.info(f"✅ Success: {result['rows_processed']} rows, game {result.get('game_id')}")
+                    # Track processed date for gap resolution
+                    try:
+                        # Extract date from file path: .../2026-01-27/...
+                        date_str = file_path.split('/')[-2]  # Get date directory
+                        if len(date_str) == 10 and date_str[4] == '-':  # YYYY-MM-DD format
+                            processed_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+                            self.processed_dates.add(processed_date)
+                    except Exception as e:
+                        self.logger.debug(f"Could not extract date from {file_path}: {e}")
             else:
                 error_count += 1
                 self.logger.error(f"❌ Error: {result['error']}")
         
+        # Mark data_gaps as resolved for processed dates (added 2026-01-29)
+        if self.processed_dates:
+            gaps_resolved = self.resolve_data_gaps(self.processed_dates)
+        else:
+            gaps_resolved = 0
+
         # Summary
         self.logger.info(f"\n{'='*60}")
         self.logger.info(f"Backfill completed:")
@@ -288,6 +357,7 @@ class BigDataBallPbpBackfill:
         self.logger.info(f"  Skipped (duplicates): {skipped_count}")
         self.logger.info(f"  Errors: {error_count}")
         self.logger.info(f"  Total rows inserted: {total_rows}")
+        self.logger.info(f"  Data gaps resolved: {gaps_resolved} dates")
         self.logger.info(f"{'='*60}")
 
 def main():
