@@ -77,7 +77,8 @@ class EarlyExitMixin:
                 return True
 
         # EARLY EXIT 1.5: Games not finished yet (NEW)
-        if self.ENABLE_GAMES_FINISHED_CHECK:
+        # Skip this check in backfill_mode since historical games are definitely finished
+        if self.ENABLE_GAMES_FINISHED_CHECK and not backfill_mode:
             if not self._are_games_finished(check_date):
                 logger.info(f"Games on {check_date} not finished yet, skipping to prevent retry storm")
                 self._log_skip('games_not_finished')
