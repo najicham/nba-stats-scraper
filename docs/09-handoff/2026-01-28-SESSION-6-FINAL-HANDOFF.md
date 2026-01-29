@@ -4,6 +4,135 @@ This is the definitive handoff document for the next Claude Code session. Read t
 
 ---
 
+## 🎯 Primary Mission: Make Daily Orchestration Bulletproof
+
+**Our #1 goal is resilient, self-healing daily orchestration.** The pipeline should:
+- Run automatically without manual intervention
+- Recover gracefully from transient failures
+- Alert on issues before they cascade
+- Never lose data or produce incorrect predictions
+
+Every improvement should ask: "Does this make the daily pipeline more reliable?"
+
+---
+
+## Session Philosophy
+
+### 1. Resilience First
+- **Prevent issues before they happen** - Add validation, pre-commit hooks, schema checks
+- **Fail fast, recover gracefully** - Detect problems early, have clear recovery paths
+- **Automate everything** - Manual steps = potential for human error
+
+### 2. Keep Documentation Updated
+- **Update handoff docs** after every significant change
+- **Update runbooks** when you fix an issue (so it's easier next time)
+- **Add comments** explaining "why" not just "what"
+
+### 3. Use Agents Liberally
+- **Spawn parallel agents** for investigation - don't do things sequentially
+- **Use Explore agents** for codebase research
+- **Use general-purpose agents** for fixes and commands
+- **10+ agents per session is normal** - they're fast and effective
+
+### 4. Understand Root Causes
+- Don't just fix symptoms - understand WHY something broke
+- Add prevention mechanisms (validation, tests, automation)
+- Document the root cause for future reference
+
+---
+
+## 📚 Project Documentation (Keep Updated!)
+
+| Directory | Purpose | Update When... |
+|-----------|---------|----------------|
+| `CLAUDE.md` | Quick reference for Claude Code sessions | Adding new patterns or tools |
+| `docs/01-architecture/` | System architecture, data flow diagrams | Changing system structure |
+| `docs/02-operations/` | Runbooks, deployment, troubleshooting | Fixing production issues |
+| `docs/03-phases/` | Phase-specific documentation (1-5) | Changing phase behavior |
+| `docs/05-development/` | Development guides, best practices | Adding new patterns |
+| `docs/08-projects/current/` | Active projects, ML performance | Working on improvements |
+| `docs/09-handoff/` | Session handoff documents | End of every session |
+| `schemas/bigquery/` | BigQuery table schemas | Modifying tables |
+
+**Rule: If you fix something, update the relevant docs so the next session knows about it.**
+
+---
+
+## 🛠️ Validation Tools (Run These!)
+
+### Daily Validation (Run First Every Session)
+```bash
+/validate-daily
+```
+This checks:
+- Box scores complete
+- Analytics generated
+- Features created with correct version
+- Predictions generated
+- No Phase 3 errors
+
+### Historical Validation (For Date Ranges)
+```bash
+/validate-historical 2026-01-25 2026-01-28
+```
+
+### Deployment Drift Check
+```bash
+./bin/check-deployment-drift.sh --verbose
+```
+Detects services running old code.
+
+### Spot Check Data Accuracy
+```bash
+python scripts/spot_check_data_accuracy.py --samples 10
+```
+Validates rolling averages and usage rates.
+
+### Quick BigQuery Health Checks
+```bash
+# Predictions by date
+bq query --use_legacy_sql=false "SELECT game_date, COUNT(*) FROM nba_predictions.player_prop_predictions WHERE game_date >= CURRENT_DATE() - 3 AND is_active = TRUE GROUP BY 1"
+
+# Feature versions
+bq query --use_legacy_sql=false "SELECT game_date, feature_version, COUNT(*) FROM nba_predictions.ml_feature_store_v2 WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1, 2"
+
+# Phase completion
+bq query --use_legacy_sql=false "SELECT * FROM nba_orchestration.phase_execution_log WHERE game_date >= CURRENT_DATE() - 1 ORDER BY execution_timestamp DESC LIMIT 20"
+```
+
+---
+
+## 🚀 Making Orchestration More Bulletproof
+
+### Current Vulnerabilities (Fix These!)
+
+| Vulnerability | Impact | Prevention Needed |
+|--------------|--------|-------------------|
+| Feature version mismatch | Predictions fail silently | Pre-deployment validation |
+| Phase 2 trigger name mismatch | Downstream phases don't run | ✅ Fixed with explicit mapping |
+| Missing boxscores | Analytics incomplete | Better BDL fallback |
+| Quota exceeded | All writes fail | ✅ BigQueryBatchWriter migration (partial) |
+| Stale deployments | Bug fixes not live | ✅ Deployment drift detection |
+
+### Improvements to Consider
+
+1. **Add Circuit Breakers** - Stop cascading failures when upstream fails
+2. **Add Health Endpoints** - Quick `/health` check for each service
+3. **Add Retry with Backoff** - Don't fail on transient errors
+4. **Add Data Quality Gates** - Block bad data from propagating
+5. **Add Alerting** - Slack/email when things go wrong
+
+### Orchestration Files to Know
+
+| File | Purpose |
+|------|---------|
+| `orchestration/cloud_functions/phase2_to_phase3/main.py` | Phase 2→3 trigger |
+| `orchestration/cloud_functions/phase3_to_phase4/main.py` | Phase 3→4 trigger |
+| `monitoring/health_summary/main.py` | Health check aggregation |
+| `shared/config/orchestration_config.py` | Centralized orchestration config |
+
+---
+
 ## Quick Start for Next Session
 
 ```bash
@@ -151,6 +280,39 @@ The comprehensive codebase audit identified 130+ issues across 8 categories:
 2. **Use explicit mappings over regex** - Regex-based normalization is error-prone; explicit dicts are clearer
 3. **Parallel agents are effective** - This session spawned 25+ agents for parallel investigation
 4. **Batch inserts don't hurt parallelism** - Workers write to separate staging tables, so batching is safe
+5. **Fix the system, not just the code** - Add validation, tests, and automation to prevent recurrence
+6. **Document as you go** - Future sessions benefit from clear handoffs and updated runbooks
+
+---
+
+## Using Agents Effectively
+
+### When to Use Agents
+- **Investigation**: Spawn 3-5 Explore agents to search different areas in parallel
+- **Fixes**: Use general-purpose agents to fix issues while you investigate others
+- **Validation**: Run validation agents while making code changes
+- **Deployment**: Use Bash agents to deploy services in parallel
+
+### Agent Types
+| Type | Use For |
+|------|---------|
+| `Explore` | Finding code, understanding patterns, research |
+| `general-purpose` | Fixing bugs, running commands, making changes |
+| `Bash` | Git operations, gcloud commands, deployments |
+
+### Example: Parallel Investigation
+```
+Task(subagent_type="Explore", prompt="Find all places where game_id is formatted")
+Task(subagent_type="Explore", prompt="Check Phase 3 processor completion logic")
+Task(subagent_type="general-purpose", prompt="Fix the hardcoded path in file X")
+Task(subagent_type="Bash", prompt="Deploy service Y")
+```
+
+### Tips
+- Give detailed prompts with file paths and context
+- Check agent results before moving on
+- Spawn 5-10 agents at once for major investigations
+- Use agents proactively - don't wait until you're stuck
 
 ---
 
@@ -202,12 +364,27 @@ ORDER BY game_date DESC, phase_name
 
 ## Next Session Checklist
 
+### Immediate (Do First)
 - [ ] Run `/validate-daily` to check overnight processing
 - [ ] Verify Jan 29 features regenerated as v2_33features
 - [ ] If Jan 29 still shows v2_34features, manually trigger Phase 4
-- [ ] Consider fixing remaining hardcoded paths in `backfill_jobs/`
-- [ ] Consider adding smoke tests for untested processors
-- [ ] Review coordinator Pub/Sub publishing optimization (optional)
+
+### Make Orchestration Bulletproof (Priority)
+- [ ] Add pre-deployment validation to catch feature version mismatches
+- [ ] Complete BigQueryBatchWriter migration (20+ files remaining)
+- [ ] Add health endpoints to all Cloud Run services
+- [ ] Improve Phase 3 boxscore completeness checks
+- [ ] Add Slack alerts for orchestration failures
+
+### Code Quality (When Time Permits)
+- [ ] Fix remaining hardcoded paths in `backfill_jobs/`
+- [ ] Add smoke tests for 10 untested processors
+- [ ] Refactor large files (coordinator.py, player_loader.py)
+
+### Documentation (Always)
+- [ ] Update handoff doc at end of session
+- [ ] Update runbooks for any issues fixed
+- [ ] Keep CLAUDE.md current with new patterns
 
 ---
 
