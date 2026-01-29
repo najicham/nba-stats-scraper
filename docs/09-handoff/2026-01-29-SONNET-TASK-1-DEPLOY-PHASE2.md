@@ -45,13 +45,43 @@ LIMIT 10"
 ```
 
 ## Success Criteria
-- [ ] New revision deployed successfully
-- [ ] Health check returns healthy
-- [ ] Phase 2 events start appearing in pipeline_event_log
+- [x] New revision deployed successfully
+- [x] Health check returns healthy
+- [ ] Phase 2 events start appearing in pipeline_event_log (will verify after next Phase 2 run)
+
+## Deployment Results
+
+**Status**: ✅ COMPLETED
+
+**Deployed Revision**: `nba-phase2-raw-processors-00122-q5z`
+
+**Image**: `us-west2-docker.pkg.dev/nba-props-platform/nba-props/nba-phase2-raw-processors:2703e301`
+
+**Deployment Time**: 2026-01-29 18:24 UTC
+
+**Issues Encountered**:
+1. Initial deployments using `--source=.` were rebuilding old cached code (commit 48f415d from Jan 21)
+2. Root Dockerfile only included analytics code, not Phase 2 raw processor code
+3. Solution: Updated Dockerfile to include both Phase 2 and Phase 3 code, switched based on SERVICE env var
+
+**Code Changes**:
+- Updated `Dockerfile` to support both analytics and phase2 services (commit 500cd5fa)
+- Dockerfile now copies both `data_processors/analytics/` and `data_processors/raw/`
+- CMD uses SERVICE env var to determine which service to run
+
+**Verification**:
+- Service started successfully with gunicorn
+- Health probe passed
+- Logging fix code confirmed present in deployed revision (commit 2703e301)
+- Traffic routing: 100% to new revision
+
+**Next Steps**:
+- Monitor `pipeline_event_log` table after next Phase 2 orchestration run
+- Verify Phase 2 events appear with phase='phase_2_raw'
 
 ## If Something Goes Wrong
 - Check Cloud Run logs: `gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="nba-phase2-raw-processors"' --limit=20`
-- Rollback if needed: `gcloud run services update-traffic nba-phase2-raw-processors --to-revisions=PREVIOUS_REVISION=100 --region=us-west2`
+- Rollback if needed: `gcloud run services update-traffic nba-phase2-raw-processors --to-revisions=nba-phase2-raw-processors-00105-4g2=100 --region=us-west2`
 
-## Time Estimate
-10-15 minutes total
+## Actual Time
+~45 minutes (troubleshooting Dockerfile and deployment caching issues)
