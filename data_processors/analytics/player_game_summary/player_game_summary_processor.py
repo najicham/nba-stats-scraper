@@ -1334,8 +1334,9 @@ class PlayerGameSummaryProcessor(
                 return None
 
             # Parse minutes
+            # Use 'is not None' to handle 0.0 correctly (0 minutes is valid, not missing)
             minutes_decimal = self._parse_minutes_to_decimal(row['minutes'])
-            minutes_int = int(round(minutes_decimal)) if minutes_decimal else None
+            minutes_int = int(round(minutes_decimal)) if minutes_decimal is not None else None
 
             # Parse plus/minus
             plus_minus_int = self._parse_plus_minus(row['plus_minus'])
