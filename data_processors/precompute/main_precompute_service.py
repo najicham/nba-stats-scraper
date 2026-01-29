@@ -55,6 +55,14 @@ CASCADE_PROCESSORS = {
 # Health check endpoint removed - now provided by shared health blueprint (see initialization above)
 # The blueprint provides: /health (liveness), /ready (readiness), /health/deep (deep checks)
 
+@app.route('/', methods=['POST'])
+def root_process():
+    """
+    Root endpoint for Eventarc/Pub/Sub push subscriptions.
+    Forwards to the /process handler for backward compatibility.
+    """
+    return process()
+
 @app.route('/process', methods=['POST'])
 def process():
     """
