@@ -64,6 +64,7 @@ class CrossSourceValidator:
         primary_data = self._get_primary_data(game_date)
         bref_data = self._get_bref_data(game_date)
         bdl_data = self._get_bdl_data(game_date)
+        nba_api_data = self._get_nba_api_data(game_date)
 
         if not primary_data:
             logger.warning(f"No primary data found for {game_date}")
@@ -76,12 +77,16 @@ class CrossSourceValidator:
         bdl_comparison = self._compare_datasets(
             primary_data, bdl_data, 'bdl', game_date
         )
+        nba_api_comparison = self._compare_datasets(
+            primary_data, nba_api_data, 'nba_api', game_date
+        )
 
         return {
             'game_date': game_date,
             'primary_count': len(primary_data),
             'bref_comparison': bref_comparison,
             'bdl_comparison': bdl_comparison,
+            'nba_api_comparison': nba_api_comparison,
             'discrepancies': self.discrepancies,
             'stats': self.stats
         }
@@ -155,6 +160,30 @@ class CrossSourceValidator:
             free_throws_made as ft_made,
             free_throws_attempted as ft_attempted
         FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+        WHERE game_date = '{game_date}'
+        """
+        return self._query_to_dict(query)
+
+    def _get_nba_api_data(self, game_date: str) -> Dict[str, Dict]:
+        """Get NBA API BoxScoreTraditionalV3 data keyed by player_lookup."""
+        query = f"""
+        SELECT
+            player_lookup,
+            player_name,
+            minutes_played,
+            points,
+            assists,
+            total_rebounds,
+            steals,
+            blocks,
+            turnovers,
+            fg_made,
+            fg_attempted,
+            three_pt_made,
+            three_pt_attempted,
+            ft_made,
+            ft_attempted
+        FROM `{self.project_id}.nba_raw.nba_api_player_boxscores`
         WHERE game_date = '{game_date}'
         """
         return self._query_to_dict(query)
@@ -419,7 +448,7 @@ def main():
     print(f"{'='*60}")
     print(f"\nPrimary records: {results.get('primary_count', 0)}")
 
-    for source in ['bref_comparison', 'bdl_comparison']:
+    for source in ['bref_comparison', 'nba_api_comparison', 'bdl_comparison']:
         comp = results.get(source, {})
         if comp:
             print(f"\n{comp.get('source', 'Unknown').upper()}:")
