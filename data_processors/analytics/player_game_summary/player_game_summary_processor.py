@@ -78,12 +78,21 @@ class PlayerGameSummaryProcessor(
     """
 
     # =========================================================================
+    # BDL Data Source Configuration
+    # =========================================================================
+    # DISABLED 2026-01-28: BDL API returns incorrect data (roughly half the actual
+    # minutes/points for many players). NBA.com gamebook is authoritative.
+    # Set to True to re-enable BDL as fallback source.
+    # See: docs/09-handoff/2026-01-28-SESSION-8-HANDOFF.md for investigation details
+    USE_BDL_DATA = False
+
+    # =========================================================================
     # Pattern #1: Smart Skip Configuration
     # =========================================================================
     RELEVANT_SOURCES = {
         # Player stats sources - RELEVANT
         'nbac_gamebook_player_stats': True,
-        'bdl_player_boxscores': True,
+        'bdl_player_boxscores': False,  # DISABLED - BDL data quality issues (2026-01-28)
 
         # Shot zone sources - RELEVANT
         'bigdataball_play_by_play': True,
@@ -590,10 +599,14 @@ class PlayerGameSummaryProcessor(
         -- NBA.com is preferred source when available; BDL fills gaps for missing players
         -- CRITICAL FIX (2026-01-27): Changed from game-level to player-level merge
         --   Previously excluded 119 players/day including Jayson Tatum, Kyrie Irving, etc.
+        -- DISABLED (2026-01-28): BDL data quality issues - using NBA.com only
+        --   BDL returns ~50% of actual minutes/points for many players
+        --   Set USE_BDL_DATA = True to re-enable
         combined_data AS (
             -- All NBA.com data (primary source)
             SELECT * FROM nba_com_data
-
+            {"" if self.USE_BDL_DATA else "-- BDL DISABLED: Data quality issues (2026-01-28)"}
+            {'''
             UNION ALL
 
             -- BDL data for players NOT in NBA.com (fills gaps)
@@ -604,6 +617,7 @@ class PlayerGameSummaryProcessor(
                 WHERE nc.game_id = bd.game_id
                   AND nc.player_lookup = bd.player_lookup
             )
+            ''' if self.USE_BDL_DATA else ''}
         ),
 
         -- Deduplicate combined data (prevents duplicates from source overlap)
