@@ -1,0 +1,229 @@
+# config/validation_thresholds.yaml
+#
+# Centralized Validation Thresholds Configuration
+#
+# This file contains all validation thresholds used across the pipeline.
+# By centralizing these values, we:
+# 1. Eliminate hardcoded magic numbers
+# 2. Make threshold tuning easier
+# 3. Ensure consistency across all validation scripts
+#
+# Usage:
+#   from config.validation_config import get_threshold
+#   threshold = get_threshold('minutes_coverage', 'warning')  # Returns 90
+#
+# Threshold Levels:
+#   - warning: First level alert, may need attention
+#   - critical: Requires immediate attention
+#   - pass: Threshold for passing validation
+
+version: "1.0"
+last_updated: "2026-01-29"
+
+# =============================================================================
+# COVERAGE THRESHOLDS
+# =============================================================================
+# Coverage metrics measure completeness of data across the pipeline
+
+coverage:
+  # Minutes coverage - percentage of players with valid minutes data
+  minutes_coverage:
+    warning: 90    # Below this triggers a warning
+    critical: 80   # Below this triggers a critical alert
+    description: "Percentage of players with valid minutes data"
+
+  # Usage rate coverage - percentage of players with usage rate calculated
+  usage_rate_coverage:
+    warning: 90
+    critical: 80
+    description: "Percentage of players with usage_rate field populated"
+
+  # Prediction coverage - percentage of eligible players with predictions
+  prediction_coverage:
+    warning: 70    # Predictions are more lenient due to eligibility filters
+    critical: 50
+    description: "Percentage of eligible players with predictions generated"
+
+# =============================================================================
+# FIELD COMPLETENESS THRESHOLDS
+# =============================================================================
+# Field completeness measures percentage of records with non-null values
+
+field_completeness:
+  # Key statistical fields - should be highly complete
+  fg_attempts:
+    pass: 90
+    description: "Field goal attempts completeness percentage"
+
+  ft_attempts:
+    pass: 90
+    description: "Free throw attempts completeness percentage"
+
+  three_pt_attempts:
+    pass: 90
+    description: "Three point attempts completeness percentage"
+
+  # Default threshold for fields not explicitly listed
+  default:
+    pass: 85
+    description: "Default completeness threshold for unlisted fields"
+
+# =============================================================================
+# PHASE PROCESSING THRESHOLDS
+# =============================================================================
+# Thresholds for pipeline phase validation
+
+phase_processing:
+  # Phase 3 analytics processing
+  phase3:
+    expected_processors: 5
+    description: "Expected number of Phase 3 analytics processors to run"
+    processor_list:
+      - player_game_summary
+      - team_offense_game_summary
+      - team_defense_game_summary
+      - game_referees
+      - upcoming_player_game_context
+
+  # Phase 4 precompute processing
+  phase4:
+    expected_processors: 3
+    description: "Expected number of Phase 4 precompute processors"
+
+  # Phase 5 prediction processing
+  phase5:
+    expected_systems: 5
+    description: "Expected number of prediction systems"
+    system_ids:
+      - catboost_v8
+      - ensemble_v1
+      - moving_average
+      - similarity_balanced_v1
+      - zone_matchup_v1
+
+# =============================================================================
+# ACCURACY THRESHOLDS
+# =============================================================================
+# Thresholds for spot checks and accuracy validation
+
+accuracy:
+  # Spot check accuracy - comparing calculated vs expected values
+  spot_check:
+    pass: 95       # 95%+ accuracy is passing
+    warning: 90    # 90-95% triggers warning
+    critical: 85   # Below 85% is critical
+    description: "Spot check validation accuracy percentage"
+
+  # Prediction accuracy thresholds
+  prediction_accuracy:
+    pass: 60       # Predictions are harder to get right
+    warning: 50
+    critical: 40
+    description: "Prediction hit rate percentage"
+
+# =============================================================================
+# DATA FRESHNESS THRESHOLDS
+# =============================================================================
+# Maximum age of data before alerts trigger (in hours)
+
+freshness:
+  # Raw data freshness
+  raw_data:
+    max_age_hours: 24
+    description: "Maximum acceptable age for raw data in hours"
+
+  # Analytics data freshness
+  analytics:
+    max_age_hours: 12
+    description: "Maximum acceptable age for analytics data"
+
+  # Prediction freshness
+  predictions:
+    max_age_hours: 8
+    description: "Predictions should be generated within hours of analytics"
+
+  # Feature store freshness
+  features:
+    max_age_hours: 6
+    description: "ML features should be fresh"
+
+# =============================================================================
+# QUALITY THRESHOLDS
+# =============================================================================
+# Data quality score thresholds
+
+quality:
+  # Feature quality score
+  feature_quality:
+    pass: 75
+    warning: 65
+    critical: 50
+    description: "ML feature quality score threshold"
+
+  # Low quality percentage threshold
+  low_quality_percentage:
+    max_allowed: 30  # Alert if >30% of records are low quality
+    description: "Maximum percentage of records with low quality scores"
+
+  # Quality drop detection
+  quality_drop:
+    threshold: 5  # Alert if quality drops by 5+ points day over day
+    description: "Quality score drop that triggers regression alert"
+
+# =============================================================================
+# RECORD COUNT THRESHOLDS
+# =============================================================================
+# Minimum expected record counts
+
+record_counts:
+  # Minimum predictions per system per date
+  predictions_per_system:
+    min: 300
+    typical: 335
+    description: "Expected predictions per prediction system"
+
+  # Minimum players per game
+  players_per_game:
+    min: 10
+    max: 15
+    description: "Expected player count per team per game"
+
+  # Validation failures allowed
+  max_validation_failures:
+    default: 5
+    description: "Maximum validation failures before health degradation"
+
+# =============================================================================
+# DUPLICATE DETECTION THRESHOLDS
+# =============================================================================
+# Thresholds for detecting duplicate records
+
+duplicates:
+  # Max allowed duplicate ratio
+  max_ratio:
+    warning: 1.05   # >5% duplicates triggers warning
+    critical: 1.10  # >10% duplicates is critical
+    description: "Ratio of total rows to unique rows"
+
+  # Absolute duplicate count
+  max_count:
+    warning: 10
+    critical: 50
+    description: "Absolute count of duplicate records"
+
+# =============================================================================
+# GRADING THRESHOLDS
+# =============================================================================
+# Thresholds for prediction grading validation
+
+grading:
+  # Grading completion percentage
+  completion:
+    pass: 100      # All past game predictions should be graded
+    warning: 95
+    description: "Percentage of predictions that should be graded"
+
+  # Grading backlog
+  backlog:
+    max_days: 2    # Maximum days of ungraded predictions
+    description: "Maximum days of prediction grading backlog"
