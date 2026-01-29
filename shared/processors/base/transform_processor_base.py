@@ -53,11 +53,12 @@ import sentry_sdk
 from shared.utils.retry_with_jitter import retry_with_jitter
 from shared.clients.bigquery_pool import get_bigquery_client
 from shared.processors.base.failure_categorization import categorize_failure, should_alert
+from shared.processors.mixins.version_tracking_mixin import ProcessorVersionMixin
 
 logger = logging.getLogger(__name__)
 
 
-class TransformProcessorBase(ABC):
+class TransformProcessorBase(ProcessorVersionMixin, ABC):
     """
     Abstract base class for transform processors (Analytics and Precompute).
 
@@ -145,6 +146,9 @@ class TransformProcessorBase(ABC):
 
         # Heartbeat (initialized by subclass if available)
         self.heartbeat = None
+
+        # Add version tracking to stats
+        self.add_version_to_stats()
 
     @property
     def is_backfill_mode(self) -> bool:

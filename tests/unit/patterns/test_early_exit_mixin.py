@@ -5,11 +5,13 @@ Tests cover:
 1. No games scheduled check
 2. Offseason detection (July-September)
 3. Historical date check (>90 days)
-4. Configuration flags (enable/disable checks)
-5. Date parsing and validation
-6. Skip logging integration
-7. Fail-open behavior
-8. Run method delegation
+4. Games finished check (NEW)
+5. Backfill mode bypass for games_finished check (CRITICAL FIX)
+6. Configuration flags (enable/disable checks)
+7. Date parsing and validation
+8. Skip logging integration
+9. Fail-open behavior
+10. Run method delegation
 """
 
 import pytest
@@ -449,6 +451,145 @@ class TestSkipLogging:
             assert True  # Success - no exception raised
         except Exception:
             pytest.fail("_log_skip should handle logging errors gracefully")
+
+
+class TestGamesFinishedCheck:
+    """Test suite for games finished detection and backfill mode bypass"""
+
+    def test_games_finished_check_enabled_blocks_unfinished_games(self):
+        """Test that games_finished check blocks processing when games are not finished"""
+        # Mock BigQuery client to return unfinished games
+        bq_client = Mock()
+        query_result = Mock()
+        query_result.result.return_value = [
+            Mock(total_games=5, finished_games=2, unfinished_games=3)
+        ]
+        bq_client.query.return_value = query_result
+
+        class BaseProcessor:
+            def run(self, opts):
+                return True  # Would be called if no early exit
+
+        class TestProcessor(EarlyExitMixin, BaseProcessor):
+            ENABLE_NO_GAMES_CHECK = False  # Disable other checks
+            ENABLE_OFFSEASON_CHECK = False
+            ENABLE_HISTORICAL_DATE_CHECK = False
+            ENABLE_GAMES_FINISHED_CHECK = True  # Enable games finished check
+
+            def __init__(self, bq_client, project_id):
+                self.bq_client = bq_client
+                self.project_id = project_id
+                self.stats = {}
+                self.log_processing_run = Mock()
+
+        test_proc = TestProcessor(bq_client, 'test-project')
+        opts = {'start_date': '2026-01-27'}
+        result = test_proc.run(opts)
+
+        # Should exit early and skip
+        assert result is True
+        test_proc.log_processing_run.assert_called_once()
+        call_args = test_proc.log_processing_run.call_args
+        assert call_args[1]['skip_reason'] == 'games_not_finished'
+
+    def test_games_finished_check_bypassed_in_backfill_mode(self):
+        """Test that backfill_mode bypasses games_finished check (CRITICAL FIX VALIDATION)"""
+        # Mock BigQuery client to return unfinished games
+        bq_client = Mock()
+        query_result = Mock()
+        query_result.result.return_value = [
+            Mock(total_games=5, finished_games=2, unfinished_games=3)
+        ]
+        bq_client.query.return_value = query_result
+
+        class BaseProcessor:
+            def run(self, opts):
+                self.parent_run_called = True
+                return True  # Called if no early exit
+
+        class TestProcessor(EarlyExitMixin, BaseProcessor):
+            ENABLE_NO_GAMES_CHECK = False  # Disable other checks
+            ENABLE_OFFSEASON_CHECK = False
+            ENABLE_HISTORICAL_DATE_CHECK = False
+            ENABLE_GAMES_FINISHED_CHECK = True  # Enable games finished check
+
+            def __init__(self, bq_client, project_id):
+                self.bq_client = bq_client
+                self.project_id = project_id
+                self.stats = {}
+                self.log_processing_run = Mock()
+                self.parent_run_called = False
+
+        test_proc = TestProcessor(bq_client, 'test-project')
+        opts = {
+            'start_date': '2026-01-27',
+            'backfill_mode': True  # CRITICAL: bypass games finished check
+        }
+
+        with patch('shared.processors.patterns.early_exit_mixin.logger') as mock_logger:
+            result = test_proc.run(opts)
+
+            # Should NOT exit early - should proceed to parent run
+            assert result is True
+            assert test_proc.parent_run_called is True
+
+            # Should NOT have called log_processing_run (no skip)
+            test_proc.log_processing_run.assert_not_called()
+
+            # Should log backfill mode message
+            mock_logger.info.assert_any_call(
+                "BACKFILL_MODE: Historical date check disabled for 2026-01-27"
+            )
+
+    def test_games_finished_with_mixed_status(self):
+        """Test games finished check with mixed game statuses"""
+        class BaseProcessor:
+            def run(self, opts):
+                self.parent_run_called = True
+                return True
+
+        class TestProcessor(EarlyExitMixin, BaseProcessor):
+            ENABLE_NO_GAMES_CHECK = False
+            ENABLE_OFFSEASON_CHECK = False
+            ENABLE_HISTORICAL_DATE_CHECK = False
+            ENABLE_GAMES_FINISHED_CHECK = True
+
+            def __init__(self, bq_client, project_id):
+                self.bq_client = bq_client
+                self.project_id = project_id
+                self.stats = {}
+                self.log_processing_run = Mock()
+                self.parent_run_called = False
+
+        # Test Case 1: Some games not finished - should exit
+        bq_client = Mock()
+        query_result = Mock()
+        query_result.result.return_value = [
+            Mock(total_games=10, finished_games=7, unfinished_games=3)
+        ]
+        bq_client.query.return_value = query_result
+
+        test_proc = TestProcessor(bq_client, 'test-project')
+        opts = {'start_date': '2026-01-27', 'backfill_mode': False}
+        result = test_proc.run(opts)
+
+        # Should exit early
+        assert result is True
+        assert test_proc.parent_run_called is False
+        test_proc.log_processing_run.assert_called_once()
+        call_args = test_proc.log_processing_run.call_args
+        assert call_args[1]['skip_reason'] == 'games_not_finished'
+
+        # Test Case 2: Same scenario but with backfill_mode - should NOT exit
+        test_proc2 = TestProcessor(bq_client, 'test-project')
+        opts2 = {'start_date': '2026-01-27', 'backfill_mode': True}
+        result2 = test_proc2.run(opts2)
+
+        # Should NOT exit early - should proceed to parent run
+        assert result2 is True
+        assert test_proc2.parent_run_called is True
+        # Should NOT have called log_processing_run (no skip)
+        assert test_proc2.log_processing_run.call_count == 0
 
 
 class TestIntegration:
