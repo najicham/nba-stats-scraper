@@ -33,14 +33,25 @@ RUN pip install --no-cache-dir -r /app/shared/requirements.txt || true
 COPY data_processors/analytics/requirements.txt /app/data_processors/analytics/
 RUN pip install --no-cache-dir -r /app/data_processors/analytics/requirements.txt
 
+# Copy raw processor requirements (Phase 2)
+COPY data_processors/raw/requirements.txt /app/data_processors/raw/
+RUN pip install --no-cache-dir -r /app/data_processors/raw/requirements.txt
+
 # Copy all necessary code
 COPY shared/ /app/shared/
 COPY scrapers/utils/ /app/scrapers/utils/
 COPY data_processors/analytics/ /app/data_processors/analytics/
+COPY data_processors/raw/ /app/data_processors/raw/
 
 # Set Python path
 ENV PYTHONPATH=/app:$PYTHONPATH
 ENV PORT=8080
 
-# Run the Flask service with gunicorn
-CMD exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 data_processors.analytics.main_analytics_service:app
+# Run the appropriate service based on SERVICE env var (supports analytics, phase2, scrapers, etc.)
+CMD if [ "$SERVICE" = "phase2" ]; then \
+      exec gunicorn --bind :$PORT --workers 1 --threads 5 --timeout 600 data_processors.raw.main_processor_service:app; \
+    elif [ "$SERVICE" = "analytics" ]; then \
+      exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 data_processors.analytics.main_analytics_service:app; \
+    else \
+      exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 data_processors.analytics.main_analytics_service:app; \
+    fi
