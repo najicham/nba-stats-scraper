@@ -9,9 +9,11 @@ This project addresses critical pipeline reliability issues discovered in Sessio
 - 2/7 games missing PBP data
 - 4-24 hour issue detection delay
 
+**Last Updated:** Session 10 (2026-01-28)
+
 ## Timeline
 
-### Week 1: Critical Fixes (Current)
+### Week 1: Critical Fixes (Complete)
 | Task | Status | Owner | Notes |
 |------|--------|-------|-------|
 | Fix `track_source_coverage_event` | ✅ Done | Claude | Commit c7c1e999 |
@@ -21,21 +23,33 @@ This project addresses critical pipeline reliability issues discovered in Sessio
 | Deploy stale services | ⏳ Pending | User | Requires GCP_SA_KEY secret |
 | Create project documentation | ✅ Done | Claude | This directory |
 
-### Week 2: Validation Improvements
-| Task | Priority | Effort | Impact |
-|------|----------|--------|--------|
-| Create `validate-all.sh` unified command | High | 2h | Easier daily checks |
-| Add phase boundary data quality checks | High | 3h | Prevent cascades |
-| Add minutes coverage alerting | Medium | 1h | Earlier detection |
-| Add deployment health gate | Medium | 2h | Prevent bad deploys |
+### Week 2: Validation Improvements (Session 10)
+| Task | Status | Priority | Notes |
+|------|--------|----------|-------|
+| Create `validate-all.sh` unified command | ⏳ Pending | High | |
+| Add phase boundary data quality checks | ✅ Done | High | Phase boundary validation |
+| Add minutes coverage alerting | ✅ Done | Medium | Minutes coverage alerting |
+| Add deployment health gate | ⏳ Pending | Medium | |
+| Pre-extraction data check | ✅ Done | High | Validates data before extraction |
+| Empty game detection | ✅ Done | High | Detects missing game data |
+| Phase success monitor created | ✅ Done | High | Monitors phase success rates |
 
-### Week 3: Auto-Recovery
-| Task | Priority | Effort | Impact |
-|------|----------|--------|--------|
-| Add BDB scraper retry logic | High | 2h | 95%+ PBP coverage |
-| Add NBA.com PBP fallback | Medium | 3h | 99%+ coverage |
-| Implement exponential backoff | Medium | 2h | Better rate limit handling |
-| Add betting data timeout | Low | 1h | Graceful degradation |
+### Week 3: Auto-Recovery (Session 10)
+| Task | Status | Priority | Notes |
+|------|--------|----------|-------|
+| Add BDB scraper retry logic | ✅ Done | High | 95%+ PBP coverage |
+| Add NBA.com PBP fallback | ✅ Done | Medium | 99%+ coverage |
+| Implement exponential backoff | ⏳ Pending | Medium | Better rate limit handling |
+| Add betting data timeout | ⏳ Pending | Low | Graceful degradation |
+
+### Remaining Work (Post-Session 10)
+| Task | Status | Priority | Notes |
+|------|--------|----------|-------|
+| Pub/Sub backlog purge | ⏳ Pending | High | Clear stale messages from queues |
+| Retry queue SQL fix | ⏳ Pending | High | Fix SQL syntax issues in retry logic |
+| Soft dependencies enablement | ⏳ Pending | Medium | Enable soft dependency handling |
+| BigQuery migration for data_source column | ⏳ Pending | Medium | Add data_source tracking column |
+| Circuit breaker batching | ⏳ Pending | Medium | Batch circuit breaker operations |
 
 ## Architecture Changes
 
@@ -106,7 +120,19 @@ Scraper fails → Inline validation → Immediate alert → Auto-retry → Fallb
 - `bin/deploy-all-stale.sh` - Manual deploy script
 - `docs/08-projects/current/pipeline-resilience-improvements/` - This project
 
+### Created Session 10
+- BDB scraper retry logic
+- NBA.com PBP fallback implementation
+- Phase boundary validation
+- Minutes coverage alerting
+- Pre-extraction data check
+- Empty game detection
+- Phase success monitor
+
 ### To Create Next Session
-- `bin/validate-all.sh` - Unified validation
-- `data_processors/phase3/validators/` - Data quality checks
-- Updates to BDB scraper for retry logic
+- `bin/validate-all.sh` - Unified validation (consolidate existing monitors)
+- Pub/Sub backlog purge mechanism
+- Retry queue SQL fix
+- Soft dependencies enablement
+- BigQuery schema migration for data_source column
+- Circuit breaker batching implementation
