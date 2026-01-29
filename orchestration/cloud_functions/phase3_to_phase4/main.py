@@ -1479,18 +1479,58 @@ def get_completion_status(game_date: str) -> Dict:
 # HTTP ENDPOINTS (for monitoring and health checks)
 # ============================================================================
 
+# Initialize cached health checker (30-second TTL to avoid overloading dependencies)
+try:
+    from shared.endpoints.health import CachedHealthChecker
+    _health_checker = CachedHealthChecker(
+        service_name='phase3_to_phase4_orchestrator',
+        project_id=PROJECT_ID,
+        version='1.4',
+        cache_ttl_seconds=30,
+        check_bigquery=True,
+        check_firestore=True,
+        check_pubsub=True
+    )
+    CACHED_HEALTH_ENABLED = True
+except ImportError:
+    _health_checker = None
+    CACHED_HEALTH_ENABLED = False
+    logger.warning("CachedHealthChecker not available, using basic health check")
+
+
 @functions_framework.http
 def health(request):
-    """Health check endpoint for the phase3_to_phase4 orchestrator."""
-    return json.dumps({
-        'status': 'healthy',
-        'function': 'phase3_to_phase4',
-        'expected_processors': EXPECTED_PROCESSOR_COUNT,
-        'mode_aware_enabled': MODE_AWARE_ENABLED,
-        'health_check_enabled': HEALTH_CHECK_ENABLED,
-        'data_freshness_validation': 'enabled',
-        'version': '1.3'
-    }), 200, {'Content-Type': 'application/json'}
+    """
+    Health check endpoint for the phase3_to_phase4 orchestrator.
+
+    Features:
+    - Checks BigQuery, Firestore, and Pub/Sub connectivity
+    - 30-second cache to prevent overloading dependencies during frequent probes
+    - Returns 503 if any dependency is unhealthy
+    """
+    if CACHED_HEALTH_ENABLED and _health_checker:
+        # Use cached health check with dependency validation
+        result = _health_checker.get_health()
+        # Add orchestrator-specific info
+        result['function'] = 'phase3_to_phase4'
+        result['expected_processors'] = EXPECTED_PROCESSOR_COUNT
+        result['mode_aware_enabled'] = MODE_AWARE_ENABLED
+        result['data_freshness_validation'] = 'enabled'
+
+        status_code = 200 if result['status'] == 'healthy' else 503
+        return json.dumps(result), status_code, {'Content-Type': 'application/json'}
+    else:
+        # Fallback to basic health check
+        return json.dumps({
+            'status': 'healthy',
+            'function': 'phase3_to_phase4',
+            'expected_processors': EXPECTED_PROCESSOR_COUNT,
+            'mode_aware_enabled': MODE_AWARE_ENABLED,
+            'health_check_enabled': HEALTH_CHECK_ENABLED,
+            'data_freshness_validation': 'enabled',
+            'version': '1.4',
+            'cached_health': 'unavailable'
+        }), 200, {'Content-Type': 'application/json'}
 
 
 # For local testing

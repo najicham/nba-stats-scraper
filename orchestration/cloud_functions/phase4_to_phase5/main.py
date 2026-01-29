@@ -1388,23 +1388,67 @@ def get_completion_status(game_date: str) -> Dict:
 # HTTP ENDPOINTS (for monitoring and health checks)
 # ============================================================================
 
+# Initialize cached health checker (30-second TTL to avoid overloading dependencies)
+try:
+    from shared.endpoints.health import CachedHealthChecker
+    _health_checker = CachedHealthChecker(
+        service_name='phase4_to_phase5_orchestrator',
+        project_id=PROJECT_ID,
+        version='1.2',
+        cache_ttl_seconds=30,
+        check_bigquery=True,
+        check_firestore=True,
+        check_pubsub=True
+    )
+    CACHED_HEALTH_ENABLED = True
+except ImportError:
+    _health_checker = None
+    CACHED_HEALTH_ENABLED = False
+    logger.warning("CachedHealthChecker not available, using basic health check")
+
+
 @functions_framework.http
 def health(request):
-    """Health check endpoint for the phase4_to_phase5 orchestrator."""
-    return json.dumps({
-        'status': 'healthy',
-        'function': 'phase4_to_phase5',
-        'expected_processors': EXPECTED_PROCESSOR_COUNT,
-        'execution_timeout_minutes': PHASE4_TIMEOUT_MINUTES,
-        'timeout_warning_threshold': f"{PHASE4_WARNING_THRESHOLD * 100:.0f}%",
-        'tiered_timeouts': {
+    """
+    Health check endpoint for the phase4_to_phase5 orchestrator.
+
+    Features:
+    - Checks BigQuery, Firestore, and Pub/Sub connectivity
+    - 30-second cache to prevent overloading dependencies during frequent probes
+    - Returns 503 if any dependency is unhealthy
+    """
+    if CACHED_HEALTH_ENABLED and _health_checker:
+        # Use cached health check with dependency validation
+        result = _health_checker.get_health()
+        # Add orchestrator-specific info
+        result['function'] = 'phase4_to_phase5'
+        result['expected_processors'] = EXPECTED_PROCESSOR_COUNT
+        result['tiered_timeouts'] = {
             'tier1': {'seconds': TIER1_TIMEOUT_SECONDS, 'required_processors': TIER1_REQUIRED_PROCESSORS},
             'tier2': {'seconds': TIER2_TIMEOUT_SECONDS, 'required_processors': TIER2_REQUIRED_PROCESSORS},
             'tier3': {'seconds': TIER3_TIMEOUT_SECONDS, 'required_processors': TIER3_REQUIRED_PROCESSORS},
             'max': {'seconds': MAX_WAIT_SECONDS}
-        },
-        'version': '1.1'
-    }), 200, {'Content-Type': 'application/json'}
+        }
+
+        status_code = 200 if result['status'] == 'healthy' else 503
+        return json.dumps(result), status_code, {'Content-Type': 'application/json'}
+    else:
+        # Fallback to basic health check
+        return json.dumps({
+            'status': 'healthy',
+            'function': 'phase4_to_phase5',
+            'expected_processors': EXPECTED_PROCESSOR_COUNT,
+            'execution_timeout_minutes': PHASE4_TIMEOUT_MINUTES,
+            'timeout_warning_threshold': f"{PHASE4_WARNING_THRESHOLD * 100:.0f}%",
+            'tiered_timeouts': {
+                'tier1': {'seconds': TIER1_TIMEOUT_SECONDS, 'required_processors': TIER1_REQUIRED_PROCESSORS},
+                'tier2': {'seconds': TIER2_TIMEOUT_SECONDS, 'required_processors': TIER2_REQUIRED_PROCESSORS},
+                'tier3': {'seconds': TIER3_TIMEOUT_SECONDS, 'required_processors': TIER3_REQUIRED_PROCESSORS},
+                'max': {'seconds': MAX_WAIT_SECONDS}
+            },
+            'version': '1.2',
+            'cached_health': 'unavailable'
+        }), 200, {'Content-Type': 'application/json'}
 
 
 # For local testing
