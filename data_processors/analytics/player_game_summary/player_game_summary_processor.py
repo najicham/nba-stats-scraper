@@ -483,6 +483,52 @@ class PlayerGameSummaryProcessor(
         except Exception:
             return 'manual'
 
+    def _categorize_dnp_reason(self, reason_text: str | None) -> str | None:
+        """
+        Categorize DNP reason into standard categories.
+
+        Args:
+            reason_text: Raw reason from gamebook (e.g., "Injury - Right Knee")
+
+        Returns:
+            Category: 'injury', 'rest', 'coach_decision', 'personal', or 'other'
+        """
+        if not reason_text:
+            return None
+
+        reason_lower = str(reason_text).lower()
+
+        # Injury patterns
+        if any(word in reason_lower for word in [
+            'injury', 'injured', 'illness', 'sprain', 'strain',
+            'sore', 'pain', 'surgery', 'concussion', 'knee',
+            'ankle', 'back', 'hamstring', 'shoulder', 'hip',
+            'foot', 'calf', 'quad', 'groin', 'wrist', 'elbow'
+        ]):
+            return 'injury'
+
+        # Rest patterns
+        if any(word in reason_lower for word in [
+            'rest', 'load management', 'recovery', 'maintenance',
+            'scheduled rest', 'precautionary'
+        ]):
+            return 'rest'
+
+        # Personal patterns
+        if any(word in reason_lower for word in [
+            'personal', 'family', 'birth', 'funeral', 'bereavement'
+        ]):
+            return 'personal'
+
+        # Coach decision patterns
+        if any(word in reason_lower for word in [
+            'coach', 'decision', 'not with team', 'suspension',
+            'team decision', 'disciplinary'
+        ]):
+            return 'coach_decision'
+
+        return 'other'
+
     def extract_raw_data(self) -> None:
         """
         Extract data with automatic dependency checking and source tracking.
@@ -572,6 +618,7 @@ class PlayerGameSummaryProcessor(
                 player_name as player_full_name,
                 team_abbr,
                 player_status,
+                dnp_reason,  -- DNP reason text from gamebook
                 -- Team context from source (avoids game_id parsing)
                 home_team_abbr as source_home_team,
                 away_team_abbr as source_away_team,
@@ -605,7 +652,7 @@ class PlayerGameSummaryProcessor(
 
             FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
             WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
-                AND player_status = 'active'
+                AND player_status IN ('active', 'dnp', 'inactive')  -- Include DNP players
                 {player_filter_clause}
         ),
         
@@ -618,6 +665,7 @@ class PlayerGameSummaryProcessor(
                 player_full_name,
                 team_abbr,
                 'active' as player_status,
+                CAST(NULL AS STRING) as dnp_reason,  -- BDL doesn't have DNP reason
                 -- Team context: NULL for bdl, will be parsed from game_id
                 CAST(NULL AS STRING) as source_home_team,
                 CAST(NULL AS STRING) as source_away_team,
@@ -1523,6 +1571,14 @@ class PlayerGameSummaryProcessor(
                 # Availability
                 'is_active': bool(row['player_status'] == 'active'),
                 'player_status': row['player_status'],
+
+                # DNP (Did Not Play) tracking - Session 13 fix
+                'is_dnp': (
+                    row['player_status'] in ('dnp', 'inactive') or
+                    (minutes_decimal == 0 and row['player_status'] == 'active')
+                ),
+                'dnp_reason': row.get('dnp_reason') if row['player_status'] != 'active' else None,
+                'dnp_reason_category': self._categorize_dnp_reason(row.get('dnp_reason')) if row['player_status'] != 'active' else None,
 
                 # SOURCE TRACKING: One-liner adds all 18 fields!
                 **self.build_source_tracking_fields(),

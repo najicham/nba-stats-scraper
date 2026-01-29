@@ -398,6 +398,62 @@ class BatchConsolidator:
 
         return merge_query
 
+    def _deactivate_older_predictions(self, game_date: str) -> int:
+        """
+        Deactivate older predictions for the same player/game, keeping only the newest.
+
+        SESSION 13 FIX: Handles cases where multiple model versions or batches create
+        duplicate predictions for the same player/game combination. Only the newest
+        prediction (by created_at) remains active.
+
+        Args:
+            game_date: Game date to process (YYYY-MM-DD)
+
+        Returns:
+            Number of predictions deactivated
+        """
+        main_table = f"{self.project_id}.{self.staging_dataset}.{MAIN_PREDICTIONS_TABLE}"
+
+        # Deactivate all but the newest prediction per player/game
+        # Uses ROW_NUMBER to identify the newest by created_at
+        deactivation_query = f"""
+        UPDATE `{main_table}` T
+        SET is_active = FALSE,
+            updated_at = CURRENT_TIMESTAMP()
+        WHERE game_date = '{game_date}'
+          AND is_active = TRUE
+          AND prediction_id IN (
+            SELECT prediction_id
+            FROM (
+              SELECT
+                prediction_id,
+                ROW_NUMBER() OVER (
+                  PARTITION BY game_id, player_lookup
+                  ORDER BY created_at DESC
+                ) as row_num
+              FROM `{main_table}`
+              WHERE game_date = '{game_date}'
+                AND is_active = TRUE
+            )
+            WHERE row_num > 1
+          )
+        """
+
+        try:
+            query_job = self.bq_client.query(deactivation_query)
+            query_job.result(timeout=60)
+            deactivated = query_job.num_dml_affected_rows or 0
+
+            if deactivated > 0:
+                logger.info(
+                    f"SESSION 13: Deactivated {deactivated} older predictions for game_date={game_date}"
+                )
+            return deactivated
+
+        except Exception as e:
+            logger.error(f"Failed to deactivate older predictions: {e}", exc_info=True)
+            return 0
+
     def _check_for_duplicates(self, game_date: str) -> int:
         """
         Check for duplicate business keys in the main predictions table.
@@ -649,6 +705,15 @@ class BatchConsolidator:
             logger.info(
                 f"MERGE complete: {rows_affected} rows affected in {elapsed_ms:.1f}ms (batch={batch_id})"
             )
+
+            # SESSION 13 FIX: Deactivate older predictions after MERGE
+            # This ensures only the newest prediction per player/game is active,
+            # handling multiple model versions and duplicate batches
+            deactivated = self._deactivate_older_predictions(game_date)
+            if deactivated > 0:
+                logger.info(
+                    f"Deactivated {deactivated} older predictions for game_date={game_date}"
+                )
 
             # CRITICAL: Check if MERGE actually wrote data
             if rows_affected == 0:
