@@ -752,7 +752,7 @@ def orchestrate_phase2_to_phase3(cloud_event):
         if COMPLETION_TRACKER_ENABLED:
             try:
                 tracker = get_completion_tracker()
-                tracker.record_completion(
+                fs_ok, bq_ok = tracker.record_completion(
                     phase="phase2",
                     game_date=game_date,
                     processor_name=processor_name,
@@ -763,6 +763,12 @@ def orchestrate_phase2_to_phase3(cloud_event):
                         "execution_id": message_data.get('execution_id'),
                     }
                 )
+                if not fs_ok and not bq_ok:
+                    logger.error(f"CRITICAL: Both Firestore and BigQuery writes failed for {game_date}")
+                elif not bq_ok:
+                    logger.warning(f"BigQuery backup write failed for {game_date}")
+                elif not fs_ok:
+                    logger.warning(f"Firestore write failed for {game_date}, using BigQuery backup")
             except Exception as tracker_error:
                 # Non-blocking - log but don't fail the orchestration
                 logger.warning(f"BigQuery backup write failed (non-blocking): {tracker_error}")
@@ -829,7 +835,7 @@ def orchestrate_phase2_to_phase3(cloud_event):
 
                 # Log execution metrics for deadline exceeded case
                 execution_duration = (datetime.now(timezone.utc) - execution_start_time).total_seconds()
-                log_phase_execution(
+                fs_ok, bq_ok = log_phase_execution(
                     phase_name="phase2_to_phase3",
                     game_date=game_date,
                     start_time=execution_start_time,
@@ -845,6 +851,12 @@ def orchestrate_phase2_to_phase3(cloud_event):
                         "trigger_reason": "deadline_exceeded"
                     }
                 )
+                if not fs_ok and not bq_ok:
+                    logger.error(f"CRITICAL: Both Firestore and BigQuery writes failed for {game_date}")
+                elif not bq_ok:
+                    logger.warning(f"BigQuery backup write failed for {game_date}")
+                elif not fs_ok:
+                    logger.warning(f"Firestore write failed for {game_date}, using BigQuery backup")
 
         if should_trigger:
             # All expected processors complete - log for monitoring
@@ -872,7 +884,7 @@ def orchestrate_phase2_to_phase3(cloud_event):
 
             # Log execution metrics for latency tracking
             execution_duration = (datetime.now(timezone.utc) - execution_start_time).total_seconds()
-            log_phase_execution(
+            fs_ok, bq_ok = log_phase_execution(
                 phase_name="phase2_to_phase3",
                 game_date=game_date,
                 start_time=execution_start_time,
@@ -886,6 +898,12 @@ def orchestrate_phase2_to_phase3(cloud_event):
                     "orchestrator_mode": "monitoring_only"
                 }
             )
+            if not fs_ok and not bq_ok:
+                logger.error(f"CRITICAL: Both Firestore and BigQuery writes failed for {game_date}")
+            elif not bq_ok:
+                logger.warning(f"BigQuery backup write failed for {game_date}")
+            elif not fs_ok:
+                logger.warning(f"Firestore write failed for {game_date}, using BigQuery backup")
 
             # R-007: Verify Phase 2 data exists in BigQuery
             # This is monitoring-only - we don't block Phase 3 (it's triggered via Pub/Sub)

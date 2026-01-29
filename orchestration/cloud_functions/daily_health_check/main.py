@@ -36,7 +36,9 @@ logger = logging.getLogger(__name__)
 from shared.config.gcp_config import get_project_id, Regions
 PROJECT_ID = get_project_id()
 REGION = Regions.FUNCTIONS
-SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')
+SLACK_WEBHOOK_URL = os.environ.get('SLACK_WEBHOOK_URL')  # #daily-orchestration
+SLACK_WEBHOOK_URL_ERROR = os.environ.get('SLACK_WEBHOOK_URL_ERROR')  # #app-error-alerts
+SLACK_WEBHOOK_URL_WARNING = os.environ.get('SLACK_WEBHOOK_URL_WARNING')  # #nba-alerts
 
 # Services to check
 SERVICES = [
@@ -342,79 +344,193 @@ def check_game_completeness(game_date: str) -> Tuple[str, str]:
 
 
 def send_slack_notification(results: HealthCheckResult):
-    """Send health check results to Slack."""
-    if not SLACK_WEBHOOK_URL:
-        logger.warning("SLACK_WEBHOOK_URL not configured, skipping notification")
-        return
+    """
+    Send health check results to Slack.
 
-    try:
-        # Build check details
-        check_details = ""
-        for check in results.checks:
-            emoji = {
-                'pass': '✅',
-                'warn': '⚠️',
-                'fail': '❌',
-                'critical': '🚨'
-            }.get(check['status'], '❓')
+    Routes alerts to appropriate channels based on severity:
+    - CRITICAL issues → #app-error-alerts (SLACK_WEBHOOK_URL_ERROR)
+    - WARNINGS → #nba-alerts (SLACK_WEBHOOK_URL_WARNING)
+    - Daily summary → #daily-orchestration (SLACK_WEBHOOK_URL)
+    """
+    # Build check details
+    check_details = ""
+    critical_details = ""
+    warning_details = ""
 
-            check_details += f"{emoji} *{check['name']}*: {check['message']}\\n"
+    for check in results.checks:
+        emoji = {
+            'pass': '✅',
+            'warn': '⚠️',
+            'fail': '❌',
+            'critical': '🚨'
+        }.get(check['status'], '❓')
 
-        payload = {
-            "attachments": [{
-                "color": results.slack_color,
-                "blocks": [
-                    {
-                        "type": "header",
-                        "text": {
-                            "type": "plain_text",
-                            "text": "Daily Pipeline Health Check",
-                            "emoji": True
+        line = f"{emoji} *{check['name']}*: {check['message']}\\n"
+        check_details += line
+
+        # Collect critical and warning details for separate alerts
+        if check['status'] == 'critical':
+            critical_details += line
+        elif check['status'] in ['warn', 'fail']:
+            warning_details += line
+
+    # ========================================================================
+    # CRITICAL ALERT: Send to #app-error-alerts
+    # ========================================================================
+    if results.critical > 0 and SLACK_WEBHOOK_URL_ERROR:
+        try:
+            critical_payload = {
+                "attachments": [{
+                    "color": "danger",
+                    "blocks": [
+                        {
+                            "type": "header",
+                            "text": {
+                                "type": "plain_text",
+                                "text": "🚨 CRITICAL: Daily Health Check Failed",
+                                "emoji": True
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"*{results.critical} critical issue(s) detected*\\n\\n{critical_details}"
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": "*Recommended Actions:*\\n• Run morning health check: `./bin/monitoring/morning_health_check.sh`\\n• Check Cloud Run logs for failed services\\n• Review recent handoff docs"
+                            }
+                        },
+                        {
+                            "type": "context",
+                            "elements": [{
+                                "type": "mrkdwn",
+                                "text": f"Automated alert - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
+                            }]
                         }
-                    },
-                    {
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": f"*Overall Status:* {results.overall_status}"
+                    ]
+                }]
+            }
+
+            success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL_ERROR, critical_payload, timeout=10)
+            if success:
+                logger.info("Critical alert sent to #app-error-alerts")
+            else:
+                logger.error("Failed to send critical alert to #app-error-alerts")
+
+        except Exception as e:
+            logger.error(f"Failed to send critical alert: {e}", exc_info=True)
+
+    # ========================================================================
+    # WARNING ALERT: Send to #nba-alerts
+    # ========================================================================
+    if results.warnings > 0 and not results.critical and SLACK_WEBHOOK_URL_WARNING:
+        try:
+            warning_payload = {
+                "attachments": [{
+                    "color": "warning",
+                    "blocks": [
+                        {
+                            "type": "header",
+                            "text": {
+                                "type": "plain_text",
+                                "text": "⚠️ Daily Health Check Warnings",
+                                "emoji": True
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"*{results.warnings} warning(s) detected*\\n\\n{warning_details}"
+                            }
+                        },
+                        {
+                            "type": "context",
+                            "elements": [{
+                                "type": "mrkdwn",
+                                "text": f"Automated alert - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
+                            }]
                         }
-                    },
-                    {
-                        "type": "section",
-                        "fields": [
-                            {"type": "mrkdwn", "text": f"*Passed:*\\n{results.passed}"},
-                            {"type": "mrkdwn", "text": f"*Warnings:*\\n{results.warnings}"},
-                            {"type": "mrkdwn", "text": f"*Failed:*\\n{results.failed}"},
-                            {"type": "mrkdwn", "text": f"*Critical:*\\n{results.critical}"}
-                        ]
-                    },
-                    {
-                        "type": "section",
-                        "text": {
-                            "type": "mrkdwn",
-                            "text": f"*Check Results:*\\n{check_details}"
+                    ]
+                }]
+            }
+
+            success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL_WARNING, warning_payload, timeout=10)
+            if success:
+                logger.info("Warning alert sent to #nba-alerts")
+            else:
+                logger.error("Failed to send warning alert to #nba-alerts")
+
+        except Exception as e:
+            logger.error(f"Failed to send warning alert: {e}", exc_info=True)
+
+    # ========================================================================
+    # DAILY SUMMARY: Send to #daily-orchestration
+    # ========================================================================
+    if SLACK_WEBHOOK_URL:
+        try:
+            summary_payload = {
+                "attachments": [{
+                    "color": results.slack_color,
+                    "blocks": [
+                        {
+                            "type": "header",
+                            "text": {
+                                "type": "plain_text",
+                                "text": "Daily Pipeline Health Check",
+                                "emoji": True
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"*Overall Status:* {results.overall_status}"
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "fields": [
+                                {"type": "mrkdwn", "text": f"*Passed:*\\n{results.passed}"},
+                                {"type": "mrkdwn", "text": f"*Warnings:*\\n{results.warnings}"},
+                                {"type": "mrkdwn", "text": f"*Failed:*\\n{results.failed}"},
+                                {"type": "mrkdwn", "text": f"*Critical:*\\n{results.critical}"}
+                            ]
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"*Check Results:*\\n{check_details}"
+                            }
+                        },
+                        {
+                            "type": "context",
+                            "elements": [{
+                                "type": "mrkdwn",
+                                "text": f"Automated daily health check - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
+                            }]
                         }
-                    },
-                    {
-                        "type": "context",
-                        "elements": [{
-                            "type": "mrkdwn",
-                            "text": f"Automated daily health check - {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}"
-                        }]
-                    }
-                ]
-            }]
-        }
+                    ]
+                }]
+            }
 
-        success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
+            success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, summary_payload, timeout=10)
 
-        if success:
-            logger.info("Slack notification sent successfully")
-        else:
-            logger.error("Failed to send Slack notification after retries", exc_info=True)
+            if success:
+                logger.info("Daily summary sent to #daily-orchestration")
+            else:
+                logger.error("Failed to send daily summary to #daily-orchestration")
 
-    except (requests.exceptions.RequestException, ValueError, KeyError) as e:
-        logger.error(f"Failed to send Slack notification: {e}", exc_info=True)
+        except (requests.exceptions.RequestException, ValueError, KeyError) as e:
+            logger.error(f"Failed to send daily summary: {e}", exc_info=True)
+    else:
+        logger.warning("SLACK_WEBHOOK_URL not configured, skipping daily summary")
 
 
 @functions_framework.http

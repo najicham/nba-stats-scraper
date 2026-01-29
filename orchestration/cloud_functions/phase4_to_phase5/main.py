@@ -803,7 +803,7 @@ def orchestrate_phase4_to_phase5(cloud_event):
         if COMPLETION_TRACKER_ENABLED:
             try:
                 tracker = get_completion_tracker()
-                tracker.record_completion(
+                fs_ok, bq_ok = tracker.record_completion(
                     phase="phase4",
                     game_date=game_date,
                     processor_name=processor_name,
@@ -814,6 +814,12 @@ def orchestrate_phase4_to_phase5(cloud_event):
                         "execution_id": message_data.get('execution_id'),
                     }
                 )
+                if not fs_ok and not bq_ok:
+                    logger.error(f"CRITICAL: Both Firestore and BigQuery writes failed for {game_date}")
+                elif not bq_ok:
+                    logger.warning(f"BigQuery backup write failed for {game_date}")
+                elif not fs_ok:
+                    logger.warning(f"Firestore write failed for {game_date}, using BigQuery backup")
             except Exception as tracker_error:
                 # Non-blocking - log but don't fail the orchestration
                 logger.warning(f"BigQuery backup write failed (non-blocking): {tracker_error}")
@@ -1235,7 +1241,7 @@ def trigger_phase5(game_date: str, correlation_id: str, upstream_message: Dict) 
             # Don't fail - Pub/Sub message was sent, coordinator can pick it up
 
         # Log phase execution for latency tracking and monitoring
-        log_phase_execution(
+        fs_ok, bq_ok = log_phase_execution(
             phase_name="phase4_to_phase5",
             game_date=game_date,
             start_time=datetime.now(timezone.utc),
@@ -1252,6 +1258,12 @@ def trigger_phase5(game_date: str, correlation_id: str, upstream_message: Dict) 
                 "message_id": message_id
             }
         )
+        if not fs_ok and not bq_ok:
+            logger.error(f"CRITICAL: Both Firestore and BigQuery writes failed for {game_date}")
+        elif not bq_ok:
+            logger.warning(f"BigQuery backup write failed for {game_date}")
+        elif not fs_ok:
+            logger.warning(f"Firestore write failed for {game_date}, using BigQuery backup")
 
         return message_id
 
