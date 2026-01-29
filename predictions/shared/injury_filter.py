@@ -8,15 +8,23 @@ Checks player injury status before generating predictions to:
 2. Flag predictions for QUESTIONABLE/DOUBTFUL players (high uncertainty)
 3. Pass through all other players normally
 4. Calculate teammate injury impact for usage adjustments (v2.0)
+5. Check historical DNP patterns from gamebook data (v2.1)
 
-Data Sources (v2.0):
+Data Sources (v2.1):
 - nba_raw.nbac_injury_report: NBA.com official injury reports (primary)
+- nba_analytics.player_game_summary: Historical DNP data from gamebooks (v2.1)
 - nba_raw.bdl_injuries: Ball Don't Lie backup source (validation)
 
 Based on analysis of 2024-25 season:
 - 28.6% of DNPs (1,833) were catchable by checking OUT status
 - 8.8% of DNPs (567) were QUESTIONABLE (flag but don't skip)
 - 58.6% of DNPs had no injury report entry (late scratches, can't catch)
+
+V2.1 Enhancement: Historical DNP Pattern Detection
+- Queries player_game_summary for recent DNP history
+- Flags players with 2+ DNPs in last 5 games as "dnp_risk"
+- Captures late scratches, coach decisions not in injury report
+- Analysis shows 35%+ of DNPs can be caught via gamebook history
 
 Usage:
     from predictions.shared.injury_filter import InjuryFilter
@@ -28,6 +36,11 @@ Usage:
         # Don't generate prediction
     elif status.has_warning:
         # Generate prediction but flag uncertainty
+
+    # v2.1: Check DNP history for additional risk signal
+    dnp_history = filter.check_dnp_history(player_lookup, game_date)
+    if dnp_history.has_dnp_risk:
+        # Player has recent DNP pattern - flag for uncertainty
 
     # v2.0: Get teammate impact for usage adjustments
     impact = filter.get_teammate_impact(player_lookup, team_abbr, game_date)
@@ -56,6 +69,35 @@ class InjuryStatus:
     should_skip: bool  # True if prediction should be skipped
     has_warning: bool  # True if prediction should be flagged
     message: str  # Human-readable status message
+
+
+@dataclass
+class DNPHistory:
+    """
+    Historical DNP pattern for a player (v2.1)
+
+    Provides supplemental signal from gamebook data that captures:
+    - Late scratches not in pre-game injury report
+    - Coach decisions that become patterns
+    - Recurring injuries that weren't reported pre-game
+    """
+    player_lookup: str
+    game_date: date
+    games_checked: int  # Number of recent games analyzed
+    dnp_count: int  # DNPs in the window
+    dnp_rate: float  # DNP rate (0.0-1.0)
+    recent_dnp_reasons: List[str]  # Last few DNP reasons
+    last_dnp_date: Optional[date]  # Most recent DNP
+    has_dnp_risk: bool  # True if pattern suggests DNP risk
+    risk_category: Optional[str]  # 'injury', 'coach_decision', 'recurring', None
+    message: str  # Human-readable summary
+
+    @property
+    def days_since_last_dnp(self) -> Optional[int]:
+        """Days since last DNP, or None if no recent DNPs"""
+        if self.last_dnp_date:
+            return (self.game_date - self.last_dnp_date).days
+        return None
 
 
 class InjuryFilter:
@@ -304,6 +346,329 @@ class InjuryFilter:
         }
 
     # =========================================================================
+    # V2.1: HISTORICAL DNP PATTERN CHECKING
+    # =========================================================================
+
+    # Configuration for DNP risk detection
+    DNP_HISTORY_WINDOW = 5  # Number of recent games to check
+    DNP_RISK_THRESHOLD = 2  # DNPs in window that trigger risk flag
+
+    def check_dnp_history(
+        self,
+        player_lookup: str,
+        game_date: date,
+        window_games: int = None
+    ) -> DNPHistory:
+        """
+        Check player's recent DNP history from gamebook data (v2.1)
+
+        Queries player_game_summary for DNP patterns that may not be
+        in the pre-game injury report (coach decisions, late scratches, etc.)
+
+        Args:
+            player_lookup: Player identifier
+            game_date: Date of the upcoming game
+            window_games: Number of recent games to check (default: DNP_HISTORY_WINDOW)
+
+        Returns:
+            DNPHistory with risk assessment
+        """
+        window = window_games or self.DNP_HISTORY_WINDOW
+
+        query = """
+        SELECT
+            player_lookup,
+            game_date,
+            is_dnp,
+            dnp_reason,
+            dnp_reason_category
+        FROM `nba-props-platform.nba_analytics.player_game_summary`
+        WHERE player_lookup = @player_lookup
+          AND game_date < @game_date
+          AND game_date >= DATE_SUB(@game_date, INTERVAL 30 DAY)
+        ORDER BY game_date DESC
+        LIMIT @window_games
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("player_lookup", "STRING", player_lookup),
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                bigquery.ScalarQueryParameter("window_games", "INT64", window),
+            ]
+        )
+
+        try:
+            result = self.client.query(query, job_config=job_config).result()
+            rows = list(result)
+
+            if not rows:
+                return DNPHistory(
+                    player_lookup=player_lookup,
+                    game_date=game_date,
+                    games_checked=0,
+                    dnp_count=0,
+                    dnp_rate=0.0,
+                    recent_dnp_reasons=[],
+                    last_dnp_date=None,
+                    has_dnp_risk=False,
+                    risk_category=None,
+                    message="OK: No recent game history found"
+                )
+
+            games_checked = len(rows)
+            dnp_games = [r for r in rows if r.is_dnp]
+            dnp_count = len(dnp_games)
+            dnp_rate = dnp_count / games_checked if games_checked > 0 else 0.0
+
+            # Get DNP reasons and dates
+            recent_reasons = [r.dnp_reason for r in dnp_games if r.dnp_reason][:3]
+            last_dnp_date = dnp_games[0].game_date if dnp_games else None
+
+            # Determine risk category based on DNP reason categories
+            risk_category = None
+            if dnp_games:
+                categories = [r.dnp_reason_category for r in dnp_games if r.dnp_reason_category]
+                if categories:
+                    # Find most common category
+                    category_counts = {}
+                    for cat in categories:
+                        category_counts[cat] = category_counts.get(cat, 0) + 1
+                    risk_category = max(category_counts.keys(), key=lambda k: category_counts[k])
+
+            # Determine if has DNP risk
+            has_dnp_risk = dnp_count >= self.DNP_RISK_THRESHOLD
+
+            # Build message
+            if has_dnp_risk:
+                message = f"DNP_RISK: {dnp_count}/{games_checked} recent games DNP"
+                if risk_category:
+                    message += f" ({risk_category})"
+            elif dnp_count > 0:
+                message = f"LOW_RISK: {dnp_count}/{games_checked} recent games DNP"
+            else:
+                message = f"OK: No DNPs in last {games_checked} games"
+
+            return DNPHistory(
+                player_lookup=player_lookup,
+                game_date=game_date,
+                games_checked=games_checked,
+                dnp_count=dnp_count,
+                dnp_rate=dnp_rate,
+                recent_dnp_reasons=recent_reasons,
+                last_dnp_date=last_dnp_date,
+                has_dnp_risk=has_dnp_risk,
+                risk_category=risk_category,
+                message=message
+            )
+
+        except Exception as e:
+            logger.error(f"Error checking DNP history for {player_lookup}: {e}", exc_info=True)
+            return DNPHistory(
+                player_lookup=player_lookup,
+                game_date=game_date,
+                games_checked=0,
+                dnp_count=0,
+                dnp_rate=0.0,
+                recent_dnp_reasons=[],
+                last_dnp_date=None,
+                has_dnp_risk=False,
+                risk_category=None,
+                message=f"OK: Error checking DNP history (fail-open): {e}"
+            )
+
+    def check_dnp_history_batch(
+        self,
+        player_lookups: List[str],
+        game_date: date,
+        window_games: int = None
+    ) -> Dict[str, DNPHistory]:
+        """
+        Check DNP history for multiple players efficiently (v2.1)
+
+        Args:
+            player_lookups: List of player identifiers
+            game_date: Date of the upcoming game
+            window_games: Number of recent games to check
+
+        Returns:
+            Dict mapping player_lookup to DNPHistory
+        """
+        window = window_games or self.DNP_HISTORY_WINDOW
+
+        if not player_lookups:
+            return {}
+
+        query = """
+        WITH ranked_games AS (
+            SELECT
+                player_lookup,
+                game_date,
+                is_dnp,
+                dnp_reason,
+                dnp_reason_category,
+                ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup
+                    ORDER BY game_date DESC
+                ) as game_rank
+            FROM `nba-props-platform.nba_analytics.player_game_summary`
+            WHERE player_lookup IN UNNEST(@player_lookups)
+              AND game_date < @game_date
+              AND game_date >= DATE_SUB(@game_date, INTERVAL 30 DAY)
+        )
+        SELECT
+            player_lookup,
+            game_date,
+            is_dnp,
+            dnp_reason,
+            dnp_reason_category
+        FROM ranked_games
+        WHERE game_rank <= @window_games
+        ORDER BY player_lookup, game_date DESC
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups),
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                bigquery.ScalarQueryParameter("window_games", "INT64", window),
+            ]
+        )
+
+        try:
+            result = self.client.query(query, job_config=job_config).result()
+
+            # Group rows by player
+            player_rows: Dict[str, List] = {p: [] for p in player_lookups}
+            for row in result:
+                if row.player_lookup in player_rows:
+                    player_rows[row.player_lookup].append(row)
+
+            # Build DNPHistory for each player
+            histories = {}
+            for player in player_lookups:
+                rows = player_rows.get(player, [])
+
+                if not rows:
+                    histories[player] = DNPHistory(
+                        player_lookup=player,
+                        game_date=game_date,
+                        games_checked=0,
+                        dnp_count=0,
+                        dnp_rate=0.0,
+                        recent_dnp_reasons=[],
+                        last_dnp_date=None,
+                        has_dnp_risk=False,
+                        risk_category=None,
+                        message="OK: No recent game history found"
+                    )
+                    continue
+
+                games_checked = len(rows)
+                dnp_games = [r for r in rows if r.is_dnp]
+                dnp_count = len(dnp_games)
+                dnp_rate = dnp_count / games_checked if games_checked > 0 else 0.0
+
+                recent_reasons = [r.dnp_reason for r in dnp_games if r.dnp_reason][:3]
+                last_dnp_date = dnp_games[0].game_date if dnp_games else None
+
+                risk_category = None
+                if dnp_games:
+                    categories = [r.dnp_reason_category for r in dnp_games if r.dnp_reason_category]
+                    if categories:
+                        category_counts = {}
+                        for cat in categories:
+                            category_counts[cat] = category_counts.get(cat, 0) + 1
+                        risk_category = max(category_counts.keys(), key=lambda k: category_counts[k])
+
+                has_dnp_risk = dnp_count >= self.DNP_RISK_THRESHOLD
+
+                if has_dnp_risk:
+                    message = f"DNP_RISK: {dnp_count}/{games_checked} recent games DNP"
+                    if risk_category:
+                        message += f" ({risk_category})"
+                elif dnp_count > 0:
+                    message = f"LOW_RISK: {dnp_count}/{games_checked} recent games DNP"
+                else:
+                    message = f"OK: No DNPs in last {games_checked} games"
+
+                histories[player] = DNPHistory(
+                    player_lookup=player,
+                    game_date=game_date,
+                    games_checked=games_checked,
+                    dnp_count=dnp_count,
+                    dnp_rate=dnp_rate,
+                    recent_dnp_reasons=recent_reasons,
+                    last_dnp_date=last_dnp_date,
+                    has_dnp_risk=has_dnp_risk,
+                    risk_category=risk_category,
+                    message=message
+                )
+
+            return histories
+
+        except Exception as e:
+            logger.error(f"Error batch checking DNP history: {e}", exc_info=True)
+            # Fail-open for all players
+            return {
+                p: DNPHistory(
+                    player_lookup=p,
+                    game_date=game_date,
+                    games_checked=0,
+                    dnp_count=0,
+                    dnp_rate=0.0,
+                    recent_dnp_reasons=[],
+                    last_dnp_date=None,
+                    has_dnp_risk=False,
+                    risk_category=None,
+                    message=f"OK: Error checking (fail-open): {e}"
+                )
+                for p in player_lookups
+            }
+
+    def get_combined_risk(
+        self,
+        player_lookup: str,
+        game_date: date
+    ) -> Tuple[InjuryStatus, DNPHistory]:
+        """
+        Get both injury status and DNP history for comprehensive risk assessment (v2.1)
+
+        Args:
+            player_lookup: Player identifier
+            game_date: Date of the game
+
+        Returns:
+            Tuple of (InjuryStatus, DNPHistory)
+        """
+        injury_status = self.check_player(player_lookup, game_date)
+        dnp_history = self.check_dnp_history(player_lookup, game_date)
+        return injury_status, dnp_history
+
+    def get_combined_risk_batch(
+        self,
+        player_lookups: List[str],
+        game_date: date
+    ) -> Dict[str, Tuple[InjuryStatus, DNPHistory]]:
+        """
+        Get both injury status and DNP history for multiple players (v2.1)
+
+        Args:
+            player_lookups: List of player identifiers
+            game_date: Date of the game
+
+        Returns:
+            Dict mapping player_lookup to (InjuryStatus, DNPHistory) tuple
+        """
+        injury_statuses = self.check_players_batch(player_lookups, game_date)
+        dnp_histories = self.check_dnp_history_batch(player_lookups, game_date)
+
+        return {
+            p: (injury_statuses[p], dnp_histories[p])
+            for p in player_lookups
+        }
+
+    # =========================================================================
     # V2.0: TEAMMATE IMPACT AND USAGE ADJUSTMENTS
     # =========================================================================
 
@@ -507,3 +872,34 @@ def check_injury_status(player_lookup: str, game_date: date) -> InjuryStatus:
         InjuryStatus with skip/warning flags
     """
     return get_injury_filter().check_player(player_lookup, game_date)
+
+
+def check_dnp_history(player_lookup: str, game_date: date) -> DNPHistory:
+    """
+    Convenience function to check DNP history (v2.1)
+
+    Args:
+        player_lookup: Player identifier
+        game_date: Date of the upcoming game
+
+    Returns:
+        DNPHistory with risk assessment
+    """
+    return get_injury_filter().check_dnp_history(player_lookup, game_date)
+
+
+def get_combined_player_risk(
+    player_lookup: str,
+    game_date: date
+) -> Tuple[InjuryStatus, DNPHistory]:
+    """
+    Convenience function to get combined risk assessment (v2.1)
+
+    Args:
+        player_lookup: Player identifier
+        game_date: Date of the game
+
+    Returns:
+        Tuple of (InjuryStatus, DNPHistory)
+    """
+    return get_injury_filter().get_combined_risk(player_lookup, game_date)
