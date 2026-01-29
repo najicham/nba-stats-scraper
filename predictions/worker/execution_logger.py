@@ -151,7 +151,21 @@ class ExecutionLogger:
             return len(entries_to_flush)
 
         except Exception as e:
-            logger.error(f"Error flushing execution log buffer: {e}", exc_info=True)
+            # Extract detailed errors from BigQuery load job if available
+            error_details = str(e)
+            if hasattr(e, '__cause__') and hasattr(e.__cause__, 'errors'):
+                error_details = f"{e} - Details: {e.__cause__.errors}"
+            elif 'load_job' in dir() and load_job.errors:
+                error_details = f"{e} - BigQuery errors: {load_job.errors}"
+
+            logger.error(f"Error flushing execution log buffer: {error_details}", exc_info=True)
+
+            # Log sample of problematic data for debugging
+            if entries_to_flush:
+                sample_entry = entries_to_flush[0]
+                logger.error(f"Sample entry game_date={sample_entry.get('game_date')}, "
+                           f"player={sample_entry.get('player_lookup')}")
+
             # Re-add entries to buffer on failure (best effort)
             with _buffer_lock:
                 _log_buffer = entries_to_flush + _log_buffer

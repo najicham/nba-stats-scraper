@@ -630,7 +630,7 @@ def handle_prediction_request():
             execution_logger.log_failure(
                 player_lookup=player_lookup,
                 universal_player_id=universal_player_id,
-                game_date=game_date_str or 'unknown',
+                game_date=game_date_str or '1900-01-01',  # Sentinel date for BigQuery DATE type
                 game_id=game_id or 'unknown',
                 line_values=line_values,
                 duration_seconds=duration,
@@ -648,7 +648,7 @@ def handle_prediction_request():
             execution_logger.log_failure(
                 player_lookup=player_lookup,
                 universal_player_id=universal_player_id,
-                game_date=game_date_str or 'unknown',
+                game_date=game_date_str or '1900-01-01',  # Sentinel date for BigQuery DATE type
                 game_id=game_id or 'unknown',
                 line_values=line_values,
                 duration_seconds=duration,
