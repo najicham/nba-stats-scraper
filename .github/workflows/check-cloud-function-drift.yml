@@ -1,0 +1,185 @@
+name: Check Cloud Function Drift
+
+on:
+  schedule:
+    - cron: '0 12 * * *'  # Noon UTC daily
+  workflow_dispatch:
+
+jobs:
+  check-drift:
+    name: Check Cloud Function Drift
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history needed for git log comparisons
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Check Cloud Function drift
+        id: drift-check
+        run: |
+          # Run drift check and capture output
+          ./bin/check-cloud-function-drift.sh --verbose > drift_report.txt 2>&1 || true
+          cat drift_report.txt
+
+          # Parse for stale functions (>24h drift)
+          STALE_FUNCTIONS=$(grep -E "^❌.*STALE DEPLOYMENT" drift_report.txt | sed 's/❌ //' | sed 's/: STALE DEPLOYMENT.*//' || true)
+
+          if [ -z "$STALE_FUNCTIONS" ]; then
+            echo "drift_detected=false" >> $GITHUB_OUTPUT
+            echo "::notice::All Cloud Functions are up to date!"
+          else
+            echo "drift_detected=true" >> $GITHUB_OUTPUT
+
+            # Count stale functions
+            STALE_COUNT=$(echo "$STALE_FUNCTIONS" | wc -l)
+            echo "stale_count=$STALE_COUNT" >> $GITHUB_OUTPUT
+
+            # Store function list (newline-separated -> comma-separated for summary)
+            STALE_LIST=$(echo "$STALE_FUNCTIONS" | tr '\n' ',' | sed 's/,$//')
+            echo "stale_functions=$STALE_LIST" >> $GITHUB_OUTPUT
+
+            echo "::warning::Found $STALE_COUNT Cloud Function(s) with deployment drift: $STALE_LIST"
+          fi
+
+          # Save full report for issue body
+          {
+            echo 'drift_report<<EOF'
+            cat drift_report.txt
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+
+      - name: Check for existing drift issue
+        id: check-existing
+        if: steps.drift-check.outputs.drift_detected == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Check if there's already an open cloud-function-drift issue
+          EXISTING_ISSUE=$(gh issue list --label "cloud-function-drift" --state open --json number --jq '.[0].number' || echo "")
+
+          if [ -n "$EXISTING_ISSUE" ]; then
+            echo "existing_issue=$EXISTING_ISSUE" >> $GITHUB_OUTPUT
+            echo "::notice::Found existing drift issue #$EXISTING_ISSUE"
+          else
+            echo "existing_issue=" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create or update drift issue
+        if: steps.drift-check.outputs.drift_detected == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          STALE_FUNCTIONS: ${{ steps.drift-check.outputs.stale_functions }}
+          STALE_COUNT: ${{ steps.drift-check.outputs.stale_count }}
+          DRIFT_REPORT: ${{ steps.drift-check.outputs.drift_report }}
+          EXISTING_ISSUE: ${{ steps.check-existing.outputs.existing_issue }}
+        run: |
+          # Build issue body
+          ISSUE_BODY=$(cat <<'ISSUE_EOF'
+          ## Cloud Function Drift Detected
+
+          **${{ steps.drift-check.outputs.stale_count }} Cloud Function(s)** have code changes that haven't been deployed (>24h old).
+
+          ### Stale Functions
+
+          ISSUE_EOF
+          )
+
+          # Add each stale function as a checkbox
+          for function in $(echo "$STALE_FUNCTIONS" | tr ',' '\n'); do
+            ISSUE_BODY="$ISSUE_BODY
+          - [ ] \`$function\`"
+          done
+
+          ISSUE_BODY="$ISSUE_BODY
+
+          ### Full Drift Report
+
+          \`\`\`
+          $DRIFT_REPORT
+          \`\`\`
+
+          ### Resolution
+
+          Deploy the stale Cloud Functions using their deployment scripts:
+
+          \`\`\`bash
+          # Example for phase2-to-phase3 orchestrator
+          ./bin/orchestrators/deploy_phase2_to_phase3.sh
+
+          # Or use gcloud directly
+          gcloud functions deploy <function-name> --region=us-west2 --gen2
+          \`\`\`
+
+          Check \`bin/orchestrators/\` directory for function-specific deployment scripts.
+
+          ### Context
+
+          - **Detected**: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          - **Workflow run**: [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+          ---
+          *This issue was automatically created by the Cloud Function drift check workflow.*
+          "
+
+          if [ -n "$EXISTING_ISSUE" ]; then
+            # Update existing issue with new comment
+            gh issue comment "$EXISTING_ISSUE" --body "## Updated Drift Report ($(date -u '+%Y-%m-%d %H:%M UTC'))
+
+          Still detecting drift in **$STALE_COUNT** Cloud Function(s): \`$STALE_FUNCTIONS\`
+
+          <details>
+          <summary>Full Report</summary>
+
+          \`\`\`
+          $DRIFT_REPORT
+          \`\`\`
+
+          </details>
+
+          [Workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+
+            echo "::notice::Updated existing issue #$EXISTING_ISSUE with new drift report"
+          else
+            # Create new issue
+            gh issue create \
+              --title "Cloud Function Drift: $STALE_COUNT function(s) behind" \
+              --body "$ISSUE_BODY" \
+              --label "cloud-function-drift"
+
+            echo "::notice::Created new Cloud Function drift issue"
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Cloud Function Drift Check Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.drift-check.outputs.drift_detected }}" == "true" ]; then
+            echo "### :warning: Drift Detected" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**${{ steps.drift-check.outputs.stale_count }}** Cloud Function(s) have stale deployments (>24h):" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            for function in $(echo "${{ steps.drift-check.outputs.stale_functions }}" | tr ',' '\n'); do
+              echo "- \`$function\`" >> $GITHUB_STEP_SUMMARY
+            done
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "A GitHub issue has been created/updated with details." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "### :white_check_mark: All Cloud Functions Up to Date" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "No deployment drift detected. All Cloud Functions are running the latest code." >> $GITHUB_STEP_SUMMARY
+          fi
