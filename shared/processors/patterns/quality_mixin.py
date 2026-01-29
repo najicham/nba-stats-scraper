@@ -564,6 +564,58 @@ class QualityMixin:
             logger.error(f"Error sending quality degradation alert: {e}", exc_info=True)
 
     # ==========================================================================
+    # SOURCE COVERAGE TRACKING
+    # ==========================================================================
+    def track_source_coverage_event(
+        self,
+        event_type,
+        severity,
+        source: str = None,
+        message: str = None,
+        details: Dict = None,
+        **kwargs
+    ) -> str:
+        """
+        Track a source coverage event (convenience wrapper around log_quality_event).
+
+        This method provides a simpler interface for tracking source coverage events
+        without requiring all the parameters of log_quality_event.
+
+        Args:
+            event_type: Type of event (from SourceCoverageEventType enum or string)
+            severity: Severity level (from SourceCoverageSeverity enum or string)
+            source: Name of the data source affected
+            message: Human-readable event description
+            details: Additional event metadata dict
+            **kwargs: Additional parameters passed to log_quality_event
+
+        Returns:
+            event_id (UUID string)
+
+        Example:
+            self.track_source_coverage_event(
+                event_type=SourceCoverageEventType.DEPENDENCY_STALE,
+                severity=SourceCoverageSeverity.WARNING,
+                source='team_offense_game_summary',
+                message="Team stats not available, usage_rate will be NULL",
+                details={'team_stats_count': 0}
+            )
+        """
+        # Build description from message and details
+        description = message or f"Source coverage event: {source}"
+        if details:
+            description += f" | Details: {json.dumps(details)}"
+
+        return self.log_quality_event(
+            event_type=event_type,
+            severity=severity,
+            description=description,
+            primary_source=source,
+            resolution_details=details,
+            **kwargs
+        )
+
+    # ==========================================================================
     # HELPER METHODS
     # ==========================================================================
     def build_quality_columns(self, quality: Dict, include_legacy: bool = True) -> Dict:
