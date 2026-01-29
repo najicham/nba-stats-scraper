@@ -23,17 +23,21 @@ from typing import Set, Tuple, List
 
 def extract_schema_fields_from_sql(schema_path: Path) -> Set[str]:
     """
-    Extract field names from BigQuery CREATE TABLE statement.
+    Extract field names from BigQuery CREATE TABLE and ALTER TABLE statements.
 
-    Parses SQL to find column definitions like:
-        prediction_id STRING NOT NULL,
-        confidence_score NUMERIC(5,2) NOT NULL,
+    Parses SQL to find column definitions from:
+    1. CREATE TABLE block
+    2. ALTER TABLE ADD COLUMN statements
+
+    Examples:
+        CREATE TABLE: prediction_id STRING NOT NULL,
+        ALTER TABLE:  ADD COLUMN IF NOT EXISTS feature_importance JSON
     """
     fields = set()
 
     content = schema_path.read_text()
 
-    # Find the CREATE TABLE block
+    # 1. Extract fields from CREATE TABLE block
     create_match = re.search(
         r'CREATE TABLE[^(]+\((.*?)\)\s*PARTITION BY',
         content,
@@ -56,6 +60,21 @@ def extract_schema_fields_from_sql(schema_path: Path) -> Set[str]:
     )
 
     for match in column_pattern.finditer(create_block):
+        field_name = match.group(1).lower()
+        # Skip SQL keywords that might match
+        if field_name not in ('if', 'not', 'exists', 'default', 'options'):
+            fields.add(field_name)
+
+    # 2. Extract fields from ALTER TABLE ADD COLUMN statements
+    # Pattern: ADD COLUMN IF NOT EXISTS field_name TYPE
+    # or:      ADD COLUMN field_name TYPE
+    alter_pattern = re.compile(
+        r'ADD\s+COLUMN(?:\s+IF\s+NOT\s+EXISTS)?\s+(\w+)\s+'
+        r'(?:STRING|BOOLEAN|INT64|NUMERIC|FLOAT64|ARRAY|JSON|TIMESTAMP|DATE)',
+        re.MULTILINE | re.IGNORECASE
+    )
+
+    for match in alter_pattern.finditer(content):
         field_name = match.group(1).lower()
         # Skip SQL keywords that might match
         if field_name not in ('if', 'not', 'exists', 'default', 'options'):
