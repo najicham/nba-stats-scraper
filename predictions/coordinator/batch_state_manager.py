@@ -63,8 +63,10 @@ import os
 import sys
 import time
 
-# Add path for slack utilities
-sys.path.append('/home/naji/code/nba-stats-scraper/orchestration/cloud_functions/self_heal')
+# Add path for slack utilities (use relative path for Docker/cloud compatibility)
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_repo_root = os.path.dirname(os.path.dirname(_current_dir))
+sys.path.append(os.path.join(_repo_root, 'orchestration', 'cloud_functions', 'self_heal'))
 
 logger = logging.getLogger(__name__)
 
