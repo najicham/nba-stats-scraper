@@ -34,7 +34,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Set, Tuple, Any
 
-from google.cloud import bigquery
+from google.cloud import bigquery, firestore
 from google.cloud.exceptions import GoogleCloudError
 
 from shared.clients import get_bigquery_client, get_firestore_client
