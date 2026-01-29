@@ -405,11 +405,13 @@ class PredictionAccuracyProcessor:
         try:
             result = self.bq_client.query(query).to_dataframe()
             # Return dict of dicts with all player context
+            # Note: Use pd.notna() to handle both None and pandas NAType
+            import pandas as pd
             return {
                 row['player_lookup']: {
-                    'actual_points': int(row['actual_points']) if row['actual_points'] is not None else None,
-                    'team_abbr': row['team_abbr'],
-                    'opponent_team_abbr': row['opponent_team_abbr'],
+                    'actual_points': int(row['actual_points']) if pd.notna(row['actual_points']) else None,
+                    'team_abbr': row['team_abbr'] if pd.notna(row['team_abbr']) else None,
+                    'opponent_team_abbr': row['opponent_team_abbr'] if pd.notna(row['opponent_team_abbr']) else None,
                     'minutes_played': self._safe_float(row['minutes_played'])
                 }
                 for _, row in result.iterrows()
