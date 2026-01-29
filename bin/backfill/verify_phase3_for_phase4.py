@@ -112,7 +112,7 @@ def get_expected_game_dates(bq_client: bigquery.Client, start_date: date, end_da
     FROM `nba-props-platform.nba_reference.nba_schedule`
     WHERE game_date >= '{start_date}'
       AND game_date <= '{end_date}'
-      AND season_type IN ('Regular Season', 'Playoffs')
+      AND (is_regular_season = TRUE OR is_playoffs = TRUE)
     ORDER BY game_date
     """
 

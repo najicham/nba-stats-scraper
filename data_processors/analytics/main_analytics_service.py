@@ -507,6 +507,7 @@ def process_analytics():
                 return jsonify({
                     "status": "delayed",
                     "reason": "incomplete_boxscores",
+                    "message": f"Processing delayed for {game_date} - incomplete boxscores ({completeness['actual_games']}/{completeness['expected_games']} games available)",
                     "game_date": game_date,
                     "completeness": {
                         "expected": completeness["expected_games"],
@@ -557,6 +558,8 @@ def process_analytics():
         failures = [r for r in results if r.get('status') in ('error', 'exception', 'timeout')]
         successes = [r for r in results if r.get('status') == 'success']
 
+        total_processors = len(results)
+
         if not successes and failures:
             # All processors failed - return 500 to trigger Pub/Sub retry
             logger.error(
@@ -565,8 +568,11 @@ def process_analytics():
             )
             return jsonify({
                 "status": "failed",
+                "message": f"Failed to process analytics for {game_date} (0/{total_processors} processors completed)",
                 "source_table": source_table,
                 "game_date": game_date,
+                "processors_run": total_processors,
+                "processors_succeeded": 0,
                 "failures": len(failures),
                 "results": results
             }), 500
@@ -575,13 +581,16 @@ def process_analytics():
             # Partial failure - log warning but return 200 to ACK
             # (retrying won't help if some processors succeeded)
             logger.warning(
-                f"⚠️ PARTIAL FAILURE: {len(failures)}/{len(results)} analytics processors failed "
+                f"⚠️ PARTIAL FAILURE: {len(failures)}/{total_processors} analytics processors failed "
                 f"for {game_date} (source={source_table})"
             )
             return jsonify({
                 "status": "partial_failure",
+                "message": f"Partially processed analytics for {game_date} ({len(successes)}/{total_processors} processors completed, {len(failures)} failed)",
                 "source_table": source_table,
                 "game_date": game_date,
+                "processors_run": total_processors,
+                "processors_succeeded": len(successes),
                 "successes": len(successes),
                 "failures": len(failures),
                 "results": results
@@ -590,8 +599,11 @@ def process_analytics():
         # All succeeded
         return jsonify({
             "status": "completed",
+            "message": f"Successfully processed analytics for {game_date} ({total_processors}/{total_processors} processors completed)",
             "source_table": source_table,
             "game_date": game_date,
+            "processors_run": total_processors,
+            "processors_succeeded": total_processors,
             "results": results
         }), 200
 

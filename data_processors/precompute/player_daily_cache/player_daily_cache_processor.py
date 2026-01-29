@@ -1701,6 +1701,24 @@ class PlayerDailyCacheProcessor(
 
         return record
 
+    # ========================================================================
+    # STATS & REPORTING
+    # ========================================================================
+
+    def get_precompute_stats(self) -> dict:
+        """
+        Get processor-specific stats for logging and backfill tracking.
+
+        Returns:
+            dict: Stats including players_processed, players_failed, and cache metadata
+        """
+        return {
+            'players_processed': len(self.transformed_data) if self.transformed_data else 0,
+            'players_failed': len(self.failed_entities) if self.failed_entities else 0,
+            'early_season': getattr(self, 'early_season_flag', False),
+            'cache_version': self.cache_version
+        }
+
 
 def main():
     """
