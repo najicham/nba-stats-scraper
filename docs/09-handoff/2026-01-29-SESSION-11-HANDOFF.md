@@ -51,9 +51,11 @@ When a Phase 2 processor fails or doesn't run, there's no record of what happene
 
 | Fix | File | Commit |
 |-----|------|--------|
-| Wrong table name in CleanupProcessor | `orchestration/cleanup_processor.py` | Pending |
+| Fix ALL 11 table names in CleanupProcessor | `orchestration/cleanup_processor.py` | 5e07f5cd |
+| Add retry storm detection | `orchestration/cleanup_processor.py` | 92c36daa |
 | Mark Jan 27 gaps as resolved | `data_gaps` table | Direct BQ update |
-| Update project docs | `docs/08-projects/current/pipeline-resilience-improvements/PROJECT-PLAN.md` | Pending |
+| Update project docs | `docs/08-projects/current/pipeline-resilience-improvements/PROJECT-PLAN.md` | 5e07f5cd |
+| Deploy nba-phase1-scrapers | Cloud Run | Revision 00016-m5g |
 
 ---
 
