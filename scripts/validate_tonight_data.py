@@ -6,12 +6,17 @@ Comprehensive validation script for tonight's game data.
 Checks each stage of the pipeline and reports issues.
 
 TIMING GUIDANCE:
-  Pre-Game Check:  Run after 5 PM ET (before games start at 7 PM)
-  Post-Game Check: Run after 6 AM ET next day (after predictions generated)
+  Pre-Flight Check: Run at 5 PM ET (before games start) with --pre-flight flag
+  Pre-Game Check:   Run after 5 PM ET (before games start at 7 PM)
+  Post-Game Check:  Run after 6 AM ET next day (after predictions generated)
 
 Running earlier may show false alarms as workflows haven't completed yet.
 
 Usage:
+    # Pre-flight checks (before games start)
+    python scripts/validate_tonight_data.py --pre-flight
+
+    # Full validation
     python scripts/validate_tonight_data.py [--date YYYY-MM-DD]
     python scripts/validate_tonight_data.py --date 2026-01-26  # Check specific date
 """
@@ -762,6 +767,104 @@ class TonightDataValidator:
             self.add_warning('spot_check', f'Spot check failed with error: {e}')
             return True  # Don't fail validation on spot check errors
 
+    def run_preflight_checks(self) -> bool:
+        """
+        Run pre-flight checks before games start (5 PM ET).
+
+        Validates that all data needed for tonight's predictions is ready:
+        - Betting data loaded
+        - Game context ready
+        - ML features exist
+        - Prediction worker healthy
+
+        Returns:
+            True if all pre-flight checks pass, False otherwise
+        """
+        print(f"\n{'='*60}")
+        print(f"PRE-FLIGHT VALIDATION - {self.target_date}")
+        print(f"Run before games start (recommended: 5 PM ET)")
+        print(f"{'='*60}\n")
+
+        # Check timing
+        current_time_et = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=5)
+        hour_et = current_time_et.hour
+
+        if hour_et < 17:
+            print(f"⚠️  WARNING: Running pre-flight at {hour_et:02d}:{current_time_et.minute:02d} ET")
+            print(f"    Recommended time: After 5 PM ET")
+            print(f"    Betting data may not be available yet\n")
+
+        # Run critical pre-flight checks
+        game_count = self.check_schedule()
+        if game_count == 0:
+            print("\n⚠️ No games scheduled - pre-flight checks skipped")
+            return True
+
+        print()
+        self.check_betting_data()
+        print()
+        self.check_game_context()
+        print()
+
+        # Check ML features for tonight
+        print("ML Features for Tonight:")
+        query = f"""
+        SELECT COUNT(*) as features, COUNT(DISTINCT player_lookup) as players
+        FROM `{self.project}.nba_predictions.ml_feature_store_v2`
+        WHERE game_date = '{self.target_date}'
+        """
+        result = list(self.client.query(query).result(timeout=60))[0]
+        features = result.features
+        players = result.players
+
+        if features > 0:
+            print(f"✓ ML Features: {features} features for {players} players")
+        else:
+            self.add_issue('ml_features', f'No ML features found for {self.target_date}')
+            print(f"✗ ML Features: No features generated yet")
+
+        print()
+
+        # Check prediction worker health
+        print("Prediction Worker Health:")
+        try:
+            import requests
+            response = requests.get(
+                "https://prediction-worker-f7p3g7f6ya-wl.a.run.app/health",
+                timeout=10
+            )
+            if response.status_code == 200:
+                print("✓ Prediction Worker: Healthy")
+            else:
+                self.add_warning('prediction_worker', f'Prediction worker returned status {response.status_code}')
+                print(f"⚠️ Prediction Worker: Status {response.status_code}")
+        except Exception as e:
+            self.add_warning('prediction_worker', f'Could not reach prediction worker: {e}')
+            print(f"⚠️ Prediction Worker: Unreachable ({str(e)[:50]})")
+
+        # Print summary
+        print(f"\n{'='*60}")
+        print("PRE-FLIGHT SUMMARY")
+        print(f"{'='*60}")
+
+        if self.issues:
+            print(f"\n❌ {len(self.issues)} ISSUES FOUND:")
+            for issue in self.issues:
+                print(f"  [{issue['stage']}] {issue['message']}")
+
+        if self.warnings:
+            print(f"\n⚠️ {len(self.warnings)} WARNINGS:")
+            for warning in self.warnings:
+                print(f"  [{warning['stage']}] {warning['message']}")
+
+        if not self.issues and not self.warnings:
+            print("\n✅ All pre-flight checks passed!")
+            print("\n🚀 System is ready for tonight's games")
+
+        print(f"\n{'='*60}\n")
+
+        return len(self.issues) == 0
+
     def run_all_checks(self) -> bool:
         """Run all validation checks."""
         print(f"\n{'='*60}")
@@ -842,6 +945,8 @@ class TonightDataValidator:
 def main():
     parser = argparse.ArgumentParser(description='Validate tonight\'s game data')
     parser.add_argument('--date', type=str, help='Target date (YYYY-MM-DD), default: today')
+    parser.add_argument('--pre-flight', action='store_true',
+                       help='Run pre-flight checks (before games start at 5 PM ET)')
     args = parser.parse_args()
 
     if args.date:
@@ -850,7 +955,11 @@ def main():
         target_date = date.today()
 
     validator = TonightDataValidator(target_date)
-    success = validator.run_all_checks()
+
+    if args.pre_flight:
+        success = validator.run_preflight_checks()
+    else:
+        success = validator.run_all_checks()
 
     sys.exit(0 if success else 1)
 

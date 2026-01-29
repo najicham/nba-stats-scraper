@@ -1340,14 +1340,44 @@ For deeper investigation, consult:
 - `docs/06-testing/SPOT-CHECK-SYSTEM.md` - Spot check details
 - `docs/09-handoff/` - Recent session findings and fixes
 
+## Morning Workflow (RECOMMENDED)
+
+**NEW (2026-01-28): Start your morning validation with the fast dashboard:**
+
+```bash
+# Step 1: Quick health check (< 30 seconds)
+./bin/monitoring/morning_health_check.sh
+
+# If issues detected, run full validation
+python scripts/validate_tonight_data.py --date $(date -d "yesterday" +%Y-%m-%d)
+```
+
+**Morning dashboard shows:**
+- Overnight processing summary (games, phases, data quality)
+- Phase 3 completion status (must be 5/5)
+- Stuck phase detection
+- Recent errors
+- Clear action items if issues found
+
+**When to use each tool:**
+- **Morning dashboard** (`morning_health_check.sh`): Run first thing every morning for quick overview
+- **Full validation** (`validate_tonight_data.py`): Run when dashboard shows issues or for comprehensive checks
+- **Pre-flight checks** (`validate_tonight_data.py --pre-flight`): Run at 5 PM before games start
+
 ## Key Commands Reference
 
 ```bash
-# Health check
-./bin/monitoring/daily_health_check.sh
+# Morning health dashboard (NEW - run first!)
+./bin/monitoring/morning_health_check.sh
+
+# Pre-flight checks (run at 5 PM ET before games)
+python scripts/validate_tonight_data.py --pre-flight
 
 # Full validation
 python scripts/validate_tonight_data.py
+
+# Legacy health check (more verbose)
+./bin/monitoring/daily_health_check.sh
 
 # Spot checks (5 samples, fast checks)
 python scripts/spot_check_data_accuracy.py --samples 5 --checks rolling_avg,usage_rate
