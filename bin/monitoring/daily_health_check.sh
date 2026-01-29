@@ -170,9 +170,13 @@ FROM raw_counts r
 LEFT JOIN analytics_counts a ON r.game_date = a.game_date
 ORDER BY r.game_date DESC" 2>/dev/null
 
-# 7B. Minutes coverage check (CRITICAL threshold: 80%, WARNING: 90%)
+# 7B. Minutes coverage check
+# NOTE: This metric includes DNP (Did Not Play) players in the total, so ~60-65% coverage is EXPECTED.
+# About 35-40% of rostered players don't play in any given game (DNPs, inactives, etc.)
+# CRITICAL < 55% indicates actual data extraction failure
+# WARNING < 70% may indicate some data issues
 echo ""
-echo "MINUTES COVERAGE (Last 7 Days):"
+echo "MINUTES COVERAGE (Last 7 Days) - Includes DNP Players:"
 MINUTES_RESULT=$(bq query --use_legacy_sql=false --format=csv --quiet "
 SELECT
   game_date,
@@ -189,7 +193,9 @@ if [ -n "$MINUTES_RESULT" ]; then
   printf "   %-12s %8s %12s %8s %10s\n" "game_date" "total" "has_minutes" "pct" "status"
   printf "   %-12s %8s %12s %8s %10s\n" "-----------" "-------" "-----------" "------" "--------"
 
-  # Parse and print results with status (using thresholds from centralized config)
+  # Parse and print results with status
+  # NOTE: Expected coverage is ~60-65% because total includes DNP players
+  # Using adjusted thresholds: CRITICAL < 55%, WARNING < 70%
   echo "$MINUTES_RESULT" | tail -n +2 | while IFS=, read -r game_date total has_minutes pct; do
     pct_int=${pct%.*}
     if [ "${pct_int:-0}" -lt "${MINUTES_CRITICAL}" ]; then

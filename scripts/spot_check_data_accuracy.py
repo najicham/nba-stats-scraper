@@ -254,6 +254,9 @@ def check_usage_rate(
         #   - player_game_summary uses AWAY_HOME format (e.g., 20260128_NYK_TOR)
         #   - team_offense_game_summary uses HOME_AWAY format (e.g., 20260128_TOR_NYK)
         # We handle this by creating a reversed game_id for the join
+        # NOTE: team_offense_game_summary often has duplicate records per team-game
+        # with different game_id formats (HOME_AWAY vs AWAY_HOME). We use ROW_NUMBER()
+        # to deduplicate, keeping the record with higher possessions (more complete data).
         query = f"""
         WITH player_stats AS (
             SELECT
@@ -276,15 +279,31 @@ def check_usage_rate(
             WHERE player_lookup = @player_lookup
               AND game_date = @game_date
         ),
-        team_stats AS (
+        team_stats_raw AS (
             SELECT
                 game_id,
                 team_abbr,
                 fg_attempts as team_fg_attempts,
                 ft_attempts as team_ft_attempts,
-                turnovers as team_turnovers
+                turnovers as team_turnovers,
+                -- Calculate possessions for ranking (higher = more complete data)
+                COALESCE(fg_attempts, 0) + 0.44 * COALESCE(ft_attempts, 0) + COALESCE(turnovers, 0) as possessions
             FROM `{project_id}.nba_analytics.team_offense_game_summary`
             WHERE game_date = @game_date  -- Required for partition elimination
+        ),
+        team_stats_deduped AS (
+            -- Deduplicate by keeping the record with highest possessions per team
+            SELECT *,
+                ROW_NUMBER() OVER (
+                    PARTITION BY team_abbr
+                    ORDER BY possessions DESC
+                ) as rn
+            FROM team_stats_raw
+        ),
+        team_stats AS (
+            SELECT game_id, team_abbr, team_fg_attempts, team_ft_attempts, team_turnovers
+            FROM team_stats_deduped
+            WHERE rn = 1
         )
         SELECT
             p.*,
@@ -293,8 +312,7 @@ def check_usage_rate(
             t.team_turnovers
         FROM player_stats p
         LEFT JOIN team_stats t
-            ON (p.game_id = t.game_id OR p.game_id_reversed = t.game_id)
-            AND p.team_abbr = t.team_abbr
+            ON p.team_abbr = t.team_abbr
         """
 
         job_config = bigquery.QueryJobConfig(

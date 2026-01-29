@@ -25,6 +25,9 @@ COPY shared/ ./shared/
 # Copy predictions package structure
 COPY predictions/__init__.py ./predictions/__init__.py
 
+# Copy predictions/shared module (contains batch_staging_writer, etc.)
+COPY predictions/shared/ ./predictions/shared/
+
 # Copy coordinator code
 COPY predictions/coordinator/ ./predictions/coordinator/
 

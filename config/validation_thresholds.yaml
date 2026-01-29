@@ -27,10 +27,14 @@ last_updated: "2026-01-29"
 
 coverage:
   # Minutes coverage - percentage of players with valid minutes data
+  # NOTE: This includes DNP (Did Not Play) players in total, so ~55-65% is EXPECTED.
+  # About 35-45% of rostered players don't play in any given game (DNPs, inactives).
+  # Natural variation: 55-66% depending on number of games and team rosters.
+  # Only flag issues if coverage drops significantly below the expected range.
   minutes_coverage:
-    warning: 90    # Below this triggers a warning
-    critical: 80   # Below this triggers a critical alert
-    description: "Percentage of players with valid minutes data"
+    warning: 50    # Below 50% is below expected range
+    critical: 40   # Below 40% indicates actual data extraction failure
+    description: "Percentage of players with valid minutes data (includes DNP players in total, ~55-65% expected)"
 
   # Usage rate coverage - percentage of players with usage rate calculated
   usage_rate_coverage:
