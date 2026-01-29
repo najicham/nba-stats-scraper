@@ -139,3 +139,24 @@ curl -s https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/health
 
 *Created: 2026-01-29*
 *Author: Claude Opus 4.5*
+
+---
+
+## Addendum: Phase 2 IndentationError Fixed
+
+**Discovered from background task**: `nba-phase2-raw-processors` was failing with:
+```
+IndentationError: unexpected indent
+  File "/app/data_processors/raw/nbacom/nbac_gamebook_processor.py", line 642
+```
+
+**Root Cause**: Extra whitespace on line 648 (20 spaces instead of empty line) before the `except` clause.
+
+**Fix Applied**: Commit `805507ae` - removed extra whitespace.
+
+**Deployment Status**: Build submitted, pending deployment.
+
+### Additional Commit
+```
+805507ae fix: Fix IndentationError in nbac_gamebook_processor.py
+```

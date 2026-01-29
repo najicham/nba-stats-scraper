@@ -645,7 +645,7 @@ class NbacGamebookProcessor(SmartIdempotencyMixin, ProcessorBase):
 
             if resolution_stats['injury_database_resolved'] > 0:
                 logger.info(f"Injury database resolutions: {resolution_stats['injury_database_resolved']}")
-                    
+
         except Exception as e:
             logger.error(f"Error logging performance: {e}")
             
