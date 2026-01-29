@@ -54,11 +54,12 @@ from shared.utils.retry_with_jitter import retry_with_jitter
 from shared.clients.bigquery_pool import get_bigquery_client
 from shared.processors.base.failure_categorization import categorize_failure, should_alert
 from shared.processors.mixins.version_tracking_mixin import ProcessorVersionMixin
+from shared.processors.mixins.deployment_freshness_mixin import DeploymentFreshnessMixin
 
 logger = logging.getLogger(__name__)
 
 
-class TransformProcessorBase(ProcessorVersionMixin, ABC):
+class TransformProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, ABC):
     """
     Abstract base class for transform processors (Analytics and Precompute).
 
@@ -109,6 +110,9 @@ class TransformProcessorBase(ProcessorVersionMixin, ABC):
 
     def __init__(self):
         """Initialize transform processor with common attributes."""
+        # Check deployment freshness to detect stale code
+        self.check_deployment_freshness()
+
         self.opts: Dict = {}
         self.raw_data = None
         self.validated_data: Dict = {}
