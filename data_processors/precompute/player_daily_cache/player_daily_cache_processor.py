@@ -121,6 +121,14 @@ class PlayerDailyCacheProcessor(
     upstream_table = 'nba_analytics.player_game_summary'
     lookback_days = 10  # Must match data requirements
 
+    # ============================================================
+    # SOFT DEPENDENCY CONFIGURATION (added Session 10)
+    # ============================================================
+    # When enabled, processor can proceed with degraded upstream data if coverage > threshold
+    # This prevents all-or-nothing blocking when upstream processors have partial failures
+    use_soft_dependencies = True
+    soft_dependency_threshold = 0.80  # Proceed if >80% upstream coverage
+
     # Primary key fields for duplicate detection and MERGE operations
     PRIMARY_KEY_FIELDS = ['cache_date', 'player_lookup']
 

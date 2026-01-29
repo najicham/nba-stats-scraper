@@ -100,6 +100,14 @@ class TeamDefenseZoneAnalysisProcessor(
     upstream_table = 'nba_analytics.team_defense_game_summary'
     lookback_days = 15  # Must match min_games_required
 
+    # ============================================================
+    # SOFT DEPENDENCY CONFIGURATION (added Session 10)
+    # ============================================================
+    # When enabled, processor can proceed with degraded upstream data if coverage > threshold
+    # This prevents all-or-nothing blocking when upstream processors have partial failures
+    use_soft_dependencies = True
+    soft_dependency_threshold = 0.80  # Proceed if >80% upstream coverage
+
     # Smart Idempotency: Fields to hash (meaningful business fields only)
     HASH_FIELDS = [
         'team_abbr', 'analysis_date',
