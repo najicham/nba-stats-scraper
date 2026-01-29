@@ -1161,11 +1161,22 @@ def normalize_processor_name(raw_name: str, output_table: Optional[str] = None) 
 
     # Convert CamelCase to snake_case and strip "Processor" suffix
     name = raw_name.replace('Processor', '')
+    # Strip "Async" prefix (async processors should map to same names as sync versions)
+    if name.startswith('Async'):
+        name = name[5:]  # Remove 'Async' prefix
     # Insert underscore before capitals and lowercase
     name = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
     name = re.sub('([a-z0-9])([A-Z])', r'\1_\2', name).lower()
 
     logger.debug(f"Normalized '{raw_name}' -> '{name}'")
+
+    # Warn if normalized name doesn't match expected set
+    if name not in EXPECTED_PROCESSOR_SET:
+        logger.warning(
+            f"Normalized processor name '{name}' (from '{raw_name}') "
+            f"not in expected set: {EXPECTED_PROCESSOR_SET}"
+        )
+
     return name
 
 

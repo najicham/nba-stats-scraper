@@ -58,6 +58,9 @@ try:
 except ImportError:
     SoftDependencyMixin = object  # Fallback to empty object
 
+# Import unified publisher for Phase 4→5 completion messages
+from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
+
 # Import sport configuration for multi-sport support
 from shared.config.sport_config import get_precompute_dataset, get_project_id
 
@@ -347,6 +350,9 @@ class PrecomputeProcessorBase(
             # Log processor completion
             self._log_pipeline_complete(data_date, total_seconds)
 
+            # Publish completion message to trigger Phase 5
+            self._publish_completion_message(success=True)
+
             return True
 
         except Exception as e:
@@ -534,3 +540,82 @@ class PrecomputeProcessorBase(
         Child classes override to publish completion messages, etc.
         """
         pass
+
+    def _publish_completion_message(self, success: bool, error: str = None) -> None:
+        """
+        Publish unified completion message to nba-phase4-precompute-complete topic.
+        This triggers Phase 5 prediction processors that depend on precompute data.
+
+        Uses UnifiedPubSubPublisher for consistent message format across all phases.
+
+        Args:
+            success: Whether processing completed successfully
+            error: Optional error message if failed
+        """
+        try:
+            # Skip publishing in backfill mode to prevent triggering downstream
+            if getattr(self, 'is_backfill', False) or self.opts.get('is_backfill', False):
+                logger.info("⏸️  Skipping Phase 4 completion publish (backfill mode)")
+                return
+
+            # Skip if downstream trigger disabled
+            if self.opts.get('skip_downstream_trigger', False):
+                logger.info("⏸️  Skipping Phase 4 completion publish (skip_downstream_trigger=True)")
+                return
+
+            publisher = UnifiedPubSubPublisher(project_id=self.project_id)
+
+            # Get the data date
+            data_date = self.opts.get('data_date') or self.opts.get('end_date')
+            if isinstance(data_date, date):
+                data_date = data_date.strftime('%Y-%m-%d')
+
+            # Determine status
+            if success:
+                status = 'success'
+            elif error:
+                status = 'failed'
+            else:
+                status = 'no_data'
+
+            # Calculate duration
+            duration_seconds = self.stats.get('total_runtime', 0)
+
+            # Publish unified message
+            message_id = publisher.publish_completion(
+                topic='nba-phase4-precompute-complete',
+                processor_name=self.__class__.__name__,
+                phase='phase_4_precompute',
+                execution_id=getattr(self, 'run_id', None) or self.correlation_id,
+                correlation_id=self.correlation_id,
+                game_date=str(data_date) if data_date else None,
+                output_table=self.table_name,
+                output_dataset=self.dataset_id,
+                status=status,
+                record_count=self.stats.get('rows_processed', 0),
+                records_failed=0,
+                parent_processor=getattr(self, 'parent_processor', None),
+                trigger_source=self.opts.get('trigger_source', 'manual'),
+                trigger_message_id=getattr(self, 'trigger_message_id', None),
+                duration_seconds=duration_seconds,
+                error_message=error,
+                error_type=type(error).__name__ if error else None,
+                metadata={
+                    'total_runtime': duration_seconds,
+                    'rows_processed': self.stats.get('rows_processed', 0),
+                    'rows_skipped': self.stats.get('rows_skipped', 0),
+                },
+                skip_downstream=self.opts.get('skip_downstream_trigger', False)
+            )
+
+            if message_id:
+                logger.info(
+                    f"✅ Published Phase 4 completion message to nba-phase4-precompute-complete "
+                    f"(message_id: {message_id}, correlation_id: {self.correlation_id})"
+                )
+            else:
+                logger.info("⏸️  Skipped Phase 4 completion publish (publish returned None)")
+
+        except Exception as e:
+            # Don't fail the processor if publishing fails
+            logger.warning(f"Failed to publish Phase 4 completion message: {e}", exc_info=True)

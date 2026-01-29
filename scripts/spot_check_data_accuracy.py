@@ -250,12 +250,22 @@ def check_usage_rate(
 
     try:
         # Get player stats and team stats
+        # NOTE: game_id format differs between tables:
+        #   - player_game_summary uses AWAY_HOME format (e.g., 20260128_NYK_TOR)
+        #   - team_offense_game_summary uses HOME_AWAY format (e.g., 20260128_TOR_NYK)
+        # We handle this by creating a reversed game_id for the join
         query = f"""
         WITH player_stats AS (
             SELECT
                 player_lookup,
                 game_date,
                 game_id,
+                -- Create reversed game_id: YYYYMMDD_AWAY_HOME -> YYYYMMDD_HOME_AWAY
+                CONCAT(
+                    SPLIT(game_id, '_')[OFFSET(0)], '_',
+                    SPLIT(game_id, '_')[OFFSET(2)], '_',
+                    SPLIT(game_id, '_')[OFFSET(1)]
+                ) as game_id_reversed,
                 team_abbr,
                 usage_rate,
                 minutes_played,
@@ -283,7 +293,7 @@ def check_usage_rate(
             t.team_turnovers
         FROM player_stats p
         LEFT JOIN team_stats t
-            ON p.game_id = t.game_id
+            ON (p.game_id = t.game_id OR p.game_id_reversed = t.game_id)
             AND p.team_abbr = t.team_abbr
         """
 
