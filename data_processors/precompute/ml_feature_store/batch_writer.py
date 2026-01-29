@@ -197,9 +197,13 @@ class BatchWriter:
             if "processed_at" in required_fields and out.get("processed_at") is None:
                 out["processed_at"] = current_utc.isoformat()
 
-            # Handle features field - must never be null for BigQuery
+            # Handle ARRAY fields - must never be null for BigQuery, default to empty array
             if "features" in required_fields and out.get("features") is None:
                 out["features"] = []
+            if "feature_names" in required_fields and out.get("feature_names") is None:
+                out["feature_names"] = []
+            if "data_quality_issues" in required_fields and out.get("data_quality_issues") is None:
+                out["data_quality_issues"] = []
 
             validated.append(out)
 
@@ -276,9 +280,10 @@ class BatchWriter:
 
         sanitized = {key: sanitize_value(value) for key, value in row.items()}
 
-        # Ensure 'features' field is never null (BigQuery schema requires it)
-        if 'features' in sanitized and sanitized['features'] is None:
-            sanitized['features'] = []
+        # Ensure ARRAY fields are never null (BigQuery schema requires arrays, not NULL)
+        for array_field in ['features', 'feature_names', 'data_quality_issues']:
+            if array_field in sanitized and sanitized[array_field] is None:
+                sanitized[array_field] = []
 
         # For REPEATED FLOAT fields like 'features', replace None with 0.0
         # (BigQuery doesn't allow NULL inside REPEATED arrays)

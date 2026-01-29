@@ -42,6 +42,15 @@ repos:
         always_run: true
         verbose: true
 
+      - id: validate-schema-types
+        name: Validate BigQuery schema types
+        description: Detects type mismatches (invalid DATE fallbacks, ARRAY serialization, etc.)
+        entry: python .pre-commit-hooks/validate_schema_types.py
+        language: python
+        pass_filenames: false
+        always_run: true
+        verbose: true
+
   # Standard pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
