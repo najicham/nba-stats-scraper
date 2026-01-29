@@ -5,6 +5,8 @@ Routes:
 - POST /force-predictions: Force prediction generation
 - POST /retry-phase: Retry a failed phase
 - POST /trigger-self-heal: Trigger self-heal process
+- POST /cleanup-scraper-failures: Run scraper failure cleanup script
+- POST /validate-schemas: Run schema validation check
 """
 
 import os
@@ -249,3 +251,215 @@ def action_trigger_self_heal():
         )
 
         return jsonify({'error': str(e)}), 500
+
+
+@actions_bp.route('/cleanup-scraper-failures', methods=['POST'])
+@rate_limit
+def action_cleanup_scraper_failures():
+    """
+    Run the scraper failure cleanup script.
+
+    This checks if data exists for "failed" scrapers and marks them
+    as backfilled if data is actually present.
+
+    Returns:
+        JSON with cleanup results
+    """
+    is_valid, error = check_auth()
+    if not is_valid:
+        return error
+
+    audit_logger = get_audit_logger()
+
+    try:
+        import subprocess
+        import re
+
+        # Get project root (admin_dashboard is in services/)
+        project_root = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), '../../..'
+        ))
+
+        script_path = os.path.join(
+            project_root,
+            'bin/monitoring/cleanup_scraper_failures.py'
+        )
+
+        # Run with --days-back=7 by default
+        result = subprocess.run(
+            ['python', script_path, '--days-back=7'],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=project_root
+        )
+
+        # Parse output for metrics
+        output = result.stdout
+
+        # Extract counts from output (look for patterns like "Marked X failures")
+        cleaned_match = re.search(r'Marked (\d+) failures as backfilled', output)
+        remaining_match = re.search(r'(\d+) failures still missing data', output)
+
+        cleaned = int(cleaned_match.group(1)) if cleaned_match else 0
+        remaining = int(remaining_match.group(1)) if remaining_match else 0
+
+        success = result.returncode == 0
+
+        logger.info(f"Scraper failure cleanup completed: cleaned={cleaned}, remaining={remaining}, "
+                   f"returncode={result.returncode}")
+
+        # Log the action
+        audit_logger.log_action(
+            action_type='cleanup_scraper_failures',
+            action_details={
+                'cleaned': cleaned,
+                'remaining': remaining,
+                'returncode': result.returncode
+            },
+            success=success,
+            error_message=result.stderr if result.stderr and not success else None,
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent')
+        )
+
+        return jsonify({
+            'success': success,
+            'cleaned': cleaned,
+            'remaining': remaining,
+            'output': output[:500],  # Truncate for UI
+            'full_output': output
+        }), (200 if success else 500)
+
+    except subprocess.TimeoutExpired:
+        error_msg = 'Script timed out after 120 seconds'
+        logger.error(f"Cleanup script timeout: {error_msg}")
+
+        audit_logger.log_action(
+            action_type='cleanup_scraper_failures',
+            action_details={},
+            success=False,
+            error_message=error_msg,
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent')
+        )
+
+        return jsonify({
+            'success': False,
+            'error': error_msg
+        }), 500
+
+    except Exception as e:
+        logger.error(f"Failed to run cleanup script: {e}", exc_info=True)
+
+        audit_logger.log_action(
+            action_type='cleanup_scraper_failures',
+            action_details={},
+            success=False,
+            error_message=str(e),
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent')
+        )
+
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@actions_bp.route('/validate-schemas', methods=['POST'])
+@rate_limit
+def action_validate_schemas():
+    """
+    Run schema validation check.
+
+    This validates that code fields match BigQuery schema fields,
+    catching potential schema mismatches before deployment.
+
+    Returns:
+        JSON with validation results
+    """
+    is_valid, error = check_auth()
+    if not is_valid:
+        return error
+
+    audit_logger = get_audit_logger()
+
+    try:
+        import subprocess
+
+        project_root = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), '../../..'
+        ))
+
+        script_path = os.path.join(
+            project_root,
+            '.pre-commit-hooks/validate_schema_fields.py'
+        )
+
+        result = subprocess.run(
+            ['python', script_path],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            cwd=project_root
+        )
+
+        passed = result.returncode == 0
+
+        logger.info(f"Schema validation completed: passed={passed}, returncode={result.returncode}")
+
+        # Log the action
+        audit_logger.log_action(
+            action_type='validate_schemas',
+            action_details={
+                'validation_passed': passed,
+                'returncode': result.returncode
+            },
+            success=passed,
+            error_message=result.stderr if result.stderr and not passed else None,
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent')
+        )
+
+        return jsonify({
+            'success': passed,
+            'validation_passed': passed,
+            'output': result.stdout,
+            'errors': result.stderr if result.stderr else None
+        }), (200 if passed else 500)
+
+    except subprocess.TimeoutExpired:
+        error_msg = 'Validation timed out after 30 seconds'
+        logger.error(f"Schema validation timeout: {error_msg}")
+
+        audit_logger.log_action(
+            action_type='validate_schemas',
+            action_details={},
+            success=False,
+            error_message=error_msg,
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent')
+        )
+
+        return jsonify({
+            'success': False,
+            'error': error_msg
+        }), 500
+
+    except Exception as e:
+        logger.error(f"Failed to run schema validation: {e}", exc_info=True)
+
+        audit_logger.log_action(
+            action_type='validate_schemas',
+            action_details={},
+            success=False,
+            error_message=str(e),
+            ip_address=request.remote_addr,
+            user_agent=request.headers.get('User-Agent')
+        )
+
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
