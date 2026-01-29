@@ -34,6 +34,13 @@ from shared.validation.historical_completeness import (
     MINIMUM_GAMES_THRESHOLD,
 )
 
+# Phase 3 Data Quality Check (Pipeline Resilience - Jan 2026)
+from shared.validation.phase3_data_quality_check import (
+    Phase3DataQualityChecker,
+    QualityCheckResult,
+    check_phase3_quality,
+)
+
 __all__ = [
     'EXPECTED_PREDICTION_SYSTEMS',
     'PHASE2_SOURCES',
@@ -46,4 +53,8 @@ __all__ = [
     'HistoricalCompletenessResult',
     'WINDOW_SIZE',
     'MINIMUM_GAMES_THRESHOLD',
+    # Phase 3 Data Quality Check
+    'Phase3DataQualityChecker',
+    'QualityCheckResult',
+    'check_phase3_quality',
 ]

@@ -243,6 +243,9 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             self.OUTPUT_TABLE = self.table_name
             self.OUTPUT_DATASET = self.dataset_id
             data_date = opts.get('end_date') or opts.get('start_date')
+            # Define analysis_date early so it's available for all logging throughout the run
+            # This prevents "cannot access local variable 'analysis_date'" errors in exception handlers
+            analysis_date = data_date
             self.start_run_tracking(
                 data_date=data_date,
                 trigger_source=opts.get('trigger_source', 'manual'),
@@ -418,8 +421,7 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
 
                 # Structured logging for processor start with dependency status (added 2026-01-27)
                 # Enables diagnosis of "why did X run before Y?" by showing when deps became available
-                # Get analysis_date for logging (use end_date as primary, fall back to start_date)
-                analysis_date = self.opts.get('end_date') or self.opts.get('start_date')
+                # Note: analysis_date is defined earlier in run() to ensure availability in all code paths
                 logger.info("processor_started", extra={
                     "event": "processor_started",
                     "processor": self.processor_name,
@@ -458,7 +460,7 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
 
                     # DEFENSE 1: Check if yesterday's upstream processor succeeded
                     # (Prevents cascade failure scenario where Monday fails, Tuesday runs anyway)
-                    analysis_date = self.opts.get('end_date') or self.opts.get('start_date')
+                    # Note: analysis_date is defined earlier in run() to ensure availability in all code paths
                     if analysis_date and hasattr(self, 'upstream_processor_name'):
                         yesterday = analysis_date - timedelta(days=1) if isinstance(analysis_date, date) else None
 
@@ -550,8 +552,8 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             # Detects which entities changed since last processing
             # Enables 99%+ efficiency gain for mid-day updates
             # Falls back to full batch if change detection fails
+            # Note: analysis_date is defined earlier in run() to ensure availability in all code paths
             # ═══════════════════════════════════════════════════════════════
-            analysis_date = self.opts.get('end_date') or self.opts.get('start_date')
 
             # Check if entities_changed was passed from upstream (orchestrator)
             if opts.get('entities_changed'):

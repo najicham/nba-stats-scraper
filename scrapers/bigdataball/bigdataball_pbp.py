@@ -31,6 +31,7 @@ import os
 import sys
 import io
 import json
+import time
 import pandas as pd
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -66,6 +67,11 @@ logger = logging.getLogger(__name__)
 # --------------------------------------------------------------------------- #
 # Optimized PBP Scraper (FOCUSED ON SPECIFIC GAMES)
 # --------------------------------------------------------------------------- #
+class GameNotFoundError(Exception):
+    """Raised when a game file is not found on BigDataBall (may be released later)."""
+    pass
+
+
 class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
     """Optimized scraper for downloading specific BigDataBall games by ID."""
 
@@ -82,6 +88,10 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
     required_opts: List[str] = []
     download_type = DownloadType.BINARY  # We're downloading CSV files
     decode_download_data = True  # We manually populate decoded_data
+
+    # Retry configuration for late file releases
+    MAX_RETRIES = 3
+    RETRY_DELAYS = [30, 60, 120]  # Exponential backoff in seconds
 
     # ------------------------------------------------------------------ #
     # Exporters (includes capture support)
@@ -215,78 +225,150 @@ class BigDataBallPbpScraper(ScraperBase, ScraperFlaskMixin):
     # Download & Decode (Override for Google Drive)                     #
     # ------------------------------------------------------------------ #
     def download_and_decode(self):
-        """Override to use Google Drive API instead of HTTP requests"""
-        try:
-            # Search for the specific game file
-            self.step_info("drive_search", "Searching for specific game", 
-                          extra={"query": self.opts["search_query"]})
-            
-            files = self._search_drive_files()
-            if not files:
-                error_msg = f"No game found matching query: {self.opts['search_query']}"
-                
-                # Send warning notification for missing game
+        """Override to use Google Drive API instead of HTTP requests.
+
+        Includes retry logic with exponential backoff to handle cases where
+        BigDataBall releases files late (hours after game ends).
+        """
+        last_error = None
+
+        for attempt in range(self.MAX_RETRIES + 1):
+            try:
+                self._download_and_decode_attempt(attempt)
+                return  # Success - exit retry loop
+
+            except GameNotFoundError as e:
+                last_error = e
+
+                if attempt < self.MAX_RETRIES:
+                    delay = self.RETRY_DELAYS[attempt]
+                    logger.warning(
+                        "Game not found (attempt %d/%d), retrying in %d seconds: %s",
+                        attempt + 1, self.MAX_RETRIES + 1, delay, str(e)
+                    )
+                    self.step_info(
+                        "retry_scheduled",
+                        f"Game file not available yet. Retry {attempt + 1}/{self.MAX_RETRIES} in {delay}s",
+                        extra={
+                            "attempt": attempt + 1,
+                            "max_retries": self.MAX_RETRIES,
+                            "delay_seconds": delay,
+                            "game_id": self.opts.get("game_id"),
+                            "teams": self.opts.get("teams")
+                        }
+                    )
+                    time.sleep(delay)
+                else:
+                    # All retries exhausted
+                    logger.error(
+                        "All %d retry attempts exhausted. Game file not found: %s",
+                        self.MAX_RETRIES + 1, str(e)
+                    )
+
+                    # Send final error notification
+                    try:
+                        notify_error(
+                            title="BigDataBall Game Not Found After Retries",
+                            message=f"Game file not available after {self.MAX_RETRIES + 1} attempts (total wait: {sum(self.RETRY_DELAYS)}s)",
+                            details={
+                                'scraper': 'bigdataball_pbp',
+                                'total_attempts': self.MAX_RETRIES + 1,
+                                'total_wait_seconds': sum(self.RETRY_DELAYS),
+                                'game_id': self.opts.get('game_id'),
+                                'teams': self.opts.get('teams'),
+                                'search_query': self.opts.get('search_query')
+                            },
+                            processor_name=self.__class__.__name__
+                        )
+                    except Exception as notify_ex:
+                        logger.warning(f"Failed to send notification: {notify_ex}")
+
+                    raise
+
+            except Exception as e:
+                # Non-retryable errors - fail immediately
+                logger.error(f"Non-retryable error in BigDataBall download_and_decode: {e}")
+
+                # Send error notification for download failures
+                try:
+                    notify_error(
+                        title="BigDataBall Download Failed",
+                        message=f"Failed to download game data: {str(e)}",
+                        details={
+                            'scraper': 'bigdataball_pbp',
+                            'error_type': type(e).__name__,
+                            'game_id': self.opts.get('game_id'),
+                            'teams': self.opts.get('teams'),
+                            'search_query': self.opts.get('search_query')
+                        },
+                        processor_name="BigDataBall PBP Scraper"
+                    )
+                except Exception as notify_ex:
+                    logger.warning(f"Failed to send notification: {notify_ex}")
+
+                raise
+
+    def _download_and_decode_attempt(self, attempt: int):
+        """Single attempt to download and decode the game file.
+
+        Args:
+            attempt: The current attempt number (0-indexed)
+
+        Raises:
+            GameNotFoundError: If the game file is not found (retryable)
+            Exception: For other errors (non-retryable)
+        """
+        # Search for the specific game file
+        self.step_info("drive_search", f"Searching for specific game (attempt {attempt + 1})",
+                      extra={"query": self.opts["search_query"], "attempt": attempt + 1})
+
+        files = self._search_drive_files()
+        if not files:
+            error_msg = f"No game found matching query: {self.opts['search_query']}"
+
+            # Only send warning notification on first attempt
+            if attempt == 0:
                 try:
                     notify_warning(
                         title="BigDataBall Game Not Found",
-                        message=error_msg,
+                        message=f"{error_msg} - will retry with exponential backoff",
                         details={
                             'scraper': 'bigdataball_pbp',
                             'search_query': self.opts['search_query'],
                             'game_id': self.opts.get('game_id'),
-                            'teams': self.opts.get('teams')
+                            'teams': self.opts.get('teams'),
+                            'max_retries': self.MAX_RETRIES,
+                            'retry_delays': self.RETRY_DELAYS
                         },
                         processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-                
-                raise ValueError(error_msg)
 
-            # Get the target file (should be only one for specific game)
-            target_file = self._get_target_file(files)
-            self.step_info("drive_file_found", f"Found game file: {target_file['name']}", 
-                          extra={"file_id": target_file['id'], "modified": target_file.get('modifiedTime')})
+            raise GameNotFoundError(error_msg)
 
-            # Download the file
-            self.downloaded_file_path = self._download_drive_file(target_file)
-            
-            # Store the raw CSV content
-            with open(self.downloaded_file_path, 'rb') as f:
-                raw_content = f.read()
-            
-            # Create a mock response object for compatibility with base class
-            class MockResponse:
-                def __init__(self, content):
-                    self.content = content
-                    self.status_code = 200
-            
-            self.raw_response = MockResponse(raw_content)
-            
-            # Process CSV file into decoded_data
-            self._process_csv_file()
-            
-        except Exception as e:
-            logger.error(f"Error in BigDataBall download_and_decode: {e}")
-            
-            # Send error notification for download failures
-            try:
-                notify_error(
-                    title="BigDataBall Download Failed",
-                    message=f"Failed to download game data: {str(e)}",
-                    details={
-                        'scraper': 'bigdataball_pbp',
-                        'error_type': type(e).__name__,
-                        'game_id': self.opts.get('game_id'),
-                        'teams': self.opts.get('teams'),
-                        'search_query': self.opts.get('search_query')
-                    },
-                    processor_name="BigDataBall PBP Scraper"
-                )
-            except Exception as notify_ex:
-                logger.warning(f"Failed to send notification: {notify_ex}")
-            
-            raise
+        # Get the target file (should be only one for specific game)
+        target_file = self._get_target_file(files)
+        self.step_info("drive_file_found", f"Found game file: {target_file['name']}",
+                      extra={"file_id": target_file['id'], "modified": target_file.get('modifiedTime')})
+
+        # Download the file
+        self.downloaded_file_path = self._download_drive_file(target_file)
+
+        # Store the raw CSV content
+        with open(self.downloaded_file_path, 'rb') as f:
+            raw_content = f.read()
+
+        # Create a mock response object for compatibility with base class
+        class MockResponse:
+            def __init__(self, content):
+                self.content = content
+                self.status_code = 200
+
+        self.raw_response = MockResponse(raw_content)
+
+        # Process CSV file into decoded_data
+        self._process_csv_file()
 
     def _search_drive_files(self) -> List[Dict]:
         """Search for the specific game file"""

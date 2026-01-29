@@ -407,8 +407,11 @@ class ParameterResolver:
         Returns list of parameter sets (one per game).
         """
         games = context.get('games_today', [])
+        target_date = context.get('target_date', context.get('execution_date', ''))
 
         if not games:
+            # Validate whether empty games is expected (offseason) or not
+            self._validate_games_list(games, target_date, 'nbac_play_by_play', context)
             logger.warning("No games today for play-by-play scraper")
             return []
 
@@ -435,8 +438,11 @@ class ParameterResolver:
         so we only need to pass the date, not iterate per game.
         """
         games = context.get('games_today', [])
+        target_date = context.get('target_date', context.get('execution_date', ''))
 
         if not games:
+            # Validate whether empty games is expected (offseason) or not
+            self._validate_games_list(games, target_date, 'nbac_player_boxscore', context)
             logger.warning("No games today for game-specific scraper")
             return {'date': context['execution_date']}
 
@@ -457,8 +463,11 @@ class ParameterResolver:
         Returns list of parameter sets (one per game).
         """
         games = context.get('games_today', [])
+        target_date = context.get('target_date', context.get('execution_date', ''))
 
         if not games:
+            # Validate whether empty games is expected (offseason) or not
+            self._validate_games_list(games, target_date, 'bigdataball_pbp', context)
             logger.warning("No games today for bigdataball_pbp scraper")
             return []
 
@@ -483,8 +492,11 @@ class ParameterResolver:
         Returns list of parameter sets (one per game).
         """
         games = context.get('games_today', [])
+        target_date = context.get('target_date', context.get('execution_date', ''))
 
         if not games:
+            # Validate whether empty games is expected (offseason) or not
+            self._validate_games_list(games, target_date, 'nbac_team_boxscore', context)
             logger.warning("No games today for nbac_team_boxscore scraper")
             return []
 
@@ -632,8 +644,11 @@ class ParameterResolver:
         Returns list of parameter sets to iterate over ALL games.
         """
         games = context.get('games_today', [])
+        target_date = context.get('target_date', context.get('execution_date', ''))
 
         if not games:
+            # Validate whether empty games is expected (offseason) or not
+            self._validate_games_list(games, target_date, 'nbac_gamebook_pdf', context)
             logger.warning("No games today for gamebook PDF scraper")
             return []
 
@@ -735,7 +750,85 @@ class ParameterResolver:
     # ========================================================================
     # Helper Methods
     # ========================================================================
-    
+
+    def _is_offseason(self, date_str: str) -> bool:
+        """
+        Check if a date falls within the NBA offseason.
+
+        The NBA offseason is typically July through September:
+        - Regular season ends in April
+        - Playoffs run through June
+        - Draft is in late June
+        - Free agency starts July 1
+        - Regular season starts in October
+
+        Args:
+            date_str: Date string in YYYY-MM-DD format
+
+        Returns:
+            True if the date is in the offseason (July-September), False otherwise
+        """
+        try:
+            parsed_date = datetime.strptime(date_str, '%Y-%m-%d')
+            month = parsed_date.month
+            # Offseason is July (7), August (8), September (9)
+            return month in (7, 8, 9)
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Could not parse date '{date_str}' for offseason check: {e}")
+            # Default to False (assume it's NOT offseason) to trigger alerts on bad dates
+            return False
+
+    def _validate_games_list(
+        self,
+        games: List,
+        date_str: str,
+        scraper_name: str,
+        context: Dict[str, Any]
+    ) -> None:
+        """
+        Validate that an empty games list is expected (offseason) or unexpected (potential issue).
+
+        This prevents silent failures when the schedule service is broken but returns
+        empty data instead of raising an error.
+
+        Args:
+            games: List of game objects from schedule service
+            date_str: Target date string (YYYY-MM-DD)
+            scraper_name: Name of the scraper requesting games
+            context: Workflow context for additional logging
+
+        Raises:
+            RuntimeError: If games list is empty during non-offseason (critical failure)
+        """
+        if games:
+            # Games exist, nothing to validate
+            return
+
+        workflow_name = context.get('workflow_name', 'unknown')
+
+        if self._is_offseason(date_str):
+            # Empty games during offseason is expected
+            logger.info(
+                f"No games for {date_str} - this is expected during offseason "
+                f"(scraper: {scraper_name}, workflow: {workflow_name})"
+            )
+            return
+
+        # NOT offseason but no games - this is suspicious
+        # Log CRITICAL to trigger alerting
+        logger.critical(
+            f"ALERT: No games returned for {date_str} but we are NOT in offseason! "
+            f"This may indicate a schedule service failure. "
+            f"Scraper: {scraper_name}, Workflow: {workflow_name}. "
+            f"Check schedule service health and GCS/BigQuery connectivity."
+        )
+
+        # Raise an error to prevent silent failure
+        raise RuntimeError(
+            f"Empty games list for {date_str} during non-offseason. "
+            f"Schedule service may be broken. Scraper: {scraper_name}"
+        )
+
     def get_current_season(self, current_time: datetime) -> str:
         """
         Determine current NBA season based on date.

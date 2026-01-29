@@ -360,6 +360,44 @@ class PlayerGameSummaryProcessor(
 
         return is_available, count
 
+    def _check_source_data_available(self, start_date: str, end_date: str) -> tuple[bool, int]:
+        """
+        Pre-extraction check for upstream data availability.
+
+        Runs a quick COUNT(*) query on the primary source (nbac_gamebook_player_stats)
+        to verify data exists before running expensive extraction queries.
+        This prevents "No data extracted" errors and wasted BigQuery costs.
+
+        Args:
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
+
+        Returns:
+            (is_available, record_count) - True if data exists, False otherwise
+        """
+        query = f"""
+        SELECT COUNT(*) as record_count
+        FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
+        WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+            AND player_status = 'active'
+        """
+        try:
+            result = self.bq_client.query(query).result()
+            count = next(result).record_count
+            is_available = count > 0
+
+            if not is_available:
+                logger.warning(
+                    f"No source data available: nbac_gamebook_player_stats has 0 records "
+                    f"for date range {start_date} to {end_date}"
+                )
+
+            return is_available, count
+        except Exception as e:
+            logger.error(f"Error checking source data availability: {e}")
+            # On error, proceed with extraction (fail gracefully)
+            return True, -1
+
     def get_upstream_data_check_query(self, start_date: str, end_date: str) -> Optional[str]:
         """
         Check if upstream data is available for circuit breaker auto-reset.
@@ -456,6 +494,27 @@ class PlayerGameSummaryProcessor(
         """
         start_date = self.opts['start_date']
         end_date = self.opts['end_date']
+
+        # PRE-EXTRACTION DATA AVAILABILITY CHECK
+        # Run a quick COUNT(*) to verify upstream data exists before expensive queries
+        source_available, source_count = self._check_source_data_available(start_date, end_date)
+        if not source_available:
+            # Track the issue for monitoring
+            self.track_source_coverage_event(
+                event_type=SourceCoverageEventType.SOURCE_MISSING,
+                severity=SourceCoverageSeverity.WARNING,
+                source='nbac_gamebook_player_stats',
+                message=f"No source data available for date range {start_date} to {end_date}",
+                details={'record_count': source_count, 'date_range': f"{start_date} to {end_date}"}
+            )
+            logger.warning(
+                f"PRE-EXTRACTION CHECK: No data in nbac_gamebook_player_stats for {start_date} to {end_date}. "
+                f"Skipping extraction to avoid expensive queries."
+            )
+            self.raw_data = pd.DataFrame()
+            return
+
+        logger.info(f"PRE-EXTRACTION CHECK: Found {source_count} records in source table")
 
         # DEPENDENCY CHECKING: Already done in base class run() method!
         # Base class calls check_dependencies() and track_source_usage()

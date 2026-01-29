@@ -375,8 +375,18 @@ class DefenseZoneAnalyticsProcessor(
         - Paint (non-rim): 4 < shot_distance <= 8 feet
         - Mid-range: 8 < shot_distance AND shot_type = '2PT'
         - Three-point: shot_type = '3PT'
+
+        NOTE: NBA.com fallback handling (data_source = 'nbacom_fallback')
+        When BigDataBall is unavailable, PBP data comes from NBA.com with these limitations:
+        - Lineup fields are NULL (away_player_1_lookup through home_player_5_lookup)
+        - Contest tracking may be less accurate (player_2_role availability varies)
+
+        This query does NOT use lineup fields - only action event fields (player_1_team_abbr,
+        player_2_role, etc.) which ARE populated for both data sources. The query handles
+        NULL player_2_role gracefully by treating NULL as not contested/blocked.
         """
         # Try bigdataball first (better shot_distance data)
+        # NOTE: Query works for both 'bigdataball' and 'nbacom_fallback' data sources
         query = f"""
         WITH shot_events AS (
             SELECT
@@ -386,6 +396,7 @@ class DefenseZoneAnalyticsProcessor(
                 shot_type,
                 shot_distance,
                 shot_made,
+                data_source,  -- Track source for quality metadata
                 -- Classify zone with rim separation
                 CASE
                     WHEN shot_type = '3PT' THEN 'three_pt'
@@ -394,13 +405,14 @@ class DefenseZoneAnalyticsProcessor(
                     ELSE 'mid_range'
                 END as shot_zone,
                 -- Track if shot was contested (if player_2_role exists)
+                -- COALESCE handles NULL player_2_role gracefully (treats as not contested)
                 CASE
-                    WHEN player_2_role IN ('contest', 'block') THEN TRUE
+                    WHEN COALESCE(player_2_role, '') IN ('contest', 'block') THEN TRUE
                     ELSE FALSE
                 END as was_contested,
-                -- Track blocks
+                -- Track blocks (COALESCE for NULL-safety)
                 CASE
-                    WHEN player_2_role = 'block' THEN TRUE
+                    WHEN COALESCE(player_2_role, '') = 'block' THEN TRUE
                     ELSE FALSE
                 END as was_blocked,
                 home_team_abbr,
@@ -444,6 +456,11 @@ class DefenseZoneAnalyticsProcessor(
                 SUM(CASE WHEN shot_zone = 'mid_range' THEN 1 ELSE 0 END) as mid_range_fga_allowed,
                 SUM(CASE WHEN shot_zone = 'mid_range' AND shot_made THEN 1 ELSE 0 END) as mid_range_fg_allowed,
 
+                -- Data source quality tracking
+                -- Count how many events came from fallback vs primary source
+                SUM(CASE WHEN data_source = 'nbacom_fallback' THEN 1 ELSE 0 END) as fallback_event_count,
+                COUNT(*) as total_event_count,
+
                 MAX(processed_at) as processed_at
 
             FROM shot_events
@@ -451,7 +468,16 @@ class DefenseZoneAnalyticsProcessor(
         )
 
         SELECT *,
-            'bigdataball_play_by_play' as data_source
+            -- If ANY events came from fallback, note the mixed source
+            CASE
+                WHEN fallback_event_count > 0 AND fallback_event_count < total_event_count
+                    THEN 'mixed_bigdataball_nbacom'
+                WHEN fallback_event_count = total_event_count
+                    THEN 'nbacom_fallback'
+                ELSE 'bigdataball'
+            END as data_source,
+            -- Calculate fallback percentage for quality scoring
+            SAFE_DIVIDE(fallback_event_count, total_event_count) as fallback_pct
         FROM defense_stats
         ORDER BY game_date DESC, game_id
         """
@@ -464,6 +490,20 @@ class DefenseZoneAnalyticsProcessor(
                 self.source_tracking['play_by_play']['rows_found'] = len(df)
                 if 'processed_at' in df.columns and not df['processed_at'].isna().all():
                     self.source_tracking['play_by_play']['last_updated'] = df['processed_at'].max()
+
+                # Track NBA.com fallback usage for quality monitoring
+                if 'fallback_pct' in df.columns:
+                    fallback_records = (df['data_source'] == 'nbacom_fallback').sum()
+                    mixed_records = (df['data_source'] == 'mixed_bigdataball_nbacom').sum()
+                    if fallback_records > 0 or mixed_records > 0:
+                        logger.warning(
+                            f"NBA.com fallback detected: {fallback_records} full fallback, "
+                            f"{mixed_records} mixed source records. "
+                            f"Lineup fields (away_player_1-5, home_player_1-5) are NULL for fallback data."
+                        )
+                        self.source_tracking['play_by_play']['has_fallback_data'] = True
+                        self.source_tracking['play_by_play']['fallback_count'] = fallback_records + mixed_records
+
                 logger.info(f"Extracted {len(df)} play-by-play records from bigdataball")
                 return
         except Exception as e:
@@ -954,6 +994,11 @@ class DefenseZoneAnalyticsProcessor(
         """
         Assess data quality based on available data.
 
+        Handles NBA.com fallback data gracefully:
+        - When data_source = 'nbacom_fallback', lineup fields are NULL
+        - Contest/block tracking may be less accurate with fallback data
+        - Slight quality penalty applied but data is still usable
+
         Returns:
             (tier, score, issues) tuple
         """
@@ -964,6 +1009,21 @@ class DefenseZoneAnalyticsProcessor(
         if not pbp_data:
             issues.append('no_pbp_data')
             score -= 40
+        else:
+            # Check for NBA.com fallback data (lineup fields are NULL)
+            data_source = pbp_data.get('data_source', 'bigdataball')
+            if data_source == 'nbacom_fallback':
+                issues.append('nbacom_fallback_no_lineups')
+                score -= 5  # Minor penalty - core stats still accurate
+            elif data_source == 'mixed_bigdataball_nbacom':
+                issues.append('mixed_source_data')
+                score -= 3  # Very minor penalty for mixed sources
+
+            # Check fallback percentage if available
+            fallback_pct = pbp_data.get('fallback_pct', 0)
+            if fallback_pct and fallback_pct > 0.5:
+                issues.append('high_fallback_ratio')
+                score -= 5  # Additional penalty if >50% is fallback
 
         # Check if we have boxscore data
         if not boxscore_data:

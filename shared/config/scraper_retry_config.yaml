@@ -231,8 +231,8 @@ scrapers:
   # BIGDATABALL PLAY-BY-PLAY - 94% coverage, Google Drive dependent
   # --------------------------------------------------------------------------
   bigdataball_pbp:
-    enabled: false  # Enable when monitoring shows consistent gaps
-    priority: LOW
+    enabled: true
+    priority: MEDIUM
 
     comparison:
       source_table: "nba_raw.nbac_schedule"

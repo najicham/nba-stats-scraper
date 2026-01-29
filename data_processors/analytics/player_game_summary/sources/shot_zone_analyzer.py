@@ -88,11 +88,22 @@ class ShotZoneAnalyzer:
         """
         Extract shot zones from BigDataBall PBP (primary source, has coordinates).
 
+        NOTE: NBA.com fallback handling
+        When data_source = 'nbacom_fallback', the following fields are NULL:
+        - away_player_1_lookup through away_player_5_lookup
+        - home_player_1_lookup through home_player_5_lookup
+
+        This query does NOT use lineup fields - it only uses action event fields
+        (player_1_lookup, player_2_lookup, player_2_role) which ARE populated
+        for NBA.com fallback data. No special handling needed for fallback.
+
         Returns:
             True if extraction succeeded and returned data, False otherwise
         """
         try:
             # Query BigDataBall play-by-play for player shot zones, shot creation, and blocks
+            # NOTE: This query works correctly for both 'bigdataball' and 'nbacom_fallback'
+            # data sources because it only uses action event fields, NOT lineup fields.
             query = f"""
             WITH player_shots AS (
                 SELECT
@@ -106,7 +117,8 @@ class ShotZoneAnalyzer:
                         ELSE 'mid_range'
                     END as zone,
                     shot_made,
-                    player_2_role  -- 'assist' or 'block' or NULL
+                    player_2_role,  -- 'assist' or 'block' or NULL
+                    data_source  -- Track source for quality metadata
                 FROM `{self.project_id}.nba_raw.bigdataball_play_by_play`
                 WHERE event_type = 'shot'
                     AND shot_made IS NOT NULL
@@ -167,8 +179,12 @@ class ShotZoneAnalyzer:
                     COUNT(CASE WHEN zone = 'three' THEN 1 END) as three_attempts_pbp,
                     COUNT(CASE WHEN zone = 'three' AND shot_made = TRUE THEN 1 END) as three_makes_pbp,
                     -- Assisted vs unassisted field goals
+                    -- NULL player_2_role is treated as unassisted (defensive for NBA.com fallback)
                     COUNT(CASE WHEN shot_made = TRUE AND player_2_role = 'assist' THEN 1 END) as assisted_fg_makes,
-                    COUNT(CASE WHEN shot_made = TRUE AND (player_2_role IS NULL OR player_2_role NOT IN ('assist', 'block')) THEN 1 END) as unassisted_fg_makes
+                    COUNT(CASE WHEN shot_made = TRUE AND COALESCE(player_2_role, '') NOT IN ('assist', 'block') THEN 1 END) as unassisted_fg_makes,
+                    -- Track data source mix for quality monitoring
+                    SUM(CASE WHEN data_source = 'nbacom_fallback' THEN 1 ELSE 0 END) as fallback_count,
+                    COUNT(*) as total_events
                 FROM player_shots
                 GROUP BY game_id, player_lookup
             )
@@ -186,7 +202,10 @@ class ShotZoneAnalyzer:
                 COALESCE(a.and1_count, 0) as and1_count,
                 b.paint_blocks,
                 b.mid_range_blocks,
-                b.three_pt_blocks
+                b.three_pt_blocks,
+                -- Data source quality indicator
+                s.fallback_count,
+                s.total_events
             FROM shot_aggregates s
             LEFT JOIN and1_events a ON s.game_id = a.game_id AND s.player_lookup = a.player_lookup
             LEFT JOIN block_aggregates b ON s.game_id = b.game_id AND s.player_lookup = b.blocker_lookup
@@ -197,6 +216,7 @@ class ShotZoneAnalyzer:
             if not shot_zones_df.empty:
                 # Convert to dict keyed by (game_id, player_lookup)
                 blocks_found = 0
+                fallback_player_games = 0
                 for _, row in shot_zones_df.iterrows():
                     key = (row['game_id'], row['player_lookup'])
                     self.shot_zone_data[key] = {
@@ -215,6 +235,17 @@ class ShotZoneAnalyzer:
                     # Count players with any blocks
                     if pd.notna(row['paint_blocks']) or pd.notna(row['mid_range_blocks']) or pd.notna(row['three_pt_blocks']):
                         blocks_found += 1
+                    # Track NBA.com fallback usage
+                    fallback_count = int(row.get('fallback_count', 0) or 0)
+                    if fallback_count > 0:
+                        fallback_player_games += 1
+
+                # Log if any fallback data detected
+                if fallback_player_games > 0:
+                    logger.warning(
+                        f"BigDataBall: {fallback_player_games}/{len(self.shot_zone_data)} player-games "
+                        f"contain NBA.com fallback data (lineup fields are NULL for those records)"
+                    )
 
                 logger.debug(f"BigDataBall: Extracted {len(self.shot_zone_data)} player-games, {blocks_found} with blocks")
                 return True

@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS `nba_raw.bigdataball_play_by_play` (
   source_file_path STRING NOT NULL,          -- GCS path to source CSV
   csv_filename STRING,                       -- Original CSV filename from Google Drive
   csv_row_number INT64,                      -- Row number in source CSV
+  data_source STRING,                        -- 'bigdataball' (primary) or 'nbacom_fallback' (when BDB unavailable)
 
   -- Smart Idempotency (Pattern #14)
   data_hash STRING,                          -- SHA256 hash of meaningful fields: game_id, event_id, period, game_clock, event_type, score_home, score_away

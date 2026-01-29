@@ -18,6 +18,8 @@ Critical Features:
 - **MODE-AWARE ORCHESTRATION**: Different processor expectations for overnight vs same-day vs tomorrow
 - **HEALTH CHECK INTEGRATION**: Validates downstream services before triggering
 - **GRACEFUL DEGRADATION**: Triggers if critical processors + majority complete
+- **MINUTES COVERAGE ALERTING**: Alert < 90%, Block < 80% minutes_played coverage
+- **DATA QUALITY CHECK**: Comprehensive Phase 3 data quality validation before Phase 4
 
 Phase 3 Processors:
 - player_game_summary
@@ -26,9 +28,9 @@ Phase 3 Processors:
 - upcoming_player_game_context
 - upcoming_team_game_context
 
-Version: 1.3 - Added R-008 data freshness validation
+Version: 1.5 - Added comprehensive Phase 3 data quality check (NULL rates, field completeness, coverage)
 Created: 2025-11-29
-Updated: 2026-01-19
+Updated: 2026-01-28
 """
 
 import base64
@@ -44,6 +46,7 @@ import pytz
 import requests
 from shared.clients.bigquery_pool import get_bigquery_client
 from shared.validation.phase_boundary_validator import PhaseBoundaryValidator, ValidationMode
+from shared.validation.phase3_data_quality_check import Phase3DataQualityChecker, QualityCheckResult
 from shared.utils.phase_execution_logger import log_phase_execution
 from orchestration.shared.utils.slack_retry import send_slack_webhook_with_retry
 
@@ -356,6 +359,17 @@ def check_phase4_services_health() -> Tuple[bool, Dict[str, Dict]]:
 COVERAGE_THRESHOLD_PCT = float(os.environ.get('COVERAGE_THRESHOLD_PCT', '80.0'))
 COVERAGE_GATING_ENABLED = os.environ.get('COVERAGE_GATING_ENABLED', 'true').lower() == 'true'
 
+# Phase 3 data quality check configuration
+# This is a comprehensive check that validates NULL rates, field completeness,
+# minutes coverage, and record counts BEFORE triggering Phase 4
+DATA_QUALITY_CHECK_ENABLED = os.environ.get('DATA_QUALITY_CHECK_ENABLED', 'true').lower() == 'true'
+
+# Minutes coverage thresholds for alerting and blocking
+# Alert immediately when coverage < 90%, Block Phase 4 when coverage < 80%
+MINUTES_COVERAGE_ALERT_THRESHOLD_PCT = float(os.environ.get('MINUTES_COVERAGE_ALERT_THRESHOLD_PCT', '90.0'))
+MINUTES_COVERAGE_BLOCK_THRESHOLD_PCT = float(os.environ.get('MINUTES_COVERAGE_BLOCK_THRESHOLD_PCT', '80.0'))
+MINUTES_COVERAGE_ENABLED = os.environ.get('MINUTES_COVERAGE_ENABLED', 'true').lower() == 'true'
+
 # R-008: Data freshness validation for Phase 3 analytics tables
 # Required Phase 3 tables that must have data before Phase 4 can proceed
 REQUIRED_PHASE3_TABLES = [
@@ -515,6 +529,354 @@ def check_data_coverage(game_date: str) -> tuple:
         logger.error(f"Coverage check failed: {e}", exc_info=True)
         # On error, allow transition (fail-open) but log warning
         return (True, 0.0, {'error': str(e), 'fail_open': True})
+
+
+def check_minutes_coverage(game_date: str) -> tuple:
+    """
+    Check minutes_played coverage for players in player_game_summary.
+
+    This validates that players have valid minutes_played data (not NULL and > 0).
+    Coverage < 90% triggers an alert, < 80% blocks Phase 4 transition.
+
+    Args:
+        game_date: The date to check (YYYY-MM-DD)
+
+    Returns:
+        tuple: (should_alert: bool, should_block: bool, coverage_pct: float, details: dict)
+            - should_alert: True if coverage < MINUTES_COVERAGE_ALERT_THRESHOLD_PCT (90%)
+            - should_block: True if coverage < MINUTES_COVERAGE_BLOCK_THRESHOLD_PCT (80%)
+            - coverage_pct: Percentage of players with valid minutes_played
+            - details: Dict with total_players, players_with_minutes, games, game_details
+    """
+    if not MINUTES_COVERAGE_ENABLED:
+        logger.info("Minutes coverage check disabled, skipping")
+        return (False, False, 100.0, {'minutes_coverage_disabled': True})
+
+    try:
+        bq_client = get_bigquery_client(project_id=PROJECT_ID)
+
+        # Query to check minutes coverage per game and overall
+        query = f"""
+        WITH player_minutes AS (
+            SELECT
+                game_id,
+                player_lookup,
+                minutes_played,
+                CASE
+                    WHEN minutes_played IS NOT NULL AND minutes_played > 0 THEN 1
+                    ELSE 0
+                END as has_valid_minutes
+            FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+            WHERE game_date = '{game_date}'
+        ),
+        game_level AS (
+            SELECT
+                game_id,
+                COUNT(*) as total_players,
+                SUM(has_valid_minutes) as players_with_minutes,
+                ROUND(100.0 * SUM(has_valid_minutes) / NULLIF(COUNT(*), 0), 1) as coverage_pct
+            FROM player_minutes
+            GROUP BY game_id
+        )
+        SELECT
+            (SELECT COUNT(*) FROM player_minutes) as total_players,
+            (SELECT SUM(has_valid_minutes) FROM player_minutes) as players_with_minutes,
+            (SELECT COUNT(DISTINCT game_id) FROM player_minutes) as total_games,
+            ARRAY_AGG(
+                STRUCT(
+                    game_id,
+                    total_players,
+                    players_with_minutes,
+                    coverage_pct
+                )
+                ORDER BY coverage_pct ASC
+            ) as game_details
+        FROM game_level
+        """
+
+        result = list(bq_client.query(query).result())
+
+        if not result:
+            logger.warning(f"Minutes coverage check returned no results for {game_date}")
+            return (False, False, 100.0, {'error': 'No results from query', 'no_data': True})
+
+        row = result[0]
+        total_players = row.total_players or 0
+        players_with_minutes = row.players_with_minutes or 0
+        total_games = row.total_games or 0
+        game_details = row.game_details if row.game_details else []
+
+        # Calculate overall coverage percentage
+        if total_players == 0:
+            # No players found - consider this as 100% coverage (no data to check)
+            coverage_pct = 100.0
+            logger.info(f"No players found for {game_date}, minutes coverage = 100%")
+        else:
+            coverage_pct = (players_with_minutes / total_players) * 100
+
+        # Determine if we should alert or block
+        should_alert = coverage_pct < MINUTES_COVERAGE_ALERT_THRESHOLD_PCT
+        should_block = coverage_pct < MINUTES_COVERAGE_BLOCK_THRESHOLD_PCT
+
+        # Find games with lowest coverage (for alerting)
+        low_coverage_games = [
+            g for g in game_details
+            if g.coverage_pct < MINUTES_COVERAGE_ALERT_THRESHOLD_PCT
+        ] if game_details else []
+
+        details = {
+            'total_players': total_players,
+            'players_with_minutes': players_with_minutes,
+            'coverage_pct': round(coverage_pct, 1),
+            'alert_threshold_pct': MINUTES_COVERAGE_ALERT_THRESHOLD_PCT,
+            'block_threshold_pct': MINUTES_COVERAGE_BLOCK_THRESHOLD_PCT,
+            'total_games': total_games,
+            'low_coverage_games': [
+                {
+                    'game_id': g.game_id,
+                    'total_players': g.total_players,
+                    'players_with_minutes': g.players_with_minutes,
+                    'coverage_pct': g.coverage_pct
+                }
+                for g in low_coverage_games[:5]  # Limit to first 5 games
+            ],
+            'players_missing_minutes': total_players - players_with_minutes
+        }
+
+        # Log appropriately based on coverage level
+        if should_block:
+            logger.error(
+                f"Minutes coverage CRITICAL for {game_date}: {coverage_pct:.1f}% "
+                f"({players_with_minutes}/{total_players} players) < {MINUTES_COVERAGE_BLOCK_THRESHOLD_PCT}% BLOCK threshold. "
+                f"Phase 4 will be BLOCKED."
+            )
+        elif should_alert:
+            logger.warning(
+                f"Minutes coverage WARNING for {game_date}: {coverage_pct:.1f}% "
+                f"({players_with_minutes}/{total_players} players) < {MINUTES_COVERAGE_ALERT_THRESHOLD_PCT}% alert threshold. "
+                f"Phase 4 will proceed with warning."
+            )
+        else:
+            logger.info(
+                f"Minutes coverage OK for {game_date}: {coverage_pct:.1f}% "
+                f"({players_with_minutes}/{total_players} players) >= {MINUTES_COVERAGE_ALERT_THRESHOLD_PCT}%"
+            )
+
+        return (should_alert, should_block, coverage_pct, details)
+
+    except Exception as e:
+        logger.error(f"Minutes coverage check failed: {e}", exc_info=True)
+        # On error, don't alert or block (fail-open) but log warning
+        return (False, False, 0.0, {'error': str(e), 'fail_open': True})
+
+
+def send_minutes_coverage_alert(
+    game_date: str,
+    coverage_pct: float,
+    details: dict,
+    is_blocking: bool
+) -> bool:
+    """
+    Send Slack alert when minutes coverage is below threshold.
+
+    Args:
+        game_date: The date being processed
+        coverage_pct: Actual minutes coverage percentage
+        details: Minutes coverage check details
+        is_blocking: True if this is a blocking alert (< 80%), False for warning (< 90%)
+
+    Returns:
+        True if alert sent successfully, False otherwise
+    """
+    if not SLACK_WEBHOOK_URL:
+        logger.warning("SLACK_WEBHOOK_URL not configured, skipping minutes coverage alert")
+        return False
+
+    try:
+        # Format low coverage games for display
+        low_coverage_games = details.get('low_coverage_games', [])
+        games_text = ""
+        if low_coverage_games:
+            games_list = [
+                f"• `{g['game_id']}`: {g['coverage_pct']:.1f}% ({g['players_with_minutes']}/{g['total_players']} players)"
+                for g in low_coverage_games
+            ]
+            games_text = "\n".join(games_list)
+        else:
+            games_text = "No game-level details available"
+
+        # Color and header based on severity
+        if is_blocking:
+            color = "#FF0000"  # Red for blocking
+            header_emoji = ":no_entry:"
+            header_text = "Phase 4 BLOCKED - Critical Minutes Coverage"
+            context_text = ":warning: Phase 4 will NOT run. Missing minutes_played data indicates data extraction failures. Check Phase 2/3 processor logs."
+        else:
+            color = "#FFA500"  # Orange for warning
+            header_emoji = ":warning:"
+            header_text = "Minutes Coverage Warning - Phase 4 Proceeding"
+            context_text = ":eyes: Phase 4 will proceed but data quality is degraded. Consider investigating missing minutes data."
+
+        payload = {
+            "attachments": [{
+                "color": color,
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": f"{header_emoji} {header_text}",
+                            "emoji": True
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Minutes coverage {coverage_pct:.1f}% is below {'blocking' if is_blocking else 'alert'} threshold!*\n"
+                                   f"{'Blocking' if is_blocking else 'Alert'} threshold: {details.get('block_threshold_pct' if is_blocking else 'alert_threshold_pct', 'N/A')}%"
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
+                            {"type": "mrkdwn", "text": f"*Coverage:*\n{coverage_pct:.1f}%"},
+                            {"type": "mrkdwn", "text": f"*Total Players:*\n{details.get('total_players', 0)}"},
+                            {"type": "mrkdwn", "text": f"*With Minutes:*\n{details.get('players_with_minutes', 0)}"},
+                            {"type": "mrkdwn", "text": f"*Missing Minutes:*\n{details.get('players_missing_minutes', 0)}"},
+                            {"type": "mrkdwn", "text": f"*Games Checked:*\n{details.get('total_games', 0)}"},
+                        ]
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Low Coverage Games:*\n{games_text}"
+                        }
+                    },
+                    {
+                        "type": "context",
+                        "elements": [{
+                            "type": "mrkdwn",
+                            "text": context_text
+                        }]
+                    }
+                ]
+            }]
+        }
+
+        success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
+        if success:
+            logger.info(
+                f"Minutes coverage {'blocking' if is_blocking else 'warning'} alert sent "
+                f"successfully for {game_date}"
+            )
+        return success
+
+    except Exception as e:
+        logger.error(f"Failed to send minutes coverage alert: {e}", exc_info=True)
+        return False
+
+
+def send_data_quality_alert(game_date: str, quality_result: 'QualityCheckResult') -> bool:
+    """
+    Send Slack alert when Phase 3 data quality check fails (BLOCKING mode).
+
+    Args:
+        game_date: The date being processed
+        quality_result: QualityCheckResult from Phase3DataQualityChecker
+
+    Returns:
+        True if alert sent successfully, False otherwise
+    """
+    if not SLACK_WEBHOOK_URL:
+        logger.warning("SLACK_WEBHOOK_URL not configured, skipping data quality alert")
+        return False
+
+    try:
+        blocking_issues = quality_result.blocking_issues
+        warnings = quality_result.warnings
+
+        # Format blocking issues
+        issues_text = "\n".join([
+            f"- [{issue.category.value}] {issue.table_name}: {issue.message}"
+            for issue in blocking_issues[:10]  # Limit to 10 issues
+        ])
+
+        # Format metrics
+        metrics_text = "\n".join([
+            f"- {k}: {v:.1f}" if isinstance(v, float) else f"- {k}: {v}"
+            for k, v in list(quality_result.metrics.items())[:8]  # Limit to 8 metrics
+        ])
+
+        payload = {
+            "attachments": [{
+                "color": "#FF0000",  # Red for blocking errors
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": ":rotating_light: Phase 4 BLOCKED - Data Quality Check FAILED",
+                            "emoji": True
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": (
+                                f"*CRITICAL: Phase 4 trigger BLOCKED due to data quality issues!*\n"
+                                f"Phase 3 analytics data for {game_date} failed quality validation."
+                            )
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*Date:*\n{game_date}"},
+                            {"type": "mrkdwn", "text": f"*Blocking Issues:*\n{len(blocking_issues)}"},
+                            {"type": "mrkdwn", "text": f"*Warnings:*\n{len(warnings)}"},
+                            {"type": "mrkdwn", "text": f"*Check Time:*\n{quality_result.check_timestamp.strftime('%H:%M:%S UTC')}"},
+                        ]
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Blocking Issues:*\n```{issues_text}```"
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Quality Metrics:*\n```{metrics_text}```"
+                        }
+                    },
+                    {
+                        "type": "context",
+                        "elements": [{
+                            "type": "mrkdwn",
+                            "text": (
+                                ":no_entry: Phase 4 will NOT run until Phase 3 data quality issues are resolved. "
+                                "Check Phase 3 processor logs and upstream data sources."
+                            )
+                        }]
+                    }
+                ]
+            }]
+        }
+
+        success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
+        if success:
+            logger.info(f"Data quality alert sent successfully for {game_date}")
+        return success
+
+    except Exception as e:
+        logger.error(f"Failed to send data quality alert: {e}", exc_info=True)
+        return False
 
 
 def send_coverage_alert(game_date: str, coverage_pct: float, details: dict) -> bool:
@@ -1282,9 +1644,95 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
                 f"Cannot trigger Phase 4 with partial data."
             )
 
+        # MINUTES COVERAGE CHECK: Verify players have valid minutes_played data
+        # Alert at < 90%, Block at < 80%
+        minutes_should_alert, minutes_should_block, minutes_coverage_pct, minutes_details = check_minutes_coverage(game_date)
+
+        if minutes_should_block:
+            logger.error(
+                f"Minutes coverage check FAILED for {game_date}: {minutes_coverage_pct:.1f}% "
+                f"< {MINUTES_COVERAGE_BLOCK_THRESHOLD_PCT}% BLOCK threshold. "
+                f"BLOCKING Phase 4 trigger to prevent NULL cascades in downstream processing."
+            )
+            send_minutes_coverage_alert(game_date, minutes_coverage_pct, minutes_details, is_blocking=True)
+
+            raise ValueError(
+                f"Minutes coverage insufficient for {game_date}: {minutes_coverage_pct:.1f}% "
+                f"(block threshold: {MINUTES_COVERAGE_BLOCK_THRESHOLD_PCT}%). "
+                f"Missing minutes for {minutes_details.get('players_missing_minutes', 0)} players. "
+                f"Cannot trigger Phase 4 with incomplete minutes data."
+            )
+        elif minutes_should_alert:
+            # Coverage is between 80-90% - alert but proceed
+            logger.warning(
+                f"Minutes coverage WARNING for {game_date}: {minutes_coverage_pct:.1f}% "
+                f"< {MINUTES_COVERAGE_ALERT_THRESHOLD_PCT}% alert threshold. "
+                f"Proceeding with Phase 4 but data quality may be degraded."
+            )
+            send_minutes_coverage_alert(game_date, minutes_coverage_pct, minutes_details, is_blocking=False)
+
+        logger.info(
+            f"Basic validation gates passed for {game_date}: "
+            f"data_exists=True, coverage={coverage_pct:.1f}%, minutes_coverage={minutes_coverage_pct:.1f}%"
+        )
+
+        # PHASE 3 DATA QUALITY CHECK: Comprehensive validation of Phase 3 analytics data
+        # This check validates NULL rates, field completeness, and record counts
+        # More thorough than the basic checks above
+        quality_check_passed = True
+        quality_result = None
+
+        if DATA_QUALITY_CHECK_ENABLED:
+            try:
+                quality_checker = Phase3DataQualityChecker(
+                    bq_client=get_bigquery_client(),
+                    project_id=PROJECT_ID
+                )
+
+                quality_result = quality_checker.run_quality_check(game_date)
+
+                if not quality_result.passed:
+                    quality_check_passed = False
+                    logger.error(
+                        f"Phase 3 data quality check FAILED for {game_date}. "
+                        f"Blocking issues: {len(quality_result.blocking_issues)}, "
+                        f"Warnings: {len(quality_result.warnings)}. "
+                        f"BLOCKING Phase 4 trigger."
+                    )
+
+                    # Send Slack alert
+                    send_data_quality_alert(game_date, quality_result)
+
+                    # CRITICAL: Raise exception to BLOCK Phase 4
+                    blocking_messages = [issue.message for issue in quality_result.blocking_issues]
+                    raise ValueError(
+                        f"Phase 3 data quality check failed for {game_date}. "
+                        f"Blocking issues: {blocking_messages[:5]}. "
+                        f"Cannot trigger Phase 4 with low-quality analytics data."
+                    )
+                else:
+                    if quality_result.warnings:
+                        logger.warning(
+                            f"Phase 3 data quality check passed with {len(quality_result.warnings)} warnings for {game_date}"
+                        )
+                    else:
+                        logger.info(f"Phase 3 data quality check PASSED for {game_date}")
+
+            except ValueError:
+                # Re-raise validation failures to block Phase 4
+                raise
+            except Exception as quality_check_error:
+                # Log error but don't block Phase 4 (fail-open for infra issues)
+                logger.error(
+                    f"Phase 3 data quality check framework error (non-blocking): {quality_check_error}",
+                    exc_info=True
+                )
+                quality_check_passed = True  # Fail-open
+
         logger.info(
             f"All validation gates passed for {game_date}: "
-            f"data_exists=True, coverage={coverage_pct:.1f}%"
+            f"data_exists=True, coverage={coverage_pct:.1f}%, minutes_coverage={minutes_coverage_pct:.1f}%, "
+            f"quality_check={'passed' if quality_check_passed else 'skipped'}"
         )
 
         # Enhanced Phase Boundary Validation (BLOCKING mode)
@@ -1443,6 +1891,11 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
             'missing_tables': missing_tables if not is_ready else [],
             'table_row_counts': table_counts,
 
+            # Minutes coverage validation results
+            'minutes_coverage_pct': minutes_coverage_pct,
+            'minutes_coverage_alert': minutes_should_alert,
+            'players_missing_minutes': minutes_details.get('players_missing_minutes', 0),
+
             # Optional metadata from upstream
             'parent_execution_id': upstream_message.get('execution_id'),
             'parent_processor': 'Phase3Orchestrator'
@@ -1474,6 +1927,9 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
                 "trigger_reason": trigger_reason,
                 "data_freshness_verified": is_ready,
                 "coverage_pct": coverage_pct,
+                "minutes_coverage_pct": minutes_coverage_pct,
+                "minutes_coverage_alert": minutes_should_alert,
+                "players_missing_minutes": minutes_details.get('players_missing_minutes', 0),
                 "players_changed": len(all_player_changes),
                 "teams_changed": len(all_team_changes),
                 "is_incremental": any_incremental,
@@ -1606,7 +2062,7 @@ try:
     _health_checker = CachedHealthChecker(
         service_name='phase3_to_phase4_orchestrator',
         project_id=PROJECT_ID,
-        version='1.4',
+        version='1.5',  # Updated for data quality check integration
         cache_ttl_seconds=30,
         check_bigquery=True,
         check_firestore=True,
@@ -1637,6 +2093,7 @@ def health(request):
         result['expected_processors'] = EXPECTED_PROCESSOR_COUNT
         result['mode_aware_enabled'] = MODE_AWARE_ENABLED
         result['data_freshness_validation'] = 'enabled'
+        result['data_quality_check_enabled'] = DATA_QUALITY_CHECK_ENABLED
 
         status_code = 200 if result['status'] == 'healthy' else 503
         return json.dumps(result), status_code, {'Content-Type': 'application/json'}
@@ -1649,7 +2106,8 @@ def health(request):
             'mode_aware_enabled': MODE_AWARE_ENABLED,
             'health_check_enabled': HEALTH_CHECK_ENABLED,
             'data_freshness_validation': 'enabled',
-            'version': '1.4',
+            'data_quality_check_enabled': DATA_QUALITY_CHECK_ENABLED,
+            'version': '1.5',
             'cached_health': 'unavailable'
         }), 200, {'Content-Type': 'application/json'}
 
