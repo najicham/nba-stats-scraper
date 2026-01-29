@@ -114,6 +114,8 @@ class MonitorResult:
     phases: List[PhaseStats] = field(default_factory=list)
     overall_status: Severity = Severity.OK
     errors_by_processor: Dict[str, int] = field(default_factory=dict)
+    expected_no_data_errors: Dict[str, int] = field(default_factory=dict)
+    expected_no_data_count: int = 0
 
     def add_phase(self, phase: PhaseStats):
         """Add phase stats and update overall status."""
@@ -146,6 +148,8 @@ class PhaseSuccessMonitor:
         self.phase3_threshold = phase3_threshold
         self.phase4_threshold = phase4_threshold
         self.bq_client = bigquery.Client(project=project_id)
+        self._game_dates_cache = None
+        self._cache_hours = None
 
     def check_success_rates(self, hours: int = 2) -> MonitorResult:
         """
@@ -195,8 +199,11 @@ class PhaseSuccessMonitor:
         )
         result.add_phase(phase_4)
 
-        # Get error breakdown
-        result.errors_by_processor = self._query_error_breakdown(hours)
+        # Get error breakdown with categorization
+        real_errors, expected_no_data, expected_count = self._query_error_breakdown(hours)
+        result.errors_by_processor = real_errors
+        result.expected_no_data_errors = expected_no_data
+        result.expected_no_data_count = expected_count
 
         # Print results
         self._print_results(result)
@@ -267,36 +274,126 @@ class PhaseSuccessMonitor:
             logger.error(f"Failed to query phase success rates: {e}")
             return {}
 
-    def _query_error_breakdown(self, hours: int) -> Dict[str, int]:
+    def _get_game_dates_with_games(self, hours: int) -> set:
         """
-        Query for error counts by processor.
+        Get dates that actually had games scheduled.
+
+        This is cached per hours value to avoid redundant queries.
 
         Args:
             hours: Number of hours to look back
 
         Returns:
-            Dict mapping processor_name to error count
+            Set of dates (as datetime.date objects) that had games
         """
+        # Use cache if available for same time range
+        if self._game_dates_cache is not None and self._cache_hours == hours:
+            return self._game_dates_cache
+
+        query = f"""
+        SELECT DISTINCT game_date
+        FROM `{self.project_id}.nba_raw.nbac_schedule`
+        WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL @days DAY)
+          AND game_date <= CURRENT_DATE()
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("days", "INT64", (hours // 24) + 2)
+            ]
+        )
+
+        try:
+            result = self.bq_client.query(query, job_config=job_config).result()
+            game_dates = {row.game_date for row in result}
+
+            # Cache the result
+            self._game_dates_cache = game_dates
+            self._cache_hours = hours
+
+            logger.debug(f"Found {len(game_dates)} dates with scheduled games")
+            return game_dates
+
+        except Exception as e:
+            logger.warning(f"Failed to query game schedule: {e}")
+            return set()
+
+    def _query_error_breakdown(self, hours: int) -> tuple[Dict[str, int], Dict[str, int], int]:
+        """
+        Query for error counts by processor, categorized as real vs expected.
+
+        Args:
+            hours: Number of hours to look back
+
+        Returns:
+            Tuple of (real_errors_by_processor, expected_no_data_by_processor, total_expected_count)
+        """
+        # Get dates with scheduled games
+        game_dates = self._get_game_dates_with_games(hours)
+
         query = f"""
         SELECT
             processor_name,
+            error_message,
+            game_date,
             COUNT(*) as error_count
         FROM `{self.project_id}.{self.dataset}.pipeline_event_log`
         WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {hours} HOUR)
           AND event_type = 'error'
           AND phase IN ('phase_3', 'phase_4')
-        GROUP BY processor_name
+        GROUP BY processor_name, error_message, game_date
         ORDER BY error_count DESC
-        LIMIT 10
         """
 
         try:
             results = list(self.bq_client.query(query).result())
-            return {row.processor_name: row.error_count for row in results}
+
+            real_errors = {}
+            expected_no_data = {}
+            total_expected = 0
+
+            for row in results:
+                processor = row.processor_name
+                error_msg = row.error_message or ""
+                game_date = row.game_date
+                count = row.error_count
+
+                # Check if this is an expected "no data" error
+                if self._is_expected_no_data_error(error_msg, game_date, game_dates):
+                    expected_no_data[processor] = expected_no_data.get(processor, 0) + count
+                    total_expected += count
+                else:
+                    # Real error
+                    real_errors[processor] = real_errors.get(processor, 0) + count
+
+            return real_errors, expected_no_data, total_expected
 
         except Exception as e:
             logger.warning(f"Failed to query error breakdown: {e}")
-            return {}
+            return {}, {}, 0
+
+    def _is_expected_no_data_error(self, error_message: str, game_date, game_dates: set) -> bool:
+        """
+        Check if a 'no data' error is expected (no games that day).
+
+        Args:
+            error_message: The error message text
+            game_date: The date of the error
+            game_dates: Set of dates that had scheduled games
+
+        Returns:
+            True if this is an expected no-data error (no games scheduled)
+        """
+        # Must be a "no data" error
+        if 'No data extracted' not in error_message:
+            return False
+
+        # If no game_date available, can't determine
+        if game_date is None:
+            return False
+
+        # Expected if there were no games scheduled on this date
+        return game_date not in game_dates
 
     def _print_results(self, result: MonitorResult):
         """Print monitoring results to console."""
@@ -319,15 +416,29 @@ class PhaseSuccessMonitor:
             print(f"   Errors: {phase.error_count}")
             print(f"   Success Rate: {phase.success_rate:.1f}% (threshold: {phase.threshold}%)")
 
+        print("\n" + "-" * 50)
+        print("ERRORS BY CATEGORY")
+        print("-" * 50)
+
+        total_real_errors = sum(result.errors_by_processor.values())
+        print(f"\n✗ Real Errors (need attention): {total_real_errors}")
         if result.errors_by_processor:
-            print("\n" + "-" * 50)
-            print("TOP ERRORS BY PROCESSOR")
-            print("-" * 50)
-            for processor, count in result.errors_by_processor.items():
-                print(f"   {processor}: {count} errors")
+            for processor, count in sorted(result.errors_by_processor.items(), key=lambda x: x[1], reverse=True)[:10]:
+                print(f"   - {processor}: {count}")
+        else:
+            print("   (none)")
+
+        print(f"\n✓ Expected No-Data (filtered): {result.expected_no_data_count}")
+        if result.expected_no_data_errors:
+            print("   These errors are from dates with no games scheduled:")
+            for processor, count in sorted(result.expected_no_data_errors.items(), key=lambda x: x[1], reverse=True)[:5]:
+                print(f"   - {processor}: {count}")
+        else:
+            print("   (none)")
 
         print("\n" + "=" * 70)
         print(f"OVERALL STATUS: {status_icons[result.overall_status]} {result.overall_status.value.upper()}")
+        print(f"Alert Noise Reduction: {result.expected_no_data_count} false positives filtered")
         print("=" * 70 + "\n")
 
     def send_slack_alert(self, result: MonitorResult) -> bool:
@@ -392,14 +503,21 @@ class PhaseSuccessMonitor:
                     }
                 })
 
-        # Add error breakdown if available
+        # Add error breakdown if available (only real errors)
         if result.errors_by_processor:
+            total_real = sum(result.errors_by_processor.values())
             error_lines = [f"- {proc}: {count} errors" for proc, count in list(result.errors_by_processor.items())[:5]]
+            error_text = f"*Real Errors (need attention): {total_real}*\n" + "\n".join(error_lines)
+
+            # Mention filtered errors if any
+            if result.expected_no_data_count > 0:
+                error_text += f"\n\n_({result.expected_no_data_count} expected no-data errors filtered)_"
+
             blocks.append({
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": "*Top Errors by Processor:*\n" + "\n".join(error_lines)
+                    "text": error_text
                 }
             })
 
