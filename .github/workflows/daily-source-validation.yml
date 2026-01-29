@@ -1,0 +1,83 @@
+name: Daily Source Validation
+
+# Run at 11 AM UTC (after games complete and are processed)
+on:
+  schedule:
+    - cron: '0 11 * * *'
+  workflow_dispatch:
+    inputs:
+      date:
+        description: 'Date to validate (YYYY-MM-DD)'
+        required: false
+
+jobs:
+  scrape-basketball-reference:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install basketball-reference-web-scraper google-cloud-bigquery requests
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Scrape Basketball Reference
+        env:
+          SCRAPER_PROXY_URL: ${{ secrets.SCRAPER_PROXY_URL }}
+        run: |
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            python scrapers/basketball_reference/bref_boxscore_scraper.py --date ${{ github.event.inputs.date }}
+          else
+            python scrapers/basketball_reference/bref_boxscore_scraper.py
+          fi
+
+  validate-sources:
+    runs-on: ubuntu-latest
+    needs: scrape-basketball-reference
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install google-cloud-bigquery requests
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Run Cross-Source Validation
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            python bin/monitoring/cross_source_validator.py --date ${{ github.event.inputs.date }}
+          else
+            python bin/monitoring/cross_source_validator.py
+          fi
+
+      - name: Generate Report
+        if: always()
+        run: |
+          echo "## Daily Source Validation Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- Basketball Reference data scraped" >> $GITHUB_STEP_SUMMARY
+          echo "- Cross-source comparison completed" >> $GITHUB_STEP_SUMMARY
+          echo "- Discrepancies logged to BigQuery" >> $GITHUB_STEP_SUMMARY
+          echo "- Slack alerts sent for major issues" >> $GITHUB_STEP_SUMMARY
