@@ -26,11 +26,14 @@ Session 15 continues from Session 13/14 to fix the prediction pipeline. Multiple
 - **Commit**: c4f8f339
 - **Status**: Code committed, deployment verified (revision 00072-rt5)
 
-### 2. Prediction Coordinator Wrong Code Deployed (NEW)
-- **Symptom**: `prediction-coordinator` service returns `"service": "analytics_processors"`
-- **Root Cause**: Deployment used wrong Dockerfile or source
+### 2. Prediction Coordinator Deployment Issues (IN PROGRESS)
+- **Symptom**: `prediction-coordinator` service returns 503 "Service Unavailable"
+- **Old Issue**: Previous revision (00098-qd8) returned `"service": "analytics_processors"` (wrong code)
+- **New Issue**: Rebuilt with correct Dockerfile (00099-6dx) but container fails to serve requests
+- **Evidence**: Container starts, gunicorn boots, but requests get "malformed response or connection error"
+- **Root Cause**: Unknown - possible cold start timeout or initialization issue
 - **Impact**: Predictions cannot be triggered
-- **Status**: Needs redeployment
+- **Status**: Investigating
 
 ### 3. ML Feature Store Not Populated for Today
 - **Symptom**: `ml_feature_store_v2` has 0 rows for 2026-01-29

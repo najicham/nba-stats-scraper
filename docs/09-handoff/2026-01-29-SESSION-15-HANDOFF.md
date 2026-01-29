@@ -17,6 +17,45 @@ cat docs/09-handoff/2026-01-29-SESSION-15-HANDOFF.md
 
 ---
 
+## P0 CRITICAL: Prediction Coordinator Broken (Added Session 15b)
+
+**Status**: Predictions cannot be generated for 2026-01-29
+
+### Current State
+- **prediction-coordinator 00098-qd8**: Returns wrong service name ("analytics_processors")
+- **prediction-coordinator 00099-6dx**: Fails with 503 "Service Unavailable"
+- **Result**: 0 predictions for today (7 games)
+
+### What Session 15b Discovered
+1. Phase 4 root endpoint fix (c4f8f339) was committed but never deployed - **NOW DEPLOYED**
+2. Prediction coordinator has wrong code in all revisions
+3. ML Feature Store has 0 records for today (blocked on coordinator)
+
+### Immediate Fix Needed
+```bash
+# Investigation needed for why 00099-6dx returns 503
+# Container starts, gunicorn boots, TCP probe passes
+# But requests fail with "malformed response or connection error"
+
+# Check logs:
+gcloud logging read 'resource.labels.revision_name="prediction-coordinator-00099-6dx"' \
+  --limit=100 --freshness=1h
+
+# Test locally:
+cd predictions/coordinator
+docker build -f Dockerfile -t test-coordinator ../..
+docker run -p 8080:8080 test-coordinator
+curl localhost:8080/health
+```
+
+### Deployment Status
+```
+nba-phase4-precompute-processors: 00072-rt5 (UPDATED - root endpoint fix)
+prediction-coordinator:           00098-qd8 (WRONG CODE - needs investigation)
+```
+
+---
+
 ## Session 15 Summary
 
 ### What Was Accomplished
