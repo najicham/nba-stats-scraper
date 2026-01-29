@@ -213,6 +213,82 @@ def check_predictions(game_date: str) -> Tuple[str, str]:
         return ('warn', f'Error checking predictions: {str(e)[:100]}')
 
 
+def check_bigquery_quota() -> Tuple[str, str]:
+    """
+    Check BigQuery quota usage to prevent cascading failures.
+
+    Monitors load_table_from_json calls which have a hard limit of 1500/table/day.
+
+    Returns:
+        Tuple of (status, message)
+    """
+    from google.cloud import logging as cloud_logging
+
+    LOAD_JOBS_LIMIT = 1500
+    WARNING_THRESHOLD = 0.80  # 80%
+    CRITICAL_THRESHOLD = 0.95  # 95%
+
+    try:
+        log_client = cloud_logging.Client(project=PROJECT_ID)
+
+        # Calculate time window (last 24 hours)
+        end_time = datetime.now(timezone.utc)
+        start_time = end_time - timedelta(hours=24)
+
+        # Build filter for load job completions
+        log_filter = f"""
+        resource.type="bigquery_resource"
+        protoPayload.methodName="jobservice.jobcompleted"
+        protoPayload.serviceData.jobCompletedEvent.eventName="load_job_completed"
+        timestamp>="{start_time.isoformat()}"
+        timestamp<"{end_time.isoformat()}"
+        """
+
+        # Count jobs per table
+        from collections import defaultdict
+        table_counts = defaultdict(int)
+
+        entries = log_client.list_entries(
+            filter_=log_filter,
+            max_results=5000  # Sample - enough for health check
+        )
+
+        for entry in entries:
+            try:
+                job_config = entry.payload.get('serviceData', {}).get(
+                    'jobCompletedEvent', {}
+                ).get('job', {}).get('jobConfiguration', {}).get('load', {})
+
+                dest_table = job_config.get('destinationTable', {})
+                dataset_id = dest_table.get('datasetId')
+                table_id = dest_table.get('tableId')
+
+                if dataset_id and table_id:
+                    full_table_id = f"{dataset_id}.{table_id}"
+                    table_counts[full_table_id] += 1
+            except Exception:
+                continue
+
+        if not table_counts:
+            return ('pass', 'No load jobs in last 24h (using streaming or batching)')
+
+        # Find highest usage table
+        max_table = max(table_counts.items(), key=lambda x: x[1])
+        max_count = max_table[1]
+        max_pct = (max_count / LOAD_JOBS_LIMIT) * 100
+
+        if max_pct >= CRITICAL_THRESHOLD * 100:
+            return ('critical', f'{max_table[0]}: {max_count}/{LOAD_JOBS_LIMIT} ({max_pct:.0f}%) - QUOTA EXHAUSTION IMMINENT')
+        elif max_pct >= WARNING_THRESHOLD * 100:
+            return ('warn', f'{max_table[0]}: {max_count}/{LOAD_JOBS_LIMIT} ({max_pct:.0f}%) - approaching limit')
+        else:
+            return ('pass', f'Max usage: {max_count}/{LOAD_JOBS_LIMIT} ({max_pct:.0f}%) - healthy')
+
+    except Exception as e:
+        logger.warning(f"Error checking BigQuery quota: {e}")
+        return ('warn', f'Could not check quota: {str(e)[:80]}')
+
+
 def check_game_completeness(game_date: str) -> Tuple[str, str]:
     """
     Check if all expected games have complete data.
@@ -394,6 +470,14 @@ def daily_health_check(request):
 
     status, message = check_game_completeness(yesterday)
     results.add(f"Game Completeness ({yesterday})", status, message)
+
+    # ========================================================================
+    # CHECK 5: BigQuery Quota Usage (prevent cascading failures)
+    # ========================================================================
+    logger.info("Checking BigQuery quota usage...")
+
+    status, message = check_bigquery_quota()
+    results.add("BigQuery Quota", status, message)
 
     # ========================================================================
     # Send Results

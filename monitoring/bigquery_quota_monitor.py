@@ -228,13 +228,16 @@ def send_alert(
     dry_run: bool = False
 ):
     """
-    Send alert about quota usage.
+    Send alert about quota usage to Slack and logs.
 
     Args:
         critical_tables: Tables exceeding critical threshold
         warning_tables: Tables exceeding warning threshold
         dry_run: If True, just log alert instead of sending
     """
+    import os
+    import requests
+
     if not critical_tables and not warning_tables:
         logger.info("✅ All tables within quota limits")
         return
@@ -286,15 +289,83 @@ def send_alert(
     if dry_run:
         logger.info("DRY RUN - Would send alert:")
         logger.info(alert_message)
-    else:
-        # Log alert
-        logger.warning(alert_message)
+        return
 
-        # In production, integrate with:
-        # - Slack webhook
-        # - Email alerts
-        # - PagerDuty
-        # - Cloud Monitoring
+    # Log alert
+    logger.warning(alert_message)
+
+    # Send to Slack
+    slack_webhook = os.environ.get(
+        'SLACK_WEBHOOK_URL_ERROR' if critical_tables else 'SLACK_WEBHOOK_URL_WARNING'
+    )
+    if not slack_webhook:
+        slack_webhook = os.environ.get('SLACK_WEBHOOK_URL')
+
+    if slack_webhook:
+        try:
+            # Build Slack message with blocks for better formatting
+            blocks = [
+                {
+                    "type": "header",
+                    "text": {
+                        "type": "plain_text",
+                        "text": f"{emoji} BigQuery Quota Alert - {severity}",
+                        "emoji": True
+                    }
+                },
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": f"*Limit:* {LOAD_JOBS_PER_TABLE_LIMIT} load jobs/table/day (hard limit)"
+                    }
+                }
+            ]
+
+            # Add critical tables
+            if critical_tables:
+                critical_text = "*CRITICAL Tables (>95%):*\n"
+                for t in critical_tables[:5]:  # Limit to 5
+                    critical_text += f"• `{t['table_id']}`: {t['load_jobs']:,} ({t['usage_pct']}%)\n"
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": critical_text}
+                })
+
+            # Add warning tables
+            if warning_tables:
+                warning_text = "*WARNING Tables (>80%):*\n"
+                for t in warning_tables[:5]:  # Limit to 5
+                    warning_text += f"• `{t['table_id']}`: {t['load_jobs']:,} ({t['usage_pct']}%)\n"
+                blocks.append({
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": warning_text}
+                })
+
+            # Add action items
+            blocks.append({
+                "type": "context",
+                "elements": [{
+                    "type": "mrkdwn",
+                    "text": ":wrench: Use `BigQueryBatchWriter` to reduce load jobs by 100x"
+                }]
+            })
+
+            payload = {
+                "attachments": [{
+                    "color": "#FF0000" if critical_tables else "#FFA500",
+                    "blocks": blocks
+                }]
+            }
+
+            response = requests.post(slack_webhook, json=payload, timeout=10)
+            response.raise_for_status()
+            logger.info(f"Sent quota alert to Slack ({severity})")
+
+        except Exception as e:
+            logger.error(f"Failed to send Slack alert: {e}", exc_info=True)
+    else:
+        logger.warning("No Slack webhook configured (SLACK_WEBHOOK_URL_ERROR or SLACK_WEBHOOK_URL)")
 
 
 def log_quota_usage(
