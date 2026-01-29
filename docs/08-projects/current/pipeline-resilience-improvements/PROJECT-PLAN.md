@@ -9,7 +9,7 @@ This project addresses critical pipeline reliability issues discovered in Sessio
 - 2/7 games missing PBP data
 - 4-24 hour issue detection delay
 
-**Last Updated:** Session 10 (2026-01-28)
+**Last Updated:** Session 11 (2026-01-29)
 
 ## Timeline
 
@@ -42,14 +42,124 @@ This project addresses critical pipeline reliability issues discovered in Sessio
 | Implement exponential backoff | ⏳ Pending | Medium | Better rate limit handling |
 | Add betting data timeout | ⏳ Pending | Low | Graceful degradation |
 
-### Remaining Work (Post-Session 10)
+### Session 10 Completed Tasks
+| Task | Status | Notes |
+|------|--------|-------|
+| Pub/Sub backlog purge | ✅ Done | Stopped retry storm (7,160 retries/day → 0) |
+| Retry queue SQL fix | ✅ Done | Parameterized queries already in place |
+| Soft dependencies enablement | ✅ Done | All 5 Phase 4 processors use 80% threshold |
+| BigQuery migration for data_source column | ✅ Done | 282,562 rows backfilled |
+| Circuit breaker batching | ✅ Done | Already uses streaming inserts |
+| Deploy all services | ✅ Done | All 5 services deployed with latest code |
+
+### Session 11 Tasks
 | Task | Status | Priority | Notes |
 |------|--------|----------|-------|
-| Pub/Sub backlog purge | ⏳ Pending | High | Clear stale messages from queues |
-| Retry queue SQL fix | ⏳ Pending | High | Fix SQL syntax issues in retry logic |
-| Soft dependencies enablement | ⏳ Pending | Medium | Enable soft dependency handling |
-| BigQuery migration for data_source column | ⏳ Pending | Medium | Add data_source tracking column |
-| Circuit breaker batching | ⏳ Pending | Medium | Batch circuit breaker operations |
+| Reprocess Jan 27 missing games | ✅ Done | P0 | 1,077 rows (2 games: DET@DEN, BKN@PHX) |
+| Verify pipeline health | ✅ Done | P0 | Retry storm resolved, only 2 errors today |
+| Fix CleanupProcessor table name bug | ✅ Done | P0 | Was checking wrong table `bigdataball_pbp` |
+| Update data_gaps table for resolved games | ✅ Done | P1 | Marked Jan 27 as resolved |
+| Schedule phase_success_monitor | ⏳ Pending | P1 | Add Cloud Scheduler cron |
+| Test NBA.com fallback end-to-end | ⏳ Pending | P2 | Verify fallback works |
+| Add lineup reconstruction | ⏳ Pending | P2 | Long-term enhancement |
+
+## Session 11 Root Cause Findings
+
+### Why Jan 27 Games Weren't Auto-Processed
+
+**Problem:** 2 games (DET@DEN, BKN@PHX) had files in GCS but weren't loaded to BigQuery.
+
+**Root Cause:** Bug in `orchestration/cleanup_processor.py` line 265:
+```python
+# Was checking wrong table name
+'bigdataball_pbp',  # WRONG - table doesn't exist
+
+# Fixed to:
+'bigdataball_play_by_play',  # CORRECT - actual table name
+```
+
+**Detection Gap:**
+- The `scraper_execution_log` correctly logged all 7 games as "success"
+- The `pipeline_reconciliation` Cloud Function correctly detected the gap at 5:15 AM
+- The `data_gaps` table correctly tracked the missing games
+- BUT: The `CleanupProcessor` couldn't find the files to republish because it was querying the wrong table
+
+**Fix Applied:** Updated `cleanup_processor.py` to use correct table name `bigdataball_play_by_play`.
+
+### Reconciliation Architecture (Working)
+
+The reconciliation system has multiple layers that are working correctly:
+
+| Component | Schedule | Status | Notes |
+|-----------|----------|--------|-------|
+| `pipeline_reconciliation` | 6 AM ET daily | ✅ Working | Detected Jan 27 gaps correctly |
+| `data_gaps` table | N/A | ✅ Working | Tracking gaps correctly |
+| `CleanupProcessor` | Hourly | ⚠️ Fixed | Table name bug fixed in Session 11 |
+| `daily_health_check` | 8 AM ET daily | ✅ Working | Checks overall health |
+| `scraper_gap_backfiller` | Every 4 hours | ✅ Working | Auto-backfills scraper gaps |
+
+### What's Still Needed
+
+#### 1. Error Logging & Visibility (HIGH PRIORITY)
+
+Currently when a game isn't processed, we can't easily tell WHY. Need:
+
+| Enhancement | Description | Status |
+|-------------|-------------|--------|
+| **File Processing Log** | Log every GCS file arrival with processing status | ⏳ Needed |
+| **Phase 2 Pub/Sub Tracking** | Track message receipt vs processing success | ⏳ Needed |
+| **Gap Root Cause Field** | Add `failure_reason` to `data_gaps` table | ⏳ Needed |
+| **Real-time Gap Alerting** | Slack alert when gap detected (not just logged) | ⏳ Needed |
+| **Processing Journey View** | Dashboard showing file → Pub/Sub → Phase 2 → BQ status | ⏳ Needed |
+
+**Root Cause of Visibility Gap:**
+
+| Phase | Logs to pipeline_event_log? | Visibility |
+|-------|----------------------------|------------|
+| Phase 1 (Scrapers) | ❌ Only scraper_execution_log | File uploaded status |
+| Phase 2 (Raw) | ❌ No logging | **BLIND SPOT** |
+| Phase 3 (Analytics) | ✅ Yes | Full visibility |
+| Phase 4 (Precompute) | ✅ Yes | Full visibility |
+| Phase 5 (Predictions) | ✅ Yes | Full visibility |
+
+**Proposed Implementation (High Priority):**
+
+1. **Add Phase 2 processor logging** (`data_processors/raw/base_raw_processor.py`):
+```python
+# Add to RawProcessorBase
+def process_with_logging(self, gcs_path: str):
+    self._log_event('processor_start', gcs_path=gcs_path)
+    try:
+        result = self._process_file(gcs_path)
+        self._log_event('processor_complete', gcs_path=gcs_path, rows=result.rows)
+        return result
+    except Exception as e:
+        self._log_event('error', gcs_path=gcs_path, error=str(e))
+        raise
+```
+
+2. **Add failure_reason to data_gaps table**:
+```sql
+ALTER TABLE nba_orchestration.data_gaps ADD COLUMN IF NOT EXISTS
+  failure_reason STRING OPTIONS(description='pubsub_missed, processor_error, quota_exceeded, etc.');
+```
+
+3. **Add real-time gap alerting** in `pipeline_reconciliation`:
+```python
+# When gap detected, send immediate Slack alert
+if gaps_found:
+    send_slack_alert(f"🚨 {len(gaps)} games missing from {source}")
+```
+
+#### 2. Auto-Remediation for Detected Gaps
+
+When `pipeline_reconciliation` detects a gap:
+- Currently: Logs to `data_gaps` table
+- Needed: Auto-trigger backfill OR alert for manual intervention
+
+#### 3. CleanupProcessor Coverage Test
+
+Add test to verify all table names in `cleanup_processor.py` are valid BigQuery tables.
 
 ## Architecture Changes
 

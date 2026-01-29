@@ -237,38 +237,38 @@ class CleanupProcessor:
         Adjust query based on your actual Phase 2 schema
         """
         # All Phase 2 raw tables that track source_file_path
+        # IMPORTANT: Table names must match actual processor output tables
+        # Verified against: grep -rh "table_name = 'nba_raw" data_processors/raw/
+        # Last verified: Session 11 (2026-01-29)
         phase2_tables = [
             # NBAC (nba.com) tables
             'nbac_schedule',
             'nbac_team_boxscore',
-            'nbac_player_boxscore',
             'nbac_play_by_play',
             'nbac_injury_report',
             'nbac_scoreboard_v2',
-            'nbac_gamebook_pdf',
-            'nbac_player_list',
+            'nbac_gamebook_player_stats',  # Was: nbac_gamebook_pdf
             'nbac_player_movement',
-            'nbac_referee',
+            'nbac_referee_game_assignments',  # Was: nbac_referee
             # BallDontLie tables
             'bdl_player_boxscores',
-            'bdl_active_players',
+            'bdl_active_players_current',  # Was: bdl_active_players
             'bdl_injuries',
             'bdl_standings',
             'bdl_live_boxscores',
             # ESPN tables
             'espn_scoreboard',
-            'espn_rosters',
-            'espn_box_scores',
+            'espn_team_rosters',  # Was: espn_rosters
+            'espn_boxscores',  # Was: espn_box_scores
             # Basketball Reference tables
-            'br_rosters',
+            'br_rosters_current',  # Was: br_rosters
             # BigDataBall tables
-            'bigdataball_pbp',
+            'bigdataball_play_by_play',
             # Odds API tables
-            'odds_events',
-            'odds_player_props',
-            'odds_game_lines',
+            'odds_api_game_lines',  # Was: odds_game_lines
+            'odds_api_player_points_props',  # Was: odds_player_props
             # BettingPros tables
-            'bp_player_props',
+            'bettingpros_player_points_props',  # Was: bp_player_props
         ]
 
         # Build UNION ALL query for all tables
