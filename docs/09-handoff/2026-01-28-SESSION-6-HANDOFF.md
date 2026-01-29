@@ -35,14 +35,38 @@ This session performed comprehensive investigation and fixes using 6 parallel ag
 | Commit | Description |
 |--------|-------------|
 | Phase 2 processor name mapping | Added CLASS_TO_CONFIG_MAP for explicit mapping |
+| `ac1d4c47` | fix: Revert to v2_33features, fix Phase 2 trigger, add upgrade guide |
+| `968323e6` | fix: Replace hardcoded path with relative path in batch_state_manager |
 
 ### Services Deployed
 
 | Service | Old Revision | New Revision | Status |
 |---------|--------------|--------------|--------|
 | nba-phase3-analytics-processors | 00130 | 00131 | Current |
-| nba-phase4-precompute-processors | 00061 | 00062 | Current |
+| nba-phase4-precompute-processors | 00062 | 00063 | Current |
 | prediction-coordinator | 00093 | 00094 | Current |
+
+---
+
+## Final Results
+
+### Features Regenerated
+- **Date Range**: Jan 25-27, 2026
+- **Feature Version**: v2_33features (reverted from v2_34)
+- **Status**: Successfully regenerated with correct feature count
+
+### Predictions Generated
+| Game Date | Predictions | Status |
+|-----------|-------------|--------|
+| Jan 25, 2026 | 1,354 | Complete |
+| Jan 26, 2026 | 723 | Complete |
+| Jan 27, 2026 | 697 | Complete |
+| Jan 28, 2026 | 2,629 | Complete |
+
+### Services Redeployed (Final)
+| Service | Old Revision | New Revision |
+|---------|--------------|--------------|
+| nba-phase4-precompute-processors | 00062 | 00063 |
 
 ---
 
@@ -121,25 +145,12 @@ This session performed comprehensive investigation and fixes using 6 parallel ag
 
 ### HIGH Priority
 
-1. **Regenerate Predictions for Jan 26-27**
-   - Feature version is now back to v2_33 (reverted from v2_34)
-   - Jan 26-27 predictions can be regenerated after redeployment of feature processor
-   ```bash
-   # After redeployment, regenerate:
-   TOKEN=$(gcloud auth print-identity-token --audiences="https://prediction-coordinator-756957797294.us-west2.run.app")
-
-   curl -X POST https://prediction-coordinator-756957797294.us-west2.run.app/start \
-     -H "Authorization: Bearer $TOKEN" \
-     -H "Content-Type: application/json" \
-     -d '{"game_date": "2026-01-26", "force": true, "skip_completeness_check": true}'
-   ```
-
-2. **game_id Format Standardization**
+1. **game_id Format Standardization**
    - In progress but needs completion
    - Affects: team_offense, potentially other analytics tables
    - Goal: Single canonical format across all pipelines
 
-3. **Clean Up Duplicate Team Stats**
+2. **Clean Up Duplicate Team Stats**
    - 16+ duplicate records exist from format inconsistency
    ```sql
    -- Identify duplicates
@@ -152,13 +163,18 @@ This session performed comprehensive investigation and fixes using 6 parallel ag
 
 ### MEDIUM Priority
 
-4. **Feature Version Coordination Process**
+3. **Feature Version Coordination Process**
    - Document process for feature schema changes
    - Consider feature versioning in table (not just code)
 
-5. **Missing Boxscores Monitoring**
+4. **Missing Boxscores Monitoring**
    - Add alerting for expected games that don't receive data
    - Current missing: MIA@CHI (Jan 8), LAC@UTA (Jan 27)
+
+5. **Prediction Parallelism vs Batch Insert Investigation** (Ongoing)
+   - Need to investigate whether prediction generation parallelism conflicts with batch insert operations
+   - May be causing intermittent issues with prediction counts
+   - Consider: rate limiting, batch size tuning, or serialization
 
 ### LOW Priority
 
@@ -172,13 +188,15 @@ This session performed comprehensive investigation and fixes using 6 parallel ag
 
 Priority order for next session:
 
-- [ ] **P0**: Resolve feature version mismatch (v2_33 vs v2_34)
-- [ ] **P0**: Regenerate Jan 26-27 predictions after fix
+- [x] **P0**: ~~Resolve feature version mismatch (v2_33 vs v2_34)~~ - DONE (reverted to v2_33)
+- [x] **P0**: ~~Regenerate Jan 25-27 predictions~~ - DONE (Jan 25: 1,354, Jan 26: 723, Jan 27: 697)
 - [ ] **P1**: Complete game_id format standardization
 - [ ] **P1**: Clean up duplicate team stats records
+- [ ] **P1**: Investigate prediction parallelism vs batch insert issues
 - [ ] **P2**: Add feature version to feature store metadata
 - [ ] **P2**: Audit Phase 2 processor mappings
 - [ ] **P3**: Document feature schema change process
+- [ ] **P3**: Review and update troubleshooting runbooks based on session learnings
 
 ---
 
@@ -280,6 +298,7 @@ For issues outside Claude's scope:
 ---
 
 *Session ended: 2026-01-28*
-*Total services redeployed: 3*
+*Total services redeployed: 4 (Phase 3, Phase 4 x2, Coordinator)*
 *Parallel agents used: 6*
 *Root causes identified: 5*
+*Predictions regenerated: 5,403 total (Jan 25-28)*
