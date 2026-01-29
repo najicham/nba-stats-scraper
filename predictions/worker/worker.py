@@ -133,7 +133,7 @@ if TYPE_CHECKING:
     from execution_logger import ExecutionLogger
     from shared.utils.player_registry import RegistryReader, PlayerNotFoundError
     from batch_staging_writer import BatchStagingWriter, get_worker_id
-    from predictions.shared.injury_filter import InjuryFilter, InjuryStatus
+    from predictions.shared.injury_filter import InjuryFilter, InjuryStatus, DNPHistory
 
 from predictions.worker.write_metrics import PredictionWriteMetrics
 from shared.utils.bigquery_retry import retry_on_quota_exceeded
@@ -816,6 +816,34 @@ def process_player_predictions(
                 f"{injury_status.reason or 'no reason'}"
             )
 
+        # v4.1: Check DNP history for additional risk signal (from gamebook data)
+        # Catches late scratches, coach decisions not in pre-game injury report
+        dnp_history = injury_filter.check_dnp_history(player_lookup, game_date)
+
+        # Inject DNP history into features
+        features['dnp_history'] = {
+            'has_dnp_risk': dnp_history.has_dnp_risk,
+            'dnp_count': dnp_history.dnp_count,
+            'dnp_rate': dnp_history.dnp_rate,
+            'games_checked': dnp_history.games_checked,
+            'risk_category': dnp_history.risk_category,
+            'days_since_last_dnp': dnp_history.days_since_last_dnp,
+            'recent_reasons': dnp_history.recent_dnp_reasons[:2] if dnp_history.recent_dnp_reasons else []
+        }
+
+        # Track in metadata
+        metadata['dnp_history'] = {
+            'has_risk': dnp_history.has_dnp_risk,
+            'dnp_count': dnp_history.dnp_count,
+            'category': dnp_history.risk_category
+        }
+
+        if dnp_history.has_dnp_risk:
+            logger.info(
+                f"⚠️ DNP risk for {player_lookup}: {dnp_history.dnp_count}/{dnp_history.games_checked} "
+                f"recent games DNP ({dnp_history.risk_category or 'unknown'})"
+            )
+
         # v4.0: Calculate teammate injury impact for usage/points adjustments
         team_abbr = line_source_info.get('team_abbr')
         if team_abbr:
@@ -858,7 +886,9 @@ def process_player_predictions(
         features['injury_flag_at_prediction'] = None
         features['injury_reason_at_prediction'] = None
         features['injury_checked_at'] = None
+        features['dnp_history'] = None
         features['teammate_injury_impact'] = None
+        metadata['dnp_history'] = None
         metadata['teammate_impact'] = None
 
     # Step 2.5: Check feature completeness (Phase 5)

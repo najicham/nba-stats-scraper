@@ -308,3 +308,47 @@ class FeatureCalculator:
         logger.debug(f"Team win pct: wins={wins}, total={total_games}, pct={win_pct:.9f}")
 
         return win_pct
+
+    # ========================================================================
+    # FEATURE 33: DNP RATE
+    # ========================================================================
+
+    def calculate_dnp_rate(self, phase3_data: Dict) -> float:
+        """
+        Calculate DNP (Did Not Play) rate from recent games (v2.1).
+
+        Uses gamebook-based DNP tracking from player_game_summary to identify
+        players with patterns of coach decisions, injuries, or other DNPs that
+        may not appear in pre-game injury reports.
+
+        Based on analysis:
+        - 35%+ of DNPs are not in pre-game injury report
+        - Coach decisions, late scratches, G League assignments
+        - Higher DNP rate = higher risk of not playing
+
+        Args:
+            phase3_data: Dict containing last_10_games with is_dnp field
+
+        Returns:
+            float: DNP rate [0.0, 1.0], default 0.0 if no data
+        """
+        last_10_games = phase3_data.get('last_10_games', [])
+
+        # Need at least 3 games for meaningful calculation
+        if len(last_10_games) < 3:
+            logger.debug(f"Insufficient games for dnp_rate: {len(last_10_games)}/3")
+            return 0.0
+
+        # Count DNPs (handle None and False values)
+        dnp_count = sum(1 for g in last_10_games if g.get('is_dnp') is True)
+        total_games = len(last_10_games)
+
+        # Calculate rate
+        dnp_rate = float(dnp_count) / float(total_games)
+
+        # Round to 9 decimal places for BigQuery NUMERIC compatibility
+        dnp_rate = round(dnp_rate, NUMERIC_PRECISION)
+
+        logger.debug(f"DNP rate: dnp_count={dnp_count}, total={total_games}, rate={dnp_rate:.9f}")
+
+        return dnp_rate

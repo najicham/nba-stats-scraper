@@ -484,6 +484,7 @@ class FeatureExtractor:
                 paint_attempts,
                 mid_range_attempts,
                 three_pt_attempts,
+                is_dnp,  -- v3.1: Added for dnp_rate feature calculation
                 ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as rn
             FROM `{self.project_id}.nba_analytics.player_game_summary`
             WHERE game_date < '{game_date}'
@@ -499,6 +500,7 @@ class FeatureExtractor:
             l.paint_attempts,
             l.mid_range_attempts,
             l.three_pt_attempts,
+            l.is_dnp,  -- v3.1: Added for dnp_rate feature calculation
             t.total_games_available
         FROM last_10_games l
         JOIN total_games_per_player t ON l.player_lookup = t.player_lookup

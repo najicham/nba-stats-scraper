@@ -72,8 +72,8 @@ logger = logging.getLogger(__name__)
 # - Vegas lines (4): betting context for value detection
 # - Opponent history (2): player performance vs specific opponent
 # - Minutes/efficiency (2): playing time and scoring rate trends
-FEATURE_VERSION = 'v2_33features'
-FEATURE_COUNT = 33
+FEATURE_VERSION = 'v2_34features'
+FEATURE_COUNT = 34
 
 FEATURE_NAMES = [
     # Recent Performance (0-4)
@@ -95,14 +95,17 @@ FEATURE_NAMES = [
     # Team Context (22-24)
     'team_pace', 'team_off_rating', 'team_win_pct',
 
-    # NEW: Vegas Lines (25-28) - V8 Model Features
+    # Vegas Lines (25-28) - V8 Model Features
     'vegas_points_line', 'vegas_opening_line', 'vegas_line_move', 'has_vegas_line',
 
-    # NEW: Opponent History (29-30) - V8 Model Features
+    # Opponent History (29-30) - V8 Model Features
     'avg_points_vs_opponent', 'games_vs_opponent',
 
-    # NEW: Minutes/Efficiency (31-32) - V8 Model Features (14.6% + 10.9% importance)
-    'minutes_avg_last_10', 'ppm_avg_last_10'
+    # Minutes/Efficiency (31-32) - V8 Model Features (14.6% + 10.9% importance)
+    'minutes_avg_last_10', 'ppm_avg_last_10',
+
+    # DNP Risk (33) - v2.1 Gamebook-based DNP pattern detection
+    'dnp_rate'
 ]
 
 
@@ -114,19 +117,20 @@ class MLFeatureStoreProcessor(
     PrecomputeProcessorBase
 ):
     """
-    Generate and cache 33 ML features for all active NBA players.
+    Generate and cache 34 ML features for all active NBA players.
 
     This is a Phase 4 processor that:
     1. Checks Phase 4 dependencies (hard requirements)
     2. Queries Phase 4 tables for player data (preferred)
     3. Falls back to Phase 3 if Phase 4 incomplete
-    4. Calculates 6 derived features
+    4. Calculates 7 derived features (including dnp_rate)
     5. Extracts 8 V8 model features (Vegas, opponent, minutes/efficiency)
     6. Scores feature quality (0-100)
     7. Writes to nba_predictions.ml_feature_store_v2 in batches
 
     v2.0 (Nov 2025): Added v4.0 dependency tracking
     v3.0 (Jan 2026): Upgraded to 33 features for V8 CatBoost model
+    v3.1 (Jan 2026): Added Feature 33: dnp_rate (gamebook DNP pattern detection)
 
     Consumers: All 5 Phase 5 prediction systems (especially CatBoost V8)
     """
@@ -1241,6 +1245,12 @@ class MLFeatureStoreProcessor(
         ppm_avg = minutes_ppm_data.get('ppm_avg_last_10', 0.4)
         features.append(float(ppm_avg) if ppm_avg is not None else 0.4)
         feature_sources[32] = 'minutes_ppm' if minutes_ppm_data else 'fallback'
+
+        # Feature 33: DNP Rate (v2.1 - gamebook-based DNP pattern detection)
+        # Uses is_dnp field from player_game_summary to catch late scratches,
+        # coach decisions, and other DNPs not in pre-game injury reports
+        features.append(self.feature_calculator.calculate_dnp_rate(phase3_data))
+        feature_sources[33] = 'calculated'
 
         return features, feature_sources
     
