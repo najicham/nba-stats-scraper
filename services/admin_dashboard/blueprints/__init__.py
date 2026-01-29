@@ -12,6 +12,7 @@
 # - audit: Audit logs and summary
 # - partials: HTMX partial views
 # - source_blocks: Source-blocked resources monitoring
+# - data_quality: Data quality monitoring and prevention system effectiveness
 
 from .status import status_bp
 from .grading import grading_bp
@@ -24,6 +25,7 @@ from .actions import actions_bp
 from .audit import audit_bp
 from .partials import partials_bp
 from .source_blocks import source_blocks_bp
+from .data_quality import data_quality_bp
 
 
 def register_blueprints(app):
@@ -39,6 +41,7 @@ def register_blueprints(app):
     app.register_blueprint(audit_bp, url_prefix='/api/audit-logs')
     app.register_blueprint(partials_bp, url_prefix='/partials')
     app.register_blueprint(source_blocks_bp)  # Source blocks (includes /api/source-blocks and /source-blocks)
+    app.register_blueprint(data_quality_bp)  # Data quality (includes /api/data-quality/*)
 
 
 __all__ = [
@@ -53,5 +56,6 @@ __all__ = [
     'audit_bp',
     'partials_bp',
     'source_blocks_bp',
+    'data_quality_bp',
     'register_blueprints',
 ]
