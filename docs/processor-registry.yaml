@@ -132,7 +132,7 @@ phase_2_raw:
     # Ball Don't Lie (6 processors)
     # -------------------------------------------------------------------------
     - name: BdlLiveBoxscoresProcessor
-      file: data_processors/raw/bdl/bdl_live_boxscores_processor.py
+      file: data_processors/raw/balldontlie/bdl_live_boxscores_processor.py
       criticality: P1
       source: Ball Don't Lie API
       table: nba_raw.bdl_live_boxscores
@@ -142,16 +142,16 @@ phase_2_raw:
       notes: Time-series data, never updates existing rows
 
     - name: BdlActivePlayersProcessor
-      file: data_processors/raw/bdl/bdl_active_players_processor.py
+      file: data_processors/raw/balldontlie/bdl_active_players_processor.py
       criticality: P2
       source: Ball Don't Lie API
-      table: nba_raw.bdl_active_players
+      table: nba_raw.bdl_active_players_current
       strategy: MERGE_UPDATE
       dependencies: []
       description: Active player registry
 
     - name: BdlStandingsProcessor
-      file: data_processors/raw/bdl/bdl_standings_processor.py
+      file: data_processors/raw/balldontlie/bdl_standings_processor.py
       criticality: P2
       source: Ball Don't Lie API
       table: nba_raw.bdl_standings
@@ -160,7 +160,7 @@ phase_2_raw:
       description: Team standings
 
     - name: BdlPlayerBoxScoresProcessor
-      file: data_processors/raw/bdl/bdl_player_boxscores_processor.py
+      file: data_processors/raw/balldontlie/bdl_player_box_scores_processor.py
       criticality: P1
       source: Ball Don't Lie API
       table: nba_raw.bdl_player_boxscores
@@ -169,7 +169,7 @@ phase_2_raw:
       description: Player box scores (backup source)
 
     - name: BdlInjuriesProcessor
-      file: data_processors/raw/bdl/bdl_injuries_processor.py
+      file: data_processors/raw/balldontlie/bdl_injuries_processor.py
       criticality: P1
       source: Ball Don't Lie API
       table: nba_raw.bdl_injuries
@@ -178,7 +178,7 @@ phase_2_raw:
       description: Injury data (backup source)
 
     - name: BdlBoxscoresProcessor
-      file: data_processors/raw/bdl/bdl_boxscores_processor.py
+      file: data_processors/raw/balldontlie/bdl_boxscores_processor.py
       criticality: P1
       source: Ball Don't Lie API
       table: nba_raw.bdl_boxscores

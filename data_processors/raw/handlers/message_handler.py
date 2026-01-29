@@ -251,7 +251,24 @@ class MessageHandler:
             logger.info(f"Normalized gcs_path-only message: bucket={bucket}, name={name}")
             return normalized
 
-        # Case 5: Unrecognized format
+        # Case 5: Status/run-history message (should be ignored, not a file trigger)
+        # These messages have fields like: game_date, output_table, status, triggered_by, retry_count
+        # They come from run history logging and should not be routed to file processors
+        if 'status' in message and 'output_table' in message and 'processor_name' not in message:
+            logger.warning(
+                f"Received run-history status message (not a file trigger). "
+                f"Status={message.get('status')}, Table={message.get('output_table')}. "
+                f"This message should not be published to the raw processor topic. Skipping."
+            )
+            return {
+                'skip_processing': True,
+                'reason': 'Status/run-history message, not a file trigger',
+                'status': message.get('status'),
+                'output_table': message.get('output_table'),
+                '_original_message': message
+            }
+
+        # Case 6: Unrecognized format
         available_fields = list(message.keys())
         raise ValueError(
             f"Unrecognized message format. "
