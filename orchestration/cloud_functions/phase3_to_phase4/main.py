@@ -45,6 +45,7 @@ import requests
 from shared.clients.bigquery_pool import get_bigquery_client
 from shared.validation.phase_boundary_validator import PhaseBoundaryValidator, ValidationMode
 from shared.utils.phase_execution_logger import log_phase_execution
+from orchestration.shared.utils.slack_retry import send_slack_webhook_with_retry
 
 # Completion tracker for dual-write to Firestore and BigQuery
 try:
@@ -808,6 +809,104 @@ def normalize_processor_name(raw_name: str, output_table: Optional[str] = None) 
     return name
 
 
+def send_orchestration_error_alert(
+    function_name: str,
+    error: Exception,
+    game_date: str,
+    correlation_id: Optional[str] = None
+) -> bool:
+    """
+    Send Slack alert when Phase 3→4 orchestrator catches an unexpected exception.
+
+    These alerts indicate potential silent failures where the orchestrator
+    might not complete processing successfully.
+
+    Args:
+        function_name: Name of the function that errored
+        error: The exception that was caught
+        game_date: The date being processed
+        correlation_id: Optional correlation ID for tracing
+
+    Returns:
+        True if alert sent successfully, False otherwise
+    """
+    if not SLACK_WEBHOOK_URL:
+        logger.warning("SLACK_WEBHOOK_URL not configured, skipping orchestration error alert")
+        return False
+
+    try:
+        import traceback
+
+        # Get stack trace (truncate to 2000 chars)
+        stack_trace = traceback.format_exc()
+        if len(stack_trace) > 2000:
+            stack_trace = stack_trace[:2000] + "\n... (truncated)"
+
+        payload = {
+            "attachments": [{
+                "color": "#FF0000",  # Red for critical error
+                "blocks": [
+                    {
+                        "type": "header",
+                        "text": {
+                            "type": "plain_text",
+                            "text": ":rotating_light: Phase 3→4 Orchestrator Error",
+                            "emoji": True
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Unexpected exception in {function_name}!*\n"
+                                   f"This may indicate a silent failure in the orchestration pipeline."
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "fields": [
+                            {"type": "mrkdwn", "text": f"*Function:*\n{function_name}"},
+                            {"type": "mrkdwn", "text": f"*Game Date:*\n{game_date}"},
+                            {"type": "mrkdwn", "text": f"*Error Type:*\n{type(error).__name__}"},
+                            {"type": "mrkdwn", "text": f"*Correlation ID:*\n{correlation_id or 'N/A'}"},
+                        ]
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Error Message:*\n```{str(error)[:500]}```"
+                        }
+                    },
+                    {
+                        "type": "section",
+                        "text": {
+                            "type": "mrkdwn",
+                            "text": f"*Stack Trace:*\n```{stack_trace}```"
+                        }
+                    },
+                    {
+                        "type": "context",
+                        "elements": [{
+                            "type": "mrkdwn",
+                            "text": f":warning: Check Cloud Function logs and investigate orchestration state. "
+                                   f"Timestamp: {datetime.now(timezone.utc).isoformat()}"
+                        }]
+                    }
+                ]
+            }]
+        }
+
+        success = send_slack_webhook_with_retry(SLACK_WEBHOOK_URL, payload, timeout=10)
+        if success:
+            logger.info(f"Orchestration error alert sent successfully for {game_date}")
+        return success
+
+    except Exception as e:
+        logger.error(f"Failed to send orchestration error alert: {e}", exc_info=True)
+        return False
+
+
 @functions_framework.cloud_event
 def orchestrate_phase3_to_phase4(cloud_event):
     """
@@ -979,6 +1078,18 @@ def orchestrate_phase3_to_phase4(cloud_event):
 
     except Exception as e:
         logger.error(f"Error in Phase 3→4 orchestrator: {e}", exc_info=True)
+
+        # Send Slack alert for unexpected orchestration errors
+        try:
+            send_orchestration_error_alert(
+                function_name="phase3_to_phase4_orchestrator",
+                error=e,
+                game_date=game_date if 'game_date' in locals() else 'unknown',
+                correlation_id=correlation_id if 'correlation_id' in locals() else None
+            )
+        except Exception as alert_error:
+            logger.error(f"Failed to send error alert: {alert_error}", exc_info=True)
+
         # CRITICAL: Re-raise to NACK message so Pub/Sub will retry
         # This prevents "silent failures" where work appears complete but didn't actually run
         # See: PDC-INVESTIGATION-FINDINGS-JAN-20.md for root cause analysis
