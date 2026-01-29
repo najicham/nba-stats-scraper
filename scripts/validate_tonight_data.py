@@ -568,16 +568,16 @@ class TonightDataValidator:
         SELECT
             COUNT(*) as total,
             COUNTIF(minutes_played > 0) as active_players,
-            -- Source fields (from raw data extraction)
-            ROUND(100.0 * COUNTIF(field_goals_attempted IS NOT NULL) / NULLIF(COUNT(*), 0), 1) as fg_attempts_pct,
-            ROUND(100.0 * COUNTIF(free_throws_attempted IS NOT NULL) / NULLIF(COUNT(*), 0), 1) as ft_attempts_pct,
-            ROUND(100.0 * COUNTIF(three_pointers_attempted IS NOT NULL) / NULLIF(COUNT(*), 0), 1) as three_attempts_pct,
+            -- Source fields (from raw data extraction) - Using correct column names
+            ROUND(100.0 * COUNTIF(fg_attempts IS NOT NULL) / NULLIF(COUNT(*), 0), 1) as fg_attempts_pct,
+            ROUND(100.0 * COUNTIF(ft_attempts IS NOT NULL) / NULLIF(COUNT(*), 0), 1) as ft_attempts_pct,
+            ROUND(100.0 * COUNTIF(three_pt_attempts IS NOT NULL) / NULLIF(COUNT(*), 0), 1) as three_attempts_pct,
             -- For active players only
-            ROUND(100.0 * COUNTIF(minutes_played > 0 AND field_goals_attempted IS NOT NULL) /
+            ROUND(100.0 * COUNTIF(minutes_played > 0 AND fg_attempts IS NOT NULL) /
                   NULLIF(COUNTIF(minutes_played > 0), 0), 1) as active_fg_pct,
-            ROUND(100.0 * COUNTIF(minutes_played > 0 AND free_throws_attempted IS NOT NULL) /
+            ROUND(100.0 * COUNTIF(minutes_played > 0 AND ft_attempts IS NOT NULL) /
                   NULLIF(COUNTIF(minutes_played > 0), 0), 1) as active_ft_pct,
-            ROUND(100.0 * COUNTIF(minutes_played > 0 AND three_pointers_attempted IS NOT NULL) /
+            ROUND(100.0 * COUNTIF(minutes_played > 0 AND three_pt_attempts IS NOT NULL) /
                   NULLIF(COUNTIF(minutes_played > 0), 0), 1) as active_three_pct
         FROM `{self.project}.nba_analytics.player_game_summary`
         WHERE game_date = '{check_date}'
