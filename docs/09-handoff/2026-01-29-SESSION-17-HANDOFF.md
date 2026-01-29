@@ -60,13 +60,37 @@ if dnp_history.has_dnp_risk:
 status, dnp_history = filter.get_combined_risk(player_lookup, game_date)
 ```
 
-### Remaining P1 Items
+### Completed: Worker Integration (v4.1)
+
+The prediction worker now calls `check_dnp_history()` after the injury status check:
+- Injects `dnp_history` into features and metadata
+- Logs warnings for players with DNP risk patterns
+- File: `predictions/worker/worker.py` lines 819-848
+
+### Completed: ML Feature Store (v3.1)
+
+Added Feature 33: `dnp_rate` to capture historical DNP patterns:
+- New method: `FeatureCalculator.calculate_dnp_rate()`
+- Updated feature_extractor to query `is_dnp` field
+- Upgraded to `v2_34features` (from v2_33features)
+- Files:
+  - `data_processors/precompute/ml_feature_store/feature_calculator.py`
+  - `data_processors/precompute/ml_feature_store/feature_extractor.py`
+  - `data_processors/precompute/ml_feature_store/ml_feature_store_processor.py`
+
+### Deployment Status
+
+| Service | Status | Notes |
+|---------|--------|-------|
+| prediction-worker | Deploying | DNP history integration |
+| nba-phase4-precompute-processors | Deploying | dnp_rate feature |
+
+### Remaining Items
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Integrate DNP history into prediction worker | Pending | Need to decide: flag only or skip? |
-| Add DNP rate to ML features | Pending | Would let model learn DNP patterns |
 | Backfill is_dnp data | Optional | Would enable immediate DNP pattern detection |
+| Monitor DNP data accumulation | Future | Feature effectiveness grows with data |
 
 ---
 
@@ -233,16 +257,18 @@ prediction-coordinator:           00101-dtr (GCP_PROJECT_ID fix)
 - [x] Verify injured player tracking is working (gamebook DNP → player_game_summary working)
 - [x] Investigate why injury_filter.py doesn't use gamebook DNP data (now it does!)
 - [x] Consider adding gamebook DNP to injury filtering (added v2.1 with DNPHistory)
+- [x] Integrate DNP history into prediction worker (v4.1)
+- [x] Add dnp_rate feature to ML Feature Store (v3.1, Feature 33)
+- [x] Deploy updated services (prediction-worker, phase4-processors)
 - [ ] Check completion event delivery issue
 - [x] Update handoff docs
 
 ## Session 18 TODO
 
-- [ ] Deploy InjuryFilter v2.1 (rebuild prediction-worker image)
-- [ ] Decide: should DNP risk flag or skip predictions?
-- [ ] Consider adding dnp_rate feature to ml_feature_store_v2
+- [ ] Verify deployment completed successfully
 - [ ] Monitor DNP data accumulation over coming days
 - [ ] Check completion event delivery issue
+- [ ] Run `/validate-daily` to confirm pipeline health
 
 ---
 
