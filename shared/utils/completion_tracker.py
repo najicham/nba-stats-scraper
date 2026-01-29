@@ -38,6 +38,7 @@ from google.cloud import bigquery, firestore
 from google.cloud.exceptions import GoogleCloudError
 
 from shared.clients import get_bigquery_client, get_firestore_client
+from shared.utils.retry_with_jitter import retry_with_jitter
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +117,7 @@ class CompletionTracker:
         # Track Firestore availability
         self._firestore_available = True
         self._last_firestore_check = None
-        self._firestore_check_interval_seconds = 60  # Re-check every minute
+        self._firestore_check_interval_seconds = 30  # Re-check every 30 seconds
 
     @property
     def firestore_client(self):
@@ -227,6 +228,12 @@ class CompletionTracker:
 
         return (firestore_success, bigquery_success)
 
+    @retry_with_jitter(
+        max_attempts=3,
+        base_delay=1.0,
+        max_delay=10.0,
+        exceptions=(GoogleCloudError,)
+    )
     def _write_to_firestore(
         self,
         phase: str,
@@ -234,7 +241,7 @@ class CompletionTracker:
         processor_name: str,
         completion_data: Dict[str, Any]
     ) -> bool:
-        """Write completion to Firestore."""
+        """Write completion to Firestore with retry logic."""
         collection = self._get_firestore_collection(phase)
         doc_ref = self.firestore_client.collection(collection).document(game_date)
 
@@ -295,6 +302,12 @@ class CompletionTracker:
 
         return True
 
+    @retry_with_jitter(
+        max_attempts=3,
+        base_delay=1.0,
+        max_delay=15.0,
+        exceptions=(GoogleCloudError,)
+    )
     def update_aggregate_status(
         self,
         phase: str,
@@ -306,7 +319,7 @@ class CompletionTracker:
         mode: Optional[str] = None
     ) -> bool:
         """
-        Update aggregated completion status in BigQuery.
+        Update aggregated completion status in BigQuery with retry logic.
 
         This provides a single-row view of completion status for each phase/date,
         useful for monitoring dashboards and analytics.
