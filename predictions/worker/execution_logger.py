@@ -278,7 +278,7 @@ class ExecutionLogger:
                 'systems_attempted': systems_attempted or [],
                 'systems_succeeded': systems_succeeded or [],
                 'systems_failed': systems_failed or [],
-                'system_errors': json.dumps(system_errors) if system_errors else None,
+                'system_errors': system_errors,  # Pass dict directly - BigQuery JSON type handles conversion
 
                 # Data quality
                 'feature_quality_score': feature_quality_score,

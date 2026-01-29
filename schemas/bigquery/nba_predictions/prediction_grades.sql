@@ -24,8 +24,14 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.prediction_grades
 
   -- Grading results
   prediction_correct BOOL,                          -- TRUE if correct, FALSE if wrong, NULL if PUSH/ungradeable
-  margin_of_error NUMERIC(5,2),                     -- |predicted - actual|
+  margin_of_error NUMERIC(5,2),                     -- DEPRECATED: use absolute_error
+  absolute_error NUMERIC(5,2),                      -- |predicted - actual| (v4)
+  signed_error NUMERIC(5,2),                        -- predicted - actual (positive = overestimate) (v4)
   line_margin NUMERIC(5,2),                         -- actual - line (how far from line)
+
+  -- DNP Voiding (v4) - Treat DNP like sportsbook voided bets
+  is_voided BOOL,                                   -- TRUE if prediction should be excluded from accuracy metrics
+  void_reason STRING,                               -- 'dnp_injury_confirmed', 'dnp_late_scratch', 'dnp_unknown'
 
   -- Data quality and metadata
   graded_at TIMESTAMP NOT NULL,                     -- When grading occurred
@@ -36,7 +42,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.prediction_grades
 
   -- Additional context
   minutes_played INT64,                             -- NULL if player DNP
-  player_dnp BOOL,                                  -- TRUE if player did not play
+  player_dnp BOOL,                                  -- DEPRECATED: use is_voided
 
   -- Indexing notes:
   -- Partitioned by game_date for efficient date range queries

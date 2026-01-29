@@ -273,8 +273,17 @@ def check_phase3_health() -> Dict:
     start_time = time.time()
 
     try:
-        # Try health check without auth first (health endpoints often don't require auth)
-        response = requests.get(HEALTH_ENDPOINT, timeout=10)
+        # SESSION 18 FIX: Try with authentication first, fall back to unauthenticated
+        # Cloud Run services may require auth even for health endpoints
+        headers = {}
+        try:
+            token = get_auth_token(PHASE3_BASE_URL)
+            headers = {"Authorization": f"Bearer {token}"}
+            logger.info("Health check: Using authenticated request")
+        except Exception as auth_error:
+            logger.warning(f"Health check: Could not get auth token, trying unauthenticated: {auth_error}")
+
+        response = requests.get(HEALTH_ENDPOINT, headers=headers, timeout=10)
         response_time_ms = (time.time() - start_time) * 1000
 
         if response.status_code == 200:
@@ -284,6 +293,19 @@ def check_phase3_health() -> Dict:
                 'status_code': 200,
                 'response_time_ms': round(response_time_ms, 1),
                 'error': None
+            }
+        elif response.status_code in (401, 403):
+            # Auth failed - log but try to proceed anyway (trigger has its own auth)
+            logger.warning(
+                f"Phase 3 health check returned {response.status_code} (auth issue) - "
+                f"will attempt trigger anyway with fresh auth token"
+            )
+            return {
+                'healthy': True,  # Assume healthy, let trigger attempt with fresh token
+                'status_code': response.status_code,
+                'response_time_ms': round(response_time_ms, 1),
+                'error': None,
+                'auth_issue': True
             }
         else:
             logger.warning(f"Phase 3 health check returned {response.status_code}")
