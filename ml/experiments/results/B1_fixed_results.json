@@ -1,0 +1,78 @@
+{
+  "experiment_id": "B1_fixed",
+  "model_path": "/home/naji/code/nba-stats-scraper/ml/experiments/results/catboost_v9_exp_B1_fixed_20260129_231337.cbm",
+  "train_period": {
+    "start": "2021-11-01",
+    "end": "2023-06-30",
+    "actual_start": "2021-11-02",
+    "actual_end": "2023-06-12",
+    "samples": 51832
+  },
+  "eval_period": {
+    "start": "2024-10-01",
+    "end": "2025-06-30",
+    "actual_start": "2025-01-09",
+    "actual_end": "2025-06-22",
+    "samples": 16303,
+    "vegas_coverage": 0.6971
+  },
+  "results": {
+    "mae": 3.9256,
+    "betting": {
+      "hit_rate": 0.7060067155826389,
+      "hit_rate_pct": 70.6,
+      "hits": 5677,
+      "misses": 2364,
+      "pushes": 11,
+      "bets_placed": 8052,
+      "bets_graded": 8041,
+      "roi": 0.34735582351081606,
+      "roi_pct": 34.74,
+      "profit": 2796.909090909091,
+      "breakeven_hit_rate": 52.38,
+      "min_edge_threshold": 1.0
+    },
+    "by_confidence": {
+      "high_5+": {
+        "count": 1146,
+        "graded": 1145,
+        "hits": 951,
+        "hit_rate": 83.06
+      },
+      "medium_3-5": {
+        "count": 2174,
+        "graded": 2170,
+        "hits": 1632,
+        "hit_rate": 75.21
+      },
+      "low_1-3": {
+        "count": 4732,
+        "graded": 4726,
+        "hits": 3094,
+        "hit_rate": 65.47
+      },
+      "pass_<1": {
+        "count": 3313,
+        "graded": 3308,
+        "hits": 1801,
+        "hit_rate": 54.44
+      }
+    },
+    "by_direction": {
+      "OVER": {
+        "count": 4370,
+        "graded": 4362,
+        "hits": 3001,
+        "hit_rate": 68.8
+      },
+      "UNDER": {
+        "count": 3682,
+        "graded": 3679,
+        "hits": 2676,
+        "hit_rate": 72.74
+      }
+    }
+  },
+  "monthly": null,
+  "evaluated_at": "2026-01-29T23:13:56.045792"
+}

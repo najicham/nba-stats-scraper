@@ -1,78 +1,78 @@
 {
   "experiment_id": "A3_fixed",
-  "model_path": "ml/experiments/results/catboost_v9_exp_A3_20260129_211030.cbm",
+  "model_path": "/home/naji/code/nba-stats-scraper/ml/experiments/results/catboost_v9_exp_A3_fixed_20260129_231337.cbm",
   "train_period": {
     "start": "2021-11-01",
-    "end": "2024-06-01",
+    "end": "2024-06-30",
     "actual_start": "2021-11-02",
-    "actual_end": "2024-05-30",
-    "samples": 77666
+    "actual_end": "2024-06-17",
+    "samples": 77780
   },
   "eval_period": {
     "start": "2024-10-01",
-    "end": "2025-01-29",
+    "end": "2025-06-30",
     "actual_start": "2025-01-09",
-    "actual_end": "2025-01-29",
-    "samples": 3120,
-    "vegas_coverage": 0.6724
+    "actual_end": "2025-06-22",
+    "samples": 16303,
+    "vegas_coverage": 0.6971
   },
   "results": {
-    "mae": 3.5773,
+    "mae": 3.9063,
     "betting": {
-      "hit_rate": 0.7429876060013046,
-      "hit_rate_pct": 74.3,
-      "hits": 1139,
-      "misses": 394,
-      "pushes": 1,
-      "bets_placed": 1534,
-      "bets_graded": 1533,
-      "roi": 0.4181581130733673,
-      "roi_pct": 41.82,
-      "profit": 641.4545454545455,
+      "hit_rate": 0.7075236671649228,
+      "hit_rate_pct": 70.75,
+      "hits": 5680,
+      "misses": 2348,
+      "pushes": 9,
+      "bets_placed": 8037,
+      "bets_graded": 8028,
+      "roi": 0.3503342495503749,
+      "roi_pct": 35.03,
+      "profit": 2815.636363636363,
       "breakeven_hit_rate": 52.38,
       "min_edge_threshold": 1.0
     },
     "by_confidence": {
       "high_5+": {
-        "count": 288,
-        "graded": 288,
-        "hits": 251,
-        "hit_rate": 87.15
+        "count": 1240,
+        "graded": 1240,
+        "hits": 1027,
+        "hit_rate": 82.82
       },
       "medium_3-5": {
-        "count": 426,
-        "graded": 426,
-        "hits": 346,
-        "hit_rate": 81.22
+        "count": 2082,
+        "graded": 2078,
+        "hits": 1578,
+        "hit_rate": 75.94
       },
       "low_1-3": {
-        "count": 820,
-        "graded": 819,
-        "hits": 542,
-        "hit_rate": 66.18
+        "count": 4715,
+        "graded": 4710,
+        "hits": 3075,
+        "hit_rate": 65.29
       },
       "pass_<1": {
-        "count": 564,
-        "graded": 563,
-        "hits": 300,
-        "hit_rate": 53.29
+        "count": 3328,
+        "graded": 3321,
+        "hits": 1822,
+        "hit_rate": 54.86
       }
     },
     "by_direction": {
       "OVER": {
-        "count": 813,
-        "graded": 812,
-        "hits": 593,
-        "hit_rate": 73.03
+        "count": 4235,
+        "graded": 4228,
+        "hits": 2937,
+        "hit_rate": 69.47
       },
       "UNDER": {
-        "count": 721,
-        "graded": 721,
-        "hits": 546,
-        "hit_rate": 75.73
+        "count": 3802,
+        "graded": 3800,
+        "hits": 2743,
+        "hit_rate": 72.18
       }
     }
   },
   "monthly": null,
-  "evaluated_at": "2026-01-29T21:27:51.075389"
+  "evaluated_at": "2026-01-29T23:13:56.624184"
 }
