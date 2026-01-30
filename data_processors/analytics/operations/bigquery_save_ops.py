@@ -61,7 +61,14 @@ class BigQuerySaveOpsMixin:
     """
 
     @retry_on_quota_exceeded
-    @retry_on_serialization
+    # NOTE: @retry_on_serialization REMOVED from here (Session 37 fix)
+    # The retry is handled inside _save_with_proper_merge() at line 256
+    # Having it here caused DOUBLE execution on serialization errors:
+    # 1. MERGE succeeds, result() throws error
+    # 2. @retry_on_serialization on _save_with_proper_merge retries (expected)
+    # 3. @retry_on_serialization HERE retries ENTIRE save_analytics() (BUG)
+    # 4. Records get inserted TWICE with different timestamps
+    # See: docs/08-projects/current/v8-model-investigation/SESSION-37-INVESTIGATION-REPORT.md
     def save_analytics(self) -> bool:
         """
         Save calculated analytics to BigQuery using batch loading.

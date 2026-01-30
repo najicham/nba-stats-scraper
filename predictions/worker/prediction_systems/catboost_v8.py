@@ -473,7 +473,8 @@ class CatBoostV8:
             dict: Prediction with metadata
         """
         if self.model is None:
-            return self._fallback_prediction(player_lookup, features, betting_line)
+            return self._fallback_prediction(player_lookup, features, betting_line,
+                                             error_code='MODEL_NOT_LOADED')
 
         # FAIL-FAST: Assert correct feature version (v2_33features required for V8 model)
         feature_version = features.get('feature_version')
@@ -509,14 +510,16 @@ class CatBoostV8:
         )
 
         if feature_vector is None:
-            return self._fallback_prediction(player_lookup, features, betting_line)
+            return self._fallback_prediction(player_lookup, features, betting_line,
+                                             error_code='FEATURE_PREPARATION_FAILED')
 
         # Make prediction
         try:
             raw_prediction = float(self.model.predict(feature_vector)[0])
         except Exception as e:
             logger.error(f"CatBoost prediction failed: {e}", exc_info=True)
-            return self._fallback_prediction(player_lookup, features, betting_line)
+            return self._fallback_prediction(player_lookup, features, betting_line,
+                                             error_code='MODEL_PREDICTION_FAILED')
 
         # Warn on extreme predictions before clamping (for monitoring/alerting)
         if raw_prediction >= 55 or raw_prediction <= 5:
@@ -562,6 +565,15 @@ class CatBoostV8:
             }
         )
 
+        # Collect warnings for this prediction
+        warnings = []
+        if features.get('early_season_flag'):
+            warnings.append('EARLY_SEASON')
+        if features.get('feature_quality_score', 100) < 70:
+            warnings.append('LOW_QUALITY_SCORE')
+        if features.get('points_std_last_10', 0) > 8:
+            warnings.append('HIGH_VARIANCE')
+
         return {
             'system_id': self.system_id,
             'model_version': self.model_version,
@@ -570,6 +582,15 @@ class CatBoostV8:
             'recommendation': recommendation,
             'model_type': 'catboost_v8_real',
             'feature_count': 33,
+            # Error tracking fields (Session 37)
+            'feature_version': feature_version,
+            'feature_quality_score': features.get('feature_quality_score'),
+            'feature_data_source': features.get('data_source'),
+            'early_season_flag': features.get('early_season_flag', False),
+            'prediction_error_code': None,  # No error for successful prediction
+            'prediction_warnings': warnings if warnings else None,
+            'raw_confidence_score': round(confidence / 100, 3),  # Store as 0-1
+            'calibration_method': 'none',  # No calibration yet applied
         }
 
     def _prepare_feature_vector(
@@ -743,15 +764,16 @@ class CatBoostV8:
         self,
         player_lookup: str,
         features: Dict,
-        betting_line: Optional[float]
+        betting_line: Optional[float],
+        error_code: str = 'MODEL_NOT_LOADED'
     ) -> Dict:
         """Fallback when model not available - use simple average"""
         # CRITICAL: Log fallback usage so it's visible in Cloud Logging
         # This addresses the "silent fallback" issue from Jan 9, 2026
         logger.warning(
-            f"FALLBACK_PREDICTION: CatBoost V8 model not loaded, using weighted average "
-            f"for {player_lookup}. Confidence will be 50.0, recommendation will be PASS. "
-            f"Check CATBOOST_V8_MODEL_PATH env var and model file accessibility."
+            f"FALLBACK_PREDICTION: CatBoost V8 using fallback for {player_lookup}. "
+            f"Error code: {error_code}. Confidence will be 50.0, recommendation will be PASS. "
+            f"Check model accessibility and feature data."
         )
 
         season_avg = features.get('points_avg_season', 10.0)
@@ -768,7 +790,17 @@ class CatBoostV8:
             'confidence_score': 50.0,
             'recommendation': 'PASS',
             'model_type': 'fallback',
-            'error': 'Model not loaded, using fallback',
+            'error': f'{error_code}: Using fallback prediction',
+            # Error tracking fields (Session 37)
+            'feature_version': features.get('feature_version'),
+            'feature_count': features.get('feature_count'),
+            'feature_quality_score': features.get('feature_quality_score'),
+            'feature_data_source': features.get('data_source'),
+            'early_season_flag': features.get('early_season_flag', False),
+            'prediction_error_code': error_code,
+            'prediction_warnings': ['FALLBACK_USED'],
+            'raw_confidence_score': 0.5,
+            'calibration_method': 'none',
         }
 
     def get_model_info(self) -> Dict:
