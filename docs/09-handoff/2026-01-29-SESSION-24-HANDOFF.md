@@ -180,14 +180,26 @@ WHERE system_id = 'catboost_v8'
 
 ---
 
-## Confidence Scale Question (Answered)
+## Confidence Scale Standardization (ACTION NEEDED)
 
-The decimal vs percentage confusion:
-- **Dec 10, 2025:** Code change (commit `6bccfdd1`) intentionally changed confidence from 0-100 to 0-1 to match monitoring expectations
-- **Jan 9, 2026:** Backfill used old code (percent scale)
-- **Jan 11+:** Forward-looking used new code (decimal scale)
-- **DB field:** FLOAT64, accepts both
-- **Real issue:** Decimal-scale predictions correlated with broken feature passing (same predictions)
+**Decision:** Standardize on **percentage (0-100)** scale for human readability.
+
+Current state:
+- Historical backfill (Jan 9): percent scale (85.0)
+- Forward-looking (Jan 11+): decimal scale (0.85)
+- DB field: FLOAT64, accepts both
+
+**Tasks for next session:**
+1. Update `normalize_confidence()` in `data_loaders.py` to NOT divide by 100 for catboost_v8
+2. Convert existing decimal values to percent:
+   ```sql
+   UPDATE nba_predictions.player_prop_predictions
+   SET confidence_score = confidence_score * 100
+   WHERE system_id = 'catboost_v8'
+     AND confidence_score <= 1
+     AND confidence_score > 0
+   ```
+3. Update any monitoring dashboards that expect 0-1 scale
 
 ---
 

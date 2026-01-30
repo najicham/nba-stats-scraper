@@ -76,11 +76,26 @@ Work on these tasks from the prevention plan:
 | Fix committed | Yes (ea88e526) |
 | Fix deployed | **NO - needs deployment** |
 
+### 4. Standardize Confidence Scale to Percentage (0-100)
+
+Decision made: Use percentage for human readability. Currently mixed (backfill=percent, forward=decimal).
+
+Steps:
+1. Update `normalize_confidence()` in `predictions/worker/data_loaders.py` - remove the `/100` for catboost_v8
+2. Convert existing decimal values:
+   ```sql
+   UPDATE nba_predictions.player_prop_predictions
+   SET confidence_score = confidence_score * 100
+   WHERE system_id = 'catboost_v8'
+     AND confidence_score <= 1
+     AND confidence_score > 0
+   ```
+3. Update any monitoring that expects 0-1 scale
+
 ## What NOT to Do
 
 - Don't retrain the model yet - it works fine
-- Don't change the confidence scale - it's correct now
-- Don't modify catboost_v8.py - the fix is in worker.py
+- Don't modify catboost_v8.py prediction logic - the fix is in worker.py
 
 ## Success Criteria
 
