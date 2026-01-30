@@ -244,19 +244,24 @@ def check_dnp_voiding(
     end_date: date,
 ) -> DNPVoidingResult:
     """
-    Check that DNP (actual_points=0) predictions are properly voided.
+    Check that DNP (Did Not Play) predictions are properly voided.
 
-    DNP predictions should have prediction_correct=NULL, not TRUE/FALSE.
+    DNP is defined as: actual_points=0 AND (minutes_played=0 OR minutes_played IS NULL)
+    A player who played but scored 0 points is NOT a DNP - that's a valid game result.
+
+    DNP predictions should have prediction_correct=NULL (voided), not TRUE/FALSE.
     """
     result = DNPVoidingResult()
 
+    # DNP = 0 points AND (0 minutes OR NULL minutes)
+    # Players who scored 0 but played >0 minutes are NOT DNP - they played but didn't score
     query = f"""
     SELECT
-        COUNTIF(actual_points = 0) as total_dnp,
-        COUNTIF(actual_points = 0 AND prediction_correct IS NULL) as dnp_voided,
-        COUNTIF(actual_points = 0 AND prediction_correct IS NOT NULL) as dnp_graded,
-        COUNTIF(actual_points = 0 AND prediction_correct = TRUE) as dnp_correct,
-        COUNTIF(actual_points = 0 AND prediction_correct = FALSE) as dnp_incorrect
+        COUNTIF(actual_points = 0 AND (minutes_played = 0 OR minutes_played IS NULL)) as total_dnp,
+        COUNTIF(actual_points = 0 AND (minutes_played = 0 OR minutes_played IS NULL) AND prediction_correct IS NULL) as dnp_voided,
+        COUNTIF(actual_points = 0 AND (minutes_played = 0 OR minutes_played IS NULL) AND prediction_correct IS NOT NULL) as dnp_graded,
+        COUNTIF(actual_points = 0 AND (minutes_played = 0 OR minutes_played IS NULL) AND prediction_correct = TRUE) as dnp_correct,
+        COUNTIF(actual_points = 0 AND (minutes_played = 0 OR minutes_played IS NULL) AND prediction_correct = FALSE) as dnp_incorrect
     FROM `{PROJECT_ID}.{PREDICTION_ACCURACY_TABLE}`
     WHERE game_date BETWEEN @start_date AND @end_date
     """
@@ -301,6 +306,7 @@ def check_dnp_voiding(
             player_lookup,
             game_date,
             actual_points,
+            minutes_played,
             predicted_points,
             line_value,
             prediction_correct,
@@ -308,6 +314,7 @@ def check_dnp_voiding(
         FROM `{PROJECT_ID}.{PREDICTION_ACCURACY_TABLE}`
         WHERE game_date BETWEEN @start_date AND @end_date
             AND actual_points = 0
+            AND (minutes_played = 0 OR minutes_played IS NULL)
             AND prediction_correct IS NOT NULL
         ORDER BY game_date DESC
         LIMIT 10
@@ -321,6 +328,7 @@ def check_dnp_voiding(
                     'player': row.player_lookup,
                     'date': str(row.game_date),
                     'actual': row.actual_points,
+                    'minutes': row.minutes_played,
                     'predicted': row.predicted_points,
                     'graded_as': 'correct' if row.prediction_correct else 'incorrect',
                 })
@@ -671,21 +679,23 @@ def check_confidence_calibration(
     """
     result = ConfidenceCalibrationResult()
 
+    # Note: confidence_score in prediction_accuracy is stored as 0-1 range (normalized)
+    # Convert to 0-100 for bucketing
     query = f"""
     WITH graded AS (
         SELECT
-            confidence,
+            confidence_score * 100 as confidence,
             prediction_correct,
             CASE
-                WHEN confidence >= 80 THEN '80-100'
-                WHEN confidence >= 60 THEN '60-79'
-                WHEN confidence >= 40 THEN '40-59'
+                WHEN confidence_score * 100 >= 80 THEN '80-100'
+                WHEN confidence_score * 100 >= 60 THEN '60-79'
+                WHEN confidence_score * 100 >= 40 THEN '40-59'
                 ELSE '0-39'
             END as confidence_bucket
         FROM `{PROJECT_ID}.{PREDICTION_ACCURACY_TABLE}`
         WHERE game_date BETWEEN @start_date AND @end_date
             AND prediction_correct IS NOT NULL
-            AND confidence IS NOT NULL
+            AND confidence_score IS NOT NULL
     )
     SELECT
         confidence_bucket,
