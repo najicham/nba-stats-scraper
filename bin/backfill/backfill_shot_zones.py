@@ -32,8 +32,9 @@ from typing import List, Dict
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
+import subprocess
+import requests
 from google.cloud import bigquery
-from google.cloud import pubsub_v1
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,7 +43,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
-PHASE3_TOPIC = 'nba-phase3-trigger'
+PHASE3_SERVICE_URL = 'https://nba-phase3-analytics-processors-f7p3g7f6ya-wl.a.run.app'
 
 
 def get_dates_needing_backfill(client: bigquery.Client) -> List[Dict]:
@@ -91,31 +92,60 @@ def get_dates_needing_backfill(client: bigquery.Client) -> List[Dict]:
     return result.to_dict('records')
 
 
+def get_identity_token() -> str:
+    """Get identity token for Cloud Run authentication."""
+    try:
+        result = subprocess.run(
+            ['gcloud', 'auth', 'print-identity-token'],
+            capture_output=True, text=True, check=True
+        )
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        logger.error(f"Failed to get identity token: {e}")
+        raise
+
+
 def trigger_phase3_rerun(
-    publisher: pubsub_v1.PublisherClient,
-    topic_path: str,
     game_date: date,
     dry_run: bool = False
 ) -> bool:
-    """Trigger Phase 3 reprocessing for a date."""
+    """Trigger Phase 3 reprocessing for a date via HTTP."""
     if dry_run:
         logger.info(f"[DRY-RUN] Would trigger Phase 3 for {game_date}")
         return True
 
     try:
-        message = json.dumps({
-            'game_date': game_date.isoformat(),
-            'trigger_reason': 'shot_zone_backfill',
-            'is_rerun': True,
-            'source': 'backfill_shot_zones',
-            'backfill_timestamp': datetime.utcnow().isoformat()
-        }).encode('utf-8')
+        token = get_identity_token()
 
-        future = publisher.publish(topic_path, message)
-        future.result(timeout=30)
+        # Phase 3 expects /process-date-range endpoint for manual triggers
+        url = f"{PHASE3_SERVICE_URL}/process-date-range"
 
-        logger.info(f"✓ Triggered Phase 3 for {game_date}")
-        return True
+        payload = {
+            'start_date': game_date.isoformat(),
+            'end_date': game_date.isoformat(),
+            'processors': ['PlayerGameSummaryProcessor'],  # Only need player_game_summary for shot zones
+            'backfill_mode': True,  # Bypass staleness checks
+            'trigger_reason': 'shot_zone_backfill'
+        }
+
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'Content-Type': 'application/json'
+        }
+
+        response = requests.post(url, json=payload, headers=headers, timeout=300)
+
+        if response.status_code == 200:
+            result = response.json()
+            logger.info(f"✓ Phase 3 completed for {game_date}: {result.get('status', 'unknown')}")
+            return True
+        else:
+            logger.error(f"✗ Phase 3 failed for {game_date}: {response.status_code} - {response.text[:200]}")
+            return False
+
+    except requests.Timeout:
+        logger.error(f"✗ Phase 3 timed out for {game_date}")
+        return False
     except Exception as e:
         logger.error(f"✗ Failed to trigger Phase 3 for {game_date}: {e}")
         return False
@@ -184,17 +214,9 @@ def main():
         logger.info("Add --dry-run to see what would happen without making changes")
         return
 
-    # Initialize Pub/Sub
-    if not args.dry_run:
-        publisher = pubsub_v1.PublisherClient()
-        topic_path = publisher.topic_path(PROJECT_ID, PHASE3_TOPIC)
-    else:
-        publisher = None
-        topic_path = None
-
-    # Process dates
+    # Process dates via HTTP (not Pub/Sub - the nba-phase3-trigger topic has no subscribers)
     logger.info(f"\n{'='*60}")
-    logger.info(f"Processing {len(dates_to_process)} dates (dry_run={args.dry_run})")
+    logger.info(f"Processing {len(dates_to_process)} dates via HTTP (dry_run={args.dry_run})")
     logger.info(f"{'='*60}\n")
 
     success_count = 0
@@ -203,15 +225,15 @@ def main():
     for i, d in enumerate(dates_to_process):
         game_date = d['game_date']
 
-        if trigger_phase3_rerun(publisher, topic_path, game_date, args.dry_run):
+        if trigger_phase3_rerun(game_date, args.dry_run):
             success_count += 1
             if not args.dry_run:
-                record_backfill_attempt(client, game_date, 'triggered',
+                record_backfill_attempt(client, game_date, 'completed',
                     f"Paint coverage was {d['paint_pct']}%, BDB has {d['bdb_shots']} shots")
         else:
             fail_count += 1
             if not args.dry_run:
-                record_backfill_attempt(client, game_date, 'failed', 'Pub/Sub publish failed')
+                record_backfill_attempt(client, game_date, 'failed', 'HTTP request failed')
 
         # Delay between dates (except for last one)
         if i < len(dates_to_process) - 1 and not args.dry_run and args.delay > 0:
