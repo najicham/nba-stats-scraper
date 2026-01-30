@@ -28,6 +28,9 @@ COPY predictions/__init__.py ./predictions/__init__.py
 # Copy predictions/shared module (contains batch_staging_writer, etc.)
 COPY predictions/shared/ ./predictions/shared/
 
+# Copy predictions/worker module (coordinator imports data_loaders for batch historical game loading)
+COPY predictions/worker/ ./predictions/worker/
+
 # Copy coordinator code
 COPY predictions/coordinator/ ./predictions/coordinator/
 
