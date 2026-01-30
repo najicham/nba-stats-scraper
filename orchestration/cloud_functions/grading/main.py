@@ -808,6 +808,63 @@ def send_duplicate_alert(target_date: str, duplicate_count: int):
         # Don't fail grading if alert fails
 
 
+def send_validation_failure_alert(target_date: str, issues: list):
+    """
+    Send Slack alert when post-grading validation fails (SESSION 31).
+
+    Args:
+        target_date: Date that was validated
+        issues: List of validation issues found
+    """
+    import requests
+    from google.cloud import secretmanager
+
+    try:
+        # Get Slack webhook from Secret Manager
+        client = secretmanager.SecretManagerServiceClient()
+        secret_name = f"projects/{PROJECT_ID}/secrets/slack-webhook-url/versions/latest"
+        response = client.access_secret_version(request={"name": secret_name})
+        webhook_url = response.payload.data.decode("UTF-8")
+
+        # Format issues list
+        issues_text = "\n".join(f"  • {issue}" for issue in issues[:5])
+        if len(issues) > 5:
+            issues_text += f"\n  ... and {len(issues) - 5} more"
+
+        # Send alert
+        message = {
+            "text": f"⚠️ *Validation Alert*\n\n"
+                   f"*Date:* {target_date}\n"
+                   f"*Status:* Validation checks failed\n"
+                   f"*Issues:*\n{issues_text}\n\n"
+                   f"*Action:* Review validation results and fix data issues"
+        }
+
+        # Retry logic for transient failures
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                resp = requests.post(webhook_url, json=message, timeout=10)
+                if resp.status_code == 200:
+                    logger.info(f"Sent validation alert for {target_date}")
+                    break
+                elif resp.status_code in (429, 500, 502, 503, 504) and attempt < max_retries:
+                    time.sleep(2 ** attempt)
+                    continue
+                else:
+                    logger.warning(f"Slack alert failed: {resp.status_code} - {resp.text}")
+                    break
+            except requests.exceptions.RequestException as e:
+                if attempt < max_retries:
+                    time.sleep(2 ** attempt)
+                    continue
+                logger.warning(f"Slack alert request failed: {e}")
+
+    except (requests.exceptions.RequestException, ValueError) as e:
+        logger.warning(f"Failed to send validation alert: {e}")
+        # Don't fail grading if alert fails
+
+
 def send_lock_failure_alert(target_date: str, lock_type: str, reason: str):
     """
     Send CRITICAL alert when lock acquisition fails (SESSION 97 FIX).
@@ -941,10 +998,13 @@ def main(cloud_event):
             try:
                 validation_result = run_post_grading_validation(target_date)
                 if not validation_result.get('passed', True):
+                    issues = validation_result.get('issues', [])
                     logger.warning(
-                        f"Post-grading validation issues for {target_date}: "
-                        f"{validation_result.get('issues', [])}"
+                        f"Post-grading validation issues for {target_date}: {issues}"
                     )
+                    # Send Slack alert for validation failures (Session 31)
+                    if issues:
+                        send_validation_failure_alert(target_date, issues)
             except Exception as e:
                 logger.warning(f"Post-grading validation failed (non-fatal): {e}")
                 validation_result = {'passed': True, 'error': str(e)}

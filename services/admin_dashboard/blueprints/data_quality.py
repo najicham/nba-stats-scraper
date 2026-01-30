@@ -467,3 +467,252 @@ def _get_cleanup_score(sport: str) -> int:
     except Exception as e:
         logger.error(f"Error calculating cleanup score: {e}", exc_info=True)
         return 0
+
+
+# =============================================================================
+# VALIDATION METRICS (Session 31)
+# =============================================================================
+
+@data_quality_bp.route('/api/data-quality/validation-summary')
+@rate_limit
+def get_validation_summary():
+    """
+    Get validation metrics from the v_daily_validation_summary view.
+
+    Shows DNP voiding, feature store health, prediction bounds, etc.
+    """
+    is_valid, error = check_auth()
+    if not is_valid:
+        return error
+
+    days = clamp_param(request.args.get('days', 7), 1, 30, 7)
+    project_id = os.environ.get('GCP_PROJECT_ID')
+
+    try:
+        client = get_bq_client()
+
+        # Query the validation summary view
+        query = f"""
+        SELECT
+            check_date,
+            -- Feature Store Health
+            l5_cache_match_pct,
+            duplicate_count,
+            invalid_array_count,
+            feature_bounds_violations_pct,
+            prop_line_coverage_pct,
+            -- Prediction Quality
+            dnp_graded_count,
+            placeholder_graded_count,
+            prediction_outlier_pct,
+            high_confidence_accuracy_pct,
+            -- Cross-Phase Health
+            row_count_variance_pct,
+            grading_completeness_pct,
+            player_flow_completeness_pct,
+            -- Overall Status
+            overall_status,
+            issues_count,
+            warnings_count
+        FROM `{project_id}.nba_predictions.v_daily_validation_summary`
+        WHERE check_date >= DATE_SUB(CURRENT_DATE(), INTERVAL @days DAY)
+        ORDER BY check_date DESC
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("days", "INT64", days)
+            ]
+        )
+
+        result = client.query(query, job_config=job_config).result()
+
+        validations = []
+        for row in result:
+            validations.append({
+                'date': row.check_date.isoformat() if row.check_date else None,
+                'feature_store': {
+                    'l5_cache_match_pct': float(row.l5_cache_match_pct) if row.l5_cache_match_pct else None,
+                    'duplicate_count': row.duplicate_count,
+                    'invalid_array_count': row.invalid_array_count,
+                    'bounds_violations_pct': float(row.feature_bounds_violations_pct) if row.feature_bounds_violations_pct else None,
+                    'prop_line_coverage_pct': float(row.prop_line_coverage_pct) if row.prop_line_coverage_pct else None,
+                },
+                'prediction_quality': {
+                    'dnp_graded_count': row.dnp_graded_count,
+                    'placeholder_graded_count': row.placeholder_graded_count,
+                    'outlier_pct': float(row.prediction_outlier_pct) if row.prediction_outlier_pct else None,
+                    'high_conf_accuracy_pct': float(row.high_confidence_accuracy_pct) if row.high_confidence_accuracy_pct else None,
+                },
+                'cross_phase': {
+                    'row_count_variance_pct': float(row.row_count_variance_pct) if row.row_count_variance_pct else None,
+                    'grading_completeness_pct': float(row.grading_completeness_pct) if row.grading_completeness_pct else None,
+                    'player_flow_pct': float(row.player_flow_completeness_pct) if row.player_flow_completeness_pct else None,
+                },
+                'overall_status': row.overall_status,
+                'issues_count': row.issues_count,
+                'warnings_count': row.warnings_count,
+            })
+
+        # Calculate summary stats
+        pass_count = sum(1 for v in validations if v['overall_status'] == 'PASS')
+        fail_count = sum(1 for v in validations if v['overall_status'] == 'FAIL')
+        warn_count = sum(1 for v in validations if v['overall_status'] == 'WARN')
+
+        return jsonify({
+            'validations': validations,
+            'summary': {
+                'days_checked': len(validations),
+                'pass_count': pass_count,
+                'fail_count': fail_count,
+                'warn_count': warn_count,
+                'health_pct': round(pass_count / len(validations) * 100, 1) if validations else 0,
+            },
+            'days': days
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to get validation summary: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@data_quality_bp.route('/api/data-quality/dnp-voiding')
+@rate_limit
+def get_dnp_voiding_status():
+    """
+    Get DNP voiding check results for recent dates.
+
+    DNP = Did Not Play (actual_points=0 AND minutes_played=0/NULL).
+    These should be voided (prediction_correct=NULL), not graded.
+    """
+    is_valid, error = check_auth()
+    if not is_valid:
+        return error
+
+    days = clamp_param(request.args.get('days', 7), 1, 30, 7)
+    project_id = os.environ.get('GCP_PROJECT_ID')
+
+    try:
+        client = get_bq_client()
+
+        query = f"""
+        SELECT
+            game_date,
+            COUNTIF(actual_points = 0 AND (minutes_played = 0 OR minutes_played IS NULL)) as total_dnp,
+            COUNTIF(actual_points = 0 AND (minutes_played = 0 OR minutes_played IS NULL) AND prediction_correct IS NULL) as dnp_voided,
+            COUNTIF(actual_points = 0 AND (minutes_played = 0 OR minutes_played IS NULL) AND prediction_correct IS NOT NULL) as dnp_graded_incorrectly
+        FROM `{project_id}.nba_predictions.prediction_accuracy`
+        WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL @days DAY)
+        GROUP BY game_date
+        ORDER BY game_date DESC
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("days", "INT64", days)
+            ]
+        )
+
+        result = client.query(query, job_config=job_config).result()
+
+        dnp_data = []
+        total_incorrect = 0
+        for row in result:
+            incorrect = row.dnp_graded_incorrectly or 0
+            total_incorrect += incorrect
+            dnp_data.append({
+                'date': row.game_date.isoformat(),
+                'total_dnp': row.total_dnp or 0,
+                'voided': row.dnp_voided or 0,
+                'incorrectly_graded': incorrect,
+                'status': 'PASS' if incorrect == 0 else 'FAIL',
+            })
+
+        return jsonify({
+            'dnp_data': dnp_data,
+            'summary': {
+                'days_checked': len(dnp_data),
+                'total_incorrect': total_incorrect,
+                'status': 'PASS' if total_incorrect == 0 else 'FAIL',
+            },
+            'days': days
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to get DNP voiding status: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500
+
+
+@data_quality_bp.route('/api/data-quality/prediction-integrity')
+@rate_limit
+def get_prediction_integrity():
+    """
+    Check for prediction value drift between tables.
+
+    Compares predicted_points in player_prop_predictions vs prediction_accuracy.
+    Catches grading bugs that corrupt values during grading.
+    """
+    is_valid, error = check_auth()
+    if not is_valid:
+        return error
+
+    days = clamp_param(request.args.get('days', 7), 1, 30, 7)
+    project_id = os.environ.get('GCP_PROJECT_ID')
+
+    try:
+        client = get_bq_client()
+
+        query = f"""
+        SELECT
+            pa.game_date,
+            pa.system_id,
+            COUNT(*) as total_records,
+            COUNTIF(ABS(pa.predicted_points - p.predicted_points) > 0.5) as drift_records,
+            ROUND(100.0 * COUNTIF(ABS(pa.predicted_points - p.predicted_points) > 0.5) / COUNT(*), 1) as drift_pct,
+            ROUND(MAX(ABS(pa.predicted_points - p.predicted_points)), 1) as max_drift
+        FROM `{project_id}.nba_predictions.prediction_accuracy` pa
+        JOIN `{project_id}.nba_predictions.player_prop_predictions` p
+            ON pa.player_lookup = p.player_lookup
+            AND pa.game_id = p.game_id
+            AND pa.system_id = p.system_id
+        WHERE pa.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL @days DAY)
+        GROUP BY pa.game_date, pa.system_id
+        HAVING drift_pct > 0
+        ORDER BY pa.game_date DESC, drift_pct DESC
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("days", "INT64", days)
+            ]
+        )
+
+        result = client.query(query, job_config=job_config).result()
+
+        drift_data = []
+        total_drift_records = 0
+        for row in result:
+            total_drift_records += row.drift_records
+            drift_data.append({
+                'date': row.game_date.isoformat(),
+                'system_id': row.system_id,
+                'total_records': row.total_records,
+                'drift_records': row.drift_records,
+                'drift_pct': row.drift_pct,
+                'max_drift': row.max_drift,
+            })
+
+        return jsonify({
+            'drift_data': drift_data,
+            'summary': {
+                'dates_with_drift': len(set(d['date'] for d in drift_data)),
+                'systems_affected': len(set(d['system_id'] for d in drift_data)),
+                'total_drift_records': total_drift_records,
+                'status': 'PASS' if total_drift_records == 0 else 'FAIL',
+            },
+            'days': days
+        })
+
+    except Exception as e:
+        logger.error(f"Failed to get prediction integrity: {e}", exc_info=True)
+        return jsonify({'error': str(e)}), 500

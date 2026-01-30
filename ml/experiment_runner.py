@@ -179,6 +179,8 @@ def get_players_with_features(
                 ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
             ) as season_avg
         FROM `nba-props-platform.nba_analytics.player_game_summary`
+        -- Note: <= is correct here because window function uses "1 PRECEDING" which excludes current row
+        -- QUALIFY then selects only the target date row with its pre-computed rolling averages
         WHERE game_date <= @game_date
         QUALIFY game_date = @game_date
     ),

@@ -129,6 +129,8 @@ def load_players_for_date(client: bigquery.Client, game_date: date) -> List[Dict
                 ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
             ) as ppm_avg_last_10
         FROM `nba-props-platform.nba_analytics.player_game_summary`
+        -- Note: <= is correct here because window function uses "1 PRECEDING" which excludes current row
+        -- The WHERE clause needs to include current date's row so QUALIFY can select it
         WHERE game_date <= @game_date
     )
 
