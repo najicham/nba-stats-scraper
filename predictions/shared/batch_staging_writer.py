@@ -339,6 +339,27 @@ class BatchConsolidator:
         # Construct dataset name with optional prefix
         self.staging_dataset = f"{dataset_prefix}_nba_predictions" if dataset_prefix else "nba_predictions"
 
+    def _get_staging_columns(self, staging_table_id: str) -> List[str]:
+        """
+        Get column names from a staging table.
+
+        SESSION 39 FIX: Staging tables may have fewer columns than the main table
+        if the worker code predates schema additions. We need to use only the
+        columns that exist in staging to avoid MERGE failures.
+
+        Args:
+            staging_table_id: Full table ID (project.dataset.table)
+
+        Returns:
+            List of column names in the staging table
+        """
+        try:
+            table = self.bq_client.get_table(staging_table_id)
+            return [field.name for field in table.schema]
+        except Exception as e:
+            logger.error(f"Failed to get schema for staging table {staging_table_id}: {e}")
+            raise
+
     def _find_staging_tables(self, batch_id: str) -> List[str]:
         """
         Find all staging tables for a given batch.
@@ -367,7 +388,8 @@ class BatchConsolidator:
     def _build_merge_query(
         self,
         staging_tables: List[str],
-        game_date: str
+        game_date: str,
+        staging_columns: Optional[List[str]] = None
     ) -> str:
         """
         Build the MERGE query with ROW_NUMBER deduplication.
@@ -378,21 +400,54 @@ class BatchConsolidator:
         and use COALESCE for current_points_line to handle NULL values properly
         (NULL = NULL evaluates to NULL in SQL, causing duplicate insertions).
 
+        SESSION 39 FIX: Uses explicit column list instead of SELECT * and INSERT ROW
+        to handle schema mismatches between staging tables and main table. Staging
+        tables may have fewer columns if created by older worker code.
+
         Uses ROW_NUMBER to handle duplicates, keeping the most recent prediction
         based on created_at timestamp.
 
         Args:
             staging_tables: List of staging table IDs
             game_date: Game date for filtering (YYYY-MM-DD format)
+            staging_columns: Optional list of columns in staging tables. If not provided,
+                             will be fetched from the first staging table.
 
         Returns:
             MERGE SQL query string
         """
         main_table = f"{self.project_id}.{self.staging_dataset}.{MAIN_PREDICTIONS_TABLE}"
 
-        # Build UNION ALL of all staging tables with deduplication
-        union_parts = [f"SELECT * FROM `{table}`" for table in staging_tables]
+        # Get staging columns if not provided
+        if staging_columns is None and staging_tables:
+            staging_columns = self._get_staging_columns(staging_tables[0])
+            logger.info(f"Detected {len(staging_columns)} columns in staging tables")
+
+        # Build explicit column list for SELECT (excluding row_num which we add)
+        column_list = ", ".join(staging_columns)
+
+        # Build UNION ALL of all staging tables with explicit columns
+        union_parts = [f"SELECT {column_list} FROM `{table}`" for table in staging_tables]
         union_query = " UNION ALL ".join(union_parts)
+
+        # Build UPDATE SET clause only for columns that exist in staging
+        # Exclude merge key columns and special columns from UPDATE
+        merge_key_columns = {'game_id', 'player_lookup', 'system_id', 'current_points_line', 'game_date'}
+        special_columns = {'created_at'}  # Never update created_at
+
+        update_columns = [
+            col for col in staging_columns
+            if col not in merge_key_columns and col not in special_columns
+        ]
+        update_set_clause = ",\n            ".join([
+            f"{col} = S.{col}" for col in update_columns
+        ])
+        # Always update updated_at to current timestamp
+        update_set_clause += ",\n            updated_at = CURRENT_TIMESTAMP()"
+
+        # Build INSERT column list and values
+        insert_columns = ", ".join(staging_columns)
+        insert_values = ", ".join([f"S.{col}" for col in staging_columns])
 
         # The MERGE query with ROW_NUMBER deduplication
         # Keeps the most recent prediction per unique key
@@ -401,9 +456,9 @@ class BatchConsolidator:
         merge_query = f"""
         MERGE `{main_table}` T
         USING (
-            SELECT * EXCEPT(row_num)
+            SELECT {column_list}
             FROM (
-                SELECT *,
+                SELECT {column_list},
                     ROW_NUMBER() OVER (
                         PARTITION BY game_id, player_lookup, system_id, CAST(COALESCE(current_points_line, -1) AS INT64)
                         ORDER BY created_at DESC
@@ -418,53 +473,10 @@ class BatchConsolidator:
            AND CAST(COALESCE(T.current_points_line, -1) AS INT64) = CAST(COALESCE(S.current_points_line, -1) AS INT64)
         WHEN MATCHED THEN
           UPDATE SET
-            prediction_id = S.prediction_id,
-            universal_player_id = S.universal_player_id,
-            game_id = S.game_id,
-            prediction_version = S.prediction_version,
-            predicted_points = S.predicted_points,
-            confidence_score = S.confidence_score,
-            recommendation = S.recommendation,
-            line_margin = S.line_margin,
-            is_active = S.is_active,
-            updated_at = CURRENT_TIMESTAMP(),
-            superseded_by = S.superseded_by,
-            similarity_baseline = S.similarity_baseline,
-            similar_games_count = S.similar_games_count,
-            avg_similarity_score = S.avg_similarity_score,
-            min_similarity_score = S.min_similarity_score,
-            fatigue_adjustment = S.fatigue_adjustment,
-            shot_zone_adjustment = S.shot_zone_adjustment,
-            pace_adjustment = S.pace_adjustment,
-            usage_spike_adjustment = S.usage_spike_adjustment,
-            home_away_adjustment = S.home_away_adjustment,
-            feature_importance = S.feature_importance,
-            model_version = S.model_version,
-            expected_games_count = S.expected_games_count,
-            actual_games_count = S.actual_games_count,
-            completeness_percentage = S.completeness_percentage,
-            missing_games_count = S.missing_games_count,
-            is_production_ready = S.is_production_ready,
-            data_quality_issues = S.data_quality_issues,
-            last_reprocess_attempt_at = S.last_reprocess_attempt_at,
-            reprocess_attempt_count = S.reprocess_attempt_count,
-            circuit_breaker_active = S.circuit_breaker_active,
-            circuit_breaker_until = S.circuit_breaker_until,
-            manual_override_required = S.manual_override_required,
-            season_boundary_detected = S.season_boundary_detected,
-            backfill_bootstrap_mode = S.backfill_bootstrap_mode,
-            processing_decision_reason = S.processing_decision_reason,
-            has_prop_line = S.has_prop_line,
-            line_source = S.line_source,
-            estimated_line_value = S.estimated_line_value,
-            estimation_method = S.estimation_method,
-            scoring_tier = S.scoring_tier,
-            tier_adjustment = S.tier_adjustment,
-            adjusted_points = S.adjusted_points,
-            is_actionable = S.is_actionable,
-            filter_reason = S.filter_reason
+            {update_set_clause}
         WHEN NOT MATCHED THEN
-          INSERT ROW
+          INSERT ({insert_columns})
+          VALUES ({insert_values})
         """
 
         return merge_query
