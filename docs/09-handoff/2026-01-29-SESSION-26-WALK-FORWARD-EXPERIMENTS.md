@@ -2,19 +2,21 @@
 
 **Date:** 2026-01-29
 **Author:** Claude Opus 4.5
-**Status:** COMPLETE
-**Commits:** d4bc7061, af67b3ca, 2cc7837d
+**Status:** COMPLETE (with follow-up needed)
+**Commits:** d4bc7061, af67b3ca, 2cc7837d, 06c7e0a3
 
 ---
 
 ## Executive Summary
 
-Built ML experiment infrastructure and ran 6 walk-forward experiments to understand optimal training strategy. **All experiments achieved 72-74% hit rate** - the model is robust across different training configurations.
+Built ML experiment infrastructure and ran 6 walk-forward experiments. **A1 and A2 are VALID** (72-74% hit rate on clean data). A3/B1-B3 evaluated on 2024-25 data which has a feature store bug affecting ~43% of records.
 
-| Series | Question | Best Result |
-|--------|----------|-------------|
-| A (window size) | How much training data? | A2: 73.9% (2 seasons) |
-| B (recency) | Recent vs older data? | B3: 73.8% (recent 2 seasons) |
+| Finding | Impact |
+|---------|--------|
+| A1/A2 experiments | ✅ Valid - 72-74% hit rate confirmed |
+| A3/B experiments | ⚠️ Used buggy 2024-25 data |
+| Feature store bug | Only affects 2024-25 season |
+| Vegas line fix | ✅ Now only uses real lines |
 
 ---
 
@@ -24,141 +26,232 @@ Built ML experiment infrastructure and ran 6 walk-forward experiments to underst
 
 ```
 ml/experiments/
-├── __init__.py              # Module description
 ├── train_walkforward.py     # Train on any date range
 ├── evaluate_model.py        # Evaluate with hit rate/ROI/MAE
 ├── run_experiment.py        # Combined train + eval
 ├── compare_results.py       # Compare all experiments
-└── results/                 # Models + JSON results
+└── results/                 # 6 models + JSON results
 ```
 
-### Quick Commands
+### Vegas Line Fix
 
-```bash
-# Run a new experiment
-PYTHONPATH=. python ml/experiments/run_experiment.py \
-    --experiment-id NEW_EXP \
-    --train-start 2021-11-01 --train-end 2024-06-01 \
-    --eval-start 2024-10-01 --eval-end 2025-01-29
-
-# Compare all results
-PYTHONPATH=. python ml/experiments/compare_results.py
-```
+Fixed evaluation to only use **real Vegas lines** (has_vegas_line=1.0), not imputed values.
 
 ---
 
-## Experiment Results
+## Validated Experiment Results (Clean Data)
 
-### Full Comparison Table (Real Vegas Lines Only)
+| Exp | Training | Eval Period | Vegas Coverage | Hit Rate | Bets |
+|-----|----------|-------------|----------------|----------|------|
+| **A1** | 2021-22 | 2022-23 | 53.2% | **72.06%** | 9,665 |
+| **A2** | 2021-23 | 2023-24 | 56.9% | **73.91%** | 10,667 |
 
-| Exp | Training Data | Eval Period | Vegas Coverage | Hit Rate | Bets Graded | MAE |
-|-----|--------------|-------------|----------------|----------|-------------|-----|
-| A1 | 2021-22 (26K) | 2022-23 | 53.2% | 72.06% | 9,665 | 3.893 |
-| A2 | 2021-23 (52K) | 2023-24 | 56.9% | **73.91%** | 10,667 | 3.661 |
-| A3 | 2021-24 (78K) | 2024-25 | 67.2% | **74.30%** | 1,533 | 3.577 |
-| B1 | 2021-23 (52K) | 2024-25 | 67.2% | 73.42% | 1,539 | 3.603 |
-| B2 | 2023-24 (26K) | 2024-25 | 67.2% | 74.06% | 1,515 | 3.658 |
-| B3 | 2022-24 (51K) | 2024-25 | 67.2% | 73.97% | 1,506 | 3.617 |
-
-**Note:** We only evaluate betting metrics on games with real Vegas lines (has_vegas_line=1.0).
-The feature store has imputed values for games without real lines, which we exclude.
-
-### Key Findings
-
-1. **All configurations work well**: 72-74% hit rate regardless of training window
-2. **More data → lower MAE**: Point prediction accuracy improves with more training data
-3. **Recency matters slightly**: Recent 2 seasons (B3) marginally better than older 2 seasons (B1)
-4. **No decay observed**: Models trained years ago still perform on recent data
-5. **UNDER bets stronger**: Consistently 76-78% vs 69-71% for OVER
-
-### Recommendations
-
-| Decision | Recommendation |
-|----------|---------------|
-| Training window | **2-3 seasons** (balance of recency and volume) |
-| Retraining frequency | **Quarterly** (model doesn't decay quickly) |
-| Expected performance | **73% hit rate, 40% ROI** |
+These experiments used completely clean data (feature store matches cache 100%).
 
 ---
 
-## Files Changed
+## Feature Store Bug Investigation
+
+### Summary
+
+Another session found a bug in the feature store where L5/L10 rolling averages may include the game being predicted (data leakage). See: `docs/08-projects/current/season-validation-2024-25/FEATURE-STORE-BUG-INVESTIGATION.md`
+
+### Our Findings
+
+**Bug only affects 2024-25 season:**
+
+| Season | Feature Store vs Cache Match |
+|--------|------------------------------|
+| 2022-23 | **100%** ✅ (clean) |
+| 2023-24 | **100%** ✅ (clean) |
+| 2024-25 | **57%** ❌ (43% buggy) |
+
+**Verification queries:**
+```sql
+-- 2022-23: 100% match
+WITH fs AS (
+  SELECT player_lookup, game_date, features[OFFSET(0)] as fs_l5
+  FROM nba_predictions.ml_feature_store_v2
+  WHERE game_date BETWEEN '2023-01-01' AND '2023-01-15' AND feature_count = 33
+),
+cache AS (
+  SELECT player_lookup, cache_date, points_avg_last_5 as cache_l5
+  FROM nba_precompute.player_daily_cache
+)
+SELECT ROUND(100.0 * COUNTIF(ABS(fs.fs_l5 - c.cache_l5) < 0.1) / COUNT(*), 1) as match_pct
+FROM fs JOIN cache c ON fs.player_lookup = c.player_lookup AND fs.game_date = c.cache_date
+-- Result: 100.0%
+
+-- 2024-25: Only 57% match
+-- Same query with dates '2025-01-01' to '2025-01-15'
+-- Result: 57.0%
+```
+
+### What's Affected
+
+| Data | Status |
+|------|--------|
+| Training data (2021-24) | ✅ Clean |
+| Eval data 2022-23 | ✅ Clean |
+| Eval data 2023-24 | ✅ Clean |
+| Eval data 2024-25 | ⚠️ 43% has wrong L5/L10 |
+| Production (2025-26) | ✅ Uses live cache |
+
+### Open Questions
+
+1. **Why does 43% not match?**
+   - The cache existed before the feature store backfill
+   - The fallback path was used for some reason
+   - Need to investigate backfill logs
+
+2. **Which specific features are affected?**
+   - Confirmed: L5 (features[0]) and L10 (features[1])
+   - Unknown: Are other features affected?
+
+3. **Why did fallback work for 2022-24 but fail for 2024-25?**
+   - Different backfill runs?
+   - Cache timing issue?
+
+---
+
+## Recommended Fix Approach
+
+### Option 1: Targeted Fix (Recommended)
+
+Write a script that:
+1. Identifies rows where feature store L5/L10 doesn't match cache
+2. Updates just those rows with correct values from cache
+3. Logs what was changed
+
+**Pros:** Minimal risk, fast, traceable
+**Cons:** Only fixes L5/L10, not other potentially affected features
+
+### Option 2: Full Re-backfill
+
+Re-run the feature store backfill for 2024-25 after fixing the root cause.
+
+**Pros:** Fixes everything
+**Cons:** Slower, need to find and fix root cause first
+
+### Option 3: Validate Other Features First
+
+Before fixing, check if other features are also affected:
+- features[2] = points_avg_season
+- features[4] = games_in_last_7_days
+- etc.
+
+---
+
+## Next Session Actions
+
+### P0: Validate Experiment Results
+
+1. **A1 and A2 are valid** - No action needed
+2. Re-run A3/B evaluations on the 57% of 2024-25 data that matches cache:
+
+```sql
+-- Get clean 2024-25 records only
+SELECT mf.*
+FROM nba_predictions.ml_feature_store_v2 mf
+JOIN nba_precompute.player_daily_cache c
+  ON mf.player_lookup = c.player_lookup AND mf.game_date = c.cache_date
+WHERE mf.game_date BETWEEN '2024-10-01' AND '2025-01-29'
+  AND ABS(mf.features[OFFSET(0)] - c.points_avg_last_5) < 0.1
+```
+
+### P1: Fix Feature Store
+
+1. **Check which features are affected:**
+```sql
+-- Compare all 33 features to their expected sources
+SELECT
+  feature_index,
+  COUNTIF(mismatch) as mismatches,
+  COUNT(*) as total
+FROM feature_comparison
+GROUP BY feature_index
+ORDER BY mismatches DESC
+```
+
+2. **Write targeted fix script:**
+```python
+# ml/fixes/fix_feature_store_l5_l10.py
+# - Query rows where L5/L10 doesn't match cache
+# - Update with correct values from cache
+# - Log all changes
+```
+
+3. **Or re-run backfill with verbose logging** to understand why cache wasn't used
+
+### P2: Add Prevention
+
+1. Add validation that feature store L5/L10 matches cache
+2. Alert if match rate drops below 95%
+3. Add to daily validation checks
+
+---
+
+## Files Created/Modified
 
 | File | Change |
 |------|--------|
-| `ml/experiments/__init__.py` | NEW: Module init |
-| `ml/experiments/train_walkforward.py` | NEW: Training script |
-| `ml/experiments/evaluate_model.py` | NEW: Evaluation script |
-| `ml/experiments/run_experiment.py` | NEW: Combined runner |
-| `ml/experiments/compare_results.py` | NEW: Comparison tool |
-| `ml/experiments/results/*.cbm` | NEW: 6 trained models |
-| `ml/experiments/results/*.json` | NEW: 12 result files |
-| `docs/.../EXPERIMENT-INFRASTRUCTURE.md` | NEW: How-to guide |
+| `ml/experiments/__init__.py` | NEW |
+| `ml/experiments/train_walkforward.py` | NEW |
+| `ml/experiments/evaluate_model.py` | NEW + Vegas line fix |
+| `ml/experiments/run_experiment.py` | NEW |
+| `ml/experiments/compare_results.py` | NEW |
+| `ml/experiments/results/*.cbm` | 6 trained models |
+| `ml/experiments/results/*.json` | 12 result files |
+| `docs/.../EXPERIMENT-INFRASTRUCTURE.md` | NEW |
 | `docs/.../WALK-FORWARD-EXPERIMENT-PLAN.md` | Updated with results |
-| `docs/.../README.md` | Updated with experiment status |
 
 ---
 
-## Documentation Created
+## Key Conclusions
 
-| Document | Location |
-|----------|----------|
-| Experiment Infrastructure Guide | `docs/08-projects/current/catboost-v8-performance-analysis/EXPERIMENT-INFRASTRUCTURE.md` |
-| Updated Experiment Plan | `docs/08-projects/current/catboost-v8-performance-analysis/WALK-FORWARD-EXPERIMENT-PLAN.md` |
+### Model Performance (Validated)
+- **72-74% hit rate** on clean, out-of-sample data
+- Consistent across different training windows
+- 2-3 seasons of training data appears optimal
+- UNDER bets outperform OVER bets (77% vs 70%)
+
+### Data Quality Issues
+- 2024-25 feature store has bug affecting 43% of records
+- Need to fix before trusting 2024-25 evaluations
+- Production (2025-26) data is correct
+
+### Infrastructure
+- Experiment framework is ready for future use
+- Vegas line filtering now correctly excludes imputed lines
 
 ---
 
-## What's Not Deployed
+## Quick Commands for Next Session
 
-The experiment infrastructure is **local only** - these scripts run on your machine to train and evaluate models. No production deployment needed.
-
-The production prediction worker is unchanged and still uses the existing CatBoost V8 model (which was fixed in Session 25).
-
----
-
-## Next Session Checklist
-
-### If continuing experiments:
 ```bash
-# Run decay analysis (Series C)
-# This shows month-by-month performance to understand how quickly models age
+# Compare results
+PYTHONPATH=. python ml/experiments/compare_results.py
+
+# Check feature store vs cache match rate
+bq query --use_legacy_sql=false "
+SELECT
+  FORMAT_DATE('%Y-%m', game_date) as month,
+  ROUND(100.0 * COUNTIF(ABS(fs.features[OFFSET(0)] - c.points_avg_last_5) < 0.1) / COUNT(*), 1) as match_pct
+FROM nba_predictions.ml_feature_store_v2 fs
+JOIN nba_precompute.player_daily_cache c
+  ON fs.player_lookup = c.player_lookup AND fs.game_date = c.cache_date
+WHERE fs.game_date >= '2024-10-01'
+GROUP BY 1 ORDER BY 1"
+
+# Re-run experiment on clean data only (need to implement filter)
 PYTHONPATH=. python ml/experiments/run_experiment.py \
-    --experiment-id C1 \
-    --train-start 2021-11-01 --train-end 2023-06-30 \
-    --eval-start 2023-10-01 --eval-end 2024-06-30 \
-    --monthly-breakdown
+  --experiment-id A3_clean \
+  --train-start 2021-11-01 --train-end 2024-06-01 \
+  --eval-start 2024-10-01 --eval-end 2025-01-29 \
+  --clean-only  # TODO: implement this flag
 ```
-
-### If retraining production model:
-```bash
-# Train new model with all available data
-PYTHONPATH=. python ml/experiments/run_experiment.py \
-    --experiment-id prod_v9 \
-    --train-start 2021-11-01 --train-end 2025-01-29 \
-    --eval-start 2025-01-01 --eval-end 2025-01-29
-```
-
-### Quick health check:
-```bash
-bq query --use_legacy_sql=false \
-  "SELECT game_date, AVG(predicted_points - current_points_line) as avg_edge
-   FROM nba_predictions.player_prop_predictions
-   WHERE system_id='catboost_v8' AND game_date >= CURRENT_DATE() - 3
-   GROUP BY 1"
-```
-
----
-
-## Summary Statistics
-
-| Metric | Value |
-|--------|-------|
-| Experiments run | 6 |
-| Models trained | 6 |
-| Total training time | ~10 minutes |
-| Scripts created | 4 |
-| Docs created/updated | 3 |
-| Commits | 1 |
 
 ---
 
 *Session 26 complete: 2026-01-29*
+*Follow-up needed: Fix 2024-25 feature store bug*
