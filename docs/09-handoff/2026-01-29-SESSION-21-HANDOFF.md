@@ -212,21 +212,39 @@ The coordinator is now running correctly (no more 404s), but MIA@CHI predictions
 
 ## Final Status Update (End of Session)
 
-**MIA@CHI batch was successfully triggered:**
-- Batch ID: `batch_2026-01-29_1769739719`
-- 130 prediction requests published for 8 games (including MIA@CHI)
+### Fixes Completed
 
-**But workers are failing with "No features available":**
-- Players like jadenhardy, isaiahhartenstein, jalengreen ARE in feature store
-- Workers can't find them - likely stale worker code
-- Prediction-worker deployment FAILED earlier (shared/ directory issue)
-- **Worker needs to be redeployed** before predictions will work
+| Fix | Status | Details |
+|-----|--------|---------|
+| Prediction-coordinator | ✅ Fixed | Rebuilt with correct code, deployed |
+| Prediction-worker | ✅ Fixed | Rebuilt from repo root, deployed revision `00029-6vw` |
+| Scheduler timezone | ✅ Fixed | Updated 4 jobs to use `"game_date": "TODAY"` |
+| Prevention mechanisms | ✅ Created | `bin/deploy-service.sh`, startup verification |
 
-**Remaining fixes needed:**
-1. Fix prediction-worker Dockerfile to build from repo root (like coordinator)
-2. Redeploy prediction-worker
-3. Retrigger predictions for 2026-01-29
-4. Update same-day-predictions scheduler to pass `"game_date": "TODAY"`
+### MIA@CHI Still Missing Predictions
+
+Despite all fixes:
+- Feature store has 34 MIA@CHI players ✅
+- 12 players pass coordinator filters ✅
+- Schedule shows 8 games for Jan 29 ✅
+- Predictions only show 7 games ❌
+
+**Possible remaining causes:**
+1. Coordinator may be detecting postponement/reschedule for game_id `0022500529` (reused from Jan 8)
+2. Pub/Sub messages may be going to wrong worker revision
+3. Some other filter in coordinator excluding MIA@CHI specifically
+
+**For next session:**
+```bash
+# Check postponement detection logs
+gcloud run services logs read prediction-coordinator --region=us-west2 --limit=200 | grep -i "postpone\|reschedule\|0022500529"
+
+# Manual prediction for specific player
+curl -X POST "https://prediction-worker-756957797294.us-west2.run.app/predict" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -d '{"player_lookup": "nikolavucevic", "game_date": "2026-01-29"}'
+```
 
 ---
 
