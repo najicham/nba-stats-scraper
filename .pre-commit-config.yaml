@@ -60,6 +60,15 @@ repos:
         always_run: true
         verbose: true
 
+      - id: validate-dockerfile-imports
+        name: Validate Dockerfile imports
+        description: Ensures Dockerfiles COPY all directories needed for Python imports (prevents ModuleNotFoundError at runtime)
+        entry: python .pre-commit-hooks/validate_dockerfile_imports.py
+        language: python
+        pass_filenames: false
+        always_run: true
+        verbose: true
+
       - id: check-date-comparisons
         name: Check date comparisons for data leakage
         description: Flags <= date patterns that might cause data leakage (L5/L10 bug prevention)
