@@ -138,7 +138,7 @@ class PredictionDataLoader:
         self,
         player_lookup: str,
         game_date: date,
-        feature_version: str = 'v2_33features'
+        feature_version: str = 'v2_37features'
     ) -> Optional[Dict]:
         """
         Load 33 features from ml_feature_store_v2 with intelligent caching
@@ -795,7 +795,7 @@ class PredictionDataLoader:
         self,
         player_lookups: List[str],
         game_date: date,
-        feature_version: str = 'v2_33features'
+        feature_version: str = 'v2_37features'
     ) -> Dict[str, Dict]:
         """
         Load features for ALL players on a single date in ONE query (batch optimization)
@@ -982,7 +982,7 @@ class PredictionDataLoader:
     def load_features_batch(
         self,
         player_game_pairs: List[tuple],
-        feature_version: str = 'v2_33features'
+        feature_version: str = 'v2_37features'
     ) -> Dict[tuple, Dict]:
         """
         Load features for multiple players at once (legacy interface)
