@@ -839,6 +839,110 @@ WHERE cache_date = DATE('${GAME_DATE}')"
 
 **Expected**: `last_update` should be within last 12 hours
 
+### Priority 2D: Model Drift Monitoring (NEW - Session 28)
+
+#### Weekly Hit Rate Trend
+
+Check model performance over the past 4 weeks to detect drift:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Weekly hit rate check for model drift detection
+SELECT
+  DATE_TRUNC(game_date, WEEK) as week_start,
+  COUNT(*) as predictions,
+  ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 1) as hit_rate,
+  ROUND(AVG(predicted_points - actual_points), 2) as bias,
+  CASE
+    WHEN ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 1) < 55 THEN '🔴 CRITICAL'
+    WHEN ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 1) < 60 THEN '🟡 WARNING'
+    ELSE '✅ OK'
+  END as status
+FROM nba_predictions.prediction_accuracy
+WHERE system_id = 'catboost_v8'
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
+  AND prediction_correct IS NOT NULL
+GROUP BY 1
+ORDER BY 1 DESC"
+```
+
+**Expected**: Hit rate ≥60% each week
+
+**Alert Thresholds**:
+- **≥60%**: OK - Normal performance
+- **55-59%**: WARNING - Monitor closely
+- **<55%**: CRITICAL - Model drift detected, investigate
+
+**If 2+ consecutive weeks < 55%**:
+1. 🔴 P1 CRITICAL: Model has degraded significantly
+2. Check root cause analysis in `docs/08-projects/current/catboost-v8-performance-analysis/MODEL-DEGRADATION-ROOT-CAUSE-ANALYSIS.md`
+3. Consider retraining with recency weighting
+4. Review player tier breakdown (below)
+
+#### Player Tier Performance Breakdown
+
+Check if degradation is uniform or tier-specific:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Performance by player scoring tier (last 4 weeks)
+SELECT
+  DATE_TRUNC(game_date, WEEK) as week,
+  CASE
+    WHEN actual_points >= 25 THEN '1_stars_25+'
+    WHEN actual_points >= 15 THEN '2_starters_15-25'
+    WHEN actual_points >= 5 THEN '3_rotation_5-15'
+    ELSE '4_bench_<5'
+  END as tier,
+  COUNT(*) as predictions,
+  ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 1) as hit_rate,
+  ROUND(AVG(predicted_points - actual_points), 2) as bias
+FROM nba_predictions.prediction_accuracy
+WHERE system_id = 'catboost_v8'
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
+  AND prediction_correct IS NOT NULL
+GROUP BY 1, 2
+ORDER BY 1 DESC, 2"
+```
+
+**What to look for**:
+- **Star tier (25+) hit rate < 60%**: Model under-predicting breakout performances
+- **Bench tier bias > +5**: Model over-predicting low-minute players
+- **Tier divergence > 20%**: Stars at 55%, bench at 75% = different failure modes
+
+**If tier-specific issues detected**:
+- Stars under-predicted: Add player trajectory features (pts_slope_10g, breakout_flag)
+- Bench over-predicted: Reduce model confidence for low-usage players
+- Reference: `MODEL-DEGRADATION-ROOT-CAUSE-ANALYSIS.md` for detailed analysis
+
+#### Model vs Vegas Comparison
+
+Check if our edge over Vegas is eroding:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Our MAE vs Vegas MAE (last 4 weeks)
+SELECT
+  DATE_TRUNC(game_date, WEEK) as week,
+  COUNT(*) as predictions,
+  ROUND(AVG(ABS(predicted_points - actual_points)), 2) as our_mae,
+  ROUND(AVG(ABS(line_value - actual_points)), 2) as vegas_mae,
+  ROUND(AVG(ABS(line_value - actual_points)) - AVG(ABS(predicted_points - actual_points)), 2) as our_edge
+FROM nba_predictions.prediction_accuracy
+WHERE system_id = 'catboost_v8'
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
+  AND line_value IS NOT NULL
+  AND prediction_correct IS NOT NULL
+GROUP BY 1
+ORDER BY 1 DESC"
+```
+
+**Expected**: `our_edge` > 0 (we're more accurate than Vegas)
+
+**Alert if**:
+- `our_edge` < 0 for 2+ consecutive weeks → Model no longer competitive
+- `our_edge` trending downward → Model drift in progress
+
 ### Priority 3: Quality Verification (Run if issues suspected)
 
 #### 3A. Spot Check Accuracy
@@ -1209,6 +1313,9 @@ Key fields:
 | **Game Context Coverage** | 100% | 95-99% | <95% |
 | **Phase 3 Completion** | 5/5 | 3-4/5 | 0-2/5 |
 | **Phase Execution Logs** | All phases logged | 1-2 missing | No logs found |
+| **Weekly Hit Rate** | ≥65% | 55-64% | <55% |
+| **Model Bias** | ±2 pts | ±3-5 pts | >±5 pts |
+| **Vegas Edge** | >0.5 pts | 0-0.5 pts | <0 pts |
 
 **Key Thresholds to Remember**:
 - **63% minutes coverage** → CRITICAL (not WARNING!)
@@ -1264,6 +1371,7 @@ Provide a clear, concise summary structured like this:
 | Phase 4 (Precompute) | ✅/⚠️/❌ | [feature count] |
 | Phase 5 (Predictions) | ✅/⚠️/❌ | [prediction count] |
 | Spot Checks | ✅/⚠️/❌ | [accuracy %] |
+| Model Drift | ✅/⚠️/❌ | [4-week trend, tier breakdown] |
 
 ### Issues Found
 [List issues with severity emoji]
@@ -1388,6 +1496,9 @@ python scripts/spot_check_data_accuracy.py --samples 10
 # Golden dataset verification (high-confidence validation)
 python scripts/verify_golden_dataset.py
 python scripts/verify_golden_dataset.py --verbose  # With detailed calculations
+
+# Model drift monitoring (Session 28)
+bq query --use_legacy_sql=false "SELECT DATE_TRUNC(game_date, WEEK) as week, ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 1) as hit_rate FROM nba_predictions.prediction_accuracy WHERE system_id = 'catboost_v8' AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK) GROUP BY 1 ORDER BY 1 DESC"
 
 # Manual triggers (if needed)
 gcloud scheduler jobs run same-day-phase3

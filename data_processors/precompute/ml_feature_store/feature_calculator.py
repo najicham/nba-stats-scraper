@@ -352,3 +352,169 @@ class FeatureCalculator:
         logger.debug(f"DNP rate: dnp_count={dnp_count}, total={total_games}, rate={dnp_rate:.9f}")
 
         return dnp_rate
+
+    # ========================================================================
+    # FEATURE 34: PTS SLOPE 10G (Player Trajectory - Session 28)
+    # ========================================================================
+
+    def calculate_pts_slope_10g(self, phase3_data: Dict) -> float:
+        """
+        Calculate linear regression slope of points over last 10 games.
+
+        Positive slope = player trending upward (scoring more each game)
+        Negative slope = player trending downward (scoring less each game)
+
+        Uses least squares regression on game index vs points:
+        slope = sum((x - x_mean)(y - y_mean)) / sum((x - x_mean)^2)
+
+        Args:
+            phase3_data: Dict containing last_10_games with points
+
+        Returns:
+            float: Points slope (expected points change per game), default 0.0
+        """
+        last_10_games = phase3_data.get('last_10_games', [])
+
+        # Need at least 5 games for meaningful trend
+        if len(last_10_games) < 5:
+            logger.debug(f"Insufficient games for pts_slope: {len(last_10_games)}/5")
+            return 0.0
+
+        # Get points from each game (oldest to newest for slope direction)
+        # Note: last_10_games[0] is most recent, so reverse for chronological order
+        points_list = [(g.get('points') or 0) for g in reversed(last_10_games)]
+        n = len(points_list)
+
+        # Calculate linear regression slope using least squares
+        # x = game index (0, 1, 2, ..., n-1), y = points
+        x_mean = (n - 1) / 2.0
+        y_mean = sum(points_list) / n
+
+        numerator = sum((i - x_mean) * (y - y_mean) for i, y in enumerate(points_list))
+        denominator = sum((i - x_mean) ** 2 for i in range(n))
+
+        if denominator == 0:
+            return 0.0
+
+        slope = numerator / denominator
+
+        # Round to 9 decimal places for BigQuery NUMERIC compatibility
+        slope = round(slope, NUMERIC_PRECISION)
+
+        logger.debug(f"Points slope: n={n}, slope={slope:.9f} pts/game")
+
+        return slope
+
+    # ========================================================================
+    # FEATURE 35: PTS VS SEASON ZSCORE (Player Trajectory - Session 28)
+    # ========================================================================
+
+    def calculate_pts_vs_season_zscore(self, phase4_data: Dict, phase3_data: Dict) -> float:
+        """
+        Calculate z-score of recent performance vs season average.
+
+        z-score = (L5_avg - season_avg) / season_std
+
+        Positive z-score = performing above season average
+        Negative z-score = performing below season average
+
+        Uses existing features from player_daily_cache:
+        - points_avg_last_5 (L5 avg)
+        - points_avg_season (season avg)
+        - points_std_last_10 (approximates season std)
+
+        Args:
+            phase4_data: Dict with Phase 4 data (preferred)
+            phase3_data: Dict with Phase 3 data (fallback)
+
+        Returns:
+            float: Z-score clamped to [-3.0, 3.0], default 0.0
+        """
+        # Get L5 average (prefer Phase 4)
+        l5_avg = phase4_data.get('points_avg_last_5')
+        if l5_avg is None:
+            l5_avg = phase3_data.get('points_avg_last_5')
+
+        # Get season average (prefer Phase 4)
+        season_avg = phase4_data.get('points_avg_season')
+        if season_avg is None:
+            season_avg = phase3_data.get('points_avg_season')
+
+        # Get standard deviation (prefer Phase 4)
+        std = phase4_data.get('points_std_last_10')
+        if std is None:
+            std = phase3_data.get('points_std_last_10')
+
+        # Handle missing data
+        if l5_avg is None or season_avg is None or std is None or std == 0:
+            logger.debug("Missing data for pts_vs_season_zscore, returning 0.0")
+            return 0.0
+
+        # Calculate z-score
+        z_score = (float(l5_avg) - float(season_avg)) / float(std)
+
+        # Clamp to [-3, 3] (extreme outliers capped)
+        z_score = max(-3.0, min(3.0, z_score))
+
+        # Round to 9 decimal places for BigQuery NUMERIC compatibility
+        z_score = round(z_score, NUMERIC_PRECISION)
+
+        logger.debug(f"Z-score: L5={l5_avg:.1f}, season={season_avg:.1f}, std={std:.1f}, z={z_score:.9f}")
+
+        return z_score
+
+    # ========================================================================
+    # FEATURE 36: BREAKOUT FLAG (Player Trajectory - Session 28)
+    # ========================================================================
+
+    def calculate_breakout_flag(self, phase4_data: Dict, phase3_data: Dict) -> float:
+        """
+        Calculate breakout flag for exceptional recent performance.
+
+        A player is flagged as "breaking out" if their L5 average exceeds
+        their season average by more than 1.5 standard deviations.
+
+        breakout_flag = 1.0 if L5_avg > season_avg + 1.5 * std, else 0.0
+
+        This captures:
+        - Stars having exceptional stretches
+        - Breakout games from role players
+        - Usage increases from roster changes
+
+        Args:
+            phase4_data: Dict with Phase 4 data (preferred)
+            phase3_data: Dict with Phase 3 data (fallback)
+
+        Returns:
+            float: 1.0 if breaking out, 0.0 otherwise
+        """
+        # Get L5 average (prefer Phase 4)
+        l5_avg = phase4_data.get('points_avg_last_5')
+        if l5_avg is None:
+            l5_avg = phase3_data.get('points_avg_last_5')
+
+        # Get season average (prefer Phase 4)
+        season_avg = phase4_data.get('points_avg_season')
+        if season_avg is None:
+            season_avg = phase3_data.get('points_avg_season')
+
+        # Get standard deviation (prefer Phase 4)
+        std = phase4_data.get('points_std_last_10')
+        if std is None:
+            std = phase3_data.get('points_std_last_10')
+
+        # Handle missing data
+        if l5_avg is None or season_avg is None or std is None:
+            logger.debug("Missing data for breakout_flag, returning 0.0")
+            return 0.0
+
+        # Calculate threshold (season_avg + 1.5 * std)
+        threshold = float(season_avg) + 1.5 * float(std)
+
+        # Check if breaking out
+        is_breakout = float(l5_avg) > threshold
+
+        logger.debug(f"Breakout: L5={l5_avg:.1f}, threshold={threshold:.1f} (season={season_avg:.1f} + 1.5*{std:.1f}), "
+                    f"flag={1.0 if is_breakout else 0.0}")
+
+        return 1.0 if is_breakout else 0.0

@@ -42,27 +42,94 @@ import catboost as cb
 PROJECT_ID = "nba-props-platform"
 MODEL_OUTPUT_DIR = Path(__file__).parent / "results"
 
-# Feature names - must match feature store and production V8 exactly (33 features)
+
+def calculate_sample_weights(dates: pd.Series, half_life_days: int = 180) -> np.ndarray:
+    """
+    Calculate sample weights based on recency.
+
+    More recent samples get higher weights, decaying exponentially.
+    Uses half-life parameter to control decay rate.
+
+    Args:
+        dates: Series of game dates
+        half_life_days: Number of days for weight to decay by 50% (default: 180 = 6 months)
+
+    Returns:
+        Normalized weights array (mean = 1.0 to preserve effective sample size)
+
+    Example:
+        - Game from today: weight ~1.0
+        - Game from 180 days ago: weight ~0.5
+        - Game from 360 days ago: weight ~0.25
+    """
+    # Convert to datetime if needed
+    dates = pd.to_datetime(dates)
+    max_date = dates.max()
+
+    # Calculate days old for each sample
+    days_old = (max_date - dates).dt.days
+
+    # Exponential decay: weight = exp(-days_old * ln(2) / half_life)
+    # This ensures weight = 0.5 when days_old = half_life
+    decay_rate = np.log(2) / half_life_days
+    weights = np.exp(-days_old * decay_rate)
+
+    # Normalize so mean weight = 1.0 (preserves effective sample size)
+    weights = weights / weights.mean()
+
+    return weights.values
+
+
+# Feature names - must match feature store and production
+# v2_37features: 37 features as of Session 28 (Jan 2026)
+# Note: For backward compatibility, training queries filter by feature_count
 ALL_FEATURES = [
+    # Recent Performance (0-4)
     "points_avg_last_5", "points_avg_last_10", "points_avg_season",
-    "points_std_last_10", "games_in_last_7_days", "fatigue_score",
-    "shot_zone_mismatch_score", "pace_score", "usage_spike_score",
+    "points_std_last_10", "games_in_last_7_days",
+    # Composite Factors (5-8)
+    "fatigue_score", "shot_zone_mismatch_score", "pace_score", "usage_spike_score",
+    # Derived Factors (9-12)
     "rest_advantage", "injury_risk", "recent_trend", "minutes_change",
-    "opponent_def_rating", "opponent_pace", "home_away", "back_to_back",
-    "playoff_game", "pct_paint", "pct_mid_range", "pct_three",
-    "pct_free_throw", "team_pace", "team_off_rating", "team_win_pct",
+    # Matchup Context (13-17)
+    "opponent_def_rating", "opponent_pace", "home_away", "back_to_back", "playoff_game",
+    # Shot Zones (18-21)
+    "pct_paint", "pct_mid_range", "pct_three", "pct_free_throw",
+    # Team Context (22-24)
+    "team_pace", "team_off_rating", "team_win_pct",
+    # Vegas Lines (25-28)
     "vegas_points_line", "vegas_opening_line", "vegas_line_move", "has_vegas_line",
+    # Opponent History (29-30)
     "avg_points_vs_opponent", "games_vs_opponent",
-    "minutes_avg_last_10", "ppm_avg_last_10"
+    # Minutes/Efficiency (31-32)
+    "minutes_avg_last_10", "ppm_avg_last_10",
+    # DNP Risk (33)
+    "dnp_rate",
+    # Player Trajectory (34-36) - Session 28 model degradation fix
+    "pts_slope_10g", "pts_vs_season_zscore", "breakout_flag",
 ]
 
+# Feature count for backward compatibility queries
+FEATURE_COUNT_V33 = 33  # Legacy (pre-dnp_rate)
+FEATURE_COUNT_V34 = 34  # V2.1 with dnp_rate
+FEATURE_COUNT_V37 = 37  # V2.37 with trajectory features (current)
 
-def get_training_query(train_start: str, train_end: str) -> str:
+
+def get_training_query(train_start: str, train_end: str, min_feature_count: int = 33) -> str:
     """
     Generate BigQuery SQL for fetching training data.
 
-    The feature store (ml_feature_store_v2) contains all 33 features already.
-    We just need to join with actuals to get the target variable.
+    The feature store (ml_feature_store_v2) contains feature vectors.
+    We join with actuals to get the target variable.
+
+    Args:
+        train_start: Training start date (YYYY-MM-DD)
+        train_end: Training end date (YYYY-MM-DD)
+        min_feature_count: Minimum feature count to accept (default: 33 for backwards compat)
+                          Use 37 for v2_37features with trajectory features
+
+    Note: When using feature_count > 33, make sure training data has been backfilled
+          with the new features. Historical data may only have 33-34 features.
     """
     return f"""
 SELECT
@@ -76,27 +143,46 @@ INNER JOIN `nba-props-platform.nba_analytics.player_game_summary` pgs
   ON mf.player_lookup = pgs.player_lookup
   AND mf.game_date = pgs.game_date
 WHERE mf.game_date BETWEEN '{train_start}' AND '{train_end}'
-  AND mf.feature_count = 33  -- Must have all 33 features
-  AND ARRAY_LENGTH(mf.features) = 33
+  AND mf.feature_count >= {min_feature_count}
+  AND ARRAY_LENGTH(mf.features) >= {min_feature_count}
   AND pgs.points IS NOT NULL
 ORDER BY mf.game_date
 """
 
 
-def prepare_features(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, dict]:
+def prepare_features(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, dict, list]:
     """
     Prepare feature matrix from raw dataframe.
 
-    The feature store already has all 33 features, so we just need to
-    unpack the features array into a DataFrame.
+    The feature store contains feature vectors. This function unpacks them
+    and handles variable feature counts (33, 34, or 37 features).
 
     Returns:
-        X: Feature matrix (33 features)
+        X: Feature matrix
         y: Target values (actual_points)
         medians: Median values for imputation (to be saved and used at inference)
+        feature_names: List of feature names used (depends on data)
     """
+    # Detect feature count from data
+    sample_features = df.iloc[0]['features']
+    actual_feature_count = len(sample_features)
+
+    # Use appropriate feature names based on count
+    if actual_feature_count >= 37:
+        feature_names = ALL_FEATURES[:37]
+    elif actual_feature_count >= 34:
+        feature_names = ALL_FEATURES[:34]
+    else:
+        feature_names = ALL_FEATURES[:33]
+
+    print(f"Detected {actual_feature_count} features in data, using {len(feature_names)} feature names")
+
     # Unpack features array into DataFrame with named columns
-    X = pd.DataFrame(df['features'].tolist(), columns=ALL_FEATURES)
+    # Truncate features to match feature_names length in case of mismatch
+    X = pd.DataFrame(
+        [row[:len(feature_names)] for row in df['features'].tolist()],
+        columns=feature_names
+    )
 
     # Calculate medians before imputation for saving
     medians = X.median().to_dict()
@@ -106,7 +192,7 @@ def prepare_features(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series, dict]:
 
     y = df['actual_points'].astype(float)
 
-    return X, y, medians
+    return X, y, medians, feature_names
 
 
 def train_catboost_model(
@@ -114,12 +200,21 @@ def train_catboost_model(
     y_train: pd.Series,
     X_val: pd.DataFrame,
     y_val: pd.Series,
+    sample_weight: np.ndarray = None,
     verbose: bool = False
 ) -> cb.CatBoostRegressor:
     """
     Train CatBoost model with V8 hyperparameters
 
     Uses the same hyperparameters as production V8 for fair comparison.
+
+    Args:
+        X_train: Training features
+        y_train: Training targets
+        X_val: Validation features
+        y_val: Validation targets
+        sample_weight: Optional array of sample weights for training data
+        verbose: Show training progress
     """
     model = cb.CatBoostRegressor(
         depth=6,
@@ -132,7 +227,7 @@ def train_catboost_model(
         verbose=verbose,
         early_stopping_rounds=50
     )
-    model.fit(X_train, y_train, eval_set=(X_val, y_val))
+    model.fit(X_train, y_train, eval_set=(X_val, y_val), sample_weight=sample_weight)
     return model
 
 
@@ -142,6 +237,10 @@ def main():
     parser.add_argument("--train-end", required=True, help="Training end date (YYYY-MM-DD)")
     parser.add_argument("--experiment-id", required=True, help="Experiment identifier (e.g., A1, B2)")
     parser.add_argument("--verbose", action="store_true", help="Show training progress")
+    parser.add_argument("--use-recency-weights", action="store_true",
+                       help="Apply exponential recency weighting to training samples")
+    parser.add_argument("--half-life", type=int, default=180,
+                       help="Half-life for recency decay in days (default: 180 = 6 months)")
     args = parser.parse_args()
 
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -169,8 +268,8 @@ def main():
 
     # Prepare features
     print("\nPreparing features...")
-    X, y, medians = prepare_features(df)
-    print(f"Features: {X.shape[1]}")
+    X, y, medians, feature_names_used = prepare_features(df)
+    print(f"Features: {X.shape[1]} ({feature_names_used[-1]} ... last feature)")
 
     # Sort by date for chronological split
     df_sorted = df.sort_values('game_date').reset_index(drop=True)
@@ -185,9 +284,30 @@ def main():
 
     print(f"Train: {len(X_train):,}, Validation: {len(X_val):,}")
 
+    # Calculate sample weights if requested
+    sample_weights = None
+    if args.use_recency_weights:
+        print(f"\nCalculating recency weights (half-life: {args.half_life} days)...")
+        # Need to get dates for training samples
+        train_dates = df_sorted.iloc[:split_idx]['game_date']
+        sample_weights = calculate_sample_weights(train_dates, args.half_life)
+
+        # Log weight statistics
+        print(f"Weight stats: min={sample_weights.min():.4f}, max={sample_weights.max():.4f}, "
+              f"mean={sample_weights.mean():.4f}, std={sample_weights.std():.4f}")
+
+        # Show weight at different ages
+        ages_to_show = [0, 30, 90, 180, 365, 730]
+        print("Weight by sample age:")
+        decay_rate = np.log(2) / args.half_life
+        for age in ages_to_show:
+            weight = np.exp(-age * decay_rate)
+            print(f"  {age:3d} days old: weight = {weight:.4f}")
+
     # Train model
     print("\nTraining CatBoost...")
-    model = train_catboost_model(X_train, y_train, X_val, y_val, verbose=args.verbose)
+    model = train_catboost_model(X_train, y_train, X_val, y_val,
+                                  sample_weight=sample_weights, verbose=args.verbose)
 
     best_iter = model.get_best_iteration()
     print(f"Best iteration: {best_iter}")
@@ -220,8 +340,8 @@ def main():
             "actual_end": str(actual_end),
             "samples": len(df),
         },
-        "features": ALL_FEATURES,
-        "feature_count": len(ALL_FEATURES),
+        "features": feature_names_used,
+        "feature_count": len(feature_names_used),
         "feature_medians": medians,
         "hyperparameters": {
             "depth": 6,
@@ -231,6 +351,16 @@ def main():
             "min_data_in_leaf": 16,
             "iterations": 1000,
             "early_stopping_rounds": 50,
+        },
+        "recency_weighting": {
+            "enabled": args.use_recency_weights,
+            "half_life_days": args.half_life if args.use_recency_weights else None,
+            "weight_stats": {
+                "min": float(sample_weights.min()) if sample_weights is not None else None,
+                "max": float(sample_weights.max()) if sample_weights is not None else None,
+                "mean": float(sample_weights.mean()) if sample_weights is not None else None,
+                "std": float(sample_weights.std()) if sample_weights is not None else None,
+            } if sample_weights is not None else None,
         },
         "training_results": {
             "best_iteration": best_iter,
@@ -249,11 +379,18 @@ def main():
     print("\n" + "=" * 80)
     print("TRAINING COMPLETE")
     print("=" * 80)
+
+    recency_info = ""
+    if args.use_recency_weights:
+        recency_info = f"\nRecency weighting: ENABLED (half-life: {args.half_life} days)"
+    else:
+        recency_info = "\nRecency weighting: DISABLED"
+
     print(f"""
 Experiment: {args.experiment_id}
 Model: {model_name}
 Training samples: {len(df):,}
-Training period: {args.train_start} to {args.train_end}
+Training period: {args.train_start} to {args.train_end}{recency_info}
 Validation MAE: {val_mae:.4f}
 
 Files created:

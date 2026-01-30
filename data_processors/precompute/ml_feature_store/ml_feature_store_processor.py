@@ -72,8 +72,10 @@ logger = logging.getLogger(__name__)
 # - Vegas lines (4): betting context for value detection
 # - Opponent history (2): player performance vs specific opponent
 # - Minutes/efficiency (2): playing time and scoring rate trends
-FEATURE_VERSION = 'v2_34features'
-FEATURE_COUNT = 34
+# v2_37features: Added 3 player trajectory features (Session 28 - Jan 2026)
+# - Player trajectory (3): captures rising/declining performance trends
+FEATURE_VERSION = 'v2_37features'
+FEATURE_COUNT = 37
 
 FEATURE_NAMES = [
     # Recent Performance (0-4)
@@ -105,7 +107,13 @@ FEATURE_NAMES = [
     'minutes_avg_last_10', 'ppm_avg_last_10',
 
     # DNP Risk (33) - v2.1 Gamebook-based DNP pattern detection
-    'dnp_rate'
+    'dnp_rate',
+
+    # Player Trajectory (34-36) - Session 28 model degradation fix
+    # Captures whether players are trending up/down to adapt to NBA dynamics shift
+    'pts_slope_10g',        # Linear regression slope of points over L10
+    'pts_vs_season_zscore', # Z-score of L5 avg vs season avg
+    'breakout_flag',        # 1.0 if L5 > season_avg + 1.5*std
 ]
 
 
@@ -1253,6 +1261,24 @@ class MLFeatureStoreProcessor(
         # coach decisions, and other DNPs not in pre-game injury reports
         features.append(self.feature_calculator.calculate_dnp_rate(phase3_data))
         feature_sources[33] = 'calculated'
+
+        # ============================================================
+        # PLAYER TRAJECTORY FEATURES (34-36) - Session 28 model fix
+        # Added to capture NBA dynamics shift where stars are trending up
+        # and bench players are trending down
+        # ============================================================
+
+        # Feature 34: Points slope over L10 (trend direction and magnitude)
+        features.append(self.feature_calculator.calculate_pts_slope_10g(phase3_data))
+        feature_sources[34] = 'calculated'
+
+        # Feature 35: Z-score of L5 vs season (how far from baseline)
+        features.append(self.feature_calculator.calculate_pts_vs_season_zscore(phase4_data, phase3_data))
+        feature_sources[35] = 'calculated'
+
+        # Feature 36: Breakout flag (exceptional recent performance)
+        features.append(self.feature_calculator.calculate_breakout_flag(phase4_data, phase3_data))
+        feature_sources[36] = 'calculated'
 
         return features, feature_sources
     
