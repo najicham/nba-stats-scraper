@@ -439,7 +439,7 @@ class PredictionQualityTracker:
                 game_start_time = game_start_time.replace(tzinfo=timezone.utc)
             delta = game_start_time - now
             hours_until_game = delta.total_seconds() / 3600
-            rerun_allowed = hours_until_game > 2  # 2 hour cutoff
+            rerun_allowed = hours_until_game > 1  # 1 hour cutoff before game
 
         bdb_status = self.sources.get('bigdataball_pbp', DataSourceStatus('bdb', False))
 

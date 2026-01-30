@@ -122,7 +122,7 @@ CREATE TABLE nba_predictions.prediction_audit_log (
 ┌─────────────────────────────────────────┐
 │ Check: Is it safe to re-run?            │
 │ - Game not started yet?                 │
-│ - More than 2 hours before game?        │
+│ - More than 1 hour before game?        │
 └────────┬───────────────┬────────────────┘
          │ Safe          │ Too Late
          ▼               ▼
@@ -226,7 +226,7 @@ GET /api/predictions/tonight
 
 ### Q: Should we change predictions after they're made?
 
-**A: Only if safe (>2 hours before game start)**
+**A: Only if safe (>1 hour before game start)**
 
 Reasoning:
 - Users may have already bet based on our prediction

@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 # Configuration
 PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
 PHASE3_TOPIC = 'nba-phase3-trigger'
-MIN_HOURS_BEFORE_GAME = 2  # Don't re-run if less than 2 hours before game
+MIN_HOURS_BEFORE_GAME = 1  # Don't re-run if less than 1 hour before game
 
 
 class BDBTrigger:

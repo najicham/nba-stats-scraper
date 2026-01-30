@@ -65,7 +65,7 @@ Built a comprehensive system to:
 
 ### 1. When to Re-run Predictions?
 
-**Decision:** Only if >2 hours before game start
+**Decision:** Only if >1 hour before game start
 
 **Reasoning:**
 - Users may have bet based on our prediction
@@ -194,7 +194,7 @@ GROUP BY 1"
 └────────┬─────────┘              └──────────┬──────────┘
          │                                   │
          │                                   │ Check: Is re-run safe?
-         ▼                                   │ (>2h before game?)
+         ▼                                   │ (>1h before game?)
 ┌──────────────────┐                         │
 │ pending_bdb_     │◄────────────────────────┘
 │ games table      │                  │
