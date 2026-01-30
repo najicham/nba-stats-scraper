@@ -20,7 +20,8 @@
 |----------|---------|
 | [CATBOOST-V8-PERFORMANCE-ANALYSIS.md](./CATBOOST-V8-PERFORMANCE-ANALYSIS.md) | Main analysis with Session 24 updates |
 | [SESSION-24-INVESTIGATION-FINDINGS.md](./SESSION-24-INVESTIGATION-FINDINGS.md) | Full investigation findings |
-| [WALK-FORWARD-EXPERIMENT-PLAN.md](./WALK-FORWARD-EXPERIMENT-PLAN.md) | Experiment framework for training optimization |
+| [WALK-FORWARD-EXPERIMENT-PLAN.md](./WALK-FORWARD-EXPERIMENT-PLAN.md) | Experiment framework and results |
+| [EXPERIMENT-INFRASTRUCTURE.md](./EXPERIMENT-INFRASTRUCTURE.md) | How to run experiments (scripts, commands) |
 | [PREVENTION-PLAN.md](./PREVENTION-PLAN.md) | How to prevent this bug class in the future |
 | [experiments/D1-results.json](./experiments/D1-results.json) | 2024-25 season performance data |
 
@@ -80,11 +81,13 @@ See [PREVENTION-PLAN.md](./PREVENTION-PLAN.md) for full details:
 - [x] Configure Cloud Monitoring alert for CRITICAL fallbacks
 - [x] Deploy grading views to BigQuery (5 views consolidated)
 
-### Next Phase: Walk-Forward Experiments
-See `WALK-FORWARD-EXPERIMENT-PLAN.md` for details:
-- [ ] Create `ml/experiments/train_walkforward.py`
-- [ ] Create `ml/experiments/evaluate_model.py`
-- [ ] Run Experiments A1-A3 (training window size)
+### Walk-Forward Experiments (Session 26)
+See `WALK-FORWARD-EXPERIMENT-PLAN.md` and `EXPERIMENT-INFRASTRUCTURE.md` for details:
+- [x] Create `ml/experiments/train_walkforward.py`
+- [x] Create `ml/experiments/evaluate_model.py`
+- [x] Create `ml/experiments/run_experiment.py` (combined workflow)
+- [x] Create `ml/experiments/compare_results.py` (comparison tool)
+- [x] Run Experiments A1-A3 (training window size) - **ALL SHOW 72-74% HIT RATE**
 - [ ] Run Experiments B1-B3 (recency vs volume)
 - [ ] Run Experiment C1 (decay analysis)
 - [ ] Determine optimal retraining strategy
@@ -95,6 +98,16 @@ See `WALK-FORWARD-EXPERIMENT-PLAN.md` for details:
 - [ ] Standardize other systems' confidence to percentage
 
 ## Experiment Results
+
+### Series A: Training Window Size (Session 26)
+
+| Exp | Training Data | Eval Period | Hit Rate | ROI | MAE |
+|-----|---------------|-------------|----------|-----|-----|
+| A1 | 2021-22 (26K) | 2022-23 | **72.3%** | +37.8% | 3.89 |
+| A2 | 2021-23 (52K) | 2023-24 | **73.9%** | +40.8% | 3.66 |
+| A3 | 2021-24 (78K) | 2024-25 | **73.6%** | +40.3% | 3.58 |
+
+**Key Finding:** More training data improves MAE, but hit rates remain stable at 72-74%.
 
 ### D1: Existing V8 on 2024-25 Season
 
@@ -109,9 +122,10 @@ See `WALK-FORWARD-EXPERIMENT-PLAN.md` for details:
 
 | Segment | Hit Rate |
 |---------|----------|
+| High edge (5+ pts) | 87.6% |
+| Medium edge (3-5 pts) | 78.9% |
+| UNDER bets | 77.8% |
 | High-confidence (95%+) | 79.64% |
-| High-conf UNDER | 78.09% |
-| All UNDER | 76.54% |
 
 ## Related Files
 
@@ -119,7 +133,10 @@ See `WALK-FORWARD-EXPERIMENT-PLAN.md` for details:
 |------|---------|
 | `predictions/worker/worker.py` | Feature passing fix location |
 | `predictions/worker/prediction_systems/catboost_v8.py` | Model inference code |
-| `ml/train_final_ensemble_v8.py` | Training script |
+| `ml/train_final_ensemble_v8.py` | Original training script |
+| `ml/experiments/run_experiment.py` | Walk-forward experiment runner |
+| `ml/experiments/compare_results.py` | Experiment comparison tool |
+| `ml/experiments/results/` | Experiment models and JSON results |
 | `ml/model_contract.py` | Contract validation (needs activation) |
 | `docs/09-handoff/2026-01-29-SESSION-20-CATBOOST-V8-FIX-AND-SAFEGUARDS.md` | Original fix documentation |
 
@@ -127,3 +144,4 @@ See `WALK-FORWARD-EXPERIMENT-PLAN.md` for details:
 
 *Created: 2026-01-29 Session 23*
 *Updated: 2026-01-29 Session 24*
+*Updated: 2026-01-29 Session 26 - Added experiment infrastructure*

@@ -1,0 +1,223 @@
+{
+  "experiment_id": "A2",
+  "model_path": "/home/naji/code/nba-stats-scraper/ml/experiments/results/catboost_v9_exp_A2_20260129_211005.cbm",
+  "train_period": {
+    "start": "2021-11-01",
+    "end": "2023-06-30",
+    "actual_start": "2021-11-02",
+    "actual_end": "2023-06-12",
+    "samples": 51832
+  },
+  "eval_period": {
+    "start": "2023-10-01",
+    "end": "2024-06-30",
+    "actual_start": "2023-11-08",
+    "actual_end": "2024-06-17",
+    "samples": 25948,
+    "vegas_coverage": 1.0
+  },
+  "results": {
+    "mae": 3.6611,
+    "betting": {
+      "hit_rate": 0.7391874928677393,
+      "hit_rate_pct": 73.92,
+      "hits": 12955,
+      "misses": 4571,
+      "pushes": 127,
+      "bets_placed": 17653,
+      "bets_graded": 17526,
+      "roi": 0.40821802114500233,
+      "roi_pct": 40.82,
+      "profit": 7206.272727272726,
+      "breakeven_hit_rate": 52.38,
+      "min_edge_threshold": 1.0
+    },
+    "by_confidence": {
+      "high_5+": {
+        "count": 2512,
+        "graded": 2508,
+        "hits": 2197,
+        "hit_rate": 87.6
+      },
+      "medium_3-5": {
+        "count": 4286,
+        "graded": 4278,
+        "hits": 3377,
+        "hit_rate": 78.94
+      },
+      "low_1-3": {
+        "count": 10855,
+        "graded": 10740,
+        "hits": 7381,
+        "hit_rate": 68.72
+      },
+      "pass_<1": {
+        "count": 8295,
+        "graded": 8241,
+        "hits": 4586,
+        "hit_rate": 55.65
+      }
+    },
+    "by_direction": {
+      "OVER": {
+        "count": 9104,
+        "graded": 8996,
+        "hits": 6323,
+        "hit_rate": 70.29
+      },
+      "UNDER": {
+        "count": 8549,
+        "graded": 8530,
+        "hits": 6632,
+        "hit_rate": 77.75
+      }
+    }
+  },
+  "monthly": {
+    "2023-11": {
+      "samples": 3640,
+      "mae": 3.3537,
+      "betting": {
+        "hit_rate": 0.7697450898453824,
+        "hit_rate_pct": 76.97,
+        "hits": 1842,
+        "misses": 551,
+        "pushes": 36,
+        "bets_placed": 2429,
+        "bets_graded": 2393,
+        "roi": 0.4625547363299525,
+        "roi_pct": 46.26,
+        "profit": 1123.5454545454545,
+        "breakeven_hit_rate": 52.38,
+        "min_edge_threshold": 1.0
+      }
+    },
+    "2023-12": {
+      "samples": 4421,
+      "mae": 3.736,
+      "betting": {
+        "hit_rate": 0.7295576407506702,
+        "hit_rate_pct": 72.96,
+        "hits": 2177,
+        "misses": 807,
+        "pushes": 34,
+        "bets_placed": 3018,
+        "bets_graded": 2984,
+        "roi": 0.3883667690824748,
+        "roi_pct": 38.84,
+        "profit": 1172.090909090909,
+        "breakeven_hit_rate": 52.38,
+        "min_edge_threshold": 1.0
+      }
+    },
+    "2024-01": {
+      "samples": 4991,
+      "mae": 3.7515,
+      "betting": {
+        "hit_rate": 0.7272727272727273,
+        "hit_rate_pct": 72.73,
+        "hits": 2448,
+        "misses": 918,
+        "pushes": 18,
+        "bets_placed": 3384,
+        "bets_graded": 3366,
+        "roi": 0.38636363636363635,
+        "roi_pct": 38.64,
+        "profit": 1307.4545454545455,
+        "breakeven_hit_rate": 52.38,
+        "min_edge_threshold": 1.0
+      }
+    },
+    "2024-02": {
+      "samples": 3730,
+      "mae": 3.7407,
+      "betting": {
+        "hit_rate": 0.704130262112788,
+        "hit_rate_pct": 70.41,
+        "hits": 1773,
+        "misses": 745,
+        "pushes": 15,
+        "bets_placed": 2533,
+        "bets_graded": 2518,
+        "roi": 0.34221009941499475,
+        "roi_pct": 34.22,
+        "profit": 866.8181818181818,
+        "breakeven_hit_rate": 52.38,
+        "min_edge_threshold": 1.0
+      }
+    },
+    "2024-03": {
+      "samples": 4881,
+      "mae": 3.6825,
+      "betting": {
+        "hit_rate": 0.7369391518131531,
+        "hit_rate_pct": 73.69,
+        "hits": 2398,
+        "misses": 856,
+        "pushes": 14,
+        "bets_placed": 3268,
+        "bets_graded": 3254,
+        "roi": 0.40514075887392903,
+        "roi_pct": 40.51,
+        "profit": 1324.0,
+        "breakeven_hit_rate": 52.38,
+        "min_edge_threshold": 1.0
+      }
+    },
+    "2024-04": {
+      "samples": 3324,
+      "mae": 3.6933,
+      "betting": {
+        "hit_rate": 0.7698548249359521,
+        "hit_rate_pct": 76.99,
+        "hits": 1803,
+        "misses": 539,
+        "pushes": 10,
+        "bets_placed": 2352,
+        "bets_graded": 2342,
+        "roi": 0.46772572665429807,
+        "roi_pct": 46.77,
+        "profit": 1100.090909090909,
+        "breakeven_hit_rate": 52.38,
+        "min_edge_threshold": 1.0
+      }
+    },
+    "2024-05": {
+      "samples": 847,
+      "mae": 3.5159,
+      "betting": {
+        "hit_rate": 0.7687074829931972,
+        "hit_rate_pct": 76.87,
+        "hits": 452,
+        "misses": 136,
+        "pushes": 0,
+        "bets_placed": 588,
+        "bets_graded": 588,
+        "roi": 0.46753246753246747,
+        "roi_pct": 46.75,
+        "profit": 274.9090909090909,
+        "breakeven_hit_rate": 52.38,
+        "min_edge_threshold": 1.0
+      }
+    },
+    "2024-06": {
+      "samples": 114,
+      "mae": 3.2317,
+      "betting": {
+        "hit_rate": 0.7654320987654321,
+        "hit_rate_pct": 76.54,
+        "hits": 62,
+        "misses": 19,
+        "pushes": 0,
+        "bets_placed": 81,
+        "bets_graded": 81,
+        "roi": 0.46127946127946123,
+        "roi_pct": 46.13,
+        "profit": 37.36363636363636,
+        "breakeven_hit_rate": 52.38,
+        "min_edge_threshold": 1.0
+      }
+    }
+  },
+  "evaluated_at": "2026-01-29T21:10:23.230000"
+}
