@@ -93,35 +93,43 @@ def calculate_seasonal_features(game_dates: pd.Series) -> pd.DataFrame:
     """
     Calculate seasonal features from game dates.
 
+    Uses vectorized operations for performance with large datasets.
+
     Args:
         game_dates: Series of game dates
 
     Returns:
         DataFrame with seasonal feature columns
     """
-    features = []
+    # Convert to datetime if needed
+    dates = pd.to_datetime(game_dates)
 
-    for game_date in game_dates:
-        if isinstance(game_date, str):
-            game_date = datetime.strptime(game_date, '%Y-%m-%d').date()
-        elif isinstance(game_date, pd.Timestamp):
-            game_date = game_date.date()
+    # Vectorized season year calculation
+    # NBA seasons run Oct-Jun, so Oct-Dec = same year, Jan-Sep = previous year
+    season_years = dates.dt.year.where(dates.dt.month >= 10, dates.dt.year - 1)
 
-        season_year = get_season_year(game_date)
-        season_start = get_season_start(season_year)
-        all_star_date = get_all_star_date(season_year)
+    # Pre-compute season starts and All-Star dates for each unique season
+    unique_seasons = season_years.unique()
+    season_start_map = {sy: SEASON_START_DATES.get(sy, date(sy, 10, 22)) for sy in unique_seasons}
+    all_star_map = {sy: ALL_STAR_DATES.get(sy, date(sy + 1, 2, 17)) for sy in unique_seasons}
 
-        days_into_season = (game_date - season_start).days
-        days_to_all_star = (all_star_date - game_date).days
+    # Map to each row
+    season_starts = season_years.map(lambda sy: pd.Timestamp(season_start_map[sy]))
+    all_star_dates = season_years.map(lambda sy: pd.Timestamp(all_star_map[sy]))
 
-        features.append({
-            'week_of_season': max(0, days_into_season // 7),
-            'pct_season_completed': min(1.0, max(0.0, days_into_season / 250)),
-            'days_to_all_star': days_to_all_star,
-            'is_post_all_star': 1.0 if days_to_all_star < 0 else 0.0,
-        })
+    # Calculate days
+    days_into_season = (dates - season_starts).dt.days
+    days_to_all_star = (all_star_dates - dates).dt.days
 
-    return pd.DataFrame(features)
+    # Build features DataFrame
+    features = pd.DataFrame({
+        'week_of_season': (days_into_season // 7).clip(lower=0),
+        'pct_season_completed': (days_into_season / 250).clip(0, 1),
+        'days_to_all_star': days_to_all_star,
+        'is_post_all_star': (days_to_all_star < 0).astype(float),
+    })
+
+    return features
 
 
 # V8 Feature names (33 features)
