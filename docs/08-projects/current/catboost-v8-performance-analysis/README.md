@@ -1,18 +1,21 @@
 # CatBoost V8 Performance Analysis Project
 
-**Status:** ✅ COMPLETE - ALL PREVENTION TASKS DONE
+**Status:** ⚠️ MODEL DRIFT DETECTED - RETRAINING NEEDED
 **Started:** 2026-01-29 (Session 23)
-**Updated:** 2026-01-30 (Session 25)
-**Next Phase:** Walk-Forward Experiments (Training Optimization)
+**Updated:** 2026-01-30 (Session 27)
+**Next Phase:** Retraining Experiments (Urgent)
 
-## Key Discovery (Session 24)
+## Key Discovery (Session 27)
 
-**THE MODEL WORKS!** CatBoost V8 achieved **74.25% hit rate** on the 2024-25 season (true out-of-sample data). The poor 52% performance in January 2026 was caused by a **feature passing bug**, not model failure.
+**MODEL DRIFT DETECTED!** CatBoost V8 shows significant performance degradation on the 2025-26 season:
 
-| Period | Hit Rate | Status |
-|--------|----------|--------|
-| 2024-25 Season | **74.25%** | Model working correctly |
-| Jan 2026 | 52% | Feature passing bug active |
+| Season | Hit Rate | MAE | Status |
+|--------|----------|-----|--------|
+| 2022-24 | 75.1% | 4.08 | ✅ Good |
+| 2024-25 | 74.3% | 4.18 | ✅ Good |
+| **2025-26** | **61.3%** | **6.34** | ⚠️ **DEGRADED** |
+
+The model was trained on 2021-2024 data and is now 1.5+ years out of sample. **Retraining with recent data is urgently needed.**
 
 ## Documents
 
@@ -81,16 +84,46 @@ See [PREVENTION-PLAN.md](./PREVENTION-PLAN.md) for full details:
 - [x] Configure Cloud Monitoring alert for CRITICAL fallbacks
 - [x] Deploy grading views to BigQuery (5 views consolidated)
 
-### Walk-Forward Experiments (Session 26)
+### Walk-Forward Experiments (Sessions 26-27)
 See `WALK-FORWARD-EXPERIMENT-PLAN.md` and `EXPERIMENT-INFRASTRUCTURE.md` for details:
-- [x] Create `ml/experiments/train_walkforward.py`
-- [x] Create `ml/experiments/evaluate_model.py`
-- [x] Create `ml/experiments/run_experiment.py` (combined workflow)
-- [x] Create `ml/experiments/compare_results.py` (comparison tool)
-- [x] Run Experiments A1-A3 (training window size) - **ALL SHOW 72-74% HIT RATE**
-- [ ] Run Experiments B1-B3 (recency vs volume)
-- [ ] Run Experiment C1 (decay analysis)
-- [ ] Determine optimal retraining strategy
+- [x] Create experiment infrastructure (train, evaluate, compare scripts)
+- [x] Run Experiments A1-A3 (training window size) - 72-74% hit rate
+- [x] Run Experiments B1-B3_fixed (recency vs volume) - 69-71% on clean data
+- [x] Discover model drift on 2025-26 season (61% vs 74%)
+- [ ] **URGENT: Retraining experiments (see below)**
+
+### URGENT: Retraining Experiments Needed
+
+The model has degraded on 2025-26. Run these experiments:
+
+```bash
+# Experiment 1: Train on 2024-25 only
+PYTHONPATH=. python ml/experiments/run_experiment.py \
+    --experiment-id RECENT_2024_25 \
+    --train-start 2024-10-01 --train-end 2025-06-30 \
+    --eval-start 2025-10-01 --eval-end 2026-01-28
+
+# Experiment 2: Train on first 3 months of 2025-26
+PYTHONPATH=. python ml/experiments/run_experiment.py \
+    --experiment-id INSEASON_2025_26 \
+    --train-start 2025-10-01 --train-end 2025-12-31 \
+    --eval-start 2026-01-01 --eval-end 2026-01-28
+
+# Experiment 3: Combined recent data
+PYTHONPATH=. python ml/experiments/run_experiment.py \
+    --experiment-id COMBINED_RECENT \
+    --train-start 2024-10-01 --train-end 2025-12-31 \
+    --eval-start 2026-01-01 --eval-end 2026-01-28
+
+# Experiment 4: All data including 2024-25
+PYTHONPATH=. python ml/experiments/run_experiment.py \
+    --experiment-id ALL_DATA \
+    --train-start 2021-11-01 --train-end 2025-12-31 \
+    --eval-start 2026-01-01 --eval-end 2026-01-28
+
+# Compare all
+PYTHONPATH=. python ml/experiments/compare_results.py
+```
 
 ### Future Improvements
 - [ ] Expand ml_feature_store_v2 to 33 features
@@ -99,15 +132,20 @@ See `WALK-FORWARD-EXPERIMENT-PLAN.md` and `EXPERIMENT-INFRASTRUCTURE.md` for det
 
 ## Experiment Results
 
-### Series A: Training Window Size (Session 26)
+### Session 27: Walk-Forward Validation (Clean Data)
 
-| Exp | Training Data | Eval Period | Hit Rate | ROI | MAE |
-|-----|---------------|-------------|----------|-----|-----|
-| A1 | 2021-22 (26K) | 2022-23 | **72.3%** | +37.8% | 3.89 |
-| A2 | 2021-23 (52K) | 2023-24 | **73.9%** | +40.8% | 3.66 |
-| A3 | 2021-24 (78K) | 2024-25 | **73.6%** | +40.3% | 3.58 |
+After fixing the feature store L5/L10 bug, experiments were re-run on clean data:
 
-**Key Finding:** More training data improves MAE, but hit rates remain stable at 72-74%.
+| Exp | Training | Eval | Hit Rate | ROI | MAE | Data Status |
+|-----|----------|------|----------|-----|-----|-------------|
+| A1 | 2021-22 | 2022-23 | **72.1%** | +37.5% | 3.89 | ✅ Clean |
+| A2 | 2021-23 | 2023-24 | **73.9%** | +41.1% | 3.66 | ✅ Clean |
+| A3_fixed | 2021-24 | 2024-25 | **70.8%** | +35.0% | 3.91 | ✅ Clean |
+| B1_fixed | 2021-23 | 2024-25 | **70.6%** | +34.7% | 3.93 | ✅ Clean |
+| B2_fixed | 2023-24 | 2024-25 | **69.5%** | +32.7% | 3.99 | ✅ Clean |
+| B3_fixed | 2022-24 | 2024-25 | **70.7%** | +34.9% | 3.92 | ✅ Clean |
+
+**Key Finding:** Model achieves ~70% on clean 2024-25 data, but only 61% on 2025-26 (model drift).
 
 ### D1: Existing V8 on 2024-25 Season
 
