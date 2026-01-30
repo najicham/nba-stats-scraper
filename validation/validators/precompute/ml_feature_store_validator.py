@@ -93,6 +93,12 @@ class MLFeatureStoreValidator(BaseValidator):
         # Check 11: Freshness check
         self._validate_freshness(start_date, end_date)
 
+        # Check 12: Shot zone zero-value detection (NEW - Session 38)
+        self._validate_no_shot_zone_zeros(start_date, end_date)
+
+        # Check 13: Shot zone distribution drift (NEW - Session 38)
+        self._validate_shot_zone_distribution(start_date, end_date)
+
         logger.info("Completed ML Feature Store V2 validations")
 
     def _validate_player_count(self, start_date: str, end_date: str):
@@ -611,6 +617,142 @@ class MLFeatureStoreValidator(BaseValidator):
             logger.error(f"Failed freshness validation: {e}")
             self._add_error_result("data_freshness", str(e))
 
+    def _validate_no_shot_zone_zeros(self, start_date: str, end_date: str):
+        """
+        Detect records where shot zone features are all zeros.
+
+        Added in Session 38 after discovering Jan 23 and Jan 29 had
+        all shot zone features = 0, which corrupted model predictions.
+
+        Features 18-20 are shot zone rates:
+        - 18: pct_paint (paint shot %)
+        - 19: pct_mid_range (mid-range shot %)
+        - 20: pct_three (three-point shot %)
+
+        All three being 0 simultaneously indicates a data failure.
+        """
+        check_start = time.time()
+
+        query = f"""
+        SELECT
+            game_date,
+            COUNT(*) as zero_count,
+            COUNT(*) * 100.0 / (
+                SELECT COUNT(*)
+                FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
+                WHERE game_date = t.game_date
+            ) as zero_pct
+        FROM `{self.project_id}.nba_predictions.ml_feature_store_v2` t
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+          AND features IS NOT NULL
+          AND ARRAY_LENGTH(features) >= 21
+          AND features[SAFE_OFFSET(18)] = 0
+          AND features[SAFE_OFFSET(19)] = 0
+          AND features[SAFE_OFFSET(20)] = 0
+        GROUP BY game_date
+        HAVING COUNT(*) > 5
+        ORDER BY game_date DESC
+        LIMIT 20
+        """
+
+        try:
+            result = self._execute_query(query, start_date, end_date)
+            zero_days = [
+                (str(row.game_date), row.zero_count, f"{row.zero_pct:.1f}%")
+                for row in result
+            ]
+
+            passed = len(zero_days) == 0
+            duration = time.time() - check_start
+
+            # Critical if >50% of records on any day have all zeros
+            has_critical = any(float(d[2].rstrip('%')) > 50 for d in zero_days)
+            severity = "critical" if has_critical else ("warning" if not passed else "info")
+
+            self.results.append(ValidationResult(
+                check_name="shot_zone_zeros",
+                check_type="data_quality",
+                layer="bigquery",
+                passed=passed,
+                severity=severity,
+                message=f"Found {len(zero_days)} dates with all-zero shot zone features (data failure indicator)" if not passed else "No dates with all-zero shot zone features",
+                affected_count=len(zero_days),
+                affected_items=zero_days[:10],
+                execution_duration=duration
+            ))
+
+        except Exception as e:
+            logger.error(f"Failed shot zone zeros validation: {e}")
+            self._add_error_result("shot_zone_zeros", str(e))
+
+    def _validate_shot_zone_distribution(self, start_date: str, end_date: str):
+        """
+        Validate shot zone feature distributions match expected ranges.
+
+        Added in Session 38 after discovering paint_rate dropped from 0.40 to 0.20
+        and three_pt_rate spiked from 0.34 to 0.70 - clearly out of distribution.
+
+        Expected ranges (as decimals in feature store):
+        - pct_paint (feature 18): 0.15-0.65 (15-65%)
+        - pct_mid_range (feature 19): 0.03-0.40 (3-40%)
+        - pct_three (feature 20): 0.10-0.60 (10-60%)
+        """
+        check_start = time.time()
+
+        query = f"""
+        SELECT
+            game_date,
+            ROUND(AVG(features[SAFE_OFFSET(18)]), 3) as avg_paint,
+            ROUND(AVG(features[SAFE_OFFSET(19)]), 3) as avg_mid,
+            ROUND(AVG(features[SAFE_OFFSET(20)]), 3) as avg_three,
+            COUNT(*) as record_count
+        FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
+        WHERE game_date >= '{start_date}'
+          AND game_date <= '{end_date}'
+          AND features IS NOT NULL
+          AND ARRAY_LENGTH(features) >= 21
+        GROUP BY game_date
+        HAVING
+            -- Average paint rate should be 0.25-0.50 (stricter than individual bounds)
+            AVG(features[SAFE_OFFSET(18)]) < 0.20 OR AVG(features[SAFE_OFFSET(18)]) > 0.55 OR
+            -- Average mid-range rate should be 0.10-0.30
+            AVG(features[SAFE_OFFSET(19)]) < 0.08 OR AVG(features[SAFE_OFFSET(19)]) > 0.35 OR
+            -- Average three-point rate should be 0.25-0.50
+            AVG(features[SAFE_OFFSET(20)]) < 0.20 OR AVG(features[SAFE_OFFSET(20)]) > 0.55
+        ORDER BY game_date DESC
+        LIMIT 30
+        """
+
+        try:
+            result = self._execute_query(query, start_date, end_date)
+            drift_days = [
+                (str(row.game_date), f"paint={row.avg_paint}", f"mid={row.avg_mid}", f"three={row.avg_three}")
+                for row in result
+            ]
+
+            passed = len(drift_days) == 0
+            duration = time.time() - check_start
+
+            # Critical if >5 days have drift (indicates systemic issue)
+            severity = "critical" if len(drift_days) > 5 else ("warning" if not passed else "info")
+
+            self.results.append(ValidationResult(
+                check_name="shot_zone_distribution",
+                check_type="data_quality",
+                layer="bigquery",
+                passed=passed,
+                severity=severity,
+                message=f"Found {len(drift_days)} dates with shot zone distributions outside expected ranges" if not passed else "Shot zone distributions within expected ranges",
+                affected_count=len(drift_days),
+                affected_items=drift_days[:10],
+                execution_duration=duration
+            ))
+
+        except Exception as e:
+            logger.error(f"Failed shot zone distribution validation: {e}")
+            self._add_error_result("shot_zone_distribution", str(e))
+
     def _add_error_result(self, check_name: str, error_msg: str):
         """Add an error result for failed checks"""
         self.results.append(ValidationResult(
@@ -648,7 +790,7 @@ if __name__ == "__main__":
         config_path="validation/configs/precompute/ml_feature_store.yaml"
     )
 
-    results = validator.run_validation(start_date, end_date)
+    results = validator.validate(start_date, end_date)
 
     print("\n" + "=" * 60)
     print("VALIDATION RESULTS")

@@ -1,0 +1,43 @@
+# Validation config for player_shot_zone_analysis precompute table
+# Created: 2026-01-30 (Session 38)
+
+processor:
+  name: player_shot_zone_analysis
+  description: Player shot distribution and efficiency by court zone
+  table: nba_precompute.player_shot_zone_analysis
+  layer: precompute
+
+# Date field for filtering
+date_field: analysis_date
+
+# Expected row counts
+expected_rows:
+  min_per_day: 300
+  max_per_day: 500
+
+# Key fields that must be populated
+required_not_null:
+  - player_lookup
+  - analysis_date
+
+# Domain-specific bounds (basketball knowledge)
+domain_bounds:
+  paint_rate_last_10:
+    min: 15
+    max: 65
+    description: "Paint shot percentage (typically 25-55%)"
+  mid_range_rate_last_10:
+    min: 3
+    max: 40
+    description: "Mid-range shot percentage (typically 10-30%)"
+  three_pt_rate_last_10:
+    min: 10
+    max: 60
+    description: "Three-point shot percentage (typically 20-50%)"
+
+# Validation thresholds
+thresholds:
+  freshness_warning_days: 2
+  freshness_error_days: 7
+  min_player_count: 300
+  rate_sum_tolerance: 2

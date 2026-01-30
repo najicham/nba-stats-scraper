@@ -1,0 +1,52 @@
+# Validation config for ml_feature_store_v2 predictions table
+# Created: 2026-01-30 (Session 38)
+
+processor:
+  name: ml_feature_store_v2
+  description: 33-feature vectors for ML predictions
+  table: nba_predictions.ml_feature_store_v2
+  layer: precompute
+
+# Date field for filtering
+date_field: game_date
+
+# Expected row counts
+expected_rows:
+  min_per_day: 100
+  max_per_day: 400
+
+# Key fields that must be populated
+required_not_null:
+  - player_lookup
+  - game_date
+  - features
+
+# Feature array configuration
+feature_config:
+  expected_count: 33
+  version: v2_33features
+
+# Shot zone feature indices (0-based)
+shot_zone_features:
+  paint_rate: 18
+  mid_range_rate: 19
+  three_pt_rate: 20
+
+# Domain-specific bounds for shot zone features (as decimals)
+domain_bounds:
+  feature_18_paint:
+    min: 0.15
+    max: 0.65
+  feature_19_mid:
+    min: 0.03
+    max: 0.40
+  feature_20_three:
+    min: 0.10
+    max: 0.60
+
+# Validation thresholds
+thresholds:
+  freshness_warning_days: 2
+  freshness_error_days: 7
+  min_player_count: 100
+  source_completeness_min: 70

@@ -69,6 +69,9 @@ class PlayerShotZoneValidator(BaseValidator):
         # Check 7: Freshness check
         self._validate_freshness(start_date, end_date)
 
+        # Check 8: Domain-specific range validation (NEW - Session 38)
+        self._validate_domain_specific_ranges(start_date, end_date)
+
         logger.info("Completed Player Shot Zone Analysis validations")
 
     def _validate_player_count(self, start_date: str, end_date: str):
@@ -392,6 +395,104 @@ class PlayerShotZoneValidator(BaseValidator):
             logger.error(f"Failed freshness validation: {e}")
             self._add_error_result("data_freshness", str(e))
 
+    def _validate_domain_specific_ranges(self, start_date: str, end_date: str):
+        """
+        Validate shot zone percentages match basketball domain expectations.
+
+        Added in Session 38 to catch the January 2026 feature drift where:
+        - paint_rate dropped from 40% to 20% (should be 20-60%)
+        - three_pt_rate spiked to 70% (should be 15-55%)
+
+        These bounds are based on NBA shooting patterns:
+        - Paint (restricted area + paint): typically 25-55%
+        - Mid-range: typically 5-35%
+        - Three-point: typically 15-55%
+        """
+        check_start = time.time()
+
+        # Domain bounds based on NBA shooting patterns
+        # Widened slightly to avoid false positives but catch extreme anomalies
+        query = f"""
+        SELECT
+            analysis_date,
+            player_lookup,
+            paint_rate_last_10,
+            mid_range_rate_last_10,
+            three_pt_rate_last_10,
+            CASE
+                WHEN paint_rate_last_10 < 15 THEN 'paint_too_low'
+                WHEN paint_rate_last_10 > 65 THEN 'paint_too_high'
+                WHEN mid_range_rate_last_10 < 3 THEN 'mid_too_low'
+                WHEN mid_range_rate_last_10 > 40 THEN 'mid_too_high'
+                WHEN three_pt_rate_last_10 < 10 THEN 'three_too_low'
+                WHEN three_pt_rate_last_10 > 60 THEN 'three_too_high'
+                ELSE 'unknown'
+            END as violation_type
+        FROM `{self.project_id}.nba_precompute.player_shot_zone_analysis`
+        WHERE analysis_date >= '{start_date}'
+          AND analysis_date <= '{end_date}'
+          AND (
+            -- Paint should be 15-65% (widened from typical 25-55%)
+            paint_rate_last_10 < 15 OR paint_rate_last_10 > 65 OR
+            -- Mid-range should be 3-40% (widened from typical 10-30%)
+            mid_range_rate_last_10 < 3 OR mid_range_rate_last_10 > 40 OR
+            -- Three-point should be 10-60% (widened from typical 20-50%)
+            three_pt_rate_last_10 < 10 OR three_pt_rate_last_10 > 60
+          )
+        ORDER BY analysis_date DESC
+        LIMIT 100
+        """
+
+        try:
+            result = self._execute_query(query, start_date, end_date)
+            violations = [
+                (str(row.analysis_date), row.player_lookup, row.violation_type,
+                 f"paint={row.paint_rate_last_10:.1f}%, mid={row.mid_range_rate_last_10:.1f}%, three={row.three_pt_rate_last_10:.1f}%")
+                for row in result
+            ]
+
+            # Group by violation type for summary
+            violation_counts = {}
+            for v in violations:
+                vtype = v[2]
+                violation_counts[vtype] = violation_counts.get(vtype, 0) + 1
+
+            passed = len(violations) == 0
+            duration = time.time() - check_start
+
+            # Determine severity based on count
+            # >50 violations is critical (systemic issue like Jan 2026)
+            # 10-50 is warning (some players with unusual patterns)
+            # <10 is acceptable (edge cases)
+            if len(violations) > 50:
+                severity = "critical"
+            elif len(violations) > 10:
+                severity = "warning"
+            else:
+                severity = "info"
+
+            message = (
+                f"Found {len(violations)} records with domain-specific violations: {violation_counts}"
+                if not passed
+                else "All shot zone rates within expected basketball ranges (paint 15-65%, mid 3-40%, three 10-60%)"
+            )
+
+            self.results.append(ValidationResult(
+                check_name="domain_specific_ranges",
+                check_type="data_quality",
+                layer="bigquery",
+                passed=passed,
+                severity=severity if not passed else "info",
+                message=message,
+                affected_count=len(violations),
+                affected_items=violations[:15],
+                execution_duration=duration
+            ))
+
+        except Exception as e:
+            logger.error(f"Failed domain-specific ranges validation: {e}")
+            self._add_error_result("domain_specific_ranges", str(e))
+
     def _add_error_result(self, check_name: str, error_msg: str):
         """Add an error result for failed checks"""
         self.results.append(ValidationResult(
@@ -429,7 +530,7 @@ if __name__ == "__main__":
         config_path="validation/configs/precompute/player_shot_zone_analysis.yaml"
     )
 
-    results = validator.run_validation(start_date, end_date)
+    results = validator.validate(start_date, end_date)
 
     print("\n" + "=" * 60)
     print("VALIDATION RESULTS")
