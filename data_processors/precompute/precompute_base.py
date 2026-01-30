@@ -1152,7 +1152,18 @@ class PrecomputeProcessorBase(
         """
         check_type = config.get('check_type', 'date_match')
         date_field = config.get('date_field', 'game_date')
-        
+
+        # Validate project_id before constructing BigQuery queries
+        if not hasattr(self, 'project_id') or not self.project_id:
+            logger.warning(f"project_id not initialized - cannot check table data for {table_name}")
+            return False, {
+                'exists': False,
+                'row_count': 0,
+                'age_hours': None,
+                'last_updated': None,
+                'error': 'project_id not initialized'
+            }
+
         try:
             if check_type == 'date_match':
                 # Check for exact date match
