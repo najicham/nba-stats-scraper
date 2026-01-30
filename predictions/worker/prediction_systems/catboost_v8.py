@@ -477,21 +477,23 @@ class CatBoostV8:
 
         # FAIL-FAST: Assert correct feature version (v2_33features required for V8 model)
         feature_version = features.get('feature_version')
-        if feature_version != 'v2_33features':
+        # Accept v2_33features or v2_37features (model extracts 33 features by name)
+        if feature_version not in ('v2_33features', 'v2_37features'):
             raise ValueError(
-                f"CatBoost V8 requires feature_version='v2_33features', got '{feature_version}'. "
+                f"CatBoost V8 requires feature_version='v2_33features' or 'v2_37features', got '{feature_version}'. "
                 f"This model is trained on 33 features from ML Feature Store v2. "
-                f"Ensure ml_feature_store_processor.py is upgraded to v2_33features."
+                f"Ensure ml_feature_store_processor.py is upgraded to v2_33features or v2_37features."
             )
 
         # FAIL-FAST: Assert correct feature count (defense-in-depth)
+        # Model extracts features by name, so any version >= 33 features is acceptable
         feature_count = features.get('feature_count')
         features_array = features.get('features_array', [])
         actual_count = feature_count if feature_count else len(features_array)
-        if actual_count != 33 and actual_count != 0:  # 0 means field not present, allow that
+        if actual_count < 33 and actual_count != 0:  # 0 means field not present, allow that
             raise ValueError(
-                f"CatBoost V8 requires 33 features, got {actual_count}. "
-                f"Feature version is '{feature_version}' but count doesn't match. "
+                f"CatBoost V8 requires at least 33 features, got {actual_count}. "
+                f"Feature version is '{feature_version}' but count is too low. "
                 f"Check ml_feature_store_processor.py feature extraction."
             )
 

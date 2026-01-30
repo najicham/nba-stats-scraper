@@ -393,13 +393,13 @@ class ZoneMatchupV1:
         data_source = features.get('data_source', 'unknown')
         features_array = features.get('features_array', [])
         
-        # Validate feature count if provided (accepts 25 or 33 features)
-        if feature_count not in (25, 33):
+        # Validate feature count if provided (accepts 25, 33, or 37 features)
+        if feature_count not in (25, 33, 37):
             logger.error(f"Invalid feature count: {feature_count}", exc_info=True)
             return False
 
         # Only validate array length if array exists and is non-empty
-        if features_array and len(features_array) not in (25, 33):
+        if features_array and len(features_array) not in (25, 33, 37):
             logger.error(f"Invalid array length: {len(features_array)}", exc_info=True)
             return False
         
