@@ -479,7 +479,7 @@ def handle_prediction_request():
         player_lookup = request_data['player_lookup']
         game_date_str = request_data['game_date']
         game_id = request_data['game_id']
-        line_values = request_data.get('line_values', [])
+        line_values = request_data.get('line_values') or []  # Handle explicit None from JSON
         batch_id = request_data.get('batch_id')  # From coordinator for staging writes
 
         # BATCH OPTIMIZATION: Extract pre-loaded historical games if available

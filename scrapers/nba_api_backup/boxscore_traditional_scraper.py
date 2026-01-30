@@ -193,7 +193,7 @@ class BoxScoreTraditionalScraper:
                 match = re.match(r'PT(\d+)M', minutes_str)
                 if match:
                     return int(match.group(1))
-            except:
+            except (ValueError, TypeError, AttributeError):
                 pass
 
         # Handle "32:45" format
@@ -201,13 +201,13 @@ class BoxScoreTraditionalScraper:
             try:
                 parts = str(minutes_str).split(':')
                 return int(parts[0])
-            except:
+            except (ValueError, TypeError, IndexError):
                 pass
 
         # Handle numeric
         try:
             return int(float(minutes_str))
-        except:
+        except (ValueError, TypeError):
             return 0
 
     def _normalize_name(self, name: str) -> str:

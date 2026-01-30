@@ -130,6 +130,10 @@ class ServiceErrorLogger:
             table_name: BigQuery table name (default: service_errors)
             enabled: Enable/disable error logging (useful for testing)
         """
+        # Load project_id from config if not provided
+        if project_id is None:
+            from shared.config.gcp_config import get_project_id
+            project_id = get_project_id()
         self.project_id = project_id
         self.dataset_id = dataset_id
         self.table_name = table_name

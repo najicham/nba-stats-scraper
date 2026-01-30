@@ -45,7 +45,7 @@ class PostBackfillValidator:
     # Phase configurations
     PHASE_CONFIGS = {
         'raw': {
-            'tables': ['nba_raw.bdl_player_boxscores', 'nba_raw.nbac_player_boxscore'],
+            'tables': ['nba_raw.bdl_player_boxscores', 'nba_raw.nbac_player_boxscores'],
             'downstream_phases': ['analytics'],
         },
         'analytics': {
