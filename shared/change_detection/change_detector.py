@@ -237,7 +237,7 @@ class PlayerChangeDetector(ChangeDetector):
             SELECT
                 player_lookup,
                 {', '.join(change_detection_fields)}
-            FROM `{self.project_id}.nba_raw.nbac_player_boxscore`
+            FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
             WHERE game_date = @game_date
         ),
         last_processed AS (

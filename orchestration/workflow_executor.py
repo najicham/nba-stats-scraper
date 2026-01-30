@@ -249,7 +249,7 @@ class WorkflowExecutor:
         # Query for unexecuted RUN decisions from the last hour
         # CRITICAL: LEFT JOIN prevents duplicate executions
         # Week 1: Added DATE() filter for partition pruning (cost optimization)
-        query = """
+        query = f"""
             SELECT
                 d.decision_id,
                 d.workflow_name,
