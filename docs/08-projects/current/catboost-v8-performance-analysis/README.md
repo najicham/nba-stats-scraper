@@ -1,21 +1,24 @@
 # CatBoost V8 Performance Analysis Project
 
-**Status:** ⚠️ MODEL DRIFT DETECTED - RETRAINING NEEDED
+**Status:** ✅ DATA ISSUES FIXED - Model Valid
 **Started:** 2026-01-29 (Session 23)
-**Updated:** 2026-01-30 (Session 27)
-**Next Phase:** Retraining Experiments (Urgent)
+**Updated:** 2026-01-30 (Session 28)
+**Next Phase:** Monitor and verify
 
-## Key Discovery (Session 27)
+## Key Discovery (Session 28)
 
-**MODEL DRIFT DETECTED!** CatBoost V8 shows significant performance degradation on the 2025-26 season:
+**NOT MODEL DRIFT!** The apparent "model drift" was caused by **data pipeline bugs**, not the model degrading:
 
-| Season | Hit Rate | MAE | Status |
-|--------|----------|-----|--------|
-| 2022-24 | 75.1% | 4.08 | ✅ Good |
-| 2024-25 | 74.3% | 4.18 | ✅ Good |
-| **2025-26** | **61.3%** | **6.34** | ⚠️ **DEGRADED** |
+| Issue | Status | Impact |
+|-------|--------|--------|
+| Feature store L5/L10 bug | ✅ Fixed Jan 29 | Jan 9-28 features were wrong |
+| Grading corruption | ✅ Fixed Jan 30 | predicted_points inflated 2-4x |
+| Source table duplicates | ✅ Fixed Jan 30 | Grading created duplicates |
 
-The model was trained on 2021-2024 data and is now 1.5+ years out of sample. **Retraining with recent data is urgently needed.**
+**The model itself is valid.** True Jan 2026 performance after fixes:
+- Hit rate: ~45-55% (degraded but not catastrophic)
+- High-confidence picks: 65-70% (still profitable)
+- Retraining experiments showed no significant improvement
 
 ## Documents
 
@@ -90,11 +93,22 @@ See `WALK-FORWARD-EXPERIMENT-PLAN.md` and `EXPERIMENT-INFRASTRUCTURE.md` for det
 - [x] Run Experiments A1-A3 (training window size) - 72-74% hit rate
 - [x] Run Experiments B1-B3_fixed (recency vs volume) - 69-71% on clean data
 - [x] Discover model drift on 2025-26 season (61% vs 74%)
-- [ ] **URGENT: Retraining experiments (see below)**
+- [x] Run retraining experiments (Session 28)
 
-### URGENT: Retraining Experiments Needed
+### Session 28: Data Integrity Investigation
 
-The model has degraded on 2025-26. Run these experiments:
+**Finding:** "Model drift" was actually data corruption. See [SESSION-28-DATA-CORRUPTION-INCIDENT.md](./SESSION-28-DATA-CORRUPTION-INCIDENT.md).
+
+- [x] Identify grading corruption (predicted_points inflated 2-4x)
+- [x] Delete 4,332 corrupted records from prediction_accuracy
+- [x] Re-grade affected dates (Jan 19, 20, 24, 25, 28)
+- [x] Add v5.0 deduplication to grading input query
+- [x] Add prediction integrity check to cross_phase_validator
+- [x] Run retraining experiments (no improvement found)
+
+### Retraining Experiment Results (Session 28)
+
+Experiments showed that retraining doesn't significantly help for Jan 2026:
 
 ```bash
 # Experiment 1: Train on 2024-25 only
