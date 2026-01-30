@@ -512,11 +512,12 @@ class PredictionAccuracyProcessor:
                 AND invalidation_reason IS NULL
         ),
         -- v5.0: Deduplicate by business key, keeping the latest prediction
+        -- v5.1: Cast line_value to STRING for partitioning (FLOAT64 not allowed)
         deduped AS (
             SELECT * EXCEPT(rn) FROM (
                 SELECT *,
                     ROW_NUMBER() OVER (
-                        PARTITION BY player_lookup, game_id, system_id, line_value
+                        PARTITION BY player_lookup, game_id, system_id, CAST(line_value AS STRING)
                         ORDER BY created_at DESC
                     ) as rn
                 FROM predictions_raw

@@ -264,7 +264,7 @@ class ExecutionLogger:
                 'universal_player_id': universal_player_id,
                 'game_date': game_date,
                 'game_id': game_id,
-                'line_values_requested': line_values_requested,
+                'line_values_requested': line_values_requested or [],  # Ensure never None for REPEATED field
 
                 # Execution results
                 'success': success,

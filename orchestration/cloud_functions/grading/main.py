@@ -81,8 +81,12 @@ class StructuredLogger:
 structured_logger = StructuredLogger('grading-function')
 
 # Project configuration
-from shared.config.gcp_config import get_project_id
-PROJECT_ID = get_project_id()
+# NOTE: Inline project_id logic to avoid shared module dependency in Cloud Functions
+PROJECT_ID = (
+    os.environ.get('GCP_PROJECT_ID') or
+    os.environ.get('GCP_PROJECT') or
+    'nba-props-platform'
+)
 GRADING_COMPLETE_TOPIC = 'nba-grading-complete'
 
 # Lazy-loaded publisher

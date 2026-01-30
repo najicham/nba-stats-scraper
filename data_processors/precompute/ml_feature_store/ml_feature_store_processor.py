@@ -1237,8 +1237,10 @@ class MLFeatureStoreProcessor(
         # Features 29-30: Opponent History
         opponent_data = self.feature_extractor.get_opponent_history(player_lookup, opponent) if player_lookup and opponent else {}
 
-        avg_points_vs_opp = opponent_data.get('avg_points_vs_opponent', fallback_line)
-        features.append(float(avg_points_vs_opp) if avg_points_vs_opp is not None else float(fallback_line))
+        # Use player's season average as fallback for avg_points_vs_opponent
+        season_avg_fallback = phase4_data.get('points_avg_season') or phase3_data.get('points_avg_season') or 10.0
+        avg_points_vs_opp = opponent_data.get('avg_points_vs_opponent', season_avg_fallback)
+        features.append(float(avg_points_vs_opp) if avg_points_vs_opp is not None else float(season_avg_fallback))
         feature_sources[29] = 'opponent_history' if opponent_data else 'fallback'
 
         games_vs_opp = opponent_data.get('games_vs_opponent', 0.0)
