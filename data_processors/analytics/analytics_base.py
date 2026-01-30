@@ -381,6 +381,9 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             self.run_id = saved_run_id
             self.stats["run_id"] = saved_run_id
 
+            # Flag to skip remaining processing when data already exists from alternate source
+            self.skip_processing = False
+
             self.mark_time("total")
             self.step_info("start", "Analytics processor run starting", extra={"opts": opts})
 
@@ -792,17 +795,24 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             if self.validate_on_extract:
                 self.validate_extracted_data()
 
-            # Transform/calculate analytics
-            self.mark_time("transform")
-            self.calculate_analytics()
-            transform_seconds = self.get_elapsed_seconds("transform")
-            self.stats["transform_time"] = transform_seconds
+            # Skip remaining processing if data already exists from alternate source
+            # (set by validate_extracted_data when target table has data)
+            if self.skip_processing:
+                logger.info("Skipping calculate_analytics and save_analytics - data already exists from alternate source")
+                self.stats["transform_time"] = 0
+                self.stats["save_time"] = 0
+            else:
+                # Transform/calculate analytics
+                self.mark_time("transform")
+                self.calculate_analytics()
+                transform_seconds = self.get_elapsed_seconds("transform")
+                self.stats["transform_time"] = transform_seconds
 
-            # Save to analytics tables
-            self.mark_time("save")
-            self.save_analytics()
-            save_seconds = self.get_elapsed_seconds("save")
-            self.stats["save_time"] = save_seconds
+                # Save to analytics tables
+                self.mark_time("save")
+                self.save_analytics()
+                save_seconds = self.get_elapsed_seconds("save")
+                self.stats["save_time"] = save_seconds
 
             # Complete
             total_seconds = self.get_elapsed_seconds("total")
@@ -1203,6 +1213,8 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
                     )
                     # Set empty transformed_data to signal "nothing new to write"
                     self.transformed_data = []
+                    # Flag to skip remaining processing (calculate_analytics, save_analytics)
+                    self.skip_processing = True
                     return  # Don't raise - treat as success
 
             try:
