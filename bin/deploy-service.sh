@@ -38,22 +38,27 @@ if [ -z "$SERVICE" ]; then
     exit 1
 fi
 
-# Map service names to Dockerfile paths
+# Map service names to Dockerfile paths and expected service identity
 case $SERVICE in
   prediction-coordinator)
     DOCKERFILE="predictions/coordinator/Dockerfile"
+    EXPECTED_SERVICE="prediction-coordinator"
     ;;
   prediction-worker)
     DOCKERFILE="predictions/worker/Dockerfile"
+    EXPECTED_SERVICE="prediction-worker"
     ;;
   nba-phase3-analytics-processors)
     DOCKERFILE="data_processors/analytics/Dockerfile"
+    EXPECTED_SERVICE="analytics-processor"
     ;;
   nba-phase4-precompute-processors)
     DOCKERFILE="data_processors/precompute/Dockerfile"
+    EXPECTED_SERVICE="precompute-processor"
     ;;
   nba-scrapers|nba-phase1-scrapers)
     DOCKERFILE="scrapers/Dockerfile"
+    EXPECTED_SERVICE="nba-scrapers"
     ;;
   *)
     echo "ERROR: Unknown service: $SERVICE"
@@ -138,3 +143,72 @@ gcloud logging read \
     --limit=10 \
     --project="$PROJECT" \
     --format="table(timestamp,textPayload)" 2>/dev/null || echo "(no logs available yet)"
+
+# Post-deployment service identity verification
+echo ""
+echo "[5/5] Verifying service identity..."
+
+SERVICE_URL=$(gcloud run services describe "$SERVICE" \
+    --region="$REGION" \
+    --project="$PROJECT" \
+    --format="value(status.url)" 2>/dev/null)
+
+if [ -z "$SERVICE_URL" ]; then
+    echo "WARNING: Could not get service URL for verification"
+else
+    # Wait for service to be ready and retry up to 3 times
+    RETRY=0
+    MAX_RETRIES=3
+    while [ $RETRY -lt $MAX_RETRIES ]; do
+        HEALTH_RESPONSE=$(curl -s --max-time 10 "$SERVICE_URL/health" 2>/dev/null || echo "{}")
+
+        # Try to extract service name from response (handles both service and components.scrapers formats)
+        ACTUAL_SERVICE=$(echo "$HEALTH_RESPONSE" | jq -r '.service // .components.scrapers.status // "unknown"' 2>/dev/null || echo "unknown")
+
+        # For scrapers, check if status is "operational" (in components) or "nba-scrapers" (in service field)
+        if echo "$HEALTH_RESPONSE" | jq -e '.service' >/dev/null 2>&1; then
+            ACTUAL_SERVICE=$(echo "$HEALTH_RESPONSE" | jq -r '.service' 2>/dev/null)
+        fi
+
+        if [ "$ACTUAL_SERVICE" = "$EXPECTED_SERVICE" ]; then
+            echo ""
+            echo "=============================================="
+            echo "SERVICE IDENTITY VERIFIED"
+            echo "=============================================="
+            echo "Expected: $EXPECTED_SERVICE"
+            echo "Actual:   $ACTUAL_SERVICE"
+            echo "Status:   ✅ MATCH"
+            echo "=============================================="
+            break
+        elif [ "$ACTUAL_SERVICE" = "unknown" ] || [ -z "$ACTUAL_SERVICE" ]; then
+            RETRY=$((RETRY + 1))
+            if [ $RETRY -lt $MAX_RETRIES ]; then
+                echo "Waiting for service to respond (attempt $RETRY/$MAX_RETRIES)..."
+                sleep 10
+            fi
+        else
+            echo ""
+            echo "=============================================="
+            echo "⚠️  SERVICE IDENTITY MISMATCH ⚠️"
+            echo "=============================================="
+            echo "Expected: $EXPECTED_SERVICE"
+            echo "Actual:   $ACTUAL_SERVICE"
+            echo ""
+            echo "CRITICAL: The deployed code does not match the expected service!"
+            echo "This indicates WRONG CODE was deployed."
+            echo ""
+            echo "Actions to take:"
+            echo "1. Check the Dockerfile at $DOCKERFILE"
+            echo "2. Verify the CMD in the Dockerfile points to the correct module"
+            echo "3. Rollback to the previous revision if needed:"
+            echo "   gcloud run services update-traffic $SERVICE --to-revisions=PREVIOUS_REVISION=100"
+            echo "=============================================="
+            exit 1
+        fi
+    done
+
+    if [ $RETRY -eq $MAX_RETRIES ] && [ "$ACTUAL_SERVICE" != "$EXPECTED_SERVICE" ]; then
+        echo "WARNING: Could not verify service identity after $MAX_RETRIES attempts"
+        echo "Please manually verify: curl $SERVICE_URL/health"
+    fi
+fi

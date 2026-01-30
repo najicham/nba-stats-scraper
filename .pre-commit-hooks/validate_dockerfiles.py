@@ -27,8 +27,8 @@ SERVICE_DOCKERFILE_MAP = {
     "nba-scrapers": "scrapers/Dockerfile",
     "nba-phase1-scrapers": "scrapers/Dockerfile",
 
-    # MLB (if applicable)
-    "mlb-phase1-scrapers": "scrapers/mlb/Dockerfile",
+    # Note: Add future services here when they are created
+    # "mlb-phase1-scrapers": "scrapers/mlb/Dockerfile",
 }
 
 # Services that share Dockerfiles (allowed)

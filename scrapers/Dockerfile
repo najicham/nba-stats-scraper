@@ -34,6 +34,12 @@ RUN apt-get update && apt-get install -y \
 # Copy shared module from repository root (relative to build context)
 COPY shared/ ./shared/
 
+# Copy orchestration module (needed for config_loader import in health.py)
+COPY orchestration/ ./orchestration/
+
+# Copy config directory (needed for workflows.yaml)
+COPY config/ ./config/
+
 # Install shared requirements first (for better caching)
 RUN pip install --no-cache-dir -r shared/requirements.txt || true
 
