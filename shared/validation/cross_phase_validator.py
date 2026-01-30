@@ -52,6 +52,7 @@ PREDICTION_ACCURACY = "nba_predictions.prediction_accuracy"
 # Thresholds
 ROW_COUNT_VARIANCE_THRESHOLD = 10.0  # Max % difference between phases
 GRADING_COMPLETENESS_THRESHOLD = 95.0  # Min % of predictions that should be graded
+PREDICTION_VALUE_DRIFT_THRESHOLD = 0.1  # Max avg diff between prediction tables
 
 
 # =============================================================================
@@ -117,6 +118,18 @@ class PlayerFlowResult:
 
 
 @dataclass
+class PredictionIntegrityResult:
+    """Result of prediction value integrity check between tables."""
+    total_dates_checked: int = 0
+    dates_with_drift: int = 0
+    max_drift: float = 0.0
+    affected_records: int = 0
+    status: CheckStatus = CheckStatus.PASS
+    by_date: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    issues: List[str] = field(default_factory=list)
+
+
+@dataclass
 class CrossPhaseValidationResult:
     """Complete cross-phase validation result."""
     start_date: date
@@ -125,6 +138,7 @@ class CrossPhaseValidationResult:
     row_counts: Optional[RowCountConsistencyResult] = None
     grading: Optional[GradingCompletenessResult] = None
     player_flow: Optional[PlayerFlowResult] = None
+    prediction_integrity: Optional[PredictionIntegrityResult] = None
     validation_time_seconds: float = 0.0
     issues: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
@@ -158,6 +172,14 @@ class CrossPhaseValidationResult:
             lines.append(f"  Complete flow: {self.player_flow.flow_completeness_pct:.1f}%")
             lines.append("")
 
+        if self.prediction_integrity:
+            lines.append(f"Prediction Integrity: {self.prediction_integrity.status.value.upper()}")
+            lines.append(f"  Dates checked: {self.prediction_integrity.total_dates_checked}")
+            lines.append(f"  Dates with drift: {self.prediction_integrity.dates_with_drift}")
+            if self.prediction_integrity.max_drift > 0:
+                lines.append(f"  Max drift: {self.prediction_integrity.max_drift:.2f} points")
+            lines.append("")
+
         if self.issues:
             lines.append("Issues:")
             for issue in self.issues:
@@ -187,42 +209,42 @@ def check_row_count_consistency(
 
     query = f"""
     WITH phase2 AS (
-        SELECT game_date, COUNT(DISTINCT player_lookup) as rows
+        SELECT game_date, COUNT(DISTINCT player_lookup) as row_count
         FROM `{PROJECT_ID}.{RAW_BOXSCORES}`
         WHERE game_date BETWEEN @start_date AND @end_date
         GROUP BY game_date
     ),
     phase3 AS (
-        SELECT game_date, COUNT(DISTINCT player_lookup) as rows
+        SELECT game_date, COUNT(DISTINCT player_lookup) as row_count
         FROM `{PROJECT_ID}.{PLAYER_GAME_SUMMARY}`
         WHERE game_date BETWEEN @start_date AND @end_date
         GROUP BY game_date
     ),
     phase4_cache AS (
-        SELECT cache_date as game_date, COUNT(DISTINCT player_lookup) as rows
+        SELECT cache_date as game_date, COUNT(DISTINCT player_lookup) as row_count
         FROM `{PROJECT_ID}.{PLAYER_DAILY_CACHE}`
         WHERE cache_date BETWEEN @start_date AND @end_date
         GROUP BY cache_date
     ),
     phase4_features AS (
-        SELECT game_date, COUNT(DISTINCT player_lookup) as rows
+        SELECT game_date, COUNT(DISTINCT player_lookup) as row_count
         FROM `{PROJECT_ID}.{FEATURE_STORE}`
         WHERE game_date BETWEEN @start_date AND @end_date
         GROUP BY game_date
     ),
     phase5 AS (
-        SELECT game_date, COUNT(DISTINCT player_lookup) as rows
+        SELECT game_date, COUNT(DISTINCT player_lookup) as row_count
         FROM `{PROJECT_ID}.{PREDICTIONS}`
         WHERE game_date BETWEEN @start_date AND @end_date
         GROUP BY game_date
     )
     SELECT
         COALESCE(p2.game_date, p3.game_date, p4c.game_date, p4f.game_date, p5.game_date) as game_date,
-        COALESCE(p2.rows, 0) as phase2_rows,
-        COALESCE(p3.rows, 0) as phase3_rows,
-        COALESCE(p4c.rows, 0) as phase4_cache_rows,
-        COALESCE(p4f.rows, 0) as phase4_features_rows,
-        COALESCE(p5.rows, 0) as phase5_rows
+        COALESCE(p2.row_count, 0) as phase2_rows,
+        COALESCE(p3.row_count, 0) as phase3_rows,
+        COALESCE(p4c.row_count, 0) as phase4_cache_rows,
+        COALESCE(p4f.row_count, 0) as phase4_features_rows,
+        COALESCE(p5.row_count, 0) as phase5_rows
     FROM phase2 p2
     FULL OUTER JOIN phase3 p3 ON p2.game_date = p3.game_date
     FULL OUTER JOIN phase4_cache p4c ON COALESCE(p2.game_date, p3.game_date) = p4c.game_date
@@ -462,6 +484,88 @@ def check_player_flow(
     return result
 
 
+def check_prediction_integrity(
+    client: bigquery.Client,
+    start_date: date,
+    end_date: date,
+) -> PredictionIntegrityResult:
+    """
+    Check that predicted_points values are consistent between
+    player_prop_predictions and prediction_accuracy tables.
+
+    This catches grading pipeline bugs that corrupt prediction values
+    (e.g., the Jan 28, 2026 incident where values were inflated 2-4x).
+    """
+    result = PredictionIntegrityResult()
+
+    query = f"""
+    SELECT
+        pp.game_date,
+        COUNT(*) as records,
+        ROUND(AVG(ABS(CAST(pp.predicted_points AS FLOAT64) - CAST(pa.predicted_points AS FLOAT64))), 3) as avg_drift,
+        MAX(ABS(CAST(pp.predicted_points AS FLOAT64) - CAST(pa.predicted_points AS FLOAT64))) as max_drift,
+        COUNTIF(ABS(CAST(pp.predicted_points AS FLOAT64) - CAST(pa.predicted_points AS FLOAT64)) > @threshold) as drifted_records
+    FROM `{PROJECT_ID}.{PREDICTIONS}` pp
+    JOIN `{PROJECT_ID}.{PREDICTION_ACCURACY}` pa
+        ON pp.player_lookup = pa.player_lookup
+        AND pp.game_date = pa.game_date
+        AND pp.system_id = pa.system_id
+    WHERE pp.game_date BETWEEN @start_date AND @end_date
+        AND pp.is_active = true
+    GROUP BY pp.game_date
+    ORDER BY pp.game_date DESC
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+            bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+            bigquery.ScalarQueryParameter("threshold", "FLOAT64", PREDICTION_VALUE_DRIFT_THRESHOLD),
+        ]
+    )
+
+    try:
+        query_result = client.query(query, job_config=job_config).result(
+            timeout=BQ_QUERY_TIMEOUT_SECONDS
+        )
+
+        for row in query_result:
+            result.total_dates_checked += 1
+            result.by_date[str(row.game_date)] = {
+                'records': row.records,
+                'avg_drift': row.avg_drift,
+                'max_drift': row.max_drift,
+                'drifted_records': row.drifted_records,
+            }
+
+            if row.avg_drift > PREDICTION_VALUE_DRIFT_THRESHOLD:
+                result.dates_with_drift += 1
+                result.affected_records += row.drifted_records
+                result.max_drift = max(result.max_drift, row.max_drift)
+
+        if result.dates_with_drift == 0:
+            result.status = CheckStatus.PASS
+        elif result.dates_with_drift <= 1:
+            result.status = CheckStatus.WARN
+            result.issues.append(
+                f"Prediction value drift detected on {result.dates_with_drift} date(s), "
+                f"{result.affected_records} records affected"
+            )
+        else:
+            result.status = CheckStatus.FAIL
+            result.issues.append(
+                f"HIGH: Prediction value drift on {result.dates_with_drift} dates, "
+                f"max drift: {result.max_drift:.1f} points, {result.affected_records} records affected"
+            )
+
+    except Exception as e:
+        logger.error(f"Error checking prediction integrity: {e}", exc_info=True)
+        result.status = CheckStatus.ERROR
+        result.issues.append(f"Query error: {str(e)}")
+
+    return result
+
+
 def validate_cross_phase(
     client: Optional[bigquery.Client] = None,
     start_date: Optional[date] = None,
@@ -470,6 +574,7 @@ def validate_cross_phase(
     check_row_counts: bool = True,
     check_grading: bool = True,
     check_flow: bool = True,
+    check_prediction_integrity_flag: bool = True,
 ) -> CrossPhaseValidationResult:
     """
     Run complete cross-phase validation.
@@ -512,6 +617,14 @@ def validate_cross_phase(
             result.issues.extend(result.player_flow.issues)
         elif result.player_flow.status == CheckStatus.WARN:
             result.warnings.extend(result.player_flow.issues)
+
+    if check_prediction_integrity_flag:
+        result.prediction_integrity = check_prediction_integrity(client, start_date, end_date)
+        if result.prediction_integrity.status == CheckStatus.FAIL:
+            result.passed = False
+            result.issues.extend(result.prediction_integrity.issues)
+        elif result.prediction_integrity.status == CheckStatus.WARN:
+            result.warnings.extend(result.prediction_integrity.issues)
 
     result.validation_time_seconds = (datetime.now() - start_time).total_seconds()
 

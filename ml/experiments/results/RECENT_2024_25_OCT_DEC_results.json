@@ -1,0 +1,78 @@
+{
+  "experiment_id": "RECENT_2024_25_OCT_DEC",
+  "model_path": "ml/experiments/results/catboost_v9_exp_RECENT_2024_25_20260130_001517.cbm",
+  "train_period": {
+    "start": "2024-10-01",
+    "end": "2025-06-30",
+    "actual_start": "2025-01-09",
+    "actual_end": "2025-06-22",
+    "samples": 16303
+  },
+  "eval_period": {
+    "start": "2025-10-01",
+    "end": "2025-12-31",
+    "actual_start": "2025-11-04",
+    "actual_end": "2025-12-31",
+    "samples": 12249,
+    "vegas_coverage": 0.1145
+  },
+  "results": {
+    "mae": 4.0778,
+    "betting": {
+      "hit_rate": 0.7423371647509579,
+      "hit_rate_pct": 74.23,
+      "hits": 775,
+      "misses": 269,
+      "pushes": 0,
+      "bets_placed": 1044,
+      "bets_graded": 1044,
+      "roi": 0.41718913270637403,
+      "roi_pct": 41.72,
+      "profit": 435.5454545454545,
+      "breakeven_hit_rate": 52.38,
+      "min_edge_threshold": 1.0
+    },
+    "by_confidence": {
+      "high_5+": {
+        "count": 239,
+        "graded": 239,
+        "hits": 219,
+        "hit_rate": 91.63
+      },
+      "medium_3-5": {
+        "count": 251,
+        "graded": 251,
+        "hits": 190,
+        "hit_rate": 75.7
+      },
+      "low_1-3": {
+        "count": 554,
+        "graded": 554,
+        "hits": 366,
+        "hit_rate": 66.06
+      },
+      "pass_<1": {
+        "count": 359,
+        "graded": 359,
+        "hits": 202,
+        "hit_rate": 56.27
+      }
+    },
+    "by_direction": {
+      "OVER": {
+        "count": 742,
+        "graded": 742,
+        "hits": 557,
+        "hit_rate": 75.07
+      },
+      "UNDER": {
+        "count": 302,
+        "graded": 302,
+        "hits": 218,
+        "hit_rate": 72.19
+      }
+    }
+  },
+  "monthly": null,
+  "evaluated_at": "2026-01-30T00:17:01.309768"
+}
