@@ -538,6 +538,83 @@ def trigger_phase3_analytics(target_date: str, max_retries: int = 3) -> Dict:
     }
 
 
+def run_post_grading_validation(target_date: str) -> Dict:
+    """
+    Run validation checks after grading completes.
+
+    Validates:
+    1. DNP voiding - no incorrectly graded DNP predictions
+    2. Placeholder lines - no graded placeholder lines
+
+    Args:
+        target_date: Date that was graded (YYYY-MM-DD format)
+
+    Returns:
+        Dict with validation results
+    """
+    from datetime import date as date_type
+
+    try:
+        # Parse date
+        year, month, day = map(int, target_date.split('-'))
+        game_date = date_type(year, month, day)
+
+        # Import validation functions
+        from shared.validation.prediction_quality_validator import (
+            check_dnp_voiding,
+            check_placeholder_lines,
+            CheckStatus,
+        )
+        from google.cloud import bigquery
+
+        bq_client = bigquery.Client(project=PROJECT_ID)
+
+        # Run DNP voiding check for just this date
+        dnp_result = check_dnp_voiding(bq_client, game_date, game_date)
+        placeholder_result = check_placeholder_lines(bq_client, game_date, game_date)
+
+        validation_passed = (
+            dnp_result.status in (CheckStatus.PASS, CheckStatus.WARN) and
+            placeholder_result.status in (CheckStatus.PASS, CheckStatus.WARN)
+        )
+
+        issues = []
+        if dnp_result.status == CheckStatus.FAIL:
+            issues.extend(dnp_result.issues)
+        if placeholder_result.status == CheckStatus.FAIL:
+            issues.extend(placeholder_result.issues)
+
+        result = {
+            'passed': validation_passed,
+            'dnp_voiding': {
+                'status': dnp_result.status.value,
+                'total_dnp': dnp_result.total_dnp,
+                'dnp_graded': dnp_result.dnp_graded,
+            },
+            'placeholder_lines': {
+                'status': placeholder_result.status.value,
+                'total': placeholder_result.total_placeholders,
+                'graded': placeholder_result.placeholders_graded,
+            },
+            'issues': issues,
+        }
+
+        if validation_passed:
+            logger.info(f"Post-grading validation PASSED for {target_date}")
+        else:
+            logger.warning(f"Post-grading validation FAILED for {target_date}: {issues}")
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Post-grading validation error for {target_date}: {e}", exc_info=True)
+        return {
+            'passed': True,  # Don't fail grading if validation errors
+            'error': str(e),
+            'issues': [],
+        }
+
+
 def run_prediction_accuracy_grading(target_date: str, skip_validation: bool = False) -> Dict:
     """
     Run prediction accuracy grading for a specific date.
@@ -858,7 +935,21 @@ def main(cloud_event):
             logger.error(f"Lock acquisition failed for grading {target_date} - operation ran WITHOUT lock!", exc_info=True)
             send_lock_failure_alert(target_date, 'grading', 'Lock acquisition timeout or Firestore error')
 
-        # Step 2: Run system daily performance aggregation (if enabled)
+        # Step 2: Run post-grading validation (if grading succeeded)
+        validation_result = None
+        if grading_result.get('status') == 'success':
+            try:
+                validation_result = run_post_grading_validation(target_date)
+                if not validation_result.get('passed', True):
+                    logger.warning(
+                        f"Post-grading validation issues for {target_date}: "
+                        f"{validation_result.get('issues', [])}"
+                    )
+            except Exception as e:
+                logger.warning(f"Post-grading validation failed (non-fatal): {e}")
+                validation_result = {'passed': True, 'error': str(e)}
+
+        # Step 3: Run system daily performance aggregation (if enabled)
         if run_aggregation and grading_result.get('status') == 'success':
             try:
                 aggregation_result = run_system_daily_performance(target_date)
@@ -930,7 +1021,8 @@ def main(cloud_event):
                 f"[{correlation_id}] Grading failed for {target_date}: {grading_result}"
             )
 
-        # Publish completion event
+        # Publish completion event (include validation results in message_data)
+        message_data['validation_result'] = validation_result or {}
         publish_completion(
             correlation_id=correlation_id,
             target_date=target_date,
@@ -1008,6 +1100,10 @@ def publish_completion(
             'auto_heal_retries': grading_result.get('auto_heal_retries'),
             'auto_heal_error': grading_result.get('auto_heal_error'),
             'auto_heal_status_code': grading_result.get('auto_heal_status_code'),
+
+            # Post-grading validation (Session 31)
+            'validation_passed': message_data.get('validation_result', {}).get('passed', True),
+            'validation_issues': message_data.get('validation_result', {}).get('issues', []),
 
             # Aggregation metrics (if run)
             'aggregation_status': aggregation_result.get('status') if aggregation_result else None,

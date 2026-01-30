@@ -275,6 +275,52 @@ class MLFeatureStoreBackfill:
 
         logger.info("=" * 80)
 
+        # Post-backfill validation (Session 31)
+        if not dry_run and successful_days > 0:
+            self._run_post_backfill_validation(start_date, end_date)
+
+    def _run_post_backfill_validation(self, start_date: date, end_date: date):
+        """Run validation checks after backfill completes."""
+        try:
+            from shared.validation.feature_store_validator import (
+                validate_feature_store,
+            )
+            from google.cloud import bigquery
+
+            logger.info("")
+            logger.info("=" * 80)
+            logger.info("POST-BACKFILL VALIDATION")
+            logger.info("=" * 80)
+
+            bq_client = bigquery.Client()
+            result = validate_feature_store(
+                client=bq_client,
+                start_date=start_date,
+                end_date=end_date,
+                check_l5_l10=True,
+                check_duplicates=True,
+                check_arrays=True,
+                check_bounds=True,
+                check_prop_lines=False,  # Not relevant for feature store backfill
+            )
+
+            if result.passed:
+                logger.info("✅ Post-backfill validation PASSED")
+            else:
+                logger.warning(f"⚠️  Post-backfill validation FAILED: {len(result.issues)} issues")
+                for issue in result.issues[:5]:
+                    logger.warning(f"  - {issue}")
+                if len(result.issues) > 5:
+                    logger.warning(f"  ... and {len(result.issues) - 5} more issues")
+
+            logger.info(result.summary)
+            logger.info("=" * 80)
+
+        except ImportError as e:
+            logger.warning(f"Could not run validation (missing module): {e}")
+        except Exception as e:
+            logger.warning(f"Post-backfill validation error (non-fatal): {e}")
+
     def process_specific_dates(self, dates: List[date], dry_run: bool = False):
         """Process specific dates."""
         logger.info(f"Processing {len(dates)} specific dates")
