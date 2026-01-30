@@ -383,6 +383,25 @@ def validate_line_quality(predictions: List[Dict], player_lookup: str, game_date
             issues.append(f"{system_id}: NULL line but has_prop_line=TRUE")
             placeholder_count += 1
 
+        # Check 4: ACTUAL_PROP should not have ESTIMATED api (contradiction)
+        # Session 21 fix: Prevent line_source and line_source_api contradictions
+        line_source_api = pred.get('line_source_api')
+        has_prop_line = pred.get('has_prop_line')
+
+        if line_source == 'ACTUAL_PROP' and line_source_api == 'ESTIMATED':
+            issues.append(f"{system_id}: ACTUAL_PROP with ESTIMATED api (contradiction)")
+            placeholder_count += 1
+
+        # Check 5: ACTUAL_PROP should have has_prop_line=TRUE
+        if line_source == 'ACTUAL_PROP' and has_prop_line is False:
+            issues.append(f"{system_id}: ACTUAL_PROP with has_prop_line=FALSE (contradiction)")
+            placeholder_count += 1
+
+        # Check 6: ESTIMATED_AVG should not have ODDS_API/BETTINGPROS api
+        if line_source == 'ESTIMATED_AVG' and line_source_api in ('ODDS_API', 'BETTINGPROS'):
+            issues.append(f"{system_id}: ESTIMATED_AVG with {line_source_api} api (contradiction)")
+            placeholder_count += 1
+
     if placeholder_count > 0:
         error_msg = (
             f"❌ LINE QUALITY VALIDATION FAILED\n"
