@@ -63,6 +63,115 @@ from shared.utils.schedule import NBAScheduleService
 logger = logging.getLogger("scraper_base")
 
 
+# ------------------------------------------------------------------ #
+# Error Recovery Framework
+# ------------------------------------------------------------------ #
+class SectionErrorTracker:
+    """
+    Tracks errors per section during PDF parsing to enable:
+    1. Counting errors per section
+    2. Marking sections as incomplete when too many errors occur
+    3. Providing a summary at the end of processing
+
+    Usage:
+        tracker = SectionErrorTracker(max_errors_per_section=5)
+        tracker.record_error("game_metadata", "Failed to parse arena", {"line": "..."})
+        # ... later ...
+        summary = tracker.get_summary()
+    """
+
+    def __init__(self, max_errors_per_section: int = 5):
+        self.max_errors_per_section = max_errors_per_section
+        self._errors: Dict[str, List[Dict[str, Any]]] = {}
+        self._incomplete_sections: set = set()
+
+    def record_error(self, section: str, error_message: str, context: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Record an error in a specific section.
+
+        Args:
+            section: The section name (e.g., "game_metadata", "active_players", "dnp_extraction")
+            error_message: Description of the error
+            context: Optional context data (line content, team, etc.)
+        """
+        if section not in self._errors:
+            self._errors[section] = []
+
+        error_record = {
+            "message": error_message,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "context": context or {}
+        }
+        self._errors[section].append(error_record)
+
+        # Check if section should be marked incomplete
+        if len(self._errors[section]) >= self.max_errors_per_section:
+            self._incomplete_sections.add(section)
+            logger.warning("Section '%s' marked as INCOMPLETE - exceeded %d errors",
+                          section, self.max_errors_per_section)
+
+    def is_section_incomplete(self, section: str) -> bool:
+        """Check if a section has been marked as incomplete due to too many errors."""
+        return section in self._incomplete_sections
+
+    def get_error_count(self, section: str) -> int:
+        """Get the number of errors in a specific section."""
+        return len(self._errors.get(section, []))
+
+    def get_total_error_count(self) -> int:
+        """Get the total number of errors across all sections."""
+        return sum(len(errors) for errors in self._errors.values())
+
+    def get_incomplete_sections(self) -> List[str]:
+        """Get list of sections marked as incomplete."""
+        return list(self._incomplete_sections)
+
+    def get_summary(self) -> Dict[str, Any]:
+        """
+        Get a summary of all errors and section statuses.
+
+        Returns:
+            Dict with error counts, incomplete sections, and detailed breakdown.
+        """
+        return {
+            "total_errors": self.get_total_error_count(),
+            "errors_by_section": {section: len(errors) for section, errors in self._errors.items()},
+            "incomplete_sections": self.get_incomplete_sections(),
+            "section_details": {
+                section: {
+                    "error_count": len(errors),
+                    "is_incomplete": section in self._incomplete_sections,
+                    "errors": errors[:5]  # Limit to first 5 errors per section for summary
+                }
+                for section, errors in self._errors.items()
+            }
+        }
+
+    def log_summary(self, game_code: str) -> None:
+        """Log a human-readable summary of errors."""
+        total = self.get_total_error_count()
+        incomplete = self.get_incomplete_sections()
+
+        if total == 0:
+            logger.info("PDF parsing completed with no errors for game %s", game_code)
+            return
+
+        # Build summary message
+        summary_parts = [f"PDF parsing summary for game {game_code}:"]
+        summary_parts.append(f"  Total errors: {total}")
+
+        if incomplete:
+            summary_parts.append(f"  INCOMPLETE sections: {', '.join(incomplete)}")
+
+        for section, errors in self._errors.items():
+            status = " (INCOMPLETE)" if section in self._incomplete_sections else ""
+            summary_parts.append(f"  - {section}: {len(errors)} errors{status}")
+
+        # Log as warning if there are incomplete sections, otherwise info
+        log_level = logging.WARNING if incomplete else logging.INFO
+        logger.log(log_level, "\n".join(summary_parts))
+
+
 class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
     """Downloads and parses NBA gamebook PDF - AUTO-DERIVES everything from game_code."""
 
@@ -153,6 +262,9 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             "parsing_failure": [],
             "warnings": []
         }
+
+        # Initialize section error tracker for error recovery framework
+        self.error_tracker = SectionErrorTracker(max_errors_per_section=5)
 
         # NEW: GCS client for reading PDFs from storage
         self.gcs_client = None
@@ -777,11 +889,19 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         
         # Log summary with issue count for monitoring
         if total_issues > 0:
-            logger.warning("Parsed PDF with %d parsing issues: %d active, %d DNP, %d inactive players (source: %s)", 
+            logger.warning("Parsed PDF with %d parsing issues: %d active, %d DNP, %d inactive players (source: %s)",
                           total_issues, len(active_players), len(dnp_players), len(inactive_players), self.opts["pdf_source"])
         else:
-            logger.info("Parsed PDF successfully: %d active, %d DNP, %d inactive players (source: %s)", 
+            logger.info("Parsed PDF successfully: %d active, %d DNP, %d inactive players (source: %s)",
                        len(active_players), len(dnp_players), len(inactive_players), self.opts["pdf_source"])
+
+        # Log error tracker summary
+        self.error_tracker.log_summary(self.opts["game_code"])
+
+        # Add error tracker summary to data for downstream consumers
+        error_summary = self.error_tracker.get_summary()
+        self.data["error_recovery_summary"] = error_summary
+        self.data["incomplete_sections"] = error_summary["incomplete_sections"]
 
     def _normalize_team_name(self, team_name: str) -> str:
         """Normalize team name from inactive line to full team name."""
@@ -871,15 +991,19 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                 }
         except AttributeError as e:
             logger.error("CRITICAL CODE BUG extracting DND from line '%s': %s", line, e)
-            self._log_parsing_issue("unknown_player_categories", 
+            self.error_tracker.record_error("dnd_extraction", f"AttributeError: {e}",
+                                           {"line": line, "team": team, "category": "DND"})
+            self._log_parsing_issue("unknown_player_categories",
                                    text=line, team=team, error=str(e), category="DND")
-            raise
+            # Don't raise - continue processing other lines
         except (ValueError, TypeError) as e:
             logger.error("PARSING ERROR extracting DND from line '%s': %s", line, e)
-            self._log_parsing_issue("unknown_player_categories", 
+            self.error_tracker.record_error("dnd_extraction", f"ParseError: {e}",
+                                           {"line": line, "team": team, "category": "DND"})
+            self._log_parsing_issue("unknown_player_categories",
                                    text=line, team=team, error=str(e), category="DND")
-            raise
-        
+            # Don't raise - continue processing other lines
+
         return None
 
     def _extract_game_metadata(self, text: str, game_info: Dict) -> None:
@@ -934,12 +1058,16 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         
         except AttributeError as e:
             logger.error("CRITICAL CODE BUG extracting game metadata: %s", e)
+            self.error_tracker.record_error("game_metadata", f"AttributeError: {e}",
+                                           {"context": "game_metadata_extraction"})
             self._log_parsing_issue("warnings", error=str(e), context="game_metadata_extraction")
-            raise
+            # Don't raise - metadata is optional, continue processing
         except (ValueError, TypeError) as e:
             logger.error("PARSING ERROR extracting game metadata: %s", e)
+            self.error_tracker.record_error("game_metadata", f"ParseError: {e}",
+                                           {"context": "game_metadata_extraction"})
             self._log_parsing_issue("warnings", error=str(e), context="game_metadata_extraction")
-            raise
+            # Don't raise - metadata is optional, continue processing
 
     def _parse_officials(self, officials_line: str) -> List[Dict[str, Any]]:
         """Parse officials from line like 'Officials: #24 Kevin Scott, #36 Brent Barnaky, #41 Nate Green'"""
@@ -972,13 +1100,17 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         
         except AttributeError as e:
             logger.error("CRITICAL CODE BUG parsing officials from '%s': %s", officials_line, e)
+            self.error_tracker.record_error("officials_parsing", f"AttributeError: {e}",
+                                           {"line": officials_line})
             self._log_parsing_issue("warnings", error=str(e), context="officials_parsing")
-            raise
+            # Don't raise - officials are optional, continue processing
         except (ValueError, TypeError) as e:
             logger.error("PARSING ERROR parsing officials from '%s': %s", officials_line, e)
+            self.error_tracker.record_error("officials_parsing", f"ParseError: {e}",
+                                           {"line": officials_line})
             self._log_parsing_issue("warnings", error=str(e), context="officials_parsing")
-            raise
-        
+            # Don't raise - officials are optional, continue processing
+
         return officials
 
     def _extract_inactive_players_from_line(self, line: str, all_lines: List[str], line_idx: int) -> List[Dict]:
@@ -1056,14 +1188,18 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         except AttributeError as e:
             # Code bugs (missing methods, wrong object types)
             logger.error("CRITICAL CODE BUG in inactive player extraction: %s", e)
+            self.error_tracker.record_error("inactive_player_extraction", f"AttributeError: {e}",
+                                           {"context": "inactive_player_extraction"})
             self._log_parsing_issue("warnings", error=str(e), context="inactive_player_extraction")
-            raise  # Crash loudly - this is a missing method or similar
+            # Don't raise - continue processing other sections
         except (ValueError, KeyError, TypeError) as e:
             # Data structure issues (unexpected formats, missing keys)
             logger.error("PARSING ERROR in inactive player extraction from '%s': %s", line, e)
+            self.error_tracker.record_error("inactive_player_extraction", f"ParseError: {e}",
+                                           {"line": line, "context": "inactive_player_extraction"})
             self._log_parsing_issue("warnings", error=str(e), context="inactive_player_extraction", text=line)
-            raise  # Crash loudly - data structure unexpected
-        
+            # Don't raise - continue processing other sections
+
         return inactive_list
     
     def _smart_comma_split(self, text: str) -> List[str]:
@@ -1167,16 +1303,20 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         except AttributeError as e:
             # Code bugs (regex issues, wrong method calls)
             logger.error("CRITICAL CODE BUG parsing individual inactive player '%s': %s", player_text, e)
-            self._log_parsing_issue("malformed_inactive_players", 
+            self.error_tracker.record_error("individual_inactive_player", f"AttributeError: {e}",
+                                           {"player_text": player_text, "team": team})
+            self._log_parsing_issue("malformed_inactive_players",
                                    text=player_text, team=team, error=str(e))
-            raise
+            # Don't raise - continue processing other players
         except (ValueError, TypeError) as e:
             # Data issues (unexpected string format)
             logger.error("PARSING ERROR for individual inactive player '%s': %s", player_text, e)
-            self._log_parsing_issue("malformed_inactive_players", 
+            self.error_tracker.record_error("individual_inactive_player", f"ParseError: {e}",
+                                           {"player_text": player_text, "team": team})
+            self._log_parsing_issue("malformed_inactive_players",
                                    text=player_text, team=team, error=str(e))
-            raise
-        
+            # Don't raise - continue processing other players
+
         return None
 
     # Keep existing methods but update for new structure
@@ -1203,15 +1343,19 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                 }
         except AttributeError as e:
             logger.error("CRITICAL CODE BUG extracting NWT from line '%s': %s", line, e)
-            self._log_parsing_issue("unknown_player_categories", 
+            self.error_tracker.record_error("nwt_extraction", f"AttributeError: {e}",
+                                           {"line": line, "team": team, "category": "NWT"})
+            self._log_parsing_issue("unknown_player_categories",
                                    text=line, team=team, error=str(e), category="NWT")
-            raise
+            # Don't raise - continue processing other lines
         except (ValueError, TypeError) as e:
             logger.error("PARSING ERROR extracting NWT from line '%s': %s", line, e)
-            self._log_parsing_issue("unknown_player_categories", 
+            self.error_tracker.record_error("nwt_extraction", f"ParseError: {e}",
+                                           {"line": line, "team": team, "category": "NWT"})
+            self._log_parsing_issue("unknown_player_categories",
                                    text=line, team=team, error=str(e), category="NWT")
-            raise
-        
+            # Don't raise - continue processing other lines
+
         return None
 
     def _extract_dnp_from_clean_line(self, line: str, team: str) -> Optional[Dict]:
@@ -1237,15 +1381,19 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                 }
         except AttributeError as e:
             logger.error("CRITICAL CODE BUG extracting DNP from line '%s': %s", line, e)
-            self._log_parsing_issue("unknown_player_categories", 
+            self.error_tracker.record_error("dnp_extraction", f"AttributeError: {e}",
+                                           {"line": line, "team": team, "category": "DNP"})
+            self._log_parsing_issue("unknown_player_categories",
                                    text=line, team=team, error=str(e), category="DNP")
-            raise
+            # Don't raise - continue processing other lines
         except (ValueError, TypeError) as e:
             logger.error("PARSING ERROR extracting DNP from line '%s': %s", line, e)
-            self._log_parsing_issue("unknown_player_categories", 
+            self.error_tracker.record_error("dnp_extraction", f"ParseError: {e}",
+                                           {"line": line, "team": team, "category": "DNP"})
+            self._log_parsing_issue("unknown_player_categories",
                                    text=line, team=team, error=str(e), category="DNP")
-            raise
-        
+            # Don't raise - continue processing other lines
+
         return None
 
     def _extract_active_from_clean_line(self, line: str, team: str) -> Optional[Dict]:
@@ -1296,15 +1444,19 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
                 
         except AttributeError as e:
             logger.error("CRITICAL CODE BUG extracting active player from line '%s': %s", line, e)
-            self._log_parsing_issue("failed_stat_lines", 
+            self.error_tracker.record_error("active_player_extraction", f"AttributeError: {e}",
+                                           {"line": line, "team": team})
+            self._log_parsing_issue("failed_stat_lines",
                                    text=line, team=team, error=str(e))
-            raise
+            # Don't raise - continue processing other lines
         except (ValueError, TypeError) as e:
             logger.error("PARSING ERROR extracting active player from line '%s': %s", line, e)
-            self._log_parsing_issue("failed_stat_lines", 
+            self.error_tracker.record_error("active_player_extraction", f"ParseError: {e}",
+                                           {"line": line, "team": team})
+            self._log_parsing_issue("failed_stat_lines",
                                    text=line, team=team, error=str(e))
-            raise
-        
+            # Don't raise - continue processing other lines
+
         return None
 
     def _parse_stat_line(self, stat_text: str, full_line: str = "") -> Dict[str, Any]:
@@ -1396,15 +1548,19 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
         
         except AttributeError as e:
             logger.error("CRITICAL CODE BUG parsing stat line '%s': %s", stat_text, e)
-            self._log_parsing_issue("failed_stat_lines", 
+            self.error_tracker.record_error("stat_line_parsing", f"AttributeError: {e}",
+                                           {"stat_text": stat_text, "full_line": full_line})
+            self._log_parsing_issue("failed_stat_lines",
                                    text=full_line, error=str(e), context="stat_parsing")
-            raise
+            # Don't raise - return default stats
         except (ValueError, TypeError, IndexError) as e:
             logger.error("PARSING ERROR in stat line '%s': %s", stat_text, e)
-            self._log_parsing_issue("failed_stat_lines", 
+            self.error_tracker.record_error("stat_line_parsing", f"ParseError: {e}",
+                                           {"stat_text": stat_text, "full_line": full_line})
+            self._log_parsing_issue("failed_stat_lines",
                                    text=full_line, error=str(e), context="stat_parsing")
-            raise
-        
+            # Don't raise - return default stats
+
         return stats
 
     def _safe_int(self, value: str) -> int:
@@ -1705,11 +1861,14 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
     
     # ------------------------------------------------------------------ #
     # Stats
-    # ------------------------------------------------------------------ #    
+    # ------------------------------------------------------------------ #
     def get_scraper_stats(self) -> dict:
         """Return scraper statistics for SCRAPER_STATS log (summary only, not full data)."""
         total_issues = sum(len(issues) for issues in self.parsing_issues.values())
-        
+
+        # Get error tracker summary
+        error_summary = self.error_tracker.get_summary()
+
         return {
             "game_code": self.opts["game_code"],
             "matchup": self.opts["matchup"],
@@ -1726,6 +1885,11 @@ class GetNbaComGamebookPdf(ScraperBase, ScraperFlaskMixin):
             "parser_used": self.data.get("debug_info", {}).get("parser_used", "unknown"),
             "parsing_issues_count": total_issues,
             "has_parsing_issues": total_issues > 0,
+            # Error recovery framework stats
+            "error_tracker_total_errors": error_summary["total_errors"],
+            "error_tracker_errors_by_section": error_summary["errors_by_section"],
+            "error_tracker_incomplete_sections": error_summary["incomplete_sections"],
+            "has_incomplete_sections": len(error_summary["incomplete_sections"]) > 0,
         }
 
 

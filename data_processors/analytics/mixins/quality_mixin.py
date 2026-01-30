@@ -4,8 +4,9 @@ Quality tracking and validation for analytics processors.
 Provides duplicate detection and quality issue logging with notifications
 for high-severity issues.
 
-Version: 1.0
+Version: 1.1
 Created: 2026-01-25
+Updated: 2026-01-30 - Use BigQueryBatchWriter for quality issues (quota efficiency)
 """
 
 import json
@@ -15,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Dict
 from google.cloud import bigquery
 from shared.utils.notification_system import notify_error, notify_warning
+from shared.utils.bigquery_batch_writer import get_batch_writer
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +108,11 @@ class QualityMixin:
         """
         Log data quality issues for review.
         Enhanced with notifications for high-severity issues.
-        Uses batch loading to avoid streaming buffer issues.
+
+        Uses BigQueryBatchWriter for efficient writes:
+        - Bypasses load job quota (1,500/day limit) via streaming inserts
+        - Auto-batches for efficiency (flushes on size or timeout)
+        - Thread-safe for concurrent writes
         """
         issue_record = {
             'issue_id': str(uuid.uuid4()),
@@ -124,28 +130,14 @@ class QualityMixin:
         self.quality_issues.append(issue_record)
 
         try:
-            table_id = f"{self.project_id}.nba_processing.analytics_data_issues"
+            table_id = "nba_processing.analytics_data_issues"
 
-            # Get table reference for schema
-            table_ref = self.bq_client.get_table(table_id)
-
-            # Use batch loading instead of streaming inserts
-            # This avoids the 90-minute streaming buffer that blocks DML operations
-            # See: docs/05-development/guides/bigquery-best-practices.md
-            job_config = bigquery.LoadJobConfig(
-                schema=table_ref.schema,
-                autodetect=False,
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                ignore_unknown_values=True
-            )
-
-            load_job = self.bq_client.load_table_from_json(
-                [issue_record],
-                table_id,
-                job_config=job_config
-            )
-            load_job.result(timeout=60)  # Wait for completion
+            # Use BigQueryBatchWriter for efficient writes
+            # - Bypasses load job quota via streaming inserts
+            # - Auto-batches and flushes on size (100 records) or timeout (30s)
+            # - Thread-safe singleton per table
+            writer = get_batch_writer(table_id, project_id=self.project_id)
+            writer.add_record(issue_record)
 
             # Send notification for high-severity issues
             if severity in ['CRITICAL', 'HIGH']:
