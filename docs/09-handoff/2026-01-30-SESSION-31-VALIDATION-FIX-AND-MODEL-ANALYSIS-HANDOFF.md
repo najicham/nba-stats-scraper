@@ -178,5 +178,51 @@ python -m shared.validation.prediction_quality_validator --start-date 2026-01-15
 
 ---
 
+## CRITICAL: Grading Corruption Found (From Session 28 Review)
+
+After reviewing Session 28's document, we confirmed a **separate critical issue** - grading pipeline corruption affecting multiple dates:
+
+### Corruption Summary
+
+| Date | System | Drift % | Max Drift | Records |
+|------|--------|---------|-----------|---------|
+| Jan 28 | catboost_v8 | **94.9%** | 26.0 pts | 424 |
+| Jan 25 | zone_matchup_v1 | 38.6% | 14.3 pts | 85 |
+| Jan 25 | ensemble_v1_1 | 36.8% | 16.7 pts | 81 |
+| Jan 21 | ensemble_v1 | 44.8% | 17.3 pts | 39 |
+| Jan 21 | zone_matchup_v1 | 42.5% | 6.0 pts | 37 |
+
+**Total: ~900+ corrupted records**
+
+### Example Corruption (Jan 28)
+```
+Brandon Miller: predicted 16.1 → stored as 42.1 (+26 pts!)
+Anthony Edwards: predicted 35.0 → stored as 60.0 (+25 pts!)
+Stephen Curry: predicted 20.7 → stored as 45.0 (+24.3 pts!)
+```
+
+### This is DIFFERENT from the feature store bug
+- Feature store bug: Wrong features → wrong predictions
+- Grading corruption: Correct predictions → **stored incorrectly** during grading
+
+### Required Fix
+```sql
+-- Delete corrupted grading records
+DELETE FROM nba_predictions.prediction_accuracy
+WHERE game_date IN ('2026-01-20', '2026-01-21', '2026-01-24', '2026-01-25', '2026-01-28')
+  AND system_id IN ('catboost_v8', 'zone_matchup_v1', 'similarity_balanced_v1',
+                    'ensemble_v1', 'ensemble_v1_1', 'moving_average');
+
+-- Then re-run grading for these dates
+```
+
+### Root Cause Investigation Needed
+The root cause of the grading corruption is unknown. Investigate:
+- `data_processors/grading/prediction_accuracy/prediction_accuracy_processor.py`
+- Check for race conditions, data joins, or caching issues
+
+---
+
 *Session 31 Handoff - 2026-01-30*
 *Investigation and validation integration complete*
+*Updated with Session 28 findings after review*
