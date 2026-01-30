@@ -42,12 +42,12 @@ class ChangeDetector:
             def _build_change_detection_query(self, game_date):
                 return '''
                 WITH current_raw AS (
-                    SELECT player_lookup, minutes, points, injury_status
-                    FROM nba_raw.nbac_player_boxscore
+                    SELECT player_lookup, points, assists
+                    FROM nba_raw.bdl_player_boxscores
                     WHERE game_date = @game_date
                 ),
                 last_processed AS (
-                    SELECT player_lookup, minutes, points, injury_status
+                    SELECT player_lookup, points, assists
                     FROM nba_analytics.player_game_summary
                     WHERE game_date = @game_date
                 )
@@ -55,8 +55,7 @@ class ChangeDetector:
                 FROM current_raw r
                 LEFT JOIN last_processed p USING (player_lookup)
                 WHERE p.player_lookup IS NULL  -- New player
-                   OR r.minutes != p.minutes   -- Stats changed
-                   OR r.injury_status != p.injury_status  -- Status changed
+                   OR r.points != p.points     -- Stats changed
                 '''
 
         detector = PlayerChangeDetector(project_id='nba-props-platform')
@@ -218,10 +217,12 @@ class PlayerChangeDetector(ChangeDetector):
         Detect player changes by comparing raw boxscore vs processed analytics.
         """
         # Default fields to check
+        # NOTE: Only include fields that exist in BOTH bdl_player_boxscores AND player_game_summary
+        # injury_status/active_status don't exist in these tables (they're in nbac_injury_report)
+        # rebounds doesn't exist in player_game_summary (has offensive_rebounds, defensive_rebounds)
         if change_detection_fields is None:
             change_detection_fields = [
-                'minutes', 'points', 'rebounds', 'assists',
-                'injury_status', 'active_status'
+                'points', 'assists'
             ]
 
         # Build field comparisons
@@ -237,7 +238,7 @@ class PlayerChangeDetector(ChangeDetector):
             SELECT
                 player_lookup,
                 {', '.join(change_detection_fields)}
-            FROM `{self.project_id}.nba_raw.nbac_player_boxscore`
+            FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
             WHERE game_date = @game_date
         ),
         last_processed AS (
@@ -262,7 +263,7 @@ class PlayerChangeDetector(ChangeDetector):
         """Count total players for this date."""
         query = f"""
         SELECT COUNT(DISTINCT player_lookup) as total
-        FROM `{self.project_id}.nba_raw.nbac_player_boxscore`
+        FROM `{self.project_id}.nba_raw.nbac_player_boxscores`
         WHERE game_date = @game_date
         """
 
@@ -279,6 +280,10 @@ class PlayerChangeDetector(ChangeDetector):
 class TeamChangeDetector(ChangeDetector):
     """
     Change detector for team data.
+
+    NOTE: This class references nba_raw.nbac_team_boxscore which does NOT exist.
+    The class is currently unused in production. If team change detection is needed,
+    update the table reference to an existing table.
 
     Detects changes in:
     - Team stats (offense, defense)

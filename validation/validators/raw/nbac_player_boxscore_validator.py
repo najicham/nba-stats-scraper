@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# File: validation/validators/raw/nbac_player_boxscore_validator.py
+# File: validation/validators/raw/nbac_player_boxscores_validator.py
 """
 Custom validator for NBA.com Player Boxscores - Official player stats.
 
@@ -74,17 +74,17 @@ class NbacPlayerBoxscoreValidator(BaseValidator):
           game_date,
           player_lookup,
           points,
-          fgm,
-          fg3m,
-          ftm,
-          ((fgm - fg3m) * 2 + fg3m * 3 + ftm) as calculated_points,
-          ABS(points - ((fgm - fg3m) * 2 + fg3m * 3 + ftm)) as diff
-        FROM `{self.project_id}.nba_raw.nbac_player_boxscore`
+          field_goals_made,
+          three_pointers_made,
+          free_throws_made,
+          ((field_goals_made - three_pointers_made) * 2 + three_pointers_made * 3 + free_throws_made) as calculated_points,
+          ABS(points - ((field_goals_made - three_pointers_made) * 2 + three_pointers_made * 3 + free_throws_made)) as diff
+        FROM `{self.project_id}.nba_raw.nbac_player_boxscores`
         WHERE game_date >= '{start_date}' AND game_date <= '{end_date}'
           AND minutes > 0
-          AND fgm IS NOT NULL
-          AND fg3m IS NOT NULL
-          AND ftm IS NOT NULL
+          AND field_goals_made IS NOT NULL
+          AND three_pointers_made IS NOT NULL
+          AND free_throws_made IS NOT NULL
           AND points IS NOT NULL
         HAVING diff > 0
         ORDER BY diff DESC
@@ -128,7 +128,7 @@ class NbacPlayerBoxscoreValidator(BaseValidator):
           assists,
           rebounds,
           minutes
-        FROM `{self.project_id}.nba_raw.nbac_player_boxscore`
+        FROM `{self.project_id}.nba_raw.nbac_player_boxscores`
         WHERE game_date >= '{start_date}' AND game_date <= '{end_date}'
           AND (
             points < 0 OR points > 80 OR
@@ -173,7 +173,7 @@ class NbacPlayerBoxscoreValidator(BaseValidator):
           game_date,
           COUNT(*) as player_count,
           COUNT(DISTINCT team_tricode) as team_count
-        FROM `{self.project_id}.nba_raw.nbac_player_boxscore`
+        FROM `{self.project_id}.nba_raw.nbac_player_boxscores`
         WHERE game_date >= '{start_date}' AND game_date <= '{end_date}'
         GROUP BY game_id, game_date
         HAVING player_count < 20 OR player_count > 40 OR team_count != 2
@@ -219,7 +219,7 @@ class NbacPlayerBoxscoreValidator(BaseValidator):
         FROM `{self.project_id}.nba_raw.nbac_schedule` s
         LEFT JOIN (
           SELECT DISTINCT game_id
-          FROM `{self.project_id}.nba_raw.nbac_player_boxscore`
+          FROM `{self.project_id}.nba_raw.nbac_player_boxscores`
           WHERE game_date >= '{start_date}' AND game_date <= '{end_date}'
         ) b ON s.game_id = b.game_id
         WHERE s.game_date >= '{start_date}'
@@ -264,17 +264,17 @@ class NbacPlayerBoxscoreValidator(BaseValidator):
           n.game_date,
           n.player_lookup,
           n.points as nbac_points,
-          b.pts as bdl_points,
-          ABS(n.points - b.pts) as points_diff
-        FROM `{self.project_id}.nba_raw.nbac_player_boxscore` n
+          b.points as bdl_points,
+          ABS(n.points - b.points) as points_diff
+        FROM `{self.project_id}.nba_raw.nbac_player_boxscores` n
         JOIN `{self.project_id}.nba_raw.bdl_player_boxscores` b
           ON n.player_lookup = b.player_lookup
           AND n.game_date = b.game_date
         WHERE n.game_date >= '{start_date}'
           AND n.game_date <= '{end_date}'
           AND n.points IS NOT NULL
-          AND b.pts IS NOT NULL
-          AND ABS(n.points - b.pts) > 0
+          AND b.points IS NOT NULL
+          AND ABS(n.points - b.points) > 0
         ORDER BY points_diff DESC
         LIMIT 20
         """
@@ -313,7 +313,7 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    validator = NbacPlayerBoxscoreValidator("validation/configs/raw/nbac_player_boxscore.yaml")
+    validator = NbacPlayerBoxscoreValidator("validation/configs/raw/nbac_player_boxscores.yaml")
     results = validator.run(args.start_date, args.end_date)
 
     print(f"\nValidation complete: {results['overall_status']}")

@@ -72,3 +72,7 @@ class MetadataMixin:
             f"deps_passed={self.dependency_check_passed}, "
             f"age={self.upstream_data_age_hours:.1f}h"
         )
+
+        # Chain to next mixin in MRO (PrecomputeMetadataOpsMixin) for per-table metadata
+        # This ensures source_daily_cache_rows_found etc. get populated
+        super().track_source_usage(dep_check)
