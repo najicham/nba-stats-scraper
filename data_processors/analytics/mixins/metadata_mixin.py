@@ -141,6 +141,11 @@ class MetadataMixin:
             logger.warning("table_name not set - cannot get previous hashes")
             return {}
 
+        # Validate project_id before constructing BigQuery queries
+        if not hasattr(self, 'project_id') or not self.project_id:
+            logger.warning("project_id not initialized - cannot get previous hashes")
+            return {}
+
         dependencies = self.get_dependencies()
         if not dependencies:
             logger.debug("No dependencies defined - no previous hashes to check")
@@ -218,6 +223,11 @@ class MetadataMixin:
                 logger.info(f"Skipping processing: {reason}")
                 return []  # Skip extract_raw_data
         """
+        # Validate project_id before attempting BigQuery queries
+        if not hasattr(self, 'project_id') or not self.project_id:
+            logger.warning("project_id not initialized - cannot check if processing should be skipped")
+            return False, "project_id not available"
+
         dependencies = self.get_dependencies()
         if not dependencies:
             return False, "No dependencies defined"

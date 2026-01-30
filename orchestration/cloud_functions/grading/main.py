@@ -653,32 +653,23 @@ def run_prediction_accuracy_grading(target_date: str, skip_validation: bool = Fa
                 trigger_result = trigger_phase3_analytics(target_date, max_retries=3)
 
                 if trigger_result['success']:
+                    # Phase 3 analytics typically takes 5-10+ minutes to complete.
+                    # Rather than blocking here (Cloud Functions have timeout limits),
+                    # we return immediately and let the scheduled grading jobs retry.
+                    # Schedulers run at 2:30 AM, 7 AM, and 11 AM ET for multiple retry windows.
                     logger.info(
                         f"Phase 3 triggered successfully after {trigger_result['retries']} retries. "
-                        f"Waiting 15s for processing..."
+                        f"Returning auto_heal_pending - scheduled grading jobs will retry after Phase 3 completes."
                     )
-                    # Wait a bit and re-check (Phase 3 takes a few minutes)
-                    import time as time_module
-                    time_module.sleep(15)  # Wait 15s before re-checking
-
-                    # Re-validate
-                    revalidation = validate_grading_prerequisites(target_date)
-                    if not revalidation['ready']:
-                        return {
-                            'status': 'auto_heal_pending',
-                            'date': target_date,
-                            'predictions_found': validation['predictions_count'],
-                            'actuals_found': 0,
-                            'graded': 0,
-                            'message': f'Phase 3 analytics triggered (after {trigger_result["retries"]} retries), grading should retry later',
-                            'auto_heal_retries': trigger_result['retries']
-                        }
-                    else:
-                        logger.info(
-                            f"Auto-heal successful! Re-validation found {revalidation['actuals_count']} actuals. "
-                            f"Proceeding with grading..."
-                        )
-                        # Continue to grading below since we now have actuals
+                    return {
+                        'status': 'auto_heal_pending',
+                        'date': target_date,
+                        'predictions_found': validation['predictions_count'],
+                        'actuals_found': 0,
+                        'graded': 0,
+                        'message': f'Phase 3 analytics triggered (after {trigger_result["retries"]} retries), scheduled grading will retry after completion',
+                        'auto_heal_retries': trigger_result['retries']
+                    }
                 else:
                     # Auto-heal failed
                     error_msg = trigger_result['error']

@@ -633,8 +633,14 @@ def process_date_range():
         "start_date": "2024-01-01",
         "end_date": "2024-01-07",
         "processors": ["PlayerGameSummaryProcessor"],
-        "backfill_mode": true  // Optional: bypass dependency checks
+        "backfill_mode": true,  // Optional: bypass dependency checks AND skip downstream triggers
+        "skip_downstream_trigger": false  // Optional: override skip behavior (default: same as backfill_mode)
     }
+
+    Note on completion tracking:
+    - backfill_mode=true sets skip_downstream_trigger=true by default
+    - This means Phase 4 won't auto-trigger and Firestore completion won't be updated
+    - To update completion tracking during a manual retry, set skip_downstream_trigger=false explicitly
     """
     try:
         data = request.get_json()
@@ -692,17 +698,26 @@ def process_date_range():
             processors_to_run = [processor_map[name] for name in processor_names if name in processor_map]
 
         # Build options dict for all processors
+        # Note: skip_downstream_trigger=True means completion message won't be published
+        # to Pub/Sub, so Phase 4 won't auto-trigger and Firestore completion won't be updated.
+        # For backfill_mode, we skip downstream triggers since historical data shouldn't
+        # trigger Phase 4 re-processing.
+        skip_downstream = data.get('skip_downstream_trigger', backfill_mode)
+
         opts = {
             'start_date': start_date,
             'end_date': end_date,
             'project_id': get_project_id(),
             'triggered_by': 'manual',
             'backfill_mode': backfill_mode,
+            'skip_downstream_trigger': skip_downstream,
             'dataset_prefix': dataset_prefix
         }
 
         if backfill_mode:
             logger.info(f"Running {len(processors_to_run)} processors in BACKFILL mode (PARALLEL)")
+        if skip_downstream:
+            logger.info(f"⏸️  Downstream triggers DISABLED - Phase 4 will not auto-trigger")
 
         # Execute processors in PARALLEL for faster manual runs
         logger.info(f"🚀 Running {len(processors_to_run)} analytics processors in PARALLEL for {start_date} to {end_date}")
