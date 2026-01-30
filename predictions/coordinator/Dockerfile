@@ -47,13 +47,7 @@ ENV PYTHONPATH=/app:$PYTHONPATH
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD python -c "import requests; requests.get('http://localhost:8080/health', timeout=5)"
 
-# Run with gunicorn
-CMD exec gunicorn \
-  --bind :${PORT:-8080} \
-  --workers 1 \
-  --threads 8 \
-  --timeout 300 \
-  --access-logfile - \
-  --error-logfile - \
-  --log-level info \
-  coordinator:app
+# Run with gunicorn using config file for proper logging
+# The gunicorn_config.py contains logconfig_dict that forwards Python logger output
+# to stdout/stderr so Cloud Run can capture application-level logs
+CMD exec gunicorn --config gunicorn_config.py coordinator:app

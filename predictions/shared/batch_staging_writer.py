@@ -433,7 +433,9 @@ class BatchConsolidator:
         # Build UPDATE SET clause only for columns that exist in staging
         # Exclude merge key columns and special columns from UPDATE
         merge_key_columns = {'game_id', 'player_lookup', 'system_id', 'current_points_line', 'game_date'}
-        special_columns = {'created_at'}  # Never update created_at
+        # Never update: prediction_id (preserve original ID), created_at (preserve original timestamp)
+        # updated_at is set explicitly to CURRENT_TIMESTAMP() below
+        special_columns = {'prediction_id', 'created_at', 'updated_at'}
 
         update_columns = [
             col for col in staging_columns
