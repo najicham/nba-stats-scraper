@@ -29,7 +29,7 @@ import logging
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
-from predictions.worker.prediction_systems.catboost_v8 import CatBoostV8, V8_FEATURES
+from predictions.worker.prediction_systems.catboost_v8 import CatBoostV8, V8_FEATURES, ModelLoadError
 
 
 # ============================================================================
@@ -84,19 +84,23 @@ def mock_catboost_model():
 @pytest.fixture
 def catboost_system_with_mock(mock_catboost_model):
     """Create CatBoost system with mock model (bypassing actual model loading)"""
-    with patch('predictions.worker.prediction_systems.catboost_v8.CatBoostV8._load_local_model'):
-        system = CatBoostV8(use_local=False)
-        system.model = mock_catboost_model
-        return system
+    # Use require_model=False to allow testing without actual model file
+    # Then inject the mock model
+    system = CatBoostV8(use_local=False, require_model=False)
+    system.model = mock_catboost_model
+    return system
 
 
 @pytest.fixture
 def catboost_system_no_model():
-    """Create CatBoost system without model (for fallback testing)"""
-    with patch('predictions.worker.prediction_systems.catboost_v8.CatBoostV8._load_local_model'):
-        system = CatBoostV8(use_local=False)
-        system.model = None
-        return system
+    """Create CatBoost system without model (for fallback testing)
+
+    Note: In production, require_model=True by default, which raises ModelLoadError.
+    For testing fallback behavior, we use require_model=False.
+    """
+    system = CatBoostV8(use_local=False, require_model=False)
+    system.model = None
+    return system
 
 
 # ============================================================================
@@ -116,15 +120,21 @@ class TestModelLoading:
     @patch('predictions.worker.prediction_systems.catboost_v8.CatBoostV8._load_model_from_path')
     def test_load_from_env_variable(self, mock_load):
         """Test model loading from CATBOOST_V8_MODEL_PATH env var"""
-        system = CatBoostV8()
-        mock_load.assert_called_once_with('gs://bucket/model.cbm')
+        # Use require_model=False since mock doesn't actually set self.model
+        system = CatBoostV8(require_model=False)
+        # With retry logic, it's called multiple times (3 attempts)
+        mock_load.assert_called_with('gs://bucket/model.cbm')
+        assert mock_load.call_count <= 3  # May be called up to 3 times
 
     @patch('predictions.worker.prediction_systems.catboost_v8.CatBoostV8._load_model_from_path')
     def test_explicit_path_overrides_env(self, mock_load):
         """Test explicit model_path parameter takes priority over env var"""
         with patch.dict(os.environ, {'CATBOOST_V8_MODEL_PATH': 'gs://bucket/old.cbm'}):
-            system = CatBoostV8(model_path='gs://bucket/new.cbm', use_local=False)
-            mock_load.assert_called_once_with('gs://bucket/new.cbm')
+            # Use require_model=False since mock doesn't actually set self.model
+            system = CatBoostV8(model_path='gs://bucket/new.cbm', use_local=False, require_model=False)
+            # With retry logic, it's called multiple times (3 attempts)
+            mock_load.assert_called_with('gs://bucket/new.cbm')
+            assert mock_load.call_count <= 3  # May be called up to 3 times
 
     def test_no_model_loaded_creates_none(self, catboost_system_no_model):
         """Test system gracefully handles missing model"""
@@ -484,32 +494,82 @@ class TestRecommendationLogic:
 # ============================================================================
 
 class TestFallbackBehavior:
-    """Test fallback prediction when model not loaded"""
+    """Test fallback prediction behavior
 
-    def test_fallback_when_no_model(self, catboost_system_no_model, sample_features_v2):
-        """Test fallback prediction is used when model is None"""
-        result = catboost_system_no_model.predict(
+    Session 40 Update: MODEL_NOT_LOADED now raises ModelLoadError instead of
+    falling back to weighted average. Fallback is only used for:
+    - FEATURE_PREPARATION_FAILED
+    - MODEL_PREDICTION_FAILED
+    """
+
+    def test_model_not_loaded_raises_error(self, catboost_system_no_model, sample_features_v2):
+        """Test that predict() raises ModelLoadError when model is None
+
+        This is the Session 40 behavior change: no silent fallback to weighted average.
+        """
+        with pytest.raises(ModelLoadError, match="model is not loaded"):
+            catboost_system_no_model.predict(
+                player_lookup='lebronjames',
+                features=sample_features_v2,
+                betting_line=24.5,
+            )
+
+    def test_require_model_true_raises_on_init(self):
+        """Test that require_model=True (default) raises error during initialization"""
+        with pytest.raises(ModelLoadError, match="FAILED to load after"):
+            # No model path or local model available
+            CatBoostV8(use_local=False, require_model=True)
+
+    def test_require_model_false_allows_none(self):
+        """Test that require_model=False allows model to be None (for testing only)"""
+        system = CatBoostV8(use_local=False, require_model=False)
+        assert system.model is None
+
+    def test_fallback_for_feature_prep_failure(self, catboost_system_with_mock, sample_features_v2):
+        """Test that FEATURE_PREPARATION_FAILED still uses fallback (not ModelLoadError)"""
+        # Make _prepare_feature_vector return None to simulate feature prep failure
+        catboost_system_with_mock._prepare_feature_vector = Mock(return_value=None)
+
+        result = catboost_system_with_mock.predict(
             player_lookup='lebronjames',
             features=sample_features_v2,
             betting_line=24.5,
         )
 
-        assert result['system_id'] == 'catboost_v8'
+        # Should get fallback response, not exception
         assert result['model_type'] == 'fallback'
+        assert result['prediction_error_code'] == 'FEATURE_PREPARATION_FAILED'
         assert result['confidence_score'] == 50.0
-        assert result['recommendation'] == 'PASS'
-        assert 'error' in result
 
-    def test_fallback_uses_weighted_average(self, catboost_system_no_model):
+    def test_fallback_for_prediction_failure(self, catboost_system_with_mock, sample_features_v2):
+        """Test that MODEL_PREDICTION_FAILED still uses fallback (not ModelLoadError)"""
+        # Make model.predict() raise an exception
+        catboost_system_with_mock.model.predict = Mock(side_effect=Exception("Prediction error"))
+
+        result = catboost_system_with_mock.predict(
+            player_lookup='lebronjames',
+            features=sample_features_v2,
+            betting_line=24.5,
+        )
+
+        # Should get fallback response, not exception
+        assert result['model_type'] == 'fallback'
+        assert result['prediction_error_code'] == 'MODEL_PREDICTION_FAILED'
+        assert result['confidence_score'] == 50.0
+
+    def test_fallback_weighted_average_formula(self, catboost_system_with_mock):
         """Test fallback calculates weighted average correctly"""
+        # Make prediction fail so fallback is used
+        catboost_system_with_mock.model.predict = Mock(side_effect=Exception("Model error"))
+
         features = {
             'points_avg_last_5': 30.0,
             'points_avg_last_10': 28.0,
             'points_avg_season': 25.0,
-            'feature_version': 'v2_33features',  # Not actually used in fallback
+            'feature_version': 'v2_33features',
         }
 
-        result = catboost_system_no_model.predict(
+        result = catboost_system_with_mock.predict(
             player_lookup='lebronjames',
             features=features,
             betting_line=24.5,
@@ -518,10 +578,13 @@ class TestFallbackBehavior:
         # Expected: 0.4*30 + 0.35*28 + 0.25*25 = 12 + 9.8 + 6.25 = 28.05
         assert abs(result['predicted_points'] - 28.05) < 0.1
 
-    def test_fallback_logs_warning(self, catboost_system_no_model, sample_features_v2, caplog):
+    def test_fallback_logs_warning(self, catboost_system_with_mock, sample_features_v2, caplog):
         """Test fallback logs warning message"""
+        # Make prediction fail to trigger fallback
+        catboost_system_with_mock.model.predict = Mock(side_effect=Exception("Model error"))
+
         with caplog.at_level(logging.WARNING):
-            result = catboost_system_no_model.predict(
+            result = catboost_system_with_mock.predict(
                 player_lookup='lebronjames',
                 features=sample_features_v2,
                 betting_line=24.5,

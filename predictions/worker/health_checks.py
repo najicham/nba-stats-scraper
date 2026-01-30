@@ -264,10 +264,18 @@ class HealthChecker:
                         'latest_model': str(model_files[0].name)
                     }
                 else:
+                    # Session 40: No model = FAIL, not warn
+                    # We do not support fallback mode - the model MUST be available
                     details['catboost_v8'] = {
-                        'status': 'warn',
-                        'warning': 'No CATBOOST_V8_MODEL_PATH set and no local models found',
-                        'fallback_mode': True
+                        'status': 'fail',
+                        'error': 'No CATBOOST_V8_MODEL_PATH set and no local models found. Model is REQUIRED.',
+                        'fallback_mode': False  # Fallback mode is NOT supported
+                    }
+                    return {
+                        'check': check_name,
+                        'status': 'fail',
+                        'details': details,
+                        'duration_ms': int((time.time() - start_time) * 1000)
                     }
 
             overall_status = 'pass'

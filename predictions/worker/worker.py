@@ -92,22 +92,23 @@ def validate_ml_model_availability():
         model_files = list(models_dir.glob("catboost_v8_33features_*.cbm"))
 
         if not model_files:
-            # CRITICAL: No model available - log prominent warning about fallback mode
-            logger.error("=" * 80)
-            logger.error("❌ CRITICAL: Missing CATBOOST_V8_MODEL_PATH environment variable!", exc_info=True)
-            logger.error("=" * 80)
-            logger.error(f"   Searched for local models: {models_dir}/catboost_v8_33features_*.cbm", exc_info=True)
-            logger.error("   No local models found.", exc_info=True)
-            logger.error("=" * 80)
-            logger.error("⚠️  Service will start but predictions will use FALLBACK mode", exc_info=True)
-            logger.error("⚠️  This means:", exc_info=True)
-            logger.error("     - Confidence scores will be 50% (not actual model predictions)", exc_info=True)
-            logger.error("     - Recommendations will be 'PASS' (conservative)", exc_info=True)
-            logger.error("     - Prediction quality will be degraded", exc_info=True)
-            logger.error("=" * 80)
-            logger.error("🔧 TO FIX: Set CATBOOST_V8_MODEL_PATH to:", exc_info=True)
-            logger.error("     gs://nba-props-platform-models/catboost/v8/catboost_v8_33features_YYYYMMDD_HHMMSS.cbm", exc_info=True)
-            logger.error("=" * 80)
+            # CRITICAL: No model available - FAIL FAST (Session 40: no silent fallbacks)
+            error_msg = (
+                f"CRITICAL: No CatBoost V8 model available! "
+                f"Searched: {models_dir}/catboost_v8_33features_*.cbm. "
+                f"Set CATBOOST_V8_MODEL_PATH environment variable to a valid model path. "
+                f"Example: gs://nba-props-platform-models/catboost/v8/catboost_v8_33features_YYYYMMDD_HHMMSS.cbm"
+            )
+            logger.critical(
+                error_msg,
+                extra={
+                    "severity": "CRITICAL",
+                    "alert_type": "model_not_available",
+                    "model_id": "catboost_v8",
+                    "searched_path": str(models_dir),
+                }
+            )
+            raise RuntimeError(error_msg)
         else:
             logger.info(f"✓ Found {len(model_files)} local CatBoost v8 model(s): {[f.name for f in model_files]}")
 

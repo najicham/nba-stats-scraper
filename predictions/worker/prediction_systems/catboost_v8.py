@@ -54,6 +54,37 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# Model Load Error - Critical Failure (Session 40)
+# =============================================================================
+# Model not loading is a HARD FAILURE. The system should not silently fall back
+# to weighted averages. This exception is raised when the model cannot be loaded
+# after retries, signaling that the service should not accept traffic.
+# =============================================================================
+
+class ModelLoadError(Exception):
+    """
+    Raised when CatBoost model fails to load after all retry attempts.
+
+    This is a critical error that should prevent the worker from accepting
+    prediction requests. The service should fail health checks and not
+    receive traffic until the model is available.
+    """
+
+    def __init__(self, message: str, attempts: int = 0, last_error: Exception = None):
+        self.attempts = attempts
+        self.last_error = last_error
+        super().__init__(message)
+
+    def __str__(self):
+        base = super().__str__()
+        if self.attempts > 0:
+            base += f" (after {self.attempts} attempts)"
+        if self.last_error:
+            base += f" Last error: {self.last_error}"
+        return base
+
+
+# =============================================================================
 # Prometheus Metrics (Prevention Plan Task #9)
 # =============================================================================
 # These metrics enable real-time monitoring of CatBoost V8 prediction quality
@@ -320,10 +351,16 @@ class CatBoostV8:
     Designed to run in shadow mode for comparison with existing systems.
     """
 
+    # Retry configuration for model loading
+    MODEL_LOAD_MAX_RETRIES = 3
+    MODEL_LOAD_INITIAL_DELAY_SECONDS = 1.0
+    MODEL_LOAD_BACKOFF_MULTIPLIER = 2.0
+
     def __init__(
         self,
         model_path: Optional[str] = None,
-        use_local: bool = True
+        use_local: bool = True,
+        require_model: bool = True
     ):
         """
         Initialize CatBoost V8 system
@@ -332,116 +369,160 @@ class CatBoostV8:
             model_path: Path to CatBoost model file (local or GCS)
             use_local: If True, load from local models/ directory.
                        If CATBOOST_V8_MODEL_PATH env var is set, uses that instead.
+            require_model: If True (default), raise ModelLoadError if model cannot be loaded.
+                          This is the production behavior - no silent fallbacks.
+                          Set to False only for testing.
+
+        Raises:
+            ModelLoadError: If require_model=True and model fails to load after retries.
         """
         import os
+        import time
 
         self.system_id = 'catboost_v8'
         self.model_version = 'v8'
         self.model = None
         self.metadata = None
+        self._last_load_error: Optional[Exception] = None
 
         # Check for GCS path in environment (production)
         gcs_path = os.environ.get('CATBOOST_V8_MODEL_PATH')
 
-        # Load model - priority: explicit path > env var > local
+        # Determine model source
         if model_path:
-            self._load_model_from_path(model_path)
+            model_source = model_path
+            load_method = self._load_model_from_path
         elif gcs_path:
+            model_source = gcs_path
+            load_method = self._load_model_from_path
             logger.info(f"Loading CatBoost v8 from env var: {gcs_path}")
-            self._load_model_from_path(gcs_path)
         elif use_local:
-            self._load_local_model()
-
-        # CRITICAL: Log final model load status for observability
-        if self.model is not None:
-            logger.info(
-                f"✓ CatBoost V8 model loaded successfully. "
-                f"Ready to generate real predictions with 33 features."
-            )
+            model_source = "local"
+            load_method = lambda _: self._load_local_model()
         else:
-            logger.error(
-                f"✗ CatBoost V8 model FAILED to load! All predictions will use fallback "
-                f"(weighted average, confidence=50, recommendation=PASS). "
+            model_source = None
+            load_method = None
+
+        # Load model with retries
+        if load_method:
+            delay = self.MODEL_LOAD_INITIAL_DELAY_SECONDS
+            for attempt in range(1, self.MODEL_LOAD_MAX_RETRIES + 1):
+                try:
+                    load_method(model_source)
+
+                    if self.model is not None:
+                        logger.info(
+                            f"✓ CatBoost V8 model loaded successfully on attempt {attempt}. "
+                            f"Ready to generate real predictions with 33 features."
+                        )
+                        break
+                except Exception as e:
+                    self._last_load_error = e
+                    logger.warning(
+                        f"CatBoost V8 model load attempt {attempt}/{self.MODEL_LOAD_MAX_RETRIES} failed: {e}"
+                    )
+
+                # Model still None after load attempt
+                if self.model is None and attempt < self.MODEL_LOAD_MAX_RETRIES:
+                    logger.info(f"Retrying model load in {delay:.1f}s...")
+                    time.sleep(delay)
+                    delay *= self.MODEL_LOAD_BACKOFF_MULTIPLIER
+
+        # CRITICAL: Enforce model requirement (Session 40 - no silent fallbacks)
+        if self.model is None:
+            error_msg = (
+                f"CRITICAL: CatBoost V8 model FAILED to load after {self.MODEL_LOAD_MAX_RETRIES} attempts! "
+                f"Model source: {model_source}. "
                 f"Check: 1) CATBOOST_V8_MODEL_PATH env var, 2) catboost library installed, "
-                f"3) model file exists and is accessible."
+                f"3) model file exists and is accessible, 4) GCS permissions."
             )
+
+            # Structured logging for Cloud Monitoring alerts
+            logger.critical(
+                error_msg,
+                extra={
+                    "severity": "CRITICAL",
+                    "alert_type": "model_load_failure",
+                    "model_id": "catboost_v8",
+                    "model_source": model_source,
+                    "attempts": self.MODEL_LOAD_MAX_RETRIES,
+                    "last_error": str(self._last_load_error) if self._last_load_error else None,
+                }
+            )
+
+            if require_model:
+                raise ModelLoadError(
+                    message=error_msg,
+                    attempts=self.MODEL_LOAD_MAX_RETRIES,
+                    last_error=self._last_load_error
+                )
 
     def _load_local_model(self):
-        """Load model from local models/ directory"""
-        try:
-            import catboost as cb
+        """
+        Load model from local models/ directory.
 
-            # Find the v8 model file
-            models_dir = Path(__file__).parent.parent.parent.parent / "models"
-            model_files = list(models_dir.glob("catboost_v8_33features_*.cbm"))
+        Raises exceptions on failure to enable retry logic in __init__.
+        """
+        import catboost as cb
 
-            if not model_files:
-                logger.warning("No CatBoost v8 model found, will use fallback")
-                return
+        # Find the v8 model file
+        models_dir = Path(__file__).parent.parent.parent.parent / "models"
+        model_files = list(models_dir.glob("catboost_v8_33features_*.cbm"))
 
-            # Use the most recent model
-            model_path = sorted(model_files)[-1]
-            logger.info(f"Loading CatBoost v8 model from {model_path}")
+        if not model_files:
+            raise FileNotFoundError(
+                f"No CatBoost v8 model files found in {models_dir}. "
+                f"Expected files matching: catboost_v8_33features_*.cbm"
+            )
 
-            self.model = cb.CatBoostRegressor()
-            self.model.load_model(str(model_path))
+        # Use the most recent model
+        model_path = sorted(model_files)[-1]
+        logger.info(f"Loading CatBoost v8 model from {model_path}")
 
-            # Load metadata if available
-            metadata_path = models_dir / "ensemble_v8_20260108_211817_metadata.json"
-            if metadata_path.exists():
-                with open(metadata_path) as f:
-                    self.metadata = json.load(f)
+        self.model = cb.CatBoostRegressor()
+        self.model.load_model(str(model_path))
 
-            logger.info(f"Loaded CatBoost v8 model successfully")
+        # Load metadata if available
+        metadata_path = models_dir / "ensemble_v8_20260108_211817_metadata.json"
+        if metadata_path.exists():
+            with open(metadata_path) as f:
+                self.metadata = json.load(f)
 
-        except ImportError:
-            logger.error("CatBoost not installed. Run: pip install catboost", exc_info=True)
-        except Exception as e:
-            logger.error(f"Error loading CatBoost v8 model: {e}", exc_info=True)
+        logger.info(f"Loaded CatBoost v8 model successfully")
 
     def _load_model_from_path(self, model_path: str):
-        """Load model from specified path (local or GCS)"""
-        try:
-            import catboost as cb
+        """
+        Load model from specified path (local or GCS).
 
-            if model_path.startswith("gs://"):
-                # Load from GCS with circuit breaker protection
-                from google.cloud import storage
+        Raises exceptions on failure to enable retry logic in __init__.
+        """
+        import catboost as cb
 
-                parts = model_path.replace("gs://", "").split("/", 1)
-                bucket_name, blob_path = parts[0], parts[1]
+        if model_path.startswith("gs://"):
+            # Load from GCS with circuit breaker protection
+            parts = model_path.replace("gs://", "").split("/", 1)
+            bucket_name, blob_path = parts[0], parts[1]
 
-                # Get circuit breaker for GCS model loading
-                # This prevents cascading failures if GCS is unavailable
-                gcs_cb = get_service_circuit_breaker("gcs_model_loading")
+            # Get circuit breaker for GCS model loading
+            # This prevents cascading failures if GCS is unavailable
+            gcs_cb = get_service_circuit_breaker("gcs_model_loading")
 
-                try:
-                    def download_model():
-                        from shared.clients import get_storage_client
-                        client = get_storage_client()
-                        bucket = client.bucket(bucket_name)
-                        blob = bucket.blob(blob_path)
-                        local_path = "/tmp/catboost_v8.cbm"
-                        blob.download_to_filename(local_path)
-                        return local_path
+            def download_model():
+                from shared.clients import get_storage_client
+                client = get_storage_client()
+                bucket = client.bucket(bucket_name)
+                blob = bucket.blob(blob_path)
+                local_path = "/tmp/catboost_v8.cbm"
+                blob.download_to_filename(local_path)
+                return local_path
 
-                    model_path = gcs_cb.call(download_model)
-                    logger.info(f"GCS model download successful for catboost_v8")
+            # Let CircuitBreakerError propagate - it's a retriable error
+            model_path = gcs_cb.call(download_model)
+            logger.info(f"GCS model download successful for catboost_v8")
 
-                except CircuitBreakerError as e:
-                    logger.error(
-                        f"Circuit breaker OPEN for GCS model loading: {e}. "
-                        f"CatBoost v8 will use fallback predictions.",
-                        exc_info=True
-                    )
-                    return  # Model stays None, fallback will be used
-
-            self.model = cb.CatBoostRegressor()
-            self.model.load_model(model_path)
-            logger.info(f"Loaded CatBoost v8 model from {model_path}")
-
-        except Exception as e:
-            logger.error(f"Error loading model from {model_path}: {e}", exc_info=True)
+        self.model = cb.CatBoostRegressor()
+        self.model.load_model(model_path)
+        logger.info(f"Loaded CatBoost v8 model from {model_path}")
 
     def predict(
         self,
@@ -471,10 +552,23 @@ class CatBoostV8:
 
         Returns:
             dict: Prediction with metadata
+
+        Raises:
+            ModelLoadError: If model is not loaded (should never happen in production
+                           since __init__ enforces model loading with require_model=True)
         """
+        # CRITICAL: Model must be loaded - no silent fallback to weighted average
+        # If we reach this point with model=None, it's a bug in initialization
         if self.model is None:
-            return self._fallback_prediction(player_lookup, features, betting_line,
-                                             error_code='MODEL_NOT_LOADED')
+            raise ModelLoadError(
+                message=(
+                    "CatBoost V8 model is not loaded. This should never happen in production. "
+                    "The worker should have failed to start if model loading failed. "
+                    f"player_lookup={player_lookup}"
+                ),
+                attempts=0,
+                last_error=self._last_load_error
+            )
 
         # FAIL-FAST: Assert correct feature version (v2_33features required for V8 model)
         feature_version = features.get('feature_version')
@@ -765,15 +859,24 @@ class CatBoostV8:
         player_lookup: str,
         features: Dict,
         betting_line: Optional[float],
-        error_code: str = 'MODEL_NOT_LOADED'
+        error_code: str = 'FEATURE_PREPARATION_FAILED'
     ) -> Dict:
-        """Fallback when model not available - use simple average"""
+        """
+        Fallback for feature or prediction failures - use simple weighted average.
+
+        NOTE: This is ONLY used for:
+        - FEATURE_PREPARATION_FAILED: Feature vector preparation returned None
+        - MODEL_PREDICTION_FAILED: Model.predict() threw an exception
+
+        MODEL_NOT_LOADED should NEVER use this fallback. If the model isn't loaded,
+        the system should have failed at startup (require_model=True) or raised
+        ModelLoadError in predict().
+        """
         # CRITICAL: Log fallback usage so it's visible in Cloud Logging
-        # This addresses the "silent fallback" issue from Jan 9, 2026
         logger.warning(
             f"FALLBACK_PREDICTION: CatBoost V8 using fallback for {player_lookup}. "
             f"Error code: {error_code}. Confidence will be 50.0, recommendation will be PASS. "
-            f"Check model accessibility and feature data."
+            f"This fallback is for feature/prediction issues only, not model loading failures."
         )
 
         season_avg = features.get('points_avg_season', 10.0)
@@ -821,11 +924,28 @@ class CatBoostV8:
 
 
 # Factory functions
-def load_catboost_v8_system() -> CatBoostV8:
-    """Load CatBoost V8 system with local model"""
-    return CatBoostV8(use_local=True)
+def load_catboost_v8_system(require_model: bool = True) -> CatBoostV8:
+    """
+    Load CatBoost V8 system with local model.
+
+    Args:
+        require_model: If True (default), raise ModelLoadError on failure.
+
+    Raises:
+        ModelLoadError: If require_model=True and model cannot be loaded.
+    """
+    return CatBoostV8(use_local=True, require_model=require_model)
 
 
-def load_catboost_v8_from_gcs(gcs_path: str) -> CatBoostV8:
-    """Load CatBoost V8 system from GCS"""
-    return CatBoostV8(model_path=gcs_path, use_local=False)
+def load_catboost_v8_from_gcs(gcs_path: str, require_model: bool = True) -> CatBoostV8:
+    """
+    Load CatBoost V8 system from GCS.
+
+    Args:
+        gcs_path: GCS path to the model file.
+        require_model: If True (default), raise ModelLoadError on failure.
+
+    Raises:
+        ModelLoadError: If require_model=True and model cannot be loaded.
+    """
+    return CatBoostV8(model_path=gcs_path, use_local=False, require_model=require_model)
