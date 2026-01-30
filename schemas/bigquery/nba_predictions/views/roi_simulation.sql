@@ -1,6 +1,7 @@
 -- ============================================================================
 -- View: roi_simulation
 -- Purpose: Simulate betting ROI using standard sportsbook odds
+-- Updated: 2026-01-29 - Changed from prediction_grades to prediction_accuracy
 -- ============================================================================
 -- Assumptions:
 --   - Standard odds: -110 (bet $110 to win $100)
@@ -18,8 +19,8 @@ WITH normalized_predictions AS (
       WHEN confidence_score > 1 THEN confidence_score / 100
       ELSE confidence_score
     END as normalized_confidence
-  FROM `nba-props-platform.nba_predictions.prediction_grades`
-  WHERE has_issues = FALSE  -- Only clean predictions
+  FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+  WHERE (is_voided IS NULL OR is_voided = FALSE)  -- Only non-voided predictions
     AND prediction_correct IS NOT NULL  -- Only gradeable
 ),
 

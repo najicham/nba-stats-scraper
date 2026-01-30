@@ -2,6 +2,7 @@
 -- View: confidence_calibration
 -- Purpose: Check if confidence scores are well-calibrated
 -- Expected: 90% confidence → ~90% accuracy
+-- Updated: 2026-01-29 - Changed from prediction_grades to prediction_accuracy
 -- ============================================================================
 
 CREATE OR REPLACE VIEW `nba-props-platform.nba_predictions.confidence_calibration` AS
@@ -24,14 +25,14 @@ SELECT
   ROUND(AVG(confidence_score) * 100 - 100.0 * COUNTIF(prediction_correct) / COUNT(*), 2) as calibration_error,
 
   -- Additional metrics
-  ROUND(AVG(margin_of_error), 2) as avg_margin_of_error,
+  ROUND(AVG(absolute_error), 2) as avg_absolute_error,
   MIN(game_date) as first_prediction_date,
   MAX(game_date) as last_prediction_date
 
-FROM `nba-props-platform.nba_predictions.prediction_grades`
+FROM `nba-props-platform.nba_predictions.prediction_accuracy`
 WHERE
   prediction_correct IS NOT NULL  -- Only gradeable predictions
-  AND has_issues = FALSE           -- Only clean data
+  AND (is_voided IS NULL OR is_voided = FALSE)  -- Only non-voided predictions
   AND confidence_score > 0         -- Valid confidence scores
 GROUP BY system_id, confidence_bucket
 HAVING COUNT(*) >= 10  -- Minimum sample size for statistical significance

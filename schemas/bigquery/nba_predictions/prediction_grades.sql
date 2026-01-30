@@ -3,6 +3,14 @@
 -- File: prediction_grades.sql
 -- Purpose: Grades NBA predictions against actual results
 -- ============================================================================
+--
+-- DEPRECATED: 2026-01-29
+-- Use `prediction_accuracy` table instead for all grading queries.
+-- This table only contains Jan 2026 data and is no longer actively maintained.
+-- The `prediction_accuracy` table has full historical data from Nov 2021.
+--
+-- See: docs/08-projects/current/season-validation-2024-25/GRADING-TABLE-CONSOLIDATION-REVIEW.md
+-- ============================================================================
 
 CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.prediction_grades` (
   -- Identifiers

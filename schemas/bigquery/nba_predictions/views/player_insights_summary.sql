@@ -1,6 +1,7 @@
 -- ============================================================================
 -- View: player_insights_summary
 -- Purpose: Aggregated player performance across all systems for dashboard
+-- Updated: 2026-01-29 - Changed from prediction_grades to prediction_accuracy
 -- ============================================================================
 
 CREATE OR REPLACE VIEW `nba-props-platform.nba_predictions.player_insights_summary` AS
@@ -16,8 +17,8 @@ WITH player_stats AS (
     -- Accuracy
     ROUND(100.0 * COUNTIF(prediction_correct) / COUNTIF(prediction_correct IS NOT NULL), 2) as avg_accuracy_pct,
 
-    -- Margin of error
-    ROUND(AVG(CASE WHEN prediction_correct IS NOT NULL THEN margin_of_error END), 2) as avg_margin_of_error,
+    -- Absolute error
+    ROUND(AVG(CASE WHEN prediction_correct IS NOT NULL THEN absolute_error END), 2) as avg_absolute_error,
 
     -- Over/Under counts
     COUNTIF(recommendation = 'OVER' AND prediction_correct IS NOT NULL) as over_predictions,
@@ -27,8 +28,8 @@ WITH player_stats AS (
     MIN(game_date) as first_prediction_date,
     MAX(game_date) as last_prediction_date
 
-  FROM `nba-props-platform.nba_predictions.prediction_grades`
-  WHERE has_issues = FALSE
+  FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+  WHERE (is_voided IS NULL OR is_voided = FALSE)  -- Only non-voided predictions
   GROUP BY player_lookup
   HAVING COUNT(*) >= 15  -- Minimum sample size
 ),

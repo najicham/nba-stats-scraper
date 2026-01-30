@@ -159,6 +159,17 @@ bq query --use_legacy_sql=false "SELECT game_date, COUNT(*) FROM nba_predictions
 bq query --use_legacy_sql=false "SELECT COUNT(*), COUNT(DISTINCT player_lookup) FROM nba_predictions.ml_feature_store_v2 WHERE game_date = CURRENT_DATE()"
 ```
 
+### Grading Tables
+
+**IMPORTANT:** Use the correct grading table:
+
+| Table | Use For | Data Range |
+|-------|---------|------------|
+| `prediction_accuracy` | **All grading queries** | Nov 2021 - Present (419K+ records) |
+| `prediction_grades` | DEPRECATED - do not use | Jan 2026 only (9K records) |
+
+Always query `prediction_accuracy` for grading validation, accuracy metrics, and ML analysis.
+
 ### Deployments
 ```bash
 # Check current revisions
