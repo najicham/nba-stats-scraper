@@ -1,8 +1,8 @@
 # Streaming Buffer Duplicate Cleanup Fix
 
 **Date:** 2026-01-30
-**Session:** 28 Continuation
-**Status:** Implemented, needs deployment and Cloud Scheduler setup
+**Session:** 29 (continuation of 28)
+**Status:** COMPLETE - Deployed, tested, and automated
 
 ## Problem Summary
 
@@ -30,13 +30,6 @@ Duplicates accumulate in `player_prop_predictions` because the `_deactivate_olde
 
 The `_deactivate_older_predictions()` method in `predictions/shared/batch_staging_writer.py` runs immediately after MERGE consolidation. But the MERGE just inserted rows that are now in the streaming buffer, so the subsequent UPDATE cannot modify them.
 
-### Impact
-
-- **4,415+ duplicates** exist in the source table
-- Grading already handles this via ROW_NUMBER dedup (working correctly)
-- Source table is messy but functional
-- Manual cleanup was blocked until streaming buffer cleared
-
 ## Solution Implemented
 
 ### Approach: Delayed Cleanup Job (Option A)
@@ -48,7 +41,8 @@ Added a new `/cleanup-duplicates` endpoint that can be called 2+ hours after pre
 | File | Change |
 |------|--------|
 | `predictions/shared/batch_staging_writer.py` | Added `cleanup_duplicate_predictions()` method to `BatchConsolidator` |
-| `predictions/coordinator/coordinator.py` | Added `/cleanup-duplicates` endpoint |
+| `predictions/coordinator/coordinator.py` | Added `/cleanup-duplicates` endpoint with TODAY/YESTERDAY support |
+| `bin/deploy-service.sh` | Fixed to include `GCP_PROJECT_ID` env var |
 
 ### New Endpoint
 
@@ -58,7 +52,7 @@ Authorization: X-API-Key or Bearer token
 
 Request body:
 {
-    "game_date": "2026-01-30",  // Required
+    "game_date": "2026-01-30",  // YYYY-MM-DD, "TODAY", or "YESTERDAY"
     "dry_run": false            // Optional - just count without deactivating
 }
 
@@ -74,101 +68,100 @@ Response:
 
 ### How It Works
 
-1. **Count duplicates** using ROW_NUMBER to identify non-newest predictions
-2. **Deactivate** by setting `is_active = FALSE` on older predictions
-3. **Return results** with counts for monitoring
+1. **Supports date keywords**: "TODAY", "YESTERDAY", or explicit YYYY-MM-DD
+2. **Count duplicates** using ROW_NUMBER to identify non-newest predictions
+3. **Deactivate** by setting `is_active = FALSE` on older predictions
+4. **Return results** with counts for monitoring
 
-## Deployment Steps
+## Deployment Complete
 
-### 1. Deploy Updated Coordinator
+### Service Deployed
 
-```bash
-./bin/deploy-service.sh prediction-coordinator
+- **Service**: prediction-coordinator
+- **Revision**: prediction-coordinator-00108-24j
+- **Endpoint**: `/cleanup-duplicates` (working)
+
+### Cloud Scheduler Job Created
+
+```
+Name:     prediction-duplicate-cleanup
+Schedule: 30 15 * * * (UTC) = 10:30 AM ET
+Payload:  {"game_date": "YESTERDAY", "dry_run": false}
+Status:   ENABLED
 ```
 
-### 2. Verify Endpoint Works (Dry Run)
+The job runs at 10:30 AM ET daily (2.5 hours after morning predictions at 8 AM ET), cleaning up the previous day's duplicates.
+
+## Cleanup Results (2026-01-30)
+
+### All Historical Duplicates Cleaned
+
+| Date | Duplicates Found | Deactivated | Status |
+|------|------------------|-------------|--------|
+| 2026-01-20 | 252 | 589 | **CLEANED** |
+| 2026-01-22 | 1 | 286 | **CLEANED** |
+| 2026-01-23 | 2,477 | 2,807 | **CLEANED** |
+| 2026-01-24 | 125 | 360 | **CLEANED** |
+| 2026-01-25 | 695 | 1,400 | **CLEANED** |
+| 2026-01-26 | 271 | 836 | **CLEANED** |
+| 2026-01-27 | 236 | 811 | **CLEANED** |
+| 2026-01-28 | 632 | 776 | **CLEANED** |
+| **TOTAL** | **4,689** | **7,865** | |
+
+### Verification
+
+```
++------------+--------------+----------------+
+| game_date  | total_active | est_duplicates |
++------------+--------------+----------------+
+| 2026-01-29 |          113 |              0 |
+| 2026-01-28 |          321 |              0 |
+| 2026-01-27 |          236 |              0 |
+| 2026-01-26 |          239 |              0 |
+| 2026-01-25 |          282 |              0 |
+| 2026-01-24 |           81 |              0 |
+| 2026-01-23 |           85 |              0 |
+| 2026-01-22 |           83 |              0 |
+| 2026-01-21 |          216 |              0 |
+| 2026-01-20 |          220 |              0 |
++------------+--------------+----------------+
+```
+
+**All dates now show 0 duplicates.**
+
+## Usage
+
+### Manual Cleanup
 
 ```bash
-# Get the service URL
-SERVICE_URL=$(gcloud run services describe prediction-coordinator --region=us-west2 --format='value(status.url)')
+SERVICE_URL="https://prediction-coordinator-756957797294.us-west2.run.app"
+API_KEY=$(gcloud secrets versions access latest --secret=coordinator-api-key)
 
-# Test with dry run
+# Dry run (count only)
 curl -X POST "${SERVICE_URL}/cleanup-duplicates" \
-  -H "X-API-Key: ${COORDINATOR_API_KEY}" \
+  -H "X-API-Key: ${API_KEY}" \
   -H "Content-Type: application/json" \
-  -d '{"game_date": "2026-01-29", "dry_run": true}'
-```
+  -d '{"game_date": "YESTERDAY", "dry_run": true}'
 
-### 3. Run Actual Cleanup
-
-```bash
-# Clean up today's duplicates (only after 2 hours since predictions)
+# Actual cleanup
 curl -X POST "${SERVICE_URL}/cleanup-duplicates" \
-  -H "X-API-Key: ${COORDINATOR_API_KEY}" \
+  -H "X-API-Key: ${API_KEY}" \
   -H "Content-Type: application/json" \
-  -d '{"game_date": "2026-01-30", "dry_run": false}'
+  -d '{"game_date": "YESTERDAY", "dry_run": false}'
 ```
 
-### 4. Set Up Cloud Scheduler (Optional)
-
-For automatic cleanup, create a Cloud Scheduler job that runs 2 hours after predictions:
+### Validation Commands
 
 ```bash
-# If predictions run at 8:00 AM ET, schedule cleanup for 10:00 AM ET
-gcloud scheduler jobs create http prediction-duplicate-cleanup \
-  --schedule="0 10 * * *" \
-  --time-zone="America/New_York" \
-  --uri="${SERVICE_URL}/cleanup-duplicates" \
-  --http-method=POST \
-  --headers="Content-Type=application/json" \
-  --message-body='{"game_date": "TODAY", "dry_run": false}' \
-  --oidc-service-account-email="${SERVICE_ACCOUNT}@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --location=us-west2
-```
-
-**Note:** The `game_date: "TODAY"` value needs a small modification to the endpoint to support (currently requires explicit YYYY-MM-DD format). For now, you can use a Lambda or Cloud Function to call with the current date.
-
-## Validation Commands
-
-### Check Current Duplicates
-
-```bash
-bq query --use_legacy_sql=false "
-SELECT COUNT(*) as duplicates
-FROM nba_predictions.player_prop_predictions AS t
-WHERE EXISTS (
-  SELECT 1 FROM nba_predictions.player_prop_predictions AS d
-  WHERE d.player_lookup = t.player_lookup
-    AND d.game_date = t.game_date
-    AND d.system_id = t.system_id
-    AND d.is_active = TRUE
-    AND d.created_at > t.created_at
-)
-AND t.game_date >= '2026-01-09'
-AND t.is_active = TRUE"
-```
-
-### Verify Streaming Buffer Cleared
-
-```bash
-# If this succeeds (0 rows affected), buffer is clear for that date
-bq query --use_legacy_sql=false "
-UPDATE nba_predictions.player_prop_predictions
-SET is_active = FALSE
-WHERE FALSE"
-```
-
-### Check Duplicates Per Day
-
-```bash
+# Check current duplicates
 bq query --use_legacy_sql=false "
 SELECT
   game_date,
   COUNT(*) as total_active,
-  COUNT(*) - COUNT(DISTINCT CONCAT(player_lookup, system_id)) as duplicates
+  COUNT(*) - COUNT(DISTINCT CONCAT(player_lookup, '_', system_id)) as duplicates
 FROM nba_predictions.player_prop_predictions
 WHERE is_active = TRUE
-  AND game_date >= '2026-01-20'
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
 GROUP BY 1
 ORDER BY 1 DESC"
 ```
@@ -209,77 +202,17 @@ SELECT * FROM deduped WHERE rn = 1
 
 This means **grading works correctly** even with duplicates in the source table.
 
-## Testing Results (2026-01-30)
+## Key Learnings
 
-### Manual Cleanup Test
+1. **BigQuery streaming buffer** locks rows for 30-90 minutes after DML operations (MERGE/INSERT)
+2. **Backfills create new rows** that go into the streaming buffer, blocking cleanup even for historical dates
+3. **Grading already handles duplicates** via ROW_NUMBER dedup, so duplicates don't affect graded results
+4. **Delayed cleanup is the correct pattern** for BigQuery DML on recently-modified tables
+5. **Deploy scripts should preserve env vars** - use `--update-env-vars` not `--set-env-vars`
 
-Successfully cleaned up Jan 23 duplicates:
-- Before: 2,477 duplicates
-- After: 0 duplicates
-- Rows affected: 2,807
+## Related Documentation
 
-### Streaming Buffer Observation
-
-Many game dates (Jan 20-28) have rows created TODAY (2026-01-30 08:37:XX) from a backfill job. These rows are in the streaming buffer and cannot be cleaned immediately.
-
-```
-| game_date  | newest_created       | duplicates |
-|------------|----------------------|------------|
-| 2026-01-28 | 2026-01-30 08:37:35  | 632        | <- In buffer
-| 2026-01-27 | 2026-01-30 08:37:33  | 236        | <- In buffer
-| 2026-01-26 | 2026-01-30 08:37:32  | 271        | <- In buffer
-| 2026-01-25 | 2026-01-30 08:37:29  | 695        | <- In buffer
-| 2026-01-24 | 2026-01-30 08:37:27  | 125        | <- In buffer
-| 2026-01-23 | 2026-01-23 22:01:12  | 0          | <- Cleaned!
-```
-
-### Next Steps
-
-Wait 2 hours after the backfill completed (08:37 UTC + 2h = 10:37 UTC), then run:
-
-```bash
-# After 10:37 UTC today (2026-01-30)
-for DATE in 2026-01-20 2026-01-22 2026-01-24 2026-01-25 2026-01-26 2026-01-27 2026-01-28; do
-  curl -X POST "${SERVICE_URL}/cleanup-duplicates" \
-    -H "X-API-Key: ${COORDINATOR_API_KEY}" \
-    -H "Content-Type: application/json" \
-    -d "{\"game_date\": \"${DATE}\", \"dry_run\": false}"
-done
-```
-
-## Future Improvements
-
-1. **Automatic cleanup**: Add Cloud Scheduler job for daily cleanup
-2. **Metrics**: Track duplicate counts in monitoring dashboard
-3. **Alerting**: Alert if duplicates exceed threshold after cleanup window
-4. **Backfill cleanup**: Run cleanup for historical dates with accumulated duplicates
-
-## Testing
-
-### Unit Test (Local)
-
-```python
-# test_batch_staging_writer.py
-def test_cleanup_duplicate_predictions_dry_run():
-    consolidator = BatchConsolidator(bq_client, project_id)
-    result = consolidator.cleanup_duplicate_predictions('2026-01-29', dry_run=True)
-    assert 'duplicates_found' in result
-    assert result['dry_run'] == True
-    assert result['duplicates_deactivated'] == 0
-```
-
-### Integration Test
-
-```bash
-# Clean up a known date with duplicates
-curl -X POST "http://localhost:8080/cleanup-duplicates" \
-  -H "X-API-Key: ${COORDINATOR_API_KEY}" \
-  -H "Content-Type: application/json" \
-  -d '{"game_date": "2026-01-29", "dry_run": false}'
-```
-
-## Related Issues
-
-- Session 28 Continuation Handoff: `docs/09-handoff/2026-01-30-SESSION-28-CONTINUATION-HANDOFF.md`
-- Session 92 distributed lock fix for race conditions
-- Session 13 deactivation logic for cross-batch duplicates
+- Session 28 Handoff: `docs/09-handoff/2026-01-30-SESSION-28-CONTINUATION-HANDOFF.md`
+- Session 29 Handoff: `docs/09-handoff/2026-01-30-SESSION-29-HANDOFF.md`
+- Session 92: Distributed lock fix for race conditions
+- Session 13: Deactivation logic for cross-batch duplicates

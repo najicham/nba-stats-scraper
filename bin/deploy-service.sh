@@ -113,7 +113,7 @@ gcloud run deploy "$SERVICE" \
     --image="$REGISTRY/$SERVICE:latest" \
     --region="$REGION" \
     --project="$PROJECT" \
-    --set-env-vars="BUILD_COMMIT=$BUILD_COMMIT,BUILD_TIMESTAMP=$BUILD_TIMESTAMP" \
+    --update-env-vars="BUILD_COMMIT=$BUILD_COMMIT,BUILD_TIMESTAMP=$BUILD_TIMESTAMP,GCP_PROJECT_ID=$PROJECT" \
     --quiet
 
 echo ""
