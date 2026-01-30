@@ -707,6 +707,7 @@ class PlayerLoader:
         WHERE player_lookup = @player_lookup
           AND game_date = @game_date
           AND bookmaker = @sportsbook
+          AND market_type = 'points'
           AND bet_side = 'over'
           AND is_active = TRUE
         ORDER BY created_at DESC
@@ -937,6 +938,7 @@ class PlayerLoader:
         FROM `{project}.nba_raw.bettingpros_player_points_props`
         WHERE player_lookup = @player_lookup
           AND game_date = @game_date
+          AND market_type = 'points'
           AND bet_side = 'over'  -- Only need one side for the line value
           AND is_active = TRUE
         ORDER BY

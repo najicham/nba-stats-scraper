@@ -76,6 +76,15 @@ repos:
         types: [python]
         verbose: true
 
+      - id: validate-bettingpros-queries
+        name: Validate BettingPros queries have market_type filter
+        description: Ensures queries against bettingpros_player_points_props filter by market_type='points' (Session 36 fix)
+        entry: python .pre-commit-hooks/validate_bettingpros_queries.py
+        language: python
+        pass_filenames: false
+        always_run: true
+        verbose: true
+
   # Standard pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0

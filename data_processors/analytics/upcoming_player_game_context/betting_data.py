@@ -182,6 +182,7 @@ class BettingDataExtractor:
             FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
             WHERE player_lookup IN UNNEST(@player_lookups)
               AND game_date = @game_date
+              AND market_type = 'points'
               AND is_active = TRUE
         )
         SELECT

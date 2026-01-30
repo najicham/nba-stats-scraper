@@ -2,11 +2,24 @@
 -- Description: BigQuery table schemas for BettingPros player props data
 -- BettingPros Player Points Props Tables
 -- Description: Alternative prop betting data source for line shopping and backup validation
+--
+-- IMPORTANT: Despite the table name "player_points_props", this table contains ALL prop types:
+--   - points, assists, rebounds, blocks, steals, threes
+--
+-- When querying for points predictions, you MUST filter by market_type = 'points'
+-- Failing to do so will mix in other prop types and cause incorrect line values.
+--
+-- Example correct query:
+--   SELECT * FROM bettingpros_player_points_props
+--   WHERE game_date = '2026-01-15' AND market_type = 'points' AND is_active = TRUE
+--
+-- See: .pre-commit-hooks/validate_bettingpros_queries.py for automated validation
+-- Session 36 Fix: Added after discovering 2026-01-12 grading bug
 
 CREATE TABLE IF NOT EXISTS `nba_raw.bettingpros_player_points_props` (
-  -- Core identifiers (aligned with Odds API where possible)  
+  -- Core identifiers (aligned with Odds API where possible)
   game_date DATE NOT NULL,
-  market_type STRING NOT NULL,  -- "points" (starting scope)
+  market_type STRING NOT NULL,  -- CRITICAL: "points", "assists", "rebounds", "blocks", "steals", "threes" - ALWAYS filter by this field!
   market_id INT64 NOT NULL,     -- BettingPros market ID (156 for points)
   bp_event_id INT64 NOT NULL,   -- BettingPros event ID
   offer_id STRING NOT NULL,     -- Unique offer ID per player prop

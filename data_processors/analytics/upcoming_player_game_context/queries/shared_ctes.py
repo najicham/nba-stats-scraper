@@ -209,6 +209,7 @@ def props_cte(project_id: str) -> str:
                 'bettingpros' as prop_source
             FROM `{project_id}.nba_raw.bettingpros_player_points_props`
             WHERE game_date = @game_date
+              AND market_type = 'points'
               AND is_active = TRUE
               AND player_lookup IS NOT NULL
         )"""
