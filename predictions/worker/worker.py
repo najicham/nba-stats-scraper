@@ -1715,10 +1715,11 @@ def format_prediction_for_bigquery(
     # Add completeness metadata (Phase 5)
     completeness = features.get('completeness', {})
 
-    # data_quality_issues is ARRAY<STRING> in schema - pass list directly, default to empty array
+    # data_quality_issues is STRING in schema (not ARRAY) - serialize to JSON
     data_quality_issues = completeness.get('data_quality_issues', [])
     if not isinstance(data_quality_issues, list):
-        data_quality_issues = []  # Ensure it's always a list, never None or string
+        data_quality_issues = []  # Ensure it's always a list before serializing
+    data_quality_issues_json = json.dumps(data_quality_issues) if data_quality_issues else None
 
     record.update({
         'expected_games_count': completeness.get('expected_games_count'),
@@ -1726,7 +1727,7 @@ def format_prediction_for_bigquery(
         'completeness_percentage': completeness.get('completeness_percentage', 0.0),
         'missing_games_count': completeness.get('missing_games_count'),
         'is_production_ready': completeness.get('is_production_ready', False),
-        'data_quality_issues': data_quality_issues,  # ARRAY<STRING> - pass list directly
+        'data_quality_issues': data_quality_issues_json,  # STRING - serialize to JSON
         'last_reprocess_attempt_at': None,  # Not tracked at worker level
         'reprocess_attempt_count': 0,  # Not tracked at worker level
         'circuit_breaker_active': False,  # Not tracked at worker level
