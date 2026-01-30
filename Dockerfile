@@ -47,11 +47,19 @@ COPY data_processors/raw/ /app/data_processors/raw/
 ENV PYTHONPATH=/app:$PYTHONPATH
 ENV PORT=8080
 
-# Run the appropriate service based on SERVICE env var (supports analytics, phase2, scrapers, etc.)
+# Run the appropriate service based on SERVICE env var
+# IMPORTANT: Explicit SERVICE env var required - no silent defaults
+# This prevents wrong-code deployment (see: docs/09-handoff/2026-01-29-POSTMORTEM-SCRAPER-WRONG-DEPLOYMENT.md)
 CMD if [ "$SERVICE" = "phase2" ]; then \
       exec gunicorn --bind :$PORT --workers 1 --threads 5 --timeout 600 data_processors.raw.main_processor_service:app; \
     elif [ "$SERVICE" = "analytics" ]; then \
       exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 data_processors.analytics.main_analytics_service:app; \
     else \
-      exec gunicorn --bind :$PORT --workers 1 --threads 8 --timeout 0 data_processors.analytics.main_analytics_service:app; \
+      echo "ERROR: SERVICE environment variable must be set to 'phase2' or 'analytics'" >&2; \
+      echo "This Dockerfile should not be used directly for most services." >&2; \
+      echo "Use the service-specific Dockerfile instead:" >&2; \
+      echo "  - scrapers/Dockerfile for nba-scrapers" >&2; \
+      echo "  - predictions/coordinator/Dockerfile for prediction-coordinator" >&2; \
+      echo "  - predictions/worker/Dockerfile for prediction-worker" >&2; \
+      exit 1; \
     fi
