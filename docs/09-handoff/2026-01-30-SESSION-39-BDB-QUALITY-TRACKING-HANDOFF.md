@@ -247,23 +247,29 @@ Found 10 dates with <50% paint_attempts coverage despite BDB data being availabl
 
 ## Known Issues
 
-1. **10 dates need backfill** - Phase 3 re-processing required BUT blocked by stale dependencies
-2. **Phase 3 is failing** - "Stale dependencies: team_offense_game_summary 190h old (max 72h)"
-3. **Pub/Sub trigger not connected** - The `nba-phase3-trigger` topic has no subscriptions
-4. **Quality tracker not integrated** - Prediction worker needs to call quality_tracker
-5. **NBAC play-by-play table is EMPTY** - Fallback path has nothing to fall back to
+1. **2 dates cannot be backfilled** - Jan 22-23 missing `nbac_gamebook_player_stats` source data
+2. **Pub/Sub trigger not connected** - The `nba-phase3-trigger` topic has no subscriptions
+3. **Quality tracker not integrated** - Prediction worker needs to call quality_tracker
+4. **NBAC play-by-play table is EMPTY** - Fallback path has nothing to fall back to
 
-### BLOCKING ISSUE: Phase 3 Cannot Run
+### RESOLVED: Stale Dependencies
 
-Phase 3 processor is failing for ALL dates because:
-```
-ValueError: Stale dependencies (FAIL threshold):
-  ['nba_analytics.team_offense_game_summary: 190.9h old (max: 72h)']
-```
+The stale dependency issue was resolved by deploying the latest code. Cloud Scheduler
+successfully ran overnight-analytics-6am-et which updated the analytics tables.
 
-This must be fixed before backfill can proceed. Either:
-1. Run team_offense_game_summary processor to update it
-2. Or temporarily bypass the stale check for backfill
+### Backfill Status
+
+After investigation, found that Phase 3 requires `nbac_gamebook_player_stats` as source:
+
+| Date | nbac_gamebook_stats | bdl_boxscores | Can Backfill? |
+|------|---------------------|---------------|---------------|
+| Jan 20 | ✅ 245 records | ✅ | ✅ Done (30.3%) |
+| Jan 21 | ✅ 247 records | ✅ | ✅ Done |
+| Jan 22 | ❌ 0 records | ✅ 282 | ❌ Missing source |
+| Jan 23 | ❌ 0 records | ✅ 281 | ❌ Missing source |
+| Jan 24 | ✅ 243 records | ✅ | ✅ Done |
+
+**To fix Jan 22-23:** Need to re-run NBAC scraper for those dates to populate the source table.
 
 ---
 
@@ -338,6 +344,40 @@ ORDER BY 1 DESC
 3. **Quality visibility is critical** - We didn't know predictions were degraded
 4. **Re-run timing matters** - Can't change predictions close to game time (use 1h cutoff)
 5. **Audit trail is essential** - Need to know what data was available when
+
+## Orchestration Architecture Findings
+
+### How Phase 3 is Triggered (Correct Understanding)
+
+```
+Phase 2 completes
+    ↓ publishes to
+nba-phase2-raw-complete (Pub/Sub)
+    ↓ triggers (via Eventarc)
+phase2-to-phase3-orchestrator (Cloud Function)
+    ↓ calls HTTP
+nba-phase3-analytics-processors (Cloud Run)
+```
+
+**Plus Cloud Scheduler fallbacks:**
+- `overnight-analytics-6am-et` (6 AM ET) - All 5 processors for yesterday
+- `same-day-phase3` (10:30 AM ET) - UpcomingPlayer for today
+
+### Why Backfill Script Was Broken
+
+The backfill script published to `nba-phase3-trigger` Pub/Sub topic, but:
+- This topic has **NO subscriptions** (vestigial)
+- Phase 3 is triggered via HTTP by Cloud Function, not Pub/Sub directly
+- Fixed: Changed script to use HTTP `/process-date-range` endpoint
+
+### Pub/Sub Topics Status
+
+| Topic | Subscribers | Status |
+|-------|-------------|--------|
+| `nba-phase2-raw-complete` | Eventarc trigger | ✅ Active |
+| `nba-phase3-trigger` | None | ❌ Unused |
+| `nba-phase3-analytics-complete` | Eventarc trigger | ✅ Active |
+| `nba-phase4-trigger` | Phase 4 Cloud Run | ✅ Active |
 
 ---
 
