@@ -876,7 +876,7 @@ class UpcomingTeamGameContextProcessor(
     def calculate_analytics(self) -> None:
         """
         Calculate team game context with comprehensive tracking.
-        
+
         Process:
         1. Identify target games
         2. For each game, create 2 records (home + away view)
@@ -884,14 +884,30 @@ class UpcomingTeamGameContextProcessor(
         4. Include source tracking
         5. Handle failures gracefully
         """
-        
+        # =====================================================================
+        # GUARD: Handle empty schedule_data before processing
+        # =====================================================================
+        # This can happen when:
+        # 1. should_skip_processing() returns True (sets schedule_data empty)
+        # 2. No games scheduled for the date range
+        # 3. Source data is genuinely empty
+        # In all cases, we should return early with empty results, not fail.
+        if self.schedule_data is None or self.schedule_data.empty or 'game_date' not in self.schedule_data.columns:
+            logger.info(
+                "⏭️  No data to process - schedule_data is empty or missing columns. "
+                "Returning empty results."
+            )
+            self.transformed_data = []
+            self.stats['skipped_reason'] = 'no_data_to_process'
+            return
+
         logger.info("=" * 80)
         logger.info("ANALYTICS CALCULATION STARTED")
         logger.info("=" * 80)
-        
+
         successful_records = []
         failed_count = 0
-        
+
         # Get target games
         start_date = self.opts['start_date']
         end_date = self.opts['end_date']

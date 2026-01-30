@@ -92,6 +92,14 @@ class BigQuerySaveOpsMixin:
             Exception: On BigQuery load failures after retries
         """
         if not self.transformed_data:
+            # Check if this was an intentional skip (no data to process is expected)
+            # Don't send warnings for intentional skips to reduce noise
+            skip_reason = self.stats.get('skipped_reason')
+            if skip_reason:
+                logger.info(f"⏭️  No data to save (intentional skip: {skip_reason})")
+                self.stats['rows_processed'] = 0
+                return True  # Return success for intentional skips
+
             logger.warning("No transformed data to save")
             try:
                 self._send_notification(

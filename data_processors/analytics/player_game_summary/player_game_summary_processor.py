@@ -1028,6 +1028,23 @@ class PlayerGameSummaryProcessor(
         - No manual attribute setting!
         """
         # =====================================================================
+        # GUARD: Handle empty raw_data before processing
+        # =====================================================================
+        # This can happen when:
+        # 1. should_skip_processing() returns True (sets raw_data = pd.DataFrame())
+        # 2. Incremental filter returns no matching players
+        # 3. Source data is genuinely empty
+        # In all cases, we should return early with empty results, not fail.
+        if self.raw_data is None or self.raw_data.empty or 'player_lookup' not in self.raw_data.columns:
+            logger.info(
+                "⏭️  No data to process - raw_data is empty or missing columns. "
+                "Returning empty results."
+            )
+            self.transformed_data = []
+            self.stats['skipped_reason'] = 'no_data_to_process'
+            return
+
+        # =====================================================================
         # REGISTRY: Batch lookup for universal player IDs
         # =====================================================================
         logger.info("Looking up universal player IDs...")
