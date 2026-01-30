@@ -1211,7 +1211,7 @@ class TeamDefenseGameSummaryProcessor(
           - Data quality tracking (using centralized quality_columns helper)
           - Source metadata (via dependency tracking v4.0)
         """
-        if self.raw_data is None or self.raw_data.empty:
+        if self.raw_data is None or (hasattr(self.raw_data, 'empty') and self.raw_data.empty) or (isinstance(self.raw_data, list) and len(self.raw_data) == 0):
             logger.warning("No raw data to calculate analytics")
             self.transformed_data = []
             return
