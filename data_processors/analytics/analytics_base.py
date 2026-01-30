@@ -799,8 +799,10 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             # (set by validate_extracted_data when target table has data)
             if self.skip_processing:
                 logger.info("Skipping calculate_analytics and save_analytics - data already exists from alternate source")
-                self.stats["transform_time"] = 0
-                self.stats["save_time"] = 0
+                transform_seconds = 0
+                save_seconds = 0
+                self.stats["transform_time"] = transform_seconds
+                self.stats["save_time"] = save_seconds
             else:
                 # Transform/calculate analytics
                 self.mark_time("transform")
