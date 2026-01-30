@@ -551,9 +551,13 @@ class PredictionAccuracyProcessor:
             actual_margin = None
 
         # Evaluate recommendation correctness
-        prediction_correct = self.compute_prediction_correct(
-            recommendation, line_value, actual_points
-        )
+        # v4.1: If voided (DNP), don't calculate prediction_correct - treat like sportsbook void
+        if voiding_info['is_voided']:
+            prediction_correct = None
+        else:
+            prediction_correct = self.compute_prediction_correct(
+                recommendation, line_value, actual_points
+            )
 
         # Helper to round floats for BigQuery NUMERIC compatibility
         def round_numeric(val, decimals=4):
