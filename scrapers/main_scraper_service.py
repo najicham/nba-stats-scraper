@@ -2,7 +2,7 @@
 main_scraper_service.py
 
 Single Cloud Run service that routes to all scrapers AND orchestration endpoints.
-Version 2.3.0 - Added Phase 1 Workflow Executor support (HTTP-based scraper calls)
+Version 2.4.0 - Added startup verification to detect wrong code deployment
 
 Path: scrapers/main_scraper_service.py
 """
@@ -14,6 +14,18 @@ try:
     from dotenv import load_dotenv
 except ImportError:
     load_dotenv = None
+
+# Startup verification - MUST be early to detect wrong code deployment
+try:
+    from shared.utils.startup_verification import verify_startup
+    verify_startup(
+        expected_module="scrapers",
+        service_name="nba-scrapers",
+        version="2.4.0"
+    )
+except ImportError:
+    # Shared module not available (local dev without full setup)
+    logging.warning("startup_verification not available - running without verification")
 
 # Import blueprints
 from .routes import health, scraper, orchestration, cleanup_bp, catchup, schedule_fix

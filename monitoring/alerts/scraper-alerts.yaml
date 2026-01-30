@@ -1,0 +1,140 @@
+# Cloud Monitoring Alert Policies for Scraper Services
+# Created: 2026-01-29 (Post-mortem from wrong deployment incident)
+#
+# These alerts address gaps identified in the post-mortem:
+# 1. HTTP 404 errors from scrapers (previously only 400s were monitored)
+# 2. Cloud Scheduler job failures
+# 3. Live boxscore data freshness
+#
+# To apply these alerts:
+#   gcloud alpha monitoring policies create --policy-from-file=monitoring/alerts/scraper-alerts.yaml
+#
+# Or create manually in Cloud Console: Monitoring > Alerting > Create Policy
+
+---
+# Alert 1: Scraper HTTP 4xx/5xx Errors
+# Triggers when scrapers return error status codes (404, 500, etc.)
+displayName: "Scraper Service HTTP Errors (4xx/5xx)"
+documentation:
+  content: |
+    **What:** Scraper services returning HTTP error status codes.
+
+    **Why it matters:**
+    - 404 errors indicate the scraper endpoint doesn't exist (wrong code deployed)
+    - 500 errors indicate server-side failures
+
+    **Action:**
+    1. Check service health: `curl https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/health`
+    2. If service returns "analytics-processor", wrong code is deployed
+    3. Fix: `./bin/deploy-service.sh nba-scrapers`
+
+    **Runbook:** docs/09-handoff/2026-01-29-POSTMORTEM-SCRAPER-WRONG-DEPLOYMENT.md
+  mimeType: text/markdown
+conditions:
+  - displayName: HTTP Error Responses
+    conditionThreshold:
+      filter: >
+        resource.type="cloud_run_revision" AND
+        resource.labels.service_name=monitoring.regex.full_match("nba.*scrapers") AND
+        metric.type="run.googleapis.com/request_count" AND
+        metric.labels.response_code_class="4xx" OR metric.labels.response_code_class="5xx"
+      comparison: COMPARISON_GT
+      thresholdValue: 0
+      duration: 0s
+      aggregations:
+        - alignmentPeriod: 60s
+          perSeriesAligner: ALIGN_RATE
+combiner: OR
+notificationChannels:
+  - projects/nba-props-platform/notificationChannels/slack-alerts
+alertStrategy:
+  autoClose: 7200s
+
+---
+# Alert 2: Cloud Scheduler Job Failures
+# Triggers when scheduler jobs fail 3+ times consecutively
+displayName: "Scraper Scheduler Job Failures"
+documentation:
+  content: |
+    **What:** Cloud Scheduler jobs for scrapers are failing.
+
+    **Why it matters:**
+    - Scheduler jobs trigger scraper execution
+    - Consecutive failures mean no data collection
+
+    **Common causes:**
+    - Target service returning 404 (wrong code deployed)
+    - Target service timing out
+    - Authentication issues
+
+    **Action:**
+    1. Check recent scheduler execution:
+       `gcloud scheduler jobs describe bdl-live-boxscores-evening --location=us-west2`
+    2. Check target service health
+    3. Review Cloud Run logs for errors
+
+    **Runbook:** docs/09-handoff/2026-01-29-POSTMORTEM-SCRAPER-WRONG-DEPLOYMENT.md
+  mimeType: text/markdown
+conditions:
+  - displayName: Scheduler Job Failures
+    conditionThreshold:
+      filter: >
+        resource.type="cloud_scheduler_job" AND
+        resource.labels.job_id=monitoring.regex.full_match("bdl-.*|nba-.*scraper.*") AND
+        metric.type="logging.googleapis.com/log_entry_count" AND
+        metric.labels.severity="ERROR"
+      comparison: COMPARISON_GT
+      thresholdValue: 2
+      duration: 300s
+      aggregations:
+        - alignmentPeriod: 300s
+          perSeriesAligner: ALIGN_SUM
+combiner: OR
+notificationChannels:
+  - projects/nba-props-platform/notificationChannels/slack-alerts
+alertStrategy:
+  autoClose: 7200s
+
+---
+# Alert 3: Live Boxscore Data Freshness
+# Triggers during game hours when no live data received
+displayName: "Live Boxscores Stale (Game Hours)"
+documentation:
+  content: |
+    **What:** No live boxscore data received during game hours.
+
+    **Why it matters:**
+    - Live boxscores should be scraped every 3 minutes during games
+    - Missing data affects real-time updates and predictions
+
+    **Timing context:**
+    - Games typically run 4 PM - midnight ET
+    - Live scraper runs every 3 minutes during this window
+
+    **Action:**
+    1. Check scheduler job status:
+       `gcloud scheduler jobs describe bdl-live-boxscores-evening --location=us-west2`
+    2. Verify data in BigQuery:
+       `SELECT MAX(scrape_timestamp) FROM nba_raw.bdl_live_boxscores WHERE game_date = CURRENT_DATE()`
+    3. Check scraper service health
+
+    **Runbook:** docs/02-operations/troubleshooting-matrix.md
+  mimeType: text/markdown
+conditions:
+  - displayName: No Live Data in 15 Minutes
+    conditionAbsent:
+      filter: >
+        resource.type="bigquery_table" AND
+        metric.type="custom.googleapis.com/nba/live_boxscore_writes"
+      duration: 900s
+      aggregations:
+        - alignmentPeriod: 180s
+          perSeriesAligner: ALIGN_SUM
+combiner: OR
+notificationChannels:
+  - projects/nba-props-platform/notificationChannels/slack-alerts
+alertStrategy:
+  autoClose: 7200s
+
+# Note: Alert 3 requires a custom metric to be set up.
+# Alternative: Use log-based metric on scraper success logs.

@@ -51,6 +51,15 @@ repos:
         always_run: true
         verbose: true
 
+      - id: validate-dockerfiles
+        name: Validate service Dockerfiles
+        description: Ensures all deployable services have dedicated Dockerfiles (prevents wrong code deployment)
+        entry: python .pre-commit-hooks/validate_dockerfiles.py
+        language: python
+        pass_filenames: false
+        always_run: true
+        verbose: true
+
   # Standard pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
