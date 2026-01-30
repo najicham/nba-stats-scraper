@@ -288,13 +288,27 @@ class CatBoostV8:
 
         # Make prediction
         try:
-            predicted_points = float(self.model.predict(feature_vector)[0])
+            raw_prediction = float(self.model.predict(feature_vector)[0])
         except Exception as e:
             logger.error(f"CatBoost prediction failed: {e}", exc_info=True)
             return self._fallback_prediction(player_lookup, features, betting_line)
 
+        # Warn on extreme predictions before clamping (for monitoring/alerting)
+        if raw_prediction >= 55 or raw_prediction <= 5:
+            logger.warning(
+                "extreme_prediction_detected",
+                extra={
+                    "player_lookup": player_lookup,
+                    "raw_prediction": round(raw_prediction, 2),
+                    "vegas_line": features.get('vegas_points_line'),
+                    "season_avg": features.get('points_avg_season'),
+                    "points_avg_last_5": features.get('points_avg_last_5'),
+                    "betting_line": betting_line,
+                }
+            )
+
         # Clamp to reasonable range
-        predicted_points = max(0, min(60, predicted_points))
+        predicted_points = max(0, min(60, raw_prediction))
 
         # Calculate confidence
         confidence = self._calculate_confidence(features, feature_vector)
@@ -349,6 +363,26 @@ class CatBoostV8:
             # Get season average for imputation
             season_avg = features.get('points_avg_season', 10.0)
 
+            # Log when critical features are missing from both params and dict
+            # This helps detect data pipeline issues before they affect predictions
+            missing_features = []
+            if vegas_line is None and features.get('vegas_points_line') is None:
+                missing_features.append(('vegas_points_line', season_avg))
+            if opponent_avg is None and features.get('avg_points_vs_opponent') is None:
+                missing_features.append(('avg_points_vs_opponent', season_avg))
+            if ppm_avg_last_10 is None and features.get('ppm_avg_last_10') is None:
+                missing_features.append(('ppm_avg_last_10', 0.4))
+
+            if missing_features:
+                logger.info(
+                    "features_using_defaults",
+                    extra={
+                        "player_lookup": features.get('player_lookup', 'unknown'),
+                        "missing_features": [f[0] for f in missing_features],
+                        "default_values": {f[0]: f[1] for f in missing_features},
+                    }
+                )
+
             # Build feature vector in exact order
             vector = np.array([
                 # Base features (25)
@@ -379,17 +413,18 @@ class CatBoostV8:
                 features.get('team_pace', 100),
                 features.get('team_off_rating', 112),
                 features.get('team_win_pct', 0.5),
-                # Vegas features (4) - use season avg as fallback
-                vegas_line if vegas_line is not None else season_avg,
-                vegas_opening if vegas_opening is not None else season_avg,
-                (vegas_line - vegas_opening) if vegas_line and vegas_opening else 0,
-                1.0 if vegas_line is not None else 0.0,
+                # Vegas features (4) - use features dict, then season avg as fallback
+                # CRITICAL FIX (2026-01-29): Worker passes features dict, not separate params
+                vegas_line if vegas_line is not None else features.get('vegas_points_line', season_avg),
+                vegas_opening if vegas_opening is not None else features.get('vegas_opening_line', season_avg),
+                (vegas_line - vegas_opening) if vegas_line and vegas_opening else features.get('vegas_line_move', 0),
+                1.0 if (vegas_line is not None or features.get('vegas_points_line') is not None) else 0.0,
                 # Opponent history (2)
-                opponent_avg if opponent_avg is not None else season_avg,
-                float(games_vs_opponent),
+                opponent_avg if opponent_avg is not None else features.get('avg_points_vs_opponent', season_avg),
+                float(games_vs_opponent) if games_vs_opponent else features.get('games_vs_opponent', 0.0),
                 # Minutes/PPM history (2)
                 minutes_avg_last_10 if minutes_avg_last_10 is not None else features.get('minutes_avg_last_10', 25),
-                ppm_avg_last_10 if ppm_avg_last_10 is not None else 0.4,
+                ppm_avg_last_10 if ppm_avg_last_10 is not None else features.get('ppm_avg_last_10', 0.4),
                 # Feature 33: Shot zone data availability indicator (NEW - 2026-01-25)
                 features.get('has_shot_zone_data', 0.0),
             ]).reshape(1, -1)
