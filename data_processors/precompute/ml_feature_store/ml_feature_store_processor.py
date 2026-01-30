@@ -1205,24 +1205,26 @@ class MLFeatureStoreProcessor(
         # ============================================================
 
         # Features 25-28: Vegas Lines
+        # IMPORTANT: Do NOT use season_avg as fallback - that corrupts the feature meaning
+        # If no real Vegas line exists, store None (will be np.nan in CatBoost)
+        # The has_vegas_line flag (feature 28) indicates whether Vegas data is real
         vegas_data = self.feature_extractor.get_vegas_lines(player_lookup) if player_lookup else {}
-        fallback_line = phase4_data.get('points_avg_season', phase3_data.get('points_avg_season', 15.0))
 
-        vegas_points_line = vegas_data.get('vegas_points_line', fallback_line)
-        features.append(float(vegas_points_line) if vegas_points_line is not None else float(fallback_line))
-        feature_sources[25] = 'vegas' if vegas_data else 'fallback'
+        vegas_points_line = vegas_data.get('vegas_points_line')
+        features.append(float(vegas_points_line) if vegas_points_line is not None else None)
+        feature_sources[25] = 'vegas' if vegas_points_line is not None else 'missing'
 
-        vegas_opening_line = vegas_data.get('vegas_opening_line', fallback_line)
-        features.append(float(vegas_opening_line) if vegas_opening_line is not None else float(fallback_line))
-        feature_sources[26] = 'vegas' if vegas_data else 'fallback'
+        vegas_opening_line = vegas_data.get('vegas_opening_line')
+        features.append(float(vegas_opening_line) if vegas_opening_line is not None else None)
+        feature_sources[26] = 'vegas' if vegas_opening_line is not None else 'missing'
 
-        vegas_line_move = vegas_data.get('vegas_line_move', 0.0)
-        features.append(float(vegas_line_move) if vegas_line_move is not None else 0.0)
-        feature_sources[27] = 'vegas' if vegas_data else 'fallback'
+        vegas_line_move = vegas_data.get('vegas_line_move')
+        features.append(float(vegas_line_move) if vegas_line_move is not None else None)
+        feature_sources[27] = 'vegas' if vegas_line_move is not None else 'missing'
 
-        has_vegas_line = vegas_data.get('has_vegas_line', 0.0)
-        features.append(float(has_vegas_line) if has_vegas_line is not None else 0.0)
-        feature_sources[28] = 'vegas' if vegas_data else 'fallback'
+        has_vegas_line = 1.0 if vegas_points_line is not None else 0.0
+        features.append(has_vegas_line)
+        feature_sources[28] = 'calculated'
 
         # Features 29-30: Opponent History
         opponent_data = self.feature_extractor.get_opponent_history(player_lookup, opponent) if player_lookup and opponent else {}
