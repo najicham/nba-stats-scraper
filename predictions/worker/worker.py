@@ -816,6 +816,11 @@ def process_player_predictions(
     # The ml_feature_store_v2 only has 25 base features, but CatBoost V8 needs 33.
     # Features 25-32 (Vegas/opponent/PPM) must be populated from available data.
     # Without this fix, predictions were inflated by +29 points (64.48 vs 34.96 expected).
+
+    # Snapshot original features to track which V8 features need fallbacks
+    # This is used by the v3.8 fallback severity logging below
+    original_features = set(features.keys())
+
     actual_prop = line_source_info.get('actual_prop_line')
     if actual_prop is not None:
         # Vegas features (indices 25-28)
@@ -854,7 +859,80 @@ def process_player_predictions(
         else:
             features['ppm_avg_last_10'] = 0.5  # Typical NBA PPM
 
-    # Log V8 feature enrichment for monitoring
+    # v3.8: Track which V8 features used fallback values and classify severity
+    # This implements Task #8 from the CatBoost V8 Prevention Plan to enable
+    # "loud failures" for missing features instead of silent degradation.
+    from predictions.worker.prediction_systems.catboost_v8 import (
+        classify_fallback_severity,
+        get_fallback_details,
+        FallbackSeverity,
+    )
+
+    # Track features that used fallback/default values
+    v8_fallback_features: List[str] = []
+
+    # Check Vegas features (most critical for V8 accuracy)
+    if actual_prop is None:
+        v8_fallback_features.extend(['vegas_points_line', 'vegas_opening_line', 'vegas_line_move', 'has_vegas_line'])
+
+    # Check opponent history (would require separate query, using season avg fallback)
+    # These always use fallback unless we add opponent lookup in future
+    if 'avg_points_vs_opponent' not in original_features:
+        v8_fallback_features.append('avg_points_vs_opponent')
+    if 'games_vs_opponent' not in original_features:
+        v8_fallback_features.append('games_vs_opponent')
+
+    # Check PPM features
+    if 'minutes_avg_last_10' not in original_features:
+        v8_fallback_features.append('minutes_avg_last_10')
+    if 'ppm_avg_last_10' not in original_features:
+        v8_fallback_features.append('ppm_avg_last_10')
+
+    # Classify fallback severity
+    fallback_severity = classify_fallback_severity(v8_fallback_features)
+    fallback_details = get_fallback_details(v8_fallback_features)
+
+    # Log based on severity level (loud failures principle)
+    log_extra = {
+        "player_lookup": player_lookup,
+        "fallback_severity": fallback_severity.value,
+        "fallback_count": len(v8_fallback_features),
+        "fallback_features": v8_fallback_features,
+        "critical_features": fallback_details['critical_features'],
+        "major_features": fallback_details['major_features'],
+        "vegas_points_line": features.get('vegas_points_line'),
+        "has_vegas_line": features.get('has_vegas_line'),
+        "ppm_avg_last_10": round(features.get('ppm_avg_last_10', 0), 3),
+        "avg_points_vs_opponent": features.get('avg_points_vs_opponent'),
+    }
+
+    if fallback_severity == FallbackSeverity.CRITICAL:
+        logger.error(
+            "catboost_v8_critical_fallback",
+            extra=log_extra
+        )
+    elif fallback_severity == FallbackSeverity.MAJOR:
+        logger.warning(
+            "catboost_v8_major_fallback",
+            extra=log_extra
+        )
+    elif fallback_severity == FallbackSeverity.MINOR:
+        logger.info(
+            "catboost_v8_minor_fallback",
+            extra=log_extra
+        )
+    else:
+        # NONE severity - all features present, use debug level
+        logger.debug(
+            "catboost_v8_features_complete",
+            extra=log_extra
+        )
+
+    # Store fallback info in features for potential use in prediction quality tracking
+    features['_v8_fallback_severity'] = fallback_severity.value
+    features['_v8_fallback_features'] = v8_fallback_features
+
+    # Log V8 feature enrichment for monitoring (original debug log)
     logger.debug(
         "catboost_v8_features_enriched",
         extra={

@@ -31,8 +31,9 @@ Usage:
     result = system.predict(player_lookup, features, betting_line)
 """
 
-from typing import Dict, Optional, List
+from typing import Dict, Optional, List, Set
 from datetime import date
+from enum import Enum
 import numpy as np
 import logging
 import json
@@ -44,6 +45,125 @@ from shared.utils.external_service_circuit_breaker import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Fallback Severity Classification (Prevention Plan Task #8)
+# =============================================================================
+# Categorizes fallback severity to enable loud failures for critical missing
+# features. This prevents silent degradation that led to the +29 point bug.
+# =============================================================================
+
+
+class FallbackSeverity(Enum):
+    """
+    Severity levels for feature fallbacks in CatBoost V8 predictions.
+
+    Used to classify how concerning a missing feature is:
+    - NONE: All features present, no fallbacks used
+    - MINOR: Non-critical features missing (acceptable degradation)
+    - MAJOR: Important features missing (degraded prediction quality)
+    - CRITICAL: Critical features missing (prediction may be unreliable)
+    """
+    NONE = "none"           # All features present
+    MINOR = "minor"         # Non-critical feature missing (e.g., games_vs_opponent)
+    MAJOR = "major"         # Important feature missing (e.g., minutes_avg_last_10)
+    CRITICAL = "critical"   # Critical feature missing (e.g., vegas_points_line, has_vegas_line)
+
+
+# Feature sets for severity classification
+# Critical: Features that most directly impact prediction accuracy
+CRITICAL_FEATURES: Set[str] = {
+    'vegas_points_line',    # Most predictive feature, correlates strongly with actual points
+    'has_vegas_line',       # Indicator flag - wrong value corrupts feature semantics
+    'ppm_avg_last_10',      # Points-per-minute - key efficiency metric
+}
+
+# Major: Important features that affect prediction quality
+MAJOR_FEATURES: Set[str] = {
+    'avg_points_vs_opponent',   # Historical matchup data
+    'minutes_avg_last_10',      # Playing time consistency
+}
+
+# All other V8-specific features are considered minor
+# (vegas_opening_line, vegas_line_move, games_vs_opponent)
+
+
+def classify_fallback_severity(used_defaults: List[str]) -> FallbackSeverity:
+    """
+    Classify the severity of fallback values used in feature preparation.
+
+    This function enables "loud failures" for missing features as specified
+    in the CatBoost V8 Prevention Plan. Instead of silently using defaults,
+    the system can now respond appropriately based on severity:
+
+    - NONE: Normal prediction flow
+    - MINOR: Predict, log at INFO level
+    - MAJOR: Predict, log at WARNING level, consider marking prediction_quality='degraded'
+    - CRITICAL: Log at ERROR level, consider refusing to predict
+
+    Args:
+        used_defaults: List of feature names that used default/fallback values
+
+    Returns:
+        FallbackSeverity: The highest severity level among all fallbacks
+
+    Example:
+        >>> classify_fallback_severity([])
+        FallbackSeverity.NONE
+        >>> classify_fallback_severity(['games_vs_opponent'])
+        FallbackSeverity.MINOR
+        >>> classify_fallback_severity(['minutes_avg_last_10'])
+        FallbackSeverity.MAJOR
+        >>> classify_fallback_severity(['vegas_points_line', 'has_vegas_line'])
+        FallbackSeverity.CRITICAL
+    """
+    if not used_defaults:
+        return FallbackSeverity.NONE
+
+    used_defaults_set = set(used_defaults)
+
+    # Check from highest to lowest severity
+    if used_defaults_set & CRITICAL_FEATURES:
+        return FallbackSeverity.CRITICAL
+    elif used_defaults_set & MAJOR_FEATURES:
+        return FallbackSeverity.MAJOR
+    elif used_defaults:
+        return FallbackSeverity.MINOR
+
+    return FallbackSeverity.NONE
+
+
+def get_fallback_details(used_defaults: List[str]) -> Dict:
+    """
+    Get detailed breakdown of fallback features by severity.
+
+    Useful for logging and debugging to understand exactly which features
+    contributed to each severity level.
+
+    Args:
+        used_defaults: List of feature names that used default/fallback values
+
+    Returns:
+        Dict with severity classification and feature breakdown
+    """
+    used_defaults_set = set(used_defaults)
+
+    critical = list(used_defaults_set & CRITICAL_FEATURES)
+    major = list(used_defaults_set & MAJOR_FEATURES)
+    minor = list(used_defaults_set - CRITICAL_FEATURES - MAJOR_FEATURES)
+
+    return {
+        'severity': classify_fallback_severity(used_defaults).value,
+        'total_fallbacks': len(used_defaults),
+        'critical_features': critical,
+        'major_features': major,
+        'minor_features': minor,
+        'critical_count': len(critical),
+        'major_count': len(major),
+        'minor_count': len(minor),
+    }
+
 
 # Feature order must match training exactly
 V8_FEATURES = [
