@@ -52,6 +52,7 @@ def convert_numpy_types(obj: Any) -> Any:
 
     BigQuery load_table_from_json fails if numpy types (np.float64, np.int64, etc.)
     are present in the data because they don't serialize to JSON correctly.
+    Also converts NaN/Inf floats to None since BigQuery rejects these values.
 
     Args:
         obj: Any value that might contain numpy types
@@ -59,6 +60,8 @@ def convert_numpy_types(obj: Any) -> Any:
     Returns:
         The same value with numpy types converted to Python natives
     """
+    import math
+
     if isinstance(obj, dict):
         return {k: convert_numpy_types(v) for k, v in obj.items()}
     elif isinstance(obj, list):
@@ -66,9 +69,18 @@ def convert_numpy_types(obj: Any) -> Any:
     elif isinstance(obj, np.integer):
         return int(obj)
     elif isinstance(obj, np.floating):
-        return float(obj)
+        val = float(obj)
+        # Convert NaN/Inf to None (BigQuery rejects these)
+        if math.isnan(val) or math.isinf(val):
+            return None
+        return val
+    elif isinstance(obj, float):
+        # Also handle Python floats with NaN/Inf
+        if math.isnan(obj) or math.isinf(obj):
+            return None
+        return obj
     elif isinstance(obj, np.ndarray):
-        return obj.tolist()
+        return [convert_numpy_types(x) for x in obj.tolist()]
     elif isinstance(obj, np.bool_):
         return bool(obj)
     else:
@@ -223,6 +235,20 @@ class BatchStagingWriter:
             # This fixes "JSON table encountered too many errors" caused by np.float64/np.int64
             serializable_predictions = [convert_numpy_types(p) for p in predictions]
 
+            # Validate JSON serialization before sending to BigQuery
+            # This helps identify non-serializable values that would cause silent failures
+            import json
+            for i, pred in enumerate(serializable_predictions):
+                for key, value in pred.items():
+                    try:
+                        json.dumps(value)
+                    except TypeError as e:
+                        logger.error(
+                            f"Non-JSON-serializable value in prediction {i}, field '{key}': "
+                            f"type={type(value).__name__}, value={repr(value)[:100]}, error={e}"
+                        )
+                        raise ValueError(f"Field '{key}' is not JSON-serializable: {type(value).__name__}")
+
             # Load predictions to staging table (NOT a DML operation)
             load_job = self.bq_client.load_table_from_json(
                 serializable_predictions,
@@ -230,8 +256,15 @@ class BatchStagingWriter:
                 job_config=job_config
             )
 
-            # Wait for the job to complete
-            load_job.result(timeout=300)
+            # Wait for the job to complete with detailed error handling
+            try:
+                load_job.result(timeout=300)
+            except Exception as load_error:
+                # Log detailed job errors if available
+                if hasattr(load_job, 'errors') and load_job.errors:
+                    for error in load_job.errors:
+                        logger.error(f"BigQuery load job error detail: {error}")
+                raise load_error
 
             elapsed_ms = (time.time() - start_time) * 1000
             logger.info(
