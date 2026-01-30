@@ -342,10 +342,12 @@ class BatchStateManager:
 
             else:
                 # OLD BEHAVIOR: Only ArrayUnion (legacy mode)
+                # NOTE: Removed predictions_by_player.{player} field path update
+                # because hyphens in player_lookup cause Firestore ValueError:
+                # "Non-alphanum char in element with leading alpha: player-name"
                 logger.debug(f"Legacy mode: Recording {player_lookup} to array only")
                 doc_ref.update({
                     'completed_players': ArrayUnion([player_lookup]),
-                    'predictions_by_player.{}'.format(player_lookup): predictions_count,
                     'total_predictions': Increment(predictions_count),
                     'updated_at': SERVER_TIMESTAMP
                 })
@@ -491,9 +493,10 @@ class BatchStateManager:
             No partial state is possible.
             """
             # Write to OLD structure (ArrayUnion)
+            # NOTE: Removed predictions_by_player.{player} field path update
+            # because hyphens in player_lookup cause Firestore ValueError
             transaction.update(batch_ref, {
                 'completed_players': ArrayUnion([player_lookup]),
-                'predictions_by_player.{}'.format(player_lookup): predictions_count,
                 'total_predictions': Increment(predictions_count),
                 'updated_at': SERVER_TIMESTAMP
             })
