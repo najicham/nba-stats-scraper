@@ -916,8 +916,9 @@ class PlayerGameSummaryProcessor(
     def validate_extracted_data(self) -> None:
         """Enhanced validation with cross-source quality checks."""
         super().validate_extracted_data()
-        
-        if self.raw_data.empty:
+
+        # Handle case where base class returned early (data exists via alternate source)
+        if self.raw_data is None or self.raw_data.empty:
             return
         
         # Clean data types before validation

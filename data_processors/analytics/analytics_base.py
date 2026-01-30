@@ -1144,6 +1144,35 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
         """
         raise NotImplementedError("Child classes must implement extract_raw_data()")
     
+    def _check_target_data_exists(self, start_date: str, end_date: str) -> tuple:
+        """Check if data already exists in the target analytics table.
+
+        This is used to determine if another source trigger already processed
+        the data successfully (e.g., BDL processed when NBAC trigger arrives).
+
+        Args:
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
+
+        Returns:
+            (exists, count): True if data exists, along with record count
+        """
+        if not self.table_name or not self.dataset_id:
+            return False, 0
+
+        try:
+            query = f"""
+            SELECT COUNT(*) as cnt
+            FROM `{self.project_id}.{self.dataset_id}.{self.table_name}`
+            WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+            """
+            result = self.bq_client.query(query).result()
+            count = next(result).cnt
+            return count > 0, count
+        except Exception as e:
+            logger.debug(f"Could not check target data existence: {e}")
+            return False, 0
+
     def validate_extracted_data(self) -> None:
         """Validate extracted data meets quality requirements.
 
@@ -1151,11 +1180,31 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
         Base implementation checks for empty data. Child classes should
         override to add domain-specific validation.
 
+        If no data was extracted but data already exists in the target table
+        (from another source trigger), this is treated as success to prevent
+        duplicate source triggers from causing retry loops.
+
         Raises:
             ValueError: If validation fails (e.g., no data extracted).
                 Warning notification is sent before raising.
         """
         if self.raw_data is None or (hasattr(self.raw_data, 'empty') and self.raw_data.empty):
+            # Check if data already exists in target table (from another source)
+            # This prevents retry loops when multiple sources trigger the same processor
+            start_date = self.opts.get('start_date')
+            end_date = self.opts.get('end_date')
+
+            if start_date and end_date:
+                exists, count = self._check_target_data_exists(start_date, end_date)
+                if exists:
+                    logger.info(
+                        f"No data extracted from source, but target table already has {count} records "
+                        f"for {start_date} to {end_date}. Treating as success (likely processed via alternate source)."
+                    )
+                    # Set empty transformed_data to signal "nothing new to write"
+                    self.transformed_data = []
+                    return  # Don't raise - treat as success
+
             try:
                 self._send_notification(
                     notify_warning,
