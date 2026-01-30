@@ -413,11 +413,13 @@ class CatBoostV8:
                 features.get('team_pace', 100),
                 features.get('team_off_rating', 112),
                 features.get('team_win_pct', 0.5),
-                # Vegas features (4) - use features dict, then season avg as fallback
+                # Vegas features (4) - use features dict, np.nan if no real Vegas line
                 # CRITICAL FIX (2026-01-29): Worker passes features dict, not separate params
-                vegas_line if vegas_line is not None else features.get('vegas_points_line', season_avg),
-                vegas_opening if vegas_opening is not None else features.get('vegas_opening_line', season_avg),
-                (vegas_line - vegas_opening) if vegas_line and vegas_opening else features.get('vegas_line_move', 0),
+                # IMPORTANT: Do NOT use season_avg as fallback - that would corrupt the feature
+                # CatBoost handles np.nan natively; has_vegas_line flag indicates data availability
+                vegas_line if vegas_line is not None else features.get('vegas_points_line') if features.get('vegas_points_line') is not None else np.nan,
+                vegas_opening if vegas_opening is not None else features.get('vegas_opening_line') if features.get('vegas_opening_line') is not None else np.nan,
+                (vegas_line - vegas_opening) if vegas_line and vegas_opening else features.get('vegas_line_move') if features.get('vegas_line_move') is not None else np.nan,
                 1.0 if (vegas_line is not None or features.get('vegas_points_line') is not None) else 0.0,
                 # Opponent history (2)
                 opponent_avg if opponent_avg is not None else features.get('avg_points_vs_opponent', season_avg),
@@ -430,13 +432,16 @@ class CatBoostV8:
             ]).reshape(1, -1)
 
             # Validate
-            # NOTE: Allow NaN for shot zone features (indices 18-20) as CatBoost handles them natively
-            # Other features should not be NaN
-            non_shot_zone_mask = np.ones(vector.shape[1], dtype=bool)
-            non_shot_zone_mask[18:21] = False  # Allow NaN for features 18, 19, 20 (shot zones)
+            # NOTE: Allow NaN for features that CatBoost handles natively:
+            # - Shot zone features (indices 18-20) - not available for all players
+            # - Vegas line features (indices 25-27) - not available when no prop line exists
+            # The has_vegas_line flag (index 28) indicates whether Vegas data is real
+            nullable_features_mask = np.ones(vector.shape[1], dtype=bool)
+            nullable_features_mask[18:21] = False  # Allow NaN for shot zones (features 18, 19, 20)
+            nullable_features_mask[25:28] = False  # Allow NaN for Vegas lines (features 25, 26, 27)
 
-            if np.any(np.isnan(vector[:, non_shot_zone_mask])) or np.any(np.isinf(vector)):
-                logger.warning("Feature vector contains NaN or Inf values in non-shot-zone features")
+            if np.any(np.isnan(vector[:, nullable_features_mask])) or np.any(np.isinf(vector)):
+                logger.warning("Feature vector contains NaN or Inf values in non-nullable features")
                 return None
 
             return vector
