@@ -475,7 +475,7 @@ class TonightDataValidator:
                 COUNTIF(minutes_played > 0 AND usage_rate IS NOT NULL) as active_with_usage,
                 ROUND(100.0 * COUNTIF(minutes_played > 0 AND usage_rate IS NOT NULL) / NULLIF(COUNTIF(minutes_played > 0), 0), 1) as active_usage_pct
             FROM `{self.project}.nba_analytics.player_game_summary`
-            WHERE game_date = '{check_date}'
+            WHERE analysis_date = '{check_date}'
         )
         SELECT * FROM data_quality
         """
@@ -586,7 +586,7 @@ class TonightDataValidator:
             ROUND(100.0 * COUNTIF(minutes_played > 0 AND three_pt_attempts IS NOT NULL) /
                   NULLIF(COUNTIF(minutes_played > 0), 0), 1) as active_three_pct
         FROM `{self.project}.nba_analytics.player_game_summary`
-        WHERE game_date = '{check_date}'
+        WHERE analysis_date = '{check_date}'
         """
 
         try:
@@ -681,6 +681,109 @@ class TonightDataValidator:
                     f'Scraper "{scraper}" in registry but not in workflows.yaml')
 
         return list(unscheduled)
+
+    def check_shot_zone_quality(self) -> bool:
+        """
+        Check shot zone analysis data quality (Phase 4 precompute).
+
+        This check was added in Session 39 after the CatBoost V8 model collapsed
+        from 77% to 34% hit rate due to corrupted shot zone features. The corruption
+        went undetected for a month because there was no validation of zone distributions.
+
+        Checks:
+        - paint_rate distribution is within expected range (25-50%)
+        - three_pt_rate distribution is within expected range (25-50%)
+        - Zone data is not all zeros (complete failure)
+        - Sufficient players have valid zone data
+
+        Returns:
+            True if shot zone quality is acceptable, False otherwise
+        """
+        # Check yesterday's data (today's wouldn't be processed yet)
+        check_date = self.target_date - timedelta(days=1)
+
+        query = f"""
+        WITH zone_stats AS (
+            SELECT
+                analysis_date,
+                COUNT(*) as total_records,
+                AVG(paint_rate_last_10) as avg_paint_rate,
+                AVG(three_pt_rate_last_10) as avg_three_rate,
+                COUNTIF(paint_rate_last_10 IS NULL) as null_paint_count,
+                COUNTIF(three_pt_rate_last_10 IS NULL) as null_three_count,
+                COUNTIF(paint_rate_last_10 = 0 AND mid_range_rate_last_10 = 0 AND three_pt_rate_last_10 = 0) as all_zero_count
+            FROM `{self.project}.nba_precompute.player_shot_zone_analysis`
+            WHERE analysis_date = '{check_date}'
+            GROUP BY analysis_date
+        )
+        SELECT
+            COALESCE(total_records, 0) as total_records,
+            ROUND(COALESCE(avg_paint_rate, 0), 1) as avg_paint_rate,
+            ROUND(COALESCE(avg_three_rate, 0), 1) as avg_three_rate,
+            COALESCE(null_paint_count, 0) as null_paint_count,
+            COALESCE(null_three_count, 0) as null_three_count,
+            COALESCE(all_zero_count, 0) as all_zero_count
+        FROM zone_stats
+        """
+
+        try:
+            result = list(self.client.query(query).result(timeout=60))
+
+            if not result or result[0].total_records == 0:
+                print(f"⚠️ Shot Zone Quality: No data for {check_date}")
+                self.add_warning('shot_zone_quality', f'No shot zone data for {check_date}')
+                return True  # Don't fail if no data (might be early season)
+
+            row = result[0]
+            total = row.total_records
+            avg_paint = row.avg_paint_rate
+            avg_three = row.avg_three_rate
+            null_paint = row.null_paint_count
+            null_three = row.null_three_count
+            all_zeros = row.all_zero_count
+
+            self.stats['shot_zone_records'] = total
+            self.stats['avg_paint_rate'] = f'{avg_paint}%'
+            self.stats['avg_three_rate'] = f'{avg_three}%'
+
+            issues_found = []
+
+            # Check 1: Paint rate should be 25-50% (not the corrupted 20%)
+            if avg_paint < 25:
+                issues_found.append(f'avg paint rate {avg_paint}% < 25% (CRITICAL: likely data corruption)')
+            elif avg_paint < 30:
+                issues_found.append(f'avg paint rate {avg_paint}% lower than expected (30-45%)')
+
+            # Check 2: Three-pt rate should be 25-50% (not the corrupted 70%)
+            if avg_three > 50:
+                issues_found.append(f'avg three rate {avg_three}% > 50% (CRITICAL: likely data corruption)')
+            elif avg_three > 45:
+                issues_found.append(f'avg three rate {avg_three}% higher than expected (25-40%)')
+
+            # Check 3: Too many NULL values
+            null_pct = (null_paint / total * 100) if total > 0 else 0
+            if null_pct > 10:
+                issues_found.append(f'{null_pct:.1f}% records have NULL paint rates')
+
+            # Check 4: All zeros indicates complete data failure
+            if all_zeros > 0:
+                issues_found.append(f'{all_zeros} records have ALL ZERO rates (data extraction failure)')
+
+            if issues_found:
+                print(f"⚠️ Shot Zone Quality: {len(issues_found)} issue(s) found for {check_date}")
+                for issue in issues_found:
+                    self.add_warning('shot_zone_quality', issue)
+                print(f"   Paint rate avg: {avg_paint}%, Three rate avg: {avg_three}%")
+                print(f"   Total records: {total}, NULL paint: {null_paint}, All zeros: {all_zeros}")
+                return False
+            else:
+                print(f"✓ Shot Zone Quality: {total} records, paint={avg_paint}%, three={avg_three}%")
+                return True
+
+        except Exception as e:
+            self.add_warning('shot_zone_quality', f'Check failed with error: {e}')
+            print(f"⚠️ Shot Zone Quality: Check failed ({str(e)[:50]})")
+            return True  # Don't fail validation on check errors
 
     def run_spot_checks(self, sample_size: int = 5) -> bool:
         """
@@ -917,6 +1020,9 @@ class TonightDataValidator:
         # Check field-level completeness (would have caught Jan 2026 BDL extraction bug)
         check_date = self.target_date - timedelta(days=1)  # Check yesterday's data
         self.check_field_completeness(check_date)
+        print()
+        # Check shot zone quality (added Session 39 - would have caught Jan 2026 model collapse)
+        self.check_shot_zone_quality()
         print()
         self.check_predictions()
         print()

@@ -97,13 +97,29 @@ def _compute_hash_static(record: dict, hash_fields: list) -> str:
 
 
 def _calculate_zone_metrics_static(games_df: pd.DataFrame) -> dict:
-    """Calculate shot zone metrics (static version for worker processes)."""
+    """
+    Calculate shot zone metrics (static version for worker processes).
+
+    CRITICAL: Validates zone data completeness before calculating rates.
+    Returns None for rates if data is incomplete to prevent corruption.
+    """
+    # Get raw sums - note: pandas .sum() with skipna=True treats NaN as 0
     paint_att = games_df['paint_attempts'].sum()
     paint_makes = games_df['paint_makes'].sum()
     mid_att = games_df['mid_range_attempts'].sum()
     mid_makes = games_df['mid_range_makes'].sum()
     three_att = games_df['three_pt_attempts'].sum()
     three_makes = games_df['three_pt_makes'].sum()
+
+    # CRITICAL FIX: Check if zone data is actually present (not all NaN)
+    # When all values are NaN, .sum() returns 0, which corrupts rate calculations
+    paint_has_data = games_df['paint_attempts'].notna().any()
+    mid_has_data = games_df['mid_range_attempts'].notna().any()
+    three_has_data = games_df['three_pt_attempts'].notna().any()
+
+    # If any zone is missing data entirely, we can't calculate valid rates
+    # This prevents the corruption where three_rate = 100% when paint/mid are NULL
+    zones_complete = paint_has_data and mid_has_data and three_has_data
 
     total_att = paint_att + mid_att + three_att
     total_makes = games_df['fg_makes'].sum()
@@ -112,9 +128,23 @@ def _calculate_zone_metrics_static(games_df: pd.DataFrame) -> dict:
 
     games_count = len(games_df)
 
-    paint_rate = (paint_att / total_att * 100) if total_att > 0 else None
-    mid_rate = (mid_att / total_att * 100) if total_att > 0 else None
-    three_rate = (three_att / total_att * 100) if total_att > 0 else None
+    # Calculate rates ONLY if zone data is complete
+    if zones_complete and total_att > 0:
+        paint_rate = (paint_att / total_att * 100)
+        mid_rate = (mid_att / total_att * 100)
+        three_rate = (three_att / total_att * 100)
+
+        # Validate rates sum to ~100% (allow 2% tolerance for rounding)
+        total_rate = paint_rate + mid_rate + three_rate
+        if abs(total_rate - 100) > 2:
+            # Log would happen in main thread; here just mark as invalid
+            paint_rate = None
+            mid_rate = None
+            three_rate = None
+    else:
+        paint_rate = None
+        mid_rate = None
+        three_rate = None
 
     paint_pct = (paint_makes / paint_att) if paint_att > 0 else None
     mid_pct = (mid_makes / mid_att) if mid_att > 0 else None
@@ -124,8 +154,13 @@ def _calculate_zone_metrics_static(games_df: pd.DataFrame) -> dict:
     mid_pg = mid_att / games_count if games_count > 0 else None
     three_pg = three_att / games_count if games_count > 0 else None
 
-    assisted_rate = (assisted_makes / total_makes * 100) if total_att > 0 and total_makes > 0 else None
-    unassisted_rate = (unassisted_makes / total_makes * 100) if total_att > 0 and total_makes > 0 else None
+    # Assisted rates require complete zone data too
+    if zones_complete and total_att > 0 and total_makes > 0:
+        assisted_rate = (assisted_makes / total_makes * 100)
+        unassisted_rate = (unassisted_makes / total_makes * 100)
+    else:
+        assisted_rate = None
+        unassisted_rate = None
 
     return {
         'paint_rate': round(paint_rate, 2) if paint_rate is not None else None,
@@ -139,7 +174,9 @@ def _calculate_zone_metrics_static(games_df: pd.DataFrame) -> dict:
         'three_pt_attempts_pg': round(three_pg, 1) if three_pg is not None else None,
         'assisted_rate': round(assisted_rate, 2) if assisted_rate is not None else None,
         'unassisted_rate': round(unassisted_rate, 2) if unassisted_rate is not None else None,
-        'total_shots': int(total_att) if total_att > 0 else None
+        'total_shots': int(total_att) if total_att > 0 else None,
+        # Add flag to track incomplete zone data
+        'zones_complete': zones_complete
     }
 
 
@@ -1559,49 +1596,87 @@ class PlayerShotZoneAnalysisProcessor(
     def _calculate_zone_metrics(self, games_df: pd.DataFrame) -> dict:
         """
         Calculate shot zone metrics for a sample of games.
-        
+
+        CRITICAL: Validates zone data completeness before calculating rates.
+        Returns None for rates if data is incomplete to prevent corruption.
+
         Args:
             games_df: DataFrame of games for a player
-            
+
         Returns:
             dict: Calculated metrics
         """
-        # Aggregate totals
+        # Aggregate totals - note: pandas .sum() with skipna=True treats NaN as 0
         paint_att = games_df['paint_attempts'].sum()
         paint_makes = games_df['paint_makes'].sum()
         mid_att = games_df['mid_range_attempts'].sum()
         mid_makes = games_df['mid_range_makes'].sum()
         three_att = games_df['three_pt_attempts'].sum()
         three_makes = games_df['three_pt_makes'].sum()
-        
+
+        # CRITICAL FIX (Session 39): Check if zone data is actually present (not all NaN)
+        # When all values are NaN, .sum() returns 0, which corrupts rate calculations
+        paint_has_data = games_df['paint_attempts'].notna().any()
+        mid_has_data = games_df['mid_range_attempts'].notna().any()
+        three_has_data = games_df['three_pt_attempts'].notna().any()
+
+        # If any zone is missing data entirely, we can't calculate valid rates
+        # This prevents the corruption where three_rate = 100% when paint/mid are NULL
+        zones_complete = paint_has_data and mid_has_data and three_has_data
+
+        if not zones_complete:
+            logger.warning(
+                f"Incomplete zone data detected - paint: {paint_has_data}, "
+                f"mid: {mid_has_data}, three: {three_has_data}. "
+                f"Rates will be set to None to prevent corruption."
+            )
+
         total_att = paint_att + mid_att + three_att
         total_makes = games_df['fg_makes'].sum()
         assisted_makes = games_df['assisted_fg_makes'].sum()
         unassisted_makes = games_df['unassisted_fg_makes'].sum()
-        
+
         games_count = len(games_df)
-        
-        # Calculate rates (distribution)
-        paint_rate = (paint_att / total_att * 100) if total_att > 0 else None
-        mid_rate = (mid_att / total_att * 100) if total_att > 0 else None
-        three_rate = (three_att / total_att * 100) if total_att > 0 else None
-        
+
+        # Calculate rates ONLY if zone data is complete
+        if zones_complete and total_att > 0:
+            paint_rate = (paint_att / total_att * 100)
+            mid_rate = (mid_att / total_att * 100)
+            three_rate = (three_att / total_att * 100)
+
+            # Validate rates sum to ~100% (allow 2% tolerance for rounding)
+            total_rate = paint_rate + mid_rate + three_rate
+            if abs(total_rate - 100) > 2:
+                logger.error(
+                    f"Shot zone rates sum to {total_rate:.1f}% (expected ~100%). "
+                    f"Setting rates to None to prevent corruption."
+                )
+                paint_rate = None
+                mid_rate = None
+                three_rate = None
+        else:
+            paint_rate = None
+            mid_rate = None
+            three_rate = None
+
         # Calculate efficiency (FG%)
         paint_pct = (paint_makes / paint_att) if paint_att > 0 else None
         mid_pct = (mid_makes / mid_att) if mid_att > 0 else None
         three_pct = (three_makes / three_att) if three_att > 0 else None
-        
+
         # Calculate volume per game
         paint_pg = paint_att / games_count if games_count > 0 else None
         mid_pg = mid_att / games_count if games_count > 0 else None
         three_pg = three_att / games_count if games_count > 0 else None
-        
-        # Calculate assisted rates
-        # FIX (Session 64): Check total_att > 0 for consistency with zone rates
-        # When total_att = 0, assisted/unassisted rates should also be None
-        assisted_rate = (assisted_makes / total_makes * 100) if total_att > 0 and total_makes > 0 else None
-        unassisted_rate = (unassisted_makes / total_makes * 100) if total_att > 0 and total_makes > 0 else None
-        
+
+        # Calculate assisted rates - require complete zone data
+        if zones_complete and total_att > 0 and total_makes > 0:
+            assisted_rate = (assisted_makes / total_makes * 100)
+            unassisted_rate = (unassisted_makes / total_makes * 100)
+        else:
+            assisted_rate = None
+            unassisted_rate = None
+
         return {
             'paint_rate': round(paint_rate, 2) if paint_rate is not None else None,
             'mid_range_rate': round(mid_rate, 2) if mid_rate is not None else None,
@@ -1614,7 +1689,9 @@ class PlayerShotZoneAnalysisProcessor(
             'three_pt_attempts_pg': round(three_pg, 1) if three_pg is not None else None,
             'assisted_rate': round(assisted_rate, 2) if assisted_rate is not None else None,
             'unassisted_rate': round(unassisted_rate, 2) if unassisted_rate is not None else None,
-            'total_shots': int(total_att) if total_att > 0 else None
+            'total_shots': int(total_att) if total_att > 0 else None,
+            # Add flag to track incomplete zone data
+            'zones_complete': zones_complete
         }
     
     def _determine_primary_zone(self, metrics: dict) -> Optional[str]:

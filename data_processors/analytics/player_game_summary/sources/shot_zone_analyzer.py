@@ -43,8 +43,10 @@ class ShotZoneAnalyzer:
         self.shot_zone_data: Dict[Tuple[str, str], Dict] = {}
         self.shot_zones_available: bool = False
         self.shot_zones_source: Optional[str] = None
+        # Track games that need BDB re-run (used fallback)
+        self.games_needing_bdb: Dict[str, Dict] = {}  # game_id -> metadata
 
-    def extract_shot_zones(self, start_date: str, end_date: str) -> None:
+    def extract_shot_zones(self, start_date: str, end_date: str, game_ids: Optional[list] = None) -> None:
         """
         Extract shot zone data with BigDataBall → NBAC fallback.
 
@@ -52,12 +54,15 @@ class ShotZoneAnalyzer:
         falls back to NBAC PBP if BigDataBall fails or returns no data.
 
         Gracefully handles missing play-by-play data.
+        Tracks games that need BDB re-run when fallback is used.
 
         Args:
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
+            game_ids: Optional list of game IDs being processed (for tracking)
         """
         # Try BigDataBall first (primary source - has shot coordinates)
+        bdb_failed = False
         try:
             result = self._extract_from_bigdataball(start_date, end_date)
             if result:
@@ -65,7 +70,9 @@ class ShotZoneAnalyzer:
                 self.shot_zones_source = 'bigdataball_pbp'
                 logger.info(f"✅ Using BigDataBall PBP for shot zones: {len(self.shot_zone_data)} player-games")
                 return
+            bdb_failed = True  # No data returned
         except Exception as e:
+            bdb_failed = True
             logger.warning(f"⚠️ BigDataBall shot zone extraction failed: {e}")
 
         # Fallback to NBAC PBP
@@ -75,14 +82,75 @@ class ShotZoneAnalyzer:
                 self.shot_zones_available = True
                 self.shot_zones_source = 'nbac_play_by_play'
                 logger.info(f"✅ Using NBAC fallback for shot zones: {len(self.shot_zone_data)} player-games")
+
+                # TRACK: Games need BDB re-run when it becomes available
+                if bdb_failed:
+                    self._track_games_needing_bdb(start_date, end_date, 'nbac_play_by_play', game_ids)
+                    logger.warning(
+                        f"⚠️ ALERT: BigDataBall unavailable, using NBAC fallback. "
+                        f"Games marked for BDB re-run when data available."
+                    )
                 return
         except Exception as e:
             logger.warning(f"⚠️ NBAC shot zone extraction also failed: {e}")
 
-        # Both failed
+        # Both failed - track for later
         self.shot_zones_available = False
         self.shot_zones_source = None
         logger.warning("⚠️ Shot zone extraction failed from both BigDataBall and NBAC sources")
+
+        # TRACK: Games need BDB re-run (no data at all)
+        self._track_games_needing_bdb(start_date, end_date, 'none', game_ids)
+
+    def _track_games_needing_bdb(
+        self,
+        start_date: str,
+        end_date: str,
+        fallback_source: str,
+        game_ids: Optional[list] = None
+    ) -> None:
+        """
+        Track games that were processed without BigDataBall data.
+
+        These games should be re-run when BDB data becomes available.
+
+        Args:
+            start_date: Start date
+            end_date: End date
+            fallback_source: What source was used ('nbac_play_by_play', 'none')
+            game_ids: Optional specific game IDs
+        """
+        try:
+            # If we have specific game_ids, use those
+            if game_ids:
+                for game_id in game_ids:
+                    self.games_needing_bdb[game_id] = {
+                        'game_date': start_date,
+                        'fallback_source': fallback_source,
+                        'detected_at': pd.Timestamp.now(tz='UTC').isoformat()
+                    }
+            else:
+                # Query to find what games we're processing
+                query = f"""
+                SELECT DISTINCT game_id, home_team_tricode, away_team_tricode
+                FROM `{self.project_id}.nba_raw.nbac_schedule`
+                WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+                """
+                games_df = self.bq_client.query(query).to_dataframe()
+
+                for _, row in games_df.iterrows():
+                    self.games_needing_bdb[row['game_id']] = {
+                        'game_date': start_date,
+                        'home_team': row['home_team_tricode'],
+                        'away_team': row['away_team_tricode'],
+                        'fallback_source': fallback_source,
+                        'detected_at': pd.Timestamp.now(tz='UTC').isoformat()
+                    }
+
+            logger.info(f"Tracked {len(self.games_needing_bdb)} games needing BDB re-run")
+
+        except Exception as e:
+            logger.warning(f"Failed to track games needing BDB: {e}")
 
     def _extract_from_bigdataball(self, start_date: str, end_date: str) -> bool:
         """
@@ -301,7 +369,10 @@ class ShotZoneAnalyzer:
                 COUNT(CASE WHEN zone = 'paint' AND shot_made = TRUE THEN 1 END) as paint_makes,
                 -- Mid-range zone
                 COUNT(CASE WHEN zone = 'mid_range' THEN 1 END) as mid_range_attempts,
-                COUNT(CASE WHEN zone = 'mid_range' AND shot_made = TRUE THEN 1 END) as mid_range_makes
+                COUNT(CASE WHEN zone = 'mid_range' AND shot_made = TRUE THEN 1 END) as mid_range_makes,
+                -- Three-point zone (CRITICAL FIX: was missing from NBAC extraction!)
+                COUNT(CASE WHEN zone = 'three' THEN 1 END) as three_attempts_pbp,
+                COUNT(CASE WHEN zone = 'three' AND shot_made = TRUE THEN 1 END) as three_makes_pbp
             FROM player_shots
             WHERE player_lookup IS NOT NULL
             GROUP BY game_id, player_lookup
@@ -318,6 +389,9 @@ class ShotZoneAnalyzer:
                         'paint_makes': int(row['paint_makes']) if pd.notna(row['paint_makes']) else None,
                         'mid_range_attempts': int(row['mid_range_attempts']) if pd.notna(row['mid_range_attempts']) else None,
                         'mid_range_makes': int(row['mid_range_makes']) if pd.notna(row['mid_range_makes']) else None,
+                        # Three-point zone (CRITICAL FIX: now extracted from NBAC!)
+                        'three_attempts_pbp': int(row['three_attempts_pbp']) if pd.notna(row['three_attempts_pbp']) else None,
+                        'three_makes_pbp': int(row['three_makes_pbp']) if pd.notna(row['three_makes_pbp']) else None,
                         # NBAC doesn't have these fields - set to None
                         'assisted_fg_makes': None,
                         'unassisted_fg_makes': None,
@@ -327,7 +401,7 @@ class ShotZoneAnalyzer:
                         'three_pt_blocks': None,
                     }
 
-                logger.debug(f"NBAC: Extracted {len(self.shot_zone_data)} player-games (basic zones only)")
+                logger.debug(f"NBAC: Extracted {len(self.shot_zone_data)} player-games (all zones)")
                 return True
             else:
                 logger.debug("NBAC query returned no shot zones")
@@ -344,6 +418,9 @@ class ShotZoneAnalyzer:
         Returns dict with all shot zone fields, using None for missing data.
         This allows using **analyzer.get_shot_zone_data() in record building.
 
+        IMPORTANT: Validates zone completeness and logs warnings for partial data.
+        Incomplete zone data can corrupt downstream rate calculations.
+
         Args:
             game_id: Game ID
             player_lookup: Player lookup string
@@ -353,6 +430,31 @@ class ShotZoneAnalyzer:
         """
         key = (game_id, player_lookup)
         zones = self.shot_zone_data.get(key, {})
+
+        # Validate zone completeness (all three zones should have data or all should be None)
+        paint_att = zones.get('paint_attempts')
+        mid_att = zones.get('mid_range_attempts')
+        # Note: three_pt comes from box score, not PBP, so we track PBP version separately
+        three_att_pbp = zones.get('three_attempts_pbp')
+
+        # Check for partial data that could corrupt rate calculations
+        zone_values = [paint_att, mid_att, three_att_pbp]
+        has_any = any(v is not None and v >= 0 for v in zone_values)
+        has_all = all(v is not None for v in zone_values)
+
+        if has_any and not has_all:
+            missing_zones = []
+            if paint_att is None:
+                missing_zones.append('paint')
+            if mid_att is None:
+                missing_zones.append('mid_range')
+            if three_att_pbp is None:
+                missing_zones.append('three_pt')
+            logger.warning(
+                f"⚠️ Incomplete shot zone data for {game_id}/{player_lookup}: "
+                f"missing {missing_zones} zones (source: {self.shot_zones_source}). "
+                f"This can corrupt rate calculations!"
+            )
 
         return {
             # Shot zones by location
@@ -370,3 +472,60 @@ class ShotZoneAnalyzer:
             'mid_range_blocks': zones.get('mid_range_blocks'),
             'three_pt_blocks': zones.get('three_pt_blocks'),
         }
+
+    def persist_pending_bdb_games(self) -> int:
+        """
+        Persist games that need BDB re-run to BigQuery.
+
+        Called at the end of processing to record which games used fallback
+        and should be re-run when BigDataBall data becomes available.
+
+        Returns:
+            Number of games persisted
+        """
+        if not self.games_needing_bdb:
+            return 0
+
+        try:
+            records = []
+            for game_id, metadata in self.games_needing_bdb.items():
+                records.append({
+                    'game_date': metadata.get('game_date'),
+                    'game_id': game_id,
+                    'home_team': metadata.get('home_team'),
+                    'away_team': metadata.get('away_team'),
+                    'fallback_source': metadata.get('fallback_source'),
+                    'original_processed_at': pd.Timestamp.now(tz='UTC').isoformat(),
+                    'status': 'pending_bdb',
+                    'quality_before_rerun': 'silver' if metadata.get('fallback_source') == 'nbac_play_by_play' else 'bronze',
+                    'shot_zones_complete_before': metadata.get('fallback_source') == 'nbac_play_by_play',
+                    'bdb_check_count': 0,
+                })
+
+            # Use MERGE to avoid duplicates
+            table_id = f"{self.project_id}.nba_orchestration.pending_bdb_games"
+
+            # Check if table exists
+            try:
+                self.bq_client.get_table(table_id)
+            except Exception:
+                logger.warning(f"Table {table_id} doesn't exist - skipping pending BDB tracking")
+                return 0
+
+            # Insert records (MERGE would be better but INSERT works for now)
+            job_config = bigquery.LoadJobConfig(
+                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON
+            )
+
+            load_job = self.bq_client.load_table_from_json(
+                records, table_id, job_config=job_config
+            )
+            load_job.result(timeout=60)
+
+            logger.info(f"Persisted {len(records)} games to pending_bdb_games table")
+            return len(records)
+
+        except Exception as e:
+            logger.error(f"Failed to persist pending BDB games: {e}")
+            return 0
