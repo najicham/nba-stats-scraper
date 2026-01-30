@@ -58,6 +58,25 @@ DUPLICATE_THRESHOLD = 0  # Any duplicates are bad
 ARRAY_INTEGRITY_THRESHOLD = 0  # Any invalid arrays are bad
 MISMATCH_TOLERANCE = 0.1  # Allowable difference for L5/L10 values
 
+# Feature bounds (index -> (min, max, name))
+# These are reasonable ranges for NBA player statistics
+FEATURE_BOUNDS = {
+    0: (0, 50, "points_l5_avg"),      # L5 points avg
+    1: (0, 50, "points_l10_avg"),     # L10 points avg
+    6: (0, 48, "minutes_l5_avg"),     # L5 minutes avg (max 48 min/game)
+    7: (0, 48, "minutes_l10_avg"),    # L10 minutes avg
+    14: (0, 50, "usage_rate_l5"),     # L5 usage rate (0-50%)
+    15: (0, 50, "usage_rate_l10"),    # L10 usage rate
+    16: (0, 14, "days_rest"),         # Days rest (0-14 reasonable)
+    17: (0, 1, "is_home"),            # Binary
+    21: (0, 100, "season_games"),     # Season games played
+    31: (0, 60, "line_value"),        # Prop line value
+}
+
+# Prop line thresholds
+PROP_LINE_COVERAGE_THRESHOLD = 50.0  # Minimum % of predictions with prop lines
+PLACEHOLDER_LINE_VALUE = 20.0  # Known placeholder value
+
 
 # =============================================================================
 # RESULT DATA CLASSES
@@ -109,6 +128,31 @@ class ArrayIntegrityResult:
 
 
 @dataclass
+class FeatureBoundsResult:
+    """Result of feature bounds check."""
+    total_checked: int = 0
+    out_of_bounds: int = 0
+    out_of_bounds_pct: float = 0.0
+    by_feature: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    status: CheckStatus = CheckStatus.PASS
+    sample_violations: List[Dict[str, Any]] = field(default_factory=list)
+    issues: List[str] = field(default_factory=list)
+
+
+@dataclass
+class PropLineCoverageResult:
+    """Result of prop line coverage check."""
+    total_predictions: int = 0
+    with_prop_line: int = 0
+    without_prop_line: int = 0
+    placeholder_lines: int = 0
+    coverage_pct: float = 0.0
+    status: CheckStatus = CheckStatus.PASS
+    by_date: Dict[str, float] = field(default_factory=dict)
+    issues: List[str] = field(default_factory=list)
+
+
+@dataclass
 class FeatureStoreValidationResult:
     """Complete validation result for feature store."""
     start_date: date
@@ -117,6 +161,8 @@ class FeatureStoreValidationResult:
     consistency: Optional[ConsistencyResult] = None
     duplicates: Optional[DuplicateResult] = None
     array_integrity: Optional[ArrayIntegrityResult] = None
+    feature_bounds: Optional[FeatureBoundsResult] = None
+    prop_line_coverage: Optional[PropLineCoverageResult] = None
     validation_time_seconds: float = 0.0
     issues: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
@@ -150,6 +196,17 @@ class FeatureStoreValidationResult:
             lines.append(f"  Wrong length: {self.array_integrity.wrong_length}")
             lines.append(f"  NaN values: {self.array_integrity.nan_values}")
             lines.append(f"  Inf values: {self.array_integrity.inf_values}")
+            lines.append("")
+
+        if self.feature_bounds:
+            lines.append(f"Feature Bounds: {self.feature_bounds.status.value.upper()}")
+            lines.append(f"  Out of bounds: {self.feature_bounds.out_of_bounds} ({self.feature_bounds.out_of_bounds_pct:.2f}%)")
+            lines.append("")
+
+        if self.prop_line_coverage:
+            lines.append(f"Prop Line Coverage: {self.prop_line_coverage.status.value.upper()}")
+            lines.append(f"  Coverage: {self.prop_line_coverage.coverage_pct:.1f}%")
+            lines.append(f"  Placeholder lines: {self.prop_line_coverage.placeholder_lines}")
             lines.append("")
 
         if self.issues:
@@ -512,6 +569,172 @@ def check_array_integrity(
     return result
 
 
+def check_feature_bounds(
+    client: bigquery.Client,
+    start_date: date,
+    end_date: date,
+) -> FeatureBoundsResult:
+    """
+    Check that feature values are within reasonable bounds.
+
+    Catches data issues where features have impossible values
+    (e.g., negative minutes, usage_rate > 100%).
+    """
+    result = FeatureBoundsResult()
+
+    # Build query to check each bounded feature
+    bound_checks = []
+    for idx, (min_val, max_val, name) in FEATURE_BOUNDS.items():
+        bound_checks.append(
+            f"COUNTIF(features[OFFSET({idx})] < {min_val} OR features[OFFSET({idx})] > {max_val}) as {name}_violations"
+        )
+
+    checks_sql = ",\n        ".join(bound_checks)
+
+    query = f"""
+    SELECT
+        COUNT(*) as total,
+        {checks_sql}
+    FROM `{PROJECT_ID}.{FEATURE_STORE_TABLE}`
+    WHERE game_date BETWEEN @start_date AND @end_date
+        AND ARRAY_LENGTH(features) >= {max(FEATURE_BOUNDS.keys()) + 1}
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+            bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+        ]
+    )
+
+    try:
+        query_result = client.query(query, job_config=job_config).result(
+            timeout=BQ_QUERY_TIMEOUT_SECONDS
+        )
+        row = next(iter(query_result))
+
+        result.total_checked = row.total
+        total_violations = 0
+
+        for idx, (min_val, max_val, name) in FEATURE_BOUNDS.items():
+            violations = getattr(row, f"{name}_violations", 0) or 0
+            total_violations += violations
+            if violations > 0:
+                result.by_feature[name] = {
+                    'violations': violations,
+                    'min': min_val,
+                    'max': max_val,
+                }
+
+        result.out_of_bounds = total_violations
+        if result.total_checked > 0:
+            result.out_of_bounds_pct = 100.0 * total_violations / result.total_checked
+
+        if result.out_of_bounds_pct == 0:
+            result.status = CheckStatus.PASS
+        elif result.out_of_bounds_pct < 1.0:
+            result.status = CheckStatus.WARN
+            result.issues.append(
+                f"Some features out of bounds: {result.out_of_bounds_pct:.2f}%"
+            )
+        else:
+            result.status = CheckStatus.FAIL
+            result.issues.append(
+                f"HIGH: {result.out_of_bounds_pct:.2f}% features out of bounds"
+            )
+
+    except Exception as e:
+        logger.error(f"Error checking feature bounds: {e}", exc_info=True)
+        result.status = CheckStatus.ERROR
+        result.issues.append(f"Query error: {str(e)}")
+
+    return result
+
+
+def check_prop_line_coverage(
+    client: bigquery.Client,
+    start_date: date,
+    end_date: date,
+) -> PropLineCoverageResult:
+    """
+    Check prop line coverage and quality.
+
+    Validates that predictions have real prop lines (not placeholders).
+    """
+    result = PropLineCoverageResult()
+
+    query = f"""
+    SELECT
+        game_date,
+        COUNT(*) as total,
+        COUNTIF(line_value IS NOT NULL AND line_value > 0) as with_line,
+        COUNTIF(line_value IS NULL OR line_value = 0) as without_line,
+        COUNTIF(line_value = {PLACEHOLDER_LINE_VALUE}) as placeholder_lines
+    FROM `{PROJECT_ID}.{PREDICTIONS_TABLE}`
+    WHERE game_date BETWEEN @start_date AND @end_date
+    GROUP BY game_date
+    ORDER BY game_date DESC
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+            bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+        ]
+    )
+
+    try:
+        query_result = client.query(query, job_config=job_config).result(
+            timeout=BQ_QUERY_TIMEOUT_SECONDS
+        )
+
+        total_pred = 0
+        total_with_line = 0
+        total_placeholder = 0
+
+        for row in query_result:
+            total_pred += row.total
+            total_with_line += row.with_line
+            total_placeholder += row.placeholder_lines
+
+            if row.total > 0:
+                coverage = 100.0 * row.with_line / row.total
+                result.by_date[str(row.game_date)] = coverage
+
+        result.total_predictions = total_pred
+        result.with_prop_line = total_with_line
+        result.without_prop_line = total_pred - total_with_line
+        result.placeholder_lines = total_placeholder
+
+        if total_pred > 0:
+            result.coverage_pct = 100.0 * total_with_line / total_pred
+
+        if result.coverage_pct >= PROP_LINE_COVERAGE_THRESHOLD:
+            result.status = CheckStatus.PASS
+        elif result.coverage_pct >= 30:
+            result.status = CheckStatus.WARN
+            result.issues.append(
+                f"Low prop line coverage: {result.coverage_pct:.1f}%"
+            )
+        else:
+            result.status = CheckStatus.FAIL
+            result.issues.append(
+                f"CRITICAL: Very low prop line coverage: {result.coverage_pct:.1f}%"
+            )
+
+        if total_placeholder > 0:
+            result.issues.append(
+                f"{total_placeholder} predictions have placeholder line value ({PLACEHOLDER_LINE_VALUE})"
+            )
+
+    except Exception as e:
+        logger.error(f"Error checking prop line coverage: {e}", exc_info=True)
+        result.status = CheckStatus.ERROR
+        result.issues.append(f"Query error: {str(e)}")
+
+    return result
+
+
 def validate_feature_store(
     client: Optional[bigquery.Client] = None,
     start_date: Optional[date] = None,
@@ -520,6 +743,8 @@ def validate_feature_store(
     check_consistency: bool = True,
     check_dups: bool = True,
     check_arrays: bool = True,
+    check_bounds: bool = True,
+    check_prop_lines: bool = True,
 ) -> FeatureStoreValidationResult:
     """
     Run complete feature store validation.
@@ -532,6 +757,8 @@ def validate_feature_store(
         check_consistency: Whether to check L5/L10 consistency
         check_dups: Whether to check for duplicates
         check_arrays: Whether to check array integrity
+        check_bounds: Whether to check feature value bounds
+        check_prop_lines: Whether to check prop line coverage
 
     Returns:
         FeatureStoreValidationResult with all check results
@@ -573,6 +800,22 @@ def validate_feature_store(
         if result.array_integrity.status in (CheckStatus.FAIL, CheckStatus.ERROR):
             result.passed = False
             result.issues.extend(result.array_integrity.issues)
+
+    if check_bounds:
+        result.feature_bounds = check_feature_bounds(client, start_date, end_date)
+        if result.feature_bounds.status in (CheckStatus.FAIL, CheckStatus.ERROR):
+            result.passed = False
+            result.issues.extend(result.feature_bounds.issues)
+        elif result.feature_bounds.status == CheckStatus.WARN:
+            result.warnings.extend(result.feature_bounds.issues)
+
+    if check_prop_lines:
+        result.prop_line_coverage = check_prop_line_coverage(client, start_date, end_date)
+        if result.prop_line_coverage.status in (CheckStatus.FAIL, CheckStatus.ERROR):
+            result.passed = False
+            result.issues.extend(result.prop_line_coverage.issues)
+        elif result.prop_line_coverage.status == CheckStatus.WARN:
+            result.warnings.extend(result.prop_line_coverage.issues)
 
     result.validation_time_seconds = (datetime.now() - start_time).total_seconds()
 

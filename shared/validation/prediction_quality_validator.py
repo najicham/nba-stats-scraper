@@ -57,6 +57,16 @@ PLACEHOLDER_LINE_VALUE = 20.0  # Known placeholder value
 STALE_CACHE_HOURS = 6  # Cache older than this is stale
 PLAYER_MISMATCH_THRESHOLD = 5.0  # Max % of player mismatches allowed
 
+# Prediction bounds thresholds
+PREDICTION_MIN = 0.0  # Minimum valid predicted points
+PREDICTION_MAX = 70.0  # Maximum valid predicted points (very high scorers)
+PREDICTION_OUTLIER_THRESHOLD = 1.0  # Max % of predictions outside bounds
+
+# Confidence calibration thresholds
+CONFIDENCE_ACCURACY_CORRELATION_MIN = 0.1  # Minimum correlation expected
+HIGH_CONFIDENCE_THRESHOLD = 70.0  # Confidence level considered "high"
+HIGH_CONFIDENCE_ACCURACY_MIN = 52.0  # Min accuracy for high-confidence predictions
+
 
 # =============================================================================
 # RESULT DATA CLASSES
@@ -120,6 +130,35 @@ class PlayerConsistencyResult:
 
 
 @dataclass
+class PredictionBoundsResult:
+    """Result of prediction bounds check."""
+    total_predictions: int = 0
+    predictions_below_min: int = 0
+    predictions_above_max: int = 0
+    outlier_pct: float = 0.0
+    min_prediction: float = 0.0
+    max_prediction: float = 0.0
+    avg_prediction: float = 0.0
+    status: CheckStatus = CheckStatus.PASS
+    sample_outliers: List[Dict[str, Any]] = field(default_factory=list)
+    issues: List[str] = field(default_factory=list)
+
+
+@dataclass
+class ConfidenceCalibrationResult:
+    """Result of confidence calibration check."""
+    total_graded: int = 0
+    high_confidence_count: int = 0
+    high_confidence_correct: int = 0
+    high_confidence_accuracy: float = 0.0
+    overall_accuracy: float = 0.0
+    calibration_gap: float = 0.0  # Difference between confidence and accuracy
+    status: CheckStatus = CheckStatus.PASS
+    by_confidence_bucket: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    issues: List[str] = field(default_factory=list)
+
+
+@dataclass
 class PredictionQualityResult:
     """Complete prediction quality validation result."""
     start_date: date
@@ -129,6 +168,8 @@ class PredictionQualityResult:
     placeholder_lines: Optional[PlaceholderLineResult] = None
     stale_cache: Optional[StaleCacheResult] = None
     player_consistency: Optional[PlayerConsistencyResult] = None
+    prediction_bounds: Optional[PredictionBoundsResult] = None
+    confidence_calibration: Optional[ConfidenceCalibrationResult] = None
     validation_time_seconds: float = 0.0
     issues: List[str] = field(default_factory=list)
     warnings: List[str] = field(default_factory=list)
@@ -164,6 +205,20 @@ class PredictionQualityResult:
             lines.append(f"Player Consistency Check: {self.player_consistency.status.value.upper()}")
             lines.append(f"  Mismatch rate: {self.player_consistency.mismatch_pct:.1f}%")
             lines.append(f"  Missing in analytics: {self.player_consistency.players_missing_in_analytics}")
+            lines.append("")
+
+        if self.prediction_bounds:
+            lines.append(f"Prediction Bounds Check: {self.prediction_bounds.status.value.upper()}")
+            lines.append(f"  Total predictions: {self.prediction_bounds.total_predictions:,}")
+            lines.append(f"  Outliers: {self.prediction_bounds.outlier_pct:.2f}%")
+            lines.append(f"  Range: {self.prediction_bounds.min_prediction:.1f} - {self.prediction_bounds.max_prediction:.1f}")
+            lines.append("")
+
+        if self.confidence_calibration:
+            lines.append(f"Confidence Calibration Check: {self.confidence_calibration.status.value.upper()}")
+            lines.append(f"  High-confidence accuracy: {self.confidence_calibration.high_confidence_accuracy:.1f}%")
+            lines.append(f"  Overall accuracy: {self.confidence_calibration.overall_accuracy:.1f}%")
+            lines.append(f"  Calibration gap: {self.confidence_calibration.calibration_gap:+.1f}%")
             lines.append("")
 
         if self.issues:
@@ -504,6 +559,213 @@ def check_player_consistency(
     return result
 
 
+def check_prediction_bounds(
+    client: bigquery.Client,
+    start_date: date,
+    end_date: date,
+) -> PredictionBoundsResult:
+    """
+    Check that predicted points are within reasonable bounds.
+
+    Catches model drift where predictions go outside normal ranges.
+    """
+    result = PredictionBoundsResult()
+
+    query = f"""
+    SELECT
+        COUNT(*) as total,
+        COUNTIF(predicted_points < {PREDICTION_MIN}) as below_min,
+        COUNTIF(predicted_points > {PREDICTION_MAX}) as above_max,
+        MIN(predicted_points) as min_pred,
+        MAX(predicted_points) as max_pred,
+        AVG(predicted_points) as avg_pred
+    FROM `{PROJECT_ID}.{PREDICTIONS_TABLE}`
+    WHERE game_date BETWEEN @start_date AND @end_date
+        AND predicted_points IS NOT NULL
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+            bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+        ]
+    )
+
+    try:
+        query_result = client.query(query, job_config=job_config).result(
+            timeout=BQ_QUERY_TIMEOUT_SECONDS
+        )
+        row = next(iter(query_result))
+
+        result.total_predictions = row.total or 0
+        result.predictions_below_min = row.below_min or 0
+        result.predictions_above_max = row.above_max or 0
+        result.min_prediction = row.min_pred or 0.0
+        result.max_prediction = row.max_pred or 0.0
+        result.avg_prediction = row.avg_pred or 0.0
+
+        total_outliers = result.predictions_below_min + result.predictions_above_max
+        if result.total_predictions > 0:
+            result.outlier_pct = 100.0 * total_outliers / result.total_predictions
+
+        if result.outlier_pct <= PREDICTION_OUTLIER_THRESHOLD:
+            result.status = CheckStatus.PASS
+        elif result.outlier_pct <= 5.0:
+            result.status = CheckStatus.WARN
+            result.issues.append(
+                f"Some predictions outside bounds: {result.outlier_pct:.2f}% "
+                f"(range: {result.min_prediction:.1f} - {result.max_prediction:.1f})"
+            )
+        else:
+            result.status = CheckStatus.FAIL
+            result.issues.append(
+                f"HIGH: {result.outlier_pct:.2f}% predictions outside bounds "
+                f"({PREDICTION_MIN}-{PREDICTION_MAX})"
+            )
+
+    except Exception as e:
+        logger.error(f"Error checking prediction bounds: {e}", exc_info=True)
+        result.status = CheckStatus.ERROR
+        result.issues.append(f"Query error: {str(e)}")
+
+    # Sample outliers
+    if result.predictions_below_min > 0 or result.predictions_above_max > 0:
+        sample_query = f"""
+        SELECT
+            player_lookup,
+            game_date,
+            predicted_points,
+            model_version
+        FROM `{PROJECT_ID}.{PREDICTIONS_TABLE}`
+        WHERE game_date BETWEEN @start_date AND @end_date
+            AND (predicted_points < {PREDICTION_MIN} OR predicted_points > {PREDICTION_MAX})
+        ORDER BY ABS(predicted_points - 20) DESC
+        LIMIT 10
+        """
+        try:
+            sample_result = client.query(sample_query, job_config=job_config).result(
+                timeout=BQ_QUERY_TIMEOUT_SECONDS
+            )
+            for row in sample_result:
+                result.sample_outliers.append({
+                    'player': row.player_lookup,
+                    'date': str(row.game_date),
+                    'predicted': row.predicted_points,
+                    'model': row.model_version,
+                })
+        except Exception as e:
+            logger.warning(f"Error sampling outliers: {e}")
+
+    return result
+
+
+def check_confidence_calibration(
+    client: bigquery.Client,
+    start_date: date,
+    end_date: date,
+) -> ConfidenceCalibrationResult:
+    """
+    Check that confidence scores correlate with actual accuracy.
+
+    High-confidence predictions should have higher accuracy than low-confidence ones.
+    """
+    result = ConfidenceCalibrationResult()
+
+    query = f"""
+    WITH graded AS (
+        SELECT
+            confidence,
+            prediction_correct,
+            CASE
+                WHEN confidence >= 80 THEN '80-100'
+                WHEN confidence >= 60 THEN '60-79'
+                WHEN confidence >= 40 THEN '40-59'
+                ELSE '0-39'
+            END as confidence_bucket
+        FROM `{PROJECT_ID}.{PREDICTION_ACCURACY_TABLE}`
+        WHERE game_date BETWEEN @start_date AND @end_date
+            AND prediction_correct IS NOT NULL
+            AND confidence IS NOT NULL
+    )
+    SELECT
+        confidence_bucket,
+        COUNT(*) as total,
+        COUNTIF(prediction_correct) as correct,
+        ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as accuracy
+    FROM graded
+    GROUP BY confidence_bucket
+    ORDER BY confidence_bucket DESC
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("start_date", "DATE", start_date),
+            bigquery.ScalarQueryParameter("end_date", "DATE", end_date),
+        ]
+    )
+
+    try:
+        query_result = client.query(query, job_config=job_config).result(
+            timeout=BQ_QUERY_TIMEOUT_SECONDS
+        )
+
+        total_graded = 0
+        total_correct = 0
+        high_conf_total = 0
+        high_conf_correct = 0
+
+        for row in query_result:
+            result.by_confidence_bucket[row.confidence_bucket] = {
+                'total': row.total,
+                'correct': row.correct,
+                'accuracy': row.accuracy,
+            }
+            total_graded += row.total
+            total_correct += row.correct
+
+            # Track high confidence (60+)
+            if row.confidence_bucket in ('80-100', '60-79'):
+                high_conf_total += row.total
+                high_conf_correct += row.correct
+
+        result.total_graded = total_graded
+        result.high_confidence_count = high_conf_total
+        result.high_confidence_correct = high_conf_correct
+
+        if total_graded > 0:
+            result.overall_accuracy = 100.0 * total_correct / total_graded
+
+        if high_conf_total > 0:
+            result.high_confidence_accuracy = 100.0 * high_conf_correct / high_conf_total
+
+        # Calculate calibration gap (high conf accuracy vs overall)
+        result.calibration_gap = result.high_confidence_accuracy - result.overall_accuracy
+
+        # Evaluate calibration quality
+        if result.high_confidence_accuracy >= HIGH_CONFIDENCE_ACCURACY_MIN:
+            if result.calibration_gap >= 0:
+                result.status = CheckStatus.PASS
+            else:
+                result.status = CheckStatus.WARN
+                result.issues.append(
+                    f"High-confidence predictions underperform: "
+                    f"{result.high_confidence_accuracy:.1f}% vs {result.overall_accuracy:.1f}% overall"
+                )
+        else:
+            result.status = CheckStatus.FAIL
+            result.issues.append(
+                f"HIGH: High-confidence accuracy too low: {result.high_confidence_accuracy:.1f}% "
+                f"(threshold: {HIGH_CONFIDENCE_ACCURACY_MIN}%)"
+            )
+
+    except Exception as e:
+        logger.error(f"Error checking confidence calibration: {e}", exc_info=True)
+        result.status = CheckStatus.ERROR
+        result.issues.append(f"Query error: {str(e)}")
+
+    return result
+
+
 def validate_prediction_quality(
     client: Optional[bigquery.Client] = None,
     start_date: Optional[date] = None,
@@ -513,6 +775,8 @@ def validate_prediction_quality(
     check_placeholders: bool = True,
     check_cache: bool = True,
     check_players: bool = True,
+    check_bounds: bool = True,
+    check_calibration: bool = True,
 ) -> PredictionQualityResult:
     """
     Run complete prediction quality validation.
@@ -562,6 +826,22 @@ def validate_prediction_quality(
             result.issues.extend(result.player_consistency.issues)
         elif result.player_consistency.status == CheckStatus.WARN:
             result.warnings.extend(result.player_consistency.issues)
+
+    if check_bounds:
+        result.prediction_bounds = check_prediction_bounds(client, start_date, end_date)
+        if result.prediction_bounds.status == CheckStatus.FAIL:
+            result.passed = False
+            result.issues.extend(result.prediction_bounds.issues)
+        elif result.prediction_bounds.status == CheckStatus.WARN:
+            result.warnings.extend(result.prediction_bounds.issues)
+
+    if check_calibration:
+        result.confidence_calibration = check_confidence_calibration(client, start_date, end_date)
+        if result.confidence_calibration.status == CheckStatus.FAIL:
+            result.passed = False
+            result.issues.extend(result.confidence_calibration.issues)
+        elif result.confidence_calibration.status == CheckStatus.WARN:
+            result.warnings.extend(result.confidence_calibration.issues)
 
     result.validation_time_seconds = (datetime.now() - start_time).total_seconds()
 
