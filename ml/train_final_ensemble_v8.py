@@ -334,6 +334,51 @@ metadata = {
 with open(MODEL_OUTPUT_DIR / f"ensemble_v8_{timestamp}_metadata.json", 'w') as f:
     json.dump(metadata, f, indent=2)
 
+# Save feature statistics for production validation
+feature_stats = {}
+for col in X.columns:
+    feature_stats[col] = {
+        'name': col,
+        'index': list(X.columns).index(col),
+        'mean': float(X[col].mean()) if not pd.isna(X[col].mean()) else 0.0,
+        'std': float(X[col].std()) if not pd.isna(X[col].std()) else 0.0,
+        'min_val': float(X[col].min()) if not pd.isna(X[col].min()) else 0.0,
+        'max_val': float(X[col].max()) if not pd.isna(X[col].max()) else 0.0,
+        'p5': float(X[col].quantile(0.05)) if not pd.isna(X[col].quantile(0.05)) else 0.0,
+        'p25': float(X[col].quantile(0.25)) if not pd.isna(X[col].quantile(0.25)) else 0.0,
+        'p50': float(X[col].quantile(0.50)) if not pd.isna(X[col].quantile(0.50)) else 0.0,
+        'p75': float(X[col].quantile(0.75)) if not pd.isna(X[col].quantile(0.75)) else 0.0,
+        'p95': float(X[col].quantile(0.95)) if not pd.isna(X[col].quantile(0.95)) else 0.0,
+        'missing_rate': float(X[col].isna().mean()),
+    }
+
+with open(MODEL_OUTPUT_DIR / f"ensemble_v8_{timestamp}_feature_stats.json", 'w') as f:
+    json.dump(feature_stats, f, indent=2)
+
+# Create and save model contract
+try:
+    from ml.model_contract import ModelContract, V8_NULLABLE_FEATURES, get_model_hash
+
+    catboost_path = MODEL_OUTPUT_DIR / f"catboost_v8_33features_{timestamp}.cbm"
+    contract = ModelContract(
+        model_id=f"ensemble_v8_{timestamp}",
+        model_version="v8",
+        model_type="ensemble",
+        feature_names=all_features,
+        feature_count=len(all_features),
+        feature_stats=feature_stats,
+        nullable_features=V8_NULLABLE_FEATURES,
+        training_date_range=("2021-11-01", "2024-06-01"),
+        training_samples=len(df),
+        training_mae=float(best_mae),
+        model_file_hash=get_model_hash(str(catboost_path)),
+        model_file_path=str(catboost_path),
+    )
+    contract.save(str(MODEL_OUTPUT_DIR / f"ensemble_v8_{timestamp}_contract.json"))
+    print(f"Saved model contract")
+except ImportError:
+    print("Warning: Could not import model_contract, skipping contract generation")
+
 print(f"Saved all models and metadata")
 
 # ============================================================================
