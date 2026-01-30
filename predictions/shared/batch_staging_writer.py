@@ -554,6 +554,90 @@ class BatchConsolidator:
             # Return -1 to indicate validation error (not the same as 0 duplicates)
             return -1
 
+    def cleanup_duplicate_predictions(
+        self,
+        game_date: str,
+        dry_run: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Deactivate duplicate predictions for a game date (streaming buffer safe).
+
+        SESSION 28 FIX: This method should be called 2+ hours after predictions
+        to allow BigQuery's streaming buffer to clear. The immediate deactivation
+        in consolidate_batch() fails silently because rows are in the streaming buffer.
+
+        The streaming buffer locks rows for 30-90 minutes after DML operations.
+        This delayed cleanup ensures rows are modifiable.
+
+        Args:
+            game_date: Game date to clean up (YYYY-MM-DD)
+            dry_run: If True, only count duplicates without deactivating
+
+        Returns:
+            Dict with:
+                - duplicates_found: Number of duplicate predictions
+                - duplicates_deactivated: Number deactivated (0 if dry_run)
+                - dry_run: Whether this was a dry run
+                - game_date: The game date processed
+        """
+        main_table = f"{self.project_id}.{self.staging_dataset}.{MAIN_PREDICTIONS_TABLE}"
+
+        # First, count duplicates
+        count_query = f"""
+        SELECT COUNT(*) as duplicate_count
+        FROM (
+            SELECT prediction_id
+            FROM (
+                SELECT
+                    prediction_id,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY game_id, player_lookup, system_id
+                        ORDER BY created_at DESC
+                    ) as row_num
+                FROM `{main_table}`
+                WHERE game_date = '{game_date}'
+                  AND is_active = TRUE
+            )
+            WHERE row_num > 1
+        )
+        """
+
+        try:
+            count_job = self.bq_client.query(count_query)
+            count_result = count_job.result(timeout=60)
+            row = next(iter(count_result))
+            duplicates_found = row.duplicate_count or 0
+
+            logger.info(f"Found {duplicates_found} duplicate predictions for game_date={game_date}")
+
+            if dry_run or duplicates_found == 0:
+                return {
+                    'duplicates_found': duplicates_found,
+                    'duplicates_deactivated': 0,
+                    'dry_run': dry_run,
+                    'game_date': game_date
+                }
+
+            # Perform the deactivation
+            deactivated = self._deactivate_older_predictions(game_date)
+
+            return {
+                'duplicates_found': duplicates_found,
+                'duplicates_deactivated': deactivated,
+                'dry_run': False,
+                'game_date': game_date
+            }
+
+        except Exception as e:
+            logger.error(f"Error in cleanup_duplicate_predictions for {game_date}: {e}", exc_info=True)
+            return {
+                'duplicates_found': -1,
+                'duplicates_deactivated': 0,
+                'dry_run': dry_run,
+                'game_date': game_date,
+                'error': str(e)
+            }
+
     def _cleanup_staging_tables(self, batch_id: str) -> int:
         """
         Delete all staging tables for a batch.

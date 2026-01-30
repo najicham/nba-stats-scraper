@@ -29,6 +29,32 @@ Phase 3 (5 processors)  ──→ phase3_to_phase4 ──→ Phase 4 (5 processo
 ./bin/orchestrators/deploy_phase3_to_phase4.sh
 ```
 
+## Monitoring Functions
+
+| Function | Schedule | Purpose |
+|----------|----------|---------|
+| `daily_health_check` | 8 AM ET daily | Comprehensive pipeline health check |
+| `zero_workflow_monitor` | Hourly | Alerts if zero workflows executed in 2h |
+
+### zero_workflow_monitor
+
+Detects complete orchestration system failures by monitoring for zero workflow
+executions in the last 2 hours. This catches scenarios where:
+- Cloud Scheduler is paused
+- Master controller is down
+- PubSub delivery is broken
+
+**Features:**
+- Runs hourly via Cloud Scheduler
+- Skips alerts during off-hours (2-6 AM ET)
+- Sends critical alerts to #app-error-alerts
+- Includes investigation steps in alert
+
+**Deploy:**
+```bash
+./bin/deploy/deploy_zero_workflow_monitor.sh
+```
+
 ## Key Features
 
 1. **Atomic Transactions** - Firestore transactions prevent race conditions when multiple processors complete simultaneously

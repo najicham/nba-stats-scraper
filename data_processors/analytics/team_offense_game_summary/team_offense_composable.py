@@ -169,6 +169,7 @@ def parse_overtime_periods(record: Dict) -> int:
 # =============================================================================
 # SQL QUERIES
 # =============================================================================
+# sql-template - These queries use BigQueryLoader which handles {placeholder} substitution
 
 PRIMARY_QUERY = """
 WITH team_boxscores_raw AS (
@@ -224,6 +225,7 @@ SELECT * FROM team_boxscores
 ORDER BY game_date DESC, game_id, team_abbr
 """
 
+# sql-template - Uses BigQueryLoader which handles {placeholder} substitution
 FALLBACK_QUERY = """
 -- Reconstruct team stats from player boxscores when team boxscore unavailable
 WITH player_stats AS (

@@ -129,6 +129,9 @@ class WorkflowExecutor:
         """Initialize executor with parameter resolver."""
         self.parameter_resolver = ParameterResolver()
 
+        # Project ID for BigQuery queries
+        self.project_id = os.getenv("GCP_PROJECT_ID") or os.getenv("GCP_PROJECT", "nba-props-platform")
+
         # Circuit breaker manager for handling flaky scrapers
         self.circuit_breaker_enabled = os.getenv("ENABLE_CIRCUIT_BREAKER", "true").lower() == "true"
 

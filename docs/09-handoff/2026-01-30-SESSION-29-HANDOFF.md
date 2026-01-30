@@ -1,160 +1,123 @@
-# Session 29 Handoff - Bug Fixes & Pipeline Recovery
-
-**Date:** 2026-01-30
-**Duration:** ~45 minutes
-**Focus:** Fixed critical scraper orchestration bugs, deployed fixes, cleaned up feature store
-
----
+# Session 29 Handoff - 2026-01-30
 
 ## Session Summary
 
-Fixed two critical bugs preventing scraper orchestration from working:
-1. Missing f-string prefix in `workflow_executor.py` causing "Invalid project ID '{self'" errors
-2. Wrong table name in `change_detector.py` (non-existent `nbac_player_boxscore`)
+Fixed the streaming buffer race condition that prevented duplicate cleanup in `player_prop_predictions`.
 
-Also cleaned up 108 duplicate records in the feature store for Jan 9.
+## Problem Fixed
 
----
+The `_deactivate_older_predictions()` method ran immediately after MERGE consolidation, but those rows were in BigQuery's streaming buffer (locked for 30-90 min). This caused duplicates to accumulate because the UPDATE to deactivate older predictions failed silently.
 
-## Fixes Applied
+## Solution Implemented
 
-| Fix | File | Line | Commit | Status |
-|-----|------|------|--------|--------|
-| Missing f-string prefix | `orchestration/workflow_executor.py` | 252 | `f08a5f0c` | ✅ Deployed |
-| Wrong table name | `shared/change_detection/change_detector.py` | 240, 265 | `f08a5f0c` | ✅ Deployed |
+Added a **delayed cleanup endpoint** (`/cleanup-duplicates`) that can be called 2+ hours after predictions when the streaming buffer has cleared.
 
-### Bug Details
+### Files Changed
 
-**Problem 1: workflow_executor.py (CRITICAL)**
-- Line 252: `query = """` should be `query = f"""`
-- Caused literal `{self.project_id}` to be passed to BigQuery
-- Error: "Invalid project ID '{self'" appeared every hour at :05
-- **Impact**: All scraper orchestration was broken since this bug was introduced
+| File | Change |
+|------|--------|
+| `predictions/shared/batch_staging_writer.py` | Added `cleanup_duplicate_predictions()` method to `BatchConsolidator` |
+| `predictions/coordinator/coordinator.py` | Added `/cleanup-duplicates` endpoint |
+| `docs/08-projects/current/streaming-buffer-fix/README.md` | Full project documentation |
 
-**Problem 2: change_detector.py**
-- Referenced non-existent table `nba_raw.nbac_player_boxscore`
-- Should be `nba_raw.bdl_player_boxscores`
-- **Impact**: Phase 3 smart reprocessing detection would fail
-
----
-
-## Deployment
-
-```
-Service:  nba-scrapers
-Revision: nba-scrapers-00109-ghp
-Commit:   f08a5f0c
-Deployed: 2026-01-30 08:34:24 UTC
-```
-
----
-
-## Data Cleanup
-
-### Feature Store Deduplication (Jan 9, 2026)
-- **Before**: 456 records
-- **After**: 348 records (108 duplicates removed)
-- **Backup**: `nba_predictions.ml_feature_store_v2_backup_20260109`
-
----
-
-## DNP Voiding Investigation
-
-The 80 predictions with `actual_points=0` and `prediction_correct=FALSE` are **correctly graded** - NOT voiding issues.
-
-These are players who:
-- Actually played (minutes_played > 0, ranging 3-26 minutes)
-- But scored 0 points during the game
-
-Examples:
-- Draymond Green: 23 minutes, 0 points vs UTA on Jan 28
-- Jarred Vanderbilt: 26 minutes, 0 points vs SAC on Jan 12
-
-This is a legitimate betting loss, not a DNP void situation. No code fix needed.
-
----
-
-## Current Pipeline Status (As of Session End)
-
-| Component | Status | Notes |
-|-----------|--------|-------|
-| Scrapers | ✅ Fix deployed | Will be tested at next :05 (9:05 AM ET) |
-| Phase 3 | ⚠️ 3/5 | Missing: player_game_summary, upcoming_team_game_context |
-| Phase 4 | ❌ 0 features | Blocked by Phase 3 |
-| Phase 5 | ❌ 0 predictions | Blocked by Phase 4 |
-| Jan 29 Data | ❌ Missing | No box scores collected (scraper was broken) |
-
----
-
-## Tomorrow Morning Verification
-
-### Critical Times (ET)
-| Time | Event | What to Check |
-|------|-------|---------------|
-| 9:05 AM | execute-workflows runs | No more "Invalid project ID" errors |
-| 10:30 AM | same-day-phase3 | Phase 3 completion = 5/5 |
-| 11:00 AM | same-day-phase4 | Feature store has today's data |
-| 11:30 AM | same-day-predictions | Predictions generated |
-
-### Verification Commands
+### New Endpoint
 
 ```bash
-# Check if execute-workflows is working (run after 9:10 AM)
-gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="nba-scrapers" AND textPayload:("execute-workflows")' --limit=20
-
-# Check workflow executions
-bq query --use_legacy_sql=false "
-SELECT workflow_name, status, scrapers_succeeded, scrapers_failed, execution_time
-FROM nba_orchestration.workflow_executions
-WHERE DATE(execution_time) = CURRENT_DATE()
-ORDER BY execution_time DESC LIMIT 10"
-
-# Full validation
-/validate-daily
+POST /cleanup-duplicates
+{
+    "game_date": "2026-01-30",  # Required
+    "dry_run": false            # Optional
+}
 ```
 
----
+## Testing Performed
 
-## Known Issues Still to Address
+1. **Syntax verification**: Both modified files pass Python syntax check
+2. **Manual cleanup**: Successfully cleaned Jan 23 duplicates (2,477 → 0)
+3. **Streaming buffer observation**: Confirmed rows from today's backfill cannot be cleaned (in buffer)
 
-### P1 - Critical
-1. **Jan 29 data missing** - No box scores were collected while scraper was broken
-   - Games likely happened but no data in system
-   - May need manual backfill once scrapers work
+## Current Duplicate Status
 
-### P2 - High
-2. **Monitoring gaps identified**:
-   - No alert for "zero workflows executed" scenario
-   - Slack alerts disabled by default (`SLACK_ALERTS_ENABLED=false`)
-   - No automatic morning health check job (7 AM summary exists but not 8 AM health check)
+| game_date  | total_active | duplicates | Status |
+|------------|--------------|------------|--------|
+| 2026-01-29 | 113 | 0 | Clean |
+| 2026-01-28 | 1097 | 632 | In streaming buffer |
+| 2026-01-27 | 1047 | 236 | In streaming buffer |
+| 2026-01-26 | 1075 | 271 | In streaming buffer |
+| 2026-01-25 | 1682 | 695 | In streaming buffer |
+| 2026-01-24 | 441 | 125 | In streaming buffer |
+| 2026-01-23 | 85 | 0 | **Cleaned this session** |
+| 2026-01-22 | 369 | 1 | In streaming buffer |
+| 2026-01-21 | 216 | 0 | Clean |
+| 2026-01-20 | 809 | 252 | In streaming buffer |
 
----
+Note: Dates with "In streaming buffer" had backfill rows created at 2026-01-30 08:37:XX UTC.
 
-## Files Modified This Session
+## Deployment Required
 
-```
-orchestration/workflow_executor.py      # f-string fix
-shared/change_detection/change_detector.py  # table name fix
-```
-
----
-
-## Git History
-
-```
-f08a5f0c fix: Correct f-string and table name bugs in workflow executor and change detector
+```bash
+# Deploy the coordinator with new endpoint
+./bin/deploy-service.sh prediction-coordinator
 ```
 
----
+## Next Steps for Follow-up Session
 
-## Next Session Priorities
+### 1. Deploy and Test (Priority 1)
 
-1. **Verify fix works** - Check logs after 9:05 AM ET
-2. **Backfill Jan 29 data** - Once scrapers work, manually trigger for Jan 29
-3. **Enable Slack alerts** - Set `SLACK_ALERTS_ENABLED=true` in environment
-4. **Add monitoring** - Alert for "zero workflows executed" scenario
-5. **Continue prediction regeneration** - Another chat handling Jan 9-28
+```bash
+# Deploy
+./bin/deploy-service.sh prediction-coordinator
 
----
+# Test dry run
+curl -X POST "${SERVICE_URL}/cleanup-duplicates" \
+  -H "X-API-Key: ${COORDINATOR_API_KEY}" \
+  -H "Content-Type: application/json" \
+  -d '{"game_date": "2026-01-28", "dry_run": true}'
+```
 
-*Session 29 handoff complete. Critical bug fixes deployed, awaiting verification.*
+### 2. Clean Up Historical Duplicates (Priority 2)
+
+After streaming buffer clears (~2 hours after last backfill):
+
+```bash
+for DATE in 2026-01-20 2026-01-22 2026-01-24 2026-01-25 2026-01-26 2026-01-27 2026-01-28; do
+  curl -X POST "${SERVICE_URL}/cleanup-duplicates" \
+    -H "X-API-Key: ${COORDINATOR_API_KEY}" \
+    -H "Content-Type: application/json" \
+    -d "{\"game_date\": \"${DATE}\", \"dry_run\": false}"
+done
+```
+
+### 3. Set Up Automated Cleanup (Priority 3)
+
+Create Cloud Scheduler job for daily cleanup at 10:00 AM ET (2 hours after 8 AM predictions):
+
+```bash
+gcloud scheduler jobs create http prediction-duplicate-cleanup \
+  --schedule="0 10 * * *" \
+  --time-zone="America/New_York" \
+  --uri="${SERVICE_URL}/cleanup-duplicates" \
+  --http-method=POST \
+  --headers="Content-Type=application/json" \
+  --message-body='{"game_date": "TODAY"}' \
+  --oidc-service-account-email="${SERVICE_ACCOUNT}" \
+  --location=us-west2
+```
+
+**Note:** The endpoint currently requires explicit YYYY-MM-DD format. Add support for "TODAY" keyword if automated scheduling is desired.
+
+## Key Learnings
+
+1. **BigQuery streaming buffer** locks rows for 30-90 minutes after DML operations (MERGE/INSERT)
+2. **Backfills create new rows** that go into the streaming buffer, blocking cleanup even for historical dates
+3. **Grading already handles duplicates** via ROW_NUMBER dedup, so duplicates don't affect graded results
+4. **Delayed cleanup is the correct pattern** for BigQuery DML on recently-modified tables
+
+## Commits
+
+None yet - changes need to be committed and deployed.
+
+## Related Documentation
+
+- Project documentation: `docs/08-projects/current/streaming-buffer-fix/README.md`
+- Previous handoff: `docs/09-handoff/2026-01-30-SESSION-28-CONTINUATION-HANDOFF.md`

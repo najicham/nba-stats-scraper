@@ -1331,6 +1331,104 @@ def check_stalled_batches():
         }), 500
 
 
+@app.route('/cleanup-duplicates', methods=['POST'])
+@require_api_key
+def cleanup_duplicate_predictions():
+    """
+    Clean up duplicate predictions (streaming buffer safe).
+
+    SESSION 28 FIX: This endpoint should be called 2+ hours after predictions
+    to deactivate duplicates that couldn't be cleaned immediately due to
+    BigQuery's streaming buffer (which locks rows for 30-90 minutes).
+
+    The immediate deactivation in consolidate_batch() fails silently because
+    rows inserted by MERGE are in the streaming buffer.
+
+    Recommended usage:
+    - Cloud Scheduler job runs at 10:00 AM (2 hours after 8 AM predictions)
+    - Or call manually after verifying streaming buffer has cleared
+
+    Request body:
+    {
+        "game_date": "2026-01-30",  // Required: YYYY-MM-DD, "TODAY", or "YESTERDAY"
+        "dry_run": false            // Optional: just count without deactivating
+    }
+
+    Returns:
+        200 OK with cleanup results
+    """
+    try:
+        request_data = request.get_json() or {}
+        game_date_str = request_data.get('game_date')
+        dry_run = request_data.get('dry_run', False)
+
+        if not game_date_str:
+            return jsonify({
+                'status': 'error',
+                'message': 'game_date is required'
+            }), 400
+
+        # Support TODAY, YESTERDAY, or explicit YYYY-MM-DD
+        from datetime import timedelta
+        from zoneinfo import ZoneInfo
+
+        if game_date_str.upper() == "TODAY":
+            game_date = datetime.now(ZoneInfo('America/New_York')).date()
+            game_date_str = game_date.isoformat()
+            logger.info(f"TODAY resolved to: {game_date_str}")
+        elif game_date_str.upper() == "YESTERDAY":
+            game_date = datetime.now(ZoneInfo('America/New_York')).date() - timedelta(days=1)
+            game_date_str = game_date.isoformat()
+            logger.info(f"YESTERDAY resolved to: {game_date_str}")
+        else:
+            # Validate date format
+            try:
+                game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
+            except ValueError:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Invalid date format. Use YYYY-MM-DD, TODAY, or YESTERDAY.'
+                }), 400
+
+        logger.info(
+            f"Cleaning up duplicate predictions for {game_date} "
+            f"(dry_run={dry_run})"
+        )
+
+        # Use the batch consolidator's cleanup method
+        consolidator = get_batch_consolidator()
+        result = consolidator.cleanup_duplicate_predictions(
+            game_date=game_date_str,
+            dry_run=dry_run
+        )
+
+        if 'error' in result:
+            logger.error(f"Duplicate cleanup failed: {result['error']}")
+            return jsonify({
+                'status': 'error',
+                'message': result['error'],
+                'details': result
+            }), 500
+
+        logger.info(
+            f"Duplicate cleanup {'(DRY RUN) ' if dry_run else ''}"
+            f"for {game_date}: found={result['duplicates_found']}, "
+            f"deactivated={result['duplicates_deactivated']}"
+        )
+
+        return jsonify({
+            'status': 'success',
+            **result
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error in cleanup_duplicate_predictions: {e}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+
 def publish_with_retry(publisher, topic_path: str, message_bytes: bytes,
                        player_lookup: str, max_retries: int = 3) -> bool:
     """

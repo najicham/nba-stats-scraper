@@ -68,6 +68,14 @@ repos:
         types: [python, sql]
         verbose: true
 
+      - id: validate-sql-fstrings
+        name: Validate SQL f-strings have f prefix
+        description: Detects SQL strings with {variable} patterns missing the f-prefix
+        entry: python .pre-commit-hooks/validate_sql_fstrings.py
+        language: python
+        types: [python]
+        verbose: true
+
   # Standard pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0

@@ -24,12 +24,34 @@ from datetime import datetime, timezone
 import requests
 import logging
 import os
+import sys
 import html
 import boto3
 from botocore.exceptions import ClientError
+from typing import Dict, Any, List, Union
+
+# Add parent directories to path to import orchestration modules
+# Cloud Functions run from the function directory, so we need to add the repo root
+_current_dir = os.path.dirname(os.path.abspath(__file__))
+_repo_root = os.path.abspath(os.path.join(_current_dir, '..', '..', '..'))
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
+
+from orchestration.parameter_resolver import ParameterResolver
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Lazily initialized parameter resolver (avoid initialization overhead on cold starts)
+_parameter_resolver = None
+
+
+def get_parameter_resolver() -> ParameterResolver:
+    """Get or create the parameter resolver singleton."""
+    global _parameter_resolver
+    if _parameter_resolver is None:
+        _parameter_resolver = ParameterResolver()
+    return _parameter_resolver
 
 # Configuration
 SCRAPER_SERVICE_URL = os.getenv(
@@ -219,12 +241,67 @@ def get_unbackfilled_failures(client: bigquery.Client) -> list:
     return [dict(row) for row in result]
 
 
-def test_scraper_health(scraper_name: str, test_date: str) -> bool:
-    """Test if a scraper is healthy by trying to scrape a date."""
+def resolve_scraper_parameters(scraper_name: str, target_date: str) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
+    """
+    Resolve parameters for a scraper using the parameter resolver.
+
+    Different scrapers need different parameters:
+    - nbac_player_boxscore needs 'gamedate' (YYYYMMDD format)
+    - Some scrapers need 'date' (YYYY-MM-DD)
+    - Some need game_id and iterate per game (return List[Dict])
+
+    Args:
+        scraper_name: Name of the scraper
+        target_date: Date to resolve parameters for (YYYY-MM-DD format)
+
+    Returns:
+        Dict of parameters, or List of parameter dicts for multi-entity scrapers
+    """
+    resolver = get_parameter_resolver()
+
+    # Build workflow context for the target date
+    # Use a generic workflow name since we're backfilling, not running a scheduled workflow
+    context = resolver.build_workflow_context(
+        workflow_name="gap_backfill",
+        target_games=None,
+        target_date=target_date
+    )
+
+    # Resolve parameters for this scraper
+    parameters = resolver.resolve_parameters(
+        scraper_name=scraper_name,
+        workflow_context=context
+    )
+
+    return parameters
+
+
+def call_scraper_with_params(
+    scraper_name: str,
+    parameters: Dict[str, Any]
+) -> bool:
+    """
+    Call a scraper with resolved parameters.
+
+    Args:
+        scraper_name: Name of the scraper
+        parameters: Resolved parameters for the scraper
+
+    Returns:
+        True if successful, False otherwise
+    """
     try:
+        # Build the request payload
+        payload = {
+            "scraper": scraper_name,
+            **parameters
+        }
+
+        logger.info(f"Calling scraper {scraper_name} with params: {parameters}")
+
         response = requests.post(
             f"{SCRAPER_SERVICE_URL}/scrape",
-            json={"scraper": scraper_name, "date": test_date},
+            json=payload,
             timeout=REQUEST_TIMEOUT,
             headers={"Content-Type": "application/json"}
         )
@@ -232,7 +309,35 @@ def test_scraper_health(scraper_name: str, test_date: str) -> bool:
         if response.status_code == 200:
             data = response.json()
             return data.get("status") == "success"
+        else:
+            logger.warning(f"Scraper {scraper_name} returned HTTP {response.status_code}: {response.text[:200]}")
+            return False
+
+    except Exception as e:
+        logger.warning(f"Scraper call failed for {scraper_name}: {e}")
         return False
+
+
+def test_scraper_health(scraper_name: str, test_date: str) -> bool:
+    """
+    Test if a scraper is healthy by trying to scrape a date.
+
+    Uses the parameter resolver to get correct parameters for each scraper.
+    """
+    try:
+        parameters = resolve_scraper_parameters(scraper_name, test_date)
+
+        # Handle multi-entity scrapers (return list of param sets)
+        if isinstance(parameters, list):
+            if not parameters:
+                # No entities to scrape (e.g., no games on this date)
+                # Consider this healthy - scraper logic is working
+                logger.info(f"Health check for {scraper_name}: No entities for {test_date}")
+                return True
+            # Use first entity for health check
+            parameters = parameters[0]
+
+        return call_scraper_with_params(scraper_name, parameters)
 
     except Exception as e:
         logger.warning(f"Health check failed for {scraper_name}: {e}")
@@ -240,28 +345,54 @@ def test_scraper_health(scraper_name: str, test_date: str) -> bool:
 
 
 def trigger_backfill(scraper_name: str, game_date: str) -> bool:
-    """Trigger a backfill for a specific scraper and date."""
+    """
+    Trigger a backfill for a specific scraper and date.
+
+    Uses the parameter resolver to get correct parameters for each scraper.
+    Handles multi-entity scrapers by calling once per entity.
+    """
     try:
         logger.info(f"Triggering backfill: {scraper_name} for {game_date}")
 
-        response = requests.post(
-            f"{SCRAPER_SERVICE_URL}/scrape",
-            json={"scraper": scraper_name, "date": game_date},
-            timeout=REQUEST_TIMEOUT,
-            headers={"Content-Type": "application/json"}
-        )
+        parameters = resolve_scraper_parameters(scraper_name, game_date)
 
-        if response.status_code == 200:
-            data = response.json()
-            success = data.get("status") == "success"
+        # Handle multi-entity scrapers (e.g., per-game scrapers)
+        if isinstance(parameters, list):
+            if not parameters:
+                # No entities to scrape (e.g., no games on this date)
+                logger.info(f"No entities for {scraper_name} on {game_date} - nothing to backfill")
+                return True  # Consider this a success - no work to do
+
+            logger.info(f"Multi-entity backfill: {len(parameters)} entities for {scraper_name}")
+
+            # Call scraper for each entity
+            all_success = True
+            for idx, params in enumerate(parameters, 1):
+                logger.info(f"  [{idx}/{len(parameters)}] {scraper_name}: {params}")
+                success = call_scraper_with_params(scraper_name, params)
+                if success:
+                    logger.info(f"    ✅ SUCCESS")
+                else:
+                    logger.warning(f"    ❌ FAILED")
+                    all_success = False
+
+            if all_success:
+                logger.info(f"✅ Backfill succeeded: {scraper_name} / {game_date} ({len(parameters)} entities)")
+            else:
+                logger.warning(f"⚠️ Backfill partially failed: {scraper_name} / {game_date}")
+
+            return all_success
+
+        else:
+            # Single parameter set
+            success = call_scraper_with_params(scraper_name, parameters)
+
             if success:
                 logger.info(f"✅ Backfill succeeded: {scraper_name} / {game_date}")
             else:
-                logger.warning(f"❌ Backfill returned non-success: {data}")
+                logger.warning(f"❌ Backfill failed: {scraper_name} / {game_date}")
+
             return success
-        else:
-            logger.warning(f"❌ Backfill HTTP {response.status_code}: {response.text[:200]}")
-            return False
 
     except Exception as e:
         logger.error(f"Backfill failed for {scraper_name}/{game_date}: {e}", exc_info=True)
@@ -387,8 +518,9 @@ def scraper_gap_backfiller(request):
 @functions_framework.http
 def health(request):
     """Health check endpoint for scraper_gap_backfiller."""
+    import json
     return json.dumps({
         'status': 'healthy',
         'function': 'scraper_gap_backfiller',
-        'version': '1.0'
+        'version': '1.1'  # Updated to reflect parameter resolver integration
     }), 200, {'Content-Type': 'application/json'}

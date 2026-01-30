@@ -454,5 +454,138 @@ class TestEventIDExtraction:
         assert event_ids == []
 
 
+class TestExecutePendingWorkflowsIntegration:
+    """Integration tests for execute_pending_workflows() method.
+
+    These tests verify that SQL queries are properly constructed with
+    interpolated variables, catching f-string bugs that unit tests might miss.
+    """
+
+    @patch('orchestration.workflow_executor.execute_bigquery')
+    @patch('orchestration.workflow_executor.ParameterResolver')
+    def test_execute_pending_workflows_query_has_interpolated_project_id(
+        self, mock_resolver, mock_bq
+    ):
+        """
+        Regression test: ensure f-string variables are interpolated in SQL queries.
+
+        This test would have caught the 7-day f-string bug where {self.project_id}
+        was used in a query but self.project_id was never set, causing AttributeError.
+        """
+        mock_bq.return_value = []  # No pending workflows
+
+        executor = WorkflowExecutor()
+
+        # Call execute_pending_workflows and catch any AttributeError
+        # which would indicate an unset instance variable being used in f-string
+        try:
+            result = executor.execute_pending_workflows()
+        except AttributeError as e:
+            pytest.fail(
+                f"AttributeError during execute_pending_workflows(): {e}\n"
+                f"This indicates an f-string is referencing an undefined attribute "
+                f"(e.g., self.project_id not being set in __init__)"
+            )
+
+        # Verify the query was called
+        assert mock_bq.called, "execute_bigquery should have been called"
+        query = mock_bq.call_args[0][0]  # First positional argument
+
+        # CRITICAL: Verify no uninterpolated f-string variables
+        assert '{self.' not in query, (
+            f"Query contains uninterpolated f-string variable! "
+            f"Found '{{self.' in query: {query[:200]}..."
+        )
+        assert '{self.project_id}' not in query, (
+            "Query contains literal '{self.project_id}' - f-string not working"
+        )
+
+        # Verify actual project ID is present (should be 'nba-props-platform' or similar)
+        # The query should have a fully-qualified table reference
+        assert '.nba_orchestration.workflow_decisions' in query, (
+            "Query should reference workflow_decisions table"
+        )
+        assert '.nba_orchestration.workflow_executions' in query, (
+            "Query should reference workflow_executions table"
+        )
+
+    @patch('orchestration.workflow_executor.execute_bigquery')
+    @patch('orchestration.workflow_executor.ParameterResolver')
+    def test_execute_pending_workflows_query_has_valid_sql_syntax(
+        self, mock_resolver, mock_bq
+    ):
+        """Verify the SQL query has valid structure and syntax."""
+        mock_bq.return_value = []  # No pending workflows
+
+        executor = WorkflowExecutor()
+
+        # Call execute_pending_workflows and catch any AttributeError
+        try:
+            executor.execute_pending_workflows()
+        except AttributeError as e:
+            pytest.fail(
+                f"AttributeError during execute_pending_workflows(): {e}\n"
+                f"This indicates an f-string is referencing an undefined attribute."
+            )
+
+        # Verify the query was called
+        assert mock_bq.called
+        query = mock_bq.call_args[0][0]
+
+        # Verify basic SQL structure
+        query_upper = query.upper()
+        assert 'SELECT' in query_upper, "Query should contain SELECT"
+        assert 'FROM' in query_upper, "Query should contain FROM"
+        assert 'WHERE' in query_upper, "Query should contain WHERE"
+        assert 'LEFT JOIN' in query_upper, "Query should use LEFT JOIN for deduplication"
+
+        # Verify deduplication logic is present
+        assert 'IS NULL' in query_upper, "Query should check for IS NULL (unexecuted)"
+
+    @patch('orchestration.workflow_executor.execute_bigquery')
+    @patch('orchestration.workflow_executor.ParameterResolver')
+    def test_execute_pending_workflows_no_python_string_literals_in_query(
+        self, mock_resolver, mock_bq
+    ):
+        """Verify no Python artifacts leak into the SQL query."""
+        mock_bq.return_value = []
+
+        executor = WorkflowExecutor()
+
+        # Call execute_pending_workflows and catch any AttributeError
+        try:
+            executor.execute_pending_workflows()
+        except AttributeError as e:
+            pytest.fail(
+                f"AttributeError during execute_pending_workflows(): {e}\n"
+                f"This indicates an f-string is referencing an undefined attribute."
+            )
+
+        assert mock_bq.called
+        query = mock_bq.call_args[0][0]
+
+        # Check for common Python f-string mistakes
+        python_artifacts = [
+            '{self.',      # Uninterpolated self reference
+            '{executor.',  # Uninterpolated executor reference
+            'None',        # Python None instead of SQL NULL
+            'True',        # Python True instead of SQL TRUE
+            'False',       # Python False instead of SQL FALSE
+        ]
+
+        for artifact in python_artifacts:
+            # Special case: 'IS NULL' is valid SQL, 'None' is not
+            if artifact == 'None':
+                # Make sure we're not checking "IS NULL" - that's valid
+                # Check for standalone "None" which would be a Python mistake
+                assert ' None ' not in query and ' None,' not in query, (
+                    f"Query contains Python '{artifact}' instead of SQL equivalent"
+                )
+            elif artifact in ['{self.', '{executor.']:
+                assert artifact not in query, (
+                    f"Query contains uninterpolated f-string: '{artifact}'"
+                )
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

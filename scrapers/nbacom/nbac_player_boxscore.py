@@ -357,6 +357,29 @@ class GetNbaComPlayerBoxscore(ScraperBase, ScraperFlaskMixin):
             raise DownloadDataException(f"Validation failed: {e}") from e
 
     # ------------------------------------------------------------------ #
+    # Transform data to populate self.data for execution logging
+    # ------------------------------------------------------------------ #
+    def transform_data(self) -> None:
+        """
+        Transform decoded NBA.com leaguegamelog response into self.data.
+
+        This populates self.data with player record count so that execution
+        logging correctly reports 'success' instead of 'no_data'.
+
+        Note: The actual GCS export uses ExportMode.DECODED (self.decoded_data),
+        but execution logging checks self.data to determine record count.
+        """
+        rows = self.decoded_data.get("resultSets", [{}])[0].get("rowSet", [])
+        self.data = {
+            "player_count": len(rows),
+            "records_found": len(rows),
+            "gamedate": self.opts.get("gamedate"),
+            "season": self.opts.get("season"),
+            "season_type": self.opts.get("season_type"),
+        }
+        logger.debug(f"transform_data: populated self.data with {len(rows)} player records")
+
+    # ------------------------------------------------------------------ #
     # should_save_data mirrors original logic
     # ------------------------------------------------------------------ #
     def should_save_data(self) -> bool:

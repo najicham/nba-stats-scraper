@@ -1,0 +1,10 @@
+# Zero Workflow Monitor Cloud Function Requirements
+
+# Cloud Functions framework
+functions-framework==3.*
+
+# Google Cloud libraries
+google-cloud-bigquery>=3.0.0
+
+# HTTP requests for Slack webhooks
+requests==2.*

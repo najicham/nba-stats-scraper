@@ -184,6 +184,31 @@ class ExecutionLoggingMixin:
             record_count = 0
             is_empty = False
 
+        # FALLBACK: Check decoded_data when self.data is empty
+        # This handles scrapers that use ExportMode.DECODED without implementing transform_data()
+        # (e.g., nbac_player_boxscore exports self.decoded_data directly to GCS)
+        if record_count == 0 and hasattr(self, 'decoded_data') and self.decoded_data:
+            if isinstance(self.decoded_data, dict):
+                # NBA.com API pattern: resultSets[0].rowSet contains records
+                if 'resultSets' in self.decoded_data:
+                    result_sets = self.decoded_data.get('resultSets', [])
+                    if result_sets and isinstance(result_sets[0], dict):
+                        rows = result_sets[0].get('rowSet', [])
+                        record_count = len(rows)
+                        logger.debug(f"Counted {record_count} records from decoded_data.resultSets[0].rowSet")
+                # Other common patterns
+                elif 'data' in self.decoded_data:
+                    data_val = self.decoded_data.get('data')
+                    if isinstance(data_val, list):
+                        record_count = len(data_val)
+                        logger.debug(f"Counted {record_count} records from decoded_data.data")
+                elif 'records' in self.decoded_data:
+                    record_count = len(self.decoded_data.get('records', []))
+                    logger.debug(f"Counted {record_count} records from decoded_data.records")
+            elif isinstance(self.decoded_data, list):
+                record_count = len(self.decoded_data)
+                logger.debug(f"Counted {record_count} records from decoded_data (list)")
+
         # R-009 Fix: Check for partial data status (e.g., roster-only gamebook data)
         is_partial = False
         if isinstance(self.data, dict):
