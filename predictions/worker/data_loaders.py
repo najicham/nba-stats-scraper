@@ -1228,29 +1228,36 @@ def validate_features(features: Dict, min_quality_score: float = None) -> tuple:
 
 def normalize_confidence(confidence: float, system_id: str) -> float:
     """
-    Normalize confidence to 0-1 scale for BigQuery
+    Normalize confidence to percentage (0-100) scale for BigQuery
+
+    STANDARDIZATION (Session 25): All systems now store confidence as percentages (0-100)
+    for human readability. Systems that output 0-1 are multiplied by 100.
 
     Different systems use different confidence scales:
-    - Moving Average, Zone Matchup, Ensemble: 0.0-1.0 scale (native)
-    - Similarity, XGBoost: 0-100 scale (needs division)
+    - Moving Average, Zone Matchup, Ensemble: 0.0-1.0 scale (multiply by 100)
+    - Similarity, XGBoost, CatBoost V8: 0-100 scale (native, keep as-is)
 
     Args:
         confidence: Raw confidence from system
         system_id: System identifier
 
     Returns:
-        float: Confidence on 0-1 scale
+        float: Confidence on 0-100 percentage scale
     """
-    if system_id in ['moving_average', 'zone_matchup_v1', 'ensemble_v1']:
-        # Already 0-1 scale, keep as-is
+    if system_id in ['similarity_balanced_v1', 'xgboost_v1', 'catboost_v8']:
+        # Already 0-100 scale, keep as-is
         return confidence
-    elif system_id in ['similarity_balanced_v1', 'xgboost_v1', 'catboost_v8']:
-        # Convert 0-100 to 0-1
-        return confidence / 100.0
+    elif system_id in ['moving_average', 'zone_matchup_v1', 'ensemble_v1', 'ensemble_v1_1']:
+        # Convert 0-1 to 0-100
+        return confidence * 100.0
     else:
-        # Default: assume 0-1 scale
-        logger.warning(f"Unknown system_id {system_id}, assuming 0-1 scale")
-        return confidence
+        # Default: check if value looks like decimal or percent
+        if 0 <= confidence <= 1:
+            logger.warning(f"Unknown system_id {system_id} with value {confidence}, converting to percentage")
+            return confidence * 100.0
+        else:
+            logger.warning(f"Unknown system_id {system_id} with value {confidence}, assuming already percentage")
+            return confidence
 
 
 def validate_date(date_str: str) -> bool:
