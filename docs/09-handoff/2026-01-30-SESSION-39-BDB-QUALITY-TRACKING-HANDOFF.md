@@ -247,9 +247,23 @@ Found 10 dates with <50% paint_attempts coverage despite BDB data being availabl
 
 ## Known Issues
 
-1. **10 dates need backfill** - Phase 3 re-processing required (run `python bin/backfill/backfill_shot_zones.py`)
-2. **Quality tracker not integrated** - Prediction worker needs to call quality_tracker
-3. **NBAC play-by-play table is EMPTY** - Fallback path has nothing to fall back to
+1. **10 dates need backfill** - Phase 3 re-processing required BUT blocked by stale dependencies
+2. **Phase 3 is failing** - "Stale dependencies: team_offense_game_summary 190h old (max 72h)"
+3. **Pub/Sub trigger not connected** - The `nba-phase3-trigger` topic has no subscriptions
+4. **Quality tracker not integrated** - Prediction worker needs to call quality_tracker
+5. **NBAC play-by-play table is EMPTY** - Fallback path has nothing to fall back to
+
+### BLOCKING ISSUE: Phase 3 Cannot Run
+
+Phase 3 processor is failing for ALL dates because:
+```
+ValueError: Stale dependencies (FAIL threshold):
+  ['nba_analytics.team_offense_game_summary: 190.9h old (max: 72h)']
+```
+
+This must be fixed before backfill can proceed. Either:
+1. Run team_offense_game_summary processor to update it
+2. Or temporarily bypass the stale check for backfill
 
 ---
 
