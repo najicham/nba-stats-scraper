@@ -162,9 +162,15 @@ ORDER BY season_nba_format DESC, data_source;
 -- due to WRITE_APPEND behavior during schedule updates.
 --
 -- This view returns only the most recent status per game by:
--- 1. Partitioning by game_id
+-- 1. Partitioning by (game_id, game_date) - handles game_id reuse across dates
 -- 2. Ordering by game_status DESC (Final=3 > InProgress=2 > Scheduled=1)
 -- 3. Breaking ties by processed_at DESC (most recent write wins)
+--
+-- BUG FIX (2026-01-29): Changed partition from game_id to (game_id, game_date)
+-- because NBA.com reuses game_ids across different game dates. For example,
+-- game_id 0022500529 appeared for both 2026-01-08 (Final) and 2026-01-29 (Scheduled).
+-- Without game_date in the partition, the view would only return one row per game_id,
+-- causing scheduled games to be hidden if an older game with same id was Final.
 --
 -- NOTE: Date range limited to 90 days past / 30 days future to allow
 -- partition elimination on the underlying table.
@@ -173,7 +179,7 @@ SELECT * EXCEPT(rn)
 FROM (
   SELECT *,
     ROW_NUMBER() OVER (
-      PARTITION BY game_id
+      PARTITION BY game_id, game_date
       ORDER BY game_status DESC, processed_at DESC
     ) as rn
   FROM `nba_raw.nbac_schedule`
