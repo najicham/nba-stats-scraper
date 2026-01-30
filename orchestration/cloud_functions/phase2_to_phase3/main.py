@@ -63,15 +63,15 @@ except ImportError:
     PydanticValidationError = Exception  # Fallback
 
 # Configure logging - use structured logging for Cloud Run
+logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(name)s:%(message)s')
+logger = logging.getLogger(__name__)
+
 import google.cloud.logging
 try:
     client = google.cloud.logging.Client()
     client.setup_logging()
 except Exception as e:
-    print(f"Could not setup Cloud Logging client: {e}")
-
-logging.basicConfig(level=logging.INFO, format='%(levelname)s:%(name)s:%(message)s')
-logger = logging.getLogger(__name__)
+    logger.warning(f"Could not setup Cloud Logging client: {e}")
 
 # Log module load for visibility
 logger.info("Phase2-to-Phase3 Orchestrator module loaded")
@@ -811,10 +811,8 @@ def orchestrate_phase2_to_phase3(cloud_event):
     # Capture start time for execution logging
     execution_start_time = datetime.now(timezone.utc)
 
-    # Debug: print immediately to verify function is invoked
-    print(f"DEBUG: orchestrate_phase2_to_phase3 invoked with cloud_event type: {type(cloud_event)}")
-    import sys
-    sys.stdout.flush()
+    # Debug: log immediately to verify function is invoked
+    logger.debug(f"orchestrate_phase2_to_phase3 invoked with cloud_event type: {type(cloud_event)}")
 
     try:
         # Parse Pub/Sub message
