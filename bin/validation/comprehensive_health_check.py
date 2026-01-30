@@ -110,6 +110,9 @@ class ComprehensiveHealthChecker:
         # 9. has_prop_line Consistency
         self._check_prop_line_consistency(check_date)
 
+        # 10. CatBoost Model Status (Session 40)
+        self._check_model_status(check_date)
+
         return self.checks
 
     def _query(self, sql: str) -> List[Dict]:
@@ -732,6 +735,111 @@ class ComprehensiveHealthChecker:
                 "inconsistent_count": inconsistent,
                 "consistent_count": consistent,
                 "total_actual_prop": total
+            }
+        )
+
+    def _check_model_status(self, check_date: date):
+        """
+        Check CatBoost model status - detect fallback mode (Session 40).
+
+        Fallback mode indicators:
+        1. All catboost_v8 predictions have confidence_score = 50.0 (weighted average)
+        2. model_type = 'fallback' in predictions
+        3. prediction_error_code = 'MODEL_NOT_LOADED'
+
+        This is a CRITICAL issue - fallback mode should never happen in production.
+        """
+        query = f"""
+        SELECT
+          COUNT(*) as total_predictions,
+          COUNTIF(confidence_score = 50.0) as fallback_confidence_count,
+          COUNTIF(model_type = 'fallback') as explicit_fallback_count,
+          COUNTIF(prediction_error_code IS NOT NULL) as error_code_count,
+          COUNTIF(prediction_error_code = 'MODEL_NOT_LOADED') as model_not_loaded_count,
+          COUNTIF(prediction_error_code = 'FEATURE_PREPARATION_FAILED') as feature_failed_count,
+          COUNTIF(prediction_error_code = 'MODEL_PREDICTION_FAILED') as prediction_failed_count,
+          AVG(confidence_score) as avg_confidence,
+          MIN(confidence_score) as min_confidence,
+          MAX(confidence_score) as max_confidence
+        FROM `{self.project_id}.nba_predictions.player_prop_predictions`
+        WHERE game_date = '{check_date}'
+          AND system_id = 'catboost_v8'
+          AND is_active = TRUE
+        """
+
+        results = self._query(query)
+        if not results:
+            self._add_check(
+                name="model_status",
+                category="model",
+                severity=Severity.WARNING,
+                message="No CatBoost V8 predictions found for date",
+                details={"game_date": str(check_date)}
+            )
+            return
+
+        row = results[0]
+        total = row.get('total_predictions') or 0
+        fallback_conf = row.get('fallback_confidence_count') or 0
+        explicit_fallback = row.get('explicit_fallback_count') or 0
+        model_not_loaded = row.get('model_not_loaded_count') or 0
+        feature_failed = row.get('feature_failed_count') or 0
+        prediction_failed = row.get('prediction_failed_count') or 0
+        avg_conf = row.get('avg_confidence') or 0
+        min_conf = row.get('min_confidence') or 0
+        max_conf = row.get('max_confidence') or 0
+
+        if total == 0:
+            severity = Severity.WARNING
+            message = "No CatBoost V8 predictions found"
+        elif model_not_loaded > 0:
+            # CRITICAL: Model not loaded should NEVER happen after Session 40 fix
+            severity = Severity.CRITICAL
+            message = (
+                f"MODEL NOT LOADED: {model_not_loaded}/{total} predictions have MODEL_NOT_LOADED error. "
+                f"This should never happen - check CATBOOST_V8_MODEL_PATH and redeploy worker."
+            )
+        elif fallback_conf == total and total > 10:
+            # All predictions have exactly 50% confidence - strong fallback indicator
+            severity = Severity.CRITICAL
+            message = (
+                f"FALLBACK MODE DETECTED: All {total} predictions have 50% confidence. "
+                f"Model is likely not loaded. Check worker logs for ModelLoadError."
+            )
+        elif explicit_fallback > total * 0.1:
+            # More than 10% explicit fallbacks
+            pct = round(explicit_fallback * 100.0 / total, 1)
+            severity = Severity.ERROR
+            message = f"High fallback rate: {explicit_fallback}/{total} ({pct}%) predictions in fallback mode"
+        elif feature_failed + prediction_failed > total * 0.05:
+            # More than 5% feature/prediction failures
+            error_count = feature_failed + prediction_failed
+            pct = round(error_count * 100.0 / total, 1)
+            severity = Severity.WARNING
+            message = f"Prediction errors: {error_count}/{total} ({pct}%) had feature or prediction failures"
+        elif avg_conf < 55:
+            # Low average confidence might indicate issues
+            severity = Severity.WARNING
+            message = f"Low average confidence: {avg_conf:.1f}% (expected 60-80%)"
+        else:
+            severity = Severity.OK
+            message = f"Model healthy: {total} predictions, avg confidence {avg_conf:.1f}%"
+
+        self._add_check(
+            name="model_status",
+            category="model",
+            severity=severity,
+            message=message,
+            details={
+                "total_predictions": total,
+                "fallback_confidence_count": fallback_conf,
+                "explicit_fallback_count": explicit_fallback,
+                "model_not_loaded_count": model_not_loaded,
+                "feature_failed_count": feature_failed,
+                "prediction_failed_count": prediction_failed,
+                "avg_confidence": round(avg_conf, 2) if avg_conf else None,
+                "min_confidence": round(min_conf, 2) if min_conf else None,
+                "max_confidence": round(max_conf, 2) if max_conf else None,
             }
         )
 

@@ -90,6 +90,9 @@ class PipelineDoctor:
         # Issue 5: Boxscore gaps (bonus)
         self._diagnose_boxscore_gaps(start_date, end_date)
 
+        # Issue 6: Model fallback mode (Session 40)
+        self._diagnose_model_fallback(start_date, end_date)
+
         return self.issues
 
     def _query(self, query: str) -> List[Dict]:
@@ -334,7 +337,7 @@ class PipelineDoctor:
         NOTE: Schedule uses NBA game_id format (0022500XXX), while BDL boxscores
         use YYYYMMDD_AWAY_HOME format. We join on date+teams to compare correctly.
         """
-        print("\n[5/5] Checking for boxscore gaps...")
+        print("\n[5/6] Checking for boxscore gaps...")
 
         query = f"""
         WITH schedule AS (
@@ -400,6 +403,113 @@ class PipelineDoctor:
         ))
 
         print(f"   🚨 CRITICAL: {total_missing} games missing boxscores")
+
+    def _diagnose_model_fallback(self, start_date: date, end_date: date):
+        """
+        Detect CatBoost model fallback mode (Session 40).
+
+        Fallback mode indicators:
+        1. All predictions have confidence_score = 50.0
+        2. model_type = 'fallback'
+        3. prediction_error_code = 'MODEL_NOT_LOADED'
+
+        This is a CRITICAL issue that needs immediate attention.
+        """
+        print("\n[6/6] Checking for model fallback mode...")
+
+        query = f"""
+        SELECT
+            game_date,
+            COUNT(*) as total_predictions,
+            COUNTIF(confidence_score = 50.0) as fallback_conf_count,
+            COUNTIF(model_type = 'fallback') as fallback_type_count,
+            COUNTIF(prediction_error_code = 'MODEL_NOT_LOADED') as model_not_loaded_count,
+            AVG(confidence_score) as avg_confidence,
+            -- Check if ALL predictions are fallback (100% at 50% confidence)
+            CASE WHEN COUNT(*) > 0 AND COUNTIF(confidence_score = 50.0) = COUNT(*) THEN TRUE ELSE FALSE END as all_fallback
+        FROM `{self.project_id}.nba_predictions.player_prop_predictions`
+        WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+          AND system_id = 'catboost_v8'
+          AND is_active = TRUE
+        GROUP BY game_date
+        HAVING
+            -- Flag if all predictions have 50% confidence (fallback mode)
+            COUNTIF(confidence_score = 50.0) = COUNT(*)
+            -- Or if any have MODEL_NOT_LOADED error
+            OR COUNTIF(prediction_error_code = 'MODEL_NOT_LOADED') > 0
+            -- Or if more than 10% are explicit fallback
+            OR COUNTIF(model_type = 'fallback') > COUNT(*) * 0.1
+        ORDER BY game_date
+        """
+
+        results = self._query(query)
+
+        if not results:
+            print("   ✅ Model status healthy - no fallback mode detected")
+            return
+
+        # Analyze severity
+        all_fallback_dates = [str(r['game_date']) for r in results if r.get('all_fallback')]
+        model_not_loaded_dates = [str(r['game_date']) for r in results if r.get('model_not_loaded_count', 0) > 0]
+
+        if model_not_loaded_dates:
+            severity = "critical"
+            description = (
+                f"MODEL_NOT_LOADED error detected on {len(model_not_loaded_dates)} date(s). "
+                f"CatBoost model failed to load - check CATBOOST_V8_MODEL_PATH and redeploy worker."
+            )
+        elif all_fallback_dates:
+            severity = "critical"
+            description = (
+                f"FULL FALLBACK MODE on {len(all_fallback_dates)} date(s). "
+                f"All predictions have 50% confidence - model likely not loaded."
+            )
+        else:
+            severity = "error"
+            total_fallback = sum(r.get('fallback_type_count', 0) for r in results)
+            description = f"Partial fallback mode: {total_fallback} predictions in fallback across {len(results)} dates"
+
+        affected_dates = list(set(all_fallback_dates + model_not_loaded_dates + [str(r['game_date']) for r in results]))
+        affected_dates.sort()
+
+        fix_command = (
+            "# Check worker health and model status:\n"
+            "gcloud run services describe prediction-worker --region=us-west2 --format='value(status.conditions[0].status)'\n"
+            "\n"
+            "# Check if model path is set:\n"
+            "gcloud run services describe prediction-worker --region=us-west2 --format='yaml' | grep CATBOOST_V8_MODEL_PATH\n"
+            "\n"
+            "# Check recent worker logs for ModelLoadError:\n"
+            "gcloud logging read 'resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"prediction-worker\" AND \"ModelLoadError\"' --limit=10\n"
+            "\n"
+            "# Redeploy worker to pick up model:\n"
+            "./bin/deploy-service.sh prediction-worker"
+        )
+
+        self.issues.append(PipelineIssue(
+            issue_type="model_fallback",
+            severity=severity,
+            description=description,
+            affected_dates=affected_dates,
+            affected_count=len(affected_dates),
+            fix_command=fix_command,
+            details={
+                'all_fallback_dates': all_fallback_dates,
+                'model_not_loaded_dates': model_not_loaded_dates,
+                'by_date': {str(r['game_date']): {
+                    'total': r['total_predictions'],
+                    'fallback_conf': r['fallback_conf_count'],
+                    'fallback_type': r['fallback_type_count'],
+                    'model_not_loaded': r['model_not_loaded_count'],
+                    'avg_confidence': round(float(r['avg_confidence']), 2) if r['avg_confidence'] else None
+                } for r in results}
+            }
+        ))
+
+        if severity == "critical":
+            print(f"   🚨 CRITICAL: Model fallback mode detected on {len(affected_dates)} date(s)")
+        else:
+            print(f"   ⚠️  WARNING: Partial fallback mode on {len(affected_dates)} date(s)")
 
     def _generate_batch_fix_script(self, fix_type: str, dates: List[str]) -> str:
         """Generate a batch fix script for multiple dates."""
