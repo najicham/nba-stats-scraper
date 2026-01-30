@@ -22,10 +22,14 @@ Key Features:
 - DNP/Injury voiding (v4): Marks DNP players as voided like sportsbooks void bets
 """
 
+import json
 import logging
+import math
+import re
 from datetime import datetime, date, timezone
 from typing import Dict, List, Optional
 
+import pandas as pd
 from google.cloud import bigquery
 from google.api_core import exceptions as gcp_exceptions
 from google.cloud.exceptions import GoogleCloudError
@@ -55,26 +59,10 @@ class PredictionAccuracyProcessor:
     """
 
     def __init__(self, project_id: str = PROJECT_ID, dataset_prefix: str = ''):
-        import math
         self._math = math
         self.project_id = project_id
         self.dataset_prefix = dataset_prefix
         self.bq_client = get_bigquery_client(project_id=project_id)
-
-        # Construct table names with optional prefix
-        predictions_dataset = f"{dataset_prefix}_nba_predictions" if dataset_prefix else "nba_predictions"
-        analytics_dataset = f"{dataset_prefix}_nba_analytics" if dataset_prefix else "nba_analytics"
-        raw_dataset = f"{dataset_prefix}_nba_raw" if dataset_prefix else "nba_raw"
-
-        self.predictions_table = f'{project_id}.{predictions_dataset}.player_prop_predictions'
-        self.actuals_table = f'{project_id}.{analytics_dataset}.player_game_summary'
-        self.accuracy_table = f'{project_id}.{predictions_dataset}.prediction_accuracy'
-        self.injury_table = f'{project_id}.{raw_dataset}.nbac_injury_report'
-
-        # Cache for injury status lookups (populated per-date)
-        self._injury_cache: Dict[str, Dict] = {}
-
-        logger.info(f"Initialized PredictionAccuracyProcessor (dataset_prefix: {dataset_prefix or 'production'})")
 
         # Construct table names with optional prefix
         predictions_dataset = f"{dataset_prefix}_nba_predictions" if dataset_prefix else "nba_predictions"
@@ -124,7 +112,6 @@ class PredictionAccuracyProcessor:
             s = str(value)
             # Remove ALL control characters including tab/newline
             # BigQuery load_table_from_json can't handle these in strings
-            import re
             s = re.sub(r'[\x00-\x1f\x7f-\x9f]', '', s)
             # Also remove any backslash-quote sequences that might cause issues
             s = s.replace('\\"', '"').replace('\\', '')
@@ -426,7 +413,6 @@ class PredictionAccuracyProcessor:
             result = self.bq_client.query(query).to_dataframe()
             # Return dict of dicts with all player context
             # Note: Use pd.notna() to handle both None and pandas NAType
-            import pandas as pd
             return {
                 row['player_lookup']: {
                     'actual_points': int(row['actual_points']) if pd.notna(row['actual_points']) else None,
@@ -659,7 +645,6 @@ class PredictionAccuracyProcessor:
 
         Handles NaN, Inf, and other non-JSON-serializable values.
         """
-        import json
         sanitized = {}
         for key, value in record.items():
             if value is None:
@@ -787,7 +772,6 @@ class PredictionAccuracyProcessor:
         game_date_str = game_date.isoformat()
 
         # Sanitize all records to ensure JSON compatibility
-        import json
         sanitized_results = []
         for i, record in enumerate(graded_results):
             try:
@@ -902,7 +886,6 @@ class PredictionAccuracyProcessor:
             return 0
 
         # Sanitize all records to ensure JSON compatibility
-        import json
         sanitized_results = []
         for i, record in enumerate(graded_results):
             try:

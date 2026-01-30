@@ -131,7 +131,7 @@ FILES_TO_CONSOLIDATE=(
     "config/nba_season_dates.py"
     "config/nba_teams.py"
     "config/espn_nba_team_abbr.py"
-    "config/espon_nba_team_ids.py"
+    "config/espn_nba_team_ids.py"
     "config/__init__.py"
     "config/data_sources"
     "config/source_coverage"
