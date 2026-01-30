@@ -14,210 +14,65 @@
     "actual_start": "2022-11-01",
     "actual_end": "2023-06-12",
     "samples": 25574,
-    "vegas_coverage": 1.0
+    "vegas_coverage": 0.5323
   },
   "results": {
     "mae": 3.8927,
     "betting": {
-      "hit_rate": 0.72311605347214,
-      "hit_rate_pct": 72.31,
-      "hits": 12225,
-      "misses": 4681,
-      "pushes": 108,
-      "bets_placed": 17014,
-      "bets_graded": 16906,
-      "roi": 0.37807901514260983,
-      "roi_pct": 37.81,
-      "profit": 6432.636363636364,
+      "hit_rate": 0.7206414899120538,
+      "hit_rate_pct": 72.06,
+      "hits": 6965,
+      "misses": 2700,
+      "pushes": 8,
+      "bets_placed": 9673,
+      "bets_graded": 9665,
+      "roi": 0.3754593385524844,
+      "roi_pct": 37.55,
+      "profit": 3631.818181818182,
       "breakeven_hit_rate": 52.38,
       "min_edge_threshold": 1.0
     },
     "by_confidence": {
       "high_5+": {
-        "count": 1974,
-        "graded": 1970,
-        "hits": 1662,
-        "hit_rate": 84.37
+        "count": 1358,
+        "graded": 1358,
+        "hits": 1137,
+        "hit_rate": 83.73
       },
       "medium_3-5": {
-        "count": 4001,
-        "graded": 3993,
-        "hits": 3138,
-        "hit_rate": 78.59
+        "count": 2564,
+        "graded": 2563,
+        "hits": 1972,
+        "hit_rate": 76.94
       },
       "low_1-3": {
-        "count": 11039,
-        "graded": 10943,
-        "hits": 7425,
-        "hit_rate": 67.85
+        "count": 5751,
+        "graded": 5744,
+        "hits": 3856,
+        "hit_rate": 67.13
       },
       "pass_<1": {
-        "count": 8560,
-        "graded": 8508,
-        "hits": 4725,
-        "hit_rate": 55.54
+        "count": 3941,
+        "graded": 3933,
+        "hits": 2163,
+        "hit_rate": 55.0
       }
     },
     "by_direction": {
       "OVER": {
-        "count": 9339,
-        "graded": 9250,
-        "hits": 6209,
-        "hit_rate": 67.12
+        "count": 5606,
+        "graded": 5601,
+        "hits": 3817,
+        "hit_rate": 68.15
       },
       "UNDER": {
-        "count": 7675,
-        "graded": 7656,
-        "hits": 6016,
-        "hit_rate": 78.58
+        "count": 4067,
+        "graded": 4064,
+        "hits": 3148,
+        "hit_rate": 77.46
       }
     }
   },
-  "monthly": {
-    "2022-11": {
-      "samples": 4699,
-      "mae": 3.6583,
-      "betting": {
-        "hit_rate": 0.7517053206002728,
-        "hit_rate_pct": 75.17,
-        "hits": 2204,
-        "misses": 728,
-        "pushes": 37,
-        "bets_placed": 2969,
-        "bets_graded": 2932,
-        "roi": 0.4296518570684956,
-        "roi_pct": 42.97,
-        "profit": 1275.6363636363635,
-        "breakeven_hit_rate": 52.38,
-        "min_edge_threshold": 1.0
-      }
-    },
-    "2022-12": {
-      "samples": 4662,
-      "mae": 3.9177,
-      "betting": {
-        "hit_rate": 0.6925142665323935,
-        "hit_rate_pct": 69.25,
-        "hits": 2063,
-        "misses": 916,
-        "pushes": 13,
-        "bets_placed": 2992,
-        "bets_graded": 2979,
-        "roi": 0.3206733106465727,
-        "roi_pct": 32.07,
-        "profit": 959.4545454545455,
-        "breakeven_hit_rate": 52.38,
-        "min_edge_threshold": 1.0
-      }
-    },
-    "2023-01": {
-      "samples": 4606,
-      "mae": 3.8315,
-      "betting": {
-        "hit_rate": 0.6959766385463985,
-        "hit_rate_pct": 69.6,
-        "hits": 2145,
-        "misses": 937,
-        "pushes": 18,
-        "bets_placed": 3100,
-        "bets_graded": 3082,
-        "roi": 0.3267741935483871,
-        "roi_pct": 32.68,
-        "profit": 1013.0,
-        "breakeven_hit_rate": 52.38,
-        "min_edge_threshold": 1.0
-      }
-    },
-    "2023-02": {
-      "samples": 3445,
-      "mae": 4.0541,
-      "betting": {
-        "hit_rate": 0.7040905134899913,
-        "hit_rate_pct": 70.41,
-        "hits": 1618,
-        "misses": 680,
-        "pushes": 14,
-        "bets_placed": 2312,
-        "bets_graded": 2298,
-        "roi": 0.3420887071406102,
-        "roi_pct": 34.21,
-        "profit": 790.9090909090908,
-        "breakeven_hit_rate": 52.38,
-        "min_edge_threshold": 1.0
-      }
-    },
-    "2023-03": {
-      "samples": 4837,
-      "mae": 3.9063,
-      "betting": {
-        "hit_rate": 0.736633058356248,
-        "hit_rate_pct": 73.66,
-        "hits": 2411,
-        "misses": 862,
-        "pushes": 17,
-        "bets_placed": 3290,
-        "bets_graded": 3273,
-        "roi": 0.40420005526388497,
-        "roi_pct": 40.42,
-        "profit": 1329.8181818181815,
-        "breakeven_hit_rate": 52.38,
-        "min_edge_threshold": 1.0
-      }
-    },
-    "2023-04": {
-      "samples": 2527,
-      "mae": 4.1537,
-      "betting": {
-        "hit_rate": 0.7641402714932126,
-        "hit_rate_pct": 76.41,
-        "hits": 1351,
-        "misses": 417,
-        "pushes": 6,
-        "bets_placed": 1774,
-        "bets_graded": 1768,
-        "roi": 0.45726145331556833,
-        "roi_pct": 45.73,
-        "profit": 811.1818181818182,
-        "breakeven_hit_rate": 52.38,
-        "min_edge_threshold": 1.0
-      }
-    },
-    "2023-05": {
-      "samples": 698,
-      "mae": 3.8415,
-      "betting": {
-        "hit_rate": 0.756385068762279,
-        "hit_rate_pct": 75.64,
-        "hits": 385,
-        "misses": 124,
-        "pushes": 3,
-        "bets_placed": 512,
-        "bets_graded": 509,
-        "roi": 0.44140625,
-        "roi_pct": 44.14,
-        "profit": 226.0,
-        "breakeven_hit_rate": 52.38,
-        "min_edge_threshold": 1.0
-      }
-    },
-    "2023-06": {
-      "samples": 100,
-      "mae": 4.1047,
-      "betting": {
-        "hit_rate": 0.7384615384615385,
-        "hit_rate_pct": 73.85,
-        "hits": 48,
-        "misses": 17,
-        "pushes": 0,
-        "bets_placed": 65,
-        "bets_graded": 65,
-        "roi": 0.40979020979020975,
-        "roi_pct": 40.98,
-        "profit": 26.636363636363633,
-        "breakeven_hit_rate": 52.38,
-        "min_edge_threshold": 1.0
-      }
-    }
-  },
-  "evaluated_at": "2026-01-29T21:09:57.849161"
+  "monthly": null,
+  "evaluated_at": "2026-01-29T21:28:11.144518"
 }

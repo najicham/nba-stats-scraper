@@ -66,6 +66,10 @@ def get_evaluation_query(eval_start: str, eval_end: str) -> str:
 
     The feature store (ml_feature_store_v2) contains all 33 features including
     vegas_points_line which we need for betting metrics evaluation.
+
+    IMPORTANT: We also extract has_vegas_line (index 28) to filter for real lines.
+    The feature store has imputed values when there's no real line, so we can't
+    rely on NULL checks - we must use the has_vegas_line flag.
     """
     return f"""
 SELECT
@@ -75,6 +79,8 @@ SELECT
   mf.feature_count,
   -- Extract vegas_points_line from features array (index 25)
   mf.features[OFFSET(25)] as vegas_points_line,
+  -- Extract has_vegas_line flag (index 28) - 1.0 = real line, 0.0 = imputed
+  mf.features[OFFSET(28)] as has_vegas_line,
   pgs.points as actual_points
 FROM `nba-props-platform.nba_predictions.ml_feature_store_v2` mf
 INNER JOIN `nba-props-platform.nba_analytics.player_game_summary` pgs
@@ -387,9 +393,14 @@ def main():
     print(f"\nMAE: {mae:.4f}")
 
     # Get Vegas lines for betting metrics
-    lines = df['vegas_points_line'].values
-    vegas_coverage = (~np.isnan(lines)).mean()
-    print(f"Vegas line coverage: {vegas_coverage:.1%}")
+    # IMPORTANT: Only use REAL Vegas lines (has_vegas_line = 1.0)
+    # The feature store has imputed values when there's no real line,
+    # so we can't rely on NaN checks - we must mask based on the flag
+    lines = df['vegas_points_line'].values.copy()
+    has_real_line = df['has_vegas_line'].values == 1.0
+    lines[~has_real_line] = np.nan  # Mask imputed lines as NaN
+    vegas_coverage = has_real_line.mean()
+    print(f"Vegas line coverage: {vegas_coverage:.1%} ({has_real_line.sum():,} real lines)")
 
     # Calculate betting metrics
     print("\n--- Betting Metrics ---")
@@ -428,7 +439,9 @@ def main():
         for month, group in df.groupby('month'):
             m_preds = group['prediction'].values
             m_acts = group['actual_points'].values
-            m_lines = group['vegas_points_line'].values
+            m_lines = group['vegas_points_line'].values.copy()
+            m_has_real = group['has_vegas_line'].values == 1.0
+            m_lines[~m_has_real] = np.nan  # Mask imputed lines
             m_mae = mean_absolute_error(m_acts, m_preds)
             m_betting = calculate_betting_metrics(m_preds, m_acts, m_lines, args.min_edge)
 

@@ -1,5 +1,5 @@
 {
-  "experiment_id": "A3",
+  "experiment_id": "A3_fixed",
   "model_path": "ml/experiments/results/catboost_v9_exp_A3_20260129_211030.cbm",
   "train_period": {
     "start": "2021-11-01",
@@ -74,5 +74,5 @@
     }
   },
   "monthly": null,
-  "evaluated_at": "2026-01-29T21:28:23.101129"
+  "evaluated_at": "2026-01-29T21:27:51.075389"
 }
