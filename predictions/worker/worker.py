@@ -862,10 +862,12 @@ def process_player_predictions(
     # v3.8: Track which V8 features used fallback values and classify severity
     # This implements Task #8 from the CatBoost V8 Prevention Plan to enable
     # "loud failures" for missing features instead of silent degradation.
+    # v3.9: Also record Prometheus metrics for monitoring (Prevention Task #9)
     from predictions.worker.prediction_systems.catboost_v8 import (
         classify_fallback_severity,
         get_fallback_details,
         FallbackSeverity,
+        record_feature_fallback_metrics,
     )
 
     # Track features that used fallback/default values
@@ -891,6 +893,10 @@ def process_player_predictions(
     # Classify fallback severity
     fallback_severity = classify_fallback_severity(v8_fallback_features)
     fallback_details = get_fallback_details(v8_fallback_features)
+
+    # v3.9: Record Prometheus metrics for feature fallbacks (Prevention Task #9)
+    # This enables monitoring dashboards and alerts for fallback rates
+    record_feature_fallback_metrics(v8_fallback_features)
 
     # Log based on severity level (loud failures principle)
     log_extra = {
@@ -1882,11 +1888,12 @@ def publish_completion_event(player_lookup: str, game_date: str, prediction_coun
 
 
 logger.info("=" * 80)
-logger.info("🔧 WEEK 2 ALERTING ENDPOINTS LOADING...")
+logger.info("WEEK 2 ALERTING ENDPOINTS LOADING...")
 logger.info("  - /health/deep")
 logger.info("  - /ready")
 logger.info("  - /internal/check-env")
 logger.info("  - /internal/deployment-started")
+logger.info("  - /metrics (CatBoost V8 Prometheus metrics - Prevention Task #9)")
 logger.info("=" * 80)
 
 
@@ -1975,8 +1982,80 @@ def mark_deployment_started():
         }), 500
 
 
+# =============================================================================
+# Prometheus Metrics Endpoint (Prevention Task #9)
+# =============================================================================
+# Exposes CatBoost V8 prediction metrics for monitoring and alerting.
+# Metrics:
+#   - catboost_v8_feature_fallback_total: Counter by feature_name, severity
+#   - catboost_v8_prediction_points: Histogram of prediction values
+#   - catboost_v8_extreme_prediction_total: Counter by boundary (high_60, low_0)
+# =============================================================================
+
+@app.route('/metrics', methods=['GET'])
+def prometheus_metrics():
+    """
+    Prometheus metrics endpoint for CatBoost V8 prediction monitoring.
+
+    Exposes metrics in Prometheus text format:
+    - catboost_v8_feature_fallback_total: Count of predictions using fallback values
+    - catboost_v8_prediction_points: Distribution of predicted points
+    - catboost_v8_extreme_prediction_total: Count of predictions at clamp boundaries
+
+    Returns:
+        200: Prometheus-formatted metrics text
+    """
+    from flask import Response
+    from predictions.worker.prediction_systems.catboost_v8 import (
+        catboost_v8_feature_fallback_total,
+        catboost_v8_prediction_points,
+        catboost_v8_extreme_prediction_total,
+    )
+
+    lines = []
+
+    # Format feature fallback counter
+    lines.append(f"# HELP catboost_v8_feature_fallback_total {catboost_v8_feature_fallback_total.help_text}")
+    lines.append(f"# TYPE catboost_v8_feature_fallback_total counter")
+    for labels, value in catboost_v8_feature_fallback_total.get_samples():
+        label_str = ','.join(f'{k}="{v}"' for k, v in sorted(labels.items()))
+        lines.append(f"catboost_v8_feature_fallback_total{{{label_str}}} {value}")
+
+    lines.append("")
+
+    # Format prediction histogram
+    lines.append(f"# HELP catboost_v8_prediction_points {catboost_v8_prediction_points.help_text}")
+    lines.append(f"# TYPE catboost_v8_prediction_points histogram")
+    for labels, suffix, value in catboost_v8_prediction_points.get_samples():
+        label_str = ','.join(f'{k}="{v}"' for k, v in sorted(labels.items()))
+        if label_str:
+            lines.append(f"catboost_v8_prediction_points{suffix}{{{label_str}}} {value}")
+        else:
+            lines.append(f"catboost_v8_prediction_points{suffix} {value}")
+
+    lines.append("")
+
+    # Format extreme prediction counter
+    lines.append(f"# HELP catboost_v8_extreme_prediction_total {catboost_v8_extreme_prediction_total.help_text}")
+    lines.append(f"# TYPE catboost_v8_extreme_prediction_total counter")
+    for labels, value in catboost_v8_extreme_prediction_total.get_samples():
+        label_str = ','.join(f'{k}="{v}"' for k, v in sorted(labels.items()))
+        lines.append(f"catboost_v8_extreme_prediction_total{{{label_str}}} {value}")
+
+    output = '\n'.join(lines) + '\n'
+
+    return Response(
+        output,
+        mimetype='text/plain; version=0.0.4; charset=utf-8'
+    )
+
+
+logger.info("✓ Prometheus /metrics endpoint registered for CatBoost V8 monitoring")
+
+
 if __name__ == '__main__':
     # For local testing
     # Week 2 alerting endpoints added: /health/deep, /internal/check-env, /internal/deployment-started
+    # Prevention Task #9: Added /metrics for CatBoost V8 Prometheus metrics
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False)

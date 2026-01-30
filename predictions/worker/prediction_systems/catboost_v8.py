@@ -24,6 +24,11 @@ Shot Zone Handling (Updated 2026-01-25):
 - Feature 33: has_shot_zone_data indicator (1.0 = all zones available, 0.0 = missing)
 - Allows model to distinguish "average shooter" from "data unavailable"
 
+Prometheus Metrics (Added 2026-01-29 - Prevention Task #9):
+- catboost_v8_feature_fallback_total: Counter of predictions using fallback values
+- catboost_v8_prediction_points: Histogram of predicted points distribution
+- catboost_v8_extreme_prediction_total: Counter of predictions at clamp boundaries
+
 Usage:
     from predictions.worker.prediction_systems.catboost_v8 import CatBoostV8
 
@@ -43,8 +48,45 @@ from shared.utils.external_service_circuit_breaker import (
     get_service_circuit_breaker,
     CircuitBreakerError,
 )
+from shared.utils.prometheus_metrics import Counter, Histogram
 
 logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# Prometheus Metrics (Prevention Plan Task #9)
+# =============================================================================
+# These metrics enable real-time monitoring of CatBoost V8 prediction quality
+# and feature fallback usage. They help detect issues like the +29 point bug
+# before they impact production predictions.
+#
+# Metrics are exposed via the /metrics endpoint in the worker service.
+# =============================================================================
+
+# Feature fallback counter - tracks when default values are used
+# Labels: feature_name (which feature used fallback), severity (critical/major/minor)
+catboost_v8_feature_fallback_total = Counter(
+    name='catboost_v8_feature_fallback_total',
+    help_text='Count of CatBoost V8 predictions using fallback values by feature and severity',
+    label_names=['feature_name', 'severity']
+)
+
+# Prediction distribution histogram - tracks predicted point values
+# Buckets designed for typical NBA player points (5-60 range)
+catboost_v8_prediction_points = Histogram(
+    name='catboost_v8_prediction_points',
+    help_text='Distribution of CatBoost V8 predicted points',
+    label_names=[],
+    buckets=[5.0, 10.0, 15.0, 20.0, 25.0, 30.0, 35.0, 40.0, 45.0, 50.0, 55.0, 60.0]
+)
+
+# Extreme prediction counter - tracks predictions at clamp boundaries
+# Labels: boundary ('high_60' or 'low_0')
+catboost_v8_extreme_prediction_total = Counter(
+    name='catboost_v8_extreme_prediction_total',
+    help_text='Count of CatBoost V8 predictions clamped at boundaries (0 or 60)',
+    label_names=['boundary']
+)
 
 
 # =============================================================================
@@ -163,6 +205,67 @@ def get_fallback_details(used_defaults: List[str]) -> Dict:
         'major_count': len(major),
         'minor_count': len(minor),
     }
+
+
+def record_feature_fallback_metrics(used_defaults: List[str]) -> None:
+    """
+    Record Prometheus metrics for feature fallbacks (Prevention Task #9).
+
+    Increments the catboost_v8_feature_fallback_total counter for each
+    feature that used a fallback value, labeled by feature name and severity.
+
+    This enables monitoring dashboards and alerts for:
+    - High fallback rates indicating data pipeline issues
+    - Critical feature fallbacks that may degrade prediction quality
+    - Trends in feature availability over time
+
+    Args:
+        used_defaults: List of feature names that used default/fallback values
+    """
+    if not used_defaults:
+        return
+
+    used_defaults_set = set(used_defaults)
+
+    # Record each fallback with its severity label
+    for feature_name in used_defaults:
+        if feature_name in CRITICAL_FEATURES:
+            severity = 'critical'
+        elif feature_name in MAJOR_FEATURES:
+            severity = 'major'
+        else:
+            severity = 'minor'
+
+        catboost_v8_feature_fallback_total.inc(
+            labels={'feature_name': feature_name, 'severity': severity}
+        )
+
+
+def record_prediction_metrics(raw_prediction: float, clamped_prediction: float) -> None:
+    """
+    Record Prometheus metrics for a prediction (Prevention Task #9).
+
+    Records:
+    - Prediction value in histogram for distribution monitoring
+    - Extreme prediction counter if clamped at boundaries
+
+    This enables monitoring dashboards and alerts for:
+    - Prediction distribution drift from expected ranges
+    - High rate of extreme predictions indicating model issues
+    - Mean prediction tracking over time
+
+    Args:
+        raw_prediction: The raw model prediction before clamping
+        clamped_prediction: The prediction after clamping to [0, 60]
+    """
+    # Record in histogram (use clamped value for consistent distribution)
+    catboost_v8_prediction_points.observe(clamped_prediction)
+
+    # Track extreme predictions (those that hit clamp boundaries)
+    if raw_prediction >= 60:
+        catboost_v8_extreme_prediction_total.inc(labels={'boundary': 'high_60'})
+    elif raw_prediction <= 0:
+        catboost_v8_extreme_prediction_total.inc(labels={'boundary': 'low_0'})
 
 
 # Feature order must match training exactly
@@ -429,6 +532,9 @@ class CatBoostV8:
 
         # Clamp to reasonable range
         predicted_points = max(0, min(60, raw_prediction))
+
+        # Record Prometheus metrics for prediction monitoring (Prevention Task #9)
+        record_prediction_metrics(raw_prediction, predicted_points)
 
         # Calculate confidence
         confidence = self._calculate_confidence(features, feature_vector)
