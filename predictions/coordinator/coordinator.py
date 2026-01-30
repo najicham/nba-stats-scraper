@@ -43,6 +43,20 @@ except ImportError:
     # Shared module not available (local dev without full setup)
     logging.warning("startup_verification not available - running without verification")
 
+# Critical imports verification - catch missing modules at startup, not at runtime
+# This prevents silent failures where the service starts but crashes on first request
+_CRITICAL_IMPORTS = [
+    'predictions.worker.data_loaders',  # Used in start_prediction_batch for batch loading
+]
+for _module in _CRITICAL_IMPORTS:
+    try:
+        __import__(_module)
+        logging.info(f"Critical import verified: {_module}")
+    except ImportError as e:
+        logging.error(f"CRITICAL: Missing import {_module}: {e}")
+        logging.error("This is likely a Dockerfile issue - check that all required directories are copied")
+        raise SystemExit(1)
+
 # Defer google.cloud imports to lazy loading functions to avoid cold start hang
 if TYPE_CHECKING:
     from google.cloud import bigquery, pubsub_v1
