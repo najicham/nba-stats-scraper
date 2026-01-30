@@ -19,6 +19,20 @@ from typing import Dict, List
 from google.cloud import bigquery
 from google.api_core.exceptions import GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded
 
+from ..queries.shared_ctes import (
+    games_today_cte,
+    teams_playing_cte,
+    latest_roster_per_team_cte,
+    roster_players_cte,
+    roster_players_with_games_cte,
+    injuries_cte,
+    props_cte,
+    schedule_data_cte,
+    gamebook_players_with_games_cte,
+    daily_mode_final_select,
+    backfill_mode_final_select,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -94,112 +108,16 @@ class PlayerDataLoader:
         logger.info(f"Looking for roster data between {roster_start} and {roster_end}")
 
         # DAILY MODE: Schedule + Roster + Injury
-        # Using date range for partition elimination
+        # Using shared CTEs for consistency with PlayerGameQueryBuilder
         daily_query = f"""
-        WITH games_today AS (
-            -- Get all games scheduled for target date
-            -- FIXED: Use standard game_id format (YYYYMMDD_AWAY_HOME) instead of NBA official ID
-            SELECT
-                CONCAT(
-                    FORMAT_DATE('%Y%m%d', game_date),
-                    '_',
-                    away_team_tricode,
-                    '_',
-                    home_team_tricode
-                ) as game_id,
-                game_date,
-                home_team_tricode as home_team_abbr,
-                away_team_tricode as away_team_abbr
-            FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
-            WHERE game_date = @game_date
-        ),
-        teams_playing AS (
-            -- Get all teams playing today (both home and away)
-            SELECT DISTINCT home_team_abbr as team_abbr FROM games_today
-            UNION DISTINCT
-            SELECT DISTINCT away_team_abbr as team_abbr FROM games_today
-        ),
-        latest_roster_per_team AS (
-            -- Find the most recent roster PER TEAM within partition range
-            -- FIX: Previous query found global MAX, but different teams may have different latest dates
-            SELECT team_abbr, MAX(roster_date) as roster_date
-            FROM `{self.project_id}.nba_raw.espn_team_rosters`
-            WHERE roster_date >= @roster_start
-              AND roster_date <= @roster_end
-            GROUP BY team_abbr
-        ),
-        roster_players AS (
-            -- Get all players from rosters of teams playing today
-            -- Using date range for partition elimination, then filter to latest per team
-            SELECT DISTINCT
-                r.player_lookup,
-                r.team_abbr
-            FROM `{self.project_id}.nba_raw.espn_team_rosters` r
-            INNER JOIN latest_roster_per_team lr
-                ON r.team_abbr = lr.team_abbr
-                AND r.roster_date = lr.roster_date
-            WHERE r.roster_date >= @roster_start
-              AND r.roster_date <= @roster_end
-              AND r.team_abbr IN (SELECT team_abbr FROM teams_playing)
-              AND r.player_lookup IS NOT NULL
-        ),
-        players_with_games AS (
-            -- Join roster players with their game info
-            SELECT DISTINCT
-                rp.player_lookup,
-                g.game_id,
-                rp.team_abbr,
-                g.home_team_abbr,
-                g.away_team_abbr
-            FROM roster_players rp
-            INNER JOIN games_today g
-                ON rp.team_abbr = g.home_team_abbr
-                OR rp.team_abbr = g.away_team_abbr
-        ),
-        injuries AS (
-            -- Get latest injury report for target date
-            SELECT DISTINCT
-                player_lookup,
-                injury_status
-            FROM `{self.project_id}.nba_raw.nbac_injury_report`
-            WHERE report_date = @game_date
-              AND player_lookup IS NOT NULL
-        ),
-        props AS (
-            -- Check which players have prop lines (from either source)
-            SELECT DISTINCT
-                player_lookup,
-                points_line,
-                'odds_api' as prop_source
-            FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE game_date = @game_date
-              AND player_lookup IS NOT NULL
-            UNION DISTINCT
-            SELECT DISTINCT
-                player_lookup,
-                points_line,
-                'bettingpros' as prop_source
-            FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
-            WHERE game_date = @game_date
-              AND is_active = TRUE
-              AND player_lookup IS NOT NULL
-        )
-        SELECT
-            p.player_lookup,
-            p.game_id,
-            p.team_abbr,
-            p.home_team_abbr,
-            p.away_team_abbr,
-            i.injury_status,
-            pr.points_line,
-            pr.prop_source,
-            CASE WHEN pr.player_lookup IS NOT NULL THEN TRUE ELSE FALSE END as has_prop_line
-        FROM players_with_games p
-        LEFT JOIN injuries i ON p.player_lookup = i.player_lookup
-        LEFT JOIN props pr ON p.player_lookup = pr.player_lookup
-        -- Filter out players marked OUT or DOUBTFUL in injury report
-        WHERE i.injury_status IS NULL
-           OR i.injury_status NOT IN ('Out', 'OUT', 'Doubtful', 'DOUBTFUL')
+        {games_today_cte(self.project_id)},
+        {teams_playing_cte()},
+        {latest_roster_per_team_cte(self.project_id)},
+        {roster_players_cte(self.project_id)},
+        {roster_players_with_games_cte()},
+        {injuries_cte(self.project_id)},
+        {props_cte(self.project_id)}
+        {daily_mode_final_select()}
         """
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
@@ -272,72 +190,12 @@ class PlayerDataLoader:
         self._props_source = 'gamebook'  # Track source used
 
         # BACKFILL MODE: Gamebook (post-game actual players)
+        # Using shared CTEs for consistency with PlayerGameQueryBuilder
         backfill_query = f"""
-        WITH schedule_data AS (
-            -- Get schedule data with partition filter
-            -- FIXED: Create standard game_id format (YYYYMMDD_AWAY_HOME)
-            SELECT
-                game_id as nba_game_id,
-                CONCAT(
-                    FORMAT_DATE('%Y%m%d', game_date),
-                    '_',
-                    away_team_tricode,
-                    '_',
-                    home_team_tricode
-                ) as game_id,
-                home_team_tricode,
-                away_team_tricode
-            FROM `{self.project_id}.nba_raw.v_nbac_schedule_latest`
-            WHERE game_date = @game_date
-        ),
-        players_with_games AS (
-            -- Get ALL active players from gamebook who have games on target date
-            SELECT DISTINCT
-                g.player_lookup,
-                s.game_id,  -- Use standard game_id from schedule
-                g.team_abbr,
-                g.player_status,
-                -- Get home/away from schedule since gamebook may not have it
-                COALESCE(s.home_team_tricode, g.team_abbr) as home_team_abbr,
-                COALESCE(s.away_team_tricode, g.team_abbr) as away_team_abbr
-            FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats` g
-            LEFT JOIN schedule_data s
-                ON g.game_id = s.game_id  -- FIXED: Join on generated game_id (YYYYMMDD_AWAY_HOME format)
-            WHERE g.game_date = @game_date
-              AND g.player_lookup IS NOT NULL
-              AND (g.player_status IS NULL OR g.player_status NOT IN ('DNP', 'DND', 'NWT'))
-        ),
-        props AS (
-            -- Check which players have prop lines (from either source)
-            SELECT DISTINCT
-                player_lookup,
-                points_line,
-                'odds_api' as prop_source
-            FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE game_date = @game_date
-              AND player_lookup IS NOT NULL
-            UNION DISTINCT
-            SELECT DISTINCT
-                player_lookup,
-                points_line,
-                'bettingpros' as prop_source
-            FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
-            WHERE game_date = @game_date
-              AND is_active = TRUE
-              AND player_lookup IS NOT NULL
-        )
-        SELECT
-            p.player_lookup,
-            p.game_id,
-            p.team_abbr,
-            p.home_team_abbr,
-            p.away_team_abbr,
-            p.player_status,
-            pr.points_line,
-            pr.prop_source,
-            CASE WHEN pr.player_lookup IS NOT NULL THEN TRUE ELSE FALSE END as has_prop_line
-        FROM players_with_games p
-        LEFT JOIN props pr ON p.player_lookup = pr.player_lookup
+        {schedule_data_cte(self.project_id)},
+        {gamebook_players_with_games_cte(self.project_id)},
+        {props_cte(self.project_id)}
+        {backfill_mode_final_select()}
         """
         job_config = bigquery.QueryJobConfig(
             query_parameters=[

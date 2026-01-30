@@ -1,16 +1,98 @@
 """
-File: data_processors/precompute/precompute_base.py
+Phase 4 Precompute Processor Base Class.
 
-Base class for Phase 4 precompute processors that handles:
- - Dependency checking (upstream data validation)
- - Source metadata tracking (audit trail)
- - Querying analytics BigQuery tables
- - Calculating precompute metrics
- - Loading to precompute tables
- - Error handling and quality tracking
- - Multi-channel notifications (Email + Slack)
- - Run history logging (via RunHistoryMixin)
- - Matches AnalyticsProcessorBase patterns
+This module provides the abstract base class for Phase 4 precompute processors in the
+NBA predictions pipeline. Phase 4 processors consume Phase 3 (Analytics) data and other
+Phase 4 outputs to generate pre-aggregated metrics optimized for prediction.
+
+Architecture Overview
+---------------------
+Phase 4 sits between Analytics (Phase 3) and Predictions (Phase 5):
+
+    Phase 3 (Analytics) --> Phase 4 (Precompute) --> Phase 5 (Predictions)
+
+Key responsibilities:
+    - Dependency checking: Validate upstream data exists and is fresh
+    - Source tracking: Record metadata for audit trail and debugging
+    - Metrics calculation: Aggregate rolling windows, zone analysis, etc.
+    - BigQuery persistence: MERGE/upsert to precompute tables
+    - Failure tracking: Record entity-level failures for monitoring
+
+Processing Lifecycle
+-------------------
+Each precompute processor follows this lifecycle:
+
+    1. Dependency Check - Verify upstream tables have required data
+    2. Extract - Query analytics BigQuery tables
+    3. Validate - Check extracted data quality
+    4. Calculate - Compute precompute metrics (abstract method)
+    5. Save - MERGE to BigQuery precompute tables
+    6. Log - Record run history and source metadata
+
+Dependency Configuration
+-----------------------
+Child classes define dependencies via ``get_dependencies()``:
+
+    def get_dependencies(self) -> dict:
+        return {
+            'nba_analytics.team_defense_game_summary': {
+                'description': 'Team defensive stats',
+                'date_field': 'game_date',
+                'check_type': 'lookback',      # 'date_match', 'lookback', 'existence'
+                'lookback_games': 15,
+                'expected_count_min': 20,
+                'max_age_hours': 24,
+                'critical': True,              # Fail if missing?
+                'field_prefix': 'tdgs'         # For source_* tracking fields
+            }
+        }
+
+Soft Dependencies (Graceful Degradation)
+---------------------------------------
+Added after Jan 23 incident. When ``use_soft_dependencies = True``, processors can
+proceed with degraded upstream data if coverage exceeds ``soft_dependency_threshold``
+(default 80%). This prevents all-or-nothing blocking.
+
+Implementing a Precompute Processor
+-----------------------------------
+Child classes must implement:
+
+    - ``get_dependencies()`` - Define upstream table requirements
+    - ``extract_raw_data()`` - Query upstream tables
+    - ``calculate_precompute()`` - Transform data to output format
+
+Optional overrides:
+    - ``validate_extracted_data()`` - Custom validation logic
+    - ``set_additional_opts()`` - Process additional options
+    - ``finalize()`` - Cleanup after processing
+
+Example::
+
+    class TeamDefenseZoneAnalysisProcessor(PrecomputeProcessorBase):
+        table_name = "team_defense_zone_analysis"
+        PRIMARY_KEY_FIELDS = ['analysis_date', 'team_abbr']
+
+        def get_dependencies(self):
+            return {...}
+
+        def extract_raw_data(self):
+            # Query Phase 3 tables
+            self.raw_data = self.bq_client.query(...).to_dataframe()
+
+        def calculate_precompute(self):
+            # Aggregate and transform
+            self.transformed_data = [...]
+
+Module Dependencies
+------------------
+This module integrates several mixins:
+    - ``PrecomputeMetadataOpsMixin`` - Source tracking field generation
+    - ``FailureTrackingMixin`` - Entity failure persistence
+    - ``BigQuerySaveOpsMixin`` - MERGE/upsert operations
+    - ``DefensiveCheckMixin`` - Upstream status validation
+    - ``DependencyMixin`` - Dependency configuration
+    - ``QualityMixin`` - Quality issue tracking
+    - ``RunHistoryMixin`` - Run history logging
 
 Version: 2.2 (with run history logging + multi-sport support)
 Updated: November 2025
@@ -218,25 +300,94 @@ class PrecomputeProcessorBase(
     RunHistoryMixin
 ):
     """
-    Base class for Phase 4 precompute processors.
+    Abstract base class for Phase 4 precompute processors.
 
-    Phase 4 processors depend on Phase 3 (Analytics) and other Phase 4 processors.
-    This base class provides dependency checking, source tracking, and validation.
+    This class provides the complete processing lifecycle for precompute operations,
+    including dependency validation, data extraction, transformation, and persistence.
+    Child classes implement domain-specific calculation logic.
 
-    Soft Dependencies (added after Jan 23 incident):
-    - Set use_soft_dependencies = True in child class to enable graceful degradation
-    - Processors will proceed if coverage > 80% instead of all-or-nothing
+    Inheritance Hierarchy:
+        PrecomputeProcessorBase inherits from multiple mixins that provide:
 
-    Lifecycle:
-      1) Check dependencies (are upstream tables ready?)
-      2) Extract data from analytics BigQuery tables
-      3) Validate extracted data
-      4) Calculate precompute metrics
-      5) Load to precompute BigQuery tables
-      6) Log processing run with source metadata
+        - ``PrecomputeMetadataOpsMixin``: Source tracking fields (source_*_last_updated)
+        - ``FailureTrackingMixin``: Entity-level failure recording
+        - ``BigQuerySaveOpsMixin``: MERGE/upsert to BigQuery
+        - ``DefensiveCheckMixin``: Upstream processor status validation
+        - ``DependencyMixin``: Dependency configuration management
+        - ``QualityMixin``: Quality issue tracking
+        - ``TransformProcessorBase``: Core processor infrastructure
+        - ``SoftDependencyMixin``: Graceful degradation support
+        - ``RunHistoryMixin``: Run history logging
+
+    Processing Lifecycle:
+        The ``run()`` method orchestrates:
+
+        1. **Dependency Check** - Validate upstream data via ``check_dependencies()``
+        2. **Extract** - Call ``extract_raw_data()`` (abstract)
+        3. **Validate** - Call ``validate_extracted_data()`` if enabled
+        4. **Calculate** - Call ``calculate_precompute()`` (abstract)
+        5. **Save** - Call ``save_precompute()`` to persist results
+        6. **Log** - Record run history via ``RunHistoryMixin``
+
+    Soft Dependencies:
+        Added after Jan 23 incident to prevent all-or-nothing failures.
+        When ``use_soft_dependencies = True``:
+
+        - Processor proceeds if upstream coverage > ``soft_dependency_threshold`` (80%)
+        - Degraded state is logged for monitoring
+        - Prevents cascading failures in the pipeline
+
+    Class Attributes:
+        required_opts (List[str]): Options that must be provided (default: ['analysis_date'])
+        additional_opts (List[str]): Optional extra options
+        validate_on_extract (bool): Run validation after extract (default: True)
+        save_on_error (bool): Attempt partial save on error (default: True)
+        use_soft_dependencies (bool): Enable graceful degradation (default: False)
+        soft_dependency_threshold (float): Minimum coverage to proceed (default: 0.80)
+        dataset_id (str): BigQuery dataset (from sport_config if None)
+        table_name (str): Target table name (child classes must set)
+        date_column (str): Column for date partitioning (default: 'analysis_date')
+        processing_strategy (str): Save strategy (default: 'MERGE_UPDATE')
+        PHASE (str): Phase identifier for run history (default: 'phase_4_precompute')
+        PRIMARY_KEY_FIELDS (List[str]): Fields for MERGE ON clause (child must define)
+
+    Example:
+        Implementing a precompute processor::
+
+            class PlayerCompositeFactorsProcessor(PrecomputeProcessorBase):
+                table_name = "player_composite_factors"
+                PRIMARY_KEY_FIELDS = ['analysis_date', 'player_lookup']
+
+                def get_dependencies(self):
+                    return {
+                        'nba_precompute.player_shot_zone_analysis': {
+                            'description': 'Player zone metrics',
+                            'date_field': 'analysis_date',
+                            'check_type': 'date_match',
+                            'expected_count_min': 300,
+                            'max_age_hours': 24,
+                            'critical': True,
+                            'field_prefix': 'psza'
+                        }
+                    }
+
+                def extract_raw_data(self):
+                    query = '''SELECT * FROM nba_precompute.player_shot_zone_analysis
+                               WHERE analysis_date = @date'''
+                    self.raw_data = self.bq_client.query(query, ...).to_dataframe()
+
+                def calculate_precompute(self):
+                    # Transform raw_data to output format
+                    self.transformed_data = [...]
 
     Run History:
-      Automatically logs runs to processor_run_history table via RunHistoryMixin.
+        Automatically logs runs to ``processor_run_history`` table via RunHistoryMixin.
+        Tracks: start time, duration, records processed, status, errors.
+
+    See Also:
+        - ``AnalyticsProcessorBase``: Similar base for Phase 3 processors
+        - ``get_dependencies()``: How to configure upstream requirements
+        - ``check_dependencies()``: Dependency validation logic
     """
 
     # Class-level configs
@@ -266,7 +417,25 @@ class PrecomputeProcessorBase(
     OUTPUT_DATASET: str = None  # Will be set from sport_config in __init__
     
     def __init__(self):
-        """Initialize precompute processor."""
+        """
+        Initialize precompute processor with GCP clients and tracking state.
+
+        Sets up:
+            - BigQuery client with connection pooling
+            - Project ID from environment or sport_config
+            - Dataset IDs for input/output tables
+            - Source metadata tracking attributes
+            - Dependency check state
+            - Write success tracking for R-004 compliance
+
+        Inherited Initialization:
+            The parent ``TransformProcessorBase.__init__()`` sets:
+            - opts, raw_data, validated_data, transformed_data
+            - stats, time_markers, source_metadata, quality_issues
+            - failed_entities, run_id, correlation_id
+            - parent_processor, trigger_message_id
+            - entities_changed, is_incremental_run, heartbeat
+        """
         # Initialize base class (sets opts, raw_data, validated_data, transformed_data,
         # stats, time_markers, source_metadata, quality_issues, failed_entities, run_id,
         # correlation_id, parent_processor, trigger_message_id, entities_changed,
@@ -302,9 +471,54 @@ class PrecomputeProcessorBase(
 
     def run(self, opts: Optional[Dict] = None) -> bool:
         """
-        Main entry point - matches AnalyticsProcessorBase.run() pattern.
-        Returns True on success, False on failure.
-        Enhanced with run history logging.
+        Execute the complete precompute processing lifecycle.
+
+        This is the main entry point for all precompute processors. It orchestrates
+        the full processing lifecycle: dependency checking, extraction, validation,
+        calculation, and persistence.
+
+        Args:
+            opts: Processing options dictionary. Required keys:
+                - ``analysis_date`` (str or date): Date to process
+                Optional keys:
+                - ``skip_dependency_check`` (bool): Skip dependency validation
+                - ``strict_mode`` (bool): Enable defensive checks (default: True)
+                - ``correlation_id`` (str): For distributed tracing
+                - ``parent_processor`` (str): Upstream processor name
+                - ``trigger_message_id`` (str): Pub/Sub message ID
+                - ``trigger_source`` (str): 'scheduled', 'manual', etc.
+                - ``entities_changed`` (List[str]): For incremental processing
+                - ``backfill`` (bool): Enable backfill mode (relaxed checks)
+
+        Returns:
+            bool: True if processing completed successfully, False on failure.
+
+        Processing Steps:
+            1. Re-initialize state (preserving run_id)
+            2. Validate required options
+            3. Run defensive checks (upstream status, gap detection)
+            4. Check dependencies via ``check_dependencies()``
+            5. Extract data via ``extract_raw_data()``
+            6. Validate via ``validate_extracted_data()`` (if enabled)
+            7. Calculate via ``calculate_precompute()``
+            8. Save via ``save_precompute()``
+            9. Log run history
+
+        Error Handling:
+            - Failures are logged to Sentry and run history
+            - Notifications sent for real errors (not expected failures)
+            - Partial data saved if ``save_on_error=True``
+            - Failure category determines alerting behavior
+
+        Early Exit Conditions:
+            - Missing critical dependencies: Returns False (or True if early season)
+            - No data to process: Returns True (expected condition)
+            - Soft dependency degraded: Continues with warning
+
+        Example:
+            >>> processor = TeamDefenseZoneAnalysisProcessor()
+            >>> success = processor.run({'analysis_date': '2026-01-15'})
+            >>> print(f"Processed: {processor.stats.get('rows_processed', 0)} rows")
         """
         if opts is None:
             opts = {}
@@ -695,9 +909,20 @@ class PrecomputeProcessorBase(
 
     def finalize(self) -> None:
         """
-        Cleanup hook that runs regardless of success/failure.
-        Child classes override this for cleanup operations.
-        Base implementation does nothing.
+        Cleanup hook called after processing completes.
+
+        This method runs in the ``finally`` block of ``run()``, regardless of
+        whether processing succeeded or failed. Use it for cleanup operations
+        like closing connections or flushing buffers.
+
+        Override in child classes to add custom cleanup logic. Always call
+        ``super().finalize()`` to maintain the chain.
+
+        Example:
+            >>> def finalize(self):
+            ...     # Flush any buffered failure records
+            ...     self.save_failures_to_bq()
+            ...     super().finalize()
         """
         pass
 
@@ -709,53 +934,125 @@ class PrecomputeProcessorBase(
     
     def get_dependencies(self) -> dict:
         """
-        Define required upstream tables and their constraints.
-        Must be implemented by subclasses.
-        
+        Define required upstream tables and their validation constraints.
+
+        This abstract method must be implemented by all child classes. It declares
+        which upstream tables are required, how to validate their completeness,
+        and the acceptable staleness thresholds.
+
         Returns:
-            dict: {
-                'table_name': {
-                    'description': str,           # Human-readable description
-                    'date_field': str,            # Field to check for date
-                    'check_type': str,            # 'date_match', 'lookback', 'existence'
-                    'expected_count_min': int,    # Minimum acceptable rows
-                    'max_age_hours': int,         # Maximum data staleness (hours)
-                    'critical': bool,             # Fail if missing?
-                    'lookback_games': int,        # (optional) For rolling windows
-                    'wait_for_processor': str     # (optional) Phase 4 processor dependency
-                }
-            }
-        
+            dict: Dependency configuration keyed by fully-qualified table name.
+                Each entry contains:
+
+                - ``description`` (str): Human-readable description
+                - ``date_field`` (str): Column to check for date filtering
+                - ``check_type`` (str): Validation strategy:
+                    - ``'date_match'``: Exact date match required
+                    - ``'lookback'``: Rolling window (last N games)
+                    - ``'existence'``: Any data exists
+                    - ``'per_player_game_count'``: Per-entity game counts
+                - ``expected_count_min`` (int): Minimum required rows
+                - ``max_age_hours`` (int): Maximum acceptable data age
+                - ``critical`` (bool): If True, fail on missing. If False, warn only.
+                - ``field_prefix`` (str): Prefix for source tracking fields
+                    (e.g., 'tdgs' -> 'source_tdgs_last_updated')
+                - ``lookback_games`` (int, optional): For 'lookback' check_type
+                - ``wait_for_processor`` (str, optional): Name of Phase 4 processor
+                    that must complete first
+
         Example:
-            return {
-                'nba_analytics.team_defense_game_summary': {
-                    'description': 'Team defensive stats from last 15 games',
-                    'date_field': 'game_date',
-                    'check_type': 'lookback',
-                    'lookback_games': 15,
-                    'expected_count_min': 20,
-                    'max_age_hours': 24,
-                    'critical': True
-                }
-            }
+            Team Defense Zone Analysis processor depends on Phase 3 data::
+
+                def get_dependencies(self):
+                    return {
+                        'nba_analytics.team_defense_game_summary': {
+                            'description': 'Team defensive stats from last 15 games',
+                            'date_field': 'game_date',
+                            'check_type': 'lookback',
+                            'lookback_games': 15,
+                            'expected_count_min': 20,
+                            'max_age_hours': 24,
+                            'critical': True,
+                            'field_prefix': 'tdgs'
+                        }
+                    }
+
+            ML Feature Store depends on other Phase 4 processors::
+
+                def get_dependencies(self):
+                    return {
+                        'nba_precompute.player_shot_zone_analysis': {
+                            'description': 'Player zone analysis',
+                            'date_field': 'analysis_date',
+                            'check_type': 'date_match',
+                            'expected_count_min': 300,
+                            'max_age_hours': 4,
+                            'critical': True,
+                            'field_prefix': 'psza',
+                            'wait_for_processor': 'PlayerShotZoneAnalysisProcessor'
+                        },
+                        'nba_precompute.team_defense_zone_analysis': {
+                            'description': 'Team defense analysis',
+                            'date_field': 'analysis_date',
+                            'check_type': 'date_match',
+                            'expected_count_min': 25,
+                            'max_age_hours': 4,
+                            'critical': True,
+                            'field_prefix': 'tdza'
+                        }
+                    }
+
+        Raises:
+            NotImplementedError: Must be implemented by child classes.
+
+        See Also:
+            - ``check_dependencies()``: Validates these configurations
+            - ``track_source_usage()``: Records metadata from dependency check
         """
         raise NotImplementedError("Child classes must implement get_dependencies()")
     
     def check_dependencies(self, analysis_date: date) -> dict:
         """
-        Check if required upstream data exists and is fresh enough.
+        Validate that upstream data exists and meets freshness requirements.
+
+        Iterates through dependencies defined by ``get_dependencies()`` and checks
+        each table for existence, row counts, and data freshness. Results inform
+        whether processing should proceed.
 
         Args:
-            analysis_date: Date to check dependencies for (can be string or date)
+            analysis_date: Date to check dependencies for. Accepts date object or
+                ISO format string (YYYY-MM-DD).
 
         Returns:
-            dict: {
-                'all_critical_present': bool,
-                'all_fresh': bool,
-                'missing': List[str],
-                'stale': List[str],
-                'details': Dict[str, Dict]
-            }
+            dict: Dependency check results with keys:
+                - ``all_critical_present`` (bool): All critical deps have data
+                - ``all_fresh`` (bool): No deps exceed max_age_hours
+                - ``missing`` (List[str]): Table names with missing/insufficient data
+                - ``stale`` (List[str]): Table names exceeding freshness threshold
+                - ``details`` (Dict[str, Dict]): Per-table check results:
+                    - ``exists`` (bool): Has minimum required rows
+                    - ``row_count`` (int): Actual row count found
+                    - ``expected_count_min`` (int): Required minimum
+                    - ``age_hours`` (float): Hours since last update
+                    - ``last_updated`` (str): ISO timestamp of last update
+                - ``is_early_season`` (bool, optional): True if in bootstrap period
+                - ``early_season_reason`` (str, optional): Explanation
+
+        Early Season Handling:
+            During the first 14 days of an NBA season (bootstrap period), missing
+            dependencies are expected. The result includes ``is_early_season=True``
+            which allows ``run()`` to return success instead of failing.
+
+        Example:
+            >>> dep_check = processor.check_dependencies(date(2026, 1, 15))
+            >>> if not dep_check['all_critical_present']:
+            ...     print(f"Missing: {dep_check['missing']}")
+            >>> if not dep_check['all_fresh']:
+            ...     print(f"Stale: {dep_check['stale']}")
+
+        See Also:
+            - ``get_dependencies()``: Defines what to check
+            - ``_check_table_data()``: Individual table validation
         """
         # Ensure analysis_date is a date object, not a string
         if isinstance(analysis_date, str):
@@ -819,13 +1116,39 @@ class PrecomputeProcessorBase(
 
         return results
     
-    def _check_table_data(self, table_name: str, analysis_date: date, 
+    def _check_table_data(self, table_name: str, analysis_date: date,
                           config: dict) -> tuple:
         """
-        Check if table has data for the given date.
-        
+        Check if a specific upstream table has sufficient data.
+
+        Executes a BigQuery query based on the ``check_type`` configuration to
+        validate data existence, row counts, and freshness.
+
+        Args:
+            table_name: Fully-qualified BigQuery table name
+                (e.g., 'nba_analytics.team_defense_game_summary').
+            analysis_date: Date to check data for.
+            config: Dependency configuration from ``get_dependencies()``.
+                Required keys: ``check_type``, ``date_field``.
+                Optional keys: ``lookback_games``, ``expected_count_min``,
+                ``entity_field``, ``min_games_required``.
+
         Returns:
-            (exists: bool, details: dict)
+            tuple: (exists, details) where:
+                - ``exists`` (bool): True if row_count >= expected_count_min
+                - ``details`` (dict): Check results:
+                    - ``exists`` (bool): Same as return value
+                    - ``row_count`` (int): Rows found
+                    - ``expected_count_min`` (int): Minimum required
+                    - ``age_hours`` (float or None): Hours since last update
+                    - ``last_updated`` (str or None): ISO timestamp
+                    - ``error`` (str, optional): Error message if check failed
+
+        Check Types:
+            - ``date_match``: COUNT(*) WHERE date_field = analysis_date
+            - ``lookback``: COUNT(*) for last N games (by date)
+            - ``existence``: COUNT(*) LIMIT 1 (any data exists)
+            - ``per_player_game_count``: COUNT by entity over date range
         """
         check_type = config.get('check_type', 'date_match')
         date_field = config.get('date_field', 'game_date')
@@ -941,7 +1264,20 @@ class PrecomputeProcessorBase(
                 'error': error_msg
             }
     def _format_missing_deps(self) -> Optional[str]:
-        """Format missing dependencies for database storage."""
+        """
+        Format missing dependencies list as comma-separated string.
+
+        Used when recording processing failures to database. Converts the
+        ``missing_dependencies_list`` attribute to a storage-friendly format.
+
+        Returns:
+            Optional[str]: Comma-separated table names, or None if no missing deps.
+
+        Example:
+            >>> processor.missing_dependencies_list = ['table_a', 'table_b']
+            >>> processor._format_missing_deps()
+            'table_a, table_b'
+        """
         if not self.missing_dependencies_list:
             return None
         return ", ".join(self.missing_dependencies_list)
@@ -954,20 +1290,34 @@ class PrecomputeProcessorBase(
 
     def _record_date_level_failure(self, category: str, reason: str, can_retry: bool = True) -> None:
         """
-        Record a date-level failure to the precompute_failures table.
+        Record a date-level processing failure to BigQuery.
 
-        Use this when an entire date fails (e.g., missing dependencies),
-        rather than individual player failures.
-
-        This enables visibility into WHY no records exist for a date:
-        - MISSING_DEPENDENCY: Upstream data not available (standardized singular form)
-        - MINIMUM_THRESHOLD_NOT_MET: Too few upstream records (expected during early season)
-        - PROCESSING_ERROR: Actual error during processing (needs investigation)
+        Use this method when an entire date fails to process (e.g., missing dependencies),
+        as opposed to individual entity failures. This creates visibility into why no
+        records exist for a particular date, enabling targeted backfills.
 
         Args:
-            category: Failure category (MISSING_DEPENDENCY, MINIMUM_THRESHOLD_NOT_MET, etc.)
-            reason: Detailed reason string
-            can_retry: Whether reprocessing might succeed (True if deps will be populated)
+            category: Failure category. Standard values:
+                - ``'MISSING_DEPENDENCY'``: Upstream data not available
+                - ``'MINIMUM_THRESHOLD_NOT_MET'``: Too few upstream records
+                - ``'MISSING_UPSTREAM_IN_BACKFILL'``: Phase 4 deps missing in backfill
+                - ``'PROCESSING_ERROR'``: Actual error during processing
+            reason: Detailed explanation of the failure (max 1000 chars).
+            can_retry: Whether reprocessing might succeed later.
+                Set True if dependencies will be populated.
+
+        Side Effects:
+            Writes a record to ``nba_processing.precompute_failures`` with:
+            - ``entity_id``: 'DATE_LEVEL' (marker for date-level failures)
+            - ``processor_name``: This processor's class name
+            - ``analysis_date``: Date that failed
+            - ``failure_category``: Standardized category
+            - ``failure_reason``: Detailed reason
+            - ``can_retry``: Retry eligibility flag
+
+        Note:
+            Uses ``BigQueryBatchWriter`` for quota-efficient writes.
+            Category 'MISSING_DEPENDENCIES' is auto-normalized to singular form.
         """
         try:
             table_id = f"{self.project_id}.nba_processing.precompute_failures"

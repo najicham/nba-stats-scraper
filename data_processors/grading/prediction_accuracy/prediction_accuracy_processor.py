@@ -26,6 +26,7 @@ import json
 import logging
 import math
 import re
+import threading
 from datetime import datetime, date, timezone
 from typing import Dict, List, Optional
 
@@ -36,12 +37,166 @@ from google.cloud.exceptions import GoogleCloudError
 from shared.clients.bigquery_pool import get_bigquery_client
 
 # SESSION 94 FIX: Import distributed lock to prevent race conditions
-from predictions.shared.distributed_lock import DistributedLock, LockAcquisitionError
+from predictions.shared.distributed_lock import DistributedLock, LockAcquisitionError, LOCK_TIMEOUT_SECONDS, MAX_ACQUIRE_ATTEMPTS, RETRY_DELAY_SECONDS
+
+# Standardized error handling utility
+from shared.utils.error_context import ErrorContext, log_operation_error
 
 logger = logging.getLogger(__name__)
 
 from shared.config.gcp_config import get_project_id
 PROJECT_ID = get_project_id()
+
+
+def _send_lock_failure_alert_async(
+    game_date: str,
+    lock_key: str,
+    retry_attempts: int,
+    timeout_duration: int,
+    error_message: str
+) -> None:
+    """
+    Send Slack alert for distributed lock failures (non-blocking).
+
+    Runs in a separate thread to avoid blocking grading operations.
+    Alert indicates grading proceeded WITHOUT lock protection (HIGH RISK of duplicates).
+
+    Args:
+        game_date: Date being graded (YYYY-MM-DD)
+        lock_key: The Firestore lock key that failed
+        retry_attempts: Number of retry attempts made
+        timeout_duration: Total seconds spent trying to acquire lock
+        error_message: Original error message from lock acquisition
+    """
+    def _send_alert():
+        try:
+            import requests
+            from google.cloud import secretmanager
+
+            # Get Slack webhook from Secret Manager
+            client = secretmanager.SecretManagerServiceClient()
+            secret_name = f"projects/{PROJECT_ID}/secrets/slack-webhook-url/versions/latest"
+            response = client.access_secret_version(request={"name": secret_name})
+            webhook_url = response.payload.data.decode("UTF-8")
+
+            # Build alert message
+            message = {
+                "text": (
+                    f":red_circle: *CRITICAL: Grading Lock Acquisition Failed*\n\n"
+                    f"*Game Date:* {game_date}\n"
+                    f"*Lock Key:* `{lock_key}`\n"
+                    f"*Retry Attempts:* {retry_attempts}\n"
+                    f"*Timeout Duration:* {timeout_duration} seconds\n"
+                    f"*Status:* Grading proceeded WITHOUT distributed lock (HIGH RISK)\n\n"
+                    f"*Error:*\n```{error_message}```\n\n"
+                    f"*Risk:* Concurrent grading operations may create duplicate records\n\n"
+                    f"*Investigation Steps:*\n"
+                    f"  1. Check Firestore collection: `grading_locks`\n"
+                    f"  2. Look for stuck lock with key: `{lock_key}`\n"
+                    f"  3. Check Cloud Function logs for concurrent operations\n"
+                    f"  4. Verify Firestore connectivity and quotas\n\n"
+                    f"*Next Step:* Run duplicate detection query after grading completes"
+                )
+            }
+
+            # Retry logic for transient failures
+            max_retries = 2
+            import time
+            for attempt in range(max_retries + 1):
+                try:
+                    resp = requests.post(webhook_url, json=message, timeout=10)
+                    if resp.status_code == 200:
+                        logger.info(f"Sent lock failure alert for {game_date}")
+                        break
+                    elif resp.status_code in (429, 500, 502, 503, 504) and attempt < max_retries:
+                        time.sleep(2 ** attempt)
+                        continue
+                    else:
+                        logger.warning(f"Slack lock failure alert failed: {resp.status_code}")
+                        break
+                except requests.exceptions.RequestException as e:
+                    if attempt < max_retries:
+                        time.sleep(2 ** attempt)
+                        continue
+                    logger.warning(f"Slack lock failure alert request failed: {e}")
+
+        except Exception as e:
+            # Log but don't fail grading if alert fails
+            logger.warning(f"Failed to send lock failure alert for {game_date}: {e}")
+
+    # Run in background thread to avoid blocking grading
+    thread = threading.Thread(target=_send_alert, daemon=True)
+    thread.start()
+
+
+def _send_lock_timeout_alert_async(
+    game_date: str,
+    lock_key: str,
+    elapsed_seconds: int
+) -> None:
+    """
+    Send Slack alert when lock times out (non-blocking).
+
+    This is different from acquisition failure - this is when we held the lock
+    but the operation took longer than the lock timeout.
+
+    Args:
+        game_date: Date being graded (YYYY-MM-DD)
+        lock_key: The Firestore lock key
+        elapsed_seconds: How long the operation took
+    """
+    def _send_alert():
+        try:
+            import requests
+            from google.cloud import secretmanager
+
+            # Get Slack webhook from Secret Manager
+            client = secretmanager.SecretManagerServiceClient()
+            secret_name = f"projects/{PROJECT_ID}/secrets/slack-webhook-url/versions/latest"
+            response = client.access_secret_version(request={"name": secret_name})
+            webhook_url = response.payload.data.decode("UTF-8")
+
+            # Build alert message
+            message = {
+                "text": (
+                    f":warning: *Grading Lock Timeout Warning*\n\n"
+                    f"*Game Date:* {game_date}\n"
+                    f"*Lock Key:* `{lock_key}`\n"
+                    f"*Operation Duration:* {elapsed_seconds} seconds\n"
+                    f"*Lock Timeout:* {LOCK_TIMEOUT_SECONDS} seconds\n\n"
+                    f"*Status:* Operation exceeded lock timeout\n"
+                    f"*Note:* Lock may have expired during operation, increasing duplicate risk\n\n"
+                    f"*Action:* Consider increasing LOCK_TIMEOUT_SECONDS if operations consistently exceed timeout"
+                )
+            }
+
+            # Send with retry
+            max_retries = 2
+            import time
+            for attempt in range(max_retries + 1):
+                try:
+                    resp = requests.post(webhook_url, json=message, timeout=10)
+                    if resp.status_code == 200:
+                        logger.info(f"Sent lock timeout alert for {game_date}")
+                        break
+                    elif resp.status_code in (429, 500, 502, 503, 504) and attempt < max_retries:
+                        time.sleep(2 ** attempt)
+                        continue
+                    else:
+                        logger.warning(f"Slack lock timeout alert failed: {resp.status_code}")
+                        break
+                except requests.exceptions.RequestException as e:
+                    if attempt < max_retries:
+                        time.sleep(2 ** attempt)
+                        continue
+                    logger.warning(f"Slack lock timeout alert request failed: {e}")
+
+        except Exception as e:
+            logger.warning(f"Failed to send lock timeout alert for {game_date}: {e}")
+
+    # Run in background thread
+    thread = threading.Thread(target=_send_alert, daemon=True)
+    thread.start()
 
 
 class PredictionAccuracyProcessor:
@@ -154,29 +309,27 @@ class PredictionAccuracyProcessor:
         """
 
         try:
-            result = self.bq_client.query(query).to_dataframe()
-            injury_map = {}
-            for _, row in result.iterrows():
-                injury_map[row['player_lookup']] = {
-                    'injury_status': row['injury_status'],
-                    'reason': row['reason']
-                }
-            logger.info(f"  Loaded {len(injury_map)} injury reports for {game_date}")
-            return injury_map
-        except gcp_exceptions.BadRequest as e:
-            logger.warning(f"BigQuery syntax error loading injury status for {game_date}: {e}")
-            return {}
-        except gcp_exceptions.NotFound as e:
-            logger.warning(f"BigQuery table not found loading injury status for {game_date}: {e}")
-            return {}
-        except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
-            logger.warning(f"BigQuery timeout/unavailable loading injury status for {game_date}: {e}")
-            return {}
-        except GoogleCloudError as e:
-            logger.warning(f"GCP error loading injury status for {game_date}: {e}")
+            with ErrorContext(
+                "load_injury_status",
+                game_date=str(game_date),
+                table=self.injury_table
+            ):
+                result = self.bq_client.query(query).to_dataframe()
+                injury_map = {}
+                for _, row in result.iterrows():
+                    injury_map[row['player_lookup']] = {
+                        'injury_status': row['injury_status'],
+                        'reason': row['reason']
+                    }
+                logger.info(f"  Loaded {len(injury_map)} injury reports for {game_date}")
+                return injury_map
+        except (gcp_exceptions.BadRequest, gcp_exceptions.NotFound,
+                gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded,
+                GoogleCloudError) as e:
+            # Error already logged by ErrorContext with structured fields
             return {}
         except Exception as e:
-            logger.warning(f"Unexpected error loading injury status for {game_date}: {type(e).__name__}: {e}")
+            # Error already logged by ErrorContext with structured fields
             return {}
 
     def get_injury_status(self, player_lookup: str, game_date: date) -> Optional[Dict]:
@@ -374,22 +527,20 @@ class PredictionAccuracyProcessor:
         """
 
         try:
-            result = self.bq_client.query(query).to_dataframe()
-            return result.to_dict('records')
-        except gcp_exceptions.BadRequest as e:
-            logger.error(f"BigQuery syntax error loading predictions for {game_date}: {e}")
-            return []
-        except gcp_exceptions.NotFound as e:
-            logger.error(f"BigQuery table not found loading predictions for {game_date}: {e}")
-            return []
-        except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
-            logger.error(f"BigQuery timeout/unavailable loading predictions for {game_date}: {e}")
-            return []
-        except GoogleCloudError as e:
-            logger.error(f"GCP error loading predictions for {game_date}: {e}")
+            with ErrorContext(
+                "load_predictions_for_grading",
+                game_date=str(game_date),
+                table=self.predictions_table
+            ):
+                result = self.bq_client.query(query).to_dataframe()
+                return result.to_dict('records')
+        except (gcp_exceptions.BadRequest, gcp_exceptions.NotFound,
+                gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded,
+                GoogleCloudError) as e:
+            # Error already logged by ErrorContext with structured fields
             return []
         except Exception as e:
-            logger.error(f"Unexpected error loading predictions for {game_date}: {type(e).__name__}: {e}", exc_info=True)
+            # Error already logged by ErrorContext with structured fields
             return []
 
     def get_actuals_for_date(self, game_date: date) -> Dict[str, Dict]:
@@ -410,35 +561,30 @@ class PredictionAccuracyProcessor:
         """
 
         try:
-            result = self.bq_client.query(query).to_dataframe()
-            # Return dict of dicts with all player context
-            # Note: Use pd.notna() to handle both None and pandas NAType
-            return {
-                row['player_lookup']: {
-                    'actual_points': int(row['actual_points']) if pd.notna(row['actual_points']) else None,
-                    'team_abbr': row['team_abbr'] if pd.notna(row['team_abbr']) else None,
-                    'opponent_team_abbr': row['opponent_team_abbr'] if pd.notna(row['opponent_team_abbr']) else None,
-                    'minutes_played': self._safe_float(row['minutes_played'])
+            with ErrorContext(
+                "load_actuals_for_grading",
+                game_date=str(game_date),
+                table=self.actuals_table
+            ):
+                result = self.bq_client.query(query).to_dataframe()
+                # Return dict of dicts with all player context
+                # Note: Use pd.notna() to handle both None and pandas NAType
+                return {
+                    row['player_lookup']: {
+                        'actual_points': int(row['actual_points']) if pd.notna(row['actual_points']) else None,
+                        'team_abbr': row['team_abbr'] if pd.notna(row['team_abbr']) else None,
+                        'opponent_team_abbr': row['opponent_team_abbr'] if pd.notna(row['opponent_team_abbr']) else None,
+                        'minutes_played': self._safe_float(row['minutes_played'])
+                    }
+                    for _, row in result.iterrows()
                 }
-                for _, row in result.iterrows()
-            }
-        except gcp_exceptions.BadRequest as e:
-            logger.error(f"BigQuery syntax error loading actuals for {game_date}: {e}")
-            return {}
-        except gcp_exceptions.NotFound as e:
-            logger.error(f"BigQuery table not found loading actuals for {game_date}: {e}")
-            return {}
-        except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
-            logger.error(f"BigQuery timeout/unavailable loading actuals for {game_date}: {e}")
-            return {}
-        except GoogleCloudError as e:
-            logger.error(f"GCP error loading actuals for {game_date}: {e}")
-            return {}
-        except (KeyError, TypeError, ValueError) as e:
-            logger.error(f"Data parsing error loading actuals for {game_date}: {e}")
+        except (gcp_exceptions.BadRequest, gcp_exceptions.NotFound,
+                gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded,
+                GoogleCloudError, KeyError, TypeError, ValueError) as e:
+            # Error already logged by ErrorContext with structured fields
             return {}
         except Exception as e:
-            logger.error(f"Unexpected error loading actuals for {game_date}: {type(e).__name__}: {e}", exc_info=True)
+            # Error already logged by ErrorContext with structured fields
             return {}
 
     def compute_prediction_correct(
@@ -790,76 +936,71 @@ class PredictionAccuracyProcessor:
         graded_results = sanitized_results
 
         try:
-            # STEP 1: DELETE existing records for this date
-            delete_query = f"""
-            DELETE FROM `{self.accuracy_table}`
-            WHERE game_date = '{game_date}'
-            """
-            delete_job = self.bq_client.query(delete_query)
-            delete_job.result(timeout=60)
-            deleted_count = delete_job.num_dml_affected_rows or 0
+            # Use ErrorContext for structured error logging on critical write operation
+            with ErrorContext(
+                "write_graded_results",
+                game_date=str(game_date),
+                record_count=len(graded_results),
+                table=self.accuracy_table,
+                alert_on_failure=True  # Alert on grading write failures
+            ):
+                # STEP 1: DELETE existing records for this date
+                delete_query = f"""
+                DELETE FROM `{self.accuracy_table}`
+                WHERE game_date = '{game_date}'
+                """
+                delete_job = self.bq_client.query(delete_query)
+                delete_job.result(timeout=60)
+                deleted_count = delete_job.num_dml_affected_rows or 0
 
-            if deleted_count > 0:
-                logger.info(f"  Deleted {deleted_count} existing graded records for {game_date}")
+                if deleted_count > 0:
+                    logger.info(f"  Deleted {deleted_count} existing graded records for {game_date}")
 
-            # STEP 2: INSERT new records using batch loading
-            table_ref = self.bq_client.get_table(self.accuracy_table)
-            job_config = bigquery.LoadJobConfig(
-                schema=table_ref.schema,
-                autodetect=False,
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                ignore_unknown_values=True
-            )
-
-            load_job = self.bq_client.load_table_from_json(
-                graded_results,
-                self.accuracy_table,
-                job_config=job_config
-            )
-            load_job.result(timeout=60)
-
-            if load_job.errors:
-                logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
-
-            rows_written = load_job.output_rows or len(graded_results)
-
-            # STEP 3: VALIDATE no duplicates created (Layer 2 defense)
-            logger.info(f"  Running post-grading validation for {game_date}...")
-            duplicate_count = self._check_for_duplicates(game_date)
-
-            if duplicate_count > 0:
-                logger.error(
-                    f"  ❌ VALIDATION FAILED: {duplicate_count} duplicate business keys detected "
-                    f"for {game_date} despite distributed lock!"
+                # STEP 2: INSERT new records using batch loading
+                table_ref = self.bq_client.get_table(self.accuracy_table)
+                job_config = bigquery.LoadJobConfig(
+                    schema=table_ref.schema,
+                    autodetect=False,
+                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                    write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                    ignore_unknown_values=True
                 )
-                # Don't raise exception - log and alert, but don't fail grading
-                # Alerting system will notify operators
-            elif duplicate_count == 0:
-                logger.info(f"  ✅ Validation passed: No duplicates for {game_date}")
 
-            return rows_written
+                load_job = self.bq_client.load_table_from_json(
+                    graded_results,
+                    self.accuracy_table,
+                    job_config=job_config
+                )
+                load_job.result(timeout=60)
 
-        except gcp_exceptions.BadRequest as e:
-            logger.error(f"BigQuery bad request writing graded results for {game_date}: {e}")
-            return 0
-        except gcp_exceptions.NotFound as e:
-            logger.error(f"BigQuery table not found writing graded results for {game_date}: {e}")
-            return 0
-        except (gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded) as e:
-            logger.error(f"BigQuery timeout/unavailable writing graded results for {game_date}: {e}")
-            return 0
-        except gcp_exceptions.Conflict as e:
-            logger.error(f"BigQuery DML conflict writing graded results for {game_date}: {e}")
-            return 0
-        except GoogleCloudError as e:
-            logger.error(f"GCP error writing graded results for {game_date}: {e}")
-            return 0
-        except (TypeError, ValueError) as e:
-            logger.error(f"Data serialization error writing graded results for {game_date}: {e}")
+                if load_job.errors:
+                    logger.warning(f"BigQuery load had errors: {load_job.errors[:3]}")
+
+                rows_written = load_job.output_rows or len(graded_results)
+
+                # STEP 3: VALIDATE no duplicates created (Layer 2 defense)
+                logger.info(f"  Running post-grading validation for {game_date}...")
+                duplicate_count = self._check_for_duplicates(game_date)
+
+                if duplicate_count > 0:
+                    logger.error(
+                        f"  VALIDATION FAILED: {duplicate_count} duplicate business keys detected "
+                        f"for {game_date} despite distributed lock!"
+                    )
+                    # Don't raise exception - log and alert, but don't fail grading
+                    # Alerting system will notify operators
+                elif duplicate_count == 0:
+                    logger.info(f"  Validation passed: No duplicates for {game_date}")
+
+                return rows_written
+
+        except (gcp_exceptions.BadRequest, gcp_exceptions.NotFound,
+                gcp_exceptions.ServiceUnavailable, gcp_exceptions.DeadlineExceeded,
+                gcp_exceptions.Conflict, GoogleCloudError, TypeError, ValueError) as e:
+            # Error already logged by ErrorContext with structured fields
             return 0
         except Exception as e:
-            logger.error(f"Unexpected error writing graded results for {game_date}: {type(e).__name__}: {e}", exc_info=True)
+            # Error already logged by ErrorContext with structured fields
             return 0
 
     def write_graded_results(
@@ -906,19 +1047,52 @@ class PredictionAccuracyProcessor:
 
         # SESSION 94 FIX: Use distributed lock to prevent concurrent grading
         if use_lock:
+            import time as time_module
             try:
                 lock = DistributedLock(project_id=self.project_id, lock_type="grading")
+                lock_key = f"grading_{game_date_str}"
                 logger.info(f"Acquiring grading lock for game_date={game_date_str}")
 
                 with lock.acquire(game_date=game_date_str, operation_id=f"grading_{game_date_str}"):
                     # Lock acquired - run grading inside locked context
                     logger.info(f"✅ Grading lock acquired for {game_date_str}")
-                    return self._write_with_validation(graded_results, game_date)
+                    operation_start = time_module.time()
+
+                    result = self._write_with_validation(graded_results, game_date)
+
+                    # Check if operation exceeded lock timeout (risk of lock expiration)
+                    operation_duration = int(time_module.time() - operation_start)
+                    if operation_duration > LOCK_TIMEOUT_SECONDS:
+                        logger.warning(
+                            f"⚠️  Grading operation exceeded lock timeout: {operation_duration}s > {LOCK_TIMEOUT_SECONDS}s"
+                        )
+                        # Send lock timeout alert (non-blocking)
+                        _send_lock_timeout_alert_async(
+                            game_date=game_date_str,
+                            lock_key=lock_key,
+                            elapsed_seconds=operation_duration
+                        )
+
+                    return result
 
             except LockAcquisitionError as e:
                 # Failed to acquire lock after max retries
                 error_msg = f"Cannot acquire grading lock for {game_date_str}: {e}"
                 logger.error(error_msg)
+
+                # Calculate lock acquisition details for alert
+                lock_key = f"grading_{game_date_str}"
+                max_wait_seconds = MAX_ACQUIRE_ATTEMPTS * RETRY_DELAY_SECONDS
+
+                # Send Slack alert (non-blocking) for lock acquisition failure
+                _send_lock_failure_alert_async(
+                    game_date=game_date_str,
+                    lock_key=lock_key,
+                    retry_attempts=MAX_ACQUIRE_ATTEMPTS,
+                    timeout_duration=max_wait_seconds,
+                    error_message=str(e)
+                )
+
                 # Don't fail grading - try without lock (log warning)
                 logger.warning(f"⚠️  Proceeding with grading WITHOUT lock for {game_date_str}")
                 return self._write_with_validation(graded_results, game_date)

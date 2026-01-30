@@ -33,6 +33,9 @@ from shared.clients.bigquery_pool import get_bigquery_client
 from data_processors.raw.oddsapi.odds_api_props_processor import OddsApiPropsProcessor
 from data_processors.raw.oddsapi.odds_game_lines_processor import OddsGameLinesProcessor
 
+# Standardized error handling utility
+from shared.utils.error_context import ErrorContext, log_operation_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -88,25 +91,32 @@ class OddsApiGameLinesBatchProcessor(ProcessorBase):
                 continue
 
             try:
-                content = blob.download_as_text()
-                raw_data = json.loads(content)
+                # Use ErrorContext for structured error logging
+                with ErrorContext(
+                    "process_game_lines_file",
+                    game_date=game_date,
+                    file_path=blob.name,
+                    bucket=bucket_name
+                ):
+                    content = blob.download_as_text()
+                    raw_data = json.loads(content)
 
-                # Use the existing processor's transform logic
-                processor = OddsGameLinesProcessor()
-                processor.opts = {
-                    'file_path': blob.name,
-                    'bucket': bucket_name,
-                    'project_id': self.project_id
-                }
-                processor.raw_data = raw_data
-                processor.transform_data()
+                    # Use the existing processor's transform logic
+                    processor = OddsGameLinesProcessor()
+                    processor.opts = {
+                        'file_path': blob.name,
+                        'bucket': bucket_name,
+                        'project_id': self.project_id
+                    }
+                    processor.raw_data = raw_data
+                    processor.transform_data()
 
-                if processor.transformed_data:
-                    self.all_rows.extend(processor.transformed_data)
-                    file_count += 1
+                    if processor.transformed_data:
+                        self.all_rows.extend(processor.transformed_data)
+                        file_count += 1
 
             except Exception as e:
-                logger.error(f"Failed to process game-lines file {blob.name}: {e}")
+                # Error already logged by ErrorContext with structured fields
                 failed_files.append(blob.name)
 
         # CRITICAL FIX (Jan 25, 2026): Abort if too many files failed
@@ -141,45 +151,51 @@ class OddsApiGameLinesBatchProcessor(ProcessorBase):
             self.stats['rows_inserted'] = 0
             return
 
+        game_date = self.opts.get('game_date')
         table_id = f"{self.project_id}.{self.table_name}"
         temp_table_id = f"{table_id}_batch_{uuid.uuid4().hex[:8]}"
 
         try:
-            # Get target table schema
-            target_table = self.bq_client.get_table(table_id)
+            # Use ErrorContext for structured error logging on critical save operation
+            with ErrorContext(
+                "save_game_lines_batch",
+                game_date=game_date,
+                record_count=len(self.all_rows),
+                table_name=self.table_name,
+                alert_on_failure=True  # Alert on save failures
+            ):
+                # Get target table schema
+                target_table = self.bq_client.get_table(table_id)
 
-            # Create temp table with same schema
-            temp_table = bigquery.Table(temp_table_id, schema=target_table.schema)
-            self.bq_client.create_table(temp_table)
-            logger.info(f"Created temp table: {temp_table_id}")
+                # Create temp table with same schema
+                temp_table = bigquery.Table(temp_table_id, schema=target_table.schema)
+                self.bq_client.create_table(temp_table)
+                logger.info(f"Created temp table: {temp_table_id}")
 
-            # Batch load to temp table
-            job_config = bigquery.LoadJobConfig(
-                schema=target_table.schema,
-                autodetect=False,
-                write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON
-            )
+                # Batch load to temp table
+                job_config = bigquery.LoadJobConfig(
+                    schema=target_table.schema,
+                    autodetect=False,
+                    write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON
+                )
 
-            load_job = self.bq_client.load_table_from_json(
-                self.all_rows,
-                temp_table_id,
-                job_config=job_config
-            )
-            load_job.result(timeout=120)
+                load_job = self.bq_client.load_table_from_json(
+                    self.all_rows,
+                    temp_table_id,
+                    job_config=job_config
+                )
+                load_job.result(timeout=120)
 
-            logger.info(f"✅ Batch loaded {len(self.all_rows)} rows to temp table")
+                logger.info(f"✅ Batch loaded {len(self.all_rows)} rows to temp table")
 
-            # Extract game_date for partition filter
-            game_date = self.opts.get('game_date')
+                # Single MERGE operation for all games
+                self._execute_merge(temp_table_id, table_id, game_date)
 
-            # Single MERGE operation for all games
-            self._execute_merge(temp_table_id, table_id, game_date)
-
-            self.stats['rows_inserted'] = len(self.all_rows)
+                self.stats['rows_inserted'] = len(self.all_rows)
 
         except Exception as e:
-            logger.error(f"Failed to save game-lines batch: {e}")
+            # Error already logged by ErrorContext with structured fields
             self.stats['rows_inserted'] = 0
             raise
 
@@ -189,7 +205,12 @@ class OddsApiGameLinesBatchProcessor(ProcessorBase):
                 self.bq_client.delete_table(temp_table_id)
                 logger.info(f"✅ Cleaned up temp table: {temp_table_id}")
             except Exception as e:
-                logger.warning(f"Failed to delete temp table: {e}")
+                log_operation_error(
+                    "cleanup_temp_table",
+                    e,
+                    table_id=temp_table_id,
+                    game_date=game_date
+                )
 
     def _execute_merge(self, temp_table_id: str, target_table_id: str, game_date: str = None):
         """Execute single MERGE operation for all game lines."""
@@ -320,25 +341,32 @@ class OddsApiPropsBatchProcessor(ProcessorBase):
                 continue
 
             try:
-                content = blob.download_as_text()
-                raw_data = json.loads(content)
+                # Use ErrorContext for structured error logging
+                with ErrorContext(
+                    "process_player_props_file",
+                    game_date=game_date,
+                    file_path=blob.name,
+                    bucket=bucket_name
+                ):
+                    content = blob.download_as_text()
+                    raw_data = json.loads(content)
 
-                # Use the existing processor's transform logic
-                processor = OddsApiPropsProcessor()
-                processor.opts = {
-                    'file_path': blob.name,
-                    'bucket': bucket_name,
-                    'project_id': self.project_id
-                }
-                processor.raw_data = raw_data
-                processor.transform_data()
+                    # Use the existing processor's transform logic
+                    processor = OddsApiPropsProcessor()
+                    processor.opts = {
+                        'file_path': blob.name,
+                        'bucket': bucket_name,
+                        'project_id': self.project_id
+                    }
+                    processor.raw_data = raw_data
+                    processor.transform_data()
 
-                if processor.transformed_data:
-                    self.all_rows.extend(processor.transformed_data)
-                    file_count += 1
+                    if processor.transformed_data:
+                        self.all_rows.extend(processor.transformed_data)
+                        file_count += 1
 
             except Exception as e:
-                logger.error(f"Failed to process player-props file {blob.name}: {e}")
+                # Error already logged by ErrorContext with structured fields
                 failed_files.append(blob.name)
 
         # CRITICAL FIX (Jan 25, 2026): Abort if too many files failed
@@ -381,44 +409,51 @@ class OddsApiPropsBatchProcessor(ProcessorBase):
                 if isinstance(value, (dt.date, dt.datetime)):
                     row[key] = value.isoformat()
 
+        game_date = self.opts.get('game_date')
         table_id = f"{self.project_id}.{self.table_name}"
 
         try:
-            # Get target table for schema
-            target_table = self.bq_client.get_table(table_id)
+            # Use ErrorContext for structured error logging on critical save operation
+            with ErrorContext(
+                "save_player_props_batch",
+                game_date=game_date,
+                record_count=len(self.all_rows),
+                table_name=self.table_name,
+                alert_on_failure=True  # Alert on save failures
+            ):
+                # Get target table for schema
+                target_table = self.bq_client.get_table(table_id)
 
-            # Use batch loading with APPEND
-            job_config = bigquery.LoadJobConfig(
-                schema=target_table.schema,
-                autodetect=False,
-                write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                ignore_unknown_values=True
-            )
+                # Use batch loading with APPEND
+                job_config = bigquery.LoadJobConfig(
+                    schema=target_table.schema,
+                    autodetect=False,
+                    write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                    ignore_unknown_values=True
+                )
 
-            load_job = self.bq_client.load_table_from_json(
-                self.all_rows,
-                table_id,
-                job_config=job_config
-            )
-            load_job.result(timeout=120)
+                load_job = self.bq_client.load_table_from_json(
+                    self.all_rows,
+                    table_id,
+                    job_config=job_config
+                )
+                load_job.result(timeout=120)
 
-            if load_job.errors:
-                logger.error(f"BigQuery load had errors: {load_job.errors[:3]}")
-                self.stats['rows_inserted'] = 0
-                raise Exception(f"BigQuery load errors: {load_job.errors}")
+                if load_job.errors:
+                    raise Exception(f"BigQuery load errors: {load_job.errors[:3]}")
 
-            logger.info(f"✅ Batch loaded {len(self.all_rows)} prop records")
+                logger.info(f"✅ Batch loaded {len(self.all_rows)} prop records")
 
-            self.stats['rows_inserted'] = len(self.all_rows)
-            self.stats['files_processed'] = self.files_processed
+                self.stats['rows_inserted'] = len(self.all_rows)
+                self.stats['files_processed'] = self.files_processed
 
-            # Update predictions that were waiting for lines
-            if len(self.all_rows) > 0:
-                self._update_predictions_with_new_lines()
+                # Update predictions that were waiting for lines
+                if len(self.all_rows) > 0:
+                    self._update_predictions_with_new_lines()
 
         except Exception as e:
-            logger.error(f"Failed to save props batch: {e}")
+            # Error already logged by ErrorContext with structured fields
             self.stats['rows_inserted'] = 0
             raise
 
@@ -503,4 +538,10 @@ class OddsApiPropsBatchProcessor(ProcessorBase):
 
         except Exception as e:
             # Don't fail the batch if prediction update fails
-            logger.warning(f"Failed to update predictions with new lines: {e}")
+            # Log with structured context for debugging
+            log_operation_error(
+                "update_predictions_with_lines",
+                e,
+                game_date=game_date,
+                alert=False  # Non-critical - don't alert
+            )

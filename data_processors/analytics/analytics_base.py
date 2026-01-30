@@ -1,15 +1,63 @@
-"""
-Path: analytics_processors/analytics_base.py
+"""Phase 3 Analytics Processor Base Module.
 
-Base class for Phase 3 analytics processors that handles:
- - Dependency checking (upstream Phase 2 data validation)
- - Source metadata tracking (audit trail per v4.0 guide)
- - Querying raw BigQuery tables
- - Calculating analytics metrics
- - Loading to analytics tables
- - Error handling and quality tracking
- - Multi-channel notifications (Email + Slack)
- - Run history logging (via RunHistoryMixin)
+This module provides the base class for all Phase 3 analytics processors in the
+NBA data pipeline. Phase 3 transforms raw data (from Phase 2) into analytics
+metrics like rolling averages, trends, and derived statistics.
+
+Architecture Overview:
+    Phase 1 (Scrapers) -> Phase 2 (Raw) -> Phase 3 (Analytics) -> Phase 4 (Precompute)
+
+    This base class handles the analytics processing lifecycle:
+    1. Dependency checking - Validates upstream Phase 2 tables have fresh data
+    2. Change detection - Identifies which entities changed (incremental mode)
+    3. Data extraction - Queries raw BigQuery tables
+    4. Analytics calculation - Computes derived metrics
+    5. Data persistence - Saves to analytics BigQuery tables
+    6. Downstream notification - Publishes Pub/Sub message to trigger Phase 4
+
+Key Features:
+    - **State Machine**: Manages processing state through defined lifecycle phases
+    - **Dependency Checking**: Validates upstream data freshness before processing
+    - **Soft Dependencies**: Graceful degradation when coverage > 80% (configurable)
+    - **Change Detection**: Incremental processing for 99%+ efficiency gains
+    - **Heartbeat Monitoring**: 15-minute stale processor detection
+    - **Run History**: Automatic logging to processor_run_history table
+    - **Source Tracking**: Full audit trail with data lineage
+    - **Failure Categorization**: Smart error classification for alerting
+    - **Multi-Sport Support**: Sport-specific datasets via SportConfig
+
+Processing Modes:
+    - **Full Batch**: Process all entities for date range (default)
+    - **Incremental**: Process only changed entities (when change detection enabled)
+    - **Backfill**: Skip dependency checks, suppress alerts (strict_mode=False)
+
+Error Handling:
+    - Transient errors: Logged to retry queue for automatic retry
+    - Permanent errors: Categorized and alerted via Slack/Email
+    - Partial failures: Entity-level tracking via failed_entities list
+
+Usage:
+    Subclass AnalyticsProcessorBase and implement:
+    - extract_raw_data(): Query upstream tables
+    - calculate_analytics(): Compute derived metrics
+    - get_dependencies(): Define upstream table dependencies (optional)
+    - get_change_detector(): Enable incremental processing (optional)
+
+Example:
+    class PlayerAveragesProcessor(AnalyticsProcessorBase):
+        table_name = 'player_rolling_averages'
+
+        def get_dependencies(self):
+            return [{'table': 'bdl_boxscores', 'is_critical': True}]
+
+        def extract_raw_data(self):
+            self.raw_data = self.bq_client.query('''
+                SELECT * FROM `project.nba_raw.bdl_boxscores`
+                WHERE game_date BETWEEN @start AND @end
+            ''').to_dataframe()
+
+        def calculate_analytics(self):
+            self.transformed_data = compute_rolling_averages(self.raw_data)
 
 Version: 2.2 (with run history logging + multi-sport support)
 Updated: November 2025
@@ -116,26 +164,82 @@ logger = logging.getLogger("analytics_base")
 
 
 class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, DependencyMixin, MetadataMixin, QualityMixin, TransformProcessorBase, SoftDependencyMixin, RunHistoryMixin):
-    """
-    Base class for Phase 3 analytics processors with full dependency tracking.
+    """Base class for Phase 3 analytics processors with state machine lifecycle.
 
-    Phase 3 processors depend on Phase 2 (Raw) tables.
-    This base class provides dependency checking, source tracking, and validation.
+    This class orchestrates the complete analytics processing flow from dependency
+    checking through data persistence. It inherits functionality from multiple
+    mixins that handle specific concerns (quality, metadata, dependencies, etc.).
 
-    Soft Dependencies (added after Jan 23 incident):
-    - Set use_soft_dependencies = True in child class to enable graceful degradation
-    - Processors will proceed if coverage > 80% instead of all-or-nothing
+    Inheritance Hierarchy:
+        AnalyticsProcessorBase
+        ├── FailureTrackingMixin - Entity-level failure recording
+        ├── BigQuerySaveOpsMixin - MERGE/DELETE+INSERT save strategies
+        ├── DependencyMixin - Upstream table validation
+        ├── MetadataMixin - Source tracking and data lineage
+        ├── QualityMixin - Duplicate detection, quality logging
+        ├── TransformProcessorBase - Core transform operations
+        ├── SoftDependencyMixin - Graceful degradation (80% coverage)
+        └── RunHistoryMixin - Run history logging
 
-    Lifecycle:
-      1) Check dependencies (are upstream Phase 2 tables ready?)
-      2) Extract data from raw BigQuery tables
-      3) Validate extracted data
-      4) Calculate analytics
-      5) Load to analytics BigQuery tables
-      6) Log processing run with source metadata
+    State Machine Lifecycle:
+        INIT -> DEPENDENCY_CHECK -> EXTRACT -> VALIDATE -> TRANSFORM -> SAVE -> COMPLETE
+                     |                                                      |
+                     +-------------------> FAILED <------------------------+
 
-    Run History:
-      Automatically logs runs to processor_run_history table via RunHistoryMixin.
+        Each state transition is logged and timed for observability.
+
+    Processing Flow:
+        1. **Initialization**: Reset state, validate options, init clients
+        2. **Dependency Check**: Validate upstream Phase 2 tables are fresh
+        3. **Defensive Checks**: Check upstream processor status, detect gaps
+        4. **Change Detection**: Identify changed entities (incremental mode)
+        5. **Extract**: Query raw tables, store in self.raw_data
+        6. **Validate**: Verify extracted data integrity
+        7. **Transform**: Calculate analytics, store in self.transformed_data
+        8. **Save**: Persist to BigQuery with MERGE or DELETE+INSERT
+        9. **Post-Process**: Log stats, publish completion message
+
+    Configuration Class Attributes:
+        required_opts (List[str]): Options that must be provided (default: start_date, end_date)
+        additional_opts (List[str]): Extra options to validate
+        validate_on_extract (bool): Whether to validate after extraction (default: True)
+        save_on_error (bool): Save partial data on failure (default: True)
+        use_soft_dependencies (bool): Enable graceful degradation (default: False)
+        soft_dependency_threshold (float): Min coverage to proceed (default: 0.80)
+        dataset_id (str): Target BigQuery dataset (from sport_config)
+        table_name (str): Target BigQuery table (child class must set)
+        processing_strategy (str): 'MERGE_UPDATE' or 'DELETE_INSERT' (default: MERGE_UPDATE)
+
+    State Attributes (set during processing):
+        opts (Dict): Processing options (dates, run_id, etc.)
+        raw_data: Extracted data (typically pandas DataFrame)
+        validated_data: Data after validation
+        transformed_data (List[Dict]): Analytics records to save
+        stats (Dict): Timing and count statistics
+        source_metadata (Dict): Data lineage tracking
+        quality_issues (List): Detected quality problems
+        failed_entities (List): Entity-level failures
+        entities_changed (List): Changed entities (incremental mode)
+        is_incremental_run (bool): Whether running in incremental mode
+
+    Example:
+        class PlayerStatsProcessor(AnalyticsProcessorBase):
+            table_name = 'player_daily_stats'
+            processing_strategy = 'MERGE_UPDATE'
+
+            def get_dependencies(self):
+                return [{'table': 'bdl_boxscores', 'is_critical': True}]
+
+            def extract_raw_data(self):
+                # Query upstream tables
+                self.raw_data = self._execute_query_with_retry(query)
+
+            def calculate_analytics(self):
+                # Compute metrics and set self.transformed_data
+                self.transformed_data = [
+                    {**record, **self.build_source_tracking_fields()}
+                    for record in computed_records
+                ]
     """
 
     # Class-level configs
@@ -164,7 +268,20 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
     OUTPUT_DATASET: str = None  # Will be set from sport_config in __init__
     
     def __init__(self):
-        """Initialize analytics processor."""
+        """Initialize analytics processor with default state.
+
+        Sets up all state attributes to their initial values and initializes
+        GCP clients. The __init__ is called both on instantiation and at the
+        start of each run() to reset state (preserving run_id).
+
+        Initializes:
+            - Base class attributes via super().__init__()
+            - GCP project ID and BigQuery client
+            - Dataset IDs from sport_config (if not set by child class)
+            - Change detector placeholder
+            - Registry failures list
+            - Completeness checker placeholder
+        """
         # Initialize base class (sets opts, raw_data, validated_data, transformed_data,
         # stats, time_markers, source_metadata, quality_issues, failed_entities, run_id,
         # correlation_id, parent_processor, trigger_message_id, entities_changed,
@@ -207,9 +324,44 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
     # - processor_name (property)
 
     def run(self, opts: Optional[Dict] = None) -> bool:
-        """
-        Main entry point - returns True on success, False on failure.
-        Enhanced with run history logging.
+        """Execute the complete analytics processing lifecycle.
+
+        This is the main entry point for running an analytics processor. It
+        orchestrates the full lifecycle from dependency checking through data
+        persistence and downstream notification.
+
+        The method implements a state machine with the following phases:
+        1. Setup: Reset state, validate options, init clients
+        2. Dependency check: Validate upstream data freshness
+        3. Defensive checks: Upstream processor status, gap detection
+        4. Change detection: Identify changed entities (incremental mode)
+        5. Extract: Query raw tables into self.raw_data
+        6. Validate: Verify extracted data integrity
+        7. Transform: Calculate analytics into self.transformed_data
+        8. Save: Persist to BigQuery
+        9. Post-process: Log stats, publish completion message
+
+        Args:
+            opts: Processing options dictionary containing:
+                - start_date (date): Start of date range (required)
+                - end_date (date): End of date range (required)
+                - trigger_source (str): What triggered this run (optional)
+                - correlation_id (str): Trace ID for distributed tracing (optional)
+                - entities_changed (List): Pre-computed changed entities (optional)
+                - strict_mode (bool): Enable defensive checks (default: True)
+                - skip_downstream_trigger (bool): Skip Pub/Sub publish (optional)
+
+        Returns:
+            bool: True if processing completed successfully, False on failure.
+
+        Raises:
+            ValueError: If required options are missing or dependencies fail.
+            DependencyError: If upstream processor failed or data gaps exist.
+
+        Note:
+            Failures are caught and logged but not re-raised. The method returns
+            False on failure, allowing callers to handle errors gracefully.
+            Partial data may be saved on error if save_on_error=True.
         """
         if opts is None:
             opts = {}
@@ -809,10 +961,21 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
                 logger.warning(f"Error in finalize(): {finalize_ex}")
 
     def finalize(self) -> None:
-        """
-        Cleanup hook that runs regardless of success/failure.
-        Child classes override this for cleanup operations.
-        Base implementation saves any recorded failures to BigQuery.
+        """Perform cleanup operations after processing completes.
+
+        This hook runs in the finally block, executing regardless of whether
+        processing succeeded or failed. Child classes can override to add
+        custom cleanup logic (always call super().finalize()).
+
+        The base implementation:
+        - Saves any entity-level failures recorded in self.failed_entities
+        - Logs warnings if failure saving itself fails (non-blocking)
+
+        Child classes might override to:
+        - Close database connections
+        - Clean up temporary files
+        - Release locks or resources
+        - Flush remaining batched writes
         """
         # Save any failures that were recorded during processing
         try:
@@ -844,12 +1007,27 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
     # =========================================================================
     
     def set_opts(self, opts: Dict) -> None:
-        """Set options."""
+        """Store processing options and inject run_id.
+
+        Args:
+            opts: Processing options dictionary. Common keys include:
+                - start_date: Beginning of date range to process
+                - end_date: End of date range to process
+                - trigger_source: What initiated this run
+                - correlation_id: Distributed tracing ID
+        """
         self.opts = opts
         self.opts["run_id"] = self.run_id
         
     def validate_opts(self) -> None:
-        """Validate required options."""
+        """Validate that all required options are present.
+
+        Checks that each option in required_opts exists in self.opts.
+        Sends error notification and raises ValueError if any are missing.
+
+        Raises:
+            ValueError: If a required option is not provided.
+        """
         for required_opt in self.required_opts:
             if required_opt not in self.opts:
                 error_msg = f"Missing required option [{required_opt}]"
@@ -874,16 +1052,39 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
                 raise ValueError(error_msg)
     
     def set_additional_opts(self) -> None:
-        """Add additional options - child classes override and call super()."""
+        """Add derived or default options after validation.
+
+        Called after validate_opts() to set computed options. Child classes
+        should override this method and call super().set_additional_opts()
+        to add processor-specific derived options.
+
+        Default behavior:
+            Sets 'timestamp' option to current UTC time if not provided.
+        """
         if "timestamp" not in self.opts:
             self.opts["timestamp"] = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     
     def validate_additional_opts(self) -> None:
-        """Validate additional options - child classes override."""
+        """Validate additional options set by set_additional_opts().
+
+        Child classes override this to validate processor-specific options.
+        Called after set_additional_opts() completes.
+
+        Raises:
+            ValueError: If additional options fail validation.
+        """
         pass
     
     def init_clients(self) -> None:
-        """Initialize GCP clients with error notification."""
+        """Initialize GCP clients (BigQuery) with error notification.
+
+        Sets up self.project_id and self.bq_client for BigQuery operations.
+        Project ID is determined from opts['project_id'] or GCP config.
+
+        Raises:
+            GoogleAPIError: If BigQuery client initialization fails.
+                Error notification is sent before re-raising.
+        """
         try:
             from shared.config.gcp_config import get_project_id
             self.project_id = self.opts.get("project_id") or get_project_id()
@@ -944,7 +1145,16 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
         raise NotImplementedError("Child classes must implement extract_raw_data()")
     
     def validate_extracted_data(self) -> None:
-        """Validate extracted data - child classes override."""
+        """Validate extracted data meets quality requirements.
+
+        Called after extract_raw_data() if validate_on_extract=True.
+        Base implementation checks for empty data. Child classes should
+        override to add domain-specific validation.
+
+        Raises:
+            ValueError: If validation fails (e.g., no data extracted).
+                Warning notification is sent before raising.
+        """
         if self.raw_data is None or (hasattr(self.raw_data, 'empty') and self.raw_data.empty):
             try:
                 self._send_notification(
@@ -992,18 +1202,21 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
         raise NotImplementedError("Child classes must implement calculate_analytics()")
 
     def _deduplicate_records(self, records: List[Dict]) -> List[Dict]:
-        """
-        Deduplicate records by PRIMARY_KEY_FIELDS before saving.
+        """Deduplicate records by PRIMARY_KEY_FIELDS before saving.
 
+        Prevents duplicate records when the same data is processed multiple
+        times (e.g., retry after partial failure, streaming buffer conflicts).
         Keeps the record with the latest processed_at timestamp.
-        This prevents duplicate records from being inserted when the same
-        data is processed multiple times (e.g., streaming buffer conflicts).
+
+        Requires the child class to define PRIMARY_KEY_FIELDS as a list of
+        field names that form the composite primary key.
 
         Args:
-            records: List of record dictionaries to deduplicate
+            records: List of record dictionaries to deduplicate.
 
         Returns:
-            Deduplicated list of records
+            List[Dict]: Deduplicated records with latest processed_at kept.
+                Returns input unchanged if PRIMARY_KEY_FIELDS not defined.
         """
         if not records:
             return records
@@ -1063,14 +1276,20 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
     # =========================================================================
     
     def log_processing_run(self, success: bool, error: str = None, skip_reason: str = None) -> None:
-        """
-        Log processing run to monitoring table.
-        Uses batch loading to avoid streaming buffer issues.
+        """Log processing run metadata to analytics_processor_runs table.
+
+        Records run metadata for monitoring, debugging, and historical analysis.
+        Uses BigQueryBatchWriter to batch writes and avoid quota issues.
 
         Args:
-            success: Whether the processing run succeeded
-            error: Optional error message if failed
-            skip_reason: Optional reason if processing was skipped (early exit)
+            success: Whether the processing run completed successfully.
+            error: Error message if the run failed. Stored as JSON array.
+            skip_reason: Reason if processing was skipped (e.g., no data, cache hit).
+                Stored in both stats dict and run record.
+
+        Note:
+            Failures to log are caught and logged as warnings but do not
+            fail the overall processing run.
         """
         run_record = {
             'processor_name': self.__class__.__name__,
@@ -1111,7 +1330,19 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             logger.warning(f"Failed to log processing run: {e}")
     
     def post_process(self) -> None:
-        """Post-processing - log summary stats and publish completion message."""
+        """Perform post-processing after successful save.
+
+        Called after save_analytics() completes successfully. Performs:
+        1. Logs ANALYTICS_STATS JSON summary for monitoring
+        2. Publishes completion message to trigger Phase 4 (unless disabled)
+
+        The completion message is published to nba-phase3-analytics-complete
+        topic, which the Phase 4 orchestrator subscribes to.
+
+        Note:
+            Set opts['skip_downstream_trigger']=True to skip Pub/Sub publish
+            (useful for backfills that shouldn't trigger downstream).
+        """
         summary = {
             "run_id": self.run_id,
             "processor": self.__class__.__name__,
@@ -1137,7 +1368,17 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             self._publish_completion_message(success=True)
     
     def get_analytics_stats(self) -> Dict:
-        """Get analytics stats - child classes override."""
+        """Return processor-specific statistics for logging.
+
+        Child classes override to provide domain-specific metrics that
+        should be included in the ANALYTICS_STATS log entry.
+
+        Returns:
+            Dict: Statistics to merge into the summary log. Common keys:
+                - records_per_type: Breakdown by entity type
+                - validation_failures: Count of validation issues
+                - cache_hits: Number of cache hits (if applicable)
+        """
         return {}
 
     # Failure tracking operations extracted to operations/failure_tracking.py
@@ -1147,15 +1388,26 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
     # - save_failures_to_bq()
 
     def _publish_completion_message(self, success: bool, error: str = None) -> None:
-        """
-        Publish unified completion message to nba-phase3-analytics-complete topic.
-        This triggers Phase 4 precompute processors that depend on this analytics table.
+        """Publish completion message to trigger downstream Phase 4 processors.
 
-        Uses UnifiedPubSubPublisher for consistent message format across all phases.
+        Publishes a unified message to nba-phase3-analytics-complete Pub/Sub topic.
+        The Phase 4 orchestrator subscribes to this topic and routes messages to
+        the appropriate precompute processors based on the output table.
+
+        Message includes:
+        - Processor identification (name, phase, run_id)
+        - Correlation tracking (correlation_id, parent_processor)
+        - Output details (table, dataset, record count)
+        - Status and timing information
+        - Changed entities for incremental downstream processing
 
         Args:
-            success: Whether processing completed successfully
-            error: Optional error message if failed
+            success: Whether processing completed successfully.
+            error: Error message if processing failed.
+
+        Note:
+            Pub/Sub failures are logged but do not fail the processor.
+            Use opts['skip_downstream_trigger']=True to disable publishing.
         """
         try:
             # Use unified publisher

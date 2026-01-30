@@ -1,23 +1,85 @@
 """
-processors/processor_base.py
+Base class for all raw data processors in the NBA stats pipeline.
 
-Base class for all data processors that handles:
- - Loading data from GCS or databases
- - Validating and transforming data
- - Loading to BigQuery
- - Error handling and logging
- - Multi-channel notifications (Email + Slack)
- - Run history logging (via RunHistoryMixin)
+This module provides ``ProcessorBase``, the foundation for Phase 2 raw data
+processing. All raw processors inherit from this class to gain standardized:
 
-UPDATED: 2025-11-27
- - Added RunHistoryMixin for processor run history logging
- - Added load_json_from_gcs() helper for raw processors
- - Fixed duplicate error notifications
- - Improved documentation
+- **Data loading**: Load JSON from GCS or query BigQuery directly
+- **Transformation**: Convert raw API/scraper data to BigQuery-compatible rows
+- **Persistence**: Batch loading to BigQuery with schema enforcement
+- **Error handling**: Sentry integration, notifications, and partial data saving
+- **Observability**: Run history tracking, heartbeat monitoring, pipeline logging
+- **Idempotency**: Deduplication to prevent duplicate processing on retries
 
-UPDATED: 2026-01-06
- - Added multi-sport support via SportConfig
- - Dataset names now derived from SPORT environment variable
+Architecture Overview::
+
+    Phase 1 (Scrapers)      Phase 2 (Raw Processors)      Phase 3 (Analytics)
+    ==================      ========================      ===================
+    ScraperBase             ProcessorBase                 AnalyticsProcessor
+        |                       |                              |
+        v                       v                              v
+    GCS (JSON files)    -->  BigQuery (raw tables)    -->  BigQuery (analytics)
+
+Processor Types:
+    1. **Raw Processors**: Load JSON from GCS, transform, save to BigQuery.
+       Example: ``NbacBoxscoreProcessor``, ``BdlPlayByPlayProcessor``
+
+    2. **Reference Processors**: Load from BigQuery, transform, save back.
+       Example: ``BasketballRefRosterProcessor``
+
+Processing Lifecycle:
+    1. ``run(opts)`` - Entry point, orchestrates the entire flow
+    2. ``init_clients()`` - Initialize BigQuery and GCS clients
+    3. ``load_data()`` - Load data from source (abstract, child implements)
+    4. ``validate_loaded_data()`` - Validate raw data exists and is valid
+    5. ``transform_data()`` - Transform to target schema (abstract, child implements)
+    6. ``save_data()`` - Batch load to BigQuery with retries
+    7. ``post_process()`` - Log stats, record run history
+
+Error Handling:
+    - All exceptions are caught and categorized by ``_categorize_failure()``
+    - Errors are reported to Sentry and optionally notified via Slack/Email
+    - Partial data is saved to /tmp for debugging
+    - Run history records failure for future retry
+
+Usage Example::
+
+    from data_processors.raw.processor_base import ProcessorBase
+
+    class MyProcessor(ProcessorBase):
+        required_opts = ['file_path', 'bucket']
+        table_name = 'my_table'
+
+        def load_data(self) -> None:
+            self.raw_data = self.load_json_from_gcs()
+
+        def transform_data(self) -> None:
+            self.transformed_data = [
+                {'id': item['id'], 'name': item['name']}
+                for item in self.raw_data['items']
+            ]
+
+    # Run the processor
+    processor = MyProcessor()
+    success = processor.run({'file_path': 'data/2024-01-15.json', 'bucket': 'my-bucket'})
+
+Key Patterns:
+    - Matches ``ScraperBase`` patterns for consistency
+    - Uses ``RunHistoryMixin`` for deduplication and tracking
+    - Uses ``ProcessorVersionMixin`` for version tracking
+    - Uses ``DeploymentFreshnessMixin`` to detect stale deployments
+
+See Also:
+    - ``shared/processors/mixins.py``: RunHistoryMixin, ProcessorVersionMixin
+    - ``scrapers/scraper_base.py``: ScraperBase (parallel implementation)
+    - ``data_processors/analytics/analytics_processor_base.py``: Phase 3 base
+
+Changelog:
+    2025-11-27: Added RunHistoryMixin, load_json_from_gcs(), improved docs
+    2026-01-06: Added multi-sport support via SportConfig
+    2026-01-23: Added ProcessorHeartbeat for stuck processor detection
+    2026-01-25: Added retry logic for streaming buffer conflicts
+    2026-01-29: Added pipeline_event_log logging for Phase 2 visibility
 """
 
 import json
@@ -191,31 +253,73 @@ def _categorize_failure(error: Exception, step: str, stats: Dict = None) -> str:
 
 class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryMixin):
     """
-    Base class for data processors - matches ScraperBase patterns.
+    Base class for all raw data processors in the pipeline.
 
-    There are two types of processors:
-    1. Raw Processors: Load JSON from GCS → Transform → Save to BigQuery
-    2. Reference Processors: Load from BigQuery → Transform → Save back to BigQuery
+    ProcessorBase provides the foundation for Phase 2 raw data processing,
+    handling the complete lifecycle from data loading through BigQuery persistence.
+    It follows the same patterns as ScraperBase for consistency.
 
-    Lifecycle:
-      1) load_data() - Load data from source (GCS or BigQuery)
-      2) validate_loaded_data() - Validate the loaded data
-      3) transform_data() - Transform data for target schema
-      4) save_data() - Save to BigQuery
-      5) post_process() - Log stats and cleanup
+    There are two types of processors that inherit from this class:
 
-    Child classes must implement:
-      - load_data(): Load self.raw_data from source
-      - transform_data(): Transform self.raw_data → self.transformed_data
+    1. **Raw Processors**: Load JSON from GCS, transform, save to BigQuery.
+       Use ``load_json_from_gcs()`` helper in ``load_data()``.
 
-    Child classes can override:
-      - validate_loaded_data(): Custom validation logic
-      - save_data(): Custom save logic (MERGE, DELETE, etc.)
-      - get_processor_stats(): Return custom statistics
+    2. **Reference Processors**: Load from BigQuery, transform, save back.
+       Query BigQuery directly in ``load_data()``.
 
-    Run History:
-      Automatically logs runs to processor_run_history table via RunHistoryMixin.
-      Child classes can set OUTPUT_TABLE and OUTPUT_DATASET for better tracking.
+    Processing Lifecycle:
+        The ``run()`` method orchestrates these steps in order:
+
+        1. ``set_opts()`` / ``validate_opts()`` - Validate required options
+        2. ``init_clients()`` - Initialize BigQuery and GCS clients
+        3. ``load_data()`` - Load from source (child implements)
+        4. ``validate_loaded_data()`` - Check data exists
+        5. ``transform_data()`` - Transform to target schema (child implements)
+        6. ``save_data()`` - Batch load to BigQuery
+        7. ``post_process()`` - Log stats and metrics
+
+    Attributes:
+        required_opts (List[str]): Options that must be provided to ``run()``.
+        additional_opts (List[str]): Optional computed options.
+        table_name (str): Target BigQuery table name (child must set).
+        dataset_id (str): Target BigQuery dataset (defaults from sport_config).
+        validate_on_load (bool): Whether to validate after loading. Default True.
+        save_on_error (bool): Save partial data on failure. Default True.
+        SKIP_DEDUPLICATION (bool): Skip run history check. Default False.
+            Set True for LIVE processors that run repeatedly.
+        PHASE (str): Pipeline phase identifier. Default 'phase_2_raw'.
+        raw_data: Data loaded from source (set by ``load_data()``).
+        transformed_data: Data to save (set by ``transform_data()``).
+        stats (Dict): Runtime statistics for monitoring.
+        run_id (str): Unique identifier for this run (UUID).
+
+    Example:
+        Minimal processor implementation::
+
+            class GameProcessor(ProcessorBase):
+                required_opts = ['file_path', 'bucket', 'game_date']
+                table_name = 'games'
+
+                def load_data(self) -> None:
+                    self.raw_data = self.load_json_from_gcs()
+
+                def transform_data(self) -> None:
+                    game = self.raw_data
+                    self.transformed_data = {
+                        'game_id': game['id'],
+                        'game_date': self.opts['game_date'],
+                        'home_team': game['home']['abbreviation'],
+                        'away_team': game['away']['abbreviation'],
+                    }
+
+    Mixins:
+        - ``DeploymentFreshnessMixin``: Detects stale deployed code
+        - ``ProcessorVersionMixin``: Tracks processor version in stats
+        - ``RunHistoryMixin``: Records runs for deduplication and history
+
+    See Also:
+        - ``_categorize_failure()``: Categorizes errors for alerting
+        - ``shared/processors/mixins.py``: Mixin implementations
     """
 
     # Class-level configs (matching ScraperBase pattern)
@@ -245,7 +349,16 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
     OUTPUT_DATASET: str = None  # Will be set from sport_config in __init__
     
     def __init__(self):
-        """Initialize processor with same pattern as ScraperBase."""
+        """
+        Initialize the processor with default state.
+
+        Sets up empty containers for data, statistics, and GCP clients.
+        Generates a unique run_id for tracking this execution.
+
+        The initialization pattern matches ScraperBase for consistency.
+        Note that ``run()`` calls ``__init__()`` again to reset state
+        while preserving the run_id.
+        """
         self.opts = {}
         self.raw_data = None
         self.validated_data = {}
@@ -274,9 +387,56 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
         
     def run(self, opts: Optional[Dict] = None) -> bool:
         """
-        Main entry point - matches ScraperBase.run() pattern.
-        Returns True on success, False on failure.
-        Enhanced with notifications and run history logging.
+        Execute the complete processing pipeline.
+
+        This is the main entry point for running a processor. It orchestrates
+        the entire lifecycle from initialization through data persistence,
+        handling errors, notifications, and run history tracking.
+
+        The processing flow is:
+            1. Reset state and validate options
+            2. Check deduplication (skip if already processed)
+            3. Start run history tracking
+            4. Load data from source
+            5. Validate loaded data
+            6. Transform data to target schema
+            7. Save to BigQuery
+            8. Publish completion event (triggers Phase 3)
+            9. Record success in run history
+
+        Args:
+            opts: Configuration options for this run. Common options include:
+                - file_path (str): GCS path to source file
+                - bucket (str): GCS bucket name
+                - date/game_date (str): Date being processed (YYYY-MM-DD)
+                - game_code (str): Optional game identifier for deduplication
+                - trigger_source (str): How this was triggered ('pubsub', 'manual')
+                - trigger_message_id (str): Pub/Sub message ID if triggered
+                - skip_downstream_trigger (bool): Skip Phase 3 trigger (backfills)
+                - correlation_id (str): Trace ID from original scraper
+
+        Returns:
+            bool: True if processing completed successfully, False otherwise.
+                Returns True for expected "no data" scenarios (no games scheduled).
+
+        Raises:
+            No exceptions are raised - all errors are caught, logged, and
+            result in a False return value.
+
+        Example:
+            >>> processor = GameProcessor()
+            >>> success = processor.run({
+            ...     'file_path': 'games/2024-01-15/game_001.json',
+            ...     'bucket': 'nba-data',
+            ...     'game_date': '2024-01-15'
+            ... })
+            >>> if not success:
+            ...     print("Processing failed, check logs")
+
+        Note:
+            - Deduplication prevents reprocessing on Pub/Sub retries
+            - Set SKIP_DEDUPLICATION=True for LIVE processors
+            - Run history tracks all attempts for debugging
         """
         if opts is None:
             opts = {}
@@ -549,7 +709,16 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
             return False
     
     def _get_current_step(self) -> str:
-        """Helper to determine current processing step for error context."""
+        """
+        Determine the current processing step for error context.
+
+        Uses processor state to infer which step was executing when an
+        error occurred. This helps categorize failures and enables
+        targeted alerting.
+
+        Returns:
+            str: One of 'initialization', 'load', 'transform', or 'save'.
+        """
         if not self.bq_client or not self.gcs_client:
             return "initialization"
         elif not self.raw_data:
@@ -560,12 +729,36 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
             return "save"
     
     def set_opts(self, opts: Dict) -> None:
-        """Set options - matches scraper pattern."""
+        """
+        Store configuration options for this run.
+
+        Saves the provided options and adds the run_id for tracking.
+        Called at the start of ``run()`` before validation.
+
+        Args:
+            opts: Dictionary of configuration options. Will be modified
+                to include the run_id.
+        """
         self.opts = opts
         self.opts["run_id"] = self.run_id
         
     def validate_opts(self) -> None:
-        """Validate required options - matches scraper pattern."""
+        """
+        Validate that all required options are present.
+
+        Checks that each option in ``required_opts`` is present in
+        ``self.opts``. Missing options trigger an error notification
+        and raise ValueError.
+
+        Raises:
+            ValueError: If any required option is missing.
+
+        Example:
+            Child class defines required_opts::
+
+                class MyProcessor(ProcessorBase):
+                    required_opts = ['file_path', 'bucket', 'game_date']
+        """
         for required_opt in self.required_opts:
             if required_opt not in self.opts:
                 error_msg = f"Missing required option [{required_opt}]"
@@ -606,11 +799,40 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
             self.opts["timestamp"] = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     
     def validate_additional_opts(self) -> None:
-        """Validate additional options - child classes override."""
+        """
+        Validate computed/additional options.
+
+        Override in child classes to validate options computed in
+        ``set_additional_opts()``. Called after ``set_additional_opts()``.
+
+        Raises:
+            ValueError: If any additional option is invalid.
+
+        Example:
+            Validate a derived season year::
+
+                def validate_additional_opts(self) -> None:
+                    if self.opts.get('season_year', 0) < 2000:
+                        raise ValueError("Invalid season_year")
+        """
         pass
     
     def init_clients(self) -> None:
-        """Initialize GCP clients with error notification."""
+        """
+        Initialize Google Cloud Platform clients.
+
+        Creates BigQuery and Cloud Storage clients for data operations.
+        Uses connection pooling for efficiency. Client initialization
+        errors trigger notifications and are treated as critical failures.
+
+        Raises:
+            Exception: If BigQuery or GCS client initialization fails.
+                Error is reported to Sentry and notification is sent.
+
+        Note:
+            Uses ``get_bigquery_client()`` from shared pool for efficiency.
+            Project ID comes from opts or sport_config.
+        """
         try:
             # Use project_id from opts, falling back to sport_config
             project_id = self.opts.get("project_id", self.project_id)
@@ -982,7 +1204,16 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
         return any(pattern.lower() in reason_lower for pattern in acceptable_patterns)
 
     def _send_zero_row_alert(self, validation_result: dict) -> None:
-        """Send immediate alert for unexpected 0-row result."""
+        """
+        Send an alert notification for unexpected zero-row save result.
+
+        Called when processor expected to save data but saved 0 rows,
+        and the reason is not an acceptable scenario (like idempotency skip).
+
+        Args:
+            validation_result: Dict with validation details including
+                processor_name, expected_rows, reason, file_path, game_date.
+        """
         try:
             notify_warning(
                 title=f"⚠️ {self.__class__.__name__}: Zero Rows Saved",
@@ -1003,7 +1234,18 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
             logger.warning(f"Failed to send zero-row alert: {e}")
 
     def _log_processor_metrics(self, validation_result: dict) -> None:
-        """Log processor output validation to monitoring table."""
+        """
+        Log processor output validation to monitoring table.
+
+        Writes validation results to ``processor_output_validation`` table
+        for trending analysis and alerting. Non-blocking - failures are
+        logged but don't fail the processor.
+
+        Args:
+            validation_result: Dict with keys processor_name, file_path,
+                game_date, expected_rows, actual_rows, issue_type, severity,
+                reason, is_valid.
+        """
         try:
             # Only log if we have project_id
             if not hasattr(self, 'project_id') or not self.project_id:
@@ -1070,7 +1312,15 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
         return False
 
     def _get_idempotency_stats(self) -> Dict:
-        """Get idempotency statistics for diagnosis message."""
+        """
+        Get idempotency statistics for diagnosis messages.
+
+        Attempts to retrieve stats from SmartIdempotencyMixin if available,
+        falls back to self.stats if mixin not present.
+
+        Returns:
+            Dict: Statistics including rows_skipped, hashes_matched, total_records.
+        """
         if hasattr(self, 'get_idempotency_stats'):
             try:
                 return self.get_idempotency_stats()
@@ -1107,7 +1357,12 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
         return False
 
     def _has_raw_data(self) -> bool:
-        """Check if raw data was loaded."""
+        """
+        Check if raw data was successfully loaded.
+
+        Returns:
+            bool: True if raw_data exists and is non-empty.
+        """
         if not hasattr(self, 'raw_data'):
             return False
 
@@ -1120,7 +1375,12 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
         return True
 
     def _has_transformed_data(self) -> bool:
-        """Check if transformed data was produced."""
+        """
+        Check if transformed data was successfully produced.
+
+        Returns:
+            bool: True if transformed_data exists and is non-empty.
+        """
         if not hasattr(self, 'transformed_data'):
             return False
 
@@ -1564,7 +1824,15 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
             )
 
     def post_process(self) -> None:
-        """Post-processing - matches scraper's post_export()."""
+        """
+        Perform post-processing after successful data save.
+
+        Logs final statistics in structured JSON format for monitoring.
+        Merges processor-specific stats from ``get_processor_stats()``.
+
+        Override in child classes to add custom cleanup logic, but
+        always call ``super().post_process()`` to ensure stats logging.
+        """
         summary = {
             "run_id": self.run_id,
             "processor": self.__class__.__name__,
@@ -1602,7 +1870,17 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
     # LOGGING METHODS (matching scraper_base pattern)
     # ================================================================
     def step_info(self, step_name: str, message: str, extra: Optional[Dict] = None) -> None:
-        """Log structured step - matches scraper pattern."""
+        """
+        Log a structured step message for observability.
+
+        Creates a log entry with consistent format for pipeline monitoring.
+        Includes run_id and step name for correlation.
+
+        Args:
+            step_name: Name of the processing step (e.g., 'load', 'transform').
+            message: Human-readable message describing the step.
+            extra: Additional context to include in the log entry.
+        """
         if extra is None:
             extra = {}
         extra.update({
@@ -1615,7 +1893,19 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
     # TIME TRACKING (matching scraper_base exactly)
     # ================================================================
     def mark_time(self, label: str) -> str:
-        """Mark time - matches scraper implementation."""
+        """
+        Mark a time checkpoint for performance tracking.
+
+        On first call with a label, records the start time.
+        On subsequent calls, returns elapsed time since last mark.
+
+        Args:
+            label: Identifier for this time marker (e.g., 'load', 'transform').
+
+        Returns:
+            str: Elapsed seconds since last mark, formatted as "X.X".
+                Returns "0.0" on first call with a label.
+        """
         now = datetime.now()
         if label not in self.time_markers:
             self.time_markers[label] = {
@@ -1630,7 +1920,16 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
             return f"{delta:.1f}"
     
     def get_elapsed_seconds(self, label: str) -> float:
-        """Get elapsed seconds - matches scraper implementation."""
+        """
+        Get total elapsed time since a marker was first set.
+
+        Args:
+            label: Identifier for the time marker.
+
+        Returns:
+            float: Total seconds elapsed since ``mark_time(label)`` was
+                first called. Returns 0.0 if label was never set.
+        """
         if label not in self.time_markers:
             return 0.0
         start_time = self.time_markers[label]["start"]
@@ -1641,11 +1940,28 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
     # ERROR HANDLING (matching scraper pattern)
     # ================================================================
     def report_error(self, exc: Exception) -> None:
-        """Report error to Sentry."""
+        """
+        Report an exception to Sentry for monitoring.
+
+        Args:
+            exc: The exception to report.
+        """
         sentry_sdk.capture_exception(exc)
     
     def _save_partial_data(self, exc: Exception) -> None:
-        """Save partial data on error for debugging."""
+        """
+        Save partial data to filesystem for debugging after failures.
+
+        Writes a JSON file with error context, options, and data samples
+        to /tmp for post-mortem analysis.
+
+        Args:
+            exc: The exception that caused the failure.
+
+        Note:
+            Only called if ``save_on_error`` is True (default).
+            File is saved to /tmp/processor_debug_{run_id}.json
+        """
         try:
             debug_file = f"/tmp/processor_debug_{self.run_id}.json"
             debug_data = {
