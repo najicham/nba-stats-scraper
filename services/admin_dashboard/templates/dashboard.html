@@ -113,6 +113,13 @@
             >
                 Pipeline Timeline
             </button>
+            <button
+                @click="activeTab = 'validation'"
+                :class="activeTab === 'validation' ? 'border-teal-500 text-teal-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm"
+            >
+                Validation
+            </button>
         </nav>
     </div>
 
@@ -494,6 +501,67 @@
                 </div>
             </div>
         </div>
+
+        <!-- Validation Tab -->
+        <div x-show="activeTab === 'validation'" x-cloak>
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="text-lg font-medium text-gray-900">Data Quality Validation</h3>
+                    <div class="flex items-center space-x-4">
+                        <select id="validation-days-select" class="text-sm border-gray-300 rounded-md">
+                            <option value="3">Last 3 days</option>
+                            <option value="7" selected>Last 7 days</option>
+                            <option value="14">Last 14 days</option>
+                            <option value="30">Last 30 days</option>
+                        </select>
+                        <button
+                            id="refresh-validation-btn"
+                            class="text-sm text-blue-600 hover:text-blue-800"
+                        >
+                            Refresh
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Validation Summary Metrics -->
+                <div id="validation-summary-metrics" class="mb-6">
+                    <div class="text-gray-500 text-center py-4">Loading validation summary...</div>
+                </div>
+
+                <!-- Validation Sections -->
+                <div class="space-y-6">
+                    <!-- Validation Summary Section -->
+                    <div class="border border-gray-200 rounded-lg">
+                        <div class="bg-gray-50 px-4 py-3 border-b border-gray-200">
+                            <h4 class="text-sm font-semibold text-gray-700">Validation Summary</h4>
+                        </div>
+                        <div id="validation-summary-content" class="p-4">
+                            <div class="text-gray-500 text-center py-4">Loading...</div>
+                        </div>
+                    </div>
+
+                    <!-- DNP Voiding Section -->
+                    <div class="border border-gray-200 rounded-lg">
+                        <div class="bg-gray-50 px-4 py-3 border-b border-gray-200">
+                            <h4 class="text-sm font-semibold text-gray-700">DNP Voiding Status</h4>
+                        </div>
+                        <div id="dnp-voiding-content" class="p-4">
+                            <div class="text-gray-500 text-center py-4">Loading...</div>
+                        </div>
+                    </div>
+
+                    <!-- Prediction Integrity Section -->
+                    <div class="border border-gray-200 rounded-lg">
+                        <div class="bg-gray-50 px-4 py-3 border-b border-gray-200">
+                            <h4 class="text-sm font-semibold text-gray-700">Prediction Integrity</h4>
+                        </div>
+                        <div id="prediction-integrity-content" class="p-4">
+                            <div class="text-gray-500 text-center py-4">Loading...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 
@@ -680,6 +748,310 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 });
+
+// =========================================================================
+// Validation Tab Functionality
+// =========================================================================
+
+document.addEventListener('DOMContentLoaded', function() {
+    const refreshValidationBtn = document.getElementById('refresh-validation-btn');
+    const validationDaysSelect = document.getElementById('validation-days-select');
+
+    // Watch for validation tab activation
+    const validationObserver = new MutationObserver(function(mutations) {
+        mutations.forEach(function(mutation) {
+            if (mutation.type === 'attributes' && mutation.attributeName === 'style') {
+                const validationTab = document.querySelector('[x-show="activeTab === \'validation\'"]');
+                if (validationTab && validationTab.style.display !== 'none') {
+                    loadValidationData();
+                }
+            }
+        });
+    });
+
+    const validationTabDiv = document.querySelector('[x-show="activeTab === \'validation\'"]');
+    if (validationTabDiv) {
+        validationObserver.observe(validationTabDiv, { attributes: true });
+    }
+
+    // Refresh button handler
+    if (refreshValidationBtn) {
+        refreshValidationBtn.addEventListener('click', function() {
+            loadValidationData();
+        });
+    }
+
+    // Days select handler
+    if (validationDaysSelect) {
+        validationDaysSelect.addEventListener('change', function() {
+            loadValidationData();
+        });
+    }
+});
+
+async function loadValidationData() {
+    const daysSelect = document.getElementById('validation-days-select');
+    const days = daysSelect ? daysSelect.value : 7;
+
+    // Load all three endpoints in parallel
+    const [summaryData, dnpData, integrityData] = await Promise.all([
+        fetchValidationEndpoint(`/api/data-quality/validation-summary?days=${days}`),
+        fetchValidationEndpoint(`/api/data-quality/dnp-voiding?days=${days}`),
+        fetchValidationEndpoint(`/api/data-quality/prediction-integrity?days=${days}`)
+    ]);
+
+    // Render summary metrics at top
+    renderValidationSummaryMetrics(summaryData, dnpData, integrityData);
+
+    // Render each section
+    renderValidationSummary(summaryData);
+    renderDnpVoiding(dnpData);
+    renderPredictionIntegrity(integrityData);
+}
+
+async function fetchValidationEndpoint(url) {
+    try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return await response.json();
+    } catch (error) {
+        console.error(`Error fetching ${url}:`, error);
+        return { error: error.message };
+    }
+}
+
+function getStatusBadge(status) {
+    const statusUpper = (status || '').toUpperCase();
+    if (statusUpper === 'PASS' || statusUpper === 'OK') {
+        return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">PASS</span>';
+    } else if (statusUpper === 'WARN' || statusUpper === 'WARNING') {
+        return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">WARN</span>';
+    } else if (statusUpper === 'FAIL' || statusUpper === 'ERROR') {
+        return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">FAIL</span>';
+    }
+    return '<span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-800">' + (status || 'N/A') + '</span>';
+}
+
+function renderValidationSummaryMetrics(summaryData, dnpData, integrityData) {
+    const container = document.getElementById('validation-summary-metrics');
+    if (!container) return;
+
+    // Calculate overall status
+    let passCount = 0;
+    let warnCount = 0;
+    let failCount = 0;
+
+    const countStatus = (data) => {
+        if (!data || data.error) return;
+        const results = data.results || data.daily_results || [];
+        results.forEach(r => {
+            const status = (r.status || r.overall_status || '').toUpperCase();
+            if (status === 'PASS' || status === 'OK') passCount++;
+            else if (status === 'WARN' || status === 'WARNING') warnCount++;
+            else if (status === 'FAIL' || status === 'ERROR') failCount++;
+        });
+    };
+
+    countStatus(summaryData);
+    countStatus(dnpData);
+    countStatus(integrityData);
+
+    const total = passCount + warnCount + failCount;
+    const passRate = total > 0 ? ((passCount / total) * 100).toFixed(1) : 0;
+
+    // Determine overall health
+    let healthStatus = 'PASS';
+    let healthBg = 'bg-green-50';
+    let healthText = 'text-green-600';
+    if (failCount > 0) {
+        healthStatus = 'FAIL';
+        healthBg = 'bg-red-50';
+        healthText = 'text-red-600';
+    } else if (warnCount > 0) {
+        healthStatus = 'WARN';
+        healthBg = 'bg-yellow-50';
+        healthText = 'text-yellow-600';
+    }
+
+    container.innerHTML = `
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div class="${healthBg} rounded-lg p-4 text-center">
+                <div class="text-2xl font-bold ${healthText}">${healthStatus}</div>
+                <div class="text-sm text-gray-600">Overall Health</div>
+            </div>
+            <div class="bg-green-50 rounded-lg p-4 text-center">
+                <div class="text-2xl font-bold text-green-600">${passCount}</div>
+                <div class="text-sm text-gray-600">Passed</div>
+            </div>
+            <div class="bg-yellow-50 rounded-lg p-4 text-center">
+                <div class="text-2xl font-bold text-yellow-600">${warnCount}</div>
+                <div class="text-sm text-gray-600">Warnings</div>
+            </div>
+            <div class="bg-red-50 rounded-lg p-4 text-center">
+                <div class="text-2xl font-bold text-red-600">${failCount}</div>
+                <div class="text-sm text-gray-600">Failed</div>
+            </div>
+            <div class="bg-blue-50 rounded-lg p-4 text-center">
+                <div class="text-2xl font-bold text-blue-600">${passRate}%</div>
+                <div class="text-sm text-gray-600">Pass Rate</div>
+            </div>
+        </div>
+    `;
+}
+
+function renderValidationSummary(data) {
+    const container = document.getElementById('validation-summary-content');
+    if (!container) return;
+
+    if (data.error) {
+        container.innerHTML = `<div class="text-red-500 text-center py-4">Error loading data: ${data.error}</div>`;
+        return;
+    }
+
+    const results = data.results || data.daily_results || [];
+    if (results.length === 0) {
+        container.innerHTML = '<div class="text-gray-500 text-center py-4">No validation data available</div>';
+        return;
+    }
+
+    let html = `
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Games</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Predictions</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Graded</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Coverage</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Issues</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+    `;
+
+    results.forEach(r => {
+        const coverage = r.coverage_pct !== undefined ? r.coverage_pct.toFixed(1) + '%' : 'N/A';
+        const issues = r.issues || r.issue_count || 0;
+        html += `
+            <tr>
+                <td class="px-4 py-3 text-sm font-medium text-gray-900">${r.game_date || r.date}</td>
+                <td class="px-4 py-3 text-sm">${getStatusBadge(r.status || r.overall_status)}</td>
+                <td class="px-4 py-3 text-sm text-gray-500">${r.games || r.game_count || 'N/A'}</td>
+                <td class="px-4 py-3 text-sm text-gray-500">${r.predictions || r.prediction_count || 'N/A'}</td>
+                <td class="px-4 py-3 text-sm text-gray-500">${r.graded || r.graded_count || 'N/A'}</td>
+                <td class="px-4 py-3 text-sm text-gray-500">${coverage}</td>
+                <td class="px-4 py-3 text-sm text-gray-500">${issues}</td>
+            </tr>
+        `;
+    });
+
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+}
+
+function renderDnpVoiding(data) {
+    const container = document.getElementById('dnp-voiding-content');
+    if (!container) return;
+
+    if (data.error) {
+        container.innerHTML = `<div class="text-red-500 text-center py-4">Error loading data: ${data.error}</div>`;
+        return;
+    }
+
+    const results = data.results || data.daily_results || [];
+    if (results.length === 0) {
+        container.innerHTML = '<div class="text-gray-500 text-center py-4">No DNP voiding data available</div>';
+        return;
+    }
+
+    let html = `
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">DNP Players</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Voided</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Pending</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Void Rate</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+    `;
+
+    results.forEach(r => {
+        const voidRate = r.void_rate_pct !== undefined ? r.void_rate_pct.toFixed(1) + '%' :
+                        (r.voided && r.dnp_players ? ((r.voided / r.dnp_players) * 100).toFixed(1) + '%' : 'N/A');
+        html += `
+            <tr>
+                <td class="px-4 py-3 text-sm font-medium text-gray-900">${r.game_date || r.date}</td>
+                <td class="px-4 py-3 text-sm">${getStatusBadge(r.status || r.overall_status)}</td>
+                <td class="px-4 py-3 text-sm text-gray-500">${r.dnp_players || r.dnp_count || 'N/A'}</td>
+                <td class="px-4 py-3 text-sm text-gray-500">${r.voided || r.voided_count || 'N/A'}</td>
+                <td class="px-4 py-3 text-sm text-gray-500">${r.pending || r.pending_count || 0}</td>
+                <td class="px-4 py-3 text-sm text-gray-500">${voidRate}</td>
+            </tr>
+        `;
+    });
+
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+}
+
+function renderPredictionIntegrity(data) {
+    const container = document.getElementById('prediction-integrity-content');
+    if (!container) return;
+
+    if (data.error) {
+        container.innerHTML = `<div class="text-red-500 text-center py-4">Error loading data: ${data.error}</div>`;
+        return;
+    }
+
+    const results = data.results || data.daily_results || [];
+    if (results.length === 0) {
+        container.innerHTML = '<div class="text-gray-500 text-center py-4">No prediction integrity data available</div>';
+        return;
+    }
+
+    let html = `
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Valid</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Missing Fields</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Duplicates</th>
+                        <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Integrity %</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+    `;
+
+    results.forEach(r => {
+        const integrityPct = r.integrity_pct !== undefined ? r.integrity_pct.toFixed(1) + '%' :
+                           (r.valid && r.total ? ((r.valid / r.total) * 100).toFixed(1) + '%' : 'N/A');
+        html += `
+            <tr>
+                <td class="px-4 py-3 text-sm font-medium text-gray-900">${r.game_date || r.date}</td>
+                <td class="px-4 py-3 text-sm">${getStatusBadge(r.status || r.overall_status)}</td>
+                <td class="px-4 py-3 text-sm text-gray-500">${r.total || r.total_predictions || 'N/A'}</td>
+                <td class="px-4 py-3 text-sm text-gray-500">${r.valid || r.valid_count || 'N/A'}</td>
+                <td class="px-4 py-3 text-sm text-gray-500">${r.missing_fields || r.missing_field_count || 0}</td>
+                <td class="px-4 py-3 text-sm text-gray-500">${r.duplicates || r.duplicate_count || 0}</td>
+                <td class="px-4 py-3 text-sm text-gray-500">${integrityPct}</td>
+            </tr>
+        `;
+    });
+
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+}
 </script>
 {% endblock %}
 

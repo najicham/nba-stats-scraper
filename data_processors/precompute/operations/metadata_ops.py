@@ -57,15 +57,9 @@ class PrecomputeMetadataOpsMixin:
         Build dict of all source tracking fields for output records.
         Extracts from self.source_metadata populated by track_source_usage().
 
-        Note: Returns empty dict in backfill mode since these fields don't exist
-        in the BigQuery schema and would cause MERGE failures.
-
         Returns:
             Dict with source_* fields per v4.0 spec (3 fields per source)
         """
-        # Skip source tracking in backfill mode - fields don't exist in BigQuery schema
-        if getattr(self, 'is_backfill_mode', False):
-            return {}
 
         fields = {}
 

@@ -313,7 +313,7 @@ class PredictionAccuracyProcessor:
 
     def get_predictions_for_date(self, game_date: date) -> List[Dict]:
         """
-        Load all predictions for a specific game date.
+        Load all predictions for a specific game date (with deduplication).
 
         Returns predictions from all 5 systems:
         - moving_average_baseline_v1
@@ -321,49 +321,69 @@ class PredictionAccuracyProcessor:
         - similarity_balanced_v1
         - xgboost_v1
         - ensemble_v1
+
+        v5.0: Added deduplication to handle duplicate predictions in source table.
+        Uses ROW_NUMBER to keep only the latest prediction per business key
+        (player_lookup, game_id, system_id, line_value).
         """
         query = f"""
-        SELECT
-            player_lookup,
-            game_id,
-            game_date,
-            system_id,
-            predicted_points,
-            confidence_score,
-            recommendation,
-            current_points_line as line_value,
-            pace_adjustment,
-            similar_games_count as similarity_sample_size,
-            model_version,
-            -- Line source tracking (for no-line player analysis)
-            COALESCE(has_prop_line, TRUE) as has_prop_line,
-            COALESCE(line_source, 'ACTUAL_PROP') as line_source,
-            estimated_line_value,
-            -- Confidence tier filtering (v3.4 - shadow tracking)
-            COALESCE(is_actionable, TRUE) as is_actionable,
-            filter_reason,
-            -- v3.4: Pre-game injury tracking (captured at prediction time)
-            injury_status_at_prediction,
-            injury_flag_at_prediction,
-            injury_reason_at_prediction,
-            injury_checked_at,
-            -- v3.5: Invalidation tracking (for postponed/cancelled games)
-            invalidation_reason
-        FROM `{self.predictions_table}`
-        WHERE game_date = '{game_date}'
-            -- v3.10: Only grade active predictions (exclude deactivated duplicates)
-            AND is_active = TRUE
-            -- PHASE 1 FIX: Exclude placeholder lines from grading
-            -- v3.8: Added BETTINGPROS as valid line source (fallback when odds_api unavailable)
-            -- v4.1 FIX: Removed has_prop_line filter - line_source is authoritative
-            -- The has_prop_line field has data inconsistencies (can be FALSE even when
-            -- line_source='ACTUAL_PROP'). Use line_source as the source of truth.
-            AND current_points_line IS NOT NULL
-            AND current_points_line != 20.0
-            AND line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
-            -- v3.5: Skip invalidated predictions (postponed/cancelled games)
-            -- These predictions should not be graded as they would skew accuracy metrics
-            AND invalidation_reason IS NULL
+        WITH predictions_raw AS (
+            SELECT
+                player_lookup,
+                game_id,
+                game_date,
+                system_id,
+                predicted_points,
+                confidence_score,
+                recommendation,
+                current_points_line as line_value,
+                pace_adjustment,
+                similar_games_count as similarity_sample_size,
+                model_version,
+                -- Line source tracking (for no-line player analysis)
+                COALESCE(has_prop_line, TRUE) as has_prop_line,
+                COALESCE(line_source, 'ACTUAL_PROP') as line_source,
+                estimated_line_value,
+                -- Confidence tier filtering (v3.4 - shadow tracking)
+                COALESCE(is_actionable, TRUE) as is_actionable,
+                filter_reason,
+                -- v3.4: Pre-game injury tracking (captured at prediction time)
+                injury_status_at_prediction,
+                injury_flag_at_prediction,
+                injury_reason_at_prediction,
+                injury_checked_at,
+                -- v3.5: Invalidation tracking (for postponed/cancelled games)
+                invalidation_reason,
+                created_at
+            FROM `{self.predictions_table}`
+            WHERE game_date = '{game_date}'
+                -- v3.10: Only grade active predictions (exclude deactivated duplicates)
+                AND is_active = TRUE
+                -- PHASE 1 FIX: Exclude placeholder lines from grading
+                -- v3.8: Added BETTINGPROS as valid line source (fallback when odds_api unavailable)
+                -- v4.1 FIX: Removed has_prop_line filter - line_source is authoritative
+                -- The has_prop_line field has data inconsistencies (can be FALSE even when
+                -- line_source='ACTUAL_PROP'). Use line_source as the source of truth.
+                AND current_points_line IS NOT NULL
+                AND current_points_line != 20.0
+                AND line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
+                -- v3.5: Skip invalidated predictions (postponed/cancelled games)
+                -- These predictions should not be graded as they would skew accuracy metrics
+                AND invalidation_reason IS NULL
+        ),
+        -- v5.0: Deduplicate by business key, keeping the latest prediction
+        deduped AS (
+            SELECT * EXCEPT(rn) FROM (
+                SELECT *,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY player_lookup, game_id, system_id, line_value
+                        ORDER BY created_at DESC
+                    ) as rn
+                FROM predictions_raw
+            )
+            WHERE rn = 1
+        )
+        SELECT * EXCEPT(created_at) FROM deduped
         """
 
         try:
@@ -528,7 +548,7 @@ class PredictionAccuracyProcessor:
         )
 
         # Compute errors
-        if predicted_points is not None:
+        if predicted_points is not None and actual_points is not None:
             absolute_error = abs(float(predicted_points) - int(actual_points))
             signed_error = float(predicted_points) - int(actual_points)  # positive = over-predicted
             within_3 = bool(absolute_error <= 3.0)  # Ensure Python bool, not numpy bool
@@ -545,14 +565,15 @@ class PredictionAccuracyProcessor:
         else:
             predicted_margin = None
 
-        if line_value is not None:
+        if line_value is not None and actual_points is not None:
             actual_margin = actual_points - line_value
         else:
             actual_margin = None
 
         # Evaluate recommendation correctness
         # v4.1: If voided (DNP), don't calculate prediction_correct - treat like sportsbook void
-        if voiding_info['is_voided']:
+        # Also skip if actual_points is None (missing data)
+        if voiding_info['is_voided'] or actual_points is None:
             prediction_correct = None
         else:
             prediction_correct = self.compute_prediction_correct(
@@ -594,7 +615,7 @@ class PredictionAccuracyProcessor:
             'similarity_sample_size': int(prediction.get('similarity_sample_size')) if prediction.get('similarity_sample_size') is not None and not self._is_nan(prediction.get('similarity_sample_size')) else None,
 
             # Actual result
-            'actual_points': int(actual_points),
+            'actual_points': int(actual_points) if actual_points is not None else None,
             'minutes_played': self._safe_float(actual_data.get('minutes_played')),  # new in v3
 
             # Core accuracy metrics - round for NUMERIC compatibility
@@ -959,6 +980,7 @@ class PredictionAccuracyProcessor:
         # Grade each prediction
         graded_results = []
         missing_actuals = 0
+        null_actuals = 0
 
         for pred in predictions:
             player_lookup = pred['player_lookup']
@@ -966,6 +988,11 @@ class PredictionAccuracyProcessor:
 
             if actual_data is None:
                 missing_actuals += 1
+                continue
+
+            # Skip if actual_points is None (can't grade without points data)
+            if actual_data.get('actual_points') is None:
+                null_actuals += 1
                 continue
 
             graded = self.grade_prediction(pred, actual_data, game_date)
