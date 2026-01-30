@@ -126,7 +126,6 @@ if TYPE_CHECKING:
     from prediction_systems.zone_matchup_v1 import ZoneMatchupV1
     from prediction_systems.similarity_balanced_v1 import SimilarityBalancedV1
     from prediction_systems.catboost_v8 import CatBoostV8  # v8 ML model (3.40 MAE)
-    from prediction_systems.catboost_v9 import CatBoostV9  # v9 ML model (recency-weighted, shadow)
     from prediction_systems.ensemble_v1 import EnsembleV1
     from prediction_systems.ensemble_v1_1 import EnsembleV1_1
     from data_loaders import PredictionDataLoader, normalize_confidence, validate_features
@@ -183,7 +182,6 @@ _zone_matchup: Optional['ZoneMatchupV1'] = None
 _similarity: Optional['SimilarityBalancedV1'] = None
 _xgboost: Optional['XGBoostV1'] = None
 _catboost: Optional['CatBoostV8'] = None
-_catboost_v9: Optional['CatBoostV9'] = None  # V9 shadow mode
 _ensemble: Optional['EnsembleV1'] = None
 _ensemble_v1_1: Optional['EnsembleV1_1'] = None
 _staging_writer: Optional['BatchStagingWriter'] = None
@@ -261,11 +259,10 @@ def get_prediction_systems() -> tuple:
     from prediction_systems.similarity_balanced_v1 import SimilarityBalancedV1
     from prediction_systems.xgboost_v1 import XGBoostV1
     from prediction_systems.catboost_v8 import CatBoostV8
-    from prediction_systems.catboost_v9 import CatBoostV9
     from prediction_systems.ensemble_v1 import EnsembleV1
     from prediction_systems.ensemble_v1_1 import EnsembleV1_1
 
-    global _moving_average, _zone_matchup, _similarity, _xgboost, _catboost, _catboost_v9, _ensemble, _ensemble_v1_1
+    global _moving_average, _zone_matchup, _similarity, _xgboost, _catboost, _ensemble, _ensemble_v1_1
     if _ensemble is None:
         logger.info("Initializing prediction systems...")
         _moving_average = MovingAverageBaseline()
@@ -273,7 +270,6 @@ def get_prediction_systems() -> tuple:
         _similarity = SimilarityBalancedV1()
         _xgboost = XGBoostV1()  # Mock XGBoost V1 (baseline)
         _catboost = CatBoostV8()  # CatBoost v8: 3.40 MAE (champion)
-        _catboost_v9 = CatBoostV9()  # CatBoost v9: recency-weighted (shadow mode)
         _ensemble = EnsembleV1(
             moving_average_system=_moving_average,
             zone_matchup_system=_zone_matchup,
@@ -287,8 +283,8 @@ def get_prediction_systems() -> tuple:
             xgboost_system=_xgboost,
             catboost_system=_catboost
         )
-        logger.info("All prediction systems initialized (8 systems: XGBoost V1, CatBoost V8, CatBoost V9 (shadow), Ensemble V1, Ensemble V1.1, + 3 others)")
-    return _moving_average, _zone_matchup, _similarity, _xgboost, _catboost, _catboost_v9, _ensemble, _ensemble_v1_1
+        logger.info("All prediction systems initialized (7 systems: XGBoost V1, CatBoost V8, Ensemble V1, Ensemble V1.1, + 3 others)")
+    return _moving_average, _zone_matchup, _similarity, _xgboost, _catboost, _ensemble, _ensemble_v1_1
 
 _circuit_breaker: Optional['SystemCircuitBreaker'] = None
 _execution_logger: Optional['ExecutionLogger'] = None
@@ -330,7 +326,6 @@ def index():
             'similarity': str(_similarity),
             'xgboost_v1': str(_xgboost),
             'catboost_v8': str(_catboost),
-            'catboost_v9': str(_catboost_v9),  # Shadow mode
             'ensemble': str(_ensemble),
             'ensemble_v1_1': str(_ensemble_v1_1)
         }
@@ -442,7 +437,7 @@ def handle_prediction_request():
     bq_client = get_bq_client()
     pubsub_publisher = get_pubsub_publisher()
     player_registry = get_player_registry()
-    moving_average, zone_matchup, similarity, xgboost, catboost, catboost_v9, ensemble, ensemble_v1_1 = get_prediction_systems()
+    moving_average, zone_matchup, similarity, xgboost, catboost, ensemble, ensemble_v1_1 = get_prediction_systems()
     circuit_breaker = get_circuit_breaker()
     execution_logger = get_execution_logger()
 
@@ -728,7 +723,7 @@ def process_player_predictions(
             'estimation_method': None
         }
     # Lazy-load prediction systems
-    moving_average, zone_matchup, similarity, xgboost, catboost, catboost_v9, ensemble, ensemble_v1_1 = get_prediction_systems()
+    moving_average, zone_matchup, similarity, xgboost, catboost, ensemble, ensemble_v1_1 = get_prediction_systems()
 
     all_predictions = []
 
@@ -1435,54 +1430,6 @@ def process_player_predictions(
             metadata['systems_failed'].append(system_id)
             metadata['system_errors'][system_id] = error_msg
             system_predictions['ensemble_v1_1'] = None
-
-        # System 8: CatBoost V9 (shadow mode - recency-weighted training)
-        # Runs alongside V8 champion for A/B comparison without affecting production
-        system_id = 'catboost_v9'
-        metadata['systems_attempted'].append(system_id)
-        try:
-            # Check circuit breaker
-            state, skip_reason = circuit_breaker.check_circuit(system_id)
-            if state == 'OPEN':
-                logger.warning(f"Circuit breaker OPEN for {system_id}: {skip_reason}")
-                metadata['circuit_breaker_triggered'] = True
-                metadata['circuits_opened'].append(system_id)
-                metadata['systems_failed'].append(system_id)
-                metadata['system_errors'][system_id] = f'Circuit breaker open: {skip_reason}'
-                system_predictions[system_id] = None
-            else:
-                result = catboost_v9.predict(
-                    player_lookup=player_lookup,
-                    features=features,
-                    betting_line=line_value
-                )
-
-                if result['predicted_points'] is not None:
-                    # Record success
-                    circuit_breaker.record_success(system_id)
-                    metadata['systems_succeeded'].append(system_id)
-
-                    system_predictions['catboost_v9'] = {
-                        'predicted_points': result['predicted_points'],
-                        'confidence': result['confidence_score'],
-                        'recommendation': result['recommendation'],
-                        'system_type': 'dict',
-                        'metadata': result
-                    }
-                else:
-                    logger.warning(f"CatBoost v9 returned None for {player_lookup}")
-                    metadata['systems_failed'].append(system_id)
-                    metadata['system_errors'][system_id] = 'Prediction returned None'
-                    system_predictions['catboost_v9'] = None
-        except Exception as e:
-            # Record failure
-            error_msg = str(e)
-            circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
-
-            logger.error(f"CatBoost v9 failed for {player_lookup}: {e}", exc_info=True)
-            metadata['systems_failed'].append(system_id)
-            metadata['system_errors'][system_id] = error_msg
-            system_predictions['catboost_v9'] = None
 
         # Convert system predictions to BigQuery format
         for system_id, prediction in system_predictions.items():
