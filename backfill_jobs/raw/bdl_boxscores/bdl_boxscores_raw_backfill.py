@@ -511,7 +511,7 @@ class BdlBoxscoresBackfill:
                 notify_warning(
                     title="BDL Boxscore Processing Complete with Issues",
                     message=f"Processed {self.successful} files. {self.skipped} skipped, {self.streaming_conflicts} streaming conflicts.",
-                    details=details
+                    details=details,
                     processor_name=self.__class__.__name__
                 )
             elif error_rate > 0:
@@ -519,7 +519,7 @@ class BdlBoxscoresBackfill:
                 notify_info(
                     title="BDL Boxscore Processing Complete",
                     message=f"Processed {self.successful}/{self.total_files} files, {total_rows} player records. {self.errors} files failed - review logs.",
-                    details=details
+                    details=details,
                     processor_name=self.__class__.__name__
                 )
             else:
@@ -527,7 +527,7 @@ class BdlBoxscoresBackfill:
                 notify_info(
                     title="BDL Boxscore Processing Complete",
                     message=f"Successfully processed all {self.successful} files, loaded {total_rows} player records",
-                    details=details
+                    details=details,
                     processor_name=self.__class__.__name__
                 )
         except Exception as e:
