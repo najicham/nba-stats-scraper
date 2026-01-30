@@ -37,7 +37,7 @@ Validate complete 2024-25 season data quality across all pipeline phases, identi
 | Phase 3 (Analytics) | `player_game_summary` | ✅ Complete | 100% gold | None |
 | Phase 4 (Precompute) | `player_daily_cache`, composite factors | 🟡 Pending | - | - |
 | Phase 5 (Predictions) | `player_prop_predictions` | ✅ Complete | 93.4% dates | Bootstrap period expected |
-| Phase 6 (Grading) | `prediction_grades` | 🟡 N/A | Historical | Not backfilled |
+| Phase 6 (Grading) | `prediction_accuracy` | ✅ Complete | 36% graded | catboost_v8: 74.3% accuracy |
 
 ### Key Metrics (2024-25 Season)
 - **Analytics Records:** 28,240 (100% gold quality)
@@ -50,8 +50,12 @@ Validate complete 2024-25 season data quality across all pipeline phases, identi
 | Document | Purpose | Status |
 |----------|---------|--------|
 | [VALIDATION-FRAMEWORK.md](./VALIDATION-FRAMEWORK.md) | Methodology, queries, approach | 🔄 In Progress |
-| [VALIDATION-RESULTS-SUMMARY.md](./VALIDATION-RESULTS-SUMMARY.md) | Findings and root causes | 📋 Planned |
-| [DATA-QUALITY-METRICS.md](./DATA-QUALITY-METRICS.md) | KPIs and trends | 📋 Planned |
+| [VALIDATION-RESULTS-SUMMARY.md](./VALIDATION-RESULTS-SUMMARY.md) | Findings and root causes | ✅ Complete |
+| [DATA-QUALITY-METRICS.md](./DATA-QUALITY-METRICS.md) | KPIs and trends | ✅ Complete |
+| [DATA-LINEAGE-VALIDATION.md](./DATA-LINEAGE-VALIDATION.md) | Rolling average & calculation verification | ✅ Complete |
+| [VALIDATION-PLAN.md](./VALIDATION-PLAN.md) | Comprehensive 4-season validation plan | ✅ Complete |
+| [GRADING-SYSTEM-ANALYSIS.md](./GRADING-SYSTEM-ANALYSIS.md) | Grading logic and expected behavior | ✅ Complete |
+| [GRADING-TABLE-CONSOLIDATION-REVIEW.md](./GRADING-TABLE-CONSOLIDATION-REVIEW.md) | Two grading tables issue - needs decision | ⚠️ For Review |
 | [PREVENTION-MECHANISMS.md](./PREVENTION-MECHANISMS.md) | How to prevent recurrence | 📋 Planned |
 | [PROGRESS.md](./PROGRESS.md) | Session-by-session tracking | 🔄 In Progress |
 

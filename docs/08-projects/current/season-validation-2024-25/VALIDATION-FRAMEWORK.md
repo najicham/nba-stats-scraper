@@ -141,31 +141,120 @@ ORDER BY game_date
 ### Phase 6: Grading Coverage
 
 **Tables:**
-- `nba_predictions.prediction_grades`
+- `nba_predictions.prediction_accuracy` - **Primary grading table (use this!)**
+- `nba_predictions.prediction_grades` - Limited recent data only, do NOT use for historical
+
+**IMPORTANT:** Use `prediction_accuracy` for all grading validation. The `prediction_grades` table only has recent data (Jan 2026+).
 
 **Metrics:**
-- Grading coverage percentage
-- Win rate by system
-- Ungraded predictions
+- Grading coverage for actionable picks (OVER/UNDER)
+- Accuracy by system
+- Push rate
 
 **Acceptable Thresholds:**
-- Grading coverage: ≥80%
+- Grading coverage for actionable picks: ≥99%
+- Push rate: ~0.3% (expected)
+
+**Understanding "Ungraded":**
+- `PASS` recommendation → Expected NULL (no bet suggested)
+- `NO_LINE` recommendation → Expected NULL (no line available)
+- Push (actual == line) → Expected NULL (neither win nor loss)
+- `OVER/UNDER` with line, not push → Should be graded (TRUE/FALSE)
 
 **Query Template:**
 ```sql
--- Phase 6 Grading Analysis
+-- Phase 6 Grading Analysis (CORRECTED)
 SELECT
-  g.game_date,
-  COUNT(DISTINCT g.prediction_id) as graded,
-  COUNT(DISTINCT p.id) as total_predictions,
-  ROUND(100.0 * COUNT(DISTINCT g.prediction_id) / NULLIF(COUNT(DISTINCT p.id), 0), 1) as grading_pct
-FROM `nba-props-platform.nba_predictions.prediction_grades` g
-RIGHT JOIN `nba-props-platform.nba_predictions.player_prop_predictions` p
-  ON g.prediction_id = p.id
-WHERE p.game_date BETWEEN '2024-10-22' AND '2025-06-22'
-GROUP BY g.game_date
-ORDER BY g.game_date
+  recommendation,
+  COUNT(*) as total,
+  COUNTIF(prediction_correct = true) as correct,
+  COUNTIF(prediction_correct = false) as incorrect,
+  COUNTIF(prediction_correct IS NULL) as ungraded,
+  ROUND(100.0 * COUNTIF(prediction_correct = true) /
+    NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 1) as accuracy_pct
+FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+WHERE game_date BETWEEN '2024-10-22' AND '2025-06-22'
+GROUP BY recommendation
+ORDER BY total DESC
 ```
+
+**Accuracy by System:**
+```sql
+SELECT
+  system_id,
+  COUNTIF(recommendation IN ('OVER', 'UNDER')) as actionable_picks,
+  COUNTIF(prediction_correct IS NOT NULL) as graded,
+  COUNTIF(prediction_correct = true) as correct,
+  ROUND(100.0 * COUNTIF(prediction_correct = true) /
+    NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 1) as accuracy_pct
+FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+WHERE game_date BETWEEN '2024-10-22' AND '2025-06-22'
+GROUP BY system_id
+ORDER BY accuracy_pct DESC
+```
+
+---
+
+### Cache Lineage Validation
+
+**Purpose:** Verify that cached rolling averages match recalculated values from source data.
+
+**CRITICAL:** Validation queries MUST exactly match processor logic:
+
+| Filter | Processor Logic | Why |
+|--------|-----------------|-----|
+| Date comparison | `game_date < cache_date` | Cache is generated BEFORE the day's games |
+| Season filter | `season_year = X` | Only same-season games |
+| Active filter | `is_active = TRUE` | Only active roster players |
+| DNP filter | `minutes_played > 0 OR points > 0` | Exclude DNP records |
+
+**Query Template (CORRECT):**
+```sql
+-- Cache lineage validation - matches processor logic exactly
+WITH sample_cache AS (
+  SELECT player_lookup, cache_date, points_avg_last_5 as cached_l5
+  FROM `nba_precompute.player_daily_cache`
+  WHERE cache_date = @validate_date
+    AND points_avg_last_5 IS NOT NULL
+  LIMIT 50
+),
+games_ranked AS (
+  SELECT
+    g.player_lookup,
+    s.cache_date,
+    g.points,
+    ROW_NUMBER() OVER (PARTITION BY g.player_lookup ORDER BY g.game_date DESC) as rn
+  FROM sample_cache s
+  JOIN `nba_analytics.player_game_summary` g
+    ON g.player_lookup = s.player_lookup
+    AND g.game_date < s.cache_date  -- CRITICAL: strictly BEFORE
+    AND g.season_year = @season_year
+    AND g.is_active = TRUE
+    AND (g.minutes_played > 0 OR g.points > 0)
+),
+recalc AS (
+  SELECT player_lookup, ROUND(AVG(points), 1) as calc_l5
+  FROM games_ranked WHERE rn <= 5
+  GROUP BY player_lookup
+)
+SELECT
+  s.player_lookup,
+  s.cached_l5,
+  r.calc_l5,
+  CASE WHEN ABS(s.cached_l5 - r.calc_l5) < 0.1 THEN 'MATCH' ELSE 'DIFF' END as status
+FROM sample_cache s
+JOIN recalc r ON s.player_lookup = r.player_lookup
+```
+
+**Acceptable Thresholds:**
+- Exact match rate: 100% (within 0.1 pts for rounding)
+- Any DIFF indicates a bug in processor or validation query
+
+**Common Mistakes to Avoid:**
+- ❌ Using `<=` instead of `<` for date comparison
+- ❌ Forgetting season_year filter (includes prior season games)
+- ❌ Forgetting is_active filter
+- ❌ Forgetting DNP filter
 
 ---
 
