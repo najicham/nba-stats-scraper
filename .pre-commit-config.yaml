@@ -60,6 +60,14 @@ repos:
         always_run: true
         verbose: true
 
+      - id: check-date-comparisons
+        name: Check date comparisons for data leakage
+        description: Flags <= date patterns that might cause data leakage (L5/L10 bug prevention)
+        entry: python .pre-commit-hooks/check_date_comparisons.py
+        language: python
+        types: [python, sql]
+        verbose: true
+
   # Standard pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
