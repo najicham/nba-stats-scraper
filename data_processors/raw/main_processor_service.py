@@ -34,6 +34,17 @@ BATCH_PROCESSOR_TIMEOUT_SECONDS = 600
 from shared.utils.sentry_config import configure_sentry
 configure_sentry()
 
+# Startup verification - MUST be early to detect wrong code deployment
+try:
+    from shared.utils.startup_verification import verify_startup
+    verify_startup(
+        expected_module="raw-processor",
+        service_name="nba-phase2-raw-processors"
+    )
+except ImportError:
+    # Shared module not available (local dev without full setup)
+    logging.warning("startup_verification not available - running without verification")
+
 # Import GCP config
 from shared.config.gcp_config import get_project_id
 

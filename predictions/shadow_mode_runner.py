@@ -110,6 +110,10 @@ def load_players_for_date(client: bigquery.Client, game_date: date) -> List[Dict
         ) = 1
     ),
     -- Minutes/PPM history
+    -- NOTE: Using <= here is CORRECT because:
+    -- 1. Window functions use ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
+    -- 2. This explicitly excludes the current row from the calculation
+    -- 3. We need the target date in the CTE to output its calculated values
     history AS (
         SELECT
             player_lookup,

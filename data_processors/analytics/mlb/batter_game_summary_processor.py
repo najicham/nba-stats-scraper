@@ -182,6 +182,10 @@ class MlbBatterGameSummaryProcessor(CircuitBreakerMixin, AnalyticsProcessorBase)
                 ) as prev_game_date
 
             FROM `{self.project_id}.{self.raw_dataset}.bdl_batter_stats`
+            -- NOTE: Using <= here is CORRECT because:
+            -- 1. The rolling window functions use ROWS BETWEEN X PRECEDING AND 1 PRECEDING
+            -- 2. This explicitly excludes the current row from rolling calculations
+            -- 3. We need <= to include the target date's row in the output
             WHERE game_date <= '{date_str}'
               AND at_bats > 0  -- Filter to batters who had at-bats
               AND game_status IN ('STATUS_FINAL', 'STATUS_F')  -- Both formats

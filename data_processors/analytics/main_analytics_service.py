@@ -19,6 +19,17 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 from shared.utils.sentry_config import configure_sentry
 configure_sentry()
 
+# Startup verification - MUST be early to detect wrong code deployment
+try:
+    from shared.utils.startup_verification import verify_startup
+    verify_startup(
+        expected_module="analytics-processor",
+        service_name="nba-phase3-analytics-processors"
+    )
+except ImportError:
+    # Shared module not available (local dev without full setup)
+    logging.warning("startup_verification not available - running without verification")
+
 from shared.endpoints.health import create_health_blueprint, HealthChecker
 from shared.utils.validation import validate_game_date, validate_project_id, ValidationError
 from shared.config.gcp_config import get_project_id

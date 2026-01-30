@@ -32,6 +32,17 @@ from datetime import datetime, date
 import base64
 import time
 
+# Startup verification - MUST be early to detect wrong code deployment
+try:
+    from shared.utils.startup_verification import verify_startup
+    verify_startup(
+        expected_module="prediction-coordinator",
+        service_name="prediction-coordinator"
+    )
+except ImportError:
+    # Shared module not available (local dev without full setup)
+    logging.warning("startup_verification not available - running without verification")
+
 # Defer google.cloud imports to lazy loading functions to avoid cold start hang
 if TYPE_CHECKING:
     from google.cloud import bigquery, pubsub_v1
@@ -57,6 +68,7 @@ from shared.publishers.unified_pubsub_publisher import UnifiedPubSubPublisher
 from shared.config.orchestration_config import get_orchestration_config
 from shared.utils.env_validation import validate_required_env_vars
 from shared.utils.bigquery_retry import retry_on_transient
+from shared.utils.firestore_retry import retry_on_firestore_error, retry_firestore_transaction
 from shared.utils.auth_utils import get_api_key
 from shared.endpoints.health import create_health_blueprint, HealthChecker
 
@@ -1042,43 +1054,59 @@ def check_and_mark_message_processed(message_id: str) -> bool:
         return False  # Idempotency disabled, treat as new
 
     try:
-        # Lazy load Firestore via pool
-        from google.cloud import firestore
-        from shared.clients import get_firestore_client
-
-        db = get_firestore_client(PROJECT_ID)
-        dedup_ref = db.collection('pubsub_deduplication').document(message_id)
-
-        # Atomic transaction to check-and-set
-        transaction = db.transaction()
-
-        @firestore.transactional
-        def check_and_mark(transaction):
-            doc = dedup_ref.get(transaction=transaction)
-
-            if doc.exists:
-                # Already processed - duplicate message
-                logger.info(f"Duplicate message detected: {message_id}")
-                return True
-
-            # Mark as processed with TTL
-            from datetime import datetime, timedelta, timezone
-            expiry = datetime.now(timezone.utc) + timedelta(days=DEDUP_TTL_DAYS)
-
-            transaction.set(dedup_ref, {
-                'message_id': message_id,
-                'processed_at': firestore.SERVER_TIMESTAMP,
-                'expires_at': expiry  # For manual cleanup (Firestore TTL not available)
-            })
-
-            return False  # New message
-
-        return check_and_mark(transaction)
-
+        return _check_and_mark_message_processed_impl(message_id)
     except Exception as e:
         logger.error(f"Idempotency check failed for {message_id}: {e}", exc_info=True)
         # On error, treat as new to avoid blocking legitimate messages
         return False
+
+
+@retry_firestore_transaction
+def _check_and_mark_message_processed_impl(message_id: str) -> bool:
+    """
+    Internal implementation of idempotency check with Firestore retry.
+
+    Uses @retry_firestore_transaction decorator for aggressive retry
+    on transaction conflicts (5 attempts, 0.5s base delay).
+
+    Args:
+        message_id: Pub/Sub message ID
+
+    Returns:
+        True if message already processed (duplicate), False if new
+    """
+    # Lazy load Firestore via pool
+    from google.cloud import firestore
+    from shared.clients import get_firestore_client
+
+    db = get_firestore_client(PROJECT_ID)
+    dedup_ref = db.collection('pubsub_deduplication').document(message_id)
+
+    # Atomic transaction to check-and-set
+    transaction = db.transaction()
+
+    @firestore.transactional
+    def check_and_mark(transaction):
+        doc = dedup_ref.get(transaction=transaction)
+
+        if doc.exists:
+            # Already processed - duplicate message
+            logger.info(f"Duplicate message detected: {message_id}")
+            return True
+
+        # Mark as processed with TTL
+        from datetime import datetime, timedelta, timezone
+        expiry = datetime.now(timezone.utc) + timedelta(days=DEDUP_TTL_DAYS)
+
+        transaction.set(dedup_ref, {
+            'message_id': message_id,
+            'processed_at': firestore.SERVER_TIMESTAMP,
+            'expires_at': expiry  # For manual cleanup (Firestore TTL not available)
+        })
+
+        return False  # New message
+
+    return check_and_mark(transaction)
 
 
 @app.route('/complete', methods=['POST'])

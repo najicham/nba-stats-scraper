@@ -15,7 +15,7 @@ SELECT
   COUNTIF(is_voided = TRUE) as voided_predictions,
 
   -- Accuracy metrics
-  ROUND(100.0 * COUNTIF(prediction_correct) / COUNTIF(prediction_correct IS NOT NULL), 2) as accuracy_pct,
+  ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 2) as accuracy_pct,
   ROUND(AVG(CASE WHEN prediction_correct IS NOT NULL THEN absolute_error END), 2) as avg_absolute_error,
   ROUND(AVG(CASE WHEN prediction_correct IS NOT NULL THEN confidence_score END) * 100, 2) as avg_confidence,
 

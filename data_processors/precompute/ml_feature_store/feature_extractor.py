@@ -127,6 +127,11 @@ class FeatureExtractor:
         if use_backfill_query:
             # For historical backfill: use actual played data from player_game_summary
             # This captures ALL players who played, not just those expected to play
+            #
+            # NOTE: Using <= here is CORRECT because:
+            # 1. LAG() gives us the PREVIOUS row's game_date (the game before target)
+            # 2. days_since_last = target_date - previous_date (correct calculation)
+            # 3. We need the target date in the CTE to calculate its LAG value
             query = f"""
             WITH player_rest AS (
                 -- Calculate days rest from previous game

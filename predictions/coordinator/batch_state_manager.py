@@ -63,6 +63,13 @@ import os
 import sys
 import time
 
+# Import Firestore retry utilities
+from shared.utils.firestore_retry import (
+    retry_on_firestore_error,
+    retry_firestore_transaction,
+    retry_firestore_critical,
+)
+
 # Add path for slack utilities (use relative path for Docker/cloud compatibility)
 _current_dir = os.path.dirname(os.path.abspath(__file__))
 _repo_root = os.path.dirname(os.path.dirname(_current_dir))
@@ -206,6 +213,7 @@ class BatchStateManager:
             f"subcollection_reads={self.use_subcollection_reads})"
         )
 
+    @retry_on_firestore_error(max_attempts=3, base_delay=1.0)
     def create_batch(
         self,
         batch_id: str,
@@ -247,6 +255,7 @@ class BatchStateManager:
 
         return state
 
+    @retry_on_firestore_error(max_attempts=3, base_delay=0.5)
     def get_batch_state(self, batch_id: str) -> Optional[BatchState]:
         """
         Retrieve batch state from Firestore
@@ -266,6 +275,7 @@ class BatchStateManager:
 
         return BatchState.from_firestore_dict(doc.to_dict())
 
+    @retry_firestore_critical
     def record_completion(
         self,
         batch_id: str,
@@ -289,6 +299,9 @@ class BatchStateManager:
         1. Legacy mode (subcollection disabled): Write only to array
         2. Dual-write mode (default): Write to both array AND subcollection (TRANSACTIONAL)
         3. Subcollection-only mode: Write only to subcollection
+
+        Note: This method uses @retry_firestore_critical decorator for aggressive retry
+        (7 attempts, 2s base delay) because completion events MUST be recorded.
 
         Args:
             batch_id: Batch identifier
@@ -388,6 +401,7 @@ class BatchStateManager:
             # Non-fatal - batch can continue
             return False
 
+    @retry_firestore_transaction
     def record_failure(
         self,
         batch_id: str,
@@ -396,6 +410,9 @@ class BatchStateManager:
     ) -> None:
         """
         Record a player failure event
+
+        Note: Uses @retry_firestore_transaction decorator because this method
+        uses Firestore transactions which can fail due to contention.
 
         Args:
             batch_id: Batch identifier
@@ -755,9 +772,12 @@ _Check Cloud Logging for detailed error traces._"""
 
         return mismatches
 
+    @retry_on_firestore_error(max_attempts=5, base_delay=1.0)
     def mark_batch_complete(self, batch_id: str) -> None:
         """
         Explicitly mark a batch as complete
+
+        Note: Uses retry decorator because this is a critical state transition.
 
         Args:
             batch_id: Batch identifier
@@ -868,6 +888,7 @@ _Check Cloud Logging for detailed error traces._"""
 
         return True
 
+    @retry_on_firestore_error(max_attempts=3, base_delay=0.5)
     def get_active_batches(self) -> List[BatchState]:
         """
         Get all active (incomplete) batches
@@ -880,9 +901,12 @@ _Check Cloud Logging for detailed error traces._"""
 
         return [BatchState.from_firestore_dict(doc.to_dict()) for doc in docs]
 
+    @retry_on_firestore_error(max_attempts=3, base_delay=1.0)
     def cleanup_old_batches(self, days: int = 7) -> int:
         """
         Delete batch records older than specified days
+
+        Note: Uses retry decorator for transient failures during cleanup.
 
         Args:
             days: Number of days to keep (default: 7)
@@ -908,6 +932,7 @@ _Check Cloud Logging for detailed error traces._"""
     # Multi-Instance Coordination Methods
     # ============================================================================
 
+    @retry_firestore_transaction
     def create_batch_with_transaction(
         self,
         batch_id: str,
@@ -922,6 +947,9 @@ _Check Cloud Logging for detailed error traces._"""
 
         This is safe for multi-instance deployment - only one instance can
         create a batch for a given batch_id.
+
+        Note: Uses @retry_firestore_transaction decorator for aggressive retry
+        on transaction conflicts.
 
         Args:
             batch_id: Unique batch identifier
@@ -986,6 +1014,7 @@ _Check Cloud Logging for detailed error traces._"""
             logger.error(f"Transaction error creating batch: {e}", exc_info=True)
             raise
 
+    @retry_firestore_transaction
     def claim_batch_for_processing(
         self,
         batch_id: str,
@@ -997,6 +1026,9 @@ _Check Cloud Logging for detailed error traces._"""
 
         Uses Firestore transaction to ensure only one instance can claim.
         The claim has a timeout to handle crashed instances.
+
+        Note: Uses @retry_firestore_transaction decorator for aggressive retry
+        on transaction conflicts during multi-instance coordination.
 
         Args:
             batch_id: Batch identifier
@@ -1067,9 +1099,13 @@ _Check Cloud Logging for detailed error traces._"""
             logger.error(f"Transaction error claiming batch: {e}", exc_info=True)
             return False
 
+    @retry_firestore_transaction
     def release_batch_claim(self, batch_id: str, instance_id: str) -> bool:
         """
         Release a batch claim held by an instance.
+
+        Note: Uses @retry_firestore_transaction decorator for aggressive retry
+        on transaction conflicts.
 
         Args:
             batch_id: Batch identifier
@@ -1117,6 +1153,7 @@ _Check Cloud Logging for detailed error traces._"""
             logger.error(f"Transaction error releasing claim: {e}", exc_info=True)
             return False
 
+    @retry_on_firestore_error(max_attempts=3, base_delay=0.5)
     def refresh_batch_claim(
         self,
         batch_id: str,
@@ -1127,6 +1164,8 @@ _Check Cloud Logging for detailed error traces._"""
         Refresh an existing batch claim to prevent expiration.
 
         Call periodically during long operations.
+
+        Note: Uses retry decorator with shorter delays for quick operations.
 
         Args:
             batch_id: Batch identifier

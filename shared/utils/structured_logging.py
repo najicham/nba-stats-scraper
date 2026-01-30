@@ -16,6 +16,11 @@ Features:
 - Automatic context propagation
 - Backward compatible (works with string logging too)
 
+Environment Detection:
+- Cloud Run (K_SERVICE set): Structured logging ON by default
+- Local development: Structured logging OFF by default (for readability)
+- Override: Set ENABLE_STRUCTURED_LOGGING=true/false to force behavior
+
 Created: 2026-01-20 (Week 1, Day 5)
 """
 
@@ -29,6 +34,29 @@ import threading
 
 # Thread-local storage for context
 _context = threading.local()
+
+
+def _is_structured_logging_enabled() -> bool:
+    """
+    Determine if structured logging should be enabled.
+
+    Priority:
+    1. Explicit ENABLE_STRUCTURED_LOGGING env var overrides everything
+    2. If running in Cloud Run (K_SERVICE set), default to ON
+    3. If running locally (no K_SERVICE), default to OFF for readability
+
+    This ensures production logs are always queryable while keeping
+    local development output readable.
+    """
+    # Check for explicit override first
+    explicit_setting = os.getenv('ENABLE_STRUCTURED_LOGGING')
+    if explicit_setting is not None:
+        return explicit_setting.lower() == 'true'
+
+    # Auto-detect Cloud Run environment
+    # K_SERVICE is always set in Cloud Run
+    is_cloud_run = os.getenv('K_SERVICE') is not None
+    return is_cloud_run
 
 
 class StructuredLogger:
@@ -46,7 +74,7 @@ class StructuredLogger:
     
     def __init__(self, name: str):
         self.logger = logging.getLogger(name)
-        self.enabled = os.getenv('ENABLE_STRUCTURED_LOGGING', 'false').lower() == 'true'
+        self.enabled = _is_structured_logging_enabled()
     
     def _add_context(self, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Add thread-local context to extra fields."""

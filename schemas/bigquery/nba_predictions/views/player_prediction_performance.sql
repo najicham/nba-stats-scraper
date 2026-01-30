@@ -16,7 +16,7 @@ SELECT
   -- Accuracy metrics
   COUNTIF(prediction_correct) as correct,
   COUNTIF(NOT prediction_correct) as incorrect,
-  ROUND(100.0 * COUNTIF(prediction_correct) / COUNTIF(prediction_correct IS NOT NULL), 2) as accuracy_pct,
+  ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 2) as accuracy_pct,
 
   -- Performance metrics
   ROUND(AVG(CASE WHEN prediction_correct IS NOT NULL THEN absolute_error END), 2) as avg_absolute_error,
