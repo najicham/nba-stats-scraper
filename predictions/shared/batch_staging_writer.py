@@ -40,9 +40,39 @@ import logging
 import time
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
+import numpy as np
 
 from google.cloud import bigquery
 from google.api_core import exceptions as gcp_exceptions
+
+
+def convert_numpy_types(obj: Any) -> Any:
+    """
+    Convert numpy types to Python native types for JSON serialization.
+
+    BigQuery load_table_from_json fails if numpy types (np.float64, np.int64, etc.)
+    are present in the data because they don't serialize to JSON correctly.
+
+    Args:
+        obj: Any value that might contain numpy types
+
+    Returns:
+        The same value with numpy types converted to Python natives
+    """
+    if isinstance(obj, dict):
+        return {k: convert_numpy_types(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    elif isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, np.bool_):
+        return bool(obj)
+    else:
+        return obj
 
 # Import distributed lock to prevent race conditions
 from predictions.shared.distributed_lock import DistributedLock, LockAcquisitionError
@@ -189,9 +219,13 @@ class BatchStagingWriter:
                 create_disposition=bigquery.CreateDisposition.CREATE_IF_NEEDED
             )
 
+            # Convert numpy types to Python native types for JSON serialization
+            # This fixes "JSON table encountered too many errors" caused by np.float64/np.int64
+            serializable_predictions = [convert_numpy_types(p) for p in predictions]
+
             # Load predictions to staging table (NOT a DML operation)
             load_job = self.bq_client.load_table_from_json(
-                predictions,
+                serializable_predictions,
                 staging_table_id,
                 job_config=job_config
             )
