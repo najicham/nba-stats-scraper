@@ -218,28 +218,58 @@ GROUP BY 1"
 
 ```
 30fa1c99 feat: Add BigDataBall critical monitoring and shot zone validation
-[pending] feat: Add prediction quality tracking and audit logging
+ef7cba45 feat: Add prediction quality tracking and BDB auto-rerun system
+ee190236 docs: Add BigDataBall operations guide and backfill script
 ```
+
+---
+
+## Dates Needing Backfill
+
+Run `python bin/backfill/backfill_shot_zones.py --dry-run` to see current state.
+
+Found 10 dates with <50% paint_attempts coverage despite BDB data being available:
+
+| Date | Current Coverage | BDB Available |
+|------|-----------------|---------------|
+| 2026-01-02 | 9.3% | Yes |
+| 2026-01-03 | 7.9% | Yes |
+| 2026-01-04 | 12.2% | Yes |
+| 2026-01-05 | 15.9% | Yes |
+| 2026-01-06 | 15.9% | Yes |
+| 2026-01-07 | 15.5% | Yes |
+| 2026-01-10 | 7.9% | Yes |
+| 2026-01-11 | 8.5% | Yes |
+| 2026-01-21 | 0.0% | Yes |
+| 2026-01-24 | 7.6% | Yes |
 
 ---
 
 ## Known Issues
 
-1. **21 dates need backfill** - Phase 3 re-processing required for Jan 1-24
+1. **10 dates need backfill** - Phase 3 re-processing required (run `python bin/backfill/backfill_shot_zones.py`)
 2. **Quality tracker not integrated** - Prediction worker needs to call quality_tracker
-3. **Audit log table not created** - Need to run schema SQL
+3. **NBAC play-by-play table is EMPTY** - Fallback path has nothing to fall back to
+
+---
+
+## Tables Created This Session
+
+- `nba_orchestration.pending_bdb_games` ✅ Created
+- `nba_predictions.prediction_audit_log` ✅ Created
 
 ---
 
 ## Next Session Checklist
 
-1. [ ] Create audit log table in BigQuery
+1. [ ] **Run backfill** - `python bin/backfill/backfill_shot_zones.py` (10 dates)
 2. [ ] Deploy bdb_arrival_trigger Cloud Function
-3. [ ] Set up Cloud Scheduler for periodic checks
+3. [ ] Set up Cloud Scheduler for periodic checks (every 30 min)
 4. [ ] Integrate quality_tracker into prediction worker
 5. [ ] Add quality fields to predictions API response
-6. [ ] Backfill the 21 affected dates
+6. [ ] Re-run Phase 4/5 after Phase 3 backfill completes
 7. [ ] Add Slack webhook for alerts
+8. [ ] Investigate why NBAC play-by-play table is empty
 
 ---
 
@@ -292,9 +322,26 @@ ORDER BY 1 DESC
 1. **BDB data IS available** - The scraper is working, data exists
 2. **Extraction pipeline had gaps** - Old data processed without BDB
 3. **Quality visibility is critical** - We didn't know predictions were degraded
-4. **Re-run timing matters** - Can't change predictions close to game time
+4. **Re-run timing matters** - Can't change predictions close to game time (use 1h cutoff)
 5. **Audit trail is essential** - Need to know what data was available when
 
 ---
 
-*Session 39 complete. BigDataBall quality tracking system built. Deployment and backfill pending.*
+## New Files Created
+
+| File | Purpose |
+|------|---------|
+| `bin/monitoring/bdb_critical_monitor.py` | BDB availability monitoring and alerts |
+| `bin/monitoring/bdb_pending_monitor.py` | Pending game re-run monitor |
+| `bin/backfill/backfill_shot_zones.py` | Backfill script for affected dates |
+| `predictions/worker/quality_tracker.py` | Prediction quality tracking |
+| `orchestration/cloud_functions/bdb_arrival_trigger/main.py` | Auto re-run Cloud Function |
+| `schemas/bigquery/nba_orchestration/pending_bdb_games.sql` | Pending games table schema |
+| `schemas/bigquery/nba_predictions/prediction_audit_log.sql` | Audit log table schema |
+| `docs/02-operations/bigdataball-operations.md` | Complete BDB operations runbook |
+| `docs/08-projects/current/data-recovery-strategy/DATA-RECOVERY-STRATEGY.md` | Recovery strategy doc |
+| `docs/08-projects/current/data-recovery-strategy/PREDICTION-QUALITY-TRACKING.md` | Quality tracking design |
+
+---
+
+*Session 39 complete. BigDataBall quality tracking system built. Run backfill and deploy Cloud Function next.*
