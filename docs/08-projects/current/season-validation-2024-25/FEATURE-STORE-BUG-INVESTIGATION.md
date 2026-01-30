@@ -1,8 +1,10 @@
 # Feature Store Bug Investigation - Session 26
 
 **Date:** 2026-01-29
-**Status:** ACTIVE INVESTIGATION
+**Status:** ✅ FIXED (Session 27)
 **Severity:** HIGH - Affects historical prediction accuracy metrics
+
+> **FIX APPLIED:** 2026-01-29 - Patched 2,022 records from player_daily_cache. See [FEATURE-STORE-BUG-ROOT-CAUSE.md](FEATURE-STORE-BUG-ROOT-CAUSE.md) for root cause analysis.
 
 ---
 
@@ -408,3 +410,135 @@ Alert if >10% of feature store records use fallback instead of cache.
 - This document: `FEATURE-STORE-BUG-INVESTIGATION.md`
 - Validation framework: `VALIDATION-FRAMEWORK.md`
 - Cache lineage queries: `schemas/bigquery/validation/cache_lineage_validation.sql`
+
+---
+
+## Session 27 Deep Investigation
+
+### Bug Confirmation
+
+Verified that feature store L5 values **include the current game** (data leakage):
+
+```sql
+-- For Wembanyama on Jan 15, 2025:
+-- Cache L5 = 22.2 (correct - excludes Jan 15)
+-- Feature Store L5 = 17.8 (wrong - includes Jan 15)
+
+-- The 17.8 matches AVG(points) OVER (ROWS BETWEEN 4 PRECEDING AND CURRENT ROW)
+-- The 22.2 matches AVG(points) OVER (ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING)
+```
+
+### Pattern Analysis
+
+| game_date  | cache_l5 | fs_l5 | Pattern |
+|------------|----------|-------|---------|
+| 2025-01-13 | 23.0     | 22.2  | FS has cache value for Jan 15 |
+| 2025-01-15 | 22.2     | 17.8  | FS has cache value for Jan 17 |
+| 2025-01-17 | 17.8     | 17.6  | FS has cache value for Jan 19 |
+| 2025-01-19 | 17.6     | 17.2  | FS has cache value for Jan 23 |
+
+The feature store L5 for date X matches what the cache L5 should be for the NEXT game date.
+
+### Key Finding: `<=` is NOT the Root Cause
+
+Investigated all `<=` date comparisons in the codebase:
+
+1. **Window functions with `ROWS BETWEEN X PRECEDING AND 1 PRECEDING`** - The window frame already excludes current row, so `<=` in WHERE clause is CORRECT
+2. **LAG calculations** - Same principle, LAG gives previous row
+3. **Current code uses `<` correctly** - All Phase 3/4 queries use `game_date < '{game_date}'`
+
+### Why Only 2024-25 is Affected
+
+| Season | L5 Match Rate | Status |
+|--------|---------------|--------|
+| 2022-23 | 100% | Clean |
+| 2023-24 | 100% | Clean |
+| 2024-25 | 57% | **Affected** |
+
+All seasons were created on Jan 9, 2026. The same code path worked for 2022-24 but not 2024-25.
+
+**Hypothesis**: Something specific to the 2024-25 backfill caused wrong calculations:
+- Different data conditions
+- Race condition during backfill
+- Intermediate table with wrong values
+
+### Recommended Fix
+
+**Patch L5/L10 from cache:**
+
+```sql
+-- Step 1: Backup
+CREATE TABLE `nba_predictions.ml_feature_store_v2_backup_20260129` AS
+SELECT * FROM `nba_predictions.ml_feature_store_v2`
+WHERE game_date BETWEEN '2024-10-01' AND '2025-06-30';
+
+-- Step 2: Update L5/L10 from cache
+-- Note: BigQuery doesn't allow direct ARRAY element updates
+-- Need to recreate the features array with correct values
+
+-- See: schemas/bigquery/patches/patch_l5_l10_from_cache.sql
+```
+
+### Updated validate-lineage Skill
+
+Added feature store vs cache validation check to `.claude/skills/validate-lineage.md`:
+- Query to compare L5/L10 match rates
+- Pass criteria: >= 95% match
+- Alert conditions for data leakage
+
+---
+
+## Session 27 Fix Applied
+
+### Patch Summary
+
+**Date:** 2026-01-29
+**Method:** Patched L5/L10 values from `player_daily_cache`
+
+| Metric | Value |
+|--------|-------|
+| Records patched | 2,022 |
+| Average L5 diff | 1.27 points |
+| Max L5 diff | 7.4 points |
+| Average L10 diff | 0.65 points |
+| Max L10 diff | 3.5 points |
+
+### Verification Results
+
+| Metric | Before | After |
+|--------|--------|-------|
+| L5 match rate | 57% | **100%** |
+| L10 match rate | 61% | **100%** |
+
+### Spot Check: Wembanyama Jan 15, 2025
+
+| Source | L5 Value |
+|--------|----------|
+| Before patch | 17.8 (wrong) |
+| After patch | **22.2** (correct) |
+| Cache value | 22.2 |
+
+### Artifacts Created
+
+| Artifact | Purpose |
+|----------|---------|
+| `nba_predictions.feature_store_patch_audit` | Full before/after audit trail |
+| `nba_predictions.ml_feature_store_v2_backup_20260129` | Backup of patched records |
+| `schemas/bigquery/patches/2026-01-29_patch_l5_l10_from_cache.sql` | Patch SQL script |
+
+### Rollback Available
+
+If issues found, restore from backup:
+```sql
+MERGE `nba_predictions.ml_feature_store_v2` AS target
+USING `nba_predictions.ml_feature_store_v2_backup_20260129` AS source
+ON target.player_lookup = source.player_lookup AND target.game_date = source.game_date
+WHEN MATCHED THEN
+  UPDATE SET features = source.features, updated_at = source.updated_at;
+```
+
+### Post-Fix Actions Required
+
+1. **Re-run catboost predictions** for 2024-25 season with corrected features
+2. **Recalculate accuracy metrics** to get true performance numbers
+3. **Re-run affected experiments** (A3, B1, B2, B3 per root cause doc)
