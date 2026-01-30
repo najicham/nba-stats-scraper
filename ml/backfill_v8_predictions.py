@@ -102,6 +102,7 @@ def get_features_and_lines_for_date(
             f.days_rest
         FROM `{FEATURE_STORE_TABLE}` f
         WHERE f.game_date = @game_date
+          AND f.feature_count = 33  -- Only v2_33features records
     ),
     best_lines AS (
         SELECT
@@ -153,8 +154,9 @@ def get_features_and_lines_for_date(
                 if i < len(row.features):
                     feature_dict[name] = row.features[i]
 
-        # Add quality score
+        # Add quality score and feature version
         feature_dict['feature_quality_score'] = float(row.feature_quality_score or 80.0)
+        feature_dict['feature_version'] = 'v2_33features'  # Required by CatBoostV8
 
         players.append({
             'player_lookup': row.player_lookup,
