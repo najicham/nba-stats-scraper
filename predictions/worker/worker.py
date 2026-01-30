@@ -812,6 +812,60 @@ def process_player_predictions(
     # v3.6: Add line timing tracking (how close to closing line)
     features['line_minutes_before_game'] = line_source_info.get('line_minutes_before_game')
 
+    # v3.7 (Session 24 FIX): Add CatBoost V8 required features
+    # The ml_feature_store_v2 only has 25 base features, but CatBoost V8 needs 33.
+    # Features 25-32 (Vegas/opponent/PPM) must be populated from available data.
+    # Without this fix, predictions were inflated by +29 points (64.48 vs 34.96 expected).
+    actual_prop = line_source_info.get('actual_prop_line')
+    if actual_prop is not None:
+        # Vegas features (indices 25-28)
+        features['vegas_points_line'] = actual_prop
+        features['vegas_opening_line'] = actual_prop  # Use same as closing (no opening data)
+        features['vegas_line_move'] = 0.0  # No line movement data available
+        features['has_vegas_line'] = 1.0  # CRITICAL: Must be 1.0 when we have a line!
+    else:
+        # No prop line - use np.nan for Vegas features (CatBoost handles natively)
+        features['vegas_points_line'] = None
+        features['vegas_opening_line'] = None
+        features['vegas_line_move'] = None
+        features['has_vegas_line'] = 0.0
+
+    # Opponent history features (indices 29-30)
+    # These would require a separate query to player_game_summary.
+    # For now, use season average as fallback (same as training imputation).
+    # Future enhancement: Add opponent history lookup to data_loader.
+    season_avg = features.get('points_avg_season', 15.0)
+    if 'avg_points_vs_opponent' not in features:
+        features['avg_points_vs_opponent'] = season_avg
+    if 'games_vs_opponent' not in features:
+        features['games_vs_opponent'] = 0.0
+
+    # PPM features (indices 31-32)
+    # minutes_avg_last_10 is already in feature store (feature #5 = games_in_last_7_days proxy)
+    # ppm_avg_last_10 can be calculated from available data
+    if 'minutes_avg_last_10' not in features:
+        features['minutes_avg_last_10'] = 30.0  # Default NBA starter minutes
+    if 'ppm_avg_last_10' not in features:
+        # Calculate PPM from available data if possible
+        pts_avg = features.get('points_avg_last_10', season_avg)
+        mins_avg = features.get('minutes_avg_last_10', 30.0)
+        if mins_avg and mins_avg > 0:
+            features['ppm_avg_last_10'] = pts_avg / mins_avg
+        else:
+            features['ppm_avg_last_10'] = 0.5  # Typical NBA PPM
+
+    # Log V8 feature enrichment for monitoring
+    logger.debug(
+        "catboost_v8_features_enriched",
+        extra={
+            "player_lookup": player_lookup,
+            "vegas_points_line": features.get('vegas_points_line'),
+            "has_vegas_line": features.get('has_vegas_line'),
+            "ppm_avg_last_10": round(features.get('ppm_avg_last_10', 0), 3),
+            "avg_points_vs_opponent": features.get('avg_points_vs_opponent'),
+        }
+    )
+
     # v3.4: Check and inject injury status at prediction time
     # This enables distinguishing expected vs surprise voids after game completes
     try:

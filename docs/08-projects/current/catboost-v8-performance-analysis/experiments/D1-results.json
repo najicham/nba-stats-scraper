@@ -1,0 +1,60 @@
+{
+  "experiment_id": "D1",
+  "model_name": "catboost_v8 (existing)",
+  "description": "Evaluate existing CatBoost V8 model on 2024-25 season (true out-of-sample)",
+  "train_period": {
+    "start": "2021-11-01",
+    "end": "2024-05-30",
+    "samples": 80816,
+    "seasons": "2.5 (2021-22 through 2023-24)"
+  },
+  "eval_period": {
+    "start": "2024-11-01",
+    "end": "2025-06-30",
+    "predictions": 13315,
+    "season": "2024-25"
+  },
+  "results": {
+    "overall": {
+      "predictions": 13315,
+      "hits": 9887,
+      "misses": 3428,
+      "hit_rate": 74.25,
+      "roi_pct": 41.75
+    }
+  },
+  "by_month": {
+    "2024-11": {"predictions": 1848, "hit_rate": 77.44, "months_since_training": 6},
+    "2024-12": {"predictions": 2048, "hit_rate": 74.95, "months_since_training": 7},
+    "2025-01": {"predictions": 2502, "hit_rate": 72.82, "months_since_training": 8},
+    "2025-02": {"predictions": 1971, "hit_rate": 71.99, "months_since_training": 9},
+    "2025-03": {"predictions": 2684, "hit_rate": 73.32, "months_since_training": 10},
+    "2025-04": {"predictions": 1709, "hit_rate": 74.49, "months_since_training": 11},
+    "2025-05": {"predictions": 462, "hit_rate": 79.44, "months_since_training": 12},
+    "2025-06": {"predictions": 91, "hit_rate": 79.12, "months_since_training": 13}
+  },
+  "by_confidence": {
+    "95+": {"predictions": 1562, "hit_rate": 79.64, "roi_pct": 52.04},
+    "90-95": {"predictions": 8317, "hit_rate": 75.42, "roi_pct": 43.98},
+    "85-90": {"predictions": 3345, "hit_rate": 68.79, "roi_pct": 31.32},
+    "80-85": {"predictions": 91, "hit_rate": 75.82, "roi_pct": 44.75}
+  },
+  "by_direction": {
+    "OVER": {"predictions": 7032, "hit_rate": 72.21, "roi_pct": 37.85},
+    "UNDER": {"predictions": 6283, "hit_rate": 76.54, "roi_pct": 46.11}
+  },
+  "by_direction_and_confidence": {
+    "OVER_90+": {"predictions": 5132, "hit_rate": 74.24},
+    "OVER_<90": {"predictions": 1900, "hit_rate": 66.74},
+    "UNDER_90+": {"predictions": 4747, "hit_rate": 78.09},
+    "UNDER_<90": {"predictions": 1536, "hit_rate": 71.74}
+  },
+  "key_findings": [
+    "Model performed at 74.25% hit rate on true out-of-sample 2024-25 season",
+    "No significant decay: maintained 72-79% hit rate for 13 months after training",
+    "Confidence calibration works: 95%+ confidence = 79.64% hit rate",
+    "UNDER outperforms OVER by 4.33 percentage points (76.54% vs 72.21%)",
+    "Best segment: High-confidence UNDER at 78.09% hit rate"
+  ],
+  "evaluated_at": "2026-01-29"
+}

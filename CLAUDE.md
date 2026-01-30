@@ -86,6 +86,56 @@ nba-stats-scraper/
 | `docs/05-development/` | Development guides, best practices |
 | `docs/09-handoff/` | Session handoff documents |
 
+## Deployment Patterns
+
+### CRITICAL: Always deploy from repo root
+
+All service Dockerfiles expect to be built from the repository root because they need access to `shared/` modules. Building from within the service directory will fail.
+
+**Correct:**
+```bash
+./bin/deploy-service.sh prediction-worker
+```
+
+**Wrong:**
+```bash
+cd predictions/worker && gcloud run deploy --source .  # WILL FAIL - no shared/ access
+```
+
+### Deployment Script
+
+Use `./bin/deploy-service.sh <service-name>` for all deployments:
+
+| Service | Dockerfile |
+|---------|------------|
+| prediction-coordinator | predictions/coordinator/Dockerfile |
+| prediction-worker | predictions/worker/Dockerfile |
+| nba-phase3-analytics-processors | data_processors/analytics/Dockerfile |
+| nba-phase4-precompute-processors | data_processors/precompute/Dockerfile |
+
+The script:
+1. Builds from repo root with correct Dockerfile
+2. Tags with commit hash for traceability
+3. Sets BUILD_COMMIT and BUILD_TIMESTAMP env vars
+4. Deploys to Cloud Run
+5. Shows recent logs for verification
+
+### Startup Verification
+
+Services should use the startup verification utility to log deployment info:
+
+```python
+from shared.utils.startup_verification import verify_startup
+
+# At service startup
+verify_startup(
+    expected_module="coordinator",
+    service_name="prediction-coordinator"
+)
+```
+
+This helps detect deployment issues where wrong code is deployed.
+
 ## Key Commands
 
 ### Validation
