@@ -10,6 +10,8 @@
 #   - prediction-worker
 #   - nba-phase3-analytics-processors
 #   - nba-phase4-precompute-processors
+#   - nba-scrapers
+#   - nba-phase1-scrapers
 
 set -e
 
@@ -31,6 +33,8 @@ if [ -z "$SERVICE" ]; then
     echo "  - prediction-worker"
     echo "  - nba-phase3-analytics-processors"
     echo "  - nba-phase4-precompute-processors"
+    echo "  - nba-scrapers"
+    echo "  - nba-phase1-scrapers"
     exit 1
 fi
 
@@ -48,6 +52,9 @@ case $SERVICE in
   nba-phase4-precompute-processors)
     DOCKERFILE="data_processors/precompute/Dockerfile"
     ;;
+  nba-scrapers|nba-phase1-scrapers)
+    DOCKERFILE="scrapers/Dockerfile"
+    ;;
   *)
     echo "ERROR: Unknown service: $SERVICE"
     echo ""
@@ -56,6 +63,8 @@ case $SERVICE in
     echo "  - prediction-worker"
     echo "  - nba-phase3-analytics-processors"
     echo "  - nba-phase4-precompute-processors"
+    echo "  - nba-scrapers"
+    echo "  - nba-phase1-scrapers"
     exit 1
     ;;
 esac
