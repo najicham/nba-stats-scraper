@@ -37,50 +37,27 @@ Session 34 executed the Session 33 takeover tasks using parallel agents:
 
 ---
 
-## Critical Issue: Deployment Drift
+## Deployments Completed
 
-**5 services have stale deployments** (code changed at 07:51, not deployed):
+**All 5 stale services deployed successfully:**
 
-| Service | Deployed | Code Changed |
-|---------|----------|--------------|
-| nba-phase3-analytics-processors | 01:05 | 07:51 |
-| nba-phase4-precompute-processors | 01:09 | 07:51 |
-| prediction-coordinator | 01:49 | 07:51 |
-| prediction-worker | 01:23 | 07:51 |
-| nba-phase1-scrapers | 22:45 (Jan 29) | 01:39 |
+| Service | New Revision | Deployed At |
+|---------|--------------|-------------|
+| nba-phase3-analytics-processors | 00142-7jq | 08:31 PST |
+| nba-phase4-precompute-processors | 00078-mqf | 08:33 PST |
+| prediction-coordinator | 00109-529 | 08:29 PST |
+| prediction-worker | 00036-xxx | 08:36 PST |
+| nba-phase1-scrapers | 00021-f56 | 08:30 PST |
 
-### Cache Metadata Fix Not Working
-
-The Session 32 cache metadata fix is in the code but NOT deployed:
-
-```sql
--- Query shows 0 rows have source metadata populated
-SELECT game_date, COUNT(*), COUNTIF(source_daily_cache_rows_found IS NOT NULL) as has_source_metadata
-FROM nba_predictions.ml_feature_store_v2
-WHERE game_date >= CURRENT_DATE() - 3
--- Result: has_source_metadata = 0 for all dates
-```
-
-**Action Required:** Deploy all 5 stale services to get Session 32 fixes live.
+Session 32 fixes (cache metadata tracking, monitoring alerts) are now live.
 
 ---
 
 ## Next Session Priorities
 
-### P0: Deploy Stale Services
+### P1: Verify Cache Metadata After Next Workflow Run
 
-```bash
-# Deploy all stale services
-./bin/deploy-service.sh nba-phase3-analytics-processors
-./bin/deploy-service.sh nba-phase4-precompute-processors
-./bin/deploy-service.sh prediction-coordinator
-./bin/deploy-service.sh prediction-worker
-./bin/deploy-service.sh nba-phase1-scrapers
-```
-
-### P1: Verify Cache Metadata After Deployment
-
-After deployment, re-run the verification query after the next workflow run:
+Re-run the verification query after the next workflow run to confirm Session 32 fix is working:
 
 ```bash
 bq query --use_legacy_sql=false "
@@ -92,7 +69,7 @@ GROUP BY game_date
 "
 ```
 
-### P2: Add More Test Coverage
+### P2: Add More Test Coverage (Low Priority)
 
 Still need tests for (per Session 33 takeover):
 
