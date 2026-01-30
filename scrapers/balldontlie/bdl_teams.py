@@ -53,13 +53,8 @@ try:
     )
 except ImportError:
     # Graceful fallback if notification system not available
-    def notify_error(*args, **kwargs): pass
-    def notify_warning(*args, **kwargs,
-    processor_name=self.__class__.__name__
-    ): pass
-    def notify_info(*args, **kwargs,
-    processor_name=self.__class__.__name__
-    ): pass
+    def notify_warning(*args, **kwargs): pass  #
+    def notify_info(*args, **kwargs): pass  #
 
 logger = logging.getLogger(__name__)  # module-specific logger
 
@@ -258,7 +253,6 @@ class BdlTeams(ScraperBase, ScraperFlaskMixin):
                             'expected_count': 30,
                             'note': 'May indicate incomplete data or API issue'
                         },
-                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send incorrect count warning: {notify_ex}")
@@ -273,7 +267,6 @@ class BdlTeams(ScraperBase, ScraperFlaskMixin):
                             'team_count': len(teams),
                             'pages_fetched': pages_fetched
                         },
-                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send success notification: {notify_ex}")

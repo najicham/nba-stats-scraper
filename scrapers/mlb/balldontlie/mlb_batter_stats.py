@@ -53,13 +53,8 @@ except ImportError:
 try:
     from shared.utils.notification_system import notify_error, notify_warning, notify_info
 except ImportError:
-    def notify_error(*args, **kwargs): pass
-    def notify_warning(*args, **kwargs,
-    processor_name=self.__class__.__name__
-    ): pass
-    def notify_info(*args, **kwargs,
-    processor_name=self.__class__.__name__
-    ): pass
+    def notify_warning(*args, **kwargs): pass  #
+    def notify_info(*args, **kwargs): pass  #
 
 logger = logging.getLogger(__name__)
 
@@ -280,7 +275,6 @@ class MlbBatterStatsScraper(ScraperBase, ScraperFlaskMixin):
                         'date': self.opts.get('date'),
                         'total_stats': len(all_stats),
                     },
-                    processor_name=self.__class__.__name__
                 )
             else:
                 # Calculate summary stats (useful for bottom-up model validation)
@@ -299,7 +293,6 @@ class MlbBatterStatsScraper(ScraperBase, ScraperFlaskMixin):
                         'total_at_bats': total_abs,
                         'k_rate': round(k_rate, 3),
                     },
-                    processor_name=self.__class__.__name__
                 )
 
         except Exception as e:

@@ -66,13 +66,8 @@ try:
     )
 except ImportError:
     # Graceful fallback if notification system not available
-    def notify_error(*args, **kwargs): pass
-    def notify_warning(*args, **kwargs,
-    processor_name=self.__class__.__name__
-    ): pass
-    def notify_info(*args, **kwargs,
-    processor_name=self.__class__.__name__
-    ): pass
+    def notify_warning(*args, **kwargs): pass  #
+    def notify_info(*args, **kwargs): pass  #
 
 # BDL availability logging (for tracking per-game data availability)
 try:
@@ -80,7 +75,6 @@ try:
     BDL_AVAILABILITY_LOGGING_ENABLED = True
 except ImportError:
     BDL_AVAILABILITY_LOGGING_ENABLED = False
-    def log_bdl_game_availability(*args, **kwargs): pass
 
 logger = logging.getLogger("scraper_base")
 
@@ -422,7 +416,6 @@ class BdlPlayerBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
                         'dates_processed': len(dates_done),
                         'pages_fetched': pages_fetched
                     },
-                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send success notification: {notify_ex}")

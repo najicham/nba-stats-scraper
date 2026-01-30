@@ -68,13 +68,8 @@ try:
     )
 except ImportError:
     # Graceful fallback if notification system not available
-    def notify_error(*args, **kwargs): pass
-    def notify_warning(*args, **kwargs,
-    processor_name=self.__class__.__name__
-    ): pass
-    def notify_info(*args, **kwargs,
-    processor_name=self.__class__.__name__
-    ): pass
+    def notify_warning(*args, **kwargs): pass  #
+    def notify_info(*args, **kwargs): pass  #
 
 # BDL availability logger for per-game tracking (legacy - BDL specific)
 try:
@@ -82,7 +77,6 @@ try:
 except ImportError:
     # Graceful fallback if logger not available
     logger.warning("Could not import bdl_availability_logger - game availability tracking disabled")
-    def log_bdl_game_availability(*args, **kwargs): pass
 
 # Generalized scraper availability logger (new - unified tracking)
 try:
@@ -92,7 +86,6 @@ try:
     )
 except ImportError:
     logger.warning("Could not import scraper_availability_logger - unified tracking disabled")
-    def log_scraper_availability(*args, **kwargs): pass
     def extract_games_from_boxscores(*args, **kwargs): return []
 
 # --------------------------------------------------------------------------- #
@@ -297,7 +290,6 @@ class BdlBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
                             'date': self.opts.get('date'),
                             'note': 'This may be normal for off-days or future dates'
                         },
-                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send empty data warning: {notify_ex}")
@@ -313,7 +305,6 @@ class BdlBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
                             'row_count': len(rows),
                             'note': 'May indicate incomplete data or few games played'
                         },
-                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send low count warning: {notify_ex}")
@@ -330,7 +321,6 @@ class BdlBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
                             'pages_fetched': pages_fetched,
                             'estimated_games': len(rows) // 26 if len(rows) > 0 else 0
                         },
-                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send success notification: {notify_ex}")

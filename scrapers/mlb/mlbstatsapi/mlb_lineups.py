@@ -51,13 +51,8 @@ except ImportError:
 try:
     from shared.utils.notification_system import notify_error, notify_warning, notify_info
 except ImportError:
-    def notify_error(*args, **kwargs): pass
-    def notify_warning(*args, **kwargs,
-    processor_name=self.__class__.__name__
-    ): pass
-    def notify_info(*args, **kwargs,
-    processor_name=self.__class__.__name__
-    ): pass
+    def notify_warning(*args, **kwargs): pass  #
+    def notify_info(*args, **kwargs): pass  #
 
 logger = logging.getLogger(__name__)
 
@@ -214,7 +209,6 @@ class MlbLineupsScraper(ScraperBase, ScraperFlaskMixin):
                         'date': self.opts.get('date'),
                         'games': len(all_lineups),
                     },
-                    processor_name=self.__class__.__name__
                 )
             elif lineups_available > 0:
                 notify_info(
@@ -226,7 +220,6 @@ class MlbLineupsScraper(ScraperBase, ScraperFlaskMixin):
                         'total_games': len(all_lineups),
                         'lineups_available': lineups_available,
                     },
-                    processor_name=self.__class__.__name__
                 )
 
         except Exception as e:

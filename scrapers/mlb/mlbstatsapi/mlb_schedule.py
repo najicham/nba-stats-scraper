@@ -52,13 +52,8 @@ except ImportError:
 try:
     from shared.utils.notification_system import notify_error, notify_warning, notify_info
 except ImportError:
-    def notify_error(*args, **kwargs): pass
-    def notify_warning(*args, **kwargs,
-    processor_name=self.__class__.__name__
-    ): pass
-    def notify_info(*args, **kwargs,
-    processor_name=self.__class__.__name__
-    ): pass
+    def notify_warning(*args, **kwargs): pass  #
+    def notify_info(*args, **kwargs): pass  #
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +231,6 @@ class MlbScheduleScraper(ScraperBase, ScraperFlaskMixin):
                     title="MLB Schedule - No Games",
                     message=f"No games found for {self.opts.get('date', 'query')}",
                     details={'scraper': 'mlb_schedule', 'date': self.opts.get('date')},
-                    processor_name=self.__class__.__name__
                 )
             else:
                 notify_info(
@@ -248,7 +242,6 @@ class MlbScheduleScraper(ScraperBase, ScraperFlaskMixin):
                         'total_games': len(all_games),
                         'games_with_starters': games_with_starters,
                     },
-                    processor_name=self.__class__.__name__
                 )
 
         except Exception as e:

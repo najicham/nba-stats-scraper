@@ -80,12 +80,10 @@ except ImportError:
     # Fallback if notification system not available
     def notify_error(*args, **kwargs):
         pass
-    def notify_warning(*args, **kwargs,
-    processor_name=self.__class__.__name__
+    def notify_warning(*args, **kwargs): pass  #
     ):
         pass
-    def notify_info(*args, **kwargs,
-    processor_name=self.__class__.__name__
+    def notify_info(*args, **kwargs): pass  #
     ):
         pass
 
@@ -222,7 +220,6 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
                             'gamedate': self.opts.get('gamedate'),
                             'skip_json': self.skip_json
                         },
-                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
@@ -258,7 +255,6 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
                     'teams': player_structure['teams'],
                     'used_json': bool(embedded_data)
                 },
-                processor_name=self.__class__.__name__
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
@@ -325,7 +321,6 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
                         'error_type': type(e).__name__,
                         'error': str(e)
                     },
-                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -451,7 +446,6 @@ class GetEspnBoxscore(ScraperBase, ScraperFlaskMixin):
                             'tables_found': len(all_tables),
                             'tables_expected': 2
                         },
-                        processor_name=self.__class__.__name__
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")

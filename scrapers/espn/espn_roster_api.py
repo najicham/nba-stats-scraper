@@ -61,12 +61,10 @@ except ImportError:
     # Fallback if notification system not available
     def notify_error(*args, **kwargs):
         pass
-    def notify_warning(*args, **kwargs,
-    processor_name=self.__class__.__name__
+    def notify_warning(*args, **kwargs): pass  #
     ):
         pass
-    def notify_info(*args, **kwargs,
-    processor_name=self.__class__.__name__
+    def notify_info(*args, **kwargs): pass  #
     ):
         pass
 
@@ -264,7 +262,6 @@ class GetEspnTeamRosterAPI(ScraperBase, ScraperFlaskMixin):
                         'espn_team_id': ESPN_TEAM_IDS.get(self.opts['team_abbr']),
                         'athlete_count': 0
                     },
-                    processor_name=self.__class__.__name__
                 )
             except Exception as notify_ex:
                 logger.warning(f"Failed to send notification: {notify_ex}")
@@ -333,7 +330,6 @@ class GetEspnTeamRosterAPI(ScraperBase, ScraperFlaskMixin):
                     'team_name': team_obj.get("displayName"),
                     'player_count': len(players)
                 },
-                processor_name=self.__class__.__name__
             )
         except Exception as notify_ex:
             logger.warning(f"Failed to send notification: {notify_ex}")
