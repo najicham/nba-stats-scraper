@@ -176,6 +176,24 @@ Dates with fewer than 50 player records (expected for single-game days or playof
 1. ~~Investigate grading system~~ → Working correctly, use `prediction_accuracy` table
 2. ~~Investigate rolling average discrepancies~~ → Validation query was flawed, cache is correct for early season
 
+### Session 26 New Findings
+
+**Feature Store Backfill Bug (Historical Only)**
+
+The 2024-25 historical feature store (`ml_feature_store_v2`) has incorrectly calculated L5/L10 features:
+- Uses `game_date <= prediction_date` instead of `< prediction_date`
+- Includes the game being predicted in the average (data leakage)
+- Only 7-11% match rate with cache
+
+**Impact:** Limited to historical analysis only
+- Production predictions used correct cache values at runtime
+- 74% catboost_v8 accuracy confirms predictions were made correctly
+- Historical feature store backfill needs to be re-run if used for analysis
+
+**Source Reconciliation:**
+- 100% of analytics uses NBAC (preferred source), 0% BDL fallback
+- No predictions without matching analytics records
+
 ### Follow-up (P2)
 1. **Re-backfill cache for Mar-Jun 2025** if accurate historical analysis needed
 2. Run detailed validation on Nov-Dec incomplete features
