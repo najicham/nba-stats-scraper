@@ -689,6 +689,176 @@ if issues_found:
 - **Speed**: No interaction needed
 - **Documentation**: Clear command shows what was run
 
+## Feature Store vs Cache Validation (Session 27)
+
+### Purpose
+
+Validates that `ml_feature_store_v2` L5/L10 values match `player_daily_cache` values. This detects data leakage where feature store includes the current game in rolling averages.
+
+### When to Use
+
+- After feature store backfill operations
+- When investigating prediction accuracy anomalies
+- During season validation audits
+
+### Validation Query
+
+```sql
+-- Feature Store vs Cache Match Rate
+WITH comparison AS (
+  SELECT
+    fs.player_lookup,
+    fs.game_date,
+    ROUND(fs.features[OFFSET(0)], 2) as fs_l5,
+    ROUND(c.points_avg_last_5, 2) as cache_l5,
+    ROUND(fs.features[OFFSET(1)], 2) as fs_l10,
+    ROUND(c.points_avg_last_10, 2) as cache_l10
+  FROM `nba_predictions.ml_feature_store_v2` fs
+  JOIN `nba_precompute.player_daily_cache` c
+    ON fs.player_lookup = c.player_lookup AND fs.game_date = c.cache_date
+  WHERE fs.game_date BETWEEN @start_date AND @end_date
+    AND ARRAY_LENGTH(fs.features) >= 2
+)
+SELECT
+  FORMAT_DATE('%Y-%m', game_date) as month,
+  COUNT(*) as total_records,
+  COUNTIF(ABS(fs_l5 - cache_l5) < 0.1) as l5_matches,
+  ROUND(100.0 * COUNTIF(ABS(fs_l5 - cache_l5) < 0.1) / COUNT(*), 1) as l5_match_pct,
+  COUNTIF(ABS(fs_l10 - cache_l10) < 0.1) as l10_matches,
+  ROUND(100.0 * COUNTIF(ABS(fs_l10 - cache_l10) < 0.1) / COUNT(*), 1) as l10_match_pct
+FROM comparison
+GROUP BY 1
+ORDER BY 1
+```
+
+### Pass Criteria
+
+- L5 match rate >= 95%
+- L10 match rate >= 95%
+- `source_daily_cache_rows_found IS NOT NULL` for >= 95% of records
+
+### Alert Conditions
+
+1. **Data Leakage (CRITICAL)**: L5/L10 match rate < 50% - feature store likely includes current game
+2. **Cache Miss (HIGH)**: Match rate 50-95% - cache lookup failing for some records
+3. **Metadata Missing (MEDIUM)**: `source_daily_cache_rows_found = NULL` for >5% - backfill mode didn't track sources
+
+### Example Usage
+
+```bash
+# Check specific date range
+/validate-lineage feature-cache --start-date 2025-01-01 --end-date 2025-01-31
+
+# Check single date in detail
+/validate-lineage feature-cache-detail 2025-01-15
+```
+
+### Known Issues
+
+- 2024-25 season L5/L10 bug was FIXED in Session 27 (2026-01-29)
+- `source_daily_cache_rows_found = NULL` for all backfill records (by design)
+
+---
+
+## Feature Store Validation (New - Session 27)
+
+### Quick Start
+
+```bash
+# Validate last 7 days (default)
+/validate-lineage feature-store
+
+# Validate specific date range
+/validate-lineage feature-store --start-date 2025-11-01 --end-date 2025-11-30
+
+# After backfill - ALWAYS run this
+/validate-lineage feature-store --start-date <backfill-start> --end-date <backfill-end>
+
+# JSON output for automation
+/validate-lineage feature-store --json
+
+# CI mode (exit code 1 on failure)
+/validate-lineage feature-store --ci
+```
+
+### What It Checks
+
+| Check | Threshold | Alert Condition |
+|-------|-----------|-----------------|
+| **L5/L10 consistency** | >= 95% match | Feature store values don't match cache |
+| **Duplicates** | 0 | Any duplicate (player, date) pairs |
+| **Array integrity** | 0 invalid | NULL arrays, wrong length (!= 33), NaN/Inf |
+
+### Implementation
+
+The feature-store validation is implemented in Python:
+
+```python
+# Run programmatically
+from shared.validation.feature_store_validator import validate_feature_store
+
+result = validate_feature_store(
+    start_date=date(2025, 11, 1),
+    end_date=date(2025, 11, 30),
+)
+
+if not result.passed:
+    print(result.summary)
+    for issue in result.issues:
+        print(f"  - {issue}")
+```
+
+### CLI Usage
+
+```bash
+# Direct Python execution
+python -m shared.validation.feature_store_validator --days 7
+
+# With specific dates
+python -m shared.validation.feature_store_validator \
+    --start-date 2025-11-01 \
+    --end-date 2025-11-30
+
+# Just consistency check
+python -m shared.validation.feature_store_validator --consistency-only
+
+# Just duplicates
+python -m shared.validation.feature_store_validator --duplicates-only
+```
+
+### BigQuery View
+
+A daily validation summary view is available:
+
+```sql
+-- Check yesterday's validation status
+SELECT * FROM `nba_predictions.v_daily_validation_summary`
+WHERE check_date = CURRENT_DATE() - 1;
+
+-- Find any failures in last 7 days
+SELECT * FROM `nba_predictions.v_daily_validation_summary`
+WHERE status = 'FAIL'
+ORDER BY check_date DESC;
+```
+
+### After Backfill Checklist
+
+1. Run feature store validation:
+   ```bash
+   /validate-lineage feature-store --start-date <start> --end-date <end>
+   ```
+
+2. Check L5/L10 match rate >= 95%
+
+3. If match rate < 95%, investigate:
+   - Were records created from cache or fallback?
+   - Check `source_daily_cache_rows_found` column
+   - Compare sample mismatches
+
+4. If duplicates found, deduplicate before predictions
+
+---
+
 ## Related
 
 - `/validate-daily` - Daily pipeline health checks
@@ -696,3 +866,5 @@ if issues_found:
 - Project docs: `docs/08-projects/current/data-lineage-integrity/`
 - Implementation: `shared/validation/processing_gate.py`
 - Implementation: `shared/validation/window_completeness.py`
+- **NEW:** Implementation: `shared/validation/feature_store_validator.py`
+- **NEW:** View: `schemas/bigquery/predictions/views/v_daily_validation_summary.sql`
