@@ -43,7 +43,7 @@ from typing import Dict, List, Optional, Set, Tuple
 from google.cloud import firestore, pubsub_v1, bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
 from shared.utils.phase_execution_logger import log_phase_execution
-from orchestration.shared.utils.slack_retry import send_slack_webhook_with_retry
+from shared.utils.slack_retry import send_slack_webhook_with_retry
 import functions_framework
 
 # Completion tracker for dual-write to Firestore and BigQuery

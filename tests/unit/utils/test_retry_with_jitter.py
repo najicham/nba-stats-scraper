@@ -11,7 +11,7 @@ Usage:
 import pytest
 import time
 from unittest.mock import Mock, patch
-from orchestration.shared.utils.retry_with_jitter import (
+from shared.utils.retry_with_jitter import (
     retry_with_jitter,
     retry_with_simple_jitter,
     retry_fast,

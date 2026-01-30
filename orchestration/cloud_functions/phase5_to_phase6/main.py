@@ -48,7 +48,7 @@ from typing import Dict, Optional, Tuple
 import functions_framework
 from google.cloud import bigquery, pubsub_v1
 from shared.clients.bigquery_pool import get_bigquery_client
-from orchestration.shared.utils.phase_execution_logger import log_phase_execution
+from shared.utils.phase_execution_logger import log_phase_execution
 
 # Pydantic validation for Pub/Sub messages
 try:

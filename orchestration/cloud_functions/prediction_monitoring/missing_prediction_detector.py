@@ -189,7 +189,7 @@ class MissingPredictionDetector:
 
         # Import slack utilities
         try:
-            from orchestration.shared.utils.slack_channels import send_to_slack
+            from shared.utils.slack_channels import send_to_slack
         except ImportError:
             logger.error("Cannot import slack_channels, skipping alert", exc_info=True)
             return False

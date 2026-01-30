@@ -31,7 +31,7 @@ from orchestration.parameter_resolver import ParameterResolver
 from orchestration.config_loader import WorkflowConfig
 from shared.utils.bigquery_utils import execute_bigquery, insert_bigquery_rows
 from shared.utils.notification_system import notify_warning
-from orchestration.shared.utils.circuit_breaker import (
+from shared.utils.circuit_breaker import (
     CircuitBreakerManager,
     CircuitBreakerConfig,
     CircuitBreakerOpenError

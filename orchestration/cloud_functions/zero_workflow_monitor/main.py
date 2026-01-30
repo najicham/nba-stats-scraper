@@ -219,7 +219,7 @@ def send_slack_alert(execution_count: int, status_message: str):
     try:
         # Use retry logic for reliability
         try:
-            from orchestration.shared.utils.slack_retry import send_slack_webhook_with_retry
+            from shared.utils.slack_retry import send_slack_webhook_with_retry
             success = send_slack_webhook_with_retry(webhook_url, payload, timeout=10)
         except ImportError:
             # Fall back to direct request if retry module not available

@@ -26,7 +26,7 @@ from typing import Dict, List, Tuple
 from google.cloud import firestore, bigquery
 from google.api_core.exceptions import GoogleAPIError
 from shared.clients.bigquery_pool import get_bigquery_client
-from orchestration.shared.utils.slack_retry import send_slack_webhook_with_retry
+from shared.utils.slack_retry import send_slack_webhook_with_retry
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

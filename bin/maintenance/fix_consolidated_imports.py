@@ -64,7 +64,7 @@ def fix_imports_in_file(file_path: Path, dry_run: bool = True) -> Tuple[bool, in
     for module in CONSOLIDATED_MODULES:
         # Pattern: from shared.utils.MODULE import X
         old_pattern = f"from shared\\.utils\\.{module}"
-        new_replacement = f"from orchestration.shared.utils.{module}"
+        new_replacement = f"from shared.utils.{module}"
 
         new_content, num_replacements = re.subn(old_pattern, new_replacement, content)
         if num_replacements > 0:

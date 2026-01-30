@@ -11,7 +11,7 @@ Usage:
 import pytest
 import time
 from unittest.mock import Mock, patch
-from orchestration.shared.utils.circuit_breaker import (
+from shared.utils.circuit_breaker import (
     CircuitBreaker,
     CircuitBreakerManager,
     CircuitBreakerConfig,

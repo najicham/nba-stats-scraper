@@ -9,8 +9,8 @@ import logging
 from datetime import date, datetime
 from typing import List, Optional
 
-from orchestration.shared.utils.schedule import NBAScheduleService
-from orchestration.shared.utils.schedule.models import GameType
+from shared.utils.schedule import NBAScheduleService
+from shared.utils.schedule.models import GameType
 
 logger = logging.getLogger(__name__)
 

@@ -43,7 +43,7 @@ from zoneinfo import ZoneInfo
 from google.cloud import bigquery
 import functions_framework
 import requests
-from orchestration.shared.utils.slack_retry import send_slack_webhook_with_retry
+from shared.utils.slack_retry import send_slack_webhook_with_retry
 
 
 def get_bigquery_client(project_id: str) -> bigquery.Client:

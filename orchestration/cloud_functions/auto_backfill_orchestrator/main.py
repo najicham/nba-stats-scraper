@@ -493,7 +493,7 @@ def send_backfill_summary_alert(results: Dict) -> bool:
         True if alert sent
     """
     try:
-        from orchestration.shared.utils.slack_alerting import send_slack_alert
+        from shared.utils.slack_alerting import send_slack_alert
 
         triggered = results['triggered']
         total = len(results['backfills'])

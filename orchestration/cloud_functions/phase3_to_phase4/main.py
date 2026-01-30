@@ -48,7 +48,7 @@ from shared.clients.bigquery_pool import get_bigquery_client
 from shared.validation.phase_boundary_validator import PhaseBoundaryValidator, ValidationMode
 from shared.validation.phase3_data_quality_check import Phase3DataQualityChecker, QualityCheckResult
 from shared.utils.phase_execution_logger import log_phase_execution
-from orchestration.shared.utils.slack_retry import send_slack_webhook_with_retry
+from shared.utils.slack_retry import send_slack_webhook_with_retry
 
 # Completion tracker for dual-write to Firestore and BigQuery
 try:

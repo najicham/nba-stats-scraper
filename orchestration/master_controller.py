@@ -24,7 +24,7 @@ import json
 from orchestration.config_loader import WorkflowConfig
 from shared.utils.schedule import NBAScheduleService, GameType
 from shared.utils.bigquery_utils import execute_bigquery, insert_bigquery_rows
-from orchestration.shared.utils.distributed_lock import DistributedLock, LockAcquisitionError
+from shared.utils.distributed_lock import DistributedLock, LockAcquisitionError
 
 # Specific exceptions for better error handling
 from google.api_core.exceptions import GoogleAPIError

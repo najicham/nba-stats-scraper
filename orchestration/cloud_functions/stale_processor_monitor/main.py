@@ -247,7 +247,7 @@ def send_stale_alert(results: Dict) -> bool:
         True if alert sent
     """
     try:
-        from orchestration.shared.utils.slack_alerting import send_slack_alert
+        from shared.utils.slack_alerting import send_slack_alert
 
         dead_count = len(results['dead_processors'])
         stale_count = len(results['stale_processors'])

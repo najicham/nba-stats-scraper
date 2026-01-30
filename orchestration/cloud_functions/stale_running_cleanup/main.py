@@ -22,7 +22,7 @@ import functions_framework
 from flask import jsonify
 from google.cloud import bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
-from orchestration.shared.utils.slack_retry import send_slack_webhook_with_retry
+from shared.utils.slack_retry import send_slack_webhook_with_retry
 from datetime import datetime, timezone
 import logging
 import os

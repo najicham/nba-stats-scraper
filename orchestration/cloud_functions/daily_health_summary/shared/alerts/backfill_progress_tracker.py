@@ -154,7 +154,7 @@ class BackfillProgressTracker:
             return
 
         try:
-            from orchestration.shared.utils.email_alerting_ses import EmailAlerterSES
+            from shared.utils.email_alerting_ses import EmailAlerterSES
 
             progress_data = self._build_progress_data()
 
@@ -189,7 +189,7 @@ class BackfillProgressTracker:
             return
 
         try:
-            from orchestration.shared.utils.email_alerting_ses import EmailAlerterSES
+            from shared.utils.email_alerting_ses import EmailAlerterSES
 
             progress_data = self._build_progress_data()
             progress_data['is_final'] = True

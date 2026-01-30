@@ -45,7 +45,7 @@ from google.cloud import firestore
 
 # Import notification system with fallback
 try:
-    from orchestration.shared.utils.slack_retry import send_slack_webhook_with_retry
+    from shared.utils.slack_retry import send_slack_webhook_with_retry
 except ImportError:
     def send_slack_webhook_with_retry(url, payload, timeout=10):
         logging.warning("slack_retry not available, skipping notification")

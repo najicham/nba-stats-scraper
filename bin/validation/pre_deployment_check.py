@@ -139,7 +139,7 @@ def check_import_patterns(function_dir: Path, result: ValidationResult):
             if re.search(pattern, content):
                 result.add_error(
                     f"{py_file.relative_to(function_dir)}: Uses old import 'from shared.utils.{module}' "
-                    f"(should be 'from orchestration.shared.utils.{module}')"
+                    f"(should be 'from shared.utils.{module}')"
                 )
 
     result.add_info(f"Checked {files_checked} Python files for import patterns")

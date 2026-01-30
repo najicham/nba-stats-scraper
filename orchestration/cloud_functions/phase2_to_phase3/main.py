@@ -42,12 +42,12 @@ import functions_framework
 import requests
 from shared.clients.bigquery_pool import get_bigquery_client
 from shared.validation.phase_boundary_validator import PhaseBoundaryValidator, ValidationMode
-from orchestration.shared.utils.phase_execution_logger import log_phase_execution
-from orchestration.shared.utils.slack_retry import send_slack_webhook_with_retry
+from shared.utils.phase_execution_logger import log_phase_execution
+from shared.utils.slack_retry import send_slack_webhook_with_retry
 
 # Completion tracker for dual-write to Firestore and BigQuery
 try:
-    from orchestration.shared.utils.completion_tracker import get_completion_tracker
+    from shared.utils.completion_tracker import get_completion_tracker
     COMPLETION_TRACKER_ENABLED = True
 except ImportError:
     COMPLETION_TRACKER_ENABLED = False

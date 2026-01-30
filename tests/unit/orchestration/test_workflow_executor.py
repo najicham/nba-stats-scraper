@@ -30,7 +30,7 @@ from orchestration.workflow_executor import (
     ScraperExecution,
     WorkflowExecution
 )
-from orchestration.shared.utils.circuit_breaker import CircuitBreakerOpenError
+from shared.utils.circuit_breaker import CircuitBreakerOpenError
 
 
 class TestDataclasses:

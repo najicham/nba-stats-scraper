@@ -183,7 +183,7 @@ def generate_import_updates(candidates: List[Tuple[str, str, List[Path]]]) -> Di
         module_path = str(rel_path).replace('/', '.').replace('.py', '')
 
         old_import = f"from shared.utils.{module_path} import"
-        new_import = f"from orchestration.shared.utils.{module_path} import"
+        new_import = f"from shared.utils.{module_path} import"
 
         for file_path in file_paths:
             # Determine which cloud function this is
