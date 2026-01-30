@@ -3,7 +3,7 @@
 **Date:** 2026-01-29
 **Author:** Claude Opus 4.5
 **Status:** COMPLETE
-**Commit:** d4bc7061
+**Commits:** d4bc7061, af67b3ca, 2cc7837d
 
 ---
 
@@ -49,16 +49,19 @@ PYTHONPATH=. python ml/experiments/compare_results.py
 
 ## Experiment Results
 
-### Full Comparison Table
+### Full Comparison Table (Real Vegas Lines Only)
 
-| Exp | Training Data | Eval Period | Samples | Hit Rate | ROI | MAE |
-|-----|--------------|-------------|---------|----------|-----|-----|
-| A1 | 2021-22 (26K) | 2022-23 | 25,574 | 72.3% | +37.8% | 3.893 |
-| A2 | 2021-23 (52K) | 2023-24 | 25,948 | **73.9%** | +40.8% | 3.661 |
-| A3 | 2021-24 (78K) | 2024-25 | 3,120 | 73.6% | +40.3% | 3.577 |
-| B1 | 2021-23 (52K) | 2024-25 | 3,120 | 73.0% | +39.1% | 3.603 |
-| B2 | 2023-24 (26K) | 2024-25 | 3,120 | 73.5% | +40.0% | 3.658 |
-| B3 | 2022-24 (51K) | 2024-25 | 3,120 | 73.8% | +40.6% | 3.617 |
+| Exp | Training Data | Eval Period | Vegas Coverage | Hit Rate | Bets Graded | MAE |
+|-----|--------------|-------------|----------------|----------|-------------|-----|
+| A1 | 2021-22 (26K) | 2022-23 | 53.2% | 72.06% | 9,665 | 3.893 |
+| A2 | 2021-23 (52K) | 2023-24 | 56.9% | **73.91%** | 10,667 | 3.661 |
+| A3 | 2021-24 (78K) | 2024-25 | 67.2% | **74.30%** | 1,533 | 3.577 |
+| B1 | 2021-23 (52K) | 2024-25 | 67.2% | 73.42% | 1,539 | 3.603 |
+| B2 | 2023-24 (26K) | 2024-25 | 67.2% | 74.06% | 1,515 | 3.658 |
+| B3 | 2022-24 (51K) | 2024-25 | 67.2% | 73.97% | 1,506 | 3.617 |
+
+**Note:** We only evaluate betting metrics on games with real Vegas lines (has_vegas_line=1.0).
+The feature store has imputed values for games without real lines, which we exclude.
 
 ### Key Findings
 
