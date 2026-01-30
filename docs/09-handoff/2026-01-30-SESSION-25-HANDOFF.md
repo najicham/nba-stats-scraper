@@ -1,203 +1,249 @@
-# Session 25 Handoff - CatBoost V8 Fix Deployed
+# Session 25 Handoff - CatBoost V8 Complete
 
 **Date:** 2026-01-30
 **Author:** Claude Opus 4.5
-**Status:** DEPLOYED AND VERIFIED
-**Commits:** f0e95ffe, 3416a5ee
+**Status:** ALL TASKS COMPLETE
+**Commits:** f0e95ffe, 3416a5ee, 13bb5d26, 8a77aace, 1ffcc8bf
 
 ---
 
 ## Executive Summary
 
-Session 24's CatBoost V8 feature passing fix has been **deployed and verified working**. Predictions are now reasonable with avg_edge of -0.2 (vs 4-6 before fix). Also standardized confidence scores to percentage scale (0-100) and implemented Prevention Task #8 (fallback severity logging).
+CatBoost V8 is now **fully operational** with all prevention mechanisms in place. The model achieves **74.25% hit rate** on the 2024-25 season. All P0-P1 tasks are complete.
 
-| Task | Status |
-|------|--------|
-| Deploy CatBoost V8 fix | ✅ Complete (revision 00030, 00031, 00032) |
-| Verify predictions | ✅ Complete (avg_edge -0.21 on Jan 29) |
-| Standardize confidence scale | ✅ Complete (7,399 rows converted) |
-| Prevention Task #8 | ✅ Complete (fallback severity logging) |
+| Category | Status |
+|----------|--------|
+| CatBoost V8 Fix | ✅ Deployed (revision 00033) |
+| Prevention Tasks #8, #9, #10 | ✅ All Complete |
+| Cloud Monitoring Alert | ✅ Configured |
+| Grading View Consolidation | ✅ Deployed to BigQuery |
+| Feature Parity Tests | ✅ 32 tests passing |
 
 ---
 
 ## What Was Deployed
 
-### 1. CatBoost V8 Feature Enrichment Fix (v3.7)
-**Location:** `predictions/worker/worker.py` lines 815-867
+### 1. Prediction Worker (revision 00033-8wr)
+**All features now live:**
+- v3.7 feature enrichment fix (Vegas/opponent/PPM features)
+- Fallback severity classification (CRITICAL/MAJOR/MINOR/NONE)
+- Prometheus metrics (`/metrics` endpoint)
+- Confidence in percentage scale (0-100)
 
-The worker now correctly populates Vegas/opponent/PPM features for CatBoost V8:
-- `vegas_points_line`, `has_vegas_line` = prop line values
-- `ppm_avg_last_10` = calculated from available data
-- Result: Predictions now have reasonable edges (-5 to +5) instead of inflated (+29)
+### 2. Cloud Monitoring
+- Log-based metric: `catboost_v8_critical_fallback`
+- Alert policy: Triggers if >10 critical fallbacks in 1 hour
 
-### 2. Confidence Scale Standardization
-**Location:** `predictions/worker/data_loaders.py`
+### 3. BigQuery Views (5 views updated)
+All now query `prediction_accuracy` (419K records, Nov 2021+) instead of `prediction_grades`:
+- `confidence_calibration`
+- `player_insights_summary`
+- `player_prediction_performance`
+- `prediction_accuracy_summary`
+- `roi_simulation`
 
-Changed `normalize_confidence()` to store all confidence as percentage (0-100):
-- CatBoost V8, XGBoost, Similarity: Keep as-is (already 0-100)
-- Moving Average, Zone Matchup, Ensemble: Multiply by 100
+### 4. Feature Parity Tests
+Created `tests/prediction_tests/test_catboost_v8_feature_parity.py`:
+- 32 tests covering feature order, completeness, severity classification
+- All tests passing
 
-**BigQuery Migration:**
-```sql
-UPDATE nba_predictions.player_prop_predictions
-SET confidence_score = confidence_score * 100
-WHERE system_id = 'catboost_v8'
-  AND confidence_score <= 1 AND confidence_score > 0
--- Affected 7,399 rows
+---
+
+## Prevention Tasks Complete
+
+| Task | Description | Implementation |
+|------|-------------|----------------|
+| #8 | Fallback severity classification | `FallbackSeverity` enum, severity-based logging |
+| #9 | Prometheus metrics | 3 metrics + `/metrics` endpoint |
+| #10 | Feature parity tests | 32 pytest tests |
+
+### Prometheus Metrics Added
 ```
-
-### 3. Fallback Severity Classification (Prevention Task #8)
-**Location:** `predictions/worker/prediction_systems/catboost_v8.py`
-
-Added FallbackSeverity enum and classification functions:
-
-| Severity | Features | Log Level |
-|----------|----------|-----------|
-| CRITICAL | vegas_points_line, has_vegas_line, ppm_avg_last_10 | ERROR |
-| MAJOR | avg_points_vs_opponent, minutes_avg_last_10 | WARNING |
-| MINOR | Other V8 features | INFO |
-| NONE | All features present | DEBUG |
-
-This enables alerts when critical features use fallback values.
+catboost_v8_feature_fallback_total{feature_name, severity}  # Counter
+catboost_v8_prediction_points{le}                           # Histogram
+catboost_v8_extreme_prediction_total{boundary}              # Counter
+```
 
 ---
 
 ## Verification Results
 
-### Prediction Quality Check
+### Model Performance (Confirmed)
+| Period | Hit Rate | Status |
+|--------|----------|--------|
+| 2024-25 Season | **74.25%** | Verified |
+| Jan 2026 (with bug) | 52% | Fixed |
+| Jan 29 (post-fix) | avg_edge -0.21 | Normal |
+
+### System Health
 ```
-| game_date  | avg_edge | avg_pred | avg_line | extreme_count |
-|------------|----------|----------|----------|---------------|
-| 2026-01-27 | 4.06     | 16.75    | 12.80    | 1 (pre-fix)   |
-| 2026-01-28 | 6.06     | 19.73    | 13.89    | 5 (pre-fix)   |
-| 2026-01-29 | -0.21    | 11.20    | 12.09    | 0 (FIXED!)    |
+Worker revision: prediction-worker-00033-8wr
+Log metric: catboost_v8_critical_fallback (active)
+Alert policy: CatBoost V8 Critical Fallback Alert (active)
+Views: Nov 2021 - Jan 2026 data range
 ```
-
-**Key metrics (Jan 29 vs Jan 27-28):**
-- avg_edge: -0.21 vs 4-6 ✓ (reasonable)
-- avg_pred: 11.2 vs 16-19 ✓ (not inflated)
-- extreme_count: 0 vs 1-5 ✓ (no clamping at 60)
-
-### Confidence Scale Check
-```
-| game_date  | min_conf | max_conf | avg_conf |
-|------------|----------|----------|----------|
-| 2026-01-29 | 84.0     | 84.0     | 84.0     |  (percentage)
-| 2026-01-28 | 84.0     | 92.0     | 88.1     |  (converted)
-```
-
----
-
-## Deployment History
-
-| Time | Revision | Changes |
-|------|----------|---------|
-| 03:41 | 00030 | Initial v3.7 fix deployment |
-| 04:15 | 00031 | + Confidence normalization |
-| 04:45 | 00032 | + Fallback severity logging |
 
 ---
 
 ## Files Changed This Session
 
-| File | Change | Commit |
-|------|--------|--------|
-| `predictions/worker/data_loaders.py` | Confidence scale standardization | f0e95ffe |
-| `predictions/worker/prediction_systems/catboost_v8.py` | FallbackSeverity enum | 3416a5ee |
-| `predictions/worker/worker.py` | Fallback severity logging | 3416a5ee |
+| File | Change |
+|------|--------|
+| `predictions/worker/data_loaders.py` | Confidence scale → percentage |
+| `predictions/worker/worker.py` | Fallback severity logging + metrics |
+| `predictions/worker/prediction_systems/catboost_v8.py` | FallbackSeverity enum + Prometheus metrics |
+| `tests/prediction_tests/test_catboost_v8_feature_parity.py` | NEW: 32 tests |
+| `schemas/bigquery/nba_predictions/views/*.sql` | Updated to use prediction_accuracy |
+| `schemas/bigquery/nba_predictions/prediction_grades.sql` | Marked deprecated |
+| `CLAUDE.md` | Added grading table guidance |
 
 ---
 
-## Outstanding Tasks
+## What's Left for Future Sessions
 
-### Completed This Session
-- [x] Deploy CatBoost V8 fix (P0)
-- [x] Verify predictions are reasonable (avg_edge 0.5-4)
-- [x] Standardize confidence to percentage (0-100)
-- [x] Prevention Task #8: Fallback severity classification
+### P1: Model Optimization (Walk-Forward Experiments)
 
-### Still To Do (P1)
-| Task | Description | Effort |
-|------|-------------|--------|
-| #9 | Add Prometheus metrics for feature fallbacks | Medium |
-| #10 | Add feature parity tests | Medium |
-| Other systems | Convert other systems' confidence to percentage | Low |
+The model works at 74%, but we can potentially improve it with better training strategies. See `docs/08-projects/current/catboost-v8-performance-analysis/WALK-FORWARD-EXPERIMENT-PLAN.md`.
 
-### Medium-term (P2)
-| Task | Description |
-|------|-------------|
-| #11 | Expand ml_feature_store_v2 to 33 features |
-| Cloud Monitoring | Configure alerts for CRITICAL fallback logs |
+**Experiments to run:**
+
+| Exp | Question | Training Data | Eval Data |
+|-----|----------|---------------|-----------|
+| A1 | 1 season enough? | 2021-22 | 2022-23 |
+| A2 | 2 seasons better? | 2021-23 | 2023-24 |
+| A3 | 3 seasons best? | 2021-24 | 2024-25 |
+| B1 | Old data value? | 2021-23 | 2024-25 |
+| B2 | Recent > volume? | 2023-24 only | 2024-25 |
+| B3 | Balance best? | 2022-24 | 2024-25 |
+| C1 | Decay rate? | 2021-23 | Monthly 2023-24 |
+
+**Implementation needed:**
+1. Create `ml/experiments/train_walkforward.py` - Training with date params
+2. Create `ml/experiments/evaluate_model.py` - Standardized evaluation
+3. Run experiments and analyze results
+4. Determine optimal training window and retrain frequency
+
+### P2: Feature Store Expansion
+
+Currently the feature store has 25 features, but CatBoost V8 needs 33. The worker enriches features at inference time (v3.7 fix), but ideally:
+
+1. Expand `ml_feature_store_v2` schema to include all 33 features
+2. Update Phase 4 processor to populate them
+3. Remove runtime enrichment from worker
+
+### P2: Other System Confidence Standardization
+
+CatBoost V8 is now on percentage scale (0-100), but other systems still use decimal:
+
+| System | Current Scale | Action Needed |
+|--------|---------------|---------------|
+| moving_average | 0.25-0.60 | Multiply × 100 in BigQuery |
+| zone_matchup_v1 | 0.25-0.60 | Multiply × 100 in BigQuery |
+| ensemble_v1 | 0.35-0.85 | Multiply × 100 in BigQuery |
+| ensemble_v1_1 | 0.43-0.89 | Multiply × 100 in BigQuery |
+| similarity_balanced_v1 | 0.26-0.69 | Multiply × 100 in BigQuery |
+| xgboost_v1 | 0.79-0.87 | Multiply × 100 in BigQuery |
 
 ---
 
 ## Queries for Next Session
 
-### Check if new predictions have reasonable edges
+### Verify predictions are still healthy
 ```sql
 SELECT game_date,
   AVG(predicted_points - current_points_line) as avg_edge,
+  AVG(confidence_score) as avg_conf,
   COUNT(*) as count
 FROM nba_predictions.player_prop_predictions
 WHERE system_id = 'catboost_v8'
-  AND game_date >= '2026-01-30'
-GROUP BY 1
-ORDER BY 1
+  AND game_date >= CURRENT_DATE() - 3
+GROUP BY 1 ORDER BY 1
 ```
 
-### Check for CRITICAL fallback logs
+### Check for fallback alerts
 ```bash
-gcloud logging read 'resource.type="cloud_run_revision"
-  AND resource.labels.service_name="prediction-worker"
-  AND textPayload:"catboost_v8_critical_fallback"' --limit=20
+gcloud logging read 'textPayload:"catboost_v8_critical_fallback"' --limit=20 --project=nba-props-platform
 ```
 
-### Verify confidence is in percentage scale
+### Verify views have full history
 ```sql
-SELECT game_date,
-  MIN(confidence_score) as min_conf,
-  MAX(confidence_score) as max_conf
-FROM nba_predictions.player_prop_predictions
-WHERE system_id = 'catboost_v8' AND game_date >= '2026-01-29'
-GROUP BY 1
+SELECT MIN(game_date) as earliest, MAX(game_date) as latest
+FROM nba_predictions.prediction_accuracy_summary
+```
+
+### Check Prometheus metrics (if needed)
+```bash
+curl https://prediction-worker-756957797294.us-west2.run.app/metrics
 ```
 
 ---
 
-## Key Learnings
+## Project Documentation
 
-1. **Deploy fix ASAP** - The fix was ready in Session 24 but not deployed until Session 25
-2. **Verify with data** - avg_edge check immediately shows if predictions are reasonable
-3. **Add observability** - Fallback severity logging will catch future issues earlier
-4. **Standardize scales** - Mixed 0-1 vs 0-100 caused confusion; now all percentage
+All CatBoost V8 docs are in: `docs/08-projects/current/catboost-v8-performance-analysis/`
+
+| Document | Purpose |
+|----------|---------|
+| `README.md` | Project overview and status |
+| `SESSION-24-INVESTIGATION-FINDINGS.md` | Root cause analysis |
+| `PREVENTION-PLAN.md` | Prevention strategy (Tasks #8-10) |
+| `WALK-FORWARD-EXPERIMENT-PLAN.md` | Training optimization experiments |
+| `experiments/D1-results.json` | 2024-25 performance data |
 
 ---
 
 ## How to Start Next Session
 
-1. **Check predictions are still working:**
-   ```bash
-   bq query --use_legacy_sql=false "SELECT game_date, AVG(predicted_points - current_points_line) as avg_edge FROM nba_predictions.player_prop_predictions WHERE system_id='catboost_v8' AND game_date >= CURRENT_DATE() - 3 GROUP BY 1"
-   ```
+### Quick Health Check
+```bash
+# 1. Verify predictions
+bq query --use_legacy_sql=false "SELECT game_date, AVG(predicted_points - current_points_line) as avg_edge FROM nba_predictions.player_prop_predictions WHERE system_id='catboost_v8' AND game_date >= CURRENT_DATE() - 3 GROUP BY 1"
 
-2. **Check for fallback alerts:**
-   ```bash
-   gcloud logging read 'textPayload:"catboost_v8_critical_fallback"' --limit=10
-   ```
+# 2. Check for alerts
+gcloud logging read 'textPayload:"catboost_v8_critical_fallback"' --limit=5 --project=nba-props-platform
 
-3. **Work on remaining prevention tasks (#9, #10)**
+# 3. Run feature parity tests
+python -m pytest tests/prediction_tests/test_catboost_v8_feature_parity.py -v
+```
+
+### If Starting Walk-Forward Experiments
+```bash
+# Read the experiment plan
+cat docs/08-projects/current/catboost-v8-performance-analysis/WALK-FORWARD-EXPERIMENT-PLAN.md
+
+# Create experiment directory structure
+mkdir -p ml/experiments/results
+
+# Start with Experiment D1 (already have data)
+# Just need to calculate metrics from prediction_accuracy table
+```
 
 ---
 
-## Session Statistics
+## Session 25 Statistics
 
-- **Duration:** ~1.5 hours
-- **Deployments:** 3 (revisions 00030, 00031, 00032)
-- **Commits:** 2 (f0e95ffe, 3416a5ee)
-- **BigQuery rows updated:** 7,399
-- **Prevention tasks completed:** 1 of 3
+| Metric | Value |
+|--------|-------|
+| Duration | ~3 hours |
+| Deployments | 4 (revisions 00030-00033) |
+| Commits | 5 |
+| BigQuery rows updated | 7,399 |
+| Views deployed | 5 |
+| Tests created | 32 |
+| Prevention tasks | 3/3 complete |
+| Alerts configured | 1 |
+
+---
+
+## Key Learnings
+
+1. **Model works when features are correct** - 74.25% hit rate proves V8 is solid
+2. **Prevention > Reaction** - Fallback severity logging catches issues early
+3. **Observability is critical** - Prometheus metrics + Cloud Monitoring alerts
+4. **Consolidate data sources** - Single source of truth (prediction_accuracy) prevents confusion
+5. **Test feature parity** - 32 tests catch training/inference mismatches in CI
 
 ---
 
 *Handoff created: 2026-01-30*
-*Next session: Continue prevention tasks #9 and #10*
+*Session 25 Complete*
