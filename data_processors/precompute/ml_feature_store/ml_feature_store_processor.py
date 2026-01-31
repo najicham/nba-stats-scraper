@@ -116,6 +116,116 @@ FEATURE_NAMES = [
     'breakout_flag',        # 1.0 if L5 > season_avg + 1.5*std
 ]
 
+# ============================================================================
+# FEATURE VALIDATION RANGES (Session 48 - Pre-write validation)
+# ============================================================================
+# Maps feature index to (min, max, is_critical) - critical features block writes
+# Added to catch bugs like fatigue_score=0 before data is written to BigQuery
+# This would have caught the Jan 25-30 fatigue bug within 1 hour instead of 6 days
+ML_FEATURE_RANGES = {
+    # Recent Performance (0-4) - wide ranges, not critical
+    0: (0, 70, False, 'points_avg_last_5'),       # Typical: 0-50
+    1: (0, 70, False, 'points_avg_last_10'),
+    2: (0, 70, False, 'points_avg_season'),
+    3: (0, 30, False, 'points_std_last_10'),
+    4: (0, 4, False, 'games_in_last_7_days'),
+
+    # Composite Factors (5-8) - CRITICAL - these have caused bugs
+    5: (0, 100, True, 'fatigue_score'),           # CRITICAL: Must be 0-100, not adjustment
+    6: (-15, 15, False, 'shot_zone_mismatch_score'),
+    7: (-8, 8, False, 'pace_score'),
+    8: (-8, 8, False, 'usage_spike_score'),
+
+    # Derived Factors (9-12)
+    9: (-3, 3, False, 'rest_advantage'),
+    10: (0, 3, False, 'injury_risk'),
+    11: (-2, 2, False, 'recent_trend'),
+    12: (-2, 2, False, 'minutes_change'),
+
+    # Matchup Context (13-17)
+    13: (90, 130, False, 'opponent_def_rating'),
+    14: (90, 115, False, 'opponent_pace'),
+    15: (0, 1, False, 'home_away'),
+    16: (0, 1, False, 'back_to_back'),
+    17: (0, 1, False, 'playoff_game'),
+
+    # Shot Zones (18-21)
+    18: (0, 1, False, 'pct_paint'),
+    19: (0, 1, False, 'pct_mid_range'),
+    20: (0, 1, False, 'pct_three'),
+    21: (0, 0.5, False, 'pct_free_throw'),
+
+    # Team Context (22-24)
+    22: (90, 115, False, 'team_pace'),
+    23: (90, 130, False, 'team_off_rating'),
+    24: (0, 1, False, 'team_win_pct'),
+
+    # Vegas Lines (25-28) - high importance, check ranges
+    25: (0, 80, False, 'vegas_points_line'),       # Typical: 5-50
+    26: (0, 80, False, 'vegas_opening_line'),
+    27: (-15, 15, False, 'vegas_line_move'),
+    28: (0, 1, False, 'has_vegas_line'),
+
+    # Opponent History (29-30)
+    29: (0, 70, False, 'avg_points_vs_opponent'),
+    30: (0, 50, False, 'games_vs_opponent'),
+
+    # Minutes/Efficiency (31-32) - high model importance
+    31: (0, 48, False, 'minutes_avg_last_10'),
+    32: (0, 3, False, 'ppm_avg_last_10'),
+
+    # DNP Risk (33)
+    33: (0, 1, False, 'dnp_rate'),
+
+    # Player Trajectory (34-36)
+    34: (-5, 5, False, 'pts_slope_10g'),
+    35: (-4, 4, False, 'pts_vs_season_zscore'),
+    36: (0, 1, False, 'breakout_flag'),
+}
+
+
+def validate_feature_ranges(features: list, player_lookup: str = None) -> tuple:
+    """
+    Validate feature values against expected ranges BEFORE writing to BigQuery.
+
+    This is a critical prevention mechanism that catches data quality bugs
+    at write time instead of waiting for model degradation (5+ days).
+
+    Args:
+        features: List of 37 feature values
+        player_lookup: Player identifier for logging
+
+    Returns:
+        (is_valid, warnings, critical_errors)
+        - is_valid: True if no critical errors
+        - warnings: List of non-critical range violations (logged but written)
+        - critical_errors: List of critical violations (blocks write)
+    """
+    warnings = []
+    critical_errors = []
+
+    for idx, value in enumerate(features):
+        if value is None:
+            continue  # NULL values are allowed for missing data
+
+        if idx not in ML_FEATURE_RANGES:
+            continue  # No range defined for this feature
+
+        min_val, max_val, is_critical, feature_name = ML_FEATURE_RANGES[idx]
+
+        if value < min_val or value > max_val:
+            msg = f"{feature_name}[{idx}]={value:.2f} outside [{min_val}, {max_val}]"
+            if is_critical:
+                critical_errors.append(msg)
+                logger.error(f"CRITICAL_VALIDATION [{player_lookup}]: {msg}")
+            else:
+                warnings.append(msg)
+                # Only log warnings at debug level to reduce noise
+                logger.debug(f"VALIDATION_WARNING [{player_lookup}]: {msg}")
+
+    is_valid = len(critical_errors) == 0
+    return is_valid, warnings, critical_errors
+
 
 class MLFeatureStoreProcessor(
     SmartIdempotencyMixin,
@@ -1605,6 +1715,35 @@ class MLFeatureStoreProcessor(
             generation_time_ms = (datetime.now() - start_time).total_seconds() * 1000
 
             record['feature_generation_time_ms'] = int(generation_time_ms)
+
+            # ============================================================
+            # PRE-WRITE VALIDATION (Session 48 - Feature Quality)
+            # Validate feature ranges BEFORE writing to BigQuery
+            # This catches bugs like fatigue_score=0 immediately
+            # ============================================================
+            is_valid, warnings, critical_errors = validate_feature_ranges(
+                record.get('features', []),
+                player_lookup
+            )
+
+            # Add validation issues to data_quality_issues for tracking
+            if warnings:
+                record['data_quality_issues'] = record.get('data_quality_issues', []) + [
+                    f"range_warning:{w}" for w in warnings[:3]  # Limit to 3 to avoid bloat
+                ]
+
+            if critical_errors:
+                # BLOCK write for critical validation failures
+                logger.error(
+                    f"BLOCKING_WRITE [{player_lookup}]: Critical validation failed: {critical_errors}"
+                )
+                return (False, {
+                    'entity_id': player_lookup,
+                    'entity_type': 'player',
+                    'reason': f"Critical feature validation failed: {critical_errors}",
+                    'category': 'FEATURE_VALIDATION_ERROR'
+                })
+            # ============================================================
 
             return (True, record)
 
