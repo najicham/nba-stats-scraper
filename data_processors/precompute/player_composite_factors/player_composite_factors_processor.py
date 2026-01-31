@@ -566,21 +566,21 @@ class PlayerCompositeFactorsProcessor(
                     WHERE gh2.player_lookup = p.player_lookup
                       AND gh2.game_date = DATE_SUB('{analysis_date.isoformat()}', INTERVAL 1 DAY)
                 ) as back_to_back,
-                -- Games in last 7 days
-                COUNTIF(gh.game_date >= DATE_SUB('{analysis_date.isoformat()}', INTERVAL 7 DAY)) as games_in_last_7_days,
+                -- Games in last 7 days (Bug fix Session 50: use > not >= for strictly 7 days)
+                COUNTIF(gh.game_date > DATE_SUB('{analysis_date.isoformat()}', INTERVAL 7 DAY)) as games_in_last_7_days,
                 -- Minutes in last 7 days
-                COALESCE(SUM(CASE WHEN gh.game_date >= DATE_SUB('{analysis_date.isoformat()}', INTERVAL 7 DAY)
+                COALESCE(SUM(CASE WHEN gh.game_date > DATE_SUB('{analysis_date.isoformat()}', INTERVAL 7 DAY)
                     THEN gh.minutes_played ELSE 0 END), 0) as minutes_in_last_7_days,
                 -- Avg minutes per game last 7
                 SAFE_DIVIDE(
-                    SUM(CASE WHEN gh.game_date >= DATE_SUB('{analysis_date.isoformat()}', INTERVAL 7 DAY)
+                    SUM(CASE WHEN gh.game_date > DATE_SUB('{analysis_date.isoformat()}', INTERVAL 7 DAY)
                         THEN gh.minutes_played ELSE 0 END),
-                    COUNTIF(gh.game_date >= DATE_SUB('{analysis_date.isoformat()}', INTERVAL 7 DAY))
+                    COUNTIF(gh.game_date > DATE_SUB('{analysis_date.isoformat()}', INTERVAL 7 DAY))
                 ) as avg_minutes_per_game_last_7,
                 -- Back to backs in last 14 days (simplified)
                 0 as back_to_backs_last_14_days,
                 -- Avg usage rate last 7 games
-                AVG(CASE WHEN gh.game_date >= DATE_SUB('{analysis_date.isoformat()}', INTERVAL 7 DAY)
+                AVG(CASE WHEN gh.game_date > DATE_SUB('{analysis_date.isoformat()}', INTERVAL 7 DAY)
                     THEN gh.usage_rate ELSE NULL END) as avg_usage_rate_last_7_games
             FROM players_on_date p
             LEFT JOIN game_history gh ON p.player_lookup = gh.player_lookup

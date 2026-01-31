@@ -61,12 +61,19 @@ def calculate_fatigue_metrics(
     # Bug fix Session 49: was days_rest == 0, but that means same-day (impossible)
     back_to_back = (days_rest == 1)
 
-    # Games in windows
+    # Games in windows (strictly before target_date, within N days)
+    # Bug fix Session 50: was >= which included boundary, causing values > 7
     last_7_days = target_date - timedelta(days=7)
     last_14_days = target_date - timedelta(days=14)
 
-    games_last_7 = historical_data[historical_data['game_date'] >= last_7_days]
-    games_last_14 = historical_data[historical_data['game_date'] >= last_14_days]
+    games_last_7 = historical_data[
+        (historical_data['game_date'] > last_7_days) &
+        (historical_data['game_date'] < target_date)
+    ]
+    games_last_14 = historical_data[
+        (historical_data['game_date'] > last_14_days) &
+        (historical_data['game_date'] < target_date)
+    ]
 
     # Minutes totals
     minutes_last_7 = games_last_7['minutes_decimal'].sum() if 'minutes_decimal' in games_last_7.columns else 0
