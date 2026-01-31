@@ -112,7 +112,8 @@ def _process_single_player_worker(
 
         # Check for warnings
         warnings = []
-        fatigue_score = factor_scores.get('fatigue_score', 0)
+        # BUGFIX: Use context's final_score (0-100) not factor_scores which has adjustment (-5 to 0)
+        fatigue_score = factor_contexts['fatigue_context_json']['final_score']
         shot_zone_score = factor_scores.get('shot_zone_mismatch_score', 0)
 
         if fatigue_score < 50:
@@ -134,7 +135,9 @@ def _process_single_player_worker(
             'analysis_date': analysis_date,
 
             # Active factor scores
-            'fatigue_score': int(factor_scores['fatigue_score']),
+            # BUGFIX: factor_scores['fatigue_score'] is adjustment (-5 to 0), not raw score (0-100)
+            # Use context's final_score which has the correct 0-100 value
+            'fatigue_score': factor_contexts['fatigue_context_json']['final_score'],
             'shot_zone_mismatch_score': round(factor_scores['shot_zone_mismatch_score'], 1),
             'pace_score': round(factor_scores['pace_score'], 1),
             'usage_spike_score': round(factor_scores['usage_spike_score'], 1),
@@ -223,6 +226,19 @@ def _process_single_player_worker(
         hash_data = {k: record.get(k) for k in hash_fields if k in record}
         record['data_hash'] = compute_hash_from_dict(hash_data)
 
+        # ================================================================
+        # PRE-WRITE VALIDATION: Catch feature range bugs before storage
+        # ================================================================
+        validation_errors = _validate_feature_ranges(record)
+        if validation_errors:
+            # Log critical error but still write (for monitoring)
+            # Future: could reject writes entirely for CRITICAL violations
+            logger.error(
+                f"FEATURE_RANGE_VIOLATION for {player_lookup}: {validation_errors}"
+            )
+            # Add validation issues to data_quality_issues
+            record['data_quality_issues'] = record.get('data_quality_issues', []) + validation_errors
+
         return (True, record)
 
     except Exception as e:
@@ -233,3 +249,53 @@ def _process_single_player_worker(
             'reason': str(e),
             'category': 'calculation_error'
         })
+
+
+# ============================================================================
+# FEATURE RANGE VALIDATION
+# ============================================================================
+
+# Expected ranges for each feature (min, max)
+# These are the valid ranges - values outside trigger violations
+FEATURE_RANGES = {
+    'fatigue_score': (0, 100),           # 0-100 scale, higher = more rested
+    'shot_zone_mismatch_score': (-15, 15),  # Slightly wider than typical -10 to +10
+    'pace_score': (-8, 8),                 # Slightly wider than typical -5 to +5
+    'usage_spike_score': (-8, 8),          # Slightly wider than typical -5 to +5
+    'referee_favorability_score': (-10, 10),
+    'look_ahead_pressure_score': (-5, 5),
+    'travel_impact_score': (-5, 5),
+    'opponent_strength_score': (-10, 10),
+    'total_composite_adjustment': (-30, 30),  # Sum of all adjustments
+}
+
+
+def _validate_feature_ranges(record: dict) -> list:
+    """
+    Validate all features are within expected ranges BEFORE writing to BigQuery.
+
+    This is a critical safeguard to catch bugs like the fatigue_score issue
+    where the wrong value (adjustment vs raw score) was being stored.
+
+    Args:
+        record: The feature record to validate
+
+    Returns:
+        List of validation error strings (empty if all valid)
+    """
+    violations = []
+
+    for feature, (min_val, max_val) in FEATURE_RANGES.items():
+        value = record.get(feature)
+        if value is not None:
+            try:
+                value = float(value)
+                if value < min_val or value > max_val:
+                    severity = "CRITICAL" if feature == 'fatigue_score' else "WARNING"
+                    violations.append(
+                        f"{severity}:{feature}={value} outside expected [{min_val}, {max_val}]"
+                    )
+            except (ValueError, TypeError):
+                violations.append(f"WARNING:{feature} has invalid type: {type(value)}")
+
+    return violations
