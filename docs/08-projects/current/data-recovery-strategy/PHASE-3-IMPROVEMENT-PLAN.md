@@ -254,14 +254,28 @@ if result.get('status') == 'skipped':
 
 ## Implementation Timeline
 
-| Week | Priority | Task | Files |
-|------|----------|------|-------|
-| 1 | P1 | Missing data handling | analytics_base.py, main_analytics_service.py |
-| 1 | P6 | Fix HTTP response codes | main_analytics_service.py |
-| 2 | P2 | Soft dependencies | analytics_base.py |
-| 2 | P3 | Alternative sources | player_game_summary_processor.py |
-| 3 | P4 | Early season detection | analytics_base.py |
-| 3 | P5 | Output validation | analytics_base.py |
+| Week | Priority | Task | Files | Status |
+|------|----------|------|-------|--------|
+| 1 | P1 | Missing data handling | analytics_base.py, main_analytics_service.py | ✅ Session 40 |
+| 1 | P6 | Fix HTTP response codes | main_analytics_service.py | ✅ Session 40 |
+| 2 | P2 | Soft dependencies (80% threshold) | dependency_mixin.py, analytics_base.py | ✅ Session 41 |
+| 2 | P3 | Alternative sources (BDL fallback) | player_game_summary_processor.py | ⏸️ On hold - BDL unreliable |
+| 3 | P4 | Early season detection | analytics_base.py | Not started |
+| 3 | P5 | Output validation | analytics_base.py | Not started |
+
+### Session 41 Updates (2026-01-30)
+
+**P2 Soft Dependencies - COMPLETED:**
+- Added coverage calculation to `dependency_mixin.py`
+- When `use_soft_dependencies=True` and coverage >= 80%, processing continues in "degraded" mode
+- Tracks degraded state in stats for monitoring
+
+**P3 Alternative Sources - ON HOLD:**
+- BDL data quality investigation showed ~50% accuracy for many players
+- Decision: Keep BDL disabled until quality improves
+- Added automated BDL quality monitoring via `data-quality-alerts` Cloud Function
+- Check `nba_orchestration.bdl_quality_trend` view for readiness indicator
+- Re-enable when `bdl_readiness = 'READY_TO_ENABLE'` for 7 consecutive days
 
 ---
 
