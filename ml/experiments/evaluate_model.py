@@ -5,15 +5,34 @@ Model Evaluation Script for Walk-Forward Experiments
 Evaluates a trained CatBoost model on a specified date range.
 Calculates betting metrics (hit rate, ROI) and point prediction accuracy (MAE).
 
+Two evaluation modes:
+1. Standard Mode (default): Uses feature store Vegas lines
+   - Good for: Model vs model comparison (relative ranking)
+   - Sample size: Larger (all players with features)
+   - Limitation: Hit rates may not match production
+
+2. Production-Equivalent Mode (--production-equivalent): Uses real BettingPros lines
+   - Good for: Estimating actual production performance
+   - Sample size: Smaller (only players with real prop lines)
+   - Benefit: Hit rates closer to actual production results
+
 Usage:
-    # Evaluate model A1 on 2022-23 season
+    # Standard evaluation (for model comparison)
     PYTHONPATH=. python ml/experiments/evaluate_model.py \
         --model-path ml/experiments/results/catboost_v9_exp_A1_*.cbm \
         --eval-start 2022-10-01 \
         --eval-end 2023-06-30 \
         --experiment-id A1
 
-    # Evaluate with monthly breakdown
+    # Production-equivalent evaluation (for deployment decisions)
+    PYTHONPATH=. python ml/experiments/evaluate_model.py \
+        --model-path ml/experiments/results/catboost_v9_exp_A1_*.cbm \
+        --eval-start 2026-01-01 \
+        --eval-end 2026-01-31 \
+        --experiment-id A1 \
+        --production-equivalent
+
+    # With monthly breakdown
     PYTHONPATH=. python ml/experiments/evaluate_model.py \
         --model-path ml/experiments/results/catboost_v9_exp_A1_*.cbm \
         --eval-start 2022-10-01 \
@@ -109,6 +128,71 @@ WHERE mf.game_date BETWEEN '{eval_start}' AND '{eval_end}'
   AND mf.feature_count >= {min_feature_count}
   AND ARRAY_LENGTH(mf.features) >= {min_feature_count}
   AND pgs.points IS NOT NULL
+ORDER BY mf.game_date
+"""
+
+
+def get_production_equivalent_query(eval_start: str, eval_end: str, min_feature_count: int = 33) -> str:
+    """
+    Generate BigQuery SQL for production-equivalent evaluation.
+
+    This query joins to actual BettingPros prop lines instead of using
+    the feature store Vegas lines. This gives more realistic hit rate
+    estimates that match production performance.
+
+    Key differences from standard evaluation:
+    1. Uses real sportsbook lines from bettingpros_player_points_props
+    2. Only includes players who had actual prop lines posted
+    3. Filters to consensus lines (most reliable)
+
+    The sample size will be smaller but results more closely match
+    what you'd see in actual production betting.
+
+    Args:
+        eval_start: Evaluation start date (YYYY-MM-DD)
+        eval_end: Evaluation end date (YYYY-MM-DD)
+        min_feature_count: Minimum feature count to accept (default: 33)
+    """
+    return f"""
+WITH real_prop_lines AS (
+  -- Get actual BettingPros consensus lines (most recent snapshot per player/game)
+  SELECT
+    game_date,
+    player_lookup,
+    points_line as real_vegas_line
+  FROM `nba-props-platform.nba_raw.bettingpros_player_points_props`
+  WHERE bookmaker = 'BettingPros Consensus'
+    AND bet_side = 'over'
+    AND game_date BETWEEN '{eval_start}' AND '{eval_end}'
+  QUALIFY ROW_NUMBER() OVER (
+    PARTITION BY game_date, player_lookup
+    ORDER BY processed_at DESC
+  ) = 1
+)
+SELECT
+  mf.player_lookup,
+  mf.game_date,
+  mf.features,
+  mf.feature_count,
+  -- Use REAL line from BettingPros, not feature store
+  vl.real_vegas_line as vegas_points_line,
+  -- Mark all as real lines (we filtered to real lines only)
+  1.0 as has_vegas_line,
+  pgs.points as actual_points
+FROM `nba-props-platform.nba_predictions.ml_feature_store_v2` mf
+INNER JOIN `nba-props-platform.nba_analytics.player_game_summary` pgs
+  ON mf.player_lookup = pgs.player_lookup
+  AND mf.game_date = pgs.game_date
+-- INNER JOIN ensures we only include players with real prop lines
+INNER JOIN real_prop_lines vl
+  ON mf.player_lookup = vl.player_lookup
+  AND mf.game_date = vl.game_date
+WHERE mf.game_date BETWEEN '{eval_start}' AND '{eval_end}'
+  AND mf.feature_count >= {min_feature_count}
+  AND ARRAY_LENGTH(mf.features) >= {min_feature_count}
+  AND pgs.points IS NOT NULL
+  -- Additional filter: real sportsbook lines end in .5 or .0 (not estimated averages)
+  AND (vl.real_vegas_line - FLOOR(vl.real_vegas_line)) IN (0, 0.5)
 ORDER BY mf.game_date
 """
 
@@ -367,13 +451,33 @@ def calculate_direction_metrics(
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Evaluate CatBoost model on specified date range")
+    parser = argparse.ArgumentParser(
+        description="Evaluate CatBoost model on specified date range",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Evaluation Modes:
+  Standard (default):     Uses feature store Vegas lines. Good for model comparison.
+  Production-equivalent:  Uses real BettingPros lines. Good for production estimates.
+
+Example:
+  # Compare models (use standard mode)
+  python evaluate_model.py --model-path model.cbm --eval-start 2026-01-01 --eval-end 2026-01-31 --experiment-id TEST
+
+  # Estimate production performance (use production-equivalent mode)
+  python evaluate_model.py --model-path model.cbm --eval-start 2026-01-01 --eval-end 2026-01-31 --experiment-id TEST --production-equivalent
+        """
+    )
     parser.add_argument("--model-path", required=True, help="Path to model file (supports glob patterns)")
     parser.add_argument("--eval-start", required=True, help="Evaluation start date (YYYY-MM-DD)")
     parser.add_argument("--eval-end", required=True, help="Evaluation end date (YYYY-MM-DD)")
     parser.add_argument("--experiment-id", required=True, help="Experiment identifier (e.g., A1, B2)")
     parser.add_argument("--min-edge", type=float, default=1.0, help="Minimum edge to place bet (default: 1.0)")
     parser.add_argument("--monthly-breakdown", action="store_true", help="Show monthly breakdown")
+    parser.add_argument(
+        "--production-equivalent",
+        action="store_true",
+        help="Use production-equivalent evaluation (real BettingPros lines, smaller sample, more realistic hit rates)"
+    )
     args = parser.parse_args()
 
     # Resolve model path (supports glob patterns)
@@ -402,6 +506,18 @@ def main():
     print("=" * 80)
     print(f" EVALUATION: Experiment {args.experiment_id}")
     print("=" * 80)
+
+    # Determine evaluation mode
+    eval_mode = "PRODUCTION-EQUIVALENT" if args.production_equivalent else "STANDARD"
+    print(f"Evaluation mode: {eval_mode}")
+    if args.production_equivalent:
+        print("  -> Using real BettingPros lines (smaller sample, realistic hit rates)")
+        print("  -> Good for: Estimating actual production performance")
+    else:
+        print("  -> Using feature store Vegas lines (larger sample)")
+        print("  -> Good for: Model vs model comparison (relative ranking)")
+        print("  -> NOTE: Hit rates may not match production performance")
+
     print(f"Evaluation period: {args.eval_start} to {args.eval_end}")
     print(f"Minimum edge threshold: {args.min_edge}")
     if train_metadata:
@@ -412,10 +528,15 @@ def main():
     target_feature_count = train_metadata.get('feature_count', 33) if train_metadata else 33
     print(f"Target feature count from training: {target_feature_count}")
 
-    # Load evaluation data
+    # Load evaluation data - use appropriate query based on mode
     print("Loading evaluation data...")
     client = bigquery.Client(project=PROJECT_ID)
-    query = get_evaluation_query(args.eval_start, args.eval_end, min_feature_count=target_feature_count)
+
+    if args.production_equivalent:
+        query = get_production_equivalent_query(args.eval_start, args.eval_end, min_feature_count=target_feature_count)
+    else:
+        query = get_evaluation_query(args.eval_start, args.eval_end, min_feature_count=target_feature_count)
+
     df = client.query(query).to_dataframe()
     print(f"Loaded {len(df):,} samples")
 
@@ -506,6 +627,8 @@ def main():
     results = {
         "experiment_id": args.experiment_id,
         "model_path": model_path,
+        "evaluation_mode": eval_mode,
+        "production_equivalent": args.production_equivalent,
         "train_period": train_metadata['train_period'] if train_metadata else None,
         "eval_period": {
             "start": args.eval_start,
