@@ -1,0 +1,62 @@
+{
+  "experiment": "V12",
+  "train_period": {
+    "start": "2024-10-01",
+    "end": "2025-12-31"
+  },
+  "eval_period": {
+    "start": "2026-01-01",
+    "end": "2026-01-28"
+  },
+  "results": [
+    {
+      "experiment": "V12_RECENT_NOWEIGHT",
+      "config": {
+        "desc": "Recent data (no weighting)",
+        "recency": false,
+        "half_life": null
+      },
+      "mae": 4.4277,
+      "betting": {
+        "hit_rate_pct": 50.87,
+        "hits": 844,
+        "bets_graded": 1659,
+        "roi_pct": -2.88
+      },
+      "model_path": "ml/experiments/results/catboost_v12_V12_RECENT_NOWEIGHT_20260131_083746.cbm"
+    },
+    {
+      "experiment": "V12_RECENT_90D",
+      "config": {
+        "desc": "Recent data + 90-day recency",
+        "recency": true,
+        "half_life": 90
+      },
+      "mae": 4.5537,
+      "betting": {
+        "hit_rate_pct": 49.7,
+        "hits": 924,
+        "bets_graded": 1859,
+        "roi_pct": -5.11
+      },
+      "model_path": "ml/experiments/results/catboost_v12_V12_RECENT_90D_20260131_083748.cbm"
+    },
+    {
+      "experiment": "V12_RECENT_60D",
+      "config": {
+        "desc": "Recent data + 60-day recency",
+        "recency": true,
+        "half_life": 60
+      },
+      "mae": 4.6344,
+      "betting": {
+        "hit_rate_pct": 49.82,
+        "hits": 980,
+        "bets_graded": 1967,
+        "roi_pct": -4.89
+      },
+      "model_path": "ml/experiments/results/catboost_v12_V12_RECENT_60D_20260131_083750.cbm"
+    }
+  ],
+  "timestamp": "2026-01-31T08:37:50.060741"
+}

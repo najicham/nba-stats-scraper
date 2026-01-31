@@ -1,0 +1,29 @@
+{
+  "eval_period": {
+    "start": "2026-01-01",
+    "end": "2026-01-28"
+  },
+  "results": [
+    {
+      "experiment": "V8_BASELINE",
+      "status": "dry_run"
+    },
+    {
+      "experiment": "V9_RECENT_2YR",
+      "status": "dry_run"
+    },
+    {
+      "experiment": "V9_RECENCY_180",
+      "status": "dry_run"
+    },
+    {
+      "experiment": "V9_RECENCY_90",
+      "status": "dry_run"
+    },
+    {
+      "experiment": "V9_CURRENT_SEASON",
+      "status": "dry_run"
+    }
+  ],
+  "timestamp": "2026-01-31T08:34:13.568942"
+}

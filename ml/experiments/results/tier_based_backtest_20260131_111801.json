@@ -1,0 +1,306 @@
+{
+  "eval_period": {
+    "start": "2026-01-01",
+    "end": "2026-01-30"
+  },
+  "min_edge": 3.0,
+  "samples": 4792,
+  "tier_distribution": {
+    "star": 347,
+    "starter": 941,
+    "rotation": 1923,
+    "bench": 1581
+  },
+  "mae": {
+    "V8_only": 4.8939,
+    "JAN_DEC_only": 4.5298,
+    "tier_based": 4.6117
+  },
+  "comparison_edge_2": {
+    "V8_only": {
+      "overall": {
+        "hit_rate": 49.44,
+        "hits": 529,
+        "misses": 541,
+        "pushes": 0,
+        "bets_placed": 1070,
+        "bets_graded": 1070,
+        "roi": -5.62,
+        "profit": -60.09
+      },
+      "by_tier": {
+        "star": {
+          "count": 347,
+          "bets": 170,
+          "graded": 170,
+          "hits": 85,
+          "hit_rate": 50.0,
+          "model_used": "v8_production"
+        },
+        "starter": {
+          "count": 941,
+          "bets": 364,
+          "graded": 364,
+          "hits": 169,
+          "hit_rate": 46.43,
+          "model_used": "jan_dec_only"
+        },
+        "rotation": {
+          "count": 1923,
+          "bets": 450,
+          "graded": 450,
+          "hits": 221,
+          "hit_rate": 49.11,
+          "model_used": "jan_dec_only"
+        },
+        "bench": {
+          "count": 1581,
+          "bets": 86,
+          "graded": 86,
+          "hits": 54,
+          "hit_rate": 62.79,
+          "model_used": "v8_production"
+        }
+      }
+    },
+    "JAN_DEC_only": {
+      "overall": {
+        "hit_rate": 54.68,
+        "hits": 333,
+        "misses": 276,
+        "pushes": 0,
+        "bets_placed": 609,
+        "bets_graded": 609,
+        "roi": 4.39,
+        "profit": 26.73
+      },
+      "by_tier": {
+        "star": {
+          "count": 347,
+          "bets": 116,
+          "graded": 116,
+          "hits": 62,
+          "hit_rate": 53.45,
+          "model_used": "v8_production"
+        },
+        "starter": {
+          "count": 941,
+          "bets": 224,
+          "graded": 224,
+          "hits": 125,
+          "hit_rate": 55.8,
+          "model_used": "jan_dec_only"
+        },
+        "rotation": {
+          "count": 1923,
+          "bets": 217,
+          "graded": 217,
+          "hits": 113,
+          "hit_rate": 52.07,
+          "model_used": "jan_dec_only"
+        },
+        "bench": {
+          "count": 1581,
+          "bets": 52,
+          "graded": 52,
+          "hits": 33,
+          "hit_rate": 63.46,
+          "model_used": "v8_production"
+        }
+      }
+    },
+    "tier_based": {
+      "overall": {
+        "hit_rate": 54.09,
+        "hits": 377,
+        "misses": 320,
+        "pushes": 0,
+        "bets_placed": 697,
+        "bets_graded": 697,
+        "roi": 3.26,
+        "profit": 22.73
+      },
+      "by_tier": {
+        "star": {
+          "count": 347,
+          "bets": 170,
+          "graded": 170,
+          "hits": 85,
+          "hit_rate": 50.0,
+          "model_used": "v8_production"
+        },
+        "starter": {
+          "count": 941,
+          "bets": 224,
+          "graded": 224,
+          "hits": 125,
+          "hit_rate": 55.8,
+          "model_used": "jan_dec_only"
+        },
+        "rotation": {
+          "count": 1923,
+          "bets": 217,
+          "graded": 217,
+          "hits": 113,
+          "hit_rate": 52.07,
+          "model_used": "jan_dec_only"
+        },
+        "bench": {
+          "count": 1581,
+          "bets": 86,
+          "graded": 86,
+          "hits": 54,
+          "hit_rate": 62.79,
+          "model_used": "v8_production"
+        }
+      }
+    }
+  },
+  "comparison_edge_3": {
+    "V8_only": {
+      "overall": {
+        "hit_rate": 49.44,
+        "hits": 529,
+        "misses": 541,
+        "pushes": 0,
+        "bets_placed": 1070,
+        "bets_graded": 1070,
+        "roi": -5.62,
+        "profit": -60.09
+      },
+      "by_tier": {
+        "star": {
+          "count": 347,
+          "bets": 170,
+          "graded": 170,
+          "hits": 85,
+          "hit_rate": 50.0,
+          "model_used": "v8_production"
+        },
+        "starter": {
+          "count": 941,
+          "bets": 364,
+          "graded": 364,
+          "hits": 169,
+          "hit_rate": 46.43,
+          "model_used": "jan_dec_only"
+        },
+        "rotation": {
+          "count": 1923,
+          "bets": 450,
+          "graded": 450,
+          "hits": 221,
+          "hit_rate": 49.11,
+          "model_used": "jan_dec_only"
+        },
+        "bench": {
+          "count": 1581,
+          "bets": 86,
+          "graded": 86,
+          "hits": 54,
+          "hit_rate": 62.79,
+          "model_used": "v8_production"
+        }
+      }
+    },
+    "JAN_DEC_only": {
+      "overall": {
+        "hit_rate": 54.68,
+        "hits": 333,
+        "misses": 276,
+        "pushes": 0,
+        "bets_placed": 609,
+        "bets_graded": 609,
+        "roi": 4.39,
+        "profit": 26.73
+      },
+      "by_tier": {
+        "star": {
+          "count": 347,
+          "bets": 116,
+          "graded": 116,
+          "hits": 62,
+          "hit_rate": 53.45,
+          "model_used": "v8_production"
+        },
+        "starter": {
+          "count": 941,
+          "bets": 224,
+          "graded": 224,
+          "hits": 125,
+          "hit_rate": 55.8,
+          "model_used": "jan_dec_only"
+        },
+        "rotation": {
+          "count": 1923,
+          "bets": 217,
+          "graded": 217,
+          "hits": 113,
+          "hit_rate": 52.07,
+          "model_used": "jan_dec_only"
+        },
+        "bench": {
+          "count": 1581,
+          "bets": 52,
+          "graded": 52,
+          "hits": 33,
+          "hit_rate": 63.46,
+          "model_used": "v8_production"
+        }
+      }
+    },
+    "tier_based": {
+      "overall": {
+        "hit_rate": 54.09,
+        "hits": 377,
+        "misses": 320,
+        "pushes": 0,
+        "bets_placed": 697,
+        "bets_graded": 697,
+        "roi": 3.26,
+        "profit": 22.73
+      },
+      "by_tier": {
+        "star": {
+          "count": 347,
+          "bets": 170,
+          "graded": 170,
+          "hits": 85,
+          "hit_rate": 50.0,
+          "model_used": "v8_production"
+        },
+        "starter": {
+          "count": 941,
+          "bets": 224,
+          "graded": 224,
+          "hits": 125,
+          "hit_rate": 55.8,
+          "model_used": "jan_dec_only"
+        },
+        "rotation": {
+          "count": 1923,
+          "bets": 217,
+          "graded": 217,
+          "hits": 113,
+          "hit_rate": 52.07,
+          "model_used": "jan_dec_only"
+        },
+        "bench": {
+          "count": 1581,
+          "bets": 86,
+          "graded": 86,
+          "hits": 54,
+          "hit_rate": 62.79,
+          "model_used": "v8_production"
+        }
+      }
+    }
+  },
+  "tier_strategy": {
+    "star": "v8_production",
+    "starter": "jan_dec_only",
+    "rotation": "jan_dec_only",
+    "bench": "v8_production"
+  },
+  "timestamp": "2026-01-31T11:18:01.277724"
+}

@@ -196,7 +196,10 @@ class ContextBuilder:
         season_phase: str,
         game_start_time_local: Optional[str],
         spread_public_betting_pct: Optional[float],
-        total_public_betting_pct: Optional[float]
+        total_public_betting_pct: Optional[float],
+        schedule_context: Optional[Dict] = None,
+        opponent_schedule_asymmetry: Optional[Dict] = None,
+        probable_teammates: Optional[int] = None
     ) -> Dict:
         """
         Build complete context record from all component pieces.

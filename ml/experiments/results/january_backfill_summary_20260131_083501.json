@@ -1,0 +1,129 @@
+{
+  "eval_period": {
+    "start": "2026-01-01",
+    "end": "2026-01-28"
+  },
+  "results": [
+    {
+      "experiment": "V8_BASELINE",
+      "config": {
+        "description": "Production V8 baseline (2021-2024 training)",
+        "train_start": "2021-11-01",
+        "train_end": "2024-06-01",
+        "recency_weighting": false,
+        "half_life": null
+      },
+      "training_samples": 77666,
+      "eval_samples": 4567,
+      "results": {
+        "mae": 4.7178,
+        "betting": {
+          "hit_rate_pct": 50.22,
+          "hits": 1035,
+          "bets_graded": 2061,
+          "roi_pct": -4.13,
+          "profit": -85.09
+        }
+      },
+      "model_path": "/home/naji/code/nba-stats-scraper/ml/experiments/results/catboost_jan_exp_V8_BASELINE_20260131_083432.cbm",
+      "timestamp": "20260131_083432"
+    },
+    {
+      "experiment": "V9_RECENT_2YR",
+      "config": {
+        "description": "Recent 2 years only (2023-2025)",
+        "train_start": "2023-10-01",
+        "train_end": "2025-12-31",
+        "recency_weighting": false,
+        "half_life": null
+      },
+      "training_samples": 60776,
+      "eval_samples": 4567,
+      "results": {
+        "mae": 4.4477,
+        "betting": {
+          "hit_rate_pct": 50.03,
+          "hits": 822,
+          "bets_graded": 1643,
+          "roi_pct": -4.49,
+          "profit": -73.73
+        }
+      },
+      "model_path": "/home/naji/code/nba-stats-scraper/ml/experiments/results/catboost_jan_exp_V9_RECENT_2YR_20260131_083440.cbm",
+      "timestamp": "20260131_083440"
+    },
+    {
+      "experiment": "V9_RECENCY_180",
+      "config": {
+        "description": "Full data with 180-day half-life recency weighting",
+        "train_start": "2021-11-01",
+        "train_end": "2025-12-31",
+        "recency_weighting": true,
+        "half_life": 180
+      },
+      "training_samples": 112608,
+      "eval_samples": 4567,
+      "results": {
+        "mae": 4.3914,
+        "betting": {
+          "hit_rate_pct": 50.13,
+          "hits": 744,
+          "bets_graded": 1484,
+          "roi_pct": -4.29,
+          "profit": -63.64
+        }
+      },
+      "model_path": "/home/naji/code/nba-stats-scraper/ml/experiments/results/catboost_jan_exp_V9_RECENCY_180_20260131_083451.cbm",
+      "timestamp": "20260131_083451"
+    },
+    {
+      "experiment": "V9_RECENCY_90",
+      "config": {
+        "description": "Full data with 90-day half-life recency weighting",
+        "train_start": "2021-11-01",
+        "train_end": "2025-12-31",
+        "recency_weighting": true,
+        "half_life": 90
+      },
+      "training_samples": 112608,
+      "eval_samples": 4567,
+      "results": {
+        "mae": 4.385,
+        "betting": {
+          "hit_rate_pct": 51.34,
+          "hits": 688,
+          "bets_graded": 1340,
+          "roi_pct": -1.98,
+          "profit": -26.55
+        }
+      },
+      "model_path": "/home/naji/code/nba-stats-scraper/ml/experiments/results/catboost_jan_exp_V9_RECENCY_90_20260131_083458.cbm",
+      "timestamp": "20260131_083458"
+    },
+    {
+      "experiment": "V9_CURRENT_SEASON",
+      "config": {
+        "description": "Current season only (Oct 2025 - Jan 15 2026)",
+        "train_start": "2025-10-01",
+        "train_end": "2025-12-31",
+        "recency_weighting": false,
+        "half_life": null
+      },
+      "training_samples": 8982,
+      "eval_samples": 4567,
+      "results": {
+        "mae": 4.4893,
+        "betting": {
+          "hit_rate_pct": 50.41,
+          "hits": 914,
+          "bets_graded": 1813,
+          "roi_pct": -3.76,
+          "profit": -68.09
+        }
+      },
+      "model_path": "/home/naji/code/nba-stats-scraper/ml/experiments/results/catboost_jan_exp_V9_CURRENT_SEASON_20260131_083501.cbm",
+      "timestamp": "20260131_083501"
+    }
+  ],
+  "timestamp": "2026-01-31T08:35:01.972357"
+}

@@ -1,0 +1,84 @@
+{
+  "experiment_id": "ENS_REC60",
+  "model_prefix": "ensemble_exp_ENS_REC60_20260131_111430",
+  "train_period": {
+    "start": "2021-11-01",
+    "end": "2024-06-30",
+    "samples": 77780
+  },
+  "features": [
+    "points_avg_last_5",
+    "points_avg_last_10",
+    "points_avg_season",
+    "points_std_last_10",
+    "games_in_last_7_days",
+    "fatigue_score",
+    "shot_zone_mismatch_score",
+    "pace_score",
+    "usage_spike_score",
+    "rest_advantage",
+    "injury_risk",
+    "recent_trend",
+    "minutes_change",
+    "opponent_def_rating",
+    "opponent_pace",
+    "home_away",
+    "back_to_back",
+    "playoff_game",
+    "pct_paint",
+    "pct_mid_range",
+    "pct_three",
+    "pct_free_throw",
+    "team_pace",
+    "team_off_rating",
+    "team_win_pct",
+    "vegas_points_line",
+    "vegas_opening_line",
+    "vegas_line_move",
+    "has_vegas_line",
+    "avg_points_vs_opponent",
+    "games_vs_opponent",
+    "minutes_avg_last_10",
+    "ppm_avg_last_10"
+  ],
+  "feature_count": 33,
+  "recency_weighting": {
+    "enabled": true,
+    "half_life_days": 60,
+    "weight_stats": {
+      "min": 0.0027554313571730563,
+      "max": 16.334237856215676,
+      "mean": 1.0000000000000002,
+      "std": 3.138143762126262
+    }
+  },
+  "results": {
+    "XGBoost": {
+      "mae": 3.769884207736435
+    },
+    "LightGBM": {
+      "mae": 3.786161654807101
+    },
+    "CatBoost": {
+      "mae": 3.7944554181694823
+    },
+    "Simple_Avg": {
+      "mae": 3.7570812310604413
+    },
+    "Stacked": {
+      "mae": 3.7657137113642243,
+      "coefs": [
+        0.46054016430109934,
+        0.20550212772355456,
+        0.31457014934421496
+      ],
+      "intercept": 0.13357291358346224
+    }
+  },
+  "model_files": {
+    "xgboost": "/home/naji/code/nba-stats-scraper/ml/experiments/results/ensemble_exp_ENS_REC60_20260131_111430_xgboost.json",
+    "lightgbm": "/home/naji/code/nba-stats-scraper/ml/experiments/results/ensemble_exp_ENS_REC60_20260131_111430_lightgbm.txt",
+    "catboost": "/home/naji/code/nba-stats-scraper/ml/experiments/results/ensemble_exp_ENS_REC60_20260131_111430_catboost.cbm"
+  },
+  "trained_at": "2026-01-31T11:20:50.558477"
+}

@@ -866,7 +866,94 @@ WHERE cache_date = DATE('${GAME_DATE}')"
 
 **Expected**: `last_update` should be within last 12 hours
 
-### Priority 2D: Model Drift Monitoring (NEW - Session 28)
+### Priority 2D: BigDataBall Coverage Monitoring (NEW - Session 53)
+
+Check BDB play-by-play data coverage for shot zone analytics:
+
+```bash
+GAME_DATE=$(date -d "yesterday" +%Y-%m-%d)
+
+echo "=== BDB Coverage Check ==="
+bq query --use_legacy_sql=false "
+WITH schedule AS (
+  SELECT game_date, game_id
+  FROM nba_reference.nba_schedule
+  WHERE game_date = DATE('${GAME_DATE}')
+),
+bdb_games AS (
+  SELECT DISTINCT game_date, LPAD(CAST(bdb_game_id AS STRING), 10, '0') as bdb_game_id
+  FROM nba_raw.bigdataball_play_by_play
+  WHERE game_date = DATE('${GAME_DATE}')
+)
+SELECT
+  s.game_date,
+  COUNT(DISTINCT s.game_id) as scheduled,
+  COUNT(DISTINCT b.bdb_game_id) as bdb_has,
+  ROUND(100.0 * COUNT(DISTINCT b.bdb_game_id) / NULLIF(COUNT(DISTINCT s.game_id), 0), 0) as coverage_pct,
+  CASE
+    WHEN ROUND(100.0 * COUNT(DISTINCT b.bdb_game_id) / NULLIF(COUNT(DISTINCT s.game_id), 0), 0) >= 90 THEN '✅ OK'
+    WHEN ROUND(100.0 * COUNT(DISTINCT b.bdb_game_id) / NULLIF(COUNT(DISTINCT s.game_id), 0), 0) >= 50 THEN '🟡 WARNING'
+    ELSE '🔴 CRITICAL'
+  END as status
+FROM schedule s
+LEFT JOIN bdb_games b ON s.game_date = b.game_date AND s.game_id = b.bdb_game_id
+GROUP BY s.game_date"
+```
+
+**Expected**: Coverage ≥90%
+
+**Thresholds**:
+- **≥90%**: OK - Normal BDB coverage
+- **50-89%**: WARNING - Partial BDB data, shot zones may be incomplete
+- **<50%**: CRITICAL - BDB outage, investigate immediately
+
+**If coverage is low**:
+1. Check pending_bdb_games table: `bq query "SELECT COUNT(*) FROM nba_orchestration.pending_bdb_games WHERE status = 'pending_bdb'"`
+2. Check BDB scraper status in scraper service logs
+3. Run BDB retry processor: `PYTHONPATH="$PWD" .venv/bin/python bin/monitoring/bdb_retry_processor.py`
+4. Reference: Session 53 BDB investigation found Jan 17-24 outage
+
+**BDB Retry System Status**:
+```bash
+bq query --use_legacy_sql=false "
+SELECT
+  status,
+  COUNT(*) as games,
+  MIN(game_date) as earliest,
+  MAX(game_date) as latest
+FROM nba_orchestration.pending_bdb_games
+GROUP BY status
+ORDER BY status"
+```
+
+**BDB Coverage Trend (last 7 days)**:
+```bash
+bq query --use_legacy_sql=false "
+WITH schedule AS (
+  SELECT game_date, game_id
+  FROM nba_reference.nba_schedule
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+    AND game_date < CURRENT_DATE()
+),
+bdb_games AS (
+  SELECT DISTINCT game_date, LPAD(CAST(bdb_game_id AS STRING), 10, '0') as bdb_game_id
+  FROM nba_raw.bigdataball_play_by_play
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+)
+SELECT
+  s.game_date,
+  COUNT(DISTINCT s.game_id) as scheduled,
+  COUNT(DISTINCT b.bdb_game_id) as bdb_has,
+  ROUND(100.0 * COUNT(DISTINCT b.bdb_game_id) / NULLIF(COUNT(DISTINCT s.game_id), 0), 0) as pct
+FROM schedule s
+LEFT JOIN bdb_games b ON s.game_date = b.game_date AND s.game_id = b.bdb_game_id
+GROUP BY s.game_date
+ORDER BY s.game_date DESC"
+```
+
+**Known Issue**: BDB had an outage Jan 17-24, 2026 with 0-57% coverage. Games from that period have been marked as failed in pending_bdb_games. Current coverage (Jan 25+) is 100%.
+
+### Priority 2E: Model Drift Monitoring (Session 28)
 
 #### Weekly Hit Rate Trend
 
@@ -1343,6 +1430,7 @@ Key fields:
 | **Weekly Hit Rate** | ≥65% | 55-64% | <55% |
 | **Model Bias** | ±2 pts | ±3-5 pts | >±5 pts |
 | **Vegas Edge** | >0.5 pts | 0-0.5 pts | <0 pts |
+| **BDB Coverage** | ≥90% | 50-89% | <50% |
 
 **Key Thresholds to Remember**:
 - **63% minutes coverage** → CRITICAL (not WARNING!)
@@ -1358,12 +1446,14 @@ Key fields:
 - Minutes/usage coverage <80% (e.g., 63% is CRITICAL)
 - Phase 3 completion 0-2/5 processors
 - Phase execution log completely empty for a date
+- BDB coverage <50% for multiple consecutive days
 
 **🟡 P2 HIGH** (Within 1 Hour):
 - Data quality issue 70-89% coverage
 - Single phase failing completely
 - Spot check accuracy 90-94%
 - Significant prediction quality drop
+- BDB coverage 50-89% (partial shot zone data)
 
 **🟠 P3 MEDIUM** (Within 4 Hours):
 - Spot check accuracy 95-99%
@@ -1399,6 +1489,7 @@ Provide a clear, concise summary structured like this:
 | Phase 5 (Predictions) | ✅/⚠️/❌ | [prediction count] |
 | Spot Checks | ✅/⚠️/❌ | [accuracy %] |
 | Model Drift | ✅/⚠️/❌ | [4-week trend, tier breakdown] |
+| BDB Coverage | ✅/⚠️/❌ | [X]% (pending: [Y] games) |
 
 ### Issues Found
 [List issues with severity emoji]
@@ -1441,6 +1532,7 @@ Processing date: [PROCESSING_DATE] (scrapers/analytics ran after midnight)
 | Analytics | ✅/❌ | player_game_summary: [X] records |
 | Phase 3 | ✅/❌ | [X]/5 processors complete |
 | Cache Updated | ✅/❌ | Last update: [timestamp] |
+| BDB Coverage | ✅/⚠️/❌ | [X]% (pending: [Y] games) |
 
 ### Priority 3: Quality (if run)
 

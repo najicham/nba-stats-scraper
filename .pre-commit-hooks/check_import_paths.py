@@ -2,7 +2,7 @@
 """
 Pre-commit hook: Check import paths in shared code.
 
-Prevents shared code from importing from orchestration.shared.utils.
+Prevents shared code from importing from shared.utils.
 Shared code should only import from shared.utils.
 
 This prevents circular dependencies and import errors like those in Session 33/34.
@@ -24,7 +24,7 @@ def check_file(filepath: Path) -> list:
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             for line_num, line in enumerate(f, 1):
-                # Check for: from orchestration.shared.utils import ...
+                # Check for: from shared.utils import ...
                 # or: import orchestration.shared.utils
                 patterns = [
                     r'from\s+orchestration\.shared\.',
@@ -75,7 +75,7 @@ def main():
         print("=" * 80)
         print(f"Total violations: {len(all_errors)}")
         print()
-        print("Fix: Change 'from orchestration.shared.utils.*' to 'from shared.utils.*'")
+        print("Fix: Change 'from shared.utils.*' to 'from shared.utils.*'")
         print("=" * 80)
         return 1
 

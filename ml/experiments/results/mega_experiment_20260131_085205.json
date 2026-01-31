@@ -1,0 +1,577 @@
+{
+  "eval_period": {
+    "start": "2026-01-01",
+    "end": "2026-01-28"
+  },
+  "results": [
+    {
+      "experiment": "EXP01_1SEASON_2425",
+      "train_start": "2024-10-01",
+      "train_end": "2025-06-30",
+      "half_life": null,
+      "hp_override": {},
+      "samples": 25846,
+      "mae": 4.4913,
+      "metrics": {
+        "all": {
+          "bets": 1429,
+          "hits": 712,
+          "hit_rate": 49.83,
+          "roi": -4.88
+        },
+        "high_conf_5+": {
+          "bets": 91,
+          "hits": 49,
+          "hit_rate": 53.85,
+          "roi": 2.8
+        },
+        "med_conf_3-5": {
+          "bets": 229,
+          "hits": 120,
+          "hit_rate": 52.4,
+          "roi": 0.04
+        },
+        "low_conf_1-3": {
+          "bets": 1109,
+          "hits": 543,
+          "hit_rate": 48.96,
+          "roi": -6.53
+        }
+      }
+    },
+    {
+      "experiment": "EXP02_1.5SEASON",
+      "train_start": "2024-10-01",
+      "train_end": "2025-12-31",
+      "half_life": null,
+      "hp_override": {},
+      "samples": 34795,
+      "mae": 4.4423,
+      "metrics": {
+        "all": {
+          "bets": 1665,
+          "hits": 845,
+          "hit_rate": 50.75,
+          "roi": -3.11
+        },
+        "high_conf_5+": {
+          "bets": 125,
+          "hits": 66,
+          "hit_rate": 52.8,
+          "roi": 0.8
+        },
+        "med_conf_3-5": {
+          "bets": 287,
+          "hits": 152,
+          "hit_rate": 52.96,
+          "roi": 1.11
+        },
+        "low_conf_1-3": {
+          "bets": 1253,
+          "hits": 627,
+          "hit_rate": 50.04,
+          "roi": -4.47
+        }
+      }
+    },
+    {
+      "experiment": "EXP03_2SEASONS",
+      "train_start": "2023-10-01",
+      "train_end": "2025-12-31",
+      "half_life": null,
+      "hp_override": {},
+      "samples": 60743,
+      "mae": 4.4682,
+      "metrics": {
+        "all": {
+          "bets": 1678,
+          "hits": 837,
+          "hit_rate": 49.88,
+          "roi": -4.77
+        },
+        "high_conf_5+": {
+          "bets": 117,
+          "hits": 69,
+          "hit_rate": 58.97,
+          "roi": 12.59
+        },
+        "med_conf_3-5": {
+          "bets": 337,
+          "hits": 172,
+          "hit_rate": 51.04,
+          "roi": -2.56
+        },
+        "low_conf_1-3": {
+          "bets": 1224,
+          "hits": 596,
+          "hit_rate": 48.69,
+          "roi": -7.04
+        }
+      }
+    },
+    {
+      "experiment": "EXP04_3SEASONS",
+      "train_start": "2022-10-01",
+      "train_end": "2025-12-31",
+      "half_life": null,
+      "hp_override": {},
+      "samples": 86317,
+      "mae": 4.4925,
+      "metrics": {
+        "all": {
+          "bets": 1755,
+          "hits": 879,
+          "hit_rate": 50.09,
+          "roi": -4.38
+        },
+        "high_conf_5+": {
+          "bets": 144,
+          "hits": 88,
+          "hit_rate": 61.11,
+          "roi": 16.67
+        },
+        "med_conf_3-5": {
+          "bets": 371,
+          "hits": 188,
+          "hit_rate": 50.67,
+          "roi": -3.26
+        },
+        "low_conf_1-3": {
+          "bets": 1240,
+          "hits": 603,
+          "hit_rate": 48.63,
+          "roi": -7.16
+        }
+      }
+    },
+    {
+      "experiment": "EXP05_FULL_HISTORY",
+      "train_start": "2021-11-01",
+      "train_end": "2025-12-31",
+      "half_life": null,
+      "hp_override": {},
+      "samples": 112575,
+      "mae": 4.5908,
+      "metrics": {
+        "all": {
+          "bets": 1842,
+          "hits": 909,
+          "hit_rate": 49.35,
+          "roi": -5.79
+        },
+        "high_conf_5+": {
+          "bets": 181,
+          "hits": 103,
+          "hit_rate": 56.91,
+          "roi": 8.64
+        },
+        "med_conf_3-5": {
+          "bets": 433,
+          "hits": 212,
+          "hit_rate": 48.96,
+          "roi": -6.53
+        },
+        "low_conf_1-3": {
+          "bets": 1228,
+          "hits": 594,
+          "hit_rate": 48.37,
+          "roi": -7.65
+        }
+      }
+    },
+    {
+      "experiment": "EXP06_FULL_REC60",
+      "train_start": "2021-11-01",
+      "train_end": "2025-12-31",
+      "half_life": 60,
+      "hp_override": {},
+      "samples": 112575,
+      "mae": 4.3903,
+      "metrics": {
+        "all": {
+          "bets": 1325,
+          "hits": 673,
+          "hit_rate": 50.79,
+          "roi": -3.03
+        },
+        "high_conf_5+": {
+          "bets": 40,
+          "hits": 26,
+          "hit_rate": 65.0,
+          "roi": 24.09
+        },
+        "med_conf_3-5": {
+          "bets": 167,
+          "hits": 89,
+          "hit_rate": 53.29,
+          "roi": 1.74
+        },
+        "low_conf_1-3": {
+          "bets": 1118,
+          "hits": 558,
+          "hit_rate": 49.91,
+          "roi": -4.72
+        }
+      }
+    },
+    {
+      "experiment": "EXP07_FULL_REC90",
+      "train_start": "2021-11-01",
+      "train_end": "2025-12-31",
+      "half_life": 90,
+      "hp_override": {},
+      "samples": 112575,
+      "mae": 4.3879,
+      "metrics": {
+        "all": {
+          "bets": 1353,
+          "hits": 688,
+          "hit_rate": 50.85,
+          "roi": -2.92
+        },
+        "high_conf_5+": {
+          "bets": 36,
+          "hits": 22,
+          "hit_rate": 61.11,
+          "roi": 16.67
+        },
+        "med_conf_3-5": {
+          "bets": 157,
+          "hits": 81,
+          "hit_rate": 51.59,
+          "roi": -1.51
+        },
+        "low_conf_1-3": {
+          "bets": 1160,
+          "hits": 585,
+          "hit_rate": 50.43,
+          "roi": -3.72
+        }
+      }
+    },
+    {
+      "experiment": "EXP08_FULL_REC120",
+      "train_start": "2021-11-01",
+      "train_end": "2025-12-31",
+      "half_life": 120,
+      "hp_override": {},
+      "samples": 112575,
+      "mae": 4.3934,
+      "metrics": {
+        "all": {
+          "bets": 1347,
+          "hits": 687,
+          "hit_rate": 51.0,
+          "roi": -2.63
+        },
+        "high_conf_5+": {
+          "bets": 46,
+          "hits": 28,
+          "hit_rate": 60.87,
+          "roi": 16.21
+        },
+        "med_conf_3-5": {
+          "bets": 190,
+          "hits": 103,
+          "hit_rate": 54.21,
+          "roi": 3.49
+        },
+        "low_conf_1-3": {
+          "bets": 1111,
+          "hits": 556,
+          "hit_rate": 50.05,
+          "roi": -4.46
+        }
+      }
+    },
+    {
+      "experiment": "EXP09_FULL_REC180",
+      "train_start": "2021-11-01",
+      "train_end": "2025-12-31",
+      "half_life": 180,
+      "hp_override": {},
+      "samples": 112575,
+      "mae": 4.4514,
+      "metrics": {
+        "all": {
+          "bets": 1515,
+          "hits": 762,
+          "hit_rate": 50.3,
+          "roi": -3.98
+        },
+        "high_conf_5+": {
+          "bets": 102,
+          "hits": 60,
+          "hit_rate": 58.82,
+          "roi": 12.3
+        },
+        "med_conf_3-5": {
+          "bets": 226,
+          "hits": 121,
+          "hit_rate": 53.54,
+          "roi": 2.21
+        },
+        "low_conf_1-3": {
+          "bets": 1187,
+          "hits": 581,
+          "hit_rate": 48.95,
+          "roi": -6.56
+        }
+      }
+    },
+    {
+      "experiment": "EXP10_FULL_REC365",
+      "train_start": "2021-11-01",
+      "train_end": "2025-12-31",
+      "half_life": 365,
+      "hp_override": {},
+      "samples": 112575,
+      "mae": 4.5578,
+      "metrics": {
+        "all": {
+          "bets": 1738,
+          "hits": 858,
+          "hit_rate": 49.37,
+          "roi": -5.75
+        },
+        "high_conf_5+": {
+          "bets": 153,
+          "hits": 86,
+          "hit_rate": 56.21,
+          "roi": 7.31
+        },
+        "med_conf_3-5": {
+          "bets": 353,
+          "hits": 168,
+          "hit_rate": 47.59,
+          "roi": -9.14
+        },
+        "low_conf_1-3": {
+          "bets": 1232,
+          "hits": 604,
+          "hit_rate": 49.03,
+          "roi": -6.4
+        }
+      }
+    },
+    {
+      "experiment": "EXP11_2YR_REC90",
+      "train_start": "2023-10-01",
+      "train_end": "2025-12-31",
+      "half_life": 90,
+      "hp_override": {},
+      "samples": 60743,
+      "mae": 4.4385,
+      "metrics": {
+        "all": {
+          "bets": 1542,
+          "hits": 773,
+          "hit_rate": 50.13,
+          "roi": -4.3
+        },
+        "high_conf_5+": {
+          "bets": 83,
+          "hits": 51,
+          "hit_rate": 61.45,
+          "roi": 17.31
+        },
+        "med_conf_3-5": {
+          "bets": 265,
+          "hits": 139,
+          "hit_rate": 52.45,
+          "roi": 0.14
+        },
+        "low_conf_1-3": {
+          "bets": 1194,
+          "hits": 583,
+          "hit_rate": 48.83,
+          "roi": -6.78
+        }
+      }
+    },
+    {
+      "experiment": "EXP12_2YR_REC120",
+      "train_start": "2023-10-01",
+      "train_end": "2025-12-31",
+      "half_life": 120,
+      "hp_override": {},
+      "samples": 60743,
+      "mae": 4.4276,
+      "metrics": {
+        "all": {
+          "bets": 1529,
+          "hits": 767,
+          "hit_rate": 50.16,
+          "roi": -4.23
+        },
+        "high_conf_5+": {
+          "bets": 74,
+          "hits": 42,
+          "hit_rate": 56.76,
+          "roi": 8.35
+        },
+        "med_conf_3-5": {
+          "bets": 244,
+          "hits": 131,
+          "hit_rate": 53.69,
+          "roi": 2.5
+        },
+        "low_conf_1-3": {
+          "bets": 1211,
+          "hits": 594,
+          "hit_rate": 49.05,
+          "roi": -6.36
+        }
+      }
+    },
+    {
+      "experiment": "EXP13_DEEP_TREE",
+      "train_start": "2021-11-01",
+      "train_end": "2025-12-31",
+      "half_life": 90,
+      "hp_override": {
+        "depth": 8
+      },
+      "samples": 112575,
+      "mae": 4.3883,
+      "metrics": {
+        "all": {
+          "bets": 1330,
+          "hits": 683,
+          "hit_rate": 51.35,
+          "roi": -1.96
+        },
+        "high_conf_5+": {
+          "bets": 39,
+          "hits": 22,
+          "hit_rate": 56.41,
+          "roi": 7.69
+        },
+        "med_conf_3-5": {
+          "bets": 154,
+          "hits": 90,
+          "hit_rate": 58.44,
+          "roi": 11.57
+        },
+        "low_conf_1-3": {
+          "bets": 1137,
+          "hits": 571,
+          "hit_rate": 50.22,
+          "roi": -4.13
+        }
+      }
+    },
+    {
+      "experiment": "EXP14_SHALLOW_TREE",
+      "train_start": "2021-11-01",
+      "train_end": "2025-12-31",
+      "half_life": 90,
+      "hp_override": {
+        "depth": 4
+      },
+      "samples": 112575,
+      "mae": 4.3701,
+      "metrics": {
+        "all": {
+          "bets": 1359,
+          "hits": 703,
+          "hit_rate": 51.73,
+          "roi": -1.24
+        },
+        "high_conf_5+": {
+          "bets": 37,
+          "hits": 22,
+          "hit_rate": 59.46,
+          "roi": 13.51
+        },
+        "med_conf_3-5": {
+          "bets": 159,
+          "hits": 86,
+          "hit_rate": 54.09,
+          "roi": 3.26
+        },
+        "low_conf_1-3": {
+          "bets": 1163,
+          "hits": 595,
+          "hit_rate": 51.16,
+          "roi": -2.33
+        }
+      }
+    },
+    {
+      "experiment": "EXP15_FAST_LR",
+      "train_start": "2021-11-01",
+      "train_end": "2025-12-31",
+      "half_life": 90,
+      "hp_override": {
+        "learning_rate": 0.1
+      },
+      "samples": 112575,
+      "mae": 4.4224,
+      "metrics": {
+        "all": {
+          "bets": 1412,
+          "hits": 706,
+          "hit_rate": 50.0,
+          "roi": -4.55
+        },
+        "high_conf_5+": {
+          "bets": 49,
+          "hits": 27,
+          "hit_rate": 55.1,
+          "roi": 5.19
+        },
+        "med_conf_3-5": {
+          "bets": 173,
+          "hits": 93,
+          "hit_rate": 53.76,
+          "roi": 2.63
+        },
+        "low_conf_1-3": {
+          "bets": 1190,
+          "hits": 586,
+          "hit_rate": 49.24,
+          "roi": -5.99
+        }
+      }
+    },
+    {
+      "experiment": "EXP16_SLOW_LR",
+      "train_start": "2021-11-01",
+      "train_end": "2025-12-31",
+      "half_life": 90,
+      "hp_override": {
+        "learning_rate": 0.03
+      },
+      "samples": 112575,
+      "mae": 4.4029,
+      "metrics": {
+        "all": {
+          "bets": 1318,
+          "hits": 658,
+          "hit_rate": 49.92,
+          "roi": -4.69
+        },
+        "high_conf_5+": {
+          "bets": 40,
+          "hits": 25,
+          "hit_rate": 62.5,
+          "roi": 19.32
+        },
+        "med_conf_3-5": {
+          "bets": 180,
+          "hits": 101,
+          "hit_rate": 56.11,
+          "roi": 7.12
+        },
+        "low_conf_1-3": {
+          "bets": 1098,
+          "hits": 532,
+          "hit_rate": 48.45,
+          "roi": -7.5
+        }
+      }
+    }
+  ],
+  "timestamp": "2026-01-31T08:52:05.330756"
+}

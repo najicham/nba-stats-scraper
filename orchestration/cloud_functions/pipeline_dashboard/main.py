@@ -14,6 +14,7 @@ Version: 1.0
 Created: 2026-01-24
 """
 
+import json
 import logging
 import os
 from datetime import datetime, timezone, timedelta
@@ -77,7 +78,8 @@ def pipeline_dashboard(request):
             'coverage': get_prediction_coverage(bq_client, date_str),
             'alerts': get_recent_alerts(bq_client),
             'phase_summary': get_phase_summary(bq_client, date_str),
-            'degraded_runs': get_degraded_dependency_runs(bq_client, date_str)
+            'degraded_runs': get_degraded_dependency_runs(bq_client, date_str),
+            'shot_zone_quality': get_shot_zone_quality(bq_client)
         }
 
         if output_format == 'json':
@@ -358,6 +360,90 @@ def get_degraded_dependency_runs(bq_client: bigquery.Client, date_str: str) -> D
         return {'runs': [], 'summary': {'degraded_count': 0, 'processors_affected': 0}}
 
 
+def get_shot_zone_quality(bq_client: bigquery.Client) -> Dict:
+    """
+    Get shot zone data quality metrics for last 3 days.
+
+    Returns:
+        - Daily completeness % (has_complete_shot_zones)
+        - Average paint/three/mid-range rates
+        - Anomaly detection (paint <25%, three >55%)
+    """
+    query = f"""
+    WITH daily_metrics AS (
+        SELECT
+            game_date,
+            COUNT(*) as total_records,
+            COUNTIF(has_complete_shot_zones = TRUE) as complete_records,
+            ROUND(COUNTIF(has_complete_shot_zones = TRUE) * 100.0 / COUNT(*), 1) as pct_complete,
+
+            -- Average rates for complete records only
+            ROUND(AVG(CASE WHEN has_complete_shot_zones = TRUE
+                THEN SAFE_DIVIDE(paint_attempts * 100.0,
+                     paint_attempts + mid_range_attempts + three_attempts_pbp) END), 1) as avg_paint_rate,
+            ROUND(AVG(CASE WHEN has_complete_shot_zones = TRUE
+                THEN SAFE_DIVIDE(three_attempts_pbp * 100.0,
+                     paint_attempts + mid_range_attempts + three_attempts_pbp) END), 1) as avg_three_rate,
+            ROUND(AVG(CASE WHEN has_complete_shot_zones = TRUE
+                THEN SAFE_DIVIDE(mid_range_attempts * 100.0,
+                     paint_attempts + mid_range_attempts + three_attempts_pbp) END), 1) as avg_mid_rate,
+
+            -- Anomaly detection
+            COUNTIF(has_complete_shot_zones = TRUE
+                AND SAFE_DIVIDE(paint_attempts * 100.0,
+                     paint_attempts + mid_range_attempts + three_attempts_pbp) < 25) as low_paint_count,
+            COUNTIF(has_complete_shot_zones = TRUE
+                AND SAFE_DIVIDE(three_attempts_pbp * 100.0,
+                     paint_attempts + mid_range_attempts + three_attempts_pbp) > 55) as high_three_count
+        FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+        WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
+          AND minutes_played > 0
+        GROUP BY game_date
+        ORDER BY game_date DESC
+    )
+    SELECT * FROM daily_metrics
+    """
+
+    try:
+        result = list(bq_client.query(query).result())
+        daily_data = [dict(row) for row in result]
+
+        # Calculate overall status
+        if not daily_data:
+            status = 'NO_DATA'
+            status_message = 'No recent data available'
+        else:
+            latest_day = daily_data[0]
+            pct_complete = latest_day.get('pct_complete', 0)
+            avg_paint = latest_day.get('avg_paint_rate', 0)
+            avg_three = latest_day.get('avg_three_rate', 0)
+
+            # Determine status
+            if pct_complete >= 85 and 30 <= avg_paint <= 45 and 20 <= avg_three <= 50:
+                status = 'OK'
+                status_message = 'Shot zone data quality is good'
+            elif pct_complete >= 50 or (avg_paint < 25 or avg_three > 55):
+                status = 'WARNING'
+                status_message = 'Shot zone data quality degraded'
+            else:
+                status = 'CRITICAL'
+                status_message = 'Shot zone data quality critical'
+
+        return {
+            'daily_data': daily_data,
+            'status': status,
+            'status_message': status_message
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting shot zone quality: {e}", exc_info=True)
+        return {
+            'daily_data': [],
+            'status': 'ERROR',
+            'status_message': f'Error querying shot zone data: {str(e)}'
+        }
+
+
 def render_dashboard_html(data: Dict) -> str:
     """Render dashboard as HTML."""
 
@@ -450,6 +536,55 @@ def render_dashboard_html(data: Dict) -> str:
         degraded_rows = '<tr><td colspan="4" class="empty">No degraded dependency runs</td></tr>'
 
     degraded_summary = degraded.get('summary', {})
+
+    # Generate shot zone quality rows
+    shot_zone_rows = ""
+    shot_zone = data.get('shot_zone_quality', {})
+    shot_zone_status = shot_zone.get('status', 'NO_DATA')
+    shot_zone_status_message = shot_zone.get('status_message', 'Unknown')
+    shot_zone_status_class = shot_zone_status.lower() if shot_zone_status != 'NO_DATA' else 'warning'
+
+    for day in shot_zone.get('daily_data', []):
+        pct_complete = day.get('pct_complete', 0)
+        paint_rate = day.get('avg_paint_rate', 0)
+        three_rate = day.get('avg_three_rate', 0)
+        mid_rate = day.get('avg_mid_rate', 0)
+        low_paint = day.get('low_paint_count', 0)
+        high_three = day.get('high_three_count', 0)
+
+        # Determine row status
+        if pct_complete >= 85 and 30 <= paint_rate <= 45 and 20 <= three_rate <= 50:
+            row_status = 'ok'
+            status_text = 'GOOD'
+        elif pct_complete >= 50:
+            row_status = 'low'
+            status_text = 'DEGRADED'
+        else:
+            row_status = 'critical'
+            status_text = 'CRITICAL'
+
+        # Format anomalies
+        anomalies = []
+        if low_paint > 0:
+            anomalies.append(f"{low_paint} low paint")
+        if high_three > 0:
+            anomalies.append(f"{high_three} high 3pt")
+        anomaly_text = ", ".join(anomalies) if anomalies else "-"
+
+        shot_zone_rows += f"""
+        <tr class="{row_status}">
+            <td>{day['game_date']}</td>
+            <td>{pct_complete}% ({day['complete_records']}/{day['total_records']})</td>
+            <td>{paint_rate}%</td>
+            <td>{three_rate}%</td>
+            <td>{mid_rate}%</td>
+            <td class="skip-reason">{anomaly_text}</td>
+            <td><span class="status-badge {row_status}">{status_text}</span></td>
+        </tr>
+        """
+
+    if not shot_zone_rows:
+        shot_zone_rows = '<tr><td colspan="7" class="empty">No shot zone data available</td></tr>'
 
     html = f"""
 <!DOCTYPE html>
@@ -598,6 +733,29 @@ def render_dashboard_html(data: Dict) -> str:
             </thead>
             <tbody>
                 {coverage_rows}
+            </tbody>
+        </table>
+    </div>
+
+    <div class="section">
+        <h2>Shot Zone Data Quality (Last 3 Days)</h2>
+        <div class="coverage-summary">
+            <span class="coverage-stat {shot_zone_status_class}">{shot_zone_status_message}</span>
+        </div>
+        <table>
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Completeness</th>
+                    <th>Paint Rate</th>
+                    <th>Three Rate</th>
+                    <th>Mid Rate</th>
+                    <th>Anomalies</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {shot_zone_rows}
             </tbody>
         </table>
     </div>

@@ -8,6 +8,7 @@ Extracted calculators for specific computation tasks:
 - UsageCalculator: Star teammate impact on usage rates
 - GameUtils: Utility functions (team determination, game time, season phase)
 - CompletenessCheckerHelper: Batch completeness checking across multiple windows
+- ScheduleContextCalculator: Forward-looking schedule features (next game rest, opponent asymmetry)
 """
 
 from .quality_flags import QualityFlagsCalculator
@@ -16,6 +17,7 @@ from .matchup_calculator import MatchupCalculator
 from .usage_calculator import UsageCalculator
 from .game_utils import GameUtils
 from .completeness_checker_helper import CompletenessCheckerHelper
+from .schedule_context_calculator import ScheduleContextCalculator
 
 __all__ = [
     'QualityFlagsCalculator',
@@ -24,4 +26,5 @@ __all__ = [
     'UsageCalculator',
     'GameUtils',
     'CompletenessCheckerHelper',
+    'ScheduleContextCalculator',
 ]

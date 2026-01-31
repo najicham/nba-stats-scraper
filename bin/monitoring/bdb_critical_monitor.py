@@ -319,6 +319,56 @@ class BDBCriticalMonitor:
         except Exception as e:
             logger.warning(f"Failed to record gap: {e}")
 
+    def get_coverage_stats(self, check_date: Optional[date] = None) -> Dict:
+        """
+        Get BDB coverage statistics for a date.
+
+        Returns coverage percentage and counts.
+        """
+        if not check_date:
+            check_date = date.today() - timedelta(days=1)  # Yesterday by default
+
+        query = f"""
+        WITH scheduled AS (
+            SELECT COUNT(*) as total_games
+            FROM `{self.project_id}.nba_raw.nbac_schedule`
+            WHERE game_date = '{check_date}'
+              AND game_status = 3
+        ),
+        bdb_complete AS (
+            SELECT COUNT(DISTINCT LPAD(CAST(bdb_game_id AS STRING), 10, '0')) as complete_games
+            FROM `{self.project_id}.nba_raw.bigdataball_play_by_play`
+            WHERE game_date = '{check_date}'
+              AND event_type = 'shot'
+              AND shot_distance IS NOT NULL
+            HAVING COUNT(*) >= {self.MIN_SHOTS_PER_GAME}
+        )
+        SELECT
+            s.total_games,
+            COALESCE(b.complete_games, 0) as complete_games,
+            CASE
+                WHEN s.total_games > 0 THEN ROUND(100.0 * COALESCE(b.complete_games, 0) / s.total_games, 1)
+                ELSE 0
+            END as coverage_pct
+        FROM scheduled s
+        LEFT JOIN bdb_complete b ON true
+        """
+
+        try:
+            result = self.client.query(query).to_dataframe()
+            if result.empty:
+                return {'total_games': 0, 'complete_games': 0, 'coverage_pct': 0}
+            row = result.iloc[0]
+            return {
+                'date': check_date,
+                'total_games': int(row['total_games']),
+                'complete_games': int(row['complete_games']),
+                'coverage_pct': float(row['coverage_pct'])
+            }
+        except Exception as e:
+            logger.error(f"Error getting coverage stats: {e}")
+            return {'total_games': 0, 'complete_games': 0, 'coverage_pct': 0}
+
     def run(self, check_date: Optional[date] = None) -> Dict:
         """
         Main monitoring loop.
@@ -337,14 +387,42 @@ class BDBCriticalMonitor:
             'critical': 0,
             'emergency': 0,
             'retries_triggered': 0,
-            'alerts_sent': 0
+            'alerts_sent': 0,
+            'coverage_pct': 0
         }
+
+        # Get yesterday's coverage stats
+        yesterday = date.today() - timedelta(days=1)
+        coverage = self.get_coverage_stats(yesterday)
+        stats['coverage_pct'] = coverage['coverage_pct']
+
+        logger.info(f"Yesterday's coverage ({yesterday}): {coverage['complete_games']}/{coverage['total_games']} games ({coverage['coverage_pct']}%)")
+
+        # Alert if coverage < 80%
+        if coverage['total_games'] > 0 and coverage['coverage_pct'] < 80:
+            msg = (
+                f"*⚠️ Low BDB Coverage Alert*\n\n"
+                f"Yesterday ({yesterday}): {coverage['coverage_pct']}% coverage\n"
+                f"Complete: {coverage['complete_games']}/{coverage['total_games']} games\n\n"
+                f"Expected: ≥80% coverage for reliable shot zone data"
+            )
+            if self.send_slack_alert(msg, 'warning'):
+                stats['alerts_sent'] += 1
 
         # Get games needing BDB
         games = self.get_games_needing_bdb(check_date)
 
         if not games:
             logger.info("All games have complete BDB data!")
+            # Send daily "all OK" summary
+            if coverage['total_games'] > 0:
+                msg = (
+                    f"*✅ BDB Monitor Daily Summary*\n\n"
+                    f"All games from last 3 days have complete BDB data\n"
+                    f"Yesterday: {coverage['coverage_pct']}% coverage ({coverage['complete_games']}/{coverage['total_games']} games)\n\n"
+                    f"No action needed."
+                )
+                self.send_slack_alert(msg, 'ok')
             return stats
 
         stats['games_checked'] = len(games)
@@ -407,16 +485,28 @@ class BDBCriticalMonitor:
         return stats
 
     def _format_alert_message(self, games: List[Dict], severity: str) -> str:
-        """Format alert message for Slack."""
+        """Format alert message for Slack with trend data."""
+        # Group games by status
+        from collections import Counter
+        by_date = Counter(g['game_date'] for g in games)
+        by_status = Counter(g['bdb_status'] for g in games)
+
         lines = [
             f"*{len(games)} games missing BigDataBall data ({severity})*",
-            ""
+            "",
+            "*Games by Date:*"
         ]
+
+        for game_date, count in sorted(by_date.items(), reverse=True)[:3]:
+            lines.append(f"• {game_date}: {count} games")
+
+        lines.append("")
+        lines.append("*Oldest Missing Games:*")
 
         for game in games[:5]:  # Limit to 5 games in alert
             lines.append(
                 f"• {game['game_date']} {game['away_team_tricode']}@{game['home_team_tricode']} "
-                f"- {game['hours_since_game']}h since game ended"
+                f"- {game['hours_since_game']}h ago ({game['bdb_status']})"
             )
 
         if len(games) > 5:
@@ -424,7 +514,9 @@ class BDBCriticalMonitor:
 
         lines.extend([
             "",
-            "Shot zone features will be degraded. Retry triggered automatically.",
+            f"*Impact:* Shot zone features degraded for {len(games)} games",
+            f"*Action:* Retry triggered automatically, will check hourly",
+            "",
             "Run `python bin/monitoring/bdb_critical_monitor.py` for details."
         ])
 

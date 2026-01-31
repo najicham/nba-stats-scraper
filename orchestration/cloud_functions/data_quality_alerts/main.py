@@ -486,6 +486,141 @@ class DataQualityMonitor:
         except Exception as e:
             logger.warning(f"Could not store BDL quality metrics: {e}")
 
+    def check_shot_zone_quality(self, game_date: date) -> Tuple[str, str, Dict]:
+        """
+        Check shot zone data quality for potential corruption or data source issues.
+
+        Monitors:
+        - Shot zone completeness (% with has_complete_shot_zones = TRUE)
+        - Paint/three/mid-range rate distributions
+        - Anomalies indicating data corruption
+
+        Returns:
+            (alert_level, message, details)
+        """
+        query = f"""
+        WITH shot_zone_metrics AS (
+            SELECT
+                COUNT(*) as total_records,
+                COUNTIF(has_complete_shot_zones = TRUE) as complete_records,
+                ROUND(SAFE_DIVIDE(COUNTIF(has_complete_shot_zones = TRUE) * 100.0, COUNT(*)), 1) as pct_complete,
+
+                -- Average rates for complete records only
+                ROUND(AVG(CASE WHEN has_complete_shot_zones = TRUE
+                    THEN SAFE_DIVIDE(paint_attempts * 100.0,
+                         paint_attempts + mid_range_attempts + three_attempts_pbp) END), 1) as avg_paint_rate,
+                ROUND(AVG(CASE WHEN has_complete_shot_zones = TRUE
+                    THEN SAFE_DIVIDE(three_attempts_pbp * 100.0,
+                         paint_attempts + mid_range_attempts + three_attempts_pbp) END), 1) as avg_three_rate,
+                ROUND(AVG(CASE WHEN has_complete_shot_zones = TRUE
+                    THEN SAFE_DIVIDE(mid_range_attempts * 100.0,
+                         paint_attempts + mid_range_attempts + three_attempts_pbp) END), 1) as avg_mid_rate,
+
+                -- Anomaly detection (data corruption indicators)
+                COUNTIF(has_complete_shot_zones = TRUE
+                    AND SAFE_DIVIDE(paint_attempts * 100.0,
+                         paint_attempts + mid_range_attempts + three_attempts_pbp) < 25) as low_paint_count,
+                COUNTIF(has_complete_shot_zones = TRUE
+                    AND SAFE_DIVIDE(three_attempts_pbp * 100.0,
+                         paint_attempts + mid_range_attempts + three_attempts_pbp) > 55) as high_three_count
+            FROM `{self.project_id}.nba_analytics.player_game_summary`
+            WHERE game_date = @game_date
+              AND minutes_played > 0
+        )
+        SELECT * FROM shot_zone_metrics
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date.isoformat())
+            ]
+        )
+
+        result = self.bq_client.query(query, job_config=job_config).result()
+        row = next(result, None)
+
+        if not row or row.total_records == 0:
+            return 'OK', 'No player game data yet', {}
+
+        pct_complete = row.pct_complete if row.pct_complete is not None else 0
+        avg_paint = row.avg_paint_rate if row.avg_paint_rate is not None else 0
+        avg_three = row.avg_three_rate if row.avg_three_rate is not None else 0
+        avg_mid = row.avg_mid_rate if row.avg_mid_rate is not None else 0
+
+        details = {
+            'total_records': row.total_records,
+            'complete_records': row.complete_records,
+            'pct_complete': pct_complete,
+            'avg_paint_rate': avg_paint,
+            'avg_three_rate': avg_three,
+            'avg_mid_rate': avg_mid,
+            'low_paint_anomalies': row.low_paint_count,
+            'high_three_anomalies': row.high_three_count
+        }
+
+        # Store metrics for trend analysis
+        self._store_shot_zone_quality_metrics(game_date, details)
+
+        # Alert conditions (Session 53 thresholds)
+        # CRITICAL: Data corruption detected
+        if avg_paint < 25 or avg_three > 55:
+            return (
+                'CRITICAL',
+                f'SHOT ZONE DATA CORRUPTION: Paint rate {avg_paint}% (expected 30-45%) or Three rate {avg_three}% (expected 20-50%). Code regression or mixed data sources detected.',
+                details
+            )
+        # CRITICAL: Very low completeness
+        elif pct_complete < 30:
+            return (
+                'CRITICAL',
+                f'CRITICAL: Only {pct_complete}% shot zone completeness. BigDataBall PBP data missing or scraper failure.',
+                details
+            )
+        # WARNING: Degraded completeness
+        elif pct_complete < 50:
+            return (
+                'WARNING',
+                f'WARNING: Shot zone completeness at {pct_complete}% (expected >85%). BDB coverage degraded.',
+                details
+            )
+        # WARNING: Marginal completeness
+        elif pct_complete < 75:
+            return (
+                'WARNING',
+                f'LOW COMPLETENESS: Shot zone data at {pct_complete}%. Monitor BDB availability.',
+                details
+            )
+        # OK: Good quality
+        else:
+            return 'OK', f'Shot zone quality good: {pct_complete}% complete, rates within expected ranges', details
+
+    def _store_shot_zone_quality_metrics(self, game_date: date, metrics: Dict) -> None:
+        """Store shot zone quality metrics in BigQuery for trend analysis."""
+        try:
+            # Store in dedicated shot_zone_quality_trend table
+            table_id = f"{self.project_id}.nba_orchestration.shot_zone_quality_trend"
+
+            rows = [{
+                'game_date': game_date.isoformat(),
+                'total_records': metrics['total_records'],
+                'complete_records': metrics['complete_records'],
+                'pct_complete': metrics['pct_complete'],
+                'avg_paint_rate': metrics['avg_paint_rate'],
+                'avg_three_rate': metrics['avg_three_rate'],
+                'avg_mid_rate': metrics['avg_mid_rate'],
+                'low_paint_anomalies': metrics['low_paint_anomalies'],
+                'high_three_anomalies': metrics['high_three_anomalies'],
+                'checked_at': datetime.utcnow().isoformat()
+            }]
+
+            errors = self.bq_client.insert_rows_json(table_id, rows)
+            if errors:
+                logger.warning(f"Failed to store shot zone quality metrics: {errors}")
+            else:
+                logger.info(f"Stored shot zone quality metrics for {game_date}")
+        except Exception as e:
+            logger.warning(f"Could not store shot zone quality metrics (table may not exist yet): {e}")
+
 
 def send_slack_alert(level: str, check_name: str, message: str, details: Dict, game_date: date) -> bool:
     """Send alert to Slack webhook."""
@@ -602,7 +737,8 @@ def check_data_quality(request):
             'usage_rate': monitor.check_usage_rate_coverage,
             'duplicates': monitor.check_duplicates,
             'prop_lines': monitor.check_prop_lines,
-            'bdl_quality': monitor.check_bdl_quality  # Added Session 41 - track BDL quality for potential re-enable
+            'bdl_quality': monitor.check_bdl_quality,  # Added Session 41 - track BDL quality for potential re-enable
+            'shot_zone_quality': monitor.check_shot_zone_quality  # Added Session 54 - shot zone data quality monitoring
         }
 
         # Filter checks
