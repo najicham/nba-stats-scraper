@@ -292,6 +292,9 @@ class ShotZoneAnalyzer:
                         'paint_makes': int(row['paint_makes']) if pd.notna(row['paint_makes']) else None,
                         'mid_range_attempts': int(row['mid_range_attempts']) if pd.notna(row['mid_range_attempts']) else None,
                         'mid_range_makes': int(row['mid_range_makes']) if pd.notna(row['mid_range_makes']) else None,
+                        # CRITICAL: Store three-point from PBP (not box score) for source consistency
+                        'three_attempts_pbp': int(row['three_attempts_pbp']) if pd.notna(row['three_attempts_pbp']) else None,
+                        'three_makes_pbp': int(row['three_makes_pbp']) if pd.notna(row['three_makes_pbp']) else None,
                         'assisted_fg_makes': int(row['assisted_fg_makes']) if pd.notna(row['assisted_fg_makes']) else None,
                         'unassisted_fg_makes': int(row['unassisted_fg_makes']) if pd.notna(row['unassisted_fg_makes']) else None,
                         'and1_count': int(row['and1_count']) if pd.notna(row['and1_count']) else None,
@@ -462,6 +465,9 @@ class ShotZoneAnalyzer:
             'paint_makes': zones.get('paint_makes'),
             'mid_range_attempts': zones.get('mid_range_attempts'),
             'mid_range_makes': zones.get('mid_range_makes'),
+            # CRITICAL: Return three-point from PBP (not box score) for source consistency
+            'three_attempts_pbp': zones.get('three_attempts_pbp'),
+            'three_makes_pbp': zones.get('three_makes_pbp'),
             # Shot creation (assisted vs self-created)
             'assisted_fg_makes': zones.get('assisted_fg_makes'),
             'unassisted_fg_makes': zones.get('unassisted_fg_makes'),

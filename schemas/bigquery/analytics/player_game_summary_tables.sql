@@ -63,13 +63,18 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_analytics.player_game_summary
   personal_fouls INT64,                             -- Personal fouls committed
   
   -- ============================================================================
-  -- SHOT ZONE PERFORMANCE (8 fields)
+  -- SHOT ZONE PERFORMANCE (11 fields)
   -- From Big Ball Data (preferred) → NBA.com PBP (backup) → Estimation (fallback)
+  -- CRITICAL: All zone data must come from same source (PBP) to avoid corruption
   -- ============================================================================
   paint_attempts INT64,                             -- Field goal attempts in paint (≤8 feet)
   paint_makes INT64,                                -- Field goal makes in paint
   mid_range_attempts INT64,                         -- Mid-range attempts (9-23 feet, 2PT)
   mid_range_makes INT64,                            -- Mid-range makes
+  -- Three-point tracking from PBP (2026-01-31: added for source consistency)
+  three_attempts_pbp INT64,                         -- Three-point attempts from play-by-play (matches paint/mid source)
+  three_makes_pbp INT64,                            -- Three-point makes from play-by-play (matches paint/mid source)
+  has_complete_shot_zones BOOLEAN,                  -- TRUE if all three zones have data from same PBP source
   paint_blocks INT64,                               -- Blocks on paint shots (Big Ball Data only)
   mid_range_blocks INT64,                           -- Blocks on mid-range shots (Big Ball Data only)
   three_pt_blocks INT64,                            -- Blocks on three-point shots (Big Ball Data only)
@@ -229,7 +234,7 @@ OPTIONS(
 -- ============================================================================
 -- Core identifiers:           8 fields
 -- Basic stats:               16 fields
--- Shot zones:                 8 fields
+-- Shot zones:                11 fields  (+3 for PBP three-point tracking and completeness flag)
 -- Shot creation:              2 fields
 -- Advanced efficiency:        5 fields
 -- Prop betting:               7 fields
@@ -243,7 +248,7 @@ OPTIONS(
 -- Smart reprocessing:         1 field   (data_hash for Phase 4 optimization)
 -- Processing metadata:        2 fields
 -- -------------------------
--- TOTAL:                     92 fields
+-- TOTAL:                     95 fields
 
 -- ============================================================================
 -- SOURCE TRACKING FIELD SEMANTICS

@@ -2271,13 +2271,15 @@ class PlayerGameSummaryProcessor(
                     # Shooting
                     'fg_attempts': int(row['field_goals_attempted']) if pd.notna(row['field_goals_attempted']) else None,
                     'fg_makes': int(row['field_goals_made']) if pd.notna(row['field_goals_made']) else None,
-                    'three_pt_attempts': int(row['three_pointers_attempted']) if pd.notna(row['three_pointers_attempted']) else None,
-                    'three_pt_makes': int(row['three_pointers_made']) if pd.notna(row['three_pointers_made']) else None,
+                    # CRITICAL: Use PBP three_pt (not box score) for source consistency with paint/mid
+                    # If PBP not available, set to None to avoid mixed-source corruption
+                    'three_pt_attempts': shot_zone_data.get('three_attempts_pbp'),
+                    'three_pt_makes': shot_zone_data.get('three_makes_pbp'),
                     'ft_attempts': int(row['free_throws_attempted']) if pd.notna(row['free_throws_attempted']) else None,
                     'ft_makes': int(row['free_throws_made']) if pd.notna(row['free_throws_made']) else None,
 
                     # Shot zones + shot creation (Pass 2 enrichment from BigDataBall play-by-play)
-                    **self._get_shot_zone_data(row['game_id'], player_lookup),
+                    **shot_zone_data,
 
                     # Efficiency
                     'usage_rate': round(usage_rate, 1) if usage_rate else None,
@@ -2324,6 +2326,10 @@ class PlayerGameSummaryProcessor(
                     'processing_context': self._determine_processing_context(),
                     'data_quality_flag': 'complete' if (usage_rate is not None and self._team_stats_available) else ('partial_no_team_stats' if not self._team_stats_available else 'partial'),
                     'team_stats_available_at_processing': self._team_stats_available,
+
+                    # Shot zone completeness tracking (2026-01-31)
+                    # Tracks if all three zones have data from same PBP source (not mixed with box score)
+                    'has_complete_shot_zones': has_complete_shot_zones,
 
                     # Metadata
                     'processed_at': datetime.now(timezone.utc).isoformat()
