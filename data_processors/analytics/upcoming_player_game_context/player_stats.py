@@ -45,7 +45,7 @@ def calculate_fatigue_metrics(
             'minutes_in_last_14_days': 0,
             'avg_minutes_per_game_last_7': None,
             'back_to_backs_last_14_days': 0,
-            'avg_usage_rate_last_7_games': None,  # TODO: future
+            'avg_usage_rate_last_7_games': None,  # No historical data available
             'fourth_quarter_minutes_last_7': None,  # TODO: future
             'clutch_minutes_last_7_games': None,  # TODO: future
             'back_to_back': False
@@ -82,6 +82,13 @@ def calculate_fatigue_metrics(
     # Average minutes per game
     avg_minutes_last_7 = minutes_last_7 / len(games_last_7) if len(games_last_7) > 0 else None
 
+    # Average usage rate last 7 games (Session 50: implemented from historical data)
+    avg_usage_rate_last_7 = None
+    if len(games_last_7) > 0 and 'usage_rate' in games_last_7.columns:
+        valid_usage = games_last_7['usage_rate'].dropna()
+        if len(valid_usage) > 0:
+            avg_usage_rate_last_7 = round(valid_usage.mean(), 1)
+
     # Back-to-backs in last 14 days
     back_to_backs_count = 0
     if len(games_last_14) > 1:
@@ -117,7 +124,7 @@ def calculate_fatigue_metrics(
         'minutes_in_last_14_days': int(minutes_last_14),
         'avg_minutes_per_game_last_7': round(avg_minutes_last_7, 1) if avg_minutes_last_7 else None,
         'back_to_backs_last_14_days': back_to_backs_count,
-        'avg_usage_rate_last_7_games': None,  # TODO: future (needs play-by-play)
+        'avg_usage_rate_last_7_games': avg_usage_rate_last_7,  # Session 50: implemented from historical data
         'fourth_quarter_minutes_last_7': None,  # TODO: future
         'clutch_minutes_last_7_games': None,  # TODO: future
         'back_to_back': back_to_back
