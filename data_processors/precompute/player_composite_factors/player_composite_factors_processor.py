@@ -1572,7 +1572,8 @@ class PlayerCompositeFactorsProcessor(
             factor_contexts[factor.context_field] = context
 
         # Extract individual scores for convenience
-        fatigue_score = int(factor_scores['fatigue_score'])
+        # BUGFIX: factor_scores contains adjustment, use context for raw 0-100 score
+        fatigue_score = factor_contexts['fatigue_context_json']['final_score']
         shot_zone_score = factor_scores['shot_zone_mismatch_score']
         pace_score = factor_scores['pace_score']
         usage_spike_score = factor_scores['usage_spike_score']
@@ -1603,7 +1604,9 @@ class PlayerCompositeFactorsProcessor(
             # Note: NUMERIC fields have limited scale in BigQuery schema
             # shot_zone_mismatch_score: precision=4, scale=1 (XXX.X)
             # pace_score, usage_spike_score: precision=3, scale=1 (XX.X)
-            'fatigue_score': int(factor_scores['fatigue_score']),  # INTEGER
+            # BUGFIX: factor_scores contains adjustment (-5 to 0), not raw score (0-100)
+            # Use context's final_score which has the correct 0-100 value
+            'fatigue_score': factor_contexts['fatigue_context_json']['final_score'],  # INTEGER 0-100
             'shot_zone_mismatch_score': round(factor_scores['shot_zone_mismatch_score'], 1),
             'pace_score': round(factor_scores['pace_score'], 1),
             'usage_spike_score': round(factor_scores['usage_spike_score'], 1),
