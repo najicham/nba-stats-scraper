@@ -41,19 +41,19 @@ class BigQueryClient:
             SELECT COUNT(*) as total_games
             FROM `{self.project_id}.nba_reference.nba_schedule`
             WHERE game_date = CURRENT_DATE()
-            AND game_status IN ('Final', 'InProgress', 'Scheduled')
+            AND game_status IN (1, 2, 3)  -- 1=Scheduled, 2=InProgress, 3=Final
         ),
         today_grading AS (
             SELECT
                 COUNT(*) as total_graded,
                 COUNTIF(prediction_correct) as correct_predictions,
-                ROUND(COUNTIF(prediction_correct) * 100.0 / COUNT(*), 1) as accuracy_pct
+                ROUND(COUNTIF(prediction_correct) * 100.0 / NULLIF(COUNT(*), 0), 1) as accuracy_pct
             FROM `{self.project_id}.nba_predictions.prediction_accuracy`
             WHERE game_date = CURRENT_DATE()
         ),
         week_avg AS (
             SELECT
-                ROUND(COUNTIF(prediction_correct) * 100.0 / COUNT(*), 1) as week_avg_accuracy
+                ROUND(COUNTIF(prediction_correct) * 100.0 / NULLIF(COUNT(*), 0), 1) as week_avg_accuracy
             FROM `{self.project_id}.nba_predictions.prediction_accuracy`
             WHERE game_date >= CURRENT_DATE() - 7
             AND game_date < CURRENT_DATE()
@@ -106,24 +106,24 @@ class BigQueryClient:
         query = f"""
         WITH today_runs AS (
             SELECT
-                processor_type,
+                processor_name,
                 COUNT(*) as total_runs,
                 COUNTIF(status = 'success') as successful_runs,
                 COUNTIF(status = 'error') as failed_runs,
-                ROUND(AVG(TIMESTAMP_DIFF(end_time, start_time, SECOND)), 1) as avg_duration_seconds
+                ROUND(AVG(duration_seconds), 1) as avg_duration_seconds
             FROM `{self.project_id}.nba_reference.processor_run_history`
-            WHERE DATE(start_time) = CURRENT_DATE()
-            GROUP BY processor_type
+            WHERE DATE(started_at) = CURRENT_DATE()
+            GROUP BY processor_name
         )
         SELECT
-            processor_type,
+            processor_name,
             total_runs,
             successful_runs,
             failed_runs,
             ROUND(successful_runs * 100.0 / total_runs, 1) as success_rate_pct,
             avg_duration_seconds
         FROM today_runs
-        ORDER BY processor_type
+        ORDER BY processor_name
         """
 
         try:
@@ -132,7 +132,7 @@ class BigQueryClient:
 
             for row in result:
                 stats.append({
-                    'processor_type': row.processor_type,
+                    'processor_type': row.processor_name,
                     'total_runs': row.total_runs,
                     'successful_runs': row.successful_runs,
                     'failed_runs': row.failed_runs,
@@ -157,14 +157,13 @@ class BigQueryClient:
         """
         query = f"""
         SELECT
-            processor_type,
-            start_time,
-            error_message,
-            error_details
+            processor_name,
+            started_at,
+            errors
         FROM `{self.project_id}.nba_reference.processor_run_history`
         WHERE status = 'error'
-        AND DATE(start_time) >= CURRENT_DATE() - 1
-        ORDER BY start_time DESC
+        AND DATE(started_at) >= CURRENT_DATE() - 1
+        ORDER BY started_at DESC
         LIMIT {limit}
         """
 
@@ -173,11 +172,13 @@ class BigQueryClient:
             errors = []
 
             for row in result:
+                # errors is a JSON field, extract message if available
+                error_msg = str(row.errors) if row.errors else 'Unknown error'
                 errors.append({
-                    'processor_type': row.processor_type,
-                    'timestamp': row.start_time.isoformat() if row.start_time else None,
-                    'error_message': row.error_message,
-                    'error_details': row.error_details
+                    'processor_type': row.processor_name,
+                    'timestamp': row.started_at.isoformat() if row.started_at else None,
+                    'error_message': error_msg,
+                    'error_details': None
                 })
 
             return errors
@@ -206,9 +207,9 @@ class BigQueryClient:
         query = f"""
         SELECT
             game_date,
-            completeness_pct,
+            pct_complete,
             avg_paint_rate,
-            anomaly_count
+            low_paint_anomalies + high_three_anomalies as anomaly_count
         FROM `{self.project_id}.nba_orchestration.shot_zone_quality_trend`
         WHERE game_date >= CURRENT_DATE() - 7
         ORDER BY game_date DESC
@@ -222,10 +223,10 @@ class BigQueryClient:
             if row:
                 return {
                     'game_date': row.game_date.isoformat() if row.game_date else None,
-                    'completeness_pct': row.completeness_pct,
+                    'completeness_pct': row.pct_complete,
                     'avg_paint_rate': row.avg_paint_rate,
                     'anomaly_count': row.anomaly_count,
-                    'status': 'good' if row.completeness_pct >= 80 else 'degraded'
+                    'status': 'good' if row.pct_complete >= 80 else 'degraded'
                 }
             else:
                 return {'status': 'unknown'}
