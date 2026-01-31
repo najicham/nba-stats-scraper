@@ -1402,7 +1402,7 @@ def _log_prediction_regeneration(
         'regeneration_timestamp': datetime.now(timezone.utc).isoformat(),
         'game_date': game_date,
         'reason': reason,
-        'metadata': json_module.dumps(metadata),
+        'metadata': metadata,  # Pass as dict, not JSON string
         'superseded_count': results.get('superseded_count', 0),
         'regenerated_count': results.get('regenerated_count', 0),
         'triggered_by': 'coordinator_endpoint'
