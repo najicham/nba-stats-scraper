@@ -151,6 +151,7 @@ class FeatureExtractor:
                 pgs.universal_player_id,
                 pgs.game_id,
                 pgs.game_date,
+                pgs.team_abbr,  -- v3.5: Add team_abbr for team_win_pct calculation
                 pgs.opponent_team_abbr,
                 -- Derive is_home from game_id pattern (home team is second in game_id)
                 CASE
@@ -175,6 +176,7 @@ class FeatureExtractor:
                 universal_player_id,
                 game_id,
                 game_date,
+                team_abbr,  -- v3.5: Add team_abbr for team_win_pct calculation
                 opponent_team_abbr,
                 home_game AS is_home,
                 days_rest,
