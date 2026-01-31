@@ -2,15 +2,69 @@
 
 This worker must remain at module level (not a class method) to be picklable
 by ProcessPoolExecutor. All parameters must be plain dicts/primitives.
+
+IMPORTANT: This module includes bytecode cache validation to prevent issues
+where stale .pyc files cause ProcessPoolExecutor workers to use old code.
+See Session 47 handoff for details on the fatigue_score=0 bug.
 """
 
 import json
 import logging
+import os
+import sys
 from datetime import datetime, date, timezone
+from pathlib import Path
 from typing import Optional
 import pandas as pd
 
 logger = logging.getLogger(__name__)
+
+# ============================================================================
+# BYTECODE CACHE VALIDATION
+# ============================================================================
+# ProcessPoolExecutor spawns new Python processes that reimport modules.
+# If .pyc files are stale (contain old code), workers will use wrong code.
+# This validation clears the __pycache__ for this module on import.
+
+_WORKER_CODE_VERSION = "v2_fatigue_fix"  # Increment when making critical changes
+
+
+def _validate_bytecode_cache():
+    """
+    Validate bytecode cache is fresh. If not, clear it.
+
+    This prevents the bug where stale .pyc files cause ProcessPoolExecutor
+    workers to use old code (e.g., fatigue_score=0 instead of correct value).
+    """
+    try:
+        module_dir = Path(__file__).parent
+        cache_dir = module_dir / "__pycache__"
+        factors_cache_dir = module_dir / "factors" / "__pycache__"
+
+        for pycache in [cache_dir, factors_cache_dir]:
+            if pycache.exists():
+                # Get source and cache timestamps
+                for pyc_file in pycache.glob("*.pyc"):
+                    py_name = pyc_file.stem.split('.')[0] + ".py"
+                    py_file = pycache.parent / py_name
+
+                    if py_file.exists():
+                        py_mtime = py_file.stat().st_mtime
+                        pyc_mtime = pyc_file.stat().st_mtime
+
+                        # If source is newer than cache, clear the cache file
+                        if py_mtime > pyc_mtime:
+                            logger.warning(
+                                f"Stale bytecode detected: {pyc_file.name} older than {py_name}. Removing."
+                            )
+                            pyc_file.unlink()
+    except Exception as e:
+        # Don't fail on cache validation errors, just log
+        logger.debug(f"Bytecode cache validation skipped: {e}")
+
+
+# Run validation on module import
+_validate_bytecode_cache()
 
 
 def _process_single_player_worker(
@@ -231,13 +285,28 @@ def _process_single_player_worker(
         # ================================================================
         validation_errors = _validate_feature_ranges(record)
         if validation_errors:
-            # Log critical error but still write (for monitoring)
-            # Future: could reject writes entirely for CRITICAL violations
-            logger.error(
-                f"FEATURE_RANGE_VIOLATION for {player_lookup}: {validation_errors}"
-            )
-            # Add validation issues to data_quality_issues
-            record['data_quality_issues'] = record.get('data_quality_issues', []) + validation_errors
+            # Check for CRITICAL violations (fatigue_score is most important)
+            critical_errors = [e for e in validation_errors if e.startswith("CRITICAL:")]
+
+            if critical_errors:
+                # FAIL the record for critical violations to prevent bad data
+                logger.error(
+                    f"CRITICAL_FEATURE_VIOLATION for {player_lookup}: {critical_errors}. "
+                    f"Record will be rejected. This indicates a code bug (likely stale .pyc cache)."
+                )
+                return (False, {
+                    'entity_id': player_lookup,
+                    'entity_type': 'player',
+                    'reason': f"Critical feature validation failed: {critical_errors}",
+                    'category': 'VALIDATION_ERROR'
+                })
+            else:
+                # Just log warnings for non-critical violations
+                logger.warning(
+                    f"FEATURE_RANGE_VIOLATION for {player_lookup}: {validation_errors}"
+                )
+                # Add validation issues to data_quality_issues
+                record['data_quality_issues'] = record.get('data_quality_issues', []) + validation_errors
 
         return (True, record)
 
