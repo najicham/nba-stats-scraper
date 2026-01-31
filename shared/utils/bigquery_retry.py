@@ -187,7 +187,8 @@ def is_quota_exceeded_error(exc):
     Predicate function to identify BigQuery quota exceeded errors.
 
     These occur when too many concurrent DML operations target the same table,
-    exceeding BigQuery's per-table concurrent DML operation limit (~10-15).
+    exceeding BigQuery's per-table concurrent DML operation limit (~10-15),
+    OR when too many API requests (insertJob) are made simultaneously.
 
     Args:
         exc: Exception to check
@@ -202,7 +203,10 @@ def is_quota_exceeded_error(exc):
     quota_indicators = [
         "Quota exceeded",
         "quota for total number of dml jobs",
-        "pending + running"
+        "pending + running",
+        "Exceeded rate limits",
+        "too many api requests",
+        "JobService.insertJob"
     ]
 
     is_quota_error = any(indicator in error_message for indicator in quota_indicators)
@@ -210,16 +214,20 @@ def is_quota_exceeded_error(exc):
     if is_quota_error:
         table_name = extract_table_name(error_message)
 
+        # Determine error type for better logging
+        error_type = "API rate limit" if "too many api requests" in error_message else "DML quota"
+
         # Structured logging for retry metrics
         logger.warning(
-            "BigQuery quota exceeded - too many concurrent DML operations - will retry",
+            f"BigQuery {error_type} exceeded - will retry",
             extra={
                 'event_type': 'bigquery_quota_exceeded',
+                'quota_type': error_type,
                 'table_name': table_name,
                 'error_message': error_message[:200],
                 'timestamp': datetime.utcnow().isoformat(),
                 'retry_triggered': True,
-                'recommendation': 'Consider implementing table-level semaphore to limit concurrent operations'
+                'recommendation': 'Consider implementing rate limiting or reducing concurrent operations'
             }
         )
 
