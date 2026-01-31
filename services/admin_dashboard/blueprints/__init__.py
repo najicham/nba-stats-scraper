@@ -13,8 +13,10 @@
 # - partials: HTMX partial views
 # - source_blocks: Source-blocked resources monitoring
 # - data_quality: Data quality monitoring and prevention system effectiveness
+# - league_trends: League-wide trend monitoring for model drift detection
 
 from .status import status_bp
+from .league_trends import league_trends_bp
 from .grading import grading_bp
 from .analytics import analytics_bp
 from .trends import trends_bp
@@ -42,6 +44,7 @@ def register_blueprints(app):
     app.register_blueprint(partials_bp, url_prefix='/partials')
     app.register_blueprint(source_blocks_bp)  # Source blocks (includes /api/source-blocks and /source-blocks)
     app.register_blueprint(data_quality_bp)  # Data quality (includes /api/data-quality/*)
+    app.register_blueprint(league_trends_bp)  # League trends (includes /api/league-trends/*)
 
 
 __all__ = [
@@ -57,5 +60,6 @@ __all__ = [
     'partials_bp',
     'source_blocks_bp',
     'data_quality_bp',
+    'league_trends_bp',
     'register_blueprints',
 ]
