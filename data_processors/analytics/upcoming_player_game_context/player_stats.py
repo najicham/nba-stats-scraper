@@ -57,8 +57,9 @@ def calculate_fatigue_metrics(
     # Days rest
     days_rest = (target_date - last_game_date).days
 
-    # Back-to-back
-    back_to_back = (days_rest == 0)
+    # Back-to-back (consecutive days = 1 day apart, not 0)
+    # Bug fix Session 49: was days_rest == 0, but that means same-day (impossible)
+    back_to_back = (days_rest == 1)
 
     # Games in windows
     last_7_days = target_date - timedelta(days=7)
