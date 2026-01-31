@@ -38,11 +38,9 @@ except ImportError:
         # If still fails, create stub functions
         def notify_error(*args, **kwargs):
             pass
-        def notify_warning(*args, **kwargs): pass  #
-        ):
+        def notify_warning(*args, **kwargs):
             pass
-        def notify_info(*args, **kwargs): pass  #
-        ):
+        def notify_info(*args, **kwargs):
             pass
 
 
