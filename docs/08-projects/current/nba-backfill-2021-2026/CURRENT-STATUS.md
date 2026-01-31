@@ -92,14 +92,14 @@ The actual table names differ from documentation:
 ```sql
 -- Identify actual NBA game dates from schedule
 SELECT DISTINCT game_date
-FROM `nba-props-platform.nba_orchestration.nba_schedule`
+FROM `nba-props-platform.nba_reference.nba_schedule`
 WHERE game_date >= '2021-11-01'
   AND game_date < '2026-01-17'
 ORDER BY game_date;
 
 -- Find Phase 3 gaps on game days
 SELECT s.game_date
-FROM `nba-props-platform.nba_orchestration.nba_schedule` s
+FROM `nba-props-platform.nba_reference.nba_schedule` s
 LEFT JOIN `nba-props-platform.nba_analytics.player_game_summary` p
   ON s.game_date = p.game_date
 WHERE s.game_date >= '2021-11-01'

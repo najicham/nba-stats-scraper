@@ -1,9 +1,15 @@
 # CatBoost V8 Performance Analysis Project
 
-**Status:** ✅ DATA ISSUES FIXED - Model Valid
+**Status:** ✅ DATA ISSUES FIXED - V13 experiments complete
 **Started:** 2026-01-29 (Session 23)
-**Updated:** 2026-01-30 (Session 28)
-**Next Phase:** Monitor and verify
+**Updated:** 2026-01-31 (Session 52)
+**Next Phase:** Implement V13 with 60-day recency weighting
+
+## Latest Update (Session 52)
+
+**V12/V13 experiments completed.** Best configuration found:
+- **60-day recency weighting** achieves **65% hit rate** on high-confidence picks
+- See: `docs/08-projects/current/catboost-v12-v13-experiments/` for full results
 
 ## Key Discovery (Session 28)
 

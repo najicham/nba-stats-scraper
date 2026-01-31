@@ -1,9 +1,14 @@
 # CatBoost V9 Experiments
 
-**Status**: CLOSED - V9 code removed, recency weighting doesn't help
+**Status**: CLOSED - Superseded by V12/V13 experiments
 **Started**: 2026-01-30
 **Completed**: 2026-01-30
-**Next Step**: Create V11 with seasonal features (separate project)
+**Superseded By**: `docs/08-projects/current/catboost-v12-v13-experiments/`
+
+> **UPDATE (Session 52):** V12/V13 experiments found that 60-day recency weighting DOES help
+> for high-confidence picks (65% hit rate). The earlier V9 experiments used a different
+> evaluation period which may explain the conflicting results. See the V12/V13 experiments
+> for the latest findings.
 
 ---
 
