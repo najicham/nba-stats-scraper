@@ -529,6 +529,63 @@ class PlayerGameSummaryProcessor(
 
         return 'other'
 
+    def _derive_team_abbr(self, row: dict) -> str | None:
+        """
+        Derive team_abbr from game context when it's NULL in raw data.
+
+        This handles DNP players who sometimes have NULL team_abbr in gamebook extraction.
+
+        Derivation strategy:
+        1. Use existing team_abbr if available
+        2. Parse from game_id (format: YYYYMMDD_AWAY_HOME) using player's is_home flag
+        3. Use source_home_team/source_away_team with is_home flag
+
+        Args:
+            row: Data row with game_id, team_abbr, is_home, source_home_team, source_away_team
+
+        Returns:
+            Team abbreviation or None if cannot be derived
+        """
+        # Strategy 1: Use existing team_abbr
+        if pd.notna(row.get('team_abbr')) and row['team_abbr']:
+            return row['team_abbr']
+
+        # Strategy 2: Parse from game_id (YYYYMMDD_AWAY_HOME format)
+        game_id = row.get('game_id', '')
+        if game_id and '_' in game_id:
+            try:
+                parts = game_id.split('_')
+                if len(parts) >= 3:
+                    away_team = parts[1]  # e.g., 'ATL'
+                    home_team = parts[2]  # e.g., 'CHA'
+
+                    # Use is_home flag to determine which team
+                    is_home = row.get('is_home')
+                    if is_home is True:
+                        return home_team
+                    elif is_home is False:
+                        return away_team
+
+                    # If is_home not available, try source_home/away_team
+                    source_home = row.get('source_home_team')
+                    source_away = row.get('source_away_team')
+                    if source_home and source_home == home_team:
+                        return home_team
+                    if source_away and source_away == away_team:
+                        return away_team
+            except Exception:
+                pass
+
+        # Strategy 3: Fallback to source team fields with is_home
+        is_home = row.get('is_home')
+        if is_home is True and pd.notna(row.get('source_home_team')):
+            return row['source_home_team']
+        elif is_home is False and pd.notna(row.get('source_away_team')):
+            return row['source_away_team']
+
+        # Cannot derive - return None
+        return None
+
     def extract_raw_data(self) -> None:
         """
         Extract data with automatic dependency checking and source tracking.
@@ -1537,6 +1594,29 @@ class PlayerGameSummaryProcessor(
                         )
                         usage_rate = None  # Set to None rather than store invalid value
 
+            # Derive team_abbr with fallback logic for DNP players
+            # (Session 46: Fix for NULL team_abbr in raw gamebook data)
+            derived_team_abbr = self._derive_team_abbr(row)
+
+            # Derive opponent_team_abbr based on team_abbr and game context
+            derived_opponent_abbr = row.get('opponent_team_abbr')
+            if not derived_opponent_abbr and derived_team_abbr:
+                # Parse from game_id: YYYYMMDD_AWAY_HOME
+                game_id = row.get('game_id', '')
+                if game_id and '_' in game_id:
+                    try:
+                        parts = game_id.split('_')
+                        if len(parts) >= 3:
+                            away_team = parts[1]
+                            home_team = parts[2]
+                            # Opponent is the team that's not derived_team_abbr
+                            if derived_team_abbr == home_team:
+                                derived_opponent_abbr = away_team
+                            elif derived_team_abbr == away_team:
+                                derived_opponent_abbr = home_team
+                    except Exception:
+                        pass
+
             # Build record with source tracking
             record = {
                 # Core identifiers
@@ -1545,8 +1625,8 @@ class PlayerGameSummaryProcessor(
                 'player_full_name': row['player_full_name'],
                 'game_id': row['game_id'],
                 'game_date': row['game_date'].isoformat() if pd.notna(row['game_date']) else None,
-                'team_abbr': row['team_abbr'],
-                'opponent_team_abbr': row['opponent_team_abbr'],
+                'team_abbr': derived_team_abbr,
+                'opponent_team_abbr': derived_opponent_abbr,
                 'season_year': int(row['season_year']) if pd.notna(row['season_year']) else None,
 
                 # Basic stats
