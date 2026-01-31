@@ -43,6 +43,8 @@ from shared.utils.bigquery_retry import (
     retry_on_quota_exceeded,
     retry_on_serialization,
 )
+from shared.validation.pre_write_validator import PreWriteValidator, create_validation_failure_record
+from shared.utils.data_quality_logger import get_quality_logger
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +153,12 @@ class BigQuerySaveOpsMixin:
 
         # Deduplicate before save (prevents duplicates from multiple processing)
         rows = self._deduplicate_records(rows)
+
+        # Pre-write validation: Block records that would corrupt downstream data
+        rows = self._validate_before_write(rows, table_id)
+        if not rows:
+            logger.warning("All rows blocked by pre-write validation")
+            return False
 
         # Get target table schema (needed for both MERGE and INSERT strategies)
         try:
@@ -731,3 +739,104 @@ class BigQuerySaveOpsMixin:
                     return
                 else:
                     raise e
+
+    def _validate_before_write(self, rows: List[Dict], table_id: str) -> List[Dict]:
+        """
+        Validate records against business rules before writing to BigQuery.
+
+        This method blocks records that would corrupt downstream data, such as:
+        - DNP players with points=0 (should be NULL)
+        - Fatigue scores outside 0-100 range
+        - Feature arrays with wrong length
+
+        Args:
+            rows: List of records to validate
+            table_id: Full BigQuery table ID
+
+        Returns:
+            List of valid records (invalid records are logged but not returned)
+
+        Added: 2026-01-30 - Data Quality Self-Healing System
+        """
+        import os
+
+        # Check if validation is enabled (default: True)
+        if os.environ.get('ENABLE_PRE_WRITE_VALIDATION', 'true').lower() != 'true':
+            logger.debug("Pre-write validation disabled via environment variable")
+            return rows
+
+        if not rows:
+            return rows
+
+        # Extract table name from full table_id
+        # Format: project.dataset.table_name
+        table_name = table_id.split('.')[-1] if '.' in table_id else table_id
+
+        # Create validator for this table
+        validator = PreWriteValidator(table_name)
+
+        # If no rules defined for this table, skip validation
+        if not validator.rules:
+            logger.debug(f"No validation rules for {table_name}, skipping pre-write validation")
+            return rows
+
+        # Validate all records
+        valid_records, invalid_records = validator.validate(rows)
+
+        # Handle invalid records
+        if invalid_records:
+            blocked_count = len(invalid_records)
+            total_count = len(rows)
+
+            logger.warning(
+                f"PRE_WRITE_VALIDATION: Blocked {blocked_count}/{total_count} records "
+                f"for {table_name}"
+            )
+
+            # Log to quality events table
+            try:
+                quality_logger = get_quality_logger()
+                for record in invalid_records[:5]:  # Log first 5 details
+                    violations = record.get('_validation_violations', [])
+                    quality_logger.log_validation_blocked(
+                        table_name=table_name,
+                        game_date=str(record.get('game_date')) if record.get('game_date') else None,
+                        player_lookup=record.get('player_lookup'),
+                        violations=[v.get('error_message', str(v)) for v in violations],
+                        processor_name=self.__class__.__name__
+                    )
+                quality_logger.flush()
+            except Exception as log_e:
+                logger.warning(f"Failed to log validation failures: {log_e}")
+
+            # Send notification if significant blocking
+            if blocked_count > 10 or blocked_count > total_count * 0.1:
+                try:
+                    sample_violations = []
+                    for record in invalid_records[:3]:
+                        violations = record.get('_validation_violations', [])
+                        if violations:
+                            sample_violations.append(violations[0].get('error_message', 'unknown'))
+
+                    notify_warning(
+                        title=f"Pre-Write Validation Blocked Records: {self.__class__.__name__}",
+                        message=f"Blocked {blocked_count}/{total_count} records due to validation failures",
+                        details={
+                            'processor': self.__class__.__name__,
+                            'table': table_name,
+                            'blocked_count': blocked_count,
+                            'total_count': total_count,
+                            'sample_violations': sample_violations,
+                            'action': 'Records blocked from BigQuery write to prevent data corruption'
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                except Exception as notify_e:
+                    logger.warning(f"Failed to send validation notification: {notify_e}")
+
+        # Return only valid records
+        logger.info(
+            f"Pre-write validation: {len(valid_records)} valid, "
+            f"{len(invalid_records)} blocked for {table_name}"
+        )
+        return valid_records
