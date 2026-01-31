@@ -35,6 +35,100 @@ class TeamContextCalculator:
         """
         self.bq_client = bq_client
         self.project_id = project_id
+        # Cache for opponent metrics to avoid redundant queries
+        # Key: (opponent_abbr, game_date) -> dict of all metrics
+        self._opponent_cache = {}
+        self._team_cache = {}  # For team-specific metrics like pace_differential
+
+    def precompute_opponent_metrics(self, opponent_abbrs: list, game_date: date) -> None:
+        """
+        Pre-compute all opponent metrics in a single batch query.
+
+        This dramatically reduces BigQuery calls from O(players * metrics) to O(1).
+        Call this before processing players for a given date.
+
+        Args:
+            opponent_abbrs: List of unique opponent team abbreviations
+            game_date: Game date for the metrics
+        """
+        if not opponent_abbrs:
+            return
+
+        try:
+            # Single query to compute ALL opponent metrics for ALL teams
+            query = f"""
+            WITH team_games AS (
+                SELECT
+                    team_abbr,
+                    pace,
+                    opponent_ft_rate as opp_ft_rate,
+                    defensive_rating,
+                    offensive_rating,
+                    total_rebounds / NULLIF(total_rebounds + opponent_total_rebounds, 0) as reb_rate
+                FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+                WHERE team_abbr IN UNNEST(@opponent_abbrs)
+                  AND game_date < @game_date
+                  AND game_date >= '2024-10-01'
+            ),
+            last_10_per_team AS (
+                SELECT
+                    team_abbr,
+                    pace, opp_ft_rate, defensive_rating, offensive_rating, reb_rate,
+                    ROW_NUMBER() OVER (PARTITION BY team_abbr ORDER BY pace DESC) as rn
+                FROM team_games
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY team_abbr ORDER BY team_abbr) <= 10
+            )
+            SELECT
+                team_abbr as opponent_abbr,
+                ROUND(AVG(pace), 2) as avg_pace,
+                ROUND(STDDEV(pace), 2) as pace_variance,
+                ROUND(AVG(opp_ft_rate), 4) as avg_ft_rate,
+                ROUND(STDDEV(opp_ft_rate), 4) as ft_rate_variance,
+                ROUND(AVG(defensive_rating), 2) as avg_def_rating,
+                ROUND(STDDEV(defensive_rating), 2) as def_rating_variance,
+                ROUND(AVG(offensive_rating), 2) as avg_off_rating,
+                ROUND(STDDEV(offensive_rating), 2) as off_rating_variance,
+                ROUND(AVG(reb_rate), 4) as avg_reb_rate,
+                ROUND(STDDEV(reb_rate), 4) as reb_rate_variance
+            FROM last_10_per_team
+            GROUP BY team_abbr
+            """
+
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ArrayQueryParameter("opponent_abbrs", "STRING", opponent_abbrs),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
+
+            result = self.bq_client.query(query, job_config=job_config).result()
+
+            for row in result:
+                cache_key = (row.opponent_abbr, game_date)
+                self._opponent_cache[cache_key] = {
+                    'pace': row.avg_pace or 0.0,
+                    'pace_variance': row.pace_variance or 0.0,
+                    'ft_rate': row.avg_ft_rate or 0.0,
+                    'ft_rate_variance': row.ft_rate_variance or 0.0,
+                    'def_rating': row.avg_def_rating or 0.0,
+                    'def_rating_variance': row.def_rating_variance or 0.0,
+                    'off_rating': row.avg_off_rating or 0.0,
+                    'off_rating_variance': row.off_rating_variance or 0.0,
+                    'reb_rate': row.avg_reb_rate or 0.0,
+                    'reb_rate_variance': row.reb_rate_variance or 0.0,
+                }
+
+            logger.info(f"Pre-computed opponent metrics for {len(opponent_abbrs)} teams (cached {len(self._opponent_cache)} entries)")
+
+        except Exception as e:
+            logger.warning(f"Failed to pre-compute opponent metrics: {e}. Will fall back to individual queries.")
+
+    def _get_cached_opponent_metric(self, opponent_abbr: str, game_date: date, metric: str) -> Optional[float]:
+        """Get a cached metric value, or None if not cached."""
+        cache_key = (opponent_abbr, game_date)
+        if cache_key in self._opponent_cache:
+            return self._opponent_cache[cache_key].get(metric)
+        return None
 
     def calculate_pace_differential(self, team_abbr: str, opponent_abbr: str, game_date: date) -> float:
         """
@@ -104,6 +198,11 @@ class TeamContextCalculator:
         Returns:
             float: Average pace over last 10 games, rounded to 2 decimals
         """
+        # Check cache first
+        cached = self._get_cached_opponent_metric(opponent_abbr, game_date, 'pace')
+        if cached is not None:
+            return cached
+
         try:
             query = f"""
             WITH recent_games AS (
@@ -217,6 +316,11 @@ class TeamContextCalculator:
         Returns:
             float: Average defensive rating over last 10 games, rounded to 2 decimals
         """
+        # Check cache first
+        cached = self._get_cached_opponent_metric(opponent_abbr, game_date, 'def_rating')
+        if cached is not None:
+            return cached
+
         try:
             query = f"""
             WITH recent_games AS (
@@ -262,6 +366,11 @@ class TeamContextCalculator:
         Returns:
             float: Average offensive rating over last 10 games, rounded to 2 decimals
         """
+        # Check cache first
+        cached = self._get_cached_opponent_metric(opponent_abbr, game_date, 'off_rating')
+        if cached is not None:
+            return cached
+
         try:
             query = f"""
             WITH recent_games AS (
@@ -307,6 +416,11 @@ class TeamContextCalculator:
         Returns:
             float: Rebounding rate (rebounds/possession) over last 10 games, rounded to 2 decimals
         """
+        # Check cache first
+        cached = self._get_cached_opponent_metric(opponent_abbr, game_date, 'reb_rate')
+        if cached is not None:
+            return cached
+
         try:
             query = f"""
             WITH recent_games AS (
@@ -353,6 +467,11 @@ class TeamContextCalculator:
         Returns:
             float: Standard deviation of pace over last 10 games, rounded to 2 decimals
         """
+        # Check cache first
+        cached = self._get_cached_opponent_metric(opponent_abbr, game_date, 'pace_variance')
+        if cached is not None:
+            return cached
+
         try:
             query = f"""
             WITH recent_games AS (
@@ -399,6 +518,11 @@ class TeamContextCalculator:
             float: Standard deviation of FT rate per 100 possessions over last 10 games,
                    rounded to 3 decimals. Returns 0.0 if insufficient data.
         """
+        # Check cache first
+        cached = self._get_cached_opponent_metric(opponent_abbr, game_date, 'ft_rate_variance')
+        if cached is not None:
+            return cached
+
         try:
             query = f"""
             WITH recent_games AS (
@@ -458,6 +582,11 @@ class TeamContextCalculator:
         Returns:
             float: Standard deviation of defensive rating over last 10 games, rounded to 2 decimals
         """
+        # Check cache first
+        cached = self._get_cached_opponent_metric(opponent_abbr, game_date, 'def_rating_variance')
+        if cached is not None:
+            return cached
+
         try:
             query = f"""
             WITH recent_games AS (
@@ -503,6 +632,11 @@ class TeamContextCalculator:
         Returns:
             float: Standard deviation of offensive rating over last 10 games, rounded to 2 decimals
         """
+        # Check cache first
+        cached = self._get_cached_opponent_metric(opponent_abbr, game_date, 'off_rating_variance')
+        if cached is not None:
+            return cached
+
         try:
             query = f"""
             WITH recent_games AS (
@@ -548,6 +682,11 @@ class TeamContextCalculator:
         Returns:
             float: Standard deviation of rebounding rate over last 10 games, rounded to 3 decimals
         """
+        # Check cache first
+        cached = self._get_cached_opponent_metric(opponent_abbr, game_date, 'reb_rate_variance')
+        if cached is not None:
+            return cached
+
         try:
             query = f"""
             WITH recent_games AS (
@@ -845,3 +984,58 @@ class TeamContextCalculator:
         except (KeyError, AttributeError, TypeError) as e:
             logger.error(f"Data error getting star tier out for {team_abbr}: {e}")
             return 0
+
+    def get_probable_teammates(self, team_abbr: str, game_date: date) -> Optional[int]:
+        """
+        Count teammates with PROBABLE status for the game.
+
+        Players with 'probable' injury status are expected to play but have
+        some uncertainty. A high number of probable teammates may indicate
+        a team dealing with minor injuries/rest issues.
+
+        Args:
+            team_abbr: Team abbreviation (e.g., 'LAL')
+            game_date: Game date to check
+
+        Returns:
+            int: Number of teammates with probable status (0-10 typical range)
+                 Returns None if injury data is unavailable
+        """
+        try:
+            query = f"""
+            WITH latest_injury_status AS (
+                SELECT
+                    player_lookup,
+                    injury_status,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY player_lookup
+                        ORDER BY report_hour DESC
+                    ) as rn
+                FROM `{self.project_id}.nba_raw.nbac_injury_report`
+                WHERE game_date = @game_date
+                  AND team = @team_abbr
+            )
+            SELECT COUNT(*) as probable_count
+            FROM latest_injury_status
+            WHERE rn = 1
+              AND UPPER(injury_status) = 'PROBABLE'
+            """
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("team_abbr", "STRING", team_abbr),
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                ]
+            )
+
+            result = self.bq_client.query(query, job_config=job_config).result()
+            for row in result:
+                return int(row.probable_count) if row.probable_count is not None else 0
+
+            return 0
+
+        except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
+            logger.warning(f"BigQuery error getting probable teammates for {team_abbr}: {e}")
+            return None
+        except (KeyError, AttributeError, TypeError) as e:
+            logger.warning(f"Data error getting probable teammates for {team_abbr}: {e}")
+            return None

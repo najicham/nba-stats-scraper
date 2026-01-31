@@ -897,6 +897,26 @@ class UpcomingPlayerGameContextProcessor(
             )
             raise
 
+        # Pre-compute opponent team metrics in a single batch query
+        # This reduces BigQuery calls from O(players * metrics) to O(1)
+        try:
+            unique_opponents = set()
+            for player_info in self.players_to_process:
+                game_id = player_info.get('game_id')
+                if game_id and game_id in self.schedule_data:
+                    game_info = self.schedule_data[game_id]
+                    team_abbr = player_info.get('team_abbr')
+                    if team_abbr:
+                        opponent = self._get_opponent_team(team_abbr, game_info)
+                        if opponent:
+                            unique_opponents.add(opponent)
+
+            if unique_opponents:
+                team_calc = self._get_team_context_calculator()
+                team_calc.precompute_opponent_metrics(list(unique_opponents), self.target_date)
+        except Exception as e:
+            logger.warning(f"Failed to pre-compute opponent metrics, will use individual queries: {e}")
+
         # Feature flag for player-level parallelization
         ENABLE_PARALLELIZATION = os.environ.get('ENABLE_PLAYER_PARALLELIZATION', 'true').lower() == 'true'
 
