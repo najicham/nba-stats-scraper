@@ -55,42 +55,30 @@ class TeamContextCalculator:
             return
 
         try:
-            # Single query to compute ALL opponent metrics for ALL teams
+            # Batch query for offense table metrics (pace, off_rating, reb_rate)
             query = f"""
-            WITH team_games AS (
+            WITH ranked_games AS (
                 SELECT
                     team_abbr,
                     pace,
-                    opponent_ft_rate as opp_ft_rate,
-                    defensive_rating,
                     offensive_rating,
-                    total_rebounds / NULLIF(total_rebounds + opponent_total_rebounds, 0) as reb_rate
+                    rebounds / NULLIF(possessions, 0) as reb_rate,
+                    ROW_NUMBER() OVER (PARTITION BY team_abbr ORDER BY game_date DESC) as rn
                 FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
                 WHERE team_abbr IN UNNEST(@opponent_abbrs)
                   AND game_date < @game_date
                   AND game_date >= '2024-10-01'
-            ),
-            last_10_per_team AS (
-                SELECT
-                    team_abbr,
-                    pace, opp_ft_rate, defensive_rating, offensive_rating, reb_rate,
-                    ROW_NUMBER() OVER (PARTITION BY team_abbr ORDER BY pace DESC) as rn
-                FROM team_games
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY team_abbr ORDER BY team_abbr) <= 10
             )
             SELECT
                 team_abbr as opponent_abbr,
                 ROUND(AVG(pace), 2) as avg_pace,
                 ROUND(STDDEV(pace), 2) as pace_variance,
-                ROUND(AVG(opp_ft_rate), 4) as avg_ft_rate,
-                ROUND(STDDEV(opp_ft_rate), 4) as ft_rate_variance,
-                ROUND(AVG(defensive_rating), 2) as avg_def_rating,
-                ROUND(STDDEV(defensive_rating), 2) as def_rating_variance,
                 ROUND(AVG(offensive_rating), 2) as avg_off_rating,
                 ROUND(STDDEV(offensive_rating), 2) as off_rating_variance,
                 ROUND(AVG(reb_rate), 4) as avg_reb_rate,
                 ROUND(STDDEV(reb_rate), 4) as reb_rate_variance
-            FROM last_10_per_team
+            FROM ranked_games
+            WHERE rn <= 10
             GROUP BY team_abbr
             """
 
@@ -108,10 +96,6 @@ class TeamContextCalculator:
                 self._opponent_cache[cache_key] = {
                     'pace': row.avg_pace or 0.0,
                     'pace_variance': row.pace_variance or 0.0,
-                    'ft_rate': row.avg_ft_rate or 0.0,
-                    'ft_rate_variance': row.ft_rate_variance or 0.0,
-                    'def_rating': row.avg_def_rating or 0.0,
-                    'def_rating_variance': row.def_rating_variance or 0.0,
                     'off_rating': row.avg_off_rating or 0.0,
                     'off_rating_variance': row.off_rating_variance or 0.0,
                     'reb_rate': row.avg_reb_rate or 0.0,
