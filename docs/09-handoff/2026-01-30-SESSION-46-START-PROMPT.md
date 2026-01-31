@@ -4,125 +4,173 @@ Copy and paste the text below to start a new Claude Code session:
 
 ---
 
-Continue work on NBA stats scraper pipeline. Session 45 completed a deep investigation using 6 parallel agents and discovered the **root cause** of the model performance collapse.
+## Context
 
-Read the handoff document first:
+Session 44-45 discovered and fixed a **critical fatigue_score bug** that was corrupting data since Jan 25. The bug existed in TWO files:
+
+1. `player_composite_factors_processor.py` - fixed in commit `cec08a99`
+2. `worker.py` (multiprocessing module) - fixed in commit `c475cb9e`
+
+**The fixes are committed but NOT YET DEPLOYED.**
+
+Pre-write validation was also added to catch future bugs immediately.
+
+Read the full handoff:
 ```
-cat docs/09-handoff/2026-01-30-SESSION-45-DEEP-INVESTIGATION-HANDOFF.md
+cat docs/09-handoff/2026-01-30-SESSION-45-FEATURE-QUALITY-HANDOFF.md
 ```
-
-## Critical Finding: Data Corruption
-
-**DNP (Did Not Play) players are being recorded with `points = 0` instead of `NULL`**
-
-Evidence:
-- Jan 2026: 32.7% zero-point games (vs 10-12% historical)
-- Jan 27: 105 zero-point records, 0 DNP marked
-- Star players like Kyrie Irving showing `points_avg_last_5 = 0.0`
-
-Impact:
-- `points_avg_last_5` mean dropped from 10.53 → 8.49 (-19.4%)
-- Model under-predicts stars because their features are artificially lowered
-- Training MAE: 4.02 vs Production MAE: 5.5+ explained by data quality difference
-
-## Secondary Findings
-
-1. **Model NEVER had edge over Vegas** - 4+ years, 277K+ predictions, always negative edge
-2. **CatBoost V8 OVER predictions overshoot by +3.23 pts**
-3. **Code bugs**: 30-day window approximation, DNP filtering in PPM, missing points = 0
-
-## Priority Tasks for This Session
-
-### Priority 1: Fix DNP Data Corruption (CRITICAL)
-
-1. **Investigate where DNP handling broke**:
-   ```bash
-   # Check player_game_summary for DNP marking patterns
-   bq query --use_legacy_sql=false "
-   SELECT game_date,
-          COUNT(*) as total,
-          COUNTIF(is_dnp = TRUE) as dnp_marked,
-          COUNTIF(points = 0) as zero_points,
-          COUNTIF(points IS NULL) as null_points
-   FROM nba_analytics.player_game_summary
-   WHERE game_date >= '2026-01-20'
-   GROUP BY 1 ORDER BY 1"
-   ```
-
-2. **Find the code that sets is_dnp**:
-   - Look in `data_processors/analytics/player_game_summary/`
-   - Find where `is_dnp` flag is set
-   - Understand why it stopped working
-
-3. **Fix the DNP handling** - Ensure DNP players get `points = NULL`
-
-4. **Backfill corrupted data** - Reprocess Jan 2026 data
-
-### Priority 2: Fix Feature Extraction
-
-Location: `data_processors/precompute/ml_feature_store/feature_extractor.py`
-
-```python
-# Current (buggy):
-points_list = [(g.get('points') or 0) for g in last_10_games]
-
-# Should be:
-points_list = [g.get('points') for g in last_10_games if g.get('points') is not None]
-```
-
-### Priority 3: Fix 30-Day Window Bug
-
-Location: `data_processors/precompute/ml_feature_store/feature_extractor.py` lines 700-748
-
-```python
-# Current: Uses 30-day window approximation
-WHERE game_date >= DATE_SUB('{game_date}', INTERVAL 30 DAY)
-
-# Should: Use actual last 10 games
-```
-
-## Files to Focus On
-
-| File | Issue |
-|------|-------|
-| `data_processors/analytics/player_game_summary/*.py` | DNP handling |
-| `data_processors/precompute/ml_feature_store/feature_extractor.py` | Feature bugs |
-| `predictions/worker/prediction_systems/catboost_v8.py` | OVER threshold |
-
-## Quick Validation Commands
-
-```bash
-# Check current prediction accuracy
-bq query --use_legacy_sql=false "
-SELECT game_date, COUNT(*) as predictions,
-       ROUND(AVG(CASE WHEN prediction_correct THEN 1 ELSE 0 END) * 100, 1) as accuracy
-FROM nba_predictions.prediction_accuracy
-WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-GROUP BY 1 ORDER BY 1 DESC"
-
-# Check DNP data quality
-bq query --use_legacy_sql=false "
-SELECT game_date,
-       COUNTIF(points = 0) as zero_pts,
-       COUNTIF(is_dnp = TRUE) as dnp_marked
-FROM nba_analytics.player_game_summary
-WHERE game_date >= '2026-01-25'
-GROUP BY 1 ORDER BY 1"
-```
-
-## Latest Commit
-
-```
-fe2e3871 docs: Add Sessions 43-45 investigation findings and V11 experiment results
-```
-
-## Key Learnings from Session 45
-
-1. Data quality issues can masquerade as model issues
-2. DNP handling is critical for rolling average features
-3. The model never had edge over Vegas - this is fundamental
-4. Time-based features (recency, seasonality) don't help
 
 ---
 
-**Focus on fixing the DNP data corruption first - everything else depends on clean data.**
+## Priority 1: Deploy and Backfill (REQUIRED)
+
+### 1. Deploy Phase 4 Processor
+
+```bash
+./bin/deploy-service.sh nba-phase4-precompute-processors
+```
+
+### 2. Run Backfill for Jan 25-30
+
+After deployment succeeds:
+
+```bash
+PYTHONPATH=/home/naji/code/nba-stats-scraper python backfill_jobs/precompute/player_composite_factors/backfill.py --start-date 2026-01-25 --end-date 2026-01-30
+```
+
+### 3. Verify Fix Worked
+
+```sql
+SELECT
+  game_date,
+  ROUND(AVG(fatigue_score), 2) as avg_fatigue,
+  COUNTIF(fatigue_score = 0) as zeros,
+  COUNTIF(fatigue_score < 0) as negatives
+FROM nba_precompute.player_composite_factors
+WHERE game_date >= '2026-01-25'
+GROUP BY 1 ORDER BY 1;
+```
+
+**Expected:** avg_fatigue ~90-100, zeros ~0, negatives = 0
+
+---
+
+## Priority 2: Investigate Other Broken Features
+
+Session 45 found 6+ features with issues:
+
+| Feature | Issue | Impact |
+|---------|-------|--------|
+| fatigue_score | 65% zeros since Jan 25 | CRITICAL - fixed |
+| team_win_pct | Always 0.5, no variance | MEDIUM |
+| back_to_back | Always 0 | MEDIUM |
+| usage_spike_score | Always 0 | LOW |
+| vegas_points_line | 67-100% zeros Jan 30-31 | HIGH |
+| pace_score | 100% zeros some days | MEDIUM |
+
+Check each with:
+```sql
+-- team_win_pct
+SELECT DISTINCT team_win_pct FROM nba_predictions.ml_feature_store_v2
+WHERE game_date = CURRENT_DATE() - 1;
+
+-- back_to_back
+SELECT COUNTIF(back_to_back = 1) as b2b_count
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= CURRENT_DATE() - 7;
+```
+
+---
+
+## Priority 3: Implement Feature Health Monitoring
+
+Create daily monitoring table:
+
+```sql
+CREATE TABLE nba_monitoring.feature_health_daily (
+  report_date DATE NOT NULL,
+  feature_name STRING NOT NULL,
+  mean FLOAT64,
+  zero_count INT64,
+  negative_count INT64,
+  total_count INT64,
+  health_status STRING  -- 'healthy', 'warning', 'critical'
+);
+```
+
+Add to `/validate-daily` skill:
+- Feature zero counts
+- Mean vs expected baseline
+- Out-of-range violations
+
+---
+
+## Key Files
+
+| File | Description |
+|------|-------------|
+| `docs/09-handoff/2026-01-30-SESSION-45-FEATURE-QUALITY-HANDOFF.md` | Full handoff |
+| `docs/08-projects/current/2026-01-30-session-44-maintenance/FEATURE-QUALITY-COMPREHENSIVE-ANALYSIS.md` | Investigation details |
+| `data_processors/precompute/player_composite_factors/worker.py` | Fixed worker with validation |
+
+---
+
+## What Was Fixed
+
+**The Bug:**
+```python
+# BEFORE (broken): Stored adjustment -5 to 0
+'fatigue_score': int(factor_scores['fatigue_score'])
+
+# AFTER (fixed): Stores raw score 0-100
+'fatigue_score': factor_contexts['fatigue_context_json']['final_score']
+```
+
+**Prevention Added:**
+```python
+FEATURE_RANGES = {
+    'fatigue_score': (0, 100),
+    'shot_zone_mismatch_score': (-15, 15),
+    ...
+}
+
+def _validate_feature_ranges(record):
+    # Logs CRITICAL errors for out-of-range values
+    # Would have caught fatigue bug immediately
+```
+
+---
+
+## Quick Validation
+
+```bash
+# Check deployment status
+gcloud run services describe nba-phase4-precompute-processors --region=us-west2 --format="value(status.latestReadyRevisionName)"
+
+# Check for errors
+gcloud logging read 'resource.labels.service_name="nba-phase4-precompute-processors" AND severity>=ERROR' --limit=10
+
+# Run daily validation
+/validate-daily
+```
+
+---
+
+## Success Criteria
+
+1. ✅ Phase 4 deployed with commits cec08a99 + c475cb9e
+2. ✅ fatigue_score values are 0-100 after backfill
+3. ✅ Other broken features investigated
+4. ✅ Feature health monitoring started
+
+---
+
+## Latest Commits
+
+```
+d9c85961 docs: Add comprehensive feature quality analysis and Session 45 handoff
+c475cb9e fix: Fix fatigue_score bug in worker.py and add pre-write validation
+cec08a99 fix: Restore fatigue_score to use raw 0-100 value instead of adjustment
+```
+
+**Focus: Deploy the fix, run backfill, verify data is correct.**
