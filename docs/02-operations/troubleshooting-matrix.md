@@ -623,6 +623,116 @@ Phase 4 depends on Phase 3 analytics:
 
 ---
 
+### 2.4 - Shot Zone Data Corruption (FIXED Jan 2026)
+
+**Symptom:** Shot zone rates look wrong - paint rate too low (<30%) or three-point rate too high (>50%).
+
+**Historical Issue (RESOLVED):**
+- **Problem:** Paint/mid-range from play-by-play (PBP), three-point from box score
+- **Impact:** When PBP missing, paint/mid = 0 but three-pt = actual value → corrupted rates
+- **Fix Applied:** All zone fields now from same PBP source (Session 53, Jan 31 2026)
+
+#### Diagnosis: Check Shot Zone Completeness
+
+```sql
+-- Check if shot zones have complete PBP data
+SELECT
+  game_date,
+  COUNT(*) as total_records,
+  COUNTIF(has_complete_shot_zones = TRUE) as complete_zones,
+  ROUND(COUNTIF(has_complete_shot_zones = TRUE) * 100.0 / COUNT(*), 1) as pct_complete,
+
+  -- Zone rates for complete zones only
+  ROUND(AVG(CASE WHEN has_complete_shot_zones = TRUE
+    THEN SAFE_DIVIDE(paint_attempts * 100.0, paint_attempts + mid_range_attempts + three_attempts_pbp)
+    END), 1) as avg_paint_rate,
+  ROUND(AVG(CASE WHEN has_complete_shot_zones = TRUE
+    THEN SAFE_DIVIDE(three_attempts_pbp * 100.0, paint_attempts + mid_range_attempts + three_attempts_pbp)
+    END), 1) as avg_three_rate
+
+FROM `nba_analytics.player_game_summary`
+WHERE game_date >= CURRENT_DATE() - 7
+GROUP BY game_date
+ORDER BY game_date DESC;
+```
+
+**Expected Results:**
+- `pct_complete`: 50-90% (depends on BigDataBall PBP availability)
+- `avg_paint_rate`: 30-45%
+- `avg_three_rate`: 20-50%
+
+**If rates are outside expected ranges:**
+1. Check `has_complete_shot_zones = TRUE` filter is applied
+2. Verify BigDataBall PBP data exists for that date
+3. Check for code regression (three_pt should use PBP, not box score)
+
+#### Check BigDataBall PBP Coverage
+
+```sql
+-- Check if BigDataBall PBP data is available
+SELECT
+  game_date,
+  COUNT(DISTINCT game_id) as games_with_bdb,
+  COUNT(*) as pbp_events
+FROM `nba_raw.bigdataball_play_by_play`
+WHERE game_date >= CURRENT_DATE() - 7
+GROUP BY game_date
+ORDER BY game_date DESC;
+```
+
+**Compare against schedule:**
+```sql
+SELECT game_date, COUNT(*) as scheduled_games
+FROM `nba_reference.nba_schedule`
+WHERE game_date >= CURRENT_DATE() - 7
+GROUP BY game_date
+ORDER BY game_date DESC;
+```
+
+**If games_with_bdb < scheduled_games:**
+→ BigDataBall scraper failed or data not available yet
+
+#### Validate Source Consistency
+
+```sql
+-- Verify three_pt_attempts matches three_attempts_pbp (should be 100%)
+SELECT
+  COUNTIF(three_pt_attempts = three_attempts_pbp) as matching,
+  COUNTIF(three_pt_attempts != three_attempts_pbp) as mismatched,
+  COUNT(*) as total
+FROM `nba_analytics.player_game_summary`
+WHERE game_date >= CURRENT_DATE() - 7
+  AND has_complete_shot_zones = TRUE;
+```
+
+**Expected:** `matching = total`, `mismatched = 0`
+
+**If mismatched > 0:**
+→ Code regression! three_pt_attempts is using box score instead of PBP
+
+**Fix Procedures:**
+1. **Low completeness (<50%):** Normal if BigDataBall PBP unavailable - use `has_complete_shot_zones = TRUE` filter
+2. **Wrong rates despite filter:** Check code - ensure `three_pt_attempts = shot_zone_data.get('three_attempts_pbp')`
+3. **Historical data corrupted:** Reprocess those dates with fixed code
+4. **Code regression:** Review `player_game_summary_processor.py` lines ~1686, 2275
+
+**Impact:**
+- **ML models:** Filter for `has_complete_shot_zones = TRUE` in training data
+- **Analytics:** Zone rates unreliable when flag is FALSE or NULL
+- **Predictions:** Shot zone features may be NULL when PBP unavailable
+
+**Prevention:**
+- Daily validation includes shot zone completeness check
+- Pre-commit hook validates schema field consistency
+- `has_complete_shot_zones` flag tracks data quality
+
+**References:**
+- Fix documentation: `docs/09-handoff/2026-01-31-SESSION-53-SHOT-ZONE-FIX-COMPLETE.md`
+- Investigation: `docs/09-handoff/2026-01-31-SHOT-ZONE-DATA-INVESTIGATION.md`
+- Code: `data_processors/analytics/player_game_summary/sources/shot_zone_analyzer.py`
+
+---
+
 ## Section 3: Timing Issues
 
 ### 3.1 - Pipeline Didn't Run on Schedule

@@ -271,6 +271,68 @@ ORDER BY days_stale DESC"
 
 ---
 
+### Step 3b: Check Shot Zone Data Quality (NEW - Jan 2026)
+
+**Purpose:** Validate shot zone data integrity and completeness.
+
+```bash
+# Check shot zone completeness for recent dates
+bq query --use_legacy_sql=false --format=pretty "
+SELECT
+  game_date,
+  COUNT(*) as total_records,
+  COUNTIF(has_complete_shot_zones = TRUE) as complete_zones,
+  ROUND(COUNTIF(has_complete_shot_zones = TRUE) * 100.0 / COUNT(*), 1) as pct_complete,
+
+  -- Zone rates (complete zones only)
+  ROUND(AVG(CASE WHEN has_complete_shot_zones = TRUE
+    THEN SAFE_DIVIDE(paint_attempts * 100.0, paint_attempts + mid_range_attempts + three_attempts_pbp)
+    END), 1) as avg_paint_rate,
+  ROUND(AVG(CASE WHEN has_complete_shot_zones = TRUE
+    THEN SAFE_DIVIDE(three_attempts_pbp * 100.0, paint_attempts + mid_range_attempts + three_attempts_pbp)
+    END), 1) as avg_three_rate
+
+FROM nba_analytics.player_game_summary
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
+  AND minutes_played > 0
+GROUP BY game_date
+ORDER BY game_date DESC"
+```
+
+**Expected Results:**
+- `pct_complete`: 50-90% (depends on BigDataBall PBP availability)
+- `avg_paint_rate`: 30-45%
+- `avg_three_rate`: 20-50%
+
+**If completeness < 50%:** Check BigDataBall PBP availability
+
+```bash
+# Verify BigDataBall PBP data exists
+bq query --use_legacy_sql=false --format=pretty "
+SELECT
+  game_date,
+  COUNT(DISTINCT game_id) as games_with_bdb,
+  COUNT(*) as pbp_events
+FROM nba_raw.bigdataball_play_by_play
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
+GROUP BY game_date
+ORDER BY game_date DESC"
+```
+
+**If rates are outside expected ranges:**
+1. Verify `has_complete_shot_zones` filter is being applied in queries
+2. Check for code regression (see troubleshooting matrix Section 2.4)
+3. Alert if persistent across multiple days
+
+**Red Flags:**
+- `avg_paint_rate < 25%` or `avg_three_rate > 55%` = likely data corruption
+- `pct_complete < 20%` for 3+ consecutive days = BigDataBall issue
+- Mismatches between `three_pt_attempts` and `three_attempts_pbp` = code regression
+
+**Reference:** `docs/02-operations/troubleshooting-matrix.md` Section 2.4
+
+---
+
 ### Step 4: Check for Error Patterns
 
 ```bash

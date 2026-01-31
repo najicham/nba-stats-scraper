@@ -157,6 +157,16 @@ bq query --use_legacy_sql=false "SELECT game_date, COUNT(*) FROM nba_predictions
 
 # Check feature store
 bq query --use_legacy_sql=false "SELECT COUNT(*), COUNT(DISTINCT player_lookup) FROM nba_predictions.ml_feature_store_v2 WHERE game_date = CURRENT_DATE()"
+
+# Check shot zone data quality (NEW - Jan 2026)
+bq query --use_legacy_sql=false "
+  SELECT game_date,
+    COUNTIF(has_complete_shot_zones = TRUE) * 100.0 / COUNT(*) as pct_complete,
+    ROUND(AVG(CASE WHEN has_complete_shot_zones = TRUE
+      THEN SAFE_DIVIDE(paint_attempts * 100.0, paint_attempts + mid_range_attempts + three_attempts_pbp) END), 1) as paint_rate
+  FROM nba_analytics.player_game_summary
+  WHERE game_date >= CURRENT_DATE() - 3 AND minutes_played > 0
+  GROUP BY 1 ORDER BY 1 DESC"
 ```
 
 ### Grading Tables
@@ -169,6 +179,26 @@ bq query --use_legacy_sql=false "SELECT COUNT(*), COUNT(DISTINCT player_lookup) 
 | `prediction_grades` | DEPRECATED - do not use | Jan 2026 only (9K records) |
 
 Always query `prediction_accuracy` for grading validation, accuracy metrics, and ML analysis.
+
+### Schedule Data
+
+**IMPORTANT:** Use the correct schedule table:
+
+| Use Case | Table | Notes |
+|----------|-------|-------|
+| General queries | `nba_reference.nba_schedule` | View with clean column names |
+| Raw data access | `nba_raw.nbac_schedule` | Requires `WHERE game_date >= ...` partition filter |
+
+**Column names:** `home_team_tricode`, `away_team_tricode`, `game_id`, `game_date`, `game_status`
+
+```sql
+-- Example: Get today's games
+SELECT game_id, away_team_tricode, home_team_tricode, game_status
+FROM nba_reference.nba_schedule
+WHERE game_date = CURRENT_DATE()
+```
+
+**Data source:** GCS `gs://nba-scraped-data/nba-com/schedule/` → BigQuery `nba_raw.nbac_schedule` → View `nba_reference.nba_schedule`
 
 ### Deployments
 ```bash
@@ -228,6 +258,28 @@ gcloud logging read 'resource.type="cloud_run_revision" AND severity>=ERROR' --l
 2. Look for `bdl_readiness = 'READY_TO_ENABLE'` (requires <5% major discrepancies for 7 consecutive days)
 3. Daily automated check runs at 7 PM ET via `data-quality-alerts` Cloud Function
 **Re-enabling**: When `bdl_readiness = 'READY_TO_ENABLE'`, set `USE_BDL_DATA = True` in `player_game_summary_processor.py`
+
+### Shot Zone Data Quality (FIXED Jan 2026)
+**Symptom**: Shot zone rates look wrong - paint rate too low (<30%) or three rate too high (>50%)
+**Cause**: Mixed data sources - paint/mid from play-by-play (PBP), three_pt from box score
+**Impact**: When PBP missing, paint/mid = 0 but three_pt = actual value → corrupted rates
+**Fix Applied**: All zone fields now from same PBP source (Session 53)
+**Validation**:
+```sql
+-- Check shot zone completeness (expect 50-90% depending on BDB availability)
+SELECT game_date,
+  COUNTIF(has_complete_shot_zones = TRUE) * 100.0 / COUNT(*) as pct_complete
+FROM nba_analytics.player_game_summary
+WHERE game_date >= CURRENT_DATE() - 3 AND minutes_played > 0
+GROUP BY 1 ORDER BY 1 DESC
+```
+**Prevention**:
+- Use `WHERE has_complete_shot_zones = TRUE` filter for ML training and analytics
+- Daily validation checks zone completeness and rate ranges
+- `has_complete_shot_zones` flag tracks data integrity
+**References**:
+- Fix documentation: `docs/09-handoff/2026-01-31-SESSION-53-SHOT-ZONE-FIX-COMPLETE.md`
+- Troubleshooting: `docs/02-operations/troubleshooting-matrix.md` Section 2.4
 
 ## Prevention Mechanisms
 
