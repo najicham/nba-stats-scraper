@@ -227,6 +227,117 @@ def validate_feature_ranges(features: list, player_lookup: str = None) -> tuple:
     return is_valid, warnings, critical_errors
 
 
+# ============================================================================
+# FEATURE VARIANCE THRESHOLDS (Session 49 - Pre-write variance validation)
+# ============================================================================
+# Maps feature index to (min_stddev, min_distinct, feature_name)
+# Features with variance below threshold across a batch indicate potential bugs
+# where calculations are returning constant/default values (e.g., team_win_pct=0.5)
+FEATURE_VARIANCE_THRESHOLDS = {
+    # Team Context - these MUST vary across players/teams
+    22: (0.5, 5, 'team_pace'),           # 30 teams, pace varies 95-110
+    23: (1.0, 5, 'team_off_rating'),     # 30 teams, rating varies 100-120
+    24: (0.05, 5, 'team_win_pct'),       # CRITICAL: Caught the 0.5 bug
+
+    # Vegas Lines - should vary per player
+    25: (2.0, 10, 'vegas_points_line'),  # Lines typically 5-50
+
+    # Recent Performance - highly variable across players
+    0: (3.0, 20, 'points_avg_last_5'),   # Players score 0-50 PPG
+    1: (3.0, 20, 'points_avg_last_10'),
+    2: (3.0, 20, 'points_avg_season'),
+
+    # Fatigue/Composite - should vary based on game schedule
+    5: (5.0, 10, 'fatigue_score'),       # CRITICAL: Caught the Jan 25-30 bug
+    6: (1.0, 10, 'shot_zone_mismatch_score'),
+
+    # Minutes context
+    31: (5.0, 15, 'minutes_avg_last_10'),  # Varies 0-40 mins
+}
+
+
+def validate_batch_variance(records: list, min_records: int = 50) -> dict:
+    """
+    Validate feature variance across a batch BEFORE writing.
+
+    Detects bugs where calculated features return constant/default values
+    (like team_win_pct always being 0.5 due to missing team_abbr passthrough).
+
+    Args:
+        records: List of ML feature store records with 'features' key
+        min_records: Minimum records required for variance check
+
+    Returns:
+        Dict with is_valid, warnings, critical_errors, stats
+    """
+    import numpy as np
+    from collections import defaultdict
+
+    if len(records) < min_records:
+        return {
+            'is_valid': True,
+            'warnings': [],
+            'critical_errors': [],
+            'stats': {},
+            'reason': f'Skipped: only {len(records)} records (need {min_records})'
+        }
+
+    warnings = []
+    critical_errors = []
+    stats = {}
+
+    # Extract feature arrays
+    feature_values = defaultdict(list)
+    for record in records:
+        features = record.get('features', [])
+        for idx, value in enumerate(features):
+            if value is not None:
+                feature_values[idx].append(value)
+
+    # Check variance for monitored features
+    for idx, (min_variance, min_distinct, feature_name) in FEATURE_VARIANCE_THRESHOLDS.items():
+        values = feature_values.get(idx, [])
+
+        if len(values) < min_records // 2:
+            continue  # Not enough data for this feature
+
+        arr = np.array(values)
+        variance = float(np.std(arr))
+        distinct_values = len(set(round(v, 4) for v in values))
+        mean = float(np.mean(arr))
+
+        stats[feature_name] = {
+            'stddev': variance,
+            'distinct_values': distinct_values,
+            'mean': mean,
+            'count': len(values)
+        }
+
+        # Check for zero/near-zero variance (constant value)
+        if variance < 0.0001 and distinct_values == 1:
+            msg = (f"ZERO_VARIANCE: {feature_name}[{idx}] = {mean:.4f} "
+                   f"(all {len(values)} values identical)")
+            critical_errors.append(msg)
+            logger.error(f"CRITICAL_VARIANCE: {msg}")
+
+        # Check for suspiciously low variance
+        elif variance < min_variance or distinct_values < min_distinct:
+            msg = (f"LOW_VARIANCE: {feature_name}[{idx}] "
+                   f"stddev={variance:.4f} < {min_variance}, "
+                   f"distinct={distinct_values} < {min_distinct}")
+            warnings.append(msg)
+            logger.warning(f"VARIANCE_WARNING: {msg}")
+
+    is_valid = len(critical_errors) == 0
+
+    return {
+        'is_valid': is_valid,
+        'warnings': warnings,
+        'critical_errors': critical_errors,
+        'stats': stats
+    }
+
+
 class MLFeatureStoreProcessor(
     SmartIdempotencyMixin,
     SmartSkipMixin,
@@ -1507,7 +1618,24 @@ class MLFeatureStoreProcessor(
         analysis_date = self.opts['analysis_date']
         
         logger.info(f"Writing {len(self.transformed_data)} feature records to {self.dataset_id}.{self.table_name}")
-        
+
+        # Session 49: Validate batch variance BEFORE writing
+        # This catches bugs like team_win_pct=0.5 due to missing field passthrough
+        variance_result = validate_batch_variance(self.transformed_data, min_records=50)
+        if variance_result.get('critical_errors'):
+            logger.error(
+                f"BATCH_VARIANCE_CRITICAL: {len(variance_result['critical_errors'])} critical variance issues detected:\n"
+                f"  {', '.join(variance_result['critical_errors'][:5])}"
+            )
+            # Track but don't block (can change to raise ValueError after validation)
+            self.stats['variance_critical_errors'] = len(variance_result['critical_errors'])
+        if variance_result.get('warnings'):
+            logger.warning(
+                f"BATCH_VARIANCE_WARNING: {len(variance_result['warnings'])} low variance issues:\n"
+                f"  {', '.join(variance_result['warnings'][:3])}"
+            )
+            self.stats['variance_warnings'] = len(variance_result['warnings'])
+
         # Write using BatchWriter (handles DELETE + batch INSERT with retries)
         write_stats = self.batch_writer.write_batch(
             rows=self.transformed_data,
