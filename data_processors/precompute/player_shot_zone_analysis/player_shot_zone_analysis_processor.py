@@ -657,6 +657,8 @@ class PlayerShotZoneAnalysisProcessor(
               AND game_date >= '{season_start_date}'
               AND is_active = TRUE
               AND (minutes_played > 0 OR fg_attempts > 0)  -- Fallback for historical data where minutes_played is NULL
+              -- NOTE: Zone completeness is validated in _calculate_zone_metrics_static()
+              -- which sets rates to NULL when zone data is incomplete (mixed PBP/box score sources)
         )
         SELECT * 
         FROM ranked_games
