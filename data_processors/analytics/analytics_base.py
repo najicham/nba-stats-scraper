@@ -488,6 +488,16 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
                         stale=dep_check.get('stale_fail', []) + dep_check.get('stale_warn', [])
                     )
 
+                    # Track soft dependency degraded state (Session 41)
+                    if dep_check.get('is_degraded'):
+                        self.stats['is_degraded_dependency_run'] = True
+                        self.stats['degraded_dependencies'] = dep_check.get('degraded_deps', [])
+                        self.stats['overall_coverage'] = dep_check.get('overall_coverage', 1.0)
+                        logger.warning(
+                            f"⚠️ DEGRADED DEPENDENCY RUN: Processing with {dep_check.get('overall_coverage', 1.0):.1%} "
+                            f"coverage. Degraded deps: {dep_check.get('degraded_deps', [])}"
+                        )
+
                 # Handle critical dependency failures
                 if not dep_check['all_critical_present']:
                     error_msg = f"Missing critical dependencies: {dep_check['missing']}"

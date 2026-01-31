@@ -23,10 +23,19 @@ class DependencyMixin:
     Validates that required Phase 2 raw tables exist, are fresh,
     and contain expected row counts before processing begins.
 
+    Supports soft dependencies (added Session 41):
+    - When use_soft_dependencies=True, allows processing if coverage >= threshold
+    - Coverage = row_count / expected_count_min
+    - Default threshold is 80% (soft_dependency_threshold=0.80)
+
     Requires from base class:
     - self.bq_client: BigQuery client
     - self.project_id: GCP project ID
     - self.is_backfill_mode: Backfill mode flag (property)
+
+    Optional from base class (for soft dependencies):
+    - self.use_soft_dependencies: bool (default: False)
+    - self.soft_dependency_threshold: float (default: 0.80)
     """
 
     def get_dependencies(self) -> dict:
@@ -70,6 +79,8 @@ class DependencyMixin:
         Check if required upstream Phase 2 data exists and is fresh enough.
 
         Adapted from PrecomputeProcessorBase for Phase 3 date range pattern.
+        Supports soft dependencies (Session 41): allows processing with degraded
+        coverage when use_soft_dependencies=True and coverage >= threshold.
 
         Args:
             start_date: Start date (YYYY-MM-DD)
@@ -84,10 +95,17 @@ class DependencyMixin:
                 'missing': List[str],
                 'stale_fail': List[str],
                 'stale_warn': List[str],
-                'details': Dict[str, Dict]
+                'details': Dict[str, Dict],
+                'is_degraded': bool,  # True if proceeding with soft dependency
+                'degraded_deps': List[str],  # Dependencies below 100% but above threshold
+                'overall_coverage': float  # Average coverage across critical deps
             }
         """
         dependencies = self.get_dependencies()
+
+        # Get soft dependency settings from processor (if available)
+        use_soft_deps = getattr(self, 'use_soft_dependencies', False)
+        soft_threshold = getattr(self, 'soft_dependency_threshold', 0.80)
 
         # If no dependencies defined, return success
         if not dependencies:
@@ -99,7 +117,10 @@ class DependencyMixin:
                 'missing': [],
                 'stale_fail': [],
                 'stale_warn': [],
-                'details': {}
+                'details': {},
+                'is_degraded': False,
+                'degraded_deps': [],
+                'overall_coverage': 1.0
             }
 
         results = {
@@ -110,8 +131,14 @@ class DependencyMixin:
             'missing': [],
             'stale_fail': [],
             'stale_warn': [],
-            'details': {}
+            'details': {},
+            'is_degraded': False,
+            'degraded_deps': [],
+            'overall_coverage': 1.0
         }
+
+        # Track coverage for soft dependency calculation
+        critical_coverages = []
 
         for table_name, config in dependencies.items():
             logger.info(f"Checking dependency: {table_name}")
@@ -124,12 +151,34 @@ class DependencyMixin:
                 config=config
             )
 
-            # Check if missing
+            is_critical = config.get('critical', True)
+
+            # Calculate coverage percentage for soft dependency support
+            expected_min = config.get('expected_count_min', 1)
+            row_count = details.get('row_count', 0)
+            coverage = min(row_count / expected_min, 1.0) if expected_min > 0 else 0.0
+            details['coverage'] = coverage
+
+            if is_critical:
+                critical_coverages.append(coverage)
+
+            # Check if missing (no data at all)
             if not exists:
-                if config.get('critical', True):
-                    results['all_critical_present'] = False
-                    results['missing'].append(table_name)
-                    logger.error(f"Missing critical dependency: {table_name}")
+                if is_critical:
+                    # Soft dependency: check if we have SOME data above threshold
+                    if use_soft_deps and coverage >= soft_threshold:
+                        results['is_degraded'] = True
+                        results['degraded_deps'].append(
+                            f"{table_name}: {coverage:.1%} coverage (threshold: {soft_threshold:.0%})"
+                        )
+                        logger.warning(
+                            f"⚠️ SOFT DEPENDENCY: {table_name} has {coverage:.1%} coverage "
+                            f"(>= {soft_threshold:.0%} threshold) - proceeding with degraded data"
+                        )
+                    else:
+                        results['all_critical_present'] = False
+                        results['missing'].append(table_name)
+                        logger.error(f"Missing critical dependency: {table_name} ({coverage:.1%} coverage)")
                 else:
                     logger.warning(f"Missing optional dependency: {table_name}")
 
@@ -137,7 +186,6 @@ class DependencyMixin:
             if exists and details.get('age_hours') is not None:
                 max_age_warn = config.get('max_age_hours_warn', 24)
                 max_age_fail = config.get('max_age_hours_fail', 72)
-                is_critical = config.get('critical', True)  # Default to critical if not specified
 
                 if details['age_hours'] > max_age_fail:
                     results['all_fresh'] = False
@@ -164,9 +212,25 @@ class DependencyMixin:
 
             results['details'][table_name] = details
 
-        logger.info(f"Dependency check complete: "
-                   f"critical_present={results['all_critical_present']}, "
-                   f"fresh={results['all_fresh']}")
+        # Calculate overall coverage for critical dependencies
+        if critical_coverages:
+            results['overall_coverage'] = sum(critical_coverages) / len(critical_coverages)
+
+        # Log summary with soft dependency status
+        if use_soft_deps and results['is_degraded']:
+            logger.warning(
+                f"Dependency check complete (DEGRADED MODE): "
+                f"critical_present={results['all_critical_present']}, "
+                f"overall_coverage={results['overall_coverage']:.1%}, "
+                f"degraded_deps={results['degraded_deps']}"
+            )
+        else:
+            logger.info(
+                f"Dependency check complete: "
+                f"critical_present={results['all_critical_present']}, "
+                f"fresh={results['all_fresh']}, "
+                f"overall_coverage={results['overall_coverage']:.1%}"
+            )
 
         return results
 

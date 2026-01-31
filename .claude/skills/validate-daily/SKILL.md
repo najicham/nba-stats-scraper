@@ -506,9 +506,36 @@ LIMIT 20
 3. Use reconciliation to validate BDL reliability
 
 **Related Infrastructure**:
-- View: `nba_monitoring.source_reconciliation_daily` (always checks yesterday)
-- Scheduled Query: `monitoring/scheduled_queries/source_reconciliation.sql` (runs 8 AM daily)
-- Results Table: `nba_monitoring.source_reconciliation_results` (historical tracking)
+- View: `nba_orchestration.bdl_quality_trend` (BDL quality trend with readiness indicator)
+- Cloud Function: `data-quality-alerts` (runs daily at 7 PM ET, stores metrics)
+- Table: `nba_orchestration.source_discrepancies` (historical tracking)
+
+**BDL Quality Trend Check** (Session 41 addition):
+```bash
+# Check BDL quality trend and readiness status
+bq query --use_legacy_sql=false "
+SELECT
+  game_date,
+  total_players,
+  bdl_coverage,
+  coverage_pct,
+  major_discrepancies,
+  major_discrepancy_pct,
+  rolling_7d_major_pct,
+  bdl_readiness
+FROM nba_orchestration.bdl_quality_trend
+ORDER BY game_date DESC
+LIMIT 7
+"
+```
+
+**BDL Readiness Levels**:
+- **READY_TO_ENABLE**: <5% major discrepancies for 7 consecutive days (safe to re-enable)
+- **IMPROVING**: <10% major discrepancies (getting better, keep monitoring)
+- **NOT_READY**: >10% major discrepancies (keep BDL disabled)
+
+**Note**: BDL is currently DISABLED as a backup source due to data quality issues.
+Monitor this view to determine when it's safe to re-enable by setting `USE_BDL_DATA = True` in `player_game_summary_processor.py`.
 
 ### Phase 4: Check Phase Completion Status
 

@@ -219,6 +219,16 @@ gcloud logging read 'resource.type="cloud_run_revision" AND severity>=ERROR' --l
 **Cause**: Validation rejects sentinel values
 **Fix**: Update validation in `data_loaders.py` to allow -1 as sentinel
 
+### BDL Data Quality Issues (Session 41)
+**Symptom**: BDL boxscores show ~50% of actual values for some players
+**Cause**: BDL API returns inconsistent/incorrect data
+**Status**: BDL is DISABLED as backup source (`USE_BDL_DATA = False` in `player_game_summary_processor.py`)
+**Monitoring**:
+1. Check quality trend: `SELECT * FROM nba_orchestration.bdl_quality_trend ORDER BY game_date DESC LIMIT 7`
+2. Look for `bdl_readiness = 'READY_TO_ENABLE'` (requires <5% major discrepancies for 7 consecutive days)
+3. Daily automated check runs at 7 PM ET via `data-quality-alerts` Cloud Function
+**Re-enabling**: When `bdl_readiness = 'READY_TO_ENABLE'`, set `USE_BDL_DATA = True` in `player_game_summary_processor.py`
+
 ## Prevention Mechanisms
 
 ### Pre-commit Hooks

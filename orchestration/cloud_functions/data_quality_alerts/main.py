@@ -336,6 +336,156 @@ class DataQualityMonitor:
         else:
             return 'OK', 'Prop line coverage is healthy', details
 
+    def check_bdl_quality(self, game_date: date) -> Tuple[str, str, Dict]:
+        """
+        Check BDL data quality by comparing against NBA.com gamebook.
+
+        BDL is currently disabled as backup source due to data quality issues.
+        This check monitors if/when quality improves enough to re-enable.
+
+        Also stores discrepancies in source_discrepancies table for trend analysis.
+
+        Returns:
+            (alert_level, message, details)
+        """
+        # Compare BDL vs NBAC for the date
+        query = f"""
+        WITH gamebook AS (
+            SELECT
+                player_lookup,
+                player_name,
+                SAFE_CAST(REGEXP_EXTRACT(minutes, r'^([0-9]+)') AS INT64) as minutes_int,
+                points
+            FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
+            WHERE game_date = @game_date
+              AND player_status = 'active'
+        ),
+        bdl AS (
+            SELECT
+                player_lookup,
+                player_full_name,
+                SAFE_CAST(minutes AS INT64) as minutes_int,
+                points
+            FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+            WHERE game_date = @game_date
+        ),
+        comparison AS (
+            SELECT
+                g.player_lookup,
+                g.player_name,
+                g.minutes_int as gamebook_min,
+                g.points as gamebook_pts,
+                b.minutes_int as bdl_min,
+                b.points as bdl_pts,
+                ABS(COALESCE(g.minutes_int, 0) - COALESCE(b.minutes_int, 0)) as minutes_diff,
+                ABS(COALESCE(g.points, 0) - COALESCE(b.points, 0)) as points_diff,
+                CASE
+                    WHEN b.minutes_int IS NULL THEN 'missing_in_bdl'
+                    WHEN ABS(g.minutes_int - b.minutes_int) > 5 OR ABS(g.points - b.points) > 5 THEN 'major'
+                    WHEN ABS(g.minutes_int - b.minutes_int) > 2 OR ABS(g.points - b.points) > 2 THEN 'minor'
+                    ELSE 'match'
+                END as discrepancy_severity
+            FROM gamebook g
+            LEFT JOIN bdl b ON g.player_lookup = b.player_lookup
+        )
+        SELECT
+            COUNT(*) as total_players,
+            COUNTIF(bdl_min IS NOT NULL) as bdl_coverage,
+            COUNTIF(discrepancy_severity = 'match') as exact_matches,
+            COUNTIF(discrepancy_severity = 'minor') as minor_discrepancies,
+            COUNTIF(discrepancy_severity = 'major') as major_discrepancies,
+            COUNTIF(discrepancy_severity = 'missing_in_bdl') as missing_in_bdl,
+            AVG(CASE WHEN bdl_min IS NOT NULL THEN minutes_diff END) as avg_minutes_diff,
+            AVG(CASE WHEN bdl_pts IS NOT NULL THEN points_diff END) as avg_points_diff
+        FROM comparison
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date.isoformat())
+            ]
+        )
+
+        result = self.bq_client.query(query, job_config=job_config).result()
+        row = next(result, None)
+
+        if not row or row.total_players == 0:
+            return 'OK', 'No gamebook data yet to compare', {}
+
+        coverage_pct = (row.bdl_coverage / row.total_players * 100) if row.total_players > 0 else 0
+        major_pct = (row.major_discrepancies / row.total_players * 100) if row.total_players > 0 else 0
+        accuracy_pct = (row.exact_matches / row.bdl_coverage * 100) if row.bdl_coverage > 0 else 0
+
+        details = {
+            'total_players': row.total_players,
+            'bdl_coverage': row.bdl_coverage,
+            'coverage_percent': round(coverage_pct, 1),
+            'exact_matches': row.exact_matches,
+            'minor_discrepancies': row.minor_discrepancies,
+            'major_discrepancies': row.major_discrepancies,
+            'missing_in_bdl': row.missing_in_bdl,
+            'major_discrepancy_pct': round(major_pct, 1),
+            'accuracy_pct': round(accuracy_pct, 1),
+            'avg_minutes_diff': round(row.avg_minutes_diff, 1) if row.avg_minutes_diff else 0,
+            'avg_points_diff': round(row.avg_points_diff, 1) if row.avg_points_diff else 0,
+            'bdl_status': 'DISABLED',  # Current status
+            'recommendation': 'Keep disabled' if major_pct > 5 else 'Consider re-enabling'
+        }
+
+        # Store discrepancies in BigQuery for trend analysis
+        self._store_bdl_quality_metrics(game_date, details)
+
+        # Determine alert level - this is INFO only since BDL is disabled
+        # We want to track trends, not block anything
+        if major_pct > 20:
+            return (
+                'INFO',
+                f'BDL QUALITY POOR: {major_pct:.1f}% major discrepancies. Keep BDL disabled.',
+                details
+            )
+        elif major_pct > 10:
+            return (
+                'INFO',
+                f'BDL QUALITY FAIR: {major_pct:.1f}% major discrepancies. Keep monitoring.',
+                details
+            )
+        elif major_pct > 5:
+            return (
+                'INFO',
+                f'BDL QUALITY IMPROVING: {major_pct:.1f}% major discrepancies. Not yet safe to enable.',
+                details
+            )
+        else:
+            return (
+                'INFO',
+                f'BDL QUALITY GOOD: Only {major_pct:.1f}% major discrepancies. Consider re-enabling.',
+                details
+            )
+
+    def _store_bdl_quality_metrics(self, game_date: date, metrics: Dict) -> None:
+        """Store BDL quality metrics in BigQuery for trend analysis."""
+        try:
+            # Store summary in source_discrepancies table
+            table_id = f"{self.project_id}.nba_orchestration.source_discrepancies"
+
+            rows = [{
+                'game_date': game_date.isoformat(),
+                'player_lookup': '_SUMMARY_',  # Special marker for summary row
+                'player_name': 'BDL Quality Summary',
+                'backup_source': 'bdl',
+                'severity': 'info',
+                'discrepancies_json': json.dumps(metrics),
+                'detected_at': datetime.utcnow().isoformat()
+            }]
+
+            errors = self.bq_client.insert_rows_json(table_id, rows)
+            if errors:
+                logger.warning(f"Failed to store BDL quality metrics: {errors}")
+            else:
+                logger.info(f"Stored BDL quality metrics for {game_date}")
+        except Exception as e:
+            logger.warning(f"Could not store BDL quality metrics: {e}")
+
 
 def send_slack_alert(level: str, check_name: str, message: str, details: Dict, game_date: date) -> bool:
     """Send alert to Slack webhook."""
@@ -451,7 +601,8 @@ def check_data_quality(request):
             'zero_predictions': monitor.check_zero_predictions,
             'usage_rate': monitor.check_usage_rate_coverage,
             'duplicates': monitor.check_duplicates,
-            'prop_lines': monitor.check_prop_lines
+            'prop_lines': monitor.check_prop_lines,
+            'bdl_quality': monitor.check_bdl_quality  # Added Session 41 - track BDL quality for potential re-enable
         }
 
         # Filter checks
