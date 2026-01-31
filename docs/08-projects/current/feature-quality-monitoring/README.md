@@ -1,8 +1,8 @@
 # Feature Quality Monitoring System
 
 **Created:** 2026-01-30
-**Updated:** 2026-01-31 (Session 48)
-**Status:** Partially Implemented
+**Updated:** 2026-01-31 (Session 49)
+**Status:** Investigation Complete, Fixes Pending Backfill
 **Priority:** High (prevents fatigue_score-type bugs)
 
 ---
@@ -191,15 +191,38 @@ All 37 features with expected ranges (from `ML_FEATURE_RANGES`):
 
 ---
 
-## Known Broken Features
+## Known Broken Features (Session 49 Investigation)
+
+### Critical Bugs (Fixed)
+
+| Feature | Issue | Root Cause | Status | Commit |
+|---------|-------|-----------|--------|--------|
+| back_to_back (16) | **100% zeros** | `days_rest == 0` should be `== 1` | ✅ Fixed | a7381972 |
+| team_win_pct (24) | 99.8% = 0.5 | `team_abbr` not passed through | ✅ Fixed | 1c8d84d3 |
+| fatigue_score (5) | Was 0 (Jan 25-30) | Wrong value extracted | ✅ Fixed | cec08a99 |
+
+### High Severity (Upstream Issues)
 
 | Feature | Issue | Root Cause | Status |
 |---------|-------|-----------|--------|
-| usage_spike_score (8) | Always 0 | `projected_usage_rate = None` | ❌ TODO |
-| team_win_pct (24) | Always 0.5 | Not passed to final record | ❌ TODO |
-| vegas_opening_line (26) | Was 67-100% zeros | Missing `market_type` filter | ✅ Fixed |
-| vegas_points_line (25) | Was 67-100% zeros | Missing `market_type` filter | ✅ Fixed |
-| fatigue_score (5) | Was 0 (Jan 25-30) | Wrong value extracted | ✅ Fixed |
+| usage_spike_score (8) | 98.8% zeros | `projected_usage_rate` 100% NULL upstream | ❌ Needs impl |
+| pace_score (7) | 93.9% zeros | `opponent_pace_last_10` NULL upstream | ❌ Needs fix |
+| games_in_last_7_days (4) | Values up to 24 | Bug since Dec 2025 | ⚠️ Investigate |
+
+### Working as Designed
+
+| Feature | Issue | Explanation | Status |
+|---------|-------|-------------|--------|
+| injury_risk (10) | 99.3% zeros | No injury report = healthy | ✅ Correct |
+| vegas_opening_line (26) | ~50% zeros | BettingPros coverage limit | ✅ Expected |
+
+### Validation Added
+
+| Feature | Issue | Fix | Commit |
+|---------|-------|-----|--------|
+| vegas_opening_line (26) | Was 67-100% zeros | Added `market_type` filter | 0ea398bd |
+| vegas_points_line (25) | Was 67-100% zeros | Added `market_type` filter | 0ea398bd |
+| All 37 features | No variance check | Added batch variance validation | 72d1ba8d |
 
 ---
 
