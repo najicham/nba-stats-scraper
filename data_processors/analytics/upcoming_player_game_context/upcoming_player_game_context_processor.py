@@ -436,6 +436,22 @@ class UpcomingPlayerGameContextProcessor(
 
             logger.info(f"Prop coverage: {players_with_props}/{total_players} ({prop_pct:.1f}%)")
 
+            # Session 52: Feature completeness validation
+            # Check critical features aren't all NULL (prevents silent data quality issues)
+            critical_features = [
+                ('avg_usage_rate_last_7_games', 'Usage rate needed for composite factors'),
+                ('games_in_last_7_days', 'Games count needed for fatigue calculation'),
+                ('back_to_back', 'Back-to-back flag needed for ML features'),
+            ]
+            for feature_name, feature_desc in critical_features:
+                non_null_count = sum(1 for p in self.transformed_data if p.get(feature_name) is not None)
+                feature_pct = (non_null_count / total_players * 100) if total_players > 0 else 0
+                if total_players >= 50 and feature_pct < 10:
+                    logger.warning(
+                        f"FEATURE QUALITY ALERT: {feature_name} is {feature_pct:.1f}% populated "
+                        f"({non_null_count}/{total_players}). {feature_desc}"
+                    )
+
             # Alert on 0% or very low (<10%) prop coverage when we have significant players
             if total_players >= 50 and prop_pct < 10:
                 self._send_prop_coverage_alert(target_date, total_players, players_with_props, prop_pct)

@@ -1172,6 +1172,28 @@ class MLFeatureStoreProcessor(
             f"({success_rate:.1f}% success rate) in {self._timing['calculate_precompute']:.2f}s"
         )
 
+        # Session 52: Feature source validation
+        # Alert when Phase 4 composite features are all using defaults (indicates upstream issue)
+        if success_count >= 50:
+            composite_features = [
+                (5, 'fatigue_score', 50.0),
+                (6, 'shot_zone_mismatch_score', 0.0),
+                (7, 'pace_score', 0.0),
+                (8, 'usage_spike_score', 0.0),
+            ]
+            for idx, feature_name, default_val in composite_features:
+                # Count how many used Phase 4 vs default
+                phase4_count = sum(
+                    1 for r in self.transformed_data
+                    if r.get('feature_sources', {}).get(idx) == 'phase4'
+                )
+                default_pct = ((success_count - phase4_count) / success_count * 100)
+                if default_pct >= 90:
+                    logger.warning(
+                        f"FEATURE SOURCE ALERT: {feature_name} (idx {idx}) is {default_pct:.1f}% defaults "
+                        f"(only {phase4_count}/{success_count} from Phase 4). Check player_composite_factors backfill."
+                    )
+
         # Count failures by category for clear visibility
         if self.failed_entities:
             category_counts = {}

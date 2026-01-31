@@ -199,27 +199,32 @@ class GameDataLoader:
 
         start_date = self.target_date - timedelta(days=self.lookback_days)
 
-        # Try BDL first (PRIMARY)
+        # Try BDL first (PRIMARY), enriched with usage_rate from player_game_summary
+        # Session 52: Added LEFT JOIN with player_game_summary to get usage_rate
+        # which is needed for avg_usage_rate_last_7_games calculation
         query = f"""
         SELECT
-            player_lookup,
-            game_date,
-            team_abbr,
-            points,
-            minutes,
-            assists,
-            rebounds,
-            field_goals_made,
-            field_goals_attempted,
-            three_pointers_made,
-            three_pointers_attempted,
-            free_throws_made,
-            free_throws_attempted
-        FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
-        WHERE player_lookup IN UNNEST(@player_lookups)
-          AND game_date >= @start_date
-          AND game_date < @target_date
-        ORDER BY player_lookup, game_date DESC
+            bdl.player_lookup,
+            bdl.game_date,
+            bdl.team_abbr,
+            bdl.points,
+            bdl.minutes,
+            bdl.assists,
+            bdl.rebounds,
+            bdl.field_goals_made,
+            bdl.field_goals_attempted,
+            bdl.three_pointers_made,
+            bdl.three_pointers_attempted,
+            bdl.free_throws_made,
+            bdl.free_throws_attempted,
+            pgs.usage_rate
+        FROM `{self.project_id}.nba_raw.bdl_player_boxscores` bdl
+        LEFT JOIN `{self.project_id}.nba_analytics.player_game_summary` pgs
+          ON bdl.player_lookup = pgs.player_lookup AND bdl.game_date = pgs.game_date
+        WHERE bdl.player_lookup IN UNNEST(@player_lookups)
+          AND bdl.game_date >= @start_date
+          AND bdl.game_date < @target_date
+        ORDER BY bdl.player_lookup, bdl.game_date DESC
         """
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
