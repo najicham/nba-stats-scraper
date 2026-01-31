@@ -39,6 +39,13 @@ from config.validation_config import (
     get_threshold,
 )
 
+# Import postponement handling utilities
+try:
+    from shared.utils.postponement_detector import auto_confirm_stale_postponements
+    HAS_POSTPONEMENT_UTILS = True
+except ImportError:
+    HAS_POSTPONEMENT_UTILS = False
+
 
 class TonightDataValidator:
     """Validates all data required for tonight's predictions."""
@@ -50,6 +57,7 @@ class TonightDataValidator:
         self.issues: List[Dict] = []
         self.warnings: List[Dict] = []
         self.stats: Dict = {}
+        self.postponed_games: List[Dict] = []  # Track postponed games to exclude from validation
 
     def add_issue(self, stage: str, message: str, severity: str = "ERROR"):
         self.issues.append({
@@ -63,6 +71,57 @@ class TonightDataValidator:
             'stage': stage,
             'message': message
         })
+
+    def get_postponed_games(self) -> List[Dict]:
+        """
+        Get games that have been postponed from or to the target date.
+        These should be excluded from validation as they legitimately have no data.
+
+        Also auto-confirms any 'detected' postponements that have future new_dates.
+
+        Returns:
+            List of postponed game records with game_id, original_date, new_date, reason
+        """
+        # First, auto-confirm any stale 'detected' postponements with future dates
+        if HAS_POSTPONEMENT_UTILS:
+            try:
+                confirmed = auto_confirm_stale_postponements(self.client)
+                if confirmed:
+                    print(f"✓ Auto-confirmed {len(confirmed)} stale postponement(s)")
+                    for c in confirmed:
+                        print(f"   • {c['game_id']}: {c['original_date']} → {c['new_date']}")
+            except Exception as e:
+                print(f"⚠️ Could not auto-confirm postponements: {e}")
+
+        query = f"""
+        SELECT
+            game_id,
+            original_date,
+            new_date,
+            reason,
+            status,
+            detection_source
+        FROM `{self.project}.nba_orchestration.game_postponements`
+        WHERE (original_date = '{self.target_date}' OR new_date = '{self.target_date}')
+          AND status IN ('detected', 'confirmed')
+        ORDER BY original_date
+        """
+        try:
+            results = list(self.client.query(query).result(timeout=30))
+            postponed = []
+            for row in results:
+                postponed.append({
+                    'game_id': row.game_id,
+                    'original_date': str(row.original_date) if row.original_date else None,
+                    'new_date': str(row.new_date) if row.new_date else None,
+                    'reason': row.reason,
+                    'status': row.status
+                })
+            return postponed
+        except Exception as e:
+            # Don't fail validation if postponement check fails
+            print(f"⚠️ Could not check postponements: {e}")
+            return []
 
     def check_schedule(self) -> int:
         """Check that schedule data exists for target date."""
@@ -475,7 +534,7 @@ class TonightDataValidator:
                 COUNTIF(minutes_played > 0 AND usage_rate IS NOT NULL) as active_with_usage,
                 ROUND(100.0 * COUNTIF(minutes_played > 0 AND usage_rate IS NOT NULL) / NULLIF(COUNTIF(minutes_played > 0), 0), 1) as active_usage_pct
             FROM `{self.project}.nba_analytics.player_game_summary`
-            WHERE analysis_date = '{check_date}'
+            WHERE game_date = '{check_date}'
         )
         SELECT * FROM data_quality
         """
@@ -586,7 +645,7 @@ class TonightDataValidator:
             ROUND(100.0 * COUNTIF(minutes_played > 0 AND three_pt_attempts IS NOT NULL) /
                   NULLIF(COUNTIF(minutes_played > 0), 0), 1) as active_three_pct
         FROM `{self.project}.nba_analytics.player_game_summary`
-        WHERE analysis_date = '{check_date}'
+        WHERE game_date = '{check_date}'
         """
 
         try:
@@ -983,6 +1042,21 @@ class TonightDataValidator:
         print(f"TONIGHT'S DATA VALIDATION - {self.target_date}")
         print(f"{'='*60}\n")
 
+        # Check for postponed games FIRST - these should be excluded from validation
+        self.postponed_games = self.get_postponed_games()
+        if self.postponed_games:
+            print(f"📅 POSTPONED GAMES (excluded from validation):")
+            for pg in self.postponed_games:
+                if pg['original_date'] == str(self.target_date):
+                    # Game was postponed FROM this date
+                    new_date = pg['new_date'] or 'TBD'
+                    print(f"   • {pg['game_id']}: Postponed from {pg['original_date']} → {new_date}")
+                    print(f"     Reason: {pg['reason'] or 'Unknown'}")
+                else:
+                    # Game was rescheduled TO this date
+                    print(f"   • {pg['game_id']}: Rescheduled from {pg['original_date']} → {self.target_date}")
+            print()
+
         # Check timing and warn if running too early
         current_hour = datetime.now(timezone.utc).hour
         current_time_et = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=5)  # Convert to ET
@@ -1038,6 +1112,14 @@ class TonightDataValidator:
         print(f"\n{'='*60}")
         print("SUMMARY")
         print(f"{'='*60}")
+
+        # Show postponed games that were excluded from validation
+        if self.postponed_games:
+            postponed_from_today = [pg for pg in self.postponed_games if pg['original_date'] == str(self.target_date)]
+            if postponed_from_today:
+                print(f"\n📅 {len(postponed_from_today)} POSTPONED GAME(S) (excluded from missing data checks):")
+                for pg in postponed_from_today:
+                    print(f"  • {pg['game_id']}: Rescheduled to {pg['new_date'] or 'TBD'}")
 
         if self.issues:
             print(f"\n❌ {len(self.issues)} ISSUES FOUND:")

@@ -384,6 +384,7 @@ class PostponementDetector:
         Log a detected anomaly to BigQuery.
 
         Logs ALL anomaly types for complete audit trail.
+        Auto-confirms GAME_RESCHEDULED anomalies when new_date is in the future.
 
         Returns:
             game_id if logged successfully, None otherwise
@@ -392,18 +393,46 @@ class PostponementDetector:
         if not game_id:
             game_id = f"NEWS_{anomaly.get('game_date', 'unknown')}"
 
-        query = """
-        INSERT INTO `nba_orchestration.game_postponements`
-        (sport, game_id, original_date, new_date, reason, detection_source, detection_details,
-         predictions_invalidated, status)
-        VALUES
-        (@sport, @game_id, @original_date, @new_date, @reason, @detection_source, @detection_details,
-         @predictions_count, 'detected')
-        """
-
         original_date = anomaly.get('original_date') or anomaly.get('game_date')
         new_date = anomaly.get('new_date')
         predictions_count = anomaly.get('predictions_affected', 0)
+
+        # Auto-confirm rescheduled games when new_date is in the future
+        # This prevents them from sitting in 'detected' status requiring manual fix
+        auto_confirm = False
+        if anomaly.get('type') == 'GAME_RESCHEDULED' and new_date:
+            try:
+                if isinstance(new_date, str):
+                    new_date_parsed = datetime.strptime(new_date, '%Y-%m-%d').date()
+                else:
+                    new_date_parsed = new_date
+                if new_date_parsed >= date.today():
+                    auto_confirm = True
+                    logger.info(
+                        f"Auto-confirming rescheduled game {game_id}: "
+                        f"{original_date} → {new_date} (future date)"
+                    )
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Could not parse new_date for auto-confirm: {e}")
+
+        if auto_confirm:
+            query = """
+            INSERT INTO `nba_orchestration.game_postponements`
+            (sport, game_id, original_date, new_date, reason, detection_source, detection_details,
+             predictions_invalidated, status, confirmed_at)
+            VALUES
+            (@sport, @game_id, @original_date, @new_date, @reason, @detection_source, @detection_details,
+             @predictions_count, 'confirmed', CURRENT_TIMESTAMP())
+            """
+        else:
+            query = """
+            INSERT INTO `nba_orchestration.game_postponements`
+            (sport, game_id, original_date, new_date, reason, detection_source, detection_details,
+             predictions_invalidated, status)
+            VALUES
+            (@sport, @game_id, @original_date, @new_date, @reason, @detection_source, @detection_details,
+             @predictions_count, 'detected')
+            """
 
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
@@ -508,3 +537,83 @@ def get_affected_predictions(
     except Exception as e:
         logger.warning(f"Failed to count affected predictions: {e}")
         return 0
+
+
+def auto_confirm_stale_postponements(
+    bq_client: Optional[bigquery.Client] = None
+) -> List[Dict[str, Any]]:
+    """
+    Auto-confirm postponements that are still in 'detected' status but have a future new_date.
+
+    This prevents postponements from sitting in 'detected' status indefinitely when we can
+    clearly see the game has been rescheduled to a future date.
+
+    Args:
+        bq_client: Optional BigQuery client
+
+    Returns:
+        List of confirmed postponements
+    """
+    client = bq_client or bigquery.Client()
+
+    # Find postponements that should be auto-confirmed:
+    # - status = 'detected'
+    # - new_date >= today (game hasn't played yet)
+    # - new_date is not NULL
+    query = """
+    SELECT
+        game_id,
+        original_date,
+        new_date,
+        reason,
+        detection_source
+    FROM `nba_orchestration.game_postponements`
+    WHERE status = 'detected'
+      AND new_date IS NOT NULL
+      AND new_date >= CURRENT_DATE()
+    """
+
+    try:
+        results = list(client.query(query).result())
+    except Exception as e:
+        logger.error(f"Failed to query stale postponements: {e}")
+        return []
+
+    confirmed = []
+    for row in results:
+        try:
+            # Update status to confirmed
+            update_query = """
+            UPDATE `nba_orchestration.game_postponements`
+            SET status = 'confirmed',
+                confirmed_at = CURRENT_TIMESTAMP()
+            WHERE game_id = @game_id
+              AND original_date = @original_date
+              AND status = 'detected'
+            """
+
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("game_id", "STRING", row.game_id),
+                    bigquery.ScalarQueryParameter("original_date", "DATE", row.original_date),
+                ]
+            )
+
+            client.query(update_query, job_config=job_config).result()
+
+            confirmed.append({
+                'game_id': row.game_id,
+                'original_date': str(row.original_date),
+                'new_date': str(row.new_date),
+                'reason': row.reason,
+            })
+
+            logger.info(
+                f"Auto-confirmed postponement: {row.game_id} "
+                f"({row.original_date} → {row.new_date})"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed to auto-confirm {row.game_id}: {e}")
+
+    return confirmed
