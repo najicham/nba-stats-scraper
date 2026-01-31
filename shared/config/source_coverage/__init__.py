@@ -27,6 +27,7 @@ class SourceCoverageEventType(str, Enum):
     MANUAL_OVERRIDE = 'manual_override'
     INSUFFICIENT_SAMPLE = 'insufficient_sample'
     AUDIT_DETECTED = 'audit_detected'
+    DEPENDENCY_STALE = 'dependency_stale'
 
 
 class SourceCoverageSeverity(str, Enum):

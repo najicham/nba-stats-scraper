@@ -332,6 +332,9 @@ class PlayerGameSummaryProcessor(
         This prevents NULL usage_rate by ensuring team stats exist before
         player_game_summary calculates usage_rate (Bug #2 fix, 2026-01-27).
 
+        Compares actual team-game count against expected count from the NBA
+        schedule. This handles light game days (1-4 games) correctly.
+
         Args:
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
@@ -339,6 +342,7 @@ class PlayerGameSummaryProcessor(
         Returns:
             (is_available, record_count)
         """
+        # Get actual team-game count from team_offense_game_summary
         query = f"""
         SELECT COUNT(DISTINCT CONCAT(game_id, '_', team_abbr)) as team_game_count
         FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
@@ -347,14 +351,28 @@ class PlayerGameSummaryProcessor(
         result = self.bq_client.query(query).result()
         count = next(result).team_game_count
 
-        # Expect ~14 team-games per day (7 games × 2 teams)
-        # Allow some flexibility for partial days
-        expected_min = 10
-        is_available = count >= expected_min
+        # Get expected count from NBA schedule (2 teams per game)
+        expected_query = f"""
+        SELECT COALESCE(COUNT(DISTINCT game_id) * 2, 0) as expected_team_game_count
+        FROM `{self.project_id}.nba_reference.nba_schedule`
+        WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+          AND game_status = 3
+        """
+        expected_result = self.bq_client.query(expected_query).result()
+        expected_count = next(expected_result).expected_team_game_count
+
+        # Consider ready if we have at least 80% of expected data
+        # or if no games are scheduled (allow processing to continue)
+        threshold_pct = 0.80
+        if expected_count == 0:
+            is_available = True  # No games scheduled, allow processing
+        else:
+            is_available = count >= (expected_count * threshold_pct)
 
         if not is_available:
             logger.warning(
-                f"Team stats not ready: {count} records found (expected >= {expected_min}). "
+                f"Team stats not ready: {count}/{expected_count} records "
+                f"({100.0 * count / expected_count if expected_count > 0 else 0:.1f}% complete). "
                 f"Usage rate will be NULL for this run."
             )
 
@@ -969,6 +987,14 @@ class PlayerGameSummaryProcessor(
         # Extract shot zones from play-by-play (Pass 2 enrichment)
         if not self.raw_data.empty:
             self.shot_zone_analyzer.extract_shot_zones(start_date, end_date)
+
+            # Persist games that need BDB re-run when data becomes available
+            pending_count = self.shot_zone_analyzer.persist_pending_bdb_games()
+            if pending_count > 0:
+                logger.warning(
+                    f"⚠️ {pending_count} games added to pending_bdb_games table "
+                    f"(missing BigDataBall data, will retry when available)"
+                )
 
     def validate_extracted_data(self) -> None:
         """Enhanced validation with cross-source quality checks."""
@@ -1617,6 +1643,17 @@ class PlayerGameSummaryProcessor(
                     except Exception:
                         pass
 
+            # CRITICAL: Get shot zone data (all from same source - PBP, not box score)
+            # This ensures data consistency (avoid mixing PBP paint/mid with box score three_pt)
+            shot_zone_data = self.shot_zone_analyzer.get_shot_zone_data(row['game_id'], player_lookup)
+
+            # Check if we have complete shot zone data from PBP
+            has_complete_shot_zones = (
+                shot_zone_data.get('paint_attempts') is not None and
+                shot_zone_data.get('mid_range_attempts') is not None and
+                shot_zone_data.get('three_attempts_pbp') is not None
+            )
+
             # Build record with source tracking
             record = {
                 # Core identifiers
@@ -1644,13 +1681,15 @@ class PlayerGameSummaryProcessor(
                 # Shooting
                 'fg_attempts': int(row['field_goals_attempted']) if pd.notna(row['field_goals_attempted']) else None,
                 'fg_makes': int(row['field_goals_made']) if pd.notna(row['field_goals_made']) else None,
-                'three_pt_attempts': int(row['three_pointers_attempted']) if pd.notna(row['three_pointers_attempted']) else None,
-                'three_pt_makes': int(row['three_pointers_made']) if pd.notna(row['three_pointers_made']) else None,
+                # CRITICAL: Use PBP three_pt (not box score) for source consistency with paint/mid
+                # If PBP not available, set to None to avoid mixed-source corruption
+                'three_pt_attempts': shot_zone_data.get('three_attempts_pbp'),
+                'three_pt_makes': shot_zone_data.get('three_makes_pbp'),
                 'ft_attempts': int(row['free_throws_attempted']) if pd.notna(row['free_throws_attempted']) else None,
                 'ft_makes': int(row['free_throws_made']) if pd.notna(row['free_throws_made']) else None,
 
                 # Shot zones + shot creation (Pass 2 enrichment from BigDataBall play-by-play)
-                **self.shot_zone_analyzer.get_shot_zone_data(row['game_id'], player_lookup),
+                **shot_zone_data,
 
                 # Efficiency
                 'usage_rate': round(usage_rate, 1) if usage_rate else None,
@@ -1698,6 +1737,10 @@ class PlayerGameSummaryProcessor(
                 'processing_context': self._determine_processing_context(),
                 'data_quality_flag': 'complete' if (usage_rate is not None and self._team_stats_available) else ('partial_no_team_stats' if not self._team_stats_available else 'partial'),
                 'team_stats_available_at_processing': self._team_stats_available,
+
+                # Shot zone completeness tracking (2026-01-31)
+                # Tracks if all three zones have data from same PBP source (not mixed with box score)
+                'has_complete_shot_zones': has_complete_shot_zones,
 
                 # Metadata
                 'processed_at': datetime.now(timezone.utc).isoformat()
@@ -1783,6 +1826,11 @@ class PlayerGameSummaryProcessor(
 
             # Step 2: Extract shot zones for this game
             self.shot_zone_analyzer.extract_shot_zones(game_date, game_date)
+
+            # Persist games that need BDB re-run when data becomes available
+            pending_count = self.shot_zone_analyzer.persist_pending_bdb_games()
+            if pending_count > 0:
+                logger.info(f"Game {game_id} added to pending_bdb_games (missing BDB data)")
 
             # Step 3: Set registry context and do batch lookup
             # Registry context set in batch_lookup_universal_ids
@@ -2184,6 +2232,17 @@ class PlayerGameSummaryProcessor(
                                 f"likely incomplete team stats (team_poss={team_poss_used:.1f})"
                             )
                             usage_rate = None
+
+                # CRITICAL: Get shot zone data (all from same source - PBP, not box score)
+                # This ensures data consistency (avoid mixing PBP paint/mid with box score three_pt)
+                shot_zone_data = self.shot_zone_analyzer.get_shot_zone_data(row['game_id'], player_lookup)
+
+                # Check if we have complete shot zone data from PBP
+                has_complete_shot_zones = (
+                    shot_zone_data.get('paint_attempts') is not None and
+                    shot_zone_data.get('mid_range_attempts') is not None and
+                    shot_zone_data.get('three_attempts_pbp') is not None
+                )
 
                 # Build record with source tracking
                 record = {

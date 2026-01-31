@@ -172,8 +172,9 @@ ORDER BY season_nba_format DESC, data_source;
 -- Without game_date in the partition, the view would only return one row per game_id,
 -- causing scheduled games to be hidden if an older game with same id was Final.
 --
--- NOTE: Date range limited to 90 days past / 30 days future to allow
--- partition elimination on the underlying table.
+-- NOTE: Date range limited to 365 days past / 30 days future to allow
+-- partition elimination on the underlying table while supporting backfills
+-- for the current season.
 CREATE OR REPLACE VIEW `nba_raw.v_nbac_schedule_latest` AS
 SELECT * EXCEPT(rn)
 FROM (
@@ -183,7 +184,7 @@ FROM (
       ORDER BY game_status DESC, processed_at DESC
     ) as rn
   FROM `nba_raw.nbac_schedule`
-  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
     AND game_date <= DATE_ADD(CURRENT_DATE(), INTERVAL 30 DAY)
 )
 WHERE rn = 1;
