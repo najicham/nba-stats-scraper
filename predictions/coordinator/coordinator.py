@@ -1482,6 +1482,72 @@ def _generate_predictions_for_date(
 
         logger.info(f"Found {len(requests)} players with games on {game_date}")
 
+        # Create batch state in Firestore (required for worker completion tracking)
+        try:
+            state_manager = get_state_manager()
+            correlation_id = f"regen_{reason}"
+
+            # Multi-instance mode: Use transaction to prevent duplicate batch creation
+            if ENABLE_MULTI_INSTANCE:
+                instance_manager = get_coordinator_instance_manager()
+                instance_id = instance_manager.instance_id
+
+                # Use transaction-based creation for safety
+                batch_state = state_manager.create_batch_with_transaction(
+                    batch_id=batch_id,
+                    game_date=game_date,
+                    expected_players=len(requests),
+                    correlation_id=correlation_id,
+                    dataset_prefix='',
+                    instance_id=instance_id
+                )
+
+                if batch_state is None:
+                    # Batch already exists - another instance created it
+                    logger.warning(
+                        f"Regeneration batch {batch_id} already exists (created by another instance)"
+                    )
+                    return {
+                        'status': 'already_exists',
+                        'batch_id': batch_id,
+                        'message': 'Batch was created by another coordinator instance'
+                    }
+
+                # Claim the batch for this instance
+                claimed = state_manager.claim_batch_for_processing(
+                    batch_id=batch_id,
+                    instance_id=instance_id
+                )
+                if not claimed:
+                    logger.warning(f"Could not claim batch {batch_id} - may be processed by another instance")
+
+                logger.info(
+                    f"✅ Regeneration batch state persisted to Firestore: {batch_id} "
+                    f"(expected={len(requests)} players, instance={instance_id})"
+                )
+            else:
+                # Single-instance mode: Use simple create
+                batch_state = state_manager.create_batch(
+                    batch_id=batch_id,
+                    game_date=game_date,
+                    expected_players=len(requests),
+                    correlation_id=correlation_id,
+                    dataset_prefix=''
+                )
+                logger.info(
+                    f"✅ Regeneration batch state persisted to Firestore: {batch_id} "
+                    f"(expected={len(requests)} players)"
+                )
+        except Exception as e:
+            # This is critical - without persistent state, consolidation won't work
+            logger.error(f"❌ CRITICAL: Failed to persist regeneration batch state to Firestore: {e}", exc_info=True)
+            return {
+                'status': 'error',
+                'requests_published': 0,
+                'batch_id': batch_id,
+                'error': f'Failed to create batch state: {str(e)}'
+            }
+
         # BATCH OPTIMIZATION: Pre-load historical games for all players
         # This provides massive speedup (331x) - see coordinator.py:857
         try:
