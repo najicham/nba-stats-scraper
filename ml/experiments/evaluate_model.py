@@ -39,18 +39,32 @@ import catboost as cb
 PROJECT_ID = "nba-props-platform"
 RESULTS_DIR = Path(__file__).parent / "results"
 
-# Feature names - must match feature store and training exactly (33 features)
+# Feature names - must match feature store and training exactly
+# Supports 33, 34, and 37 feature variants
 ALL_FEATURES = [
+    # Recent Performance (0-4)
     "points_avg_last_5", "points_avg_last_10", "points_avg_season",
-    "points_std_last_10", "games_in_last_7_days", "fatigue_score",
-    "shot_zone_mismatch_score", "pace_score", "usage_spike_score",
+    "points_std_last_10", "games_in_last_7_days",
+    # Composite Factors (5-8)
+    "fatigue_score", "shot_zone_mismatch_score", "pace_score", "usage_spike_score",
+    # Derived Factors (9-12)
     "rest_advantage", "injury_risk", "recent_trend", "minutes_change",
-    "opponent_def_rating", "opponent_pace", "home_away", "back_to_back",
-    "playoff_game", "pct_paint", "pct_mid_range", "pct_three",
-    "pct_free_throw", "team_pace", "team_off_rating", "team_win_pct",
+    # Matchup Context (13-17)
+    "opponent_def_rating", "opponent_pace", "home_away", "back_to_back", "playoff_game",
+    # Shot Zones (18-21)
+    "pct_paint", "pct_mid_range", "pct_three", "pct_free_throw",
+    # Team Context (22-24)
+    "team_pace", "team_off_rating", "team_win_pct",
+    # Vegas Lines (25-28)
     "vegas_points_line", "vegas_opening_line", "vegas_line_move", "has_vegas_line",
+    # Opponent History (29-30)
     "avg_points_vs_opponent", "games_vs_opponent",
-    "minutes_avg_last_10", "ppm_avg_last_10"
+    # Minutes/Efficiency (31-32)
+    "minutes_avg_last_10", "ppm_avg_last_10",
+    # DNP Risk (33)
+    "dnp_rate",
+    # Player Trajectory (34-36)
+    "pts_slope_10g", "pts_vs_season_zscore", "breakout_flag",
 ]
 
 # Betting constants
@@ -60,16 +74,21 @@ LOSS_PAYOUT = -1.0  # $1 loss per $1 bet on a loss
 BREAKEVEN_HIT_RATE = 1 / (1 + WIN_PAYOUT)  # ~52.4%
 
 
-def get_evaluation_query(eval_start: str, eval_end: str) -> str:
+def get_evaluation_query(eval_start: str, eval_end: str, min_feature_count: int = 33) -> str:
     """
     Generate BigQuery SQL for fetching evaluation data.
 
-    The feature store (ml_feature_store_v2) contains all 33 features including
-    vegas_points_line which we need for betting metrics evaluation.
+    The feature store (ml_feature_store_v2) contains feature vectors.
+    We extract vegas_points_line for betting metrics evaluation.
 
     IMPORTANT: We also extract has_vegas_line (index 28) to filter for real lines.
     The feature store has imputed values when there's no real line, so we can't
     rely on NULL checks - we must use the has_vegas_line flag.
+
+    Args:
+        eval_start: Evaluation start date (YYYY-MM-DD)
+        eval_end: Evaluation end date (YYYY-MM-DD)
+        min_feature_count: Minimum feature count to accept (default: 33)
     """
     return f"""
 SELECT
@@ -87,30 +106,50 @@ INNER JOIN `nba-props-platform.nba_analytics.player_game_summary` pgs
   ON mf.player_lookup = pgs.player_lookup
   AND mf.game_date = pgs.game_date
 WHERE mf.game_date BETWEEN '{eval_start}' AND '{eval_end}'
-  AND mf.feature_count = 33
-  AND ARRAY_LENGTH(mf.features) = 33
+  AND mf.feature_count >= {min_feature_count}
+  AND ARRAY_LENGTH(mf.features) >= {min_feature_count}
   AND pgs.points IS NOT NULL
 ORDER BY mf.game_date
 """
 
 
-def prepare_features(df: pd.DataFrame, medians: dict = None) -> tuple[pd.DataFrame, pd.Series]:
+def prepare_features(df: pd.DataFrame, medians: dict = None, target_feature_count: int = None) -> tuple[pd.DataFrame, pd.Series, list]:
     """
     Prepare feature matrix from raw dataframe.
 
-    The feature store already has all 33 features, so we just need to
-    unpack the features array into a DataFrame.
+    The feature store contains feature vectors of variable length (33, 34, or 37).
+    This function unpacks them and handles variable feature counts.
 
     Args:
         df: Raw dataframe from BigQuery
         medians: Optional median values for imputation (from training)
+        target_feature_count: If specified, truncate/limit to this many features
 
     Returns:
-        X: Feature matrix (33 features)
+        X: Feature matrix
         y: Target values (actual_points)
+        feature_names: List of feature names used
     """
+    # Detect feature count from data
+    sample_features = df.iloc[0]['features']
+    actual_feature_count = len(sample_features)
+
+    # Determine how many features to use
+    if target_feature_count:
+        feature_count = min(actual_feature_count, target_feature_count)
+    else:
+        feature_count = actual_feature_count
+
+    # Use appropriate feature names based on count
+    feature_names = ALL_FEATURES[:feature_count]
+    print(f"Detected {actual_feature_count} features in data, using {len(feature_names)} feature names")
+
     # Unpack features array into DataFrame with named columns
-    X = pd.DataFrame(df['features'].tolist(), columns=ALL_FEATURES)
+    # Truncate features to match feature_names length
+    X = pd.DataFrame(
+        [row[:len(feature_names)] for row in df['features'].tolist()],
+        columns=feature_names
+    )
 
     # Use provided medians or compute from eval data
     if medians:
@@ -123,7 +162,7 @@ def prepare_features(df: pd.DataFrame, medians: dict = None) -> tuple[pd.DataFra
 
     y = df['actual_points'].astype(float)
 
-    return X, y
+    return X, y, feature_names
 
 
 def calculate_betting_metrics(
@@ -369,12 +408,20 @@ def main():
         print(f"Training period: {train_metadata['train_period']['start']} to {train_metadata['train_period']['end']}")
     print()
 
+    # Get feature count from training metadata or default to 33
+    target_feature_count = train_metadata.get('feature_count', 33) if train_metadata else 33
+    print(f"Target feature count from training: {target_feature_count}")
+
     # Load evaluation data
     print("Loading evaluation data...")
     client = bigquery.Client(project=PROJECT_ID)
-    query = get_evaluation_query(args.eval_start, args.eval_end)
+    query = get_evaluation_query(args.eval_start, args.eval_end, min_feature_count=target_feature_count)
     df = client.query(query).to_dataframe()
     print(f"Loaded {len(df):,} samples")
+
+    if len(df) == 0:
+        print("ERROR: No evaluation data found. Check date range and feature count requirements.")
+        sys.exit(1)
 
     actual_start = df['game_date'].min()
     actual_end = df['game_date'].max()
@@ -382,7 +429,8 @@ def main():
 
     # Prepare features
     print("\nPreparing features...")
-    X, y = prepare_features(df, medians)
+    X, y, feature_names_used = prepare_features(df, medians, target_feature_count=target_feature_count)
+    print(f"Using {len(feature_names_used)} features")
 
     # Generate predictions
     print("Generating predictions...")

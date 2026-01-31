@@ -1,0 +1,97 @@
+{
+  "experiment_id": "JAN_LAST_SEASON",
+  "model_path": "ml/experiments/results/catboost_v9_exp_JAN_LAST_SEASON_20260131_085238.cbm",
+  "train_period": {
+    "start": "2024-11-01",
+    "end": "2025-04-30",
+    "actual_start": "2024-11-06",
+    "actual_end": "2025-04-30",
+    "samples": 24845
+  },
+  "eval_period": {
+    "start": "2026-01-01",
+    "end": "2026-01-30",
+    "actual_start": "2026-01-01",
+    "actual_end": "2026-01-30",
+    "samples": 4792,
+    "vegas_coverage": 0.6342
+  },
+  "results": {
+    "mae": 4.4613,
+    "betting": {
+      "hit_rate": 0.5157068062827225,
+      "hit_rate_pct": 51.57,
+      "hits": 788,
+      "misses": 740,
+      "pushes": 0,
+      "bets_placed": 1528,
+      "bets_graded": 1528,
+      "roi": -0.015468824369347923,
+      "roi_pct": -1.55,
+      "profit": -23.636363636363626,
+      "breakeven_hit_rate": 52.38,
+      "min_edge_threshold": 1.0
+    },
+    "by_confidence": {
+      "high_5+": {
+        "count": 91,
+        "graded": 91,
+        "hits": 51,
+        "hit_rate": 56.04
+      },
+      "medium_3-5": {
+        "count": 233,
+        "graded": 233,
+        "hits": 128,
+        "hit_rate": 54.94
+      },
+      "low_1-3": {
+        "count": 1204,
+        "graded": 1204,
+        "hits": 609,
+        "hit_rate": 50.58
+      },
+      "pass_<1": {
+        "count": 1511,
+        "graded": 1511,
+        "hits": 749,
+        "hit_rate": 49.57
+      }
+    },
+    "by_direction": {
+      "OVER": {
+        "count": 710,
+        "graded": 710,
+        "hits": 342,
+        "hit_rate": 48.17
+      },
+      "UNDER": {
+        "count": 818,
+        "graded": 818,
+        "hits": 446,
+        "hit_rate": 54.52
+      }
+    }
+  },
+  "monthly": {
+    "2026-01": {
+      "samples": 4792,
+      "mae": 4.4613,
+      "betting": {
+        "hit_rate": 0.5157068062827225,
+        "hit_rate_pct": 51.57,
+        "hits": 788,
+        "misses": 740,
+        "pushes": 0,
+        "bets_placed": 1528,
+        "bets_graded": 1528,
+        "roi": -0.015468824369347923,
+        "roi_pct": -1.55,
+        "profit": -23.636363636363626,
+        "breakeven_hit_rate": 52.38,
+        "min_edge_threshold": 1.0
+      }
+    }
+  },
+  "evaluated_at": "2026-01-31T08:53:01.284719"
+}

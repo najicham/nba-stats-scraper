@@ -1,76 +1,65 @@
-# Session 54 Start Prompt
+# Session 54 Start Prompt - Model Ensemble Research
 
-Copy and paste everything below the line to start a new session:
+## Context
 
----
+Session 53 ran model retraining experiments and found:
+1. **Production V8 is a stacked ensemble** (XGBoost + LightGBM + CatBoost + Ridge meta-learner)
+2. **Our single CatBoost models underperform** (51% vs 57% hit rate)
+3. **Different models excel at different player tiers**:
+   - V8 is best for stars (55.8%) and bench (57.5%)
+   - JAN_DEC_ONLY is best for rotation (63%) and starters (59.9%)
 
-Continue from Session 53 (2026-01-31). Here's the context:
+## Immediate Goals
 
-## What Was Done in Session 53
+1. **Understand V8 ensemble architecture** - Read the code and document exactly how it works
+2. **Implement tier-based model selection** - Use the best model for each player tier
+3. **Design seasonal model switching** - Plan for mid-season pattern changes
+4. **Backtest the tier-based approach** - Verify it outperforms V8 on January 2026 data
 
-**BDB Retry System Implementation** - Investigated why BigDataBall play-by-play data wasn't backfilling, found a source data outage (Jan 17-24), and implemented automated retry system:
-
-1. **Root Cause**: BDB had 0% coverage Jan 17-19, 14-57% Jan 20-24, 100% since Jan 25
-2. **Marked 24 games as failed** (Jan 17-19) - data will never arrive
-3. **Deployed Cloud Function** `bdb-retry-processor` - checks pending games every 6 hours
-4. **Created scheduler** `bdb-retry-hourly` - triggers the function
-5. **Updated `/validate-daily`** - now includes BDB coverage monitoring
-
-## Current System Status
-
-- **BDB Coverage**: 100% since Jan 26 (working normally)
-- **Pending Games**: 24 games (Jan 20-24) at check_count=3, waiting for data
-- **Predictions**: Working, CatBoost V8 fix deployed, ~60% hit rate
-- **Pipeline**: Healthy
-
-## Known Issues to Address
-
-1. **Shot Zone Data Quality** (P1)
-   - Paint rate: 25.9% (should be 30-45%)
-   - Three-point rate: 61% (should be 20-50%)
-   - Root cause: Different data sources for different zones
-   - See: `docs/09-handoff/2026-01-31-SHOT-ZONE-DATA-INVESTIGATION.md` (if exists)
-
-2. **Jan 20-24 Games** (P3)
-   - 24 games still pending BDB data
-   - System will automatically mark as failed after 72 checks (~18 days)
-   - Low priority - automated system handles it
-
-3. **Model Drift Monitoring** (P2)
-   - CatBoost V8 fix is live
-   - Weeks of Jan 12 & 26 showed ~48% hit rate (below target)
-   - Monitor ongoing performance
-
-## Recommended First Steps
-
-1. Run `/validate-daily` to check current health (now includes BDB coverage)
-2. Review shot zone data quality issue if not addressed
-3. Check if any new issues emerged
-
-## Key Commands
+## Start Here
 
 ```bash
-# Check BDB retry system status
-bq query --use_legacy_sql=false "
-SELECT status, COUNT(*) as games 
-FROM nba_orchestration.pending_bdb_games 
-GROUP BY status"
+# Read the handoff and research plan
+cat docs/09-handoff/2026-01-31-SESSION-53-MODEL-EXPERIMENTS-HANDOFF.md
+cat docs/08-projects/current/model-ensemble-research/RESEARCH-PLAN.md
 
-# Check BDB coverage yesterday
-bq query --use_legacy_sql=false "
-SELECT COUNT(DISTINCT bdb_game_id) as bdb_games
-FROM nba_raw.bigdataball_play_by_play
-WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)"
-
-# Check model performance
-bq query --use_legacy_sql=false "
-SELECT game_date, 
-  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate
-FROM nba_predictions.prediction_accuracy
-WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-GROUP BY game_date ORDER BY game_date DESC"
+# Then explore V8 implementation
+cat predictions/worker/prediction_systems/catboost_v8.py
 ```
 
-## Handoff Document
+## Key Questions to Answer
 
-Full details: `docs/09-handoff/2026-01-31-SESSION-53-BDB-RETRY-SYSTEM-HANDOFF.md`
+1. Where is the V8 stacked ensemble trained?
+2. What are the base model weights in the Ridge meta-learner?
+3. Can we implement tier-based selection without changing production code?
+4. How would we A/B test the new approach?
+
+## Experiment Models Available
+
+```
+ml/experiments/results/
+├── catboost_v9_exp_JAN_DEC_ONLY_*.cbm        # 63% on rotation players
+├── catboost_v9_exp_JAN_LAST_SEASON_*.cbm     # Best overall single model
+├── catboost_v9_exp_JAN_FULL_HISTORY_*.cbm    # Trained like V8
+└── *_metadata.json
+```
+
+## Success Criteria
+
+- [ ] Document V8 ensemble architecture
+- [ ] Create tier-based predictor class
+- [ ] Backtest tier-based approach on Jan 2026
+- [ ] Compare: Tier-based vs V8 vs Vegas blend
+- [ ] Write implementation plan for production
+
+## Reference Data
+
+Session 53 results on January 2026:
+
+| Model | Stars | Rotation | Overall |
+|-------|-------|----------|---------|
+| V8 Production | 55.8% | 59.1% | 57.3% |
+| JAN_DEC_ONLY | 29.6% | 63.0% | 55.1% |
+| Tier-Based (proposed) | 55.8%* | 63.0%* | ~59%* |
+
+*Proposed: Use V8 for stars, JAN_DEC_ONLY for rotation
