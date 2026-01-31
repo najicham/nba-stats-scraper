@@ -15,10 +15,10 @@ WITH feature_definitions AS (
     STRUCT(2, 'points_avg_season', 0.0, 60.0, 12.0),
     STRUCT(3, 'points_std_last_10', 0.0, 30.0, 5.0),
     STRUCT(4, 'games_in_last_7_days', 0.0, 7.0, 3.0),
-    STRUCT(5, 'fatigue_score', 0.0, 100.0, 90.0),  -- CRITICAL: Bug detector
-    STRUCT(6, 'shot_zone_mismatch_score', 0.0, 100.0, 50.0),
-    STRUCT(7, 'pace_score', 0.0, 100.0, 50.0),
-    STRUCT(8, 'usage_spike_score', 0.0, 100.0, 50.0),
+    STRUCT(5, 'fatigue_score', 0.0, 100.0, 90.0),  -- CRITICAL: 0-100 raw score (higher=more rested)
+    STRUCT(6, 'shot_zone_mismatch_score', -15.0, 15.0, 0.0),  -- Adjustment: -10 to +10 typical
+    STRUCT(7, 'pace_score', -8.0, 8.0, 0.0),  -- Adjustment: -3 to +3 typical
+    STRUCT(8, 'usage_spike_score', -8.0, 8.0, 0.0),  -- Adjustment: -3 to +3 typical
     STRUCT(9, 'rest_advantage', -2.0, 2.0, 0.0),
     STRUCT(10, 'injury_risk', 0.0, 3.0, 0.2),
     STRUCT(11, 'recent_trend', -2.0, 2.0, 0.0),
