@@ -97,20 +97,56 @@ class DiagnosticsResult:
     recommendations: List[str]
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for BigQuery insert."""
+        """Convert to dictionary for BigQuery insert matching performance_diagnostics_daily schema."""
+        # Extract metrics for flat fields
+        vegas = self.vegas_metrics or {}
+        drift = self.drift_metrics or {}
+        quality = self.data_quality_metrics or {}
+        baselines = self.baselines or {}
+
         return {
+            # Identifiers
             'game_date': str(self.game_date),
-            'run_timestamp': self.run_timestamp.isoformat(),
-            'vegas_metrics': json.dumps(self.vegas_metrics),
-            'drift_metrics': json.dumps(self.drift_metrics),
-            'data_quality_metrics': json.dumps(self.data_quality_metrics),
-            'baselines': json.dumps(self.baselines),
-            'root_cause': self.root_cause,
-            'root_cause_confidence': self.root_cause_confidence,
-            'contributing_factors': json.dumps(self.contributing_factors),
-            'alert_level': self.alert_level,
+            'computed_at': self.run_timestamp.isoformat(),
+
+            # Vegas sharpness metrics
+            'vegas_mae_tier1': vegas.get('vegas_mae_tier1'),
+            'vegas_mae_tier2': vegas.get('vegas_mae_tier2'),
+            'vegas_mae_tier3': vegas.get('vegas_mae_tier3'),
+            'model_beats_vegas_pct': vegas.get('overall_model_beats_vegas'),
+            'sharpness_score': vegas.get('sharpness_score'),
+            'sharpness_status': vegas.get('sharpness_status'),
+
+            # Model drift metrics
+            'hit_rate_7d': drift.get('hit_rate_7d'),
+            'hit_rate_14d': drift.get('hit_rate_14d'),
+            'hit_rate_30d': drift.get('hit_rate_30d'),
+            'model_mae': drift.get('model_mae'),
+            'model_mean_error': drift.get('model_mean_error'),
+            'bias_direction': drift.get('bias_direction'),
+            'drift_score': drift.get('drift_score'),
+            'drift_severity': drift.get('drift_severity'),
+
+            # Data quality context
+            'shot_zone_completeness': quality.get('shot_zone_completeness'),
+            'predictions_made': quality.get('predictions_made'),
+            'predictions_graded': quality.get('predictions_graded'),
+            'feature_quality_avg': quality.get('feature_quality_avg'),
+
+            # Baseline comparisons
+            'vegas_mae_baseline': baselines.get('vegas_mae_baseline'),
+            'hit_rate_baseline': baselines.get('hit_rate_baseline'),
+            'sharpness_vs_baseline': baselines.get('sharpness_vs_baseline'),
+
+            # Root cause attribution
+            'primary_cause': self.root_cause,
+            'cause_confidence': self.root_cause_confidence,
+            'contributing_factors': json.dumps(self.contributing_factors) if self.contributing_factors else None,
+
+            # Alert status
+            'alert_triggered': self.alert_level != 'OK',
+            'alert_level': self.alert_level.lower() if self.alert_level else 'healthy',
             'alert_message': self.alert_message,
-            'recommendations': json.dumps(self.recommendations),
         }
 
 
@@ -123,7 +159,7 @@ class PerformanceDiagnostics:
     """
 
     # BigQuery table for persisting results
-    TABLE_ID = "nba_orchestration.performance_diagnostics"
+    TABLE_ID = "nba_orchestration.performance_diagnostics_daily"
 
     # Thresholds for alerts
     THRESHOLDS = {

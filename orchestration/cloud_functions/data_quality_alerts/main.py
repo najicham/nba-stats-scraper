@@ -44,6 +44,15 @@ from typing import Dict, List, Optional, Tuple
 from google.cloud import bigquery
 import functions_framework
 
+# Performance diagnostics for model health monitoring (Session 57)
+# This import may fail when deployed as Cloud Function without shared module
+try:
+    from shared.utils.performance_diagnostics import PerformanceDiagnostics
+    HAS_PERFORMANCE_DIAGNOSTICS = True
+except ImportError:
+    HAS_PERFORMANCE_DIAGNOSTICS = False
+    PerformanceDiagnostics = None
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -621,6 +630,65 @@ class DataQualityMonitor:
         except Exception as e:
             logger.warning(f"Could not store shot zone quality metrics (table may not exist yet): {e}")
 
+    def check_model_performance(self, game_date: date) -> Tuple[str, str, Dict]:
+        """
+        Check model performance using unified diagnostics system.
+
+        Monitors:
+        - Model vs Vegas accuracy
+        - Hit rate trends
+        - Model drift score
+        - Root cause attribution
+
+        Returns:
+            (alert_level, message, details)
+
+        Added: Session 57 (2026-01-31)
+        """
+        # Check if performance diagnostics module is available
+        if not HAS_PERFORMANCE_DIAGNOSTICS:
+            return 'INFO', 'Model performance diagnostics not available (shared module not deployed)', {}
+
+        try:
+            # Use yesterday's date for grading data (today's games not yet complete)
+            analysis_date = game_date - timedelta(days=1)
+
+            # Initialize diagnostics
+            diagnostics = PerformanceDiagnostics(game_date=analysis_date)
+
+            # Run full analysis
+            results = diagnostics.run_full_analysis()
+
+            # Extract key metrics
+            alert = results.get('alert', {})
+            level = alert.get('level', 'OK')
+            message = alert.get('message', 'No diagnostics available')
+            recommendations = alert.get('recommendations', [])
+
+            # Extract details for response
+            details = {
+                'analysis_date': analysis_date.isoformat(),
+                'root_cause': results.get('root_cause', 'UNKNOWN'),
+                'root_cause_confidence': results.get('root_cause_confidence', 0.0),
+                'contributing_factors': results.get('contributing_factors', []),
+                'vegas_metrics': results.get('vegas', {}),
+                'drift_metrics': results.get('drift', {}),
+                'data_quality': results.get('quality', {}),
+                'recommendations': recommendations
+            }
+
+            # Persist results for tracking
+            try:
+                diagnostics.persist_results()
+            except Exception as e:
+                logger.warning(f"Could not persist diagnostics results: {e}")
+
+            return level, message, details
+
+        except Exception as e:
+            logger.error(f"Error running model performance diagnostics: {e}", exc_info=True)
+            return 'ERROR', f'Model performance check failed: {str(e)}', {}
+
 
 def send_slack_alert(level: str, check_name: str, message: str, details: Dict, game_date: date) -> bool:
     """Send alert to Slack webhook."""
@@ -738,7 +806,8 @@ def check_data_quality(request):
             'duplicates': monitor.check_duplicates,
             'prop_lines': monitor.check_prop_lines,
             'bdl_quality': monitor.check_bdl_quality,  # Added Session 41 - track BDL quality for potential re-enable
-            'shot_zone_quality': monitor.check_shot_zone_quality  # Added Session 54 - shot zone data quality monitoring
+            'shot_zone_quality': monitor.check_shot_zone_quality,  # Added Session 54 - shot zone data quality monitoring
+            'model_performance': monitor.check_model_performance  # Added Session 57 - daily model performance diagnostics
         }
 
         # Filter checks

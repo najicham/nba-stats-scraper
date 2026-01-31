@@ -44,6 +44,19 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 1
 fi
 
+# Get repo root directory
+REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+FUNCTION_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Copy shared module for deployment (Session 57)
+echo ""
+echo "Copying shared module for deployment..."
+mkdir -p "$FUNCTION_DIR/shared/utils"
+cp "$REPO_ROOT/shared/__init__.py" "$FUNCTION_DIR/shared/" 2>/dev/null || echo "# Shared module init" > "$FUNCTION_DIR/shared/__init__.py"
+cp "$REPO_ROOT/shared/utils/__init__.py" "$FUNCTION_DIR/shared/utils/" 2>/dev/null || echo "# Utils init" > "$FUNCTION_DIR/shared/utils/__init__.py"
+cp "$REPO_ROOT/shared/utils/performance_diagnostics.py" "$FUNCTION_DIR/shared/utils/"
+echo "✓ Shared module copied"
+
 # Deploy function
 echo ""
 echo "Deploying Cloud Function..."
@@ -111,6 +124,12 @@ if [ "$ENVIRONMENT" = "prod" ]; then
         echo "  gcloud scheduler jobs run $SCHEDULER_JOB --location=$REGION --project=$PROJECT_ID"
     fi
 fi
+
+# Cleanup copied shared module
+echo ""
+echo "Cleaning up copied shared module..."
+rm -rf "$FUNCTION_DIR/shared"
+echo "✓ Cleanup complete"
 
 echo ""
 echo "=== Next Steps ==="
