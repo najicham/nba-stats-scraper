@@ -7,7 +7,12 @@ to understand optimal training strategies for the CatBoost V8 model.
 Key modules:
 - train_walkforward.py: Train models with configurable date ranges
 - evaluate_model.py: Evaluate models on out-of-sample data
+- experiment_registry.py: Track experiments in BigQuery
 
 See docs/08-projects/current/catboost-v8-performance-analysis/WALK-FORWARD-EXPERIMENT-PLAN.md
 for experiment definitions and methodology.
 """
+
+from ml.experiments.experiment_registry import ExperimentRegistry, get_git_commit
+
+__all__ = ["ExperimentRegistry", "get_git_commit"]

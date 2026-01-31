@@ -1,0 +1,19 @@
+# Example Experiment Configuration
+#
+# Usage:
+#   PYTHONPATH=. python ml/experiments/train_walkforward.py \
+#       --config ml/experiments/configs/example_experiment.yaml
+
+# Required fields
+experiment_id: EXP_001
+train_start: "2024-01-01"
+train_end: "2024-06-30"
+
+# Optional metadata for registry
+name: "Recency weighting experiment - 90 day half-life"
+hypothesis: "Shorter half-life (90 days) improves January accuracy by emphasizing recent patterns"
+
+# Training options
+use_recency_weights: true
+half_life: 90
+verbose: false

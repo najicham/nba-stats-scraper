@@ -1,0 +1,159 @@
+# Skill: Yesterday's Grading
+
+View yesterday's prediction results with accuracy metrics.
+
+## Trigger
+- User asks about "yesterday's results", "how did we do yesterday", "grading", "yesterday's grading"
+- User types `/yesterdays-grading`
+
+## Workflow
+
+1. Query yesterday's graded predictions from `nba_predictions.prediction_accuracy`
+2. Calculate hit rate, MAE, bias
+3. Break down by tier and confidence
+4. Display in readable format
+
+## Summary Query
+
+```sql
+SELECT
+  COUNT(*) as total_graded,
+  COUNTIF(prediction_correct) as hits,
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate,
+  ROUND(AVG(absolute_error), 2) as mae,
+  ROUND(AVG(signed_error), 2) as bias,
+  COUNTIF(signed_error > 0) as over_predictions,
+  COUNTIF(signed_error < 0) as under_predictions
+FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+  AND system_id = 'catboost_v8'
+  AND prediction_correct IS NOT NULL
+```
+
+## By Confidence Query
+
+```sql
+SELECT
+  CASE
+    WHEN confidence_score >= 0.90 THEN '90+'
+    WHEN confidence_score >= 0.85 THEN '85-89'
+    WHEN confidence_score >= 0.80 THEN '80-84'
+    ELSE '<80'
+  END as confidence,
+  COUNT(*) as bets,
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate,
+  ROUND(AVG(absolute_error), 2) as mae
+FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+  AND system_id = 'catboost_v8'
+  AND prediction_correct IS NOT NULL
+GROUP BY 1
+ORDER BY 1
+```
+
+## By Tier Query
+
+```sql
+SELECT
+  CASE
+    WHEN actual_points >= 22 THEN 'Star'
+    WHEN actual_points >= 14 THEN 'Starter'
+    WHEN actual_points >= 6 THEN 'Rotation'
+    ELSE 'Bench'
+  END as tier,
+  COUNT(*) as bets,
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate,
+  ROUND(AVG(absolute_error), 2) as mae,
+  ROUND(AVG(signed_error), 2) as bias
+FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+  AND system_id = 'catboost_v8'
+  AND prediction_correct IS NOT NULL
+GROUP BY 1
+ORDER BY 1
+```
+
+## Trading Filter Query (90+ conf, 3+ edge)
+
+```sql
+SELECT
+  player_lookup,
+  ROUND(predicted_points, 1) as predicted,
+  ROUND(actual_points, 1) as actual,
+  ROUND(line_value, 1) as line,
+  prediction_correct as hit,
+  ROUND(confidence_score * 100, 0) as conf,
+  recommendation
+FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+  AND system_id = 'catboost_v8'
+  AND confidence_score >= 0.90
+  AND ABS(predicted_points - line_value) >= 3
+ORDER BY prediction_correct DESC, confidence_score DESC
+```
+
+## Best/Worst Predictions Query
+
+```sql
+-- Best predictions (closest to actual)
+SELECT
+  player_lookup,
+  ROUND(predicted_points, 1) as predicted,
+  ROUND(actual_points, 1) as actual,
+  ROUND(absolute_error, 1) as error,
+  prediction_correct as hit
+FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+  AND system_id = 'catboost_v8'
+ORDER BY absolute_error ASC
+LIMIT 5;
+
+-- Worst predictions (furthest from actual)
+SELECT
+  player_lookup,
+  ROUND(predicted_points, 1) as predicted,
+  ROUND(actual_points, 1) as actual,
+  ROUND(absolute_error, 1) as error,
+  prediction_correct as hit
+FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+  AND system_id = 'catboost_v8'
+ORDER BY absolute_error DESC
+LIMIT 5
+```
+
+## Output Format
+
+```
+Yesterday's Results (2026-01-30)
+================================
+
+Overall Performance:
+  Total Graded: 142 predictions
+  Hit Rate: 58.5% (83/142)
+  MAE: 4.32 points
+  Bias: -0.8 (slight underprediction)
+
+By Confidence:
+| Confidence | Bets | Hit Rate | MAE  |
+|------------|------|----------|------|
+| 90+        | 28   | 71.4%    | 3.21 |
+| 85-89      | 45   | 55.6%    | 4.15 |
+| 80-84      | 42   | 52.4%    | 4.89 |
+| <80        | 27   | 48.1%    | 5.12 |
+
+By Tier:
+| Tier     | Bets | Hit Rate | Bias  |
+|----------|------|----------|-------|
+| Star     | 24   | 54.2%    | -1.2  |
+| Starter  | 48   | 60.4%    | -0.5  |
+| Rotation | 52   | 59.6%    | -0.8  |
+| Bench    | 18   | 55.6%    | -0.3  |
+
+Trading Picks (90+ conf, 3+ edge): 12 bets, 9 hits (75.0%)
+```
+
+## Parameters
+
+- `date`: Specific date to check (default: yesterday)
+- `system_id`: Which model to check (default: catboost_v8)

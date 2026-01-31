@@ -1,0 +1,328 @@
+# ============================================================================
+# Experiment Configuration Schema
+# File: ml/experiments/configs/experiment_config_schema.yaml
+# Purpose: Define the structure for ML experiment configuration files
+# ============================================================================
+#
+# This schema documents all valid fields for experiment YAML configs.
+# Use this as a reference when creating new experiment definitions.
+#
+# Usage:
+#   1. Copy example_experiment.yaml
+#   2. Modify fields according to your experiment
+#   3. Run: PYTHONPATH=. python ml/experiments/run_experiment.py --config ml/experiments/configs/your_experiment.yaml
+#
+# ============================================================================
+
+# Schema version for future compatibility
+schema_version: "1.0"
+
+# ============================================================================
+# FIELD DEFINITIONS
+# ============================================================================
+
+fields:
+  # ────────────────────────────────────────────────────────────
+  # IDENTITY FIELDS (required)
+  # ────────────────────────────────────────────────────────────
+  experiment_name:
+    type: string
+    required: true
+    description: |
+      Human-readable experiment name. Use SCREAMING_SNAKE_CASE convention.
+      Should include key parameters and date range.
+    example: "JAN_DEC_WALKFORWARD_2026"
+    pattern: "^[A-Z0-9_]+$"
+
+  hypothesis:
+    type: string
+    required: true
+    description: |
+      Clear statement of what this experiment is testing.
+      Should be falsifiable and measurable.
+    example: "Training on Nov 2021 - Dec 2025 data with recency weighting improves January 2026 hit rate"
+
+  experiment_type:
+    type: string
+    required: true
+    enum:
+      - walk_forward    # Train on historical, evaluate forward
+      - ensemble        # Combine multiple models
+      - ablation        # Remove features to test importance
+      - tier_based      # Segment by player tier
+      - hyperparameter  # Tune model parameters
+      - feature         # Test new feature additions
+    description: |
+      Type of experiment. Determines which training/evaluation script to use.
+
+  # ────────────────────────────────────────────────────────────
+  # TRAINING CONFIGURATION (required)
+  # ────────────────────────────────────────────────────────────
+  training:
+    type: object
+    required: true
+    description: |
+      Configuration for the training data period and parameters.
+    fields:
+      start_date:
+        type: date
+        required: true
+        format: "YYYY-MM-DD"
+        description: Start of training data window
+        example: "2021-11-01"
+
+      end_date:
+        type: date
+        required: true
+        format: "YYYY-MM-DD"
+        description: End of training data window
+        example: "2025-12-31"
+
+      validation_split:
+        type: float
+        required: false
+        default: 0.15
+        min: 0.05
+        max: 0.30
+        description: Fraction of training data for validation/early stopping
+
+      min_samples:
+        type: integer
+        required: false
+        default: 10000
+        description: Minimum training samples required to proceed
+
+  # ────────────────────────────────────────────────────────────
+  # EVALUATION CONFIGURATION (required)
+  # ────────────────────────────────────────────────────────────
+  evaluation:
+    type: object
+    required: true
+    description: |
+      Configuration for the evaluation/test period.
+    fields:
+      start_date:
+        type: date
+        required: true
+        format: "YYYY-MM-DD"
+        description: Start of evaluation period
+        example: "2026-01-01"
+
+      end_date:
+        type: date
+        required: true
+        format: "YYYY-MM-DD"
+        description: End of evaluation period
+        example: "2026-01-29"
+
+      baseline_model:
+        type: string
+        required: false
+        description: Model ID to compare against (from ml_model_registry)
+        example: "catboost_v8"
+
+      metrics:
+        type: array
+        required: false
+        default: ["mae", "hit_rate", "roi"]
+        description: Metrics to compute during evaluation
+        items:
+          - mae           # Mean Absolute Error
+          - rmse          # Root Mean Squared Error
+          - hit_rate      # Over/under accuracy
+          - roi           # Return on investment (flat betting)
+          - calibration   # Prediction vs actual correlation
+          - tier_accuracy # Per-tier hit rates
+
+      segment_by:
+        type: array
+        required: false
+        description: Dimensions to segment results by
+        items:
+          - tier          # star, starter, role
+          - line_range    # 0-10, 10-20, 20+
+          - home_away     # home, away
+          - back_to_back  # yes, no
+          - team          # by team
+          - month         # by month
+
+  # ────────────────────────────────────────────────────────────
+  # MODEL CONFIGURATION (required)
+  # ────────────────────────────────────────────────────────────
+  model:
+    type: object
+    required: true
+    description: |
+      Model type and hyperparameters.
+    fields:
+      type:
+        type: string
+        required: true
+        enum:
+          - catboost
+          - xgboost
+          - lightgbm
+          - ridge
+          - ensemble
+        description: Model framework to use
+
+      version:
+        type: string
+        required: false
+        description: Model version identifier
+        example: "v9"
+
+      hyperparameters:
+        type: object
+        required: true
+        description: |
+          Model-specific hyperparameters. Fields depend on model type.
+        catboost:
+          depth:
+            type: integer
+            default: 6
+            min: 3
+            max: 10
+          learning_rate:
+            type: float
+            default: 0.07
+            min: 0.01
+            max: 0.3
+          l2_leaf_reg:
+            type: float
+            default: 3.8
+            min: 1.0
+            max: 10.0
+          subsample:
+            type: float
+            default: 0.72
+            min: 0.5
+            max: 1.0
+          min_data_in_leaf:
+            type: integer
+            default: 16
+            min: 1
+            max: 100
+          iterations:
+            type: integer
+            default: 1000
+            min: 100
+            max: 5000
+          early_stopping_rounds:
+            type: integer
+            default: 50
+            min: 10
+            max: 200
+
+  # ────────────────────────────────────────────────────────────
+  # FEATURE CONFIGURATION (optional)
+  # ────────────────────────────────────────────────────────────
+  features:
+    type: object
+    required: false
+    description: |
+      Feature set configuration. Defaults to current production features.
+    fields:
+      version:
+        type: string
+        required: false
+        default: "v2_37features"
+        description: Feature set version identifier
+
+      count:
+        type: integer
+        required: false
+        default: 37
+        description: Expected number of features
+
+      exclude:
+        type: array
+        required: false
+        description: Features to exclude from this experiment (for ablation)
+        example: ["dnp_rate", "breakout_flag"]
+
+      include_only:
+        type: array
+        required: false
+        description: Only use these features (for feature importance testing)
+
+  # ────────────────────────────────────────────────────────────
+  # RECENCY WEIGHTING (optional)
+  # ────────────────────────────────────────────────────────────
+  recency:
+    type: object
+    required: false
+    description: |
+      Configuration for exponential recency weighting of training samples.
+      More recent samples get higher weights.
+    fields:
+      enabled:
+        type: boolean
+        required: true
+        default: false
+        description: Whether to apply recency weighting
+
+      half_life_days:
+        type: integer
+        required: false
+        default: 180
+        min: 30
+        max: 730
+        description: |
+          Days for weight to decay by 50%.
+          180 = 6 months: weight 0.5 at 6 months, 0.25 at 1 year
+          365 = 1 year: weight 0.5 at 1 year, 0.25 at 2 years
+
+  # ────────────────────────────────────────────────────────────
+  # TAGS AND METADATA (optional)
+  # ────────────────────────────────────────────────────────────
+  tags:
+    type: array
+    required: false
+    description: |
+      Tags for categorizing and filtering experiments.
+    items:
+      type: string
+    common_tags:
+      - production_candidate   # Consider for production deployment
+      - recency_weighting      # Uses recency sample weighting
+      - points_prop            # For points predictions
+      - ablation               # Feature removal test
+      - baseline_comparison    # Comparing against baseline
+      - tier_analysis          # Includes tier segmentation
+
+  parent_experiment:
+    type: string
+    required: false
+    description: |
+      Experiment ID of parent experiment (for iterative refinement).
+      Creates lineage tracking in the registry.
+
+  notes:
+    type: string
+    required: false
+    description: |
+      Free-form notes about the experiment design, motivation, or results.
+
+# ============================================================================
+# VALIDATION RULES
+# ============================================================================
+
+validation:
+  # Date range checks
+  - rule: training.end_date < evaluation.start_date
+    message: "Training must end before evaluation starts (no data leakage)"
+
+  - rule: training.start_date < training.end_date
+    message: "Training start must be before training end"
+
+  - rule: evaluation.start_date < evaluation.end_date
+    message: "Evaluation start must be before evaluation end"
+
+  # Feature checks for ablation
+  - rule: features.exclude implies experiment_type == 'ablation'
+    message: "Feature exclusion is only valid for ablation experiments"
+
+  # Recency weight checks
+  - rule: recency.enabled implies recency.half_life_days is set
+    message: "Half-life must be specified when recency weighting is enabled"
