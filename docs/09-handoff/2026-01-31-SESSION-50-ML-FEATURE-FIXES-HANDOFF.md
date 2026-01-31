@@ -3,7 +3,7 @@
 **Date:** 2026-01-31
 **Session:** 50
 **Focus:** Fix ML feature bugs, add caching, deploy fixes
-**Status:** All bugs fixed, backfill in progress
+**Status:** All bugs fixed, backfill in progress (17/72 dates)
 
 ---
 
@@ -13,7 +13,7 @@ Fixed 5 ML feature bugs and added performance optimization. All 37 features now 
 
 ---
 
-## Commits This Session (6 total)
+## Commits This Session (8 total)
 
 | Commit | Description |
 |--------|-------------|
@@ -22,7 +22,24 @@ Fixed 5 ML feature bugs and added performance optimization. All 37 features now 
 | `c7078aa9` | fix: Correct column names in opponent metrics batch query |
 | `ea7b50cb` | fix: Correct games_in_last_7_days window calculation (3 files) |
 | `e11c6a46` | feat: Implement avg_usage_rate_last_7_games from historical data |
-| `0fd540cd` | docs: Add Session 50 handoff |
+| `7a240a87` | docs: Update Session 50 handoff with complete fix summary |
+| `e1afa019` | chore: Adjust validation ranges for ppm_avg_last_10 and games_vs_opponent |
+
+---
+
+## Feature Count Summary
+
+| Location | Count | Purpose |
+|----------|-------|---------|
+| ML Feature Store | **37** | Storage - includes experimental features |
+| CatBoost V8 Model | **34** | Inference - uses first 33 + has_shot_zone_data |
+| Training data | **33** | Original training features |
+
+**Extra features stored for future models:**
+- `dnp_rate` (index 33) - DNP pattern detection
+- `pts_slope_10g` (index 34) - 10-game trajectory slope
+- `pts_vs_season_zscore` (index 35) - Performance z-score
+- `breakout_flag` (index 36) - Rising player indicator
 
 ---
 
@@ -56,6 +73,37 @@ Fixed 5 ML feature bugs and added performance optimization. All 37 features now 
 
 ---
 
+## Hardcoded Defaults Documentation
+
+CatBoost V8 uses these defaults when features are missing from the feature store:
+
+| Feature | Default | Rationale |
+|---------|---------|-----------|
+| `points_avg_season` | 10.0 | Conservative low scorer |
+| `fatigue_score` | 70 | Neutral fatigue level |
+| `shot_zone_mismatch_score` | 0 | No mismatch advantage |
+| `pace_score` | 0 | Neutral pace |
+| `usage_spike_score` | 0 | No spike |
+| `rest_advantage` | 0 | No rest edge |
+| `injury_risk` | 0 | Healthy |
+| `recent_trend` | 0 | Flat trend |
+| `minutes_change` | 0 | No change |
+| `opponent_def_rating` | 112 | League average |
+| `opponent_pace` | 100 | League average |
+| `home_away` | 0 | Away game |
+| `back_to_back` | 0 | Not B2B |
+| `playoff_game` | 0 | Regular season |
+| `pct_free_throw` | 20 | ~20% of shots |
+| `team_pace` | 100 | League average |
+| `team_off_rating` | 112 | League average |
+| `team_win_pct` | 0.5 | .500 team |
+| `games_vs_opponent` | 0 | No history |
+| `minutes_avg_last_10` | 25 | Starter minutes |
+| `ppm_avg_last_10` | 0.4 | 19.2 pts/48 min |
+| `has_shot_zone_data` | 0 | Data unavailable |
+
+---
+
 ## Performance Optimization
 
 ### Opponent Metrics Caching
@@ -66,12 +114,21 @@ Fixed 5 ML feature bugs and added performance optimization. All 37 features now 
 
 ---
 
+## Validation Ranges Updated
+
+| Feature | Old Range | New Range | Reason |
+|---------|-----------|-----------|--------|
+| `ppm_avg_last_10` | (0, 3.0) | (0, 1.5) | p99=1.0, max unrealistic at 3.0 |
+| `games_vs_opponent` | (0, 50) | (0, 100) | Data shows max=76 for multi-season |
+
+---
+
 ## All 37 Features Status
 
 | Status | Count | Details |
 |--------|-------|---------|
 | ✅ Working | 32 | Production features |
-| ✅ Fixed this session | 4 | back_to_back, team_win_pct, games_in_last_7_days, usage_spike |
+| ✅ Fixed this session | 5 | back_to_back, team_win_pct, games_in_last_7_days, usage_spike, join bug |
 | ✅ By design | 1 | injury_risk (0 = healthy) |
 
 **pace_score:** Working correctly for production (Jan 2026+). Historical data has NULLs but production is fine.
@@ -80,14 +137,14 @@ Fixed 5 ML feature bugs and added performance optimization. All 37 features now 
 
 ## Deployment Status
 
-| Service | Needs Deploy? | Notes |
-|---------|--------------|-------|
-| Phase 3 (analytics) | ✅ Already deployed | `fe0a3d85` |
-| Phase 4 (precompute) | ❌ No changes | Already has variance validation |
+| Service | Status | Commit |
+|---------|--------|--------|
+| Phase 3 (analytics) | ✅ Deployed | `7a240a87` |
+| Phase 4 (precompute) | ❌ Needs deploy | For validation range update |
 
-**To deploy latest fixes:**
+**To deploy Phase 4:**
 ```bash
-./bin/deploy-service.sh nba-phase3-analytics-processors
+./bin/deploy-service.sh nba-phase4-precompute-processors
 ```
 
 ---
@@ -95,8 +152,8 @@ Fixed 5 ML feature bugs and added performance optimization. All 37 features now 
 ## Backfill Status
 
 **Phase 3 Backfill Running:**
-- Date range: 2025-11-13 to 2026-01-30 (79 days)
-- Currently on: ~4/72 dates
+- Date range: 2025-11-13 to 2026-01-30 (72 days)
+- Progress: **17/72 dates** (24%)
 - Task ID: `b911e1a`
 
 **Monitor with:**
@@ -154,6 +211,7 @@ WHERE game_date >= '2026-01-28'
 | `player_daily_cache_processor.py` | Fixed window calc |
 | `player_composite_factors_processor.py` | Fixed window calc |
 | `upcoming_player_game_context_processor.py` | Added cache pre-computation |
+| `ml_feature_store_processor.py` | Updated validation ranges |
 
 ---
 
@@ -161,7 +219,7 @@ WHERE game_date >= '2026-01-28'
 
 1. [ ] Check if Phase 3 backfill completed
 2. [ ] Run ML Feature Store backfill
-3. [ ] Deploy Phase 3 with latest fixes (if not done)
+3. [ ] Deploy Phase 4 with validation range updates
 4. [ ] Verify all features in production data
 5. [ ] Consider adding ML Feature Health tab to admin dashboard
 
