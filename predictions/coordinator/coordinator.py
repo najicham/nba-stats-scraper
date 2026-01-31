@@ -1123,6 +1123,440 @@ def _check_and_mark_message_processed_impl(message_id: str) -> bool:
     return check_and_mark(transaction)
 
 
+@app.route('/regenerate-pubsub', methods=['POST'])
+def regenerate_pubsub():
+    """
+    Handle Pub/Sub push messages for prediction regeneration.
+
+    This endpoint receives messages from the 'nba-prediction-trigger' topic
+    published by the BDB retry processor when late data arrives.
+
+    Expected message format:
+    {
+        "game_date": "2026-01-17",
+        "reason": "bdb_upgrade",
+        "mode": "regenerate_with_supersede",
+        "metadata": {
+            "upgrade_from": "nbac_fallback",
+            "upgrade_to": "bigdataball",
+            ...
+        }
+    }
+    """
+    try:
+        # Parse Pub/Sub message
+        envelope = request.get_json()
+        if not envelope:
+            logger.error("No Pub/Sub message received")
+            return ('Bad Request: no Pub/Sub message received', 400)
+
+        # Decode message
+        pubsub_message = envelope.get('message', {})
+        if not pubsub_message:
+            logger.error("No message field in envelope")
+            return ('Bad Request: invalid Pub/Sub message format', 400)
+
+        # Get message data
+        message_data = base64.b64decode(pubsub_message['data']).decode('utf-8')
+        request_data = json.loads(message_data)
+
+        # Extract parameters
+        game_date = request_data.get('game_date')
+        reason = request_data.get('reason', 'feature_upgrade')
+        mode = request_data.get('mode', 'regenerate_with_supersede')
+        metadata = request_data.get('metadata', {})
+
+        logger.info(
+            f"Received Pub/Sub regeneration request: "
+            f"date={game_date}, reason={reason}, mode={mode}"
+        )
+
+        # Validate mode
+        if mode != 'regenerate_with_supersede':
+            logger.error(f"Unsupported mode: {mode}")
+            return ('Bad Request: unsupported mode', 400)
+
+        # Call internal regeneration function
+        result = _regenerate_with_supersede_internal(game_date, reason, metadata)
+
+        # Return 200 to ack Pub/Sub message
+        return jsonify(result), 200
+
+    except Exception as e:
+        logger.error(f"Pub/Sub regeneration handler failed: {e}", exc_info=True)
+        # Return 200 to ack message even on error - we don't want infinite retries
+        # The error is logged and tracked in the audit table
+        return jsonify({
+            'status': 'error',
+            'error': str(e),
+            'note': 'Message acknowledged to prevent retry loop'
+        }), 200
+
+
+@app.route('/regenerate-with-supersede', methods=['POST'])
+@require_api_key
+def regenerate_with_supersede():
+    """
+    HTTP endpoint for prediction regeneration (authenticated).
+
+    This endpoint is for direct HTTP calls requiring API key authentication.
+    For Pub/Sub-triggered regeneration, use /regenerate-pubsub.
+
+    Request body:
+    {
+        "game_date": "2026-01-17",
+        "reason": "bdb_upgrade",
+        "metadata": {
+            "upgrade_from": "nbac_fallback",
+            "upgrade_to": "bigdataball",
+            ...
+        }
+    }
+
+    Response:
+    {
+        "status": "success",
+        "game_date": "2026-01-17",
+        "superseded_count": 142,
+        "regenerated_count": 145,
+        "processing_time_seconds": 12.3
+    }
+    """
+    try:
+        # Parse request
+        data = request.json
+        game_date = data['game_date']
+        reason = data.get('reason', 'feature_upgrade')
+        metadata = data.get('metadata', {})
+
+        # Call internal regeneration function
+        result = _regenerate_with_supersede_internal(game_date, reason, metadata)
+
+        # Return appropriate status code
+        status_code = 200 if result['status'] == 'success' else 500
+        return jsonify(result), status_code
+
+    except Exception as e:
+        logger.error(f"Prediction regeneration failed: {e}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'error': str(e)
+        }), 500
+
+
+def _regenerate_with_supersede_internal(
+    game_date: str,
+    reason: str,
+    metadata: dict
+) -> dict:
+    """
+    Internal function to regenerate predictions with superseding.
+
+    Called by both HTTP endpoint and Pub/Sub handler.
+
+    Args:
+        game_date: Date to regenerate predictions for (YYYY-MM-DD string)
+        reason: Reason for regeneration (e.g., 'bdb_upgrade')
+        metadata: Context metadata (upgrade info, etc.)
+
+    Returns:
+        dict with status, counts, and timing information
+    """
+    import time
+    start_time = time.time()
+
+    try:
+        logger.info(f"Starting prediction regeneration for {game_date}, reason: {reason}")
+
+        # Step 1: Mark existing predictions as superseded
+        superseded_count = _mark_predictions_superseded(game_date, reason, metadata)
+        logger.info(f"Marked {superseded_count} predictions as superseded")
+
+        # Step 2: Generate new predictions
+        regeneration_result = _generate_predictions_for_date(game_date, reason, metadata)
+        regenerated_count = regeneration_result.get('requests_published', 0)
+
+        if regeneration_result.get('status') == 'error':
+            logger.error(f"Prediction generation failed: {regeneration_result.get('error')}")
+            # Still log to audit even if generation failed
+            _log_prediction_regeneration(game_date, reason, metadata, {
+                'superseded_count': superseded_count,
+                'regenerated_count': 0,
+                'status': 'failed',
+                'error': regeneration_result.get('error')
+            })
+            return {
+                'status': 'error',
+                'game_date': game_date,
+                'superseded_count': superseded_count,
+                'error': regeneration_result.get('error'),
+                'processing_time_seconds': round(time.time() - start_time, 2)
+            }
+
+        logger.info(f"Published {regenerated_count} prediction requests for {game_date}")
+
+        # Step 3: Track in audit log
+        _log_prediction_regeneration(game_date, reason, metadata, {
+            'superseded_count': superseded_count,
+            'regenerated_count': regenerated_count,
+            'status': 'success',
+            'batch_id': regeneration_result.get('batch_id')
+        })
+
+        processing_time = time.time() - start_time
+
+        return {
+            'status': 'success',
+            'game_date': game_date,
+            'superseded_count': superseded_count,
+            'regenerated_count': regenerated_count,
+            'batch_id': regeneration_result.get('batch_id'),
+            'processing_time_seconds': round(processing_time, 2),
+            'note': f'Predictions marked as superseded and {regenerated_count} new prediction requests published to workers.'
+        }
+
+    except Exception as e:
+        logger.error(f"Prediction regeneration failed: {e}", exc_info=True)
+        return {
+            'status': 'error',
+            'error': str(e),
+            'processing_time_seconds': round(time.time() - start_time, 2)
+        }
+
+
+def _mark_predictions_superseded(
+    game_date: str,
+    reason: str,
+    metadata: dict
+) -> int:
+    """
+    Mark existing predictions for a date as superseded.
+
+    Args:
+        game_date: Date of predictions to supersede
+        reason: Reason for superseding (e.g., 'bdb_upgrade')
+        metadata: Additional context
+
+    Returns:
+        Number of predictions marked as superseded
+    """
+    import json as json_module
+    from google.cloud import bigquery
+
+    client = bigquery.Client()
+    project_id = client.project
+
+    # Query to update existing predictions
+    query = f"""
+    UPDATE `{project_id}.nba_predictions.player_prop_predictions`
+    SET
+        superseded = TRUE,
+        superseded_at = CURRENT_TIMESTAMP(),
+        superseded_reason = @reason,
+        superseded_metadata = PARSE_JSON(@metadata_json)
+    WHERE game_date = @game_date
+      AND (superseded IS NULL OR superseded = FALSE)
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("game_date", "STRING", game_date),
+            bigquery.ScalarQueryParameter("reason", "STRING", reason),
+            bigquery.ScalarQueryParameter("metadata_json", "STRING", json_module.dumps(metadata))
+        ]
+    )
+
+    query_job = client.query(query, job_config=job_config)
+    result = query_job.result()
+
+    # Get count of updated rows
+    superseded_count = result.num_dml_affected_rows if hasattr(result, 'num_dml_affected_rows') else 0
+
+    logger.info(f"Marked {superseded_count} predictions as superseded for {game_date}")
+    return superseded_count
+
+
+def _log_prediction_regeneration(
+    game_date: str,
+    reason: str,
+    metadata: dict,
+    results: dict
+) -> None:
+    """
+    Log prediction regeneration event to audit table.
+
+    Args:
+        game_date: Date regenerated
+        reason: Reason for regeneration
+        metadata: Context metadata
+        results: Regeneration results (counts, etc.)
+    """
+    import json as json_module
+    from google.cloud import bigquery
+    from datetime import datetime, timezone
+
+    client = bigquery.Client()
+    project_id = client.project
+
+    audit_record = {
+        'regeneration_timestamp': datetime.now(timezone.utc).isoformat(),
+        'game_date': game_date,
+        'reason': reason,
+        'metadata': json_module.dumps(metadata),
+        'superseded_count': results.get('superseded_count', 0),
+        'regenerated_count': results.get('regenerated_count', 0),
+        'triggered_by': 'coordinator_endpoint'
+    }
+
+    table_id = f"{project_id}.nba_predictions.prediction_regeneration_audit"
+
+    # Insert audit record
+    try:
+        job_config = bigquery.LoadJobConfig(
+            write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
+            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON
+        )
+
+        load_job = client.load_table_from_json(
+            [audit_record], table_id, job_config=job_config
+        )
+        load_job.result(timeout=30)
+        logger.info(f"Logged regeneration event to audit table")
+
+    except Exception as e:
+        logger.warning(f"Failed to log audit record: {e}")
+        # Don't fail overall process if audit logging fails
+
+
+def _generate_predictions_for_date(
+    game_date: str,
+    reason: str,
+    metadata: dict
+) -> dict:
+    """
+    Generate new predictions for a specific date.
+
+    This function reuses the existing prediction infrastructure to regenerate
+    predictions when upstream features improve (e.g., BDB data arrives).
+
+    Args:
+        game_date: Date to generate predictions for (YYYY-MM-DD string)
+        reason: Reason for regeneration (e.g., 'bdb_upgrade')
+        metadata: Context metadata (upgrade info, etc.)
+
+    Returns:
+        dict with:
+            - status: 'success' or 'error'
+            - requests_published: Number of prediction requests published
+            - batch_id: Batch identifier for tracking
+            - error: Error message if status=='error'
+    """
+    try:
+        # Convert game_date string to date object
+        game_date_obj = datetime.strptime(game_date, '%Y-%m-%d').date()
+        logger.info(f"Generating predictions for {game_date_obj}")
+
+        # Create batch ID for tracking
+        batch_id = f"regen_{game_date}_{reason}_{int(time.time())}"
+
+        # Get players with games on this date
+        # Reuse existing PlayerLoader infrastructure
+        player_loader = get_player_loader()
+
+        # Get prediction requests for all players on this date
+        # Use min_minutes=15 and use_multiple_lines=False for regeneration
+        # (single line regeneration is faster and sufficient for upgrades)
+        requests = player_loader.create_prediction_requests(
+            game_date=game_date_obj,
+            min_minutes=15,
+            use_multiple_lines=False,
+            dataset_prefix=''  # Production dataset
+        )
+
+        if not requests:
+            logger.warning(f"No players found for {game_date} - possibly no games scheduled")
+            return {
+                'status': 'success',
+                'requests_published': 0,
+                'batch_id': batch_id,
+                'note': 'No players found for this date'
+            }
+
+        logger.info(f"Found {len(requests)} players with games on {game_date}")
+
+        # BATCH OPTIMIZATION: Pre-load historical games for all players
+        # This provides massive speedup (331x) - see coordinator.py:857
+        try:
+            player_lookups = [r.get('player_lookup') for r in requests if r.get('player_lookup')]
+            if player_lookups:
+                batch_start = time.time()
+                logger.info(f"Batch loading historical games for {len(player_lookups)} players")
+
+                # Import PredictionDataLoader to use batch loading method
+                from predictions.worker.data_loaders import PredictionDataLoader
+                data_loader = PredictionDataLoader(project_id=PROJECT_ID, dataset_prefix='')
+
+                batch_historical_games = data_loader.load_historical_games_batch(
+                    player_lookups=player_lookups,
+                    game_date=game_date_obj,
+                    lookback_days=90,
+                    max_games=30
+                )
+
+                batch_elapsed = time.time() - batch_start
+                total_games = sum(len(games) for games in batch_historical_games.values())
+                logger.info(
+                    f"Batch loaded {total_games} historical games for "
+                    f"{len(batch_historical_games)} players in {batch_elapsed:.2f}s"
+                )
+            else:
+                batch_historical_games = None
+                logger.warning("No valid player lookups found for batch loading")
+
+        except Exception as e:
+            # Non-fatal: workers can fall back to individual queries
+            logger.warning(f"Batch historical load failed (workers will use individual queries): {e}")
+            batch_historical_games = None
+
+        # Publish prediction requests to Pub/Sub
+        # Workers will receive these and generate predictions asynchronously
+        published_count = publish_prediction_requests(
+            requests=requests,
+            batch_id=batch_id,
+            batch_historical_games=batch_historical_games,
+            dataset_prefix=''  # Production dataset
+        )
+
+        if published_count == 0:
+            return {
+                'status': 'error',
+                'requests_published': 0,
+                'batch_id': batch_id,
+                'error': 'Failed to publish any prediction requests'
+            }
+
+        logger.info(
+            f"Successfully published {published_count}/{len(requests)} prediction requests "
+            f"for {game_date} (batch_id: {batch_id})"
+        )
+
+        return {
+            'status': 'success',
+            'requests_published': published_count,
+            'batch_id': batch_id,
+            'players_found': len(requests),
+            'reason': reason
+        }
+
+    except Exception as e:
+        logger.error(f"Prediction generation failed for {game_date}: {e}", exc_info=True)
+        return {
+            'status': 'error',
+            'requests_published': 0,
+            'error': str(e)
+        }
+
+
 @app.route('/complete', methods=['POST'])
 @require_api_key
 def handle_completion_event():
