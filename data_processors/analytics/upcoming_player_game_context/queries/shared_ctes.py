@@ -274,7 +274,7 @@ def gamebook_players_with_games_cte(project_id: str) -> str:
                 COALESCE(s.away_team_tricode, g.team_abbr) as away_team_abbr
             FROM `{project_id}.nba_raw.nbac_gamebook_player_stats` g
             LEFT JOIN schedule_data s
-                ON g.game_id = s.nba_game_id
+                ON g.game_id = s.game_id  -- Both use YYYYMMDD_AWAY_HOME format
             WHERE g.game_date = @game_date
               AND g.player_lookup IS NOT NULL
               AND (g.player_status IS NULL OR g.player_status NOT IN ('DNP', 'DND', 'NWT'))
