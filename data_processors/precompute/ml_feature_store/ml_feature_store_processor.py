@@ -168,11 +168,11 @@ ML_FEATURE_RANGES = {
 
     # Opponent History (29-30)
     29: (0, 70, False, 'avg_points_vs_opponent'),
-    30: (0, 50, False, 'games_vs_opponent'),
+    30: (0, 100, False, 'games_vs_opponent'),  # Session 50: data shows max 76 (multi-season)
 
     # Minutes/Efficiency (31-32) - high model importance
     31: (0, 48, False, 'minutes_avg_last_10'),
-    32: (0, 3, False, 'ppm_avg_last_10'),
+    32: (0, 1.5, False, 'ppm_avg_last_10'),  # Session 50: p99=1.0, max realistic ~1.2
 
     # DNP Risk (33)
     33: (0, 1, False, 'dnp_rate'),
