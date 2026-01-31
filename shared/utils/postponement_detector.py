@@ -539,6 +539,90 @@ def get_affected_predictions(
         return 0
 
 
+def _invalidate_predictions_for_postponement(
+    client: bigquery.Client,
+    nba_game_id: str,
+    original_date: date
+) -> int:
+    """
+    Invalidate predictions for a postponed game.
+
+    Args:
+        client: BigQuery client
+        nba_game_id: NBA.com game ID (e.g., '0022500692')
+        original_date: Original scheduled date
+
+    Returns:
+        Number of predictions invalidated
+    """
+    # Build the game_id pattern used in predictions (YYYYMMDD_AWAY_HOME format)
+    # We need to find the teams from the schedule or postponement record
+    try:
+        # First, try to get teams from postponement record or schedule
+        team_query = """
+        SELECT DISTINCT
+            away_team_tricode,
+            home_team_tricode
+        FROM `nba_raw.nbac_schedule`
+        WHERE game_id = @nba_game_id
+          AND game_date >= DATE_SUB(@original_date, INTERVAL 7 DAY)
+          AND game_date <= DATE_ADD(@original_date, INTERVAL 7 DAY)
+        LIMIT 1
+        """
+        team_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("nba_game_id", "STRING", nba_game_id),
+                bigquery.ScalarQueryParameter("original_date", "DATE", original_date),
+            ]
+        )
+        team_result = list(client.query(team_query, job_config=team_config).result())
+
+        if not team_result:
+            logger.warning(f"Could not find teams for game {nba_game_id}")
+            return 0
+
+        away_team = team_result[0].away_team_tricode
+        home_team = team_result[0].home_team_tricode
+        date_str = original_date.strftime('%Y%m%d')
+        prediction_game_id = f"{date_str}_{away_team}_{home_team}"
+
+        # Invalidate predictions
+        invalidate_query = """
+        UPDATE `nba_predictions.player_prop_predictions`
+        SET
+            invalidation_reason = @reason,
+            invalidated_at = CURRENT_TIMESTAMP()
+        WHERE game_date = @original_date
+          AND game_id = @prediction_game_id
+          AND invalidation_reason IS NULL
+        """
+
+        reason = f"game_postponed_{away_team}_{home_team}_{original_date}"
+        invalidate_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("reason", "STRING", reason),
+                bigquery.ScalarQueryParameter("original_date", "DATE", original_date),
+                bigquery.ScalarQueryParameter("prediction_game_id", "STRING", prediction_game_id),
+            ]
+        )
+
+        result = client.query(invalidate_query, job_config=invalidate_config).result()
+        # Get the number of affected rows
+        count = result.num_dml_affected_rows if hasattr(result, 'num_dml_affected_rows') else 0
+
+        if count > 0:
+            logger.info(
+                f"Invalidated {count} predictions for postponed game "
+                f"{away_team}@{home_team} on {original_date}"
+            )
+
+        return count
+
+    except Exception as e:
+        logger.error(f"Failed to invalidate predictions for {nba_game_id}: {e}")
+        return 0
+
+
 def auto_confirm_stale_postponements(
     bq_client: Optional[bigquery.Client] = None
 ) -> List[Dict[str, Any]]:
@@ -601,16 +685,40 @@ def auto_confirm_stale_postponements(
 
             client.query(update_query, job_config=job_config).result()
 
+            # Also invalidate predictions for the original date
+            invalidated_count = _invalidate_predictions_for_postponement(
+                client, row.game_id, row.original_date
+            )
+
+            # Update the predictions_invalidated count
+            if invalidated_count > 0:
+                count_update = """
+                UPDATE `nba_orchestration.game_postponements`
+                SET predictions_invalidated = @count
+                WHERE game_id = @game_id
+                  AND original_date = @original_date
+                """
+                count_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter("count", "INT64", invalidated_count),
+                        bigquery.ScalarQueryParameter("game_id", "STRING", row.game_id),
+                        bigquery.ScalarQueryParameter("original_date", "DATE", row.original_date),
+                    ]
+                )
+                client.query(count_update, job_config=count_config).result()
+
             confirmed.append({
                 'game_id': row.game_id,
                 'original_date': str(row.original_date),
                 'new_date': str(row.new_date),
                 'reason': row.reason,
+                'predictions_invalidated': invalidated_count,
             })
 
             logger.info(
                 f"Auto-confirmed postponement: {row.game_id} "
-                f"({row.original_date} → {row.new_date})"
+                f"({row.original_date} → {row.new_date}), "
+                f"invalidated {invalidated_count} predictions"
             )
 
         except Exception as e:
