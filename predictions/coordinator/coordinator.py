@@ -1398,30 +1398,28 @@ def _log_prediction_regeneration(
     client = bigquery.Client()
     project_id = client.project
 
+    # Use streaming inserts for JSON fields (avoids schema conversion issues)
+    table_id = f"{project_id}.nba_predictions.prediction_regeneration_audit"
+
     audit_record = {
-        'regeneration_timestamp': datetime.now(timezone.utc).isoformat(),
+        'regeneration_timestamp': datetime.now(timezone.utc),
         'game_date': game_date,
         'reason': reason,
-        'metadata': metadata,  # Pass as dict, not JSON string
+        'metadata': json_module.dumps(metadata),  # JSON field needs string for insert_rows
         'superseded_count': results.get('superseded_count', 0),
         'regenerated_count': results.get('regenerated_count', 0),
         'triggered_by': 'coordinator_endpoint'
     }
 
-    table_id = f"{project_id}.nba_predictions.prediction_regeneration_audit"
-
     # Insert audit record
     try:
-        job_config = bigquery.LoadJobConfig(
-            write_disposition=bigquery.WriteDisposition.WRITE_APPEND,
-            source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON
-        )
+        # Use insert_rows_json instead of load_table_from_json for JSON fields
+        errors = client.insert_rows_json(table_id, [audit_record])
 
-        load_job = client.load_table_from_json(
-            [audit_record], table_id, job_config=job_config
-        )
-        load_job.result(timeout=30)
-        logger.info(f"Logged regeneration event to audit table")
+        if errors:
+            logger.warning(f"Errors inserting audit record: {errors}")
+        else:
+            logger.info(f"Logged regeneration event to audit table")
 
     except Exception as e:
         logger.warning(f"Failed to log audit record: {e}")
