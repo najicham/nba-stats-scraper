@@ -12,22 +12,27 @@ All ideas and improvements discussed during Session 56.
 - [x] **Production-Equivalent Backtest Mode** - Added `--production-equivalent` flag to evaluate_model.py
 - [x] **6 New Skills** - todays-predictions, yesterdays-grading, top-picks, model-health, player-lookup, experiment-tracker
 - [x] **Investigated Production-Backtest Gap** - Found root causes (sample population, line contamination, missing dates)
-- [x] **Deploy Schemas** - performance_diagnostics_daily and ml_experiments tables created
+- [x] **Deploy Schemas** - performance_diagnostics_daily, ml_experiments, vegas_sharpness_daily tables created
+- [x] **Fixed Line Contamination** - Changed feature_extractor.py from AVG() to picking single best line
+- [x] **Vegas Sharpness Tracking Design** - Schema and dashboard design for tracking Vegas accuracy over time
 
 ---
 
 ## HIGH PRIORITY (P0) - Do Next
 
-### 1. Fix Feature Store Line Quality
-**Problem**: 45% of `has_vegas_line=1.0` records have estimated (not real) Vegas lines.
+### 1. ~~Fix Feature Store Line Quality~~ DONE
+**Problem**: 45% of `has_vegas_line=1.0` records had estimated (averaged) Vegas lines.
 
-**Tasks**:
-- [ ] Add `line_is_actual` BOOLEAN column to ml_feature_store_v2
-- [ ] Backfill: Set TRUE only when line ends in .5 or .0
-- [ ] Update feature store processor to set this flag correctly
-- [ ] Update backtest queries to filter on this flag
+**Solution Applied**:
+- [x] Changed `feature_extractor.py` from `AVG(points_line)` to picking single best line
+- [x] Now uses `ROW_NUMBER() ... ORDER BY is_best_line DESC, bookmaker_last_update DESC`
+- [x] New feature store records will have real lines (ends in .5 or .0)
 
-**Effort**: 1 session
+**Remaining**:
+- [ ] Backfill historical feature store records with corrected lines (optional)
+- [ ] Add `line_is_actual` flag for data quality tracking (optional)
+
+**Effort**: DONE (backfill optional)
 
 ### 2. Investigate Missing Production Dates
 **Problem**: 8 dates in January have 0 graded predictions (Jan 19, 21-24, 29-30).
@@ -77,16 +82,21 @@ All ideas and improvements discussed during Session 56.
 
 **Effort**: 1-2 sessions
 
-### 6. Vegas Sharpness Predictor
-**Problem**: We know ~14% swing is predictable, but not automated.
+### 6. Vegas Sharpness Dashboard (Design Complete)
+**Purpose**: Track Vegas accuracy over time with graphs in admin dashboard.
 
-**Tasks**:
-- [ ] Create rule-based sharpness score calculator
-- [ ] Add to prediction output (sharpness_score field)
-- [ ] Adjust edge thresholds based on sharpness
-- [ ] Monitor if this improves ROI
+**Schema**: DEPLOYED (`vegas_sharpness_daily` table)
+**Design**: See `VEGAS-SHARPNESS-DASHBOARD.md`
 
-**Effort**: 2 sessions
+**Remaining Tasks**:
+- [ ] Create `VegasSharpnessProcessor` class to populate daily data
+- [ ] Add to grading pipeline (run after prediction_accuracy updates)
+- [ ] Backfill 90 days of historical data
+- [ ] Create Flask blueprint with API endpoints (`/api/vegas-sharpness/*`)
+- [ ] Create dashboard UI component with Chart.js charts
+- [ ] Add to admin dashboard navigation
+
+**Effort**: 2-3 sessions
 
 ### 7. Trajectory Features Experiment
 **Problem**: V8 doesn't use trajectory features (pts_slope_10g, zscore, breakout_flag).

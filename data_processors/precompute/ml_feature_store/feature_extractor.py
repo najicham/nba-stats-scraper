@@ -609,29 +609,47 @@ class FeatureExtractor:
         Batch extract Vegas betting lines for all players.
 
         Features extracted:
-        - vegas_points_line: Current consensus points line
-        - vegas_opening_line: Opening line
+        - vegas_points_line: Best available points line (NOT averaged)
+        - vegas_opening_line: Opening line from same source
         - vegas_line_move: Line movement (current - opening)
-        - has_vegas_line: Boolean flag
+        - has_vegas_line: Boolean flag (1.0 = real line, 0.0 = no line)
 
         Source: bettingpros_player_points_props (Phase 2 raw data)
+
+        IMPORTANT: We use the "best" single line (is_best_line=TRUE or most recent),
+        NOT an average across sportsbooks. Averaging produces decimal values like
+        13.847 which don't match real sportsbook lines (always end in .5 or .0).
+        This matches how production worker gets lines.
         """
         if not player_lookups:
             return
 
+        # Pick the single "best" line per player, matching production behavior
+        # Priority: is_best_line flag, then most recent update
         query = f"""
+        WITH ranked_lines AS (
+            SELECT
+                player_lookup,
+                points_line,
+                opening_line,
+                ROW_NUMBER() OVER (
+                    PARTITION BY player_lookup
+                    ORDER BY is_best_line DESC, bookmaker_last_update DESC
+                ) as rn
+            FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
+            WHERE game_date = '{game_date}'
+              AND market_type = 'points'
+              AND bet_side = 'over'
+              AND points_line IS NOT NULL
+              AND is_active = TRUE
+        )
         SELECT
             player_lookup,
-            AVG(points_line) as vegas_points_line,
-            AVG(opening_line) as vegas_opening_line,
+            points_line as vegas_points_line,
+            opening_line as vegas_opening_line,
             1.0 as has_vegas_line
-        FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
-        WHERE game_date = '{game_date}'
-          AND market_type = 'points'
-          AND bet_side = 'over'
-          AND points_line IS NOT NULL
-          AND is_active = TRUE
-        GROUP BY player_lookup
+        FROM ranked_lines
+        WHERE rn = 1
         """
         result = self._safe_query(query, "batch_extract")
 
