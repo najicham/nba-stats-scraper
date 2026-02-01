@@ -1368,7 +1368,17 @@ def orchestrate_phase3_to_phase4(cloud_event):
                     logger.warning(f"Firestore write failed for {game_date}, using BigQuery backup")
             except Exception as tracker_error:
                 # Non-blocking - log but don't fail the orchestration
-                logger.warning(f"BigQuery backup write failed (non-blocking): {tracker_error}")
+                # IMPORTANT: This exception prevents completion from being recorded!
+                import traceback
+                logger.error(
+                    f"COMPLETION TRACKING FAILED (non-blocking): {tracker_error}",
+                    extra={
+                        "processor_name": processor_name,
+                        "game_date": game_date,
+                        "traceback": traceback.format_exc(),
+                        "error_type": type(tracker_error).__name__
+                    }
+                )
 
         # Update completion state with atomic transaction
         doc_ref = db.collection('phase3_completion').document(game_date)

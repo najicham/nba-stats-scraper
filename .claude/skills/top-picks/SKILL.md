@@ -16,7 +16,10 @@ These are the picks most likely to be profitable based on historical analysis.
 
 ## Main Query
 
+**IMPORTANT**: This query uses the CURRENT production model (catboost_v9 as of Jan 31, 2026).
+
 ```sql
+-- Top picks for CURRENT production model (catboost_v9)
 SELECT
   player_lookup,
   ROUND(predicted_points, 1) as predicted,
@@ -24,6 +27,7 @@ SELECT
   ROUND(ABS(predicted_points - current_points_line), 1) as edge,
   ROUND(confidence_score * 100, 0) as confidence,
   recommendation,
+  system_id,
   CASE
     WHEN ABS(predicted_points - current_points_line) >= 5 THEN 'HIGH'
     ELSE 'MEDIUM'
@@ -31,7 +35,7 @@ SELECT
 FROM `nba-props-platform.nba_predictions.player_prop_predictions`
 WHERE game_date = CURRENT_DATE()
   AND is_active = TRUE
-  AND system_id = 'catboost_v8'
+  AND system_id = 'catboost_v9'  -- Use current production model
   AND confidence_score >= 0.90
   AND ABS(predicted_points - current_points_line) >= 3
 ORDER BY
@@ -39,7 +43,14 @@ ORDER BY
   confidence_score DESC
 ```
 
+**Model Selection Logic**:
+- Use `catboost_v9` for current predictions (Jan 31+ games)
+- Use `catboost_v8` for historical analysis (Jan 18-28, 2026)
+- Can add `OR system_id = 'ensemble_v1_1'` to compare models
+
 ## With Recent Player Performance
+
+**IMPORTANT**: Uses CURRENT production model (catboost_v9) for both today's picks and historical performance.
 
 ```sql
 WITH player_recent AS (
@@ -49,7 +60,7 @@ WITH player_recent AS (
     COUNT(*) as recent_games
   FROM `nba-props-platform.nba_predictions.prediction_accuracy`
   WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
-    AND system_id = 'catboost_v8'
+    AND system_id = 'catboost_v9'  -- Use current production model
   GROUP BY player_lookup
 )
 SELECT
@@ -59,13 +70,14 @@ SELECT
   ROUND(ABS(p.predicted_points - p.current_points_line), 1) as edge,
   ROUND(p.confidence_score * 100, 0) as confidence,
   p.recommendation,
+  p.system_id,
   COALESCE(r.recent_hit_rate, 0) as player_30d_hit_rate,
   COALESCE(r.recent_games, 0) as games_l30
 FROM `nba-props-platform.nba_predictions.player_prop_predictions` p
 LEFT JOIN player_recent r ON p.player_lookup = r.player_lookup
 WHERE p.game_date = CURRENT_DATE()
   AND p.is_active = TRUE
-  AND p.system_id = 'catboost_v8'
+  AND p.system_id = 'catboost_v9'  -- Use current production model
   AND p.confidence_score >= 0.90
   AND ABS(p.predicted_points - p.current_points_line) >= 3
 ORDER BY
@@ -73,10 +85,15 @@ ORDER BY
   p.confidence_score DESC
 ```
 
+**Note**: For dates before Jan 31, 2026, change `system_id = 'catboost_v8'` to match historical data.
+
 ## Summary Stats
+
+**IMPORTANT**: Summary for CURRENT production model (catboost_v9).
 
 ```sql
 SELECT
+  system_id,
   COUNT(*) as top_picks_count,
   COUNTIF(recommendation = 'OVER') as overs,
   COUNTIF(recommendation = 'UNDER') as unders,
@@ -86,28 +103,43 @@ SELECT
 FROM `nba-props-platform.nba_predictions.player_prop_predictions`
 WHERE game_date = CURRENT_DATE()
   AND is_active = TRUE
-  AND system_id = 'catboost_v8'
+  AND system_id = 'catboost_v9'  -- Use current production model
   AND confidence_score >= 0.90
   AND ABS(predicted_points - current_points_line) >= 3
+GROUP BY system_id
 ```
 
 ## Historical Performance of Top Picks
 
+**IMPORTANT**: Shows historical performance for ALL active models to compare.
+
 ```sql
--- How do 90+ conf, 3+ edge picks perform historically?
+-- How do 90+ conf, 3+ edge picks perform historically? (ALL MODELS)
+WITH active_models AS (
+  SELECT DISTINCT system_id
+  FROM nba_predictions.prediction_accuracy
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+    AND (system_id LIKE 'catboost_%' OR system_id LIKE 'ensemble_%')
+)
 SELECT
+  system_id,
   FORMAT_DATE('%Y-%m', game_date) as month,
   COUNT(*) as bets,
   ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate,
   ROUND(AVG(absolute_error), 2) as mae
 FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-WHERE system_id = 'catboost_v8'
+WHERE system_id IN (SELECT system_id FROM active_models)
   AND confidence_score >= 0.90
   AND ABS(predicted_points - line_value) >= 3
   AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
-GROUP BY 1
-ORDER BY 1 DESC
+GROUP BY system_id, month
+ORDER BY system_id, month DESC
 ```
+
+**Model Comparison Notes**:
+- catboost_v9 is expected to have limited historical data (just started Jan 31)
+- catboost_v8 has full historical data through Jan 28
+- Compare performance to determine if V9 is improving over V8
 
 ## Output Format
 

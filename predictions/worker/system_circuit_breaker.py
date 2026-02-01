@@ -139,8 +139,10 @@ class SystemCircuitBreaker:
             state = state_info['state']
 
             if state == 'CLOSED':
-                # Reset failure count on success
-                self._reset_failure_count(system_id)
+                # Only reset failure count if it's non-zero (recovering from previous failures)
+                # Skip update if already 0 to avoid unnecessary BigQuery DML quota usage
+                if state_info.get('failure_count', 0) > 0:
+                    self._reset_failure_count(system_id)
 
             elif state == 'HALF_OPEN':
                 # Increment success count

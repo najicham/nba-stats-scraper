@@ -382,13 +382,22 @@ ORDER BY
 
 ## Output Format
 
-**Always present results in this format:**
+**Always present results in this format (grouped by model):**
 
 ```
-## Hit Rate Analysis - catboost_v8 - [Date Range]
+## Hit Rate Analysis - ALL MODELS - [Date Range]
 
-### Best Performing Picks
+### Model Summary
 
+| Model | Total Predictions | Active Date Range |
+|-------|-------------------|-------------------|
+| catboost_v9 | XXX | Jan 31+ (CURRENT) |
+| catboost_v8 | XXX | Jan 18-28 (LEGACY) |
+| ensemble_v1_1 | XXX | Jan 20+ |
+
+### Best Performing Picks (by Model)
+
+**catboost_v9** (Current Production Model):
 | Filter | Hit Rate | Bets | Status |
 |--------|----------|------|--------|
 | Premium (92+ conf, 3+ edge) | XX.X% | XXX | ✅/❌ |
@@ -396,29 +405,32 @@ ORDER BY
 | All 3+ Edge | XX.X% | XXX | ✅/❌ |
 | All Picks | XX.X% | XXX | ✅/❌ |
 
-### Weekly Trend
+**catboost_v8** (Historical):
+| Filter | Hit Rate | Bets | Status |
+|--------|----------|------|--------|
+| Premium (92+ conf, 3+ edge) | XX.X% | XXX | ✅/❌ |
+| High Edge (5+ pts) | XX.X% | XXX | ✅/❌ |
 
-| Week | Premium Hit | Premium Bets | High Edge Hit | High Edge Bets | Model Beats Vegas |
-|------|-------------|--------------|---------------|----------------|-------------------|
-| Jan 1 | XX.X% | XX | XX.X% | XX | XX.X% |
-| ... | ... | ... | ... | ... | ... |
+**ensemble_v1_1**:
+| Filter | Hit Rate | Bets | Status |
+|--------|----------|------|--------|
+| Premium (92+ conf, 3+ edge) | XX.X% | XXX | ✅/❌ |
+| High Edge (5+ pts) | XX.X% | XXX | ✅/❌ |
 
-### Confidence x Edge Matrix
+### Weekly Trend (Grouped by Model)
 
-| Confidence | Edge | Hit Rate | Bets | Status |
-|------------|------|----------|------|--------|
-| 92+ | 5+ | XX.X% | XX | ✅ |
-| 92+ | 3-5 | XX.X% | XX | ✅ |
-| ... | ... | ... | ... | ... |
+Show side-by-side comparison of models over time to detect drift and compare performance.
 
 ### Key Findings
-1. [Which filter is performing best]
-2. [Any drift detected in weekly trend]
-3. [Confidence vs edge - which matters more]
+1. [Which model is performing best currently]
+2. [Model comparison insights (V9 vs V8 vs ensemble)]
+3. [Any drift detected in weekly trend]
+4. [Confidence vs edge - which matters more for each model]
 
 ### Recommendations
-1. [Specific actionable recommendation]
-2. [Filter to use for trading]
+1. [Which model to use for trading based on current performance]
+2. [Optimal filter settings for the recommended model]
+3. [When to switch between models based on conditions]
 ```
 
 ## Key Thresholds

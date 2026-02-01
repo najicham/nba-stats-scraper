@@ -14,27 +14,53 @@ View today's active predictions with filtering options.
 
 ## Default Query (All Predictions)
 
+**IMPORTANT**: This query shows predictions from ALL active models to compare.
+
 ```sql
+-- Today's predictions for ALL active models
+WITH active_models AS (
+  SELECT DISTINCT system_id
+  FROM nba_predictions.player_prop_predictions
+  WHERE game_date = CURRENT_DATE()
+    AND is_active = TRUE
+    AND (system_id LIKE 'catboost_%' OR system_id LIKE 'ensemble_%')
+)
 SELECT
+  system_id,
   player_lookup,
   ROUND(predicted_points, 1) as predicted,
   ROUND(current_points_line, 1) as vegas_line,
   ROUND(predicted_points - current_points_line, 1) as edge,
   ROUND(confidence_score * 100, 0) as confidence,
-  recommendation,
-  system_id
+  recommendation
 FROM `nba-props-platform.nba_predictions.player_prop_predictions`
 WHERE game_date = CURRENT_DATE()
   AND is_active = TRUE
-  AND system_id = 'catboost_v8'
-ORDER BY confidence_score DESC, ABS(predicted_points - current_points_line) DESC
-LIMIT 50
+  AND system_id IN (SELECT system_id FROM active_models)
+ORDER BY system_id, confidence_score DESC, ABS(predicted_points - current_points_line) DESC
+LIMIT 100
 ```
+
+**Model Version Notes**:
+- **catboost_v9**: Current production model (Jan 31+ predictions)
+- **ensemble_v1_1**: Active ensemble model for comparison
+- Results grouped by model to compare predictions side-by-side
 
 ## High-Confidence Picks Query
 
+**IMPORTANT**: Shows high-confidence picks for ALL active models.
+
 ```sql
+-- High-confidence picks for ALL active models
+WITH active_models AS (
+  SELECT DISTINCT system_id
+  FROM nba_predictions.player_prop_predictions
+  WHERE game_date = CURRENT_DATE()
+    AND is_active = TRUE
+    AND (system_id LIKE 'catboost_%' OR system_id LIKE 'ensemble_%')
+)
 SELECT
+  system_id,
   player_lookup,
   ROUND(predicted_points, 1) as predicted,
   ROUND(current_points_line, 1) as vegas_line,
@@ -44,16 +70,27 @@ SELECT
 FROM `nba-props-platform.nba_predictions.player_prop_predictions`
 WHERE game_date = CURRENT_DATE()
   AND is_active = TRUE
-  AND system_id = 'catboost_v8'
+  AND system_id IN (SELECT system_id FROM active_models)
   AND confidence_score >= 0.90
   AND ABS(predicted_points - current_points_line) >= 3
-ORDER BY ABS(predicted_points - current_points_line) DESC
+ORDER BY system_id, ABS(predicted_points - current_points_line) DESC
 ```
 
 ## Summary Query
 
+**IMPORTANT**: Summary stats for ALL active models to compare.
+
 ```sql
+-- Summary for ALL active models
+WITH active_models AS (
+  SELECT DISTINCT system_id
+  FROM nba_predictions.player_prop_predictions
+  WHERE game_date = CURRENT_DATE()
+    AND is_active = TRUE
+    AND (system_id LIKE 'catboost_%' OR system_id LIKE 'ensemble_%')
+)
 SELECT
+  system_id,
   COUNT(*) as total_predictions,
   COUNTIF(recommendation = 'OVER') as over_picks,
   COUNTIF(recommendation = 'UNDER') as under_picks,
@@ -63,7 +100,9 @@ SELECT
 FROM `nba-props-platform.nba_predictions.player_prop_predictions`
 WHERE game_date = CURRENT_DATE()
   AND is_active = TRUE
-  AND system_id = 'catboost_v8'
+  AND system_id IN (SELECT system_id FROM active_models)
+GROUP BY system_id
+ORDER BY system_id
 ```
 
 ## Output Format

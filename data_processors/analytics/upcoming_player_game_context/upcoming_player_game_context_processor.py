@@ -315,7 +315,7 @@ class UpcomingPlayerGameContextProcessor(
 
         # Player boxscore sources - RELEVANT (historical performance)
         'nbac_gamebook_player_stats': True,
-        'bdl_player_boxscores': True,
+        'bdl_player_boxscores': False,  # DISABLED 2026-02-01 - unreliable quality, use player_game_summary instead
         'nbac_player_boxscores': True,
 
         # Schedule sources - RELEVANT (game timing, rest days)

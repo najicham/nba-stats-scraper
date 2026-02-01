@@ -61,13 +61,15 @@ class PlayerGameSummaryProcessor(
     """
     Process player game summary analytics from 6 Phase 2 raw sources.
 
-    Dependencies (6 Phase 2 tables):
+    Dependencies (5 Phase 2 tables):
     1. nba_raw.nbac_gamebook_player_stats - PRIMARY stats (CRITICAL)
-    2. nba_raw.bdl_player_boxscores - FALLBACK stats (CRITICAL)
-    3. nba_raw.bigdataball_play_by_play - PREFERRED shot zones (OPTIONAL)
-    4. nba_raw.nbac_play_by_play - BACKUP shot zones (OPTIONAL)
-    5. nba_raw.odds_api_player_points_props - PRIMARY prop lines (OPTIONAL)
-    6. nba_raw.bettingpros_player_points_props - BACKUP prop lines (OPTIONAL)
+    2. nba_raw.bigdataball_play_by_play - PREFERRED shot zones (OPTIONAL)
+    3. nba_raw.nbac_play_by_play - BACKUP shot zones (OPTIONAL)
+    4. nba_raw.odds_api_player_points_props - PRIMARY prop lines (OPTIONAL)
+    5. nba_raw.bettingpros_player_points_props - BACKUP prop lines (OPTIONAL)
+
+    REMOVED (2026-02-01):
+    - nba_raw.bdl_player_boxscores - Unreliable data quality (28% major errors on bad days)
 
     Processing Strategy: MERGE_UPDATE (allows multi-pass enrichment)
 

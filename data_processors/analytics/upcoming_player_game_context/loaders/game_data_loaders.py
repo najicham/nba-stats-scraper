@@ -187,10 +187,11 @@ class GameDataLoader:
         """
         Extract historical boxscores for all players (last 30 days).
 
-        Priority:
-        1. nba_raw.bdl_player_boxscores (PRIMARY)
-        2. nba_raw.nbac_player_boxscores (fallback)
-        3. nba_raw.nbac_gamebook_player_stats (last resort)
+        Priority (UPDATED 2026-02-01):
+        1. nba_analytics.player_game_summary (PRIMARY - uses NBAC, already enriched)
+        2. nba_raw.nbac_gamebook_player_stats (fallback if player_game_summary missing)
+
+        REMOVED: nba_raw.bdl_player_boxscores (unreliable data quality)
 
         Args:
             players_to_process: List of player dicts with player_lookup
@@ -199,32 +200,29 @@ class GameDataLoader:
 
         start_date = self.target_date - timedelta(days=self.lookback_days)
 
-        # Try BDL first (PRIMARY), enriched with usage_rate from player_game_summary
-        # Session 52: Added LEFT JOIN with player_game_summary to get usage_rate
-        # which is needed for avg_usage_rate_last_7_games calculation
+        # Use player_game_summary as PRIMARY (uses NBAC source, already has usage_rate)
+        # This replaces BDL which had unreliable data quality (28% major errors on bad days)
         query = f"""
         SELECT
-            bdl.player_lookup,
-            bdl.game_date,
-            bdl.team_abbr,
-            bdl.points,
-            bdl.minutes,
-            bdl.assists,
-            bdl.rebounds,
-            bdl.field_goals_made,
-            bdl.field_goals_attempted,
-            bdl.three_pointers_made,
-            bdl.three_pointers_attempted,
-            bdl.free_throws_made,
-            bdl.free_throws_attempted,
+            pgs.player_lookup,
+            pgs.game_date,
+            pgs.team_abbr,
+            pgs.points,
+            pgs.minutes_played as minutes,
+            pgs.assists,
+            pgs.rebounds,
+            pgs.field_goals_made,
+            pgs.field_goals_attempted,
+            pgs.three_pointers_made,
+            pgs.three_pointers_attempted,
+            pgs.free_throws_made,
+            pgs.free_throws_attempted,
             pgs.usage_rate
-        FROM `{self.project_id}.nba_raw.bdl_player_boxscores` bdl
-        LEFT JOIN `{self.project_id}.nba_analytics.player_game_summary` pgs
-          ON bdl.player_lookup = pgs.player_lookup AND bdl.game_date = pgs.game_date
-        WHERE bdl.player_lookup IN UNNEST(@player_lookups)
-          AND bdl.game_date >= @start_date
-          AND bdl.game_date < @target_date
-        ORDER BY bdl.player_lookup, bdl.game_date DESC
+        FROM `{self.project_id}.nba_analytics.player_game_summary` pgs
+        WHERE pgs.player_lookup IN UNNEST(@player_lookups)
+          AND pgs.game_date >= @start_date
+          AND pgs.game_date < @target_date
+        ORDER BY pgs.player_lookup, pgs.game_date DESC
         """
         job_config = bigquery.QueryJobConfig(
             query_parameters=[

@@ -362,15 +362,13 @@ def run_single_analytics_processor(processor_class, opts, prefer_async=None):
 # Firestore completion tracking to work correctly. The Phase 3->4 orchestrator
 # expects completion messages from all 5 processors.
 ANALYTICS_TRIGGERS = {
-    'nbac_gamebook_player_stats': [PlayerGameSummaryProcessor],
-    # bdl_player_boxscores is the primary trigger for most Phase 3 processors
-    # Added TeamDefenseGameSummaryProcessor since nbac_scoreboard_v2 is not being scraped
-    'bdl_player_boxscores': [
+    'nbac_gamebook_player_stats': [
         PlayerGameSummaryProcessor,
-        TeamOffenseGameSummaryProcessor,
-        TeamDefenseGameSummaryProcessor,  # Added: uses player boxscores for defensive actions
-        UpcomingPlayerGameContextProcessor,
+        TeamOffenseGameSummaryProcessor,  # Moved from BDL trigger
+        TeamDefenseGameSummaryProcessor,  # Moved from BDL trigger
     ],
+    # REMOVED 2026-02-01: bdl_player_boxscores trigger (unreliable data quality)
+    # All processors now use NBAC sources exclusively
     # nbac_scoreboard_v2 is kept for completeness but note it's not currently being scraped
     'nbac_scoreboard_v2': [TeamOffenseGameSummaryProcessor, TeamDefenseGameSummaryProcessor, UpcomingTeamGameContextProcessor],
     # nbac_team_boxscore is the primary source for team defense data

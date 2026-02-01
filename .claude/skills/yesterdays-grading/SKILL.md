@@ -15,8 +15,18 @@ View yesterday's prediction results with accuracy metrics.
 
 ## Summary Query
 
+**IMPORTANT**: This query shows results for ALL active models to compare performance.
+
 ```sql
+-- Yesterday's results for ALL active models
+WITH active_models AS (
+  SELECT DISTINCT system_id
+  FROM nba_predictions.prediction_accuracy
+  WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+    AND (system_id LIKE 'catboost_%' OR system_id LIKE 'ensemble_%')
+)
 SELECT
+  system_id,
   COUNT(*) as total_graded,
   COUNTIF(prediction_correct) as hits,
   ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate,
@@ -26,14 +36,31 @@ SELECT
   COUNTIF(signed_error < 0) as under_predictions
 FROM `nba-props-platform.nba_predictions.prediction_accuracy`
 WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
-  AND system_id = 'catboost_v8'
+  AND system_id IN (SELECT system_id FROM active_models)
   AND prediction_correct IS NOT NULL
+GROUP BY system_id
+ORDER BY system_id
 ```
+
+**Model Version Notes**:
+- Results will show all models that had predictions for yesterday
+- Compare catboost_v9 vs ensemble_v1_1 vs others
+- If checking historical dates (before Jan 31), will show catboost_v8
 
 ## By Confidence Query
 
+**IMPORTANT**: Breaks down by confidence for ALL active models.
+
 ```sql
+-- By confidence for ALL active models
+WITH active_models AS (
+  SELECT DISTINCT system_id
+  FROM nba_predictions.prediction_accuracy
+  WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+    AND (system_id LIKE 'catboost_%' OR system_id LIKE 'ensemble_%')
+)
 SELECT
+  system_id,
   CASE
     WHEN confidence_score >= 0.90 THEN '90+'
     WHEN confidence_score >= 0.85 THEN '85-89'
@@ -45,16 +72,26 @@ SELECT
   ROUND(AVG(absolute_error), 2) as mae
 FROM `nba-props-platform.nba_predictions.prediction_accuracy`
 WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
-  AND system_id = 'catboost_v8'
+  AND system_id IN (SELECT system_id FROM active_models)
   AND prediction_correct IS NOT NULL
-GROUP BY 1
-ORDER BY 1
+GROUP BY system_id, confidence
+ORDER BY system_id, confidence
 ```
 
 ## By Tier Query
 
+**IMPORTANT**: Breaks down by player tier for ALL active models.
+
 ```sql
+-- By tier for ALL active models
+WITH active_models AS (
+  SELECT DISTINCT system_id
+  FROM nba_predictions.prediction_accuracy
+  WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+    AND (system_id LIKE 'catboost_%' OR system_id LIKE 'ensemble_%')
+)
 SELECT
+  system_id,
   CASE
     WHEN actual_points >= 22 THEN 'Star'
     WHEN actual_points >= 14 THEN 'Starter'
@@ -67,16 +104,26 @@ SELECT
   ROUND(AVG(signed_error), 2) as bias
 FROM `nba-props-platform.nba_predictions.prediction_accuracy`
 WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
-  AND system_id = 'catboost_v8'
+  AND system_id IN (SELECT system_id FROM active_models)
   AND prediction_correct IS NOT NULL
-GROUP BY 1
-ORDER BY 1
+GROUP BY system_id, tier
+ORDER BY system_id, tier
 ```
 
 ## Trading Filter Query (90+ conf, 3+ edge)
 
+**IMPORTANT**: Shows trading picks for ALL active models to compare.
+
 ```sql
+-- Trading filter results for ALL active models
+WITH active_models AS (
+  SELECT DISTINCT system_id
+  FROM nba_predictions.prediction_accuracy
+  WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+    AND (system_id LIKE 'catboost_%' OR system_id LIKE 'ensemble_%')
+)
 SELECT
+  system_id,
   player_lookup,
   ROUND(predicted_points, 1) as predicted,
   ROUND(actual_points, 1) as actual,
@@ -86,30 +133,26 @@ SELECT
   recommendation
 FROM `nba-props-platform.nba_predictions.prediction_accuracy`
 WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
-  AND system_id = 'catboost_v8'
+  AND system_id IN (SELECT system_id FROM active_models)
   AND confidence_score >= 0.90
   AND ABS(predicted_points - line_value) >= 3
-ORDER BY prediction_correct DESC, confidence_score DESC
+ORDER BY system_id, prediction_correct DESC, confidence_score DESC
 ```
 
 ## Best/Worst Predictions Query
 
-```sql
--- Best predictions (closest to actual)
-SELECT
-  player_lookup,
-  ROUND(predicted_points, 1) as predicted,
-  ROUND(actual_points, 1) as actual,
-  ROUND(absolute_error, 1) as error,
-  prediction_correct as hit
-FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
-  AND system_id = 'catboost_v8'
-ORDER BY absolute_error ASC
-LIMIT 5;
+**IMPORTANT**: Shows best/worst for ALL active models.
 
--- Worst predictions (furthest from actual)
+```sql
+-- Best predictions (closest to actual) for ALL active models
+WITH active_models AS (
+  SELECT DISTINCT system_id
+  FROM nba_predictions.prediction_accuracy
+  WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+    AND (system_id LIKE 'catboost_%' OR system_id LIKE 'ensemble_%')
+)
 SELECT
+  system_id,
   player_lookup,
   ROUND(predicted_points, 1) as predicted,
   ROUND(actual_points, 1) as actual,
@@ -117,9 +160,23 @@ SELECT
   prediction_correct as hit
 FROM `nba-props-platform.nba_predictions.prediction_accuracy`
 WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
-  AND system_id = 'catboost_v8'
-ORDER BY absolute_error DESC
-LIMIT 5
+  AND system_id IN (SELECT system_id FROM active_models)
+ORDER BY system_id, absolute_error ASC
+LIMIT 20;
+
+-- Worst predictions (furthest from actual) for ALL active models
+SELECT
+  system_id,
+  player_lookup,
+  ROUND(predicted_points, 1) as predicted,
+  ROUND(actual_points, 1) as actual,
+  ROUND(absolute_error, 1) as error,
+  prediction_correct as hit
+FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+  AND system_id IN (SELECT system_id FROM active_models)
+ORDER BY system_id, absolute_error DESC
+LIMIT 20
 ```
 
 ## Output Format
