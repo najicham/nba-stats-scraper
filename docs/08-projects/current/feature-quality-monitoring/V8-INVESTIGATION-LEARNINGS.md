@@ -385,32 +385,114 @@ WHERE game_date = CURRENT_DATE() - 1
 
 ---
 
-## Part 6: Updated Execution Plan
+## Part 6: Consolidated Action Plan
 
-### Immediate Actions (This Session)
+### Cross-Reference: Existing TODOs
 
-| # | Action | Priority |
-|---|--------|----------|
-| 1 | Add `build_commit_sha` to predictions table schema | HIGH |
-| 2 | Add `critical_features` JSON to predictions | HIGH |
-| 3 | Update prediction worker to populate new fields | HIGH |
-| 4 | Create pre-backfill deployment check script | HIGH |
+These items align with existing plans:
 
-### Short-Term (Next Session)
+| Source | Item | Status |
+|--------|------|--------|
+| MASTER-TODO-LIST #4 | `processor_execution_log` table | 📋 READY |
+| Session 20 Handoff | Enhanced feature logging in predictions | 📋 READY |
+| Session 56 Handoff | `prediction_execution_log` table | 📋 READY |
+| This Session | `critical_features` JSON in predictions | NEW |
+| This Session | `build_commit_sha` tracking | NEW |
+| This Session | Pre-backfill deployment check | ✅ DONE |
 
-| # | Action | Priority |
-|---|--------|----------|
-| 5 | Add hit rate monitoring to /validate-daily | HIGH |
-| 6 | Add feature quality checks to /validate-daily | MEDIUM |
-| 7 | Regenerate Jan 9-28 predictions with fixed code | HIGH |
+### Immediate Actions (Session 64)
+
+| # | Action | Priority | Status |
+|---|--------|----------|--------|
+| 1 | Create pre-backfill deployment check script | HIGH | ✅ DONE |
+| 2 | Add `build_commit_sha` to predictions schema | HIGH | TODO |
+| 3 | Add `critical_features` JSON to predictions | HIGH | TODO |
+| 4 | Update prediction worker to populate fields | HIGH | TODO |
+
+### Short-Term (Next 1-2 Sessions)
+
+| # | Action | Priority | Related Plan |
+|---|--------|----------|--------------|
+| 5 | Create `prediction_execution_log` table | HIGH | Session 56, MASTER-TODO #4 |
+| 6 | Add hit rate monitoring to /validate-daily | HIGH | New |
+| 7 | Add feature quality checks to /validate-daily | MEDIUM | New |
+| 8 | Regenerate Jan 9-28 predictions | HIGH | Session 64 |
 
 ### Medium-Term (This Week)
 
-| # | Action | Priority |
-|---|--------|----------|
-| 8 | Add schema fields to prediction_accuracy | MEDIUM |
-| 9 | Add schema fields to ml_feature_store_v2 | MEDIUM |
-| 10 | Create automated hit rate alerting function | MEDIUM |
+| # | Action | Priority | Related Plan |
+|---|--------|----------|--------------|
+| 9 | Add schema fields to prediction_accuracy | MEDIUM | New |
+| 10 | Add schema fields to ml_feature_store_v2 | MEDIUM | New |
+| 11 | Enhanced feature logging (Session 20 plan) | MEDIUM | Session 20 Task 3.1-3.3 |
+| 12 | Create automated hit rate alerting function | MEDIUM | New |
+
+---
+
+## Part 7: Prediction Execution Log Table Design
+
+**From MASTER-TODO-LIST #4 + Session 56 + Session 64 insights:**
+
+```sql
+CREATE TABLE nba_predictions.prediction_execution_log (
+  -- Execution identification
+  execution_id STRING NOT NULL,           -- UUID for this run
+  batch_id STRING,                         -- Links multiple players in same batch
+
+  -- Code version tracking (NEW from Session 64)
+  build_commit_sha STRING NOT NULL,        -- Git commit that built the service
+  deployment_revision STRING,              -- Cloud Run revision ID
+
+  -- Timing
+  execution_start_timestamp TIMESTAMP NOT NULL,
+  execution_end_timestamp TIMESTAMP,
+  duration_seconds FLOAT64,
+
+  -- Scope
+  game_date DATE NOT NULL,
+  system_id STRING NOT NULL,               -- 'catboost_v8', 'ensemble_v1_1', etc.
+  players_requested INT64,
+  players_predicted INT64,
+
+  -- Status
+  status STRING NOT NULL,                  -- 'started', 'completed', 'failed', 'partial'
+  error_message STRING,
+  error_count INT64,
+
+  -- Feature Quality (NEW from Session 64)
+  avg_feature_quality_score FLOAT64,
+  pct_with_vegas_line FLOAT64,
+  pct_with_ppm FLOAT64,
+  pct_with_shot_zones FLOAT64,
+
+  -- Metadata
+  feature_store_snapshot_time TIMESTAMP,   -- When features were read
+  feature_source_mode STRING,              -- 'daily' or 'backfill'
+  orchestration_run_id STRING,
+
+  -- Partitioning
+  _partitiontime TIMESTAMP
+)
+PARTITION BY DATE(execution_start_timestamp)
+CLUSTER BY system_id, game_date;
+```
+
+**Insertion points in code:**
+1. `predictions/coordinator/coordinator.py` - At batch start/end
+2. `predictions/worker/worker.py` - Per-player if needed
+
+**Usage for investigation:**
+```sql
+-- Find predictions made with specific code version
+SELECT * FROM nba_predictions.prediction_execution_log
+WHERE build_commit_sha = 'abc1234'
+  AND game_date >= '2026-01-09';
+
+-- Find batches with low Vegas coverage
+SELECT * FROM nba_predictions.prediction_execution_log
+WHERE pct_with_vegas_line < 0.5
+ORDER BY execution_start_timestamp DESC;
+```
 
 ---
 
