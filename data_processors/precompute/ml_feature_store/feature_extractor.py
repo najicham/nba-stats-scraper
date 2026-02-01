@@ -202,7 +202,8 @@ class FeatureExtractor:
     # BATCH EXTRACTION (20x SPEEDUP FOR BACKFILL)
     # ========================================================================
 
-    def batch_extract_all_data(self, game_date: date, players_with_games: List[Dict[str, Any]]) -> None:
+    def batch_extract_all_data(self, game_date: date, players_with_games: List[Dict[str, Any]],
+                               backfill_mode: bool = False) -> None:
         """
         Batch extract all Phase 3/4 data for a game date.
 
@@ -211,10 +212,13 @@ class FeatureExtractor:
 
         Performance: 8 queries run in PARALLEL using ThreadPoolExecutor
         v1.4: Now runs all batch extractions concurrently for ~3x speedup
+        v1.7 (Session 62): Added backfill_mode parameter for Vegas line extraction
+            from raw betting tables instead of Phase 3 (fixes 43% → 95%+ coverage)
 
         Args:
             game_date: Date to extract data for
             players_with_games: List of player dicts (from get_players_with_games)
+            backfill_mode: If True, use raw betting tables for Vegas lines instead of Phase 3
         """
         if self._batch_cache_date == game_date:
             logger.debug(f"Batch cache already populated for {game_date}")
@@ -235,6 +239,7 @@ class FeatureExtractor:
         # Run ALL 11 batch extractions in PARALLEL using ThreadPoolExecutor
         # Each query is independent and can run concurrently
         # V8 Model: Added vegas_lines, opponent_history, minutes_ppm (Jan 2026)
+        # v1.7 (Session 62): Pass backfill_mode to vegas_lines for raw table joins
         extraction_tasks = [
             ('daily_cache', lambda: self._batch_extract_daily_cache(game_date)),
             ('composite_factors', lambda: self._batch_extract_composite_factors(game_date)),
@@ -245,7 +250,8 @@ class FeatureExtractor:
             ('season_stats', lambda: self._batch_extract_season_stats(game_date, all_players)),
             ('team_games', lambda: self._batch_extract_team_games(game_date, all_teams)),
             # V8 Model Features (Jan 2026)
-            ('vegas_lines', lambda: self._batch_extract_vegas_lines(game_date, all_players)),
+            # v1.7: backfill_mode joins raw betting tables for higher coverage
+            ('vegas_lines', lambda: self._batch_extract_vegas_lines(game_date, all_players, backfill_mode)),
             ('opponent_history', lambda: self._batch_extract_opponent_history(game_date, players_with_games)),
             ('minutes_ppm', lambda: self._batch_extract_minutes_ppm(game_date, all_players)),
         ]
@@ -604,17 +610,20 @@ class FeatureExtractor:
     # V8 MODEL FEATURE EXTRACTION (Jan 2026)
     # ========================================================================
 
-    def _batch_extract_vegas_lines(self, game_date: date, player_lookups: List[str]) -> None:
+    def _batch_extract_vegas_lines(self, game_date: date, player_lookups: List[str],
+                                     backfill_mode: bool = False) -> None:
         """
         Batch extract Vegas betting lines for all players.
 
         Features extracted:
-        - vegas_points_line: Current points line from Phase 3
-        - vegas_opening_line: Opening line from Phase 3
-        - vegas_line_move: Line movement (pre-calculated in Phase 3)
+        - vegas_points_line: Current points line from Phase 3 or raw tables
+        - vegas_opening_line: Opening line from Phase 3 or raw tables
+        - vegas_line_move: Line movement (pre-calculated in Phase 3, or 0 for backfill)
         - has_vegas_line: Boolean flag (1.0 = real line, 0.0 = no line)
 
-        Source: upcoming_player_game_context (Phase 3 analytics)
+        Source:
+        - Production mode: upcoming_player_game_context (Phase 3 analytics)
+        - Backfill mode (v1.7, Session 62): odds_api_player_points_props (raw tables)
 
         ARCHITECTURE NOTE (Session 59 fix):
         Previously queried bettingpros_player_points_props directly, which caused
@@ -626,23 +635,100 @@ class FeatureExtractor:
 
         This follows the Phase 3 → Phase 4 architecture pattern and ensures
         Vegas data is available as long as ANY source has it.
+
+        BACKFILL MODE FIX (Session 62):
+        In backfill mode, get_players_with_games() returns ALL players from
+        player_game_summary (not just those with props). But Phase 3 only has
+        Vegas lines for "expected" players, causing 43% coverage instead of 99%.
+
+        Solution: For backfill mode, query raw betting tables directly to get
+        Vegas lines for all players who have them, regardless of whether they
+        were in the "expected" roster.
         """
         if not player_lookups:
             return
 
-        # Read from Phase 3 which already has the cascade logic
-        query = f"""
-        SELECT
-            player_lookup,
-            current_points_line as vegas_points_line,
-            opening_points_line as vegas_opening_line,
-            line_movement as vegas_line_move,
-            CASE WHEN has_prop_line = TRUE THEN 1.0 ELSE 0.0 END as has_vegas_line
-        FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
-        WHERE game_date = '{game_date}'
-          AND current_points_line IS NOT NULL
-          AND current_points_line > 0
-        """
+        if backfill_mode:
+            # BACKFILL MODE (v1.7): Query raw betting tables directly
+            # This fixes vegas_line coverage from 43% to 95%+ for historical dates
+            #
+            # Cascade order:
+            # 1. odds_api_player_points_props (primary - DraftKings)
+            # 2. bettingpros_player_points_props (fallback, must filter market_type='points')
+            query = f"""
+            WITH odds_api_lines AS (
+                -- Primary source: Odds API (DraftKings preferred)
+                SELECT DISTINCT
+                    player_lookup,
+                    FIRST_VALUE(points_line) OVER (
+                        PARTITION BY player_lookup
+                        ORDER BY
+                            CASE WHEN bookmaker = 'draftkings' THEN 0 ELSE 1 END,
+                            snapshot_timestamp DESC
+                    ) as vegas_points_line,
+                    FIRST_VALUE(points_line) OVER (
+                        PARTITION BY player_lookup
+                        ORDER BY
+                            CASE WHEN bookmaker = 'draftkings' THEN 0 ELSE 1 END,
+                            snapshot_timestamp ASC
+                    ) as vegas_opening_line
+                FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
+                WHERE game_date = '{game_date}'
+                  AND points_line IS NOT NULL
+                  AND points_line > 0
+            ),
+            bettingpros_lines AS (
+                -- Fallback source: BettingPros (only if Odds API doesn't have player)
+                SELECT DISTINCT
+                    player_lookup,
+                    FIRST_VALUE(points_line) OVER (
+                        PARTITION BY player_lookup
+                        ORDER BY scraped_at DESC
+                    ) as vegas_points_line,
+                    FIRST_VALUE(opening_line) OVER (
+                        PARTITION BY player_lookup
+                        ORDER BY scraped_at DESC
+                    ) as vegas_opening_line
+                FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
+                WHERE game_date = '{game_date}'
+                  AND market_type = 'points'  -- CRITICAL: filter to points only!
+                  AND points_line IS NOT NULL
+                  AND points_line > 0
+            ),
+            combined AS (
+                -- Use Odds API first, fall back to BettingPros
+                SELECT
+                    COALESCE(oa.player_lookup, bp.player_lookup) as player_lookup,
+                    COALESCE(oa.vegas_points_line, bp.vegas_points_line) as vegas_points_line,
+                    COALESCE(oa.vegas_opening_line, bp.vegas_opening_line, oa.vegas_points_line, bp.vegas_points_line) as vegas_opening_line
+                FROM odds_api_lines oa
+                FULL OUTER JOIN bettingpros_lines bp USING (player_lookup)
+            )
+            SELECT
+                player_lookup,
+                vegas_points_line,
+                vegas_opening_line,
+                vegas_points_line - vegas_opening_line as vegas_line_move,
+                1.0 as has_vegas_line
+            FROM combined
+            WHERE vegas_points_line IS NOT NULL
+            """
+            logger.info(f"[BACKFILL MODE] Extracting Vegas lines from raw betting tables for {game_date}")
+        else:
+            # PRODUCTION MODE: Read from Phase 3 which already has the cascade logic
+            query = f"""
+            SELECT
+                player_lookup,
+                current_points_line as vegas_points_line,
+                opening_points_line as vegas_opening_line,
+                line_movement as vegas_line_move,
+                CASE WHEN has_prop_line = TRUE THEN 1.0 ELSE 0.0 END as has_vegas_line
+            FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
+            WHERE game_date = '{game_date}'
+              AND current_points_line IS NOT NULL
+              AND current_points_line > 0
+            """
+
         result = self._safe_query(query, "batch_extract_vegas_lines")
 
         if not result.empty:
@@ -654,7 +740,8 @@ class FeatureExtractor:
                 record['has_vegas_line'] = float(record['has_vegas_line'])
                 self._vegas_lines_lookup[record['player_lookup']] = record
 
-        logger.debug(f"Batch vegas_lines: {len(self._vegas_lines_lookup)} players (from Phase 3)")
+        mode_str = "raw betting tables" if backfill_mode else "Phase 3"
+        logger.debug(f"Batch vegas_lines: {len(self._vegas_lines_lookup)} players (from {mode_str})")
 
     def _batch_extract_opponent_history(self, game_date: date, players_with_games: List[Dict]) -> None:
         """

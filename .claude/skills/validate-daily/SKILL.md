@@ -1015,7 +1015,43 @@ ORDER BY s.game_date DESC"
 
 **Note**: This is a quick check. For historical gap analysis or determining if gaps need scraping vs processing, use `/validate-scraped-data`.
 
-### Priority 2F: Model Drift Monitoring (Session 28)
+### Priority 2F: Feature Store Vegas Line Coverage (Session 62 - CRITICAL)
+
+Check that Vegas line feature is populated in the feature store. Low coverage (<80%) directly causes hit rate degradation.
+
+```bash
+bq query --use_legacy_sql=false "
+-- Feature Store Vegas Line Coverage Check
+SELECT
+  ROUND(100.0 * COUNTIF(features[OFFSET(25)] > 0) / COUNT(*), 1) as vegas_line_pct,
+  COUNT(*) as total_records,
+  COUNT(DISTINCT game_date) as days,
+  CASE
+    WHEN ROUND(100.0 * COUNTIF(features[OFFSET(25)] > 0) / COUNT(*), 1) >= 80 THEN '✅ OK'
+    WHEN ROUND(100.0 * COUNTIF(features[OFFSET(25)] > 0) / COUNT(*), 1) >= 50 THEN '🟡 WARNING'
+    ELSE '🔴 CRITICAL'
+  END as status
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  AND ARRAY_LENGTH(features) >= 33"
+```
+
+**Thresholds**:
+- **≥80%**: OK - Normal coverage (baseline is 99%+ from last season)
+- **50-79%**: WARNING - Possible data extraction issue
+- **<50%**: CRITICAL - Feature store likely generated in backfill mode without betting data join
+
+**If CRITICAL or WARNING**:
+1. Check if backfill mode was used without the Session 62 fix
+2. Compare to Phase 3 coverage: `SELECT ROUND(100.0 * COUNTIF(current_points_line > 0) / COUNT(*), 1) FROM nba_analytics.upcoming_player_game_context WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)`
+3. Run `/validate-feature-drift` for detailed analysis
+4. Consider re-running feature store backfill with fixed code
+
+**Root Cause (Session 62 discovery)**:
+Backfill mode includes ALL players (300-500/day) but previously didn't join with betting tables.
+Production mode only includes expected players (130-200/day) who mostly have Vegas lines.
+
+### Priority 2G: Model Drift Monitoring (Session 28)
 
 #### Weekly Hit Rate Trend
 

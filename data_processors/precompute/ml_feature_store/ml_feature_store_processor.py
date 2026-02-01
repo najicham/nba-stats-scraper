@@ -632,8 +632,11 @@ class MLFeatureStoreProcessor(
 
         # BATCH EXTRACTION (20x speedup for backfill!)
         # Query all Phase 3/4 tables once upfront instead of per-player queries
+        # v3.6 (Session 62): Pass backfill_mode to enable raw betting table joins for Vegas lines
         step_start = time.time()
-        self.feature_extractor.batch_extract_all_data(analysis_date, self.players_with_games)
+        self.feature_extractor.batch_extract_all_data(
+            analysis_date, self.players_with_games, backfill_mode=self.is_backfill_mode
+        )
         self._timing['batch_extract_all_data'] = time.time() - step_start
 
         # Set raw_data to pass base class validation

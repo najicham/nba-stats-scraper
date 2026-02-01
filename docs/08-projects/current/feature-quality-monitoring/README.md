@@ -1,9 +1,9 @@
 # Feature Quality Monitoring System
 
 **Created:** 2026-01-30
-**Updated:** 2026-02-01 (Session 61)
-**Status:** Vegas Line Drift Root Cause Found - Fix Pending
-**Priority:** CRITICAL (vegas_line drift causing 26% hit rate drop on high-edge picks)
+**Updated:** 2026-02-01 (Session 63)
+**Status:** CRITICAL - Daily vs Backfill Code Path Difference Identified
+**Priority:** CRITICAL (V8 hit rate collapsed Jan 9+ due to daily orchestration issues)
 
 ---
 
@@ -18,17 +18,56 @@ A multi-layer system to detect ML feature quality issues before they impact pred
 | Drift detection (vs last season) | <48 hours | ✅ `/validate-feature-drift` skill (Session 61) |
 | Real-time alerting | <30 min | ❌ Not implemented |
 
-### Critical: Vegas Line Drift Incident (Session 61)
+### Critical: Vegas Line Drift Incident (Session 61) - FIXED Session 62
 
 **Root cause found:** Feature store `vegas_line` coverage dropped from **99.4%** (Jan 2025) to **43.4%** (Jan 2026).
 
 This caused V8 hit rate to collapse from 70-76% to 48-67% (high-edge: 86% → 60%).
 
-**Why:** 2025-26 season feature store was generated in backfill mode which includes ALL players but sets `has_prop_line=FALSE`. Last season only included players with props.
+**Why:** 2025-26 season feature store was generated in backfill mode which includes ALL players but didn't join with betting data. Last season only included players with props.
 
-**Fix needed:** Modify backfill mode to join with betting data, re-run feature store for 2025-26.
+**Fix Applied (Session 62):**
+1. Modified `_batch_extract_vegas_lines()` to accept `backfill_mode` parameter
+2. In backfill mode, queries raw betting tables (odds_api, bettingpros) instead of Phase 3
+3. Added Vegas coverage check to `/validate-daily` skill
 
-See: `2026-02-01-VEGAS-LINE-DRIFT-INCIDENT.md`
+**Re-run required:** Feature store backfill for Nov 2025 - Feb 2026
+
+**See:**
+- `2026-02-01-VEGAS-LINE-DRIFT-INCIDENT.md` - Original discovery
+- `2026-02-01-VEGAS-LINE-ROOT-CAUSE-ANALYSIS.md` - Detailed root cause & fix design
+
+### CRITICAL: Daily vs Backfill Code Path Difference (Session 63)
+
+**Root cause LIKELY identified:** Hit rate collapsed on **Jan 9, 2026** - the same day daily orchestration started running.
+
+| Period | Hit Rate | Source |
+|--------|----------|--------|
+| Jan 1-7, 2026 | 62-70% | Backfilled |
+| **Jan 9+, 2026** | **40-58%** | Daily orchestration |
+
+**Key Difference Found:**
+
+| Aspect | Daily Mode | Backfill Mode |
+|--------|-----------|---------------|
+| **Vegas Line Source** | Phase 3 (43% coverage) | Raw tables (95% coverage) |
+| **Player Query** | `upcoming_player_game_context` | `player_game_summary` |
+| **Completeness Checks** | Full validation | Skipped |
+
+**Impact:** Daily mode gets Vegas lines from Phase 3 which only has 43% coverage, while backfill queries raw betting tables with 95% coverage.
+
+**See:** `2026-02-01-SESSION-63-INVESTIGATION-FINDINGS.md` - Full investigation
+
+---
+
+### Additional Issues Found (Session 63)
+
+| Issue | Impact | Status |
+|-------|--------|--------|
+| pace_score = 0 for 100% | Broken feature | ❌ Needs fix |
+| usage_spike_score = 0 for 100% | Broken feature | ❌ Needs fix |
+| No `predicted_at` timestamp | Can't track when predictions made | ❌ Needs implementation |
+| No `feature_source_mode` field | Can't distinguish daily vs backfill | ❌ Needs implementation |
 
 ---
 
@@ -113,23 +152,73 @@ CREATE TABLE nba_monitoring_west2.feature_health_daily (
 
 ---
 
+## Prevention Mechanisms (Session 62)
+
+### 1. Vegas Coverage Check in `/validate-daily`
+
+Added Priority 2F check that alerts when vegas_line coverage drops below 80%:
+
+```sql
+SELECT
+  ROUND(100.0 * COUNTIF(features[OFFSET(25)] > 0) / COUNT(*), 1) as vegas_line_pct
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  AND ARRAY_LENGTH(features) >= 33
+-- ALERT if < 80%
+```
+
+### 2. Historical Baseline Comparison in `/validate-feature-drift`
+
+Compares current coverage to same period last season. Alerts if >20% drop.
+
+### 3. Backfill Mode Fix
+
+`_batch_extract_vegas_lines()` now accepts `backfill_mode` parameter and queries raw betting tables directly for historical dates.
+
+### 4. Unit Test Recommendation
+
+Add test to verify backfill maintains >80% Vegas coverage:
+
+```python
+def test_backfill_vegas_coverage():
+    players = extractor.get_players_with_games(date(2025, 1, 15), backfill_mode=True)
+    extractor.batch_extract_all_data(date(2025, 1, 15), players, backfill_mode=True)
+    with_vegas = sum(1 for p in players if extractor.get_vegas_lines(p['player_lookup']))
+    assert with_vegas / len(players) >= 0.80
+```
+
+---
+
 ## What's Still Needed
+
+### CRITICAL Priority (Session 63)
+
+| Task | Description | Status |
+|------|-------------|--------|
+| **Fix daily Vegas source** | Daily mode should use raw tables like backfill | ❌ CRITICAL |
+| Add `feature_source_mode` | Track 'daily' vs 'backfill' in feature store | ❌ Pending |
+| Add `predicted_at` timestamp | Track when predictions were made | ❌ Pending |
+| Re-run Jan 9+ predictions | Verify hypothesis by re-running with backfill | ❌ Pending |
 
 ### High Priority
 
 | Task | Description | Status |
 |------|-------------|--------|
+| Re-run feature store backfill | Nov 2025 - Feb 2026 with fix | ❌ Pending |
 | Deploy Phase 4 | Activate pre-write validation | ❌ Pending |
 | Scheduled query | Daily population of health table | ❌ Pending |
 | Fix usage_spike_score | `projected_usage_rate = None` | ❌ Pending |
-| Fix team_win_pct | Not passed to final record | ❌ Pending |
+| Fix pace_score | 100% zeros - investigate | ❌ Pending |
+| Fix team_win_pct | Not passed to final record | ✅ Fixed |
 
 ### Medium Priority
 
 | Task | Description | Status |
 |------|-------------|--------|
+| Add broken feature detection | Alert if pace_score or usage_spike 100% zeros | ❌ Pending |
+| Daily vs backfill comparison | Dashboard to compare coverage | ❌ Pending |
 | Expand drift detector | 12 → 37 features | ❌ Pending |
-| Add to /validate-daily | Feature health section | ❌ Pending |
+| Add to /validate-daily | Vegas coverage check | ✅ Added Session 62 |
 | Real-time alerting | Slack alerts on critical | ❌ Pending |
 | Integrate schedule_context_calculator | Hardcoded features | ❌ Pending |
 
@@ -258,6 +347,10 @@ All 37 features with expected ranges (from `ML_FEATURE_RANGES`):
 | 2026-01-30 | 44-47 | Bug discovered, root cause found |
 | 2026-01-30 | 47 | Bytecode cache fix implemented |
 | 2026-01-31 | 48 | Pre-write validation + monitoring table |
+| 2026-02-01 | 61 | Vegas line drift discovered |
+| 2026-02-01 | 62 | Vegas line backfill fix implemented |
+| 2026-02-01 | 63 | **Daily vs backfill code path difference identified** |
+| TBD | - | Fix daily Vegas source |
 | TBD | - | Deploy Phase 4 with validation |
 | TBD | - | Set up scheduled health query |
 
@@ -274,5 +367,5 @@ All 37 features with expected ranges (from `ML_FEATURE_RANGES`):
 
 ---
 
-*Last updated: 2026-01-31 (Session 48)*
+*Last updated: 2026-02-01 (Session 63 - Daily vs Backfill investigation)*
 *Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>*
