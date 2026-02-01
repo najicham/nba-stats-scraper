@@ -249,6 +249,18 @@ def run_prediction(
             'is_production_ready': True,
             'backfill_bootstrap_mode': True,
             'processing_decision_reason': 'backfill_v8',
+            # v4.1: Store feature snapshot for debugging and reproducibility
+            'features_snapshot': json.dumps({
+                'points_avg_last_5': features.get('points_avg_last_5'),
+                'points_avg_last_10': features.get('points_avg_last_10'),
+                'points_avg_season': features.get('points_avg_season'),
+                'vegas_points_line': features.get('vegas_points_line'),
+                'has_vegas_line': features.get('has_vegas_line'),
+                'minutes_avg_last_10': features.get('minutes_avg_last_10'),
+                'ppm_avg_last_10': features.get('ppm_avg_last_10'),
+            }),
+            'feature_version': features.get('feature_version', 'v2_33features'),
+            'feature_quality_score': features.get('feature_quality_score', 80.0),
         }
 
         return prediction

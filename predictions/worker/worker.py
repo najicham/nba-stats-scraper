@@ -1684,7 +1684,21 @@ def format_prediction_for_bigquery(
             'feature_importance': json.dumps({
                 'model_type': metadata.get('model_type'),
                 'feature_count': metadata.get('feature_count', 33),
-            }) if metadata.get('model_type') else None
+            }) if metadata.get('model_type') else None,
+            # v4.1: Full feature snapshot for debugging and reproducibility
+            'features_snapshot': json.dumps({
+                'points_avg_last_5': features.get('points_avg_last_5'),
+                'points_avg_last_10': features.get('points_avg_last_10'),
+                'points_avg_season': features.get('points_avg_season'),
+                'vegas_points_line': features.get('vegas_points_line'),
+                'has_vegas_line': features.get('has_vegas_line'),
+                'minutes_avg_last_10': features.get('minutes_avg_last_10'),
+                'ppm_avg_last_10': features.get('ppm_avg_last_10'),
+                'fatigue_score': features.get('fatigue_score'),
+                'opponent_def_rating': features.get('opponent_def_rating'),
+            }),
+            'feature_version': features.get('feature_version', 'v2_33features'),
+            'feature_quality_score': features.get('feature_quality_score'),
         })
     
     elif system_id == 'ensemble_v1' and 'metadata' in prediction:

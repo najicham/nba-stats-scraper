@@ -232,6 +232,17 @@ ADD COLUMN IF NOT EXISTS teammate_out_starters STRING
 ADD COLUMN IF NOT EXISTS teammate_usage_boost FLOAT64
   OPTIONS (description='Expected usage boost from teammate absences');
 
+-- v4.1: Add features_snapshot for debugging and reproducibility (Session 66)
+-- Stores the actual feature values used when making the prediction
+-- This prevents issues when feature store is backfilled with different values later
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS features_snapshot JSON
+  OPTIONS (description='Snapshot of feature values used for prediction. Enables debugging when hit rates change unexpectedly.'),
+ADD COLUMN IF NOT EXISTS feature_version STRING
+  OPTIONS (description='Feature version used: v2_33features, v2_37features, etc.'),
+ADD COLUMN IF NOT EXISTS feature_quality_score FLOAT64
+  OPTIONS (description='Quality score of features at prediction time (0-100)');
+
 -- ============================================================================
 -- VERSION HISTORY
 -- ============================================================================
@@ -255,7 +266,11 @@ ADD COLUMN IF NOT EXISTS teammate_usage_boost FLOAT64
 --                       line_minutes_before_game, model_version, teammate_opportunity_score,
 --                       teammate_out_starters, teammate_usage_boost
 --                       These fields existed in BigQuery (runtime) but were missing from SQL
+-- v4.1 (+features):     Added features_snapshot JSON, feature_version, feature_quality_score
+--                       Enables debugging when hit rates change unexpectedly
+--                       Stores actual feature values used at prediction time
+--                       Prevents issues when feature store is backfilled with different values
 --
--- Last Updated: January 28, 2026
+-- Last Updated: February 1, 2026
 -- Status: Production Ready
 -- ============================================================================
