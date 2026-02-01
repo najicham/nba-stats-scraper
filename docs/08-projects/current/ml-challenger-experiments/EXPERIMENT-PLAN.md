@@ -1,8 +1,8 @@
 # ML Challenger Experiments Plan
 
 **Created:** 2026-02-01 (Session 61)
-**Updated:** 2026-02-01 (Session 66 - Data leakage discovery)
-**Status:** READY TO RUN
+**Updated:** 2026-02-01 (Session 67 - Experiments complete, V9 candidate found)
+**Status:** ✅ EXPERIMENTS COMPLETE - V9 CANDIDATE READY
 **Goal:** Find a model that beats V8 for DraftKings betting
 
 ---
@@ -384,6 +384,40 @@ Model learned that missing vegas_line means "low-scoring player", but inference 
 - **Recommendation**: Promote to catboost_v9 and deploy
 
 **Note:** All experiments used Nov 2025+ data to ensure `team_win_pct` is realistic. Historical data (2021-Oct 2025) has broken features.
+
+---
+
+## Data Quality Audit (Session 67)
+
+Verified training data quality for Nov 2 - Jan 8, 2026 period:
+
+### Feature Status
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Rolling Averages | ✅ CLEAN | 0.95+ correlation with correct values, no leakage |
+| team_win_pct | ✅ CORRECT | Nov 2-8: 0.5 is LEGITIMATE (teams had <5 games) |
+| Vegas Features | ⚠️ PARTIAL | 26-46% real coverage, rest handled as NaN |
+| pace_score | ✅ OK | 6-11% zeros (legitimate) |
+| shot_zone_mismatch | ⚠️ HIGH ZEROS | 30-70% zeros (legitimate when no mismatch) |
+
+### Key Finding: Early November is NOT Contaminated
+
+The 100% `team_win_pct = 0.5` in Nov 2-8 was initially suspected as a bug, but investigation revealed it's **correct behavior**:
+
+1. Season started Oct 22, 2025
+2. Feature calculator requires 5+ games to compute real win percentage
+3. Through Nov 5, most teams had <5 games → default 0.5 is correct
+4. CatBoost learns to interpret 0.5 as "early season, limited data"
+
+### Comparison: Full Season vs Clean-Only Training
+
+| Approach | Samples | Premium HR | High-Edge HR |
+|----------|---------|------------|--------------|
+| Full season (Nov 2+) | 9,993 | **56.5%** | **72.2%** |
+| Clean-only (Nov 16+) | 8,018 | 52.7% | 60.8% |
+
+**Conclusion**: More data beats cleaner data. The early season defaults don't hurt performance.
 
 ---
 
