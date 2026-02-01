@@ -52,12 +52,43 @@ This prevents confusion when comparing analyses across sessions.
 
 | Query # | Name | Purpose |
 |---------|------|---------|
+| 0 | **Daily Model Comparison** | Compare all models day-by-day (quick check) |
 | 1 | Best Performing Picks | Compare standard filters (run first) |
 | 2 | Weekly Trend | Detect drift over time |
 | 3 | Confidence x Edge Matrix | Full breakdown |
 | 4 | Model Beats Vegas | Compare to Vegas accuracy |
 | 5 | **Find Best Filter** | Optimize filter for current conditions |
 | 6 | Player Tier Analysis | Performance by player scoring tier |
+
+### Query 0: Daily Model Comparison (Quick Check)
+
+**Use this to quickly see how all models performed each day.**
+
+```sql
+-- Daily comparison of all CatBoost models
+SELECT
+  game_date,
+  system_id,
+  COUNT(*) as predictions,
+  COUNTIF(ABS(predicted_points - line_value) >= 5) as high_edge,
+  ROUND(100.0 * COUNTIF(
+    ABS(predicted_points - line_value) >= 5 AND prediction_correct
+  ) / NULLIF(COUNTIF(
+    ABS(predicted_points - line_value) >= 5 AND prediction_correct IS NOT NULL
+  ), 0), 1) as high_edge_hr,
+  ROUND(100.0 * COUNTIF(prediction_correct) /
+    NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 1) as overall_hr
+FROM nba_predictions.prediction_accuracy
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  AND system_id LIKE 'catboost%'
+GROUP BY game_date, system_id
+ORDER BY game_date DESC, system_id
+```
+
+**Interpretation**:
+- Compare `catboost_v9` vs `catboost_v9_2026_02` on the same days
+- Look for patterns where one model outperforms the other
+- Note: New monthly models only have data from their deployment date forward
 
 ### Query 1: Best Performing Picks Summary (ALWAYS RUN THIS FIRST)
 
@@ -138,8 +169,10 @@ ORDER BY system_id, hit_rate DESC
 
 **Usage Notes**:
 - Results are grouped by `system_id` to compare model performance side-by-side
-- `catboost_v9` is the current production model (Jan 31+ predictions)
-- `catboost_v8` is the historical model (Jan 18-28, 2026)
+- `catboost_v9` is the original V9 model (trained Nov 2 - Jan 8)
+- `catboost_v9_2026_02` is the February 2026 monthly retrain (trained Nov 2 - Jan 24)
+- `catboost_v9_2026_XX` are monthly retrained models (added each month)
+- `catboost_v8` is the historical model (legacy, has data leakage issues)
 - `ensemble_v1_1` is an active ensemble model for comparison
 
 ### Query 2: Weekly Trend (Detect Drift)
@@ -389,11 +422,12 @@ ORDER BY
 
 ### Model Summary
 
-| Model | Total Predictions | Active Date Range |
-|-------|-------------------|-------------------|
-| catboost_v9 | XXX | Jan 31+ (CURRENT) |
-| catboost_v8 | XXX | Jan 18-28 (LEGACY) |
-| ensemble_v1_1 | XXX | Jan 20+ |
+| Model | Total Predictions | Active Date Range | Notes |
+|-------|-------------------|-------------------|-------|
+| catboost_v9 | XXX | Jan 9+ | Original V9 (trained Nov-Jan 8) |
+| catboost_v9_2026_02 | XXX | Feb 1+ | Feb monthly (trained Nov-Jan 24) |
+| catboost_v8 | XXX | Jan 18-28 | LEGACY (data leakage issues) |
+| ensemble_v1_1 | XXX | Jan 20+ | Ensemble model |
 
 ### Best Performing Picks (by Model)
 
@@ -477,3 +511,4 @@ Show side-by-side comparison of models over time to detect drift and compare per
 *Skill created: Session 55*
 *Updated: Session 57 - Added standard filters, clarified metrics confusion*
 *Updated: Session 58 - Added "Find Best Filter" query for filter optimization*
+*Updated: Session 69 - Added daily model comparison, support for monthly models (catboost_v9_2026_XX)*
