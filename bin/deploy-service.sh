@@ -8,6 +8,7 @@
 # Supported services:
 #   - prediction-coordinator
 #   - prediction-worker
+#   - nba-phase2-raw-processors
 #   - nba-phase3-analytics-processors
 #   - nba-phase4-precompute-processors
 #   - nba-scrapers
@@ -33,6 +34,7 @@ if [ -z "$SERVICE" ]; then
     echo "Available services:"
     echo "  - prediction-coordinator"
     echo "  - prediction-worker"
+    echo "  - nba-phase2-raw-processors"
     echo "  - nba-phase3-analytics-processors"
     echo "  - nba-phase4-precompute-processors"
     echo "  - nba-scrapers"
@@ -51,6 +53,10 @@ case $SERVICE in
   prediction-worker)
     DOCKERFILE="predictions/worker/Dockerfile"
     EXPECTED_SERVICE="prediction-worker"
+    ;;
+  nba-phase2-raw-processors)
+    DOCKERFILE="data_processors/raw/Dockerfile"
+    EXPECTED_SERVICE="raw-processor"
     ;;
   nba-phase3-analytics-processors)
     DOCKERFILE="data_processors/analytics/Dockerfile"
@@ -78,6 +84,7 @@ case $SERVICE in
     echo "Available services:"
     echo "  - prediction-coordinator"
     echo "  - prediction-worker"
+    echo "  - nba-phase2-raw-processors"
     echo "  - nba-phase3-analytics-processors"
     echo "  - nba-phase4-precompute-processors"
     echo "  - nba-scrapers"

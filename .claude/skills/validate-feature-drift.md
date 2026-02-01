@@ -169,26 +169,87 @@ if coverage < threshold:
     )
 ```
 
+### Check 4: Records Per Day (Detect Dilution)
+
+```sql
+-- If records/day increased significantly, you may have dilution (all players vs only those with props)
+SELECT
+  'Current' as period,
+  COUNT(*) / COUNT(DISTINCT game_date) as avg_records_per_day
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  AND ARRAY_LENGTH(features) >= 33
+UNION ALL
+SELECT
+  'Last Year' as period,
+  COUNT(*) / COUNT(DISTINCT game_date) as avg_records_per_day
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= DATE_SUB(DATE_SUB(CURRENT_DATE(), INTERVAL 1 YEAR), INTERVAL 7 DAY)
+  AND game_date < DATE_SUB(CURRENT_DATE(), INTERVAL 1 YEAR)
+  AND ARRAY_LENGTH(features) >= 33
+```
+
+**Alert thresholds**:
+- 🔴 CRITICAL: Records/day increased >100% (indicates ALL players included, not just those with props)
+- 🟡 WARNING: Records/day changed >50%
+- ✅ OK: Within 30% of last season
+
+### Check 5: has_vegas_line Flag vs Actual Coverage
+
+```sql
+-- If has_vegas_line=1 but vegas_line=0, there's a data extraction bug
+SELECT
+  ROUND(100.0 * COUNTIF(features[OFFSET(28)] = 1) / COUNT(*), 1) as has_line_flag_pct,
+  ROUND(100.0 * COUNTIF(features[OFFSET(25)] > 0) / COUNT(*), 1) as actual_line_pct,
+  ROUND(100.0 * COUNTIF(features[OFFSET(28)] = 1 AND features[OFFSET(25)] = 0) / COUNT(*), 1) as mismatch_pct
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  AND ARRAY_LENGTH(features) >= 33
+```
+
+**Alert thresholds**:
+- 🔴 CRITICAL: mismatch_pct > 5% (flag says has line but value is 0)
+- ✅ OK: mismatch_pct < 1%
+
 ## Root Cause Checklist
 
 When feature degradation is detected:
 
-1. **Check upstream data sources**
-   - Odds API scraper running? Check GCS files
-   - BettingPros scraper running? Check GCS files
-   - Player matching working? Check `upcoming_player_game_context.current_points_line`
+### Step 1: Check upstream data sources
+- Odds API scraper running? Check GCS files
+- BettingPros scraper running? Check GCS files
+- Player matching working? Check `upcoming_player_game_context.current_points_line`
 
-2. **Check Phase 3 context**
-   ```sql
-   SELECT
-     ROUND(100.0 * COUNTIF(current_points_line IS NOT NULL) / COUNT(*), 1) as pct
-   FROM nba_analytics.upcoming_player_game_context
-   WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-   ```
+### Step 2: Check Phase 3 context
+```sql
+SELECT
+  ROUND(100.0 * COUNTIF(current_points_line IS NOT NULL AND current_points_line > 0) / COUNT(*), 1) as pct
+FROM nba_analytics.upcoming_player_game_context
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+```
 
-3. **Check feature store generation**
-   - Feature extraction query working?
-   - Phase 4 processor running?
+### Step 3: Check feature store generation mode
+```sql
+-- Check if backfill mode was used (includes ALL players, not just those with props)
+-- Symptom: High record count per day but low vegas_line coverage
+SELECT
+  game_date,
+  COUNT(*) as records,
+  ROUND(100.0 * COUNTIF(features[OFFSET(25)] > 0) / COUNT(*), 1) as vegas_pct
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+  AND ARRAY_LENGTH(features) >= 33
+GROUP BY 1
+ORDER BY 1 DESC
+```
+
+If records are HIGH (300-500) but vegas_pct is LOW (<50%), the feature store was likely generated in **backfill mode** which includes all players but sets `has_prop_line=FALSE`.
+
+**Fix:** Re-run feature store in production mode or fix backfill mode to join with betting data.
+
+### Step 4: Check Phase 4 processor running
+- Feature extraction query working?
+- Check Cloud Run logs for errors
 
 ## Example Output
 

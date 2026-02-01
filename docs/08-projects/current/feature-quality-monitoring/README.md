@@ -1,9 +1,9 @@
 # Feature Quality Monitoring System
 
 **Created:** 2026-01-30
-**Updated:** 2026-01-31 (Session 49)
-**Status:** Investigation Complete, Fixes Pending Backfill
-**Priority:** High (prevents fatigue_score-type bugs)
+**Updated:** 2026-02-01 (Session 61)
+**Status:** Vegas Line Drift Root Cause Found - Fix Pending
+**Priority:** CRITICAL (vegas_line drift causing 26% hit rate drop on high-edge picks)
 
 ---
 
