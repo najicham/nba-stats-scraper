@@ -1357,6 +1357,131 @@ gcloud run services update [SERVICE_NAME] \
 
 ---
 
+### 6.4 - Cloud Function Deployment Fails - Import Errors
+
+**Symptom:** Cloud Function deployment fails health check with `ModuleNotFoundError` for shared modules.
+
+**Example Error:**
+```
+Container failed to start and listen on port 8080 within allocated timeout
+ModuleNotFoundError: No module named 'shared.validation.phase3_data_quality_check'
+```
+
+**Root Cause:** Deployment package missing required shared modules (common after directory consolidation/refactoring).
+
+#### Diagnosis
+
+**Step 1: Check deployment revision status**
+```bash
+# Check recent revisions and identify failed deployment
+gcloud run revisions list --service=SERVICE_NAME --region=us-west2
+
+# Check logs for failed revision
+gcloud logging read 'resource.labels.revision_name="FAILED_REVISION_NAME"' \
+  --limit=50 --format=json
+```
+
+**Look for:**
+- Import errors showing which modules are missing
+- Container startup failures
+- Health check timeout errors
+
+**Step 2: Review recent code changes**
+
+Check if there was recent:
+- Shared directory consolidation (e.g., `orchestration/shared/` deleted, moved to `shared/`)
+- Module reorganization or renaming
+- Import path changes
+
+**Step 3: Inspect deployment script**
+```bash
+# Check what directories the deployment script copies
+grep -A 20 "rsync" bin/orchestrators/deploy_*.sh
+```
+
+**Common Issue (Jan 30, 2026 consolidation):**
+- Deployment scripts referenced deleted `orchestration/shared/` directory
+- Scripts only copied `shared/utils/` but code also needs `shared.clients`, `shared.validation`, `shared.config`
+
+#### Fix Procedures
+
+**1. Update deployment script to copy ALL required shared modules:**
+
+```bash
+# Edit deployment script (example: bin/orchestrators/deploy_phase3_to_phase4.sh)
+# Replace partial copy with comprehensive module copying:
+
+# Before (WRONG - missing dependencies):
+rsync -aL shared/utils/ "$BUILD_DIR/shared/utils/"
+
+# After (CORRECT - all modules included):
+rsync -aL shared/utils/ "$BUILD_DIR/shared/utils/"
+rsync -aL shared/clients/ "$BUILD_DIR/shared/clients/"
+rsync -aL shared/validation/ "$BUILD_DIR/shared/validation/"
+rsync -aL shared/config/ "$BUILD_DIR/shared/config/"
+```
+
+**2. Remove broken symlinks:**
+```bash
+# Find and remove broken symlinks in deployment package
+find orchestration/cloud_functions/ -xtype l -delete
+```
+
+**3. Redeploy with fixed script:**
+```bash
+./bin/orchestrators/deploy_SERVICE_NAME.sh
+```
+
+**4. Verify deployment health:**
+```bash
+# Check new revision is healthy and active
+gcloud run services describe SERVICE_NAME --region=us-west2 \
+  --format="value(status.conditions[0].status,status.latestReadyRevisionName)"
+
+# Expected: True, SERVICE-NAME-00XXX-xxx
+```
+
+#### Prevention
+
+**After consolidating/moving shared directories:**
+
+1. **Check ALL deployment scripts** for references to old paths:
+```bash
+grep -r "orchestration/shared" bin/
+grep -r "deleted_directory_name" bin/
+```
+
+2. **Update scripts BEFORE deploying** services
+
+3. **Test deployment** to staging/test environment first
+
+4. **Add deployment validation** to check all imports are present in build directory:
+```bash
+# Add to deployment script before gcloud deploy
+python -c "import main" || { echo "Import check failed"; exit 1; }
+```
+
+5. **Document consolidation impact** in architecture docs
+
+#### Impact
+
+**During outage (Jan 29 - Feb 1, 2026 example):**
+- ❌ Could not deploy orchestrator updates
+- ❌ New revision failed health check
+- ✅ Service stayed up (Cloud Run auto-rollback to previous healthy revision)
+- ✅ Orchestrator continued working on old code
+
+**After fix:**
+- ✅ Deployment scripts updated for all orchestrators
+- ✅ Services deploy successfully with all dependencies
+
+**References:**
+- Session 60 handoff: `docs/09-handoff/2026-02-01-SESSION-60-HANDOFF.md`
+- Consolidation doc: `docs/architecture/cloud-function-shared-consolidation.md`
+- Deployment scripts: `bin/orchestrators/deploy_*.sh`
+
+---
+
 ### 7.4 - Monitoring Metrics Not Recording
 
 **Symptom:** Custom metrics (hit rate, latency, etc.) not appearing in Cloud Monitoring.

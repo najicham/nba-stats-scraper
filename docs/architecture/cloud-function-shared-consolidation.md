@@ -157,6 +157,12 @@ When adding new shared utilities or configuration:
    cd orchestration/cloud_functions/phase2_to_phase3/shared/utils
    ln -s ../../../../../shared/utils/new_utility.py new_utility.py
    ```
+4. **Update deployment scripts** if creating new top-level shared subdirectory:
+   ```bash
+   # If adding shared/NEW_DIR/, update all orchestrator deployment scripts
+   # Add to rsync section:
+   rsync -aL shared/NEW_DIR/ "$BUILD_DIR/shared/NEW_DIR/"
+   ```
 
 ### Modifying Shared Files
 
@@ -172,6 +178,39 @@ When adding new shared utilities or configuration:
 
 Google Cloud Functions supports symlinks when deploying. The deployment process follows symlinks and includes the target files in the deployment package.
 
+**CRITICAL: Deployment Scripts Must Copy All Shared Modules**
+
+After the Jan 30, 2026 consolidation that deleted `orchestration/shared/`, ALL orchestrator deployment scripts were updated to copy ALL shared subdirectories, not just `shared/utils/`.
+
+**Required in deployment scripts:**
+```bash
+# Copy shared modules to support imports from shared.* (post-consolidation: Jan 30, 2026)
+# orchestration/shared/ was deleted - all utilities now in shared/ only
+rsync -aL shared/utils/ "$BUILD_DIR/shared/utils/"
+rsync -aL shared/clients/ "$BUILD_DIR/shared/clients/"
+rsync -aL shared/validation/ "$BUILD_DIR/shared/validation/"
+rsync -aL shared/config/ "$BUILD_DIR/shared/config/"
+```
+
+**Why this matters:**
+- Cloud Functions need ALL dependencies in deployment package
+- Missing modules cause container startup failures and import errors
+- Cloud Run health checks will fail if any imports are missing
+
+**Post-Consolidation Deployment Failures (Jan 29-Feb 1, 2026):**
+
+When `orchestration/shared/` was deleted during consolidation, deployment scripts still referenced the old directory. This caused deployment failures with errors like:
+```
+ModuleNotFoundError: No module named 'shared.validation.phase3_data_quality_check'
+Container failed to start and listen on port 8080
+```
+
+**All 4 orchestrator deployment scripts were updated (commit 718f2456):**
+- `bin/orchestrators/deploy_phase2_to_phase3.sh`
+- `bin/orchestrators/deploy_phase3_to_phase4.sh`
+- `bin/orchestrators/deploy_phase4_to_phase5.sh`
+- `bin/orchestrators/deploy_phase5_to_phase6.sh`
+
 **Testing Deployment:**
 
 Before deploying all cloud functions, test one:
@@ -182,6 +221,11 @@ Before deploying all cloud functions, test one:
 
 # Check logs for any import errors
 gcloud functions logs read phase2-to-phase3 --limit 50
+
+# Verify health check passed
+gcloud run services describe phase2-to-phase3-orchestrator --region=us-west2 \
+  --format="value(status.conditions[0].status)"
+# Expected: True
 ```
 
 ### Verification
@@ -253,6 +297,33 @@ ls -la orchestration/cloud_functions/phase2_to_phase3/shared/utils/completeness_
 - All imports use `from shared.utils...` pattern
 - PYTHONPATH includes project root in cloud functions
 - Verified imports work correctly in deployed functions
+
+### Risk: Deployment Script Drift After Consolidation
+
+**Issue:** Moving/deleting shared directories breaks deployment scripts that reference old paths.
+
+**Real Incident (Jan 29-Feb 1, 2026):**
+- Jan 30: Consolidation deleted `orchestration/shared/` directory
+- Jan 29: Attempted deployment failed - scripts still copied from `orchestration/shared/`
+- Scripts only copied `shared/utils/` but code needed `shared.clients`, `shared.validation`, `shared.config`
+- Container startup failed with `ModuleNotFoundError`
+- Cloud Run auto-rollback kept service up on old revision
+- Feb 1: Fixed all 4 orchestrator deployment scripts
+
+**Mitigation:**
+1. **After consolidation/refactoring**, check ALL deployment scripts:
+   ```bash
+   grep -r "orchestration/shared" bin/
+   grep -r "old_directory_name" bin/
+   ```
+2. **Update scripts BEFORE deploying** any services
+3. **Test one deployment** before bulk deployment
+4. **Verify health checks** pass on new revision:
+   ```bash
+   gcloud run services describe SERVICE_NAME --region=us-west2 \
+     --format="value(status.conditions[0].status)"
+   ```
+5. **Monitor startup logs** for import errors
 
 ## Testing
 
