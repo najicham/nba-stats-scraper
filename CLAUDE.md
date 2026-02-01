@@ -544,6 +544,44 @@ gcloud monitoring time-series list \
 **Prevention**: When creating new Cloud Run services, ensure service account has monitoring.metricWriter role
 **References**: Session 61 handoff Part 3
 
+### Backfill with Stale Code (Session 64)
+**Symptom**: Predictions have poor hit rate despite code fix being committed
+**Cause**: Backfill ran with OLD code that wasn't deployed yet
+**Real Example**: Session 64 - Feature enrichment fix committed Jan 30 03:17 UTC, but backfill ran at 07:41 UTC with OLD code. Fix wasn't deployed until 19:10 UTC (12 hours too late). Result: 50.4% hit rate instead of expected 58%+
+**Impact**:
+- 35% higher prediction error (MAE 5.8 vs 4.3)
+- 26-point collapse in high-edge hit rate (76.6% → 50.9%)
+- Required full re-generation of 20 days of predictions
+
+**CRITICAL RULE: Always Deploy Before Backfill**
+```bash
+# 1. Verify deployment matches latest commit BEFORE any backfill
+./bin/verify-deployment-before-backfill.sh prediction-worker
+
+# 2. If out of date, deploy first
+./bin/deploy-service.sh prediction-worker
+
+# 3. Only then run the backfill
+PYTHONPATH=. python backfill_jobs/predictions/backfill_v8_predictions.py --start-date 2026-01-09 --end-date 2026-01-28
+```
+
+**Detection**: Compare deployed commit to latest main
+```bash
+# Check deployed commit
+gcloud run services describe prediction-worker --region=us-west2 \
+  --format="value(metadata.labels.commit-sha)"
+
+# Compare to repo
+git log -1 --format="%h"
+```
+
+**Prevention**:
+1. **Pre-backfill check script**: `./bin/verify-deployment-before-backfill.sh <service-name>`
+2. **New tracking fields**: `build_commit_sha`, `predicted_at` in predictions table
+3. **Execution log**: `prediction_execution_log` table for full audit trail
+
+**References**: Session 64 handoff, `docs/08-projects/current/feature-quality-monitoring/V8-INVESTIGATION-LEARNINGS.md`
+
 ## Prevention Mechanisms
 
 ### Pre-commit Hooks
