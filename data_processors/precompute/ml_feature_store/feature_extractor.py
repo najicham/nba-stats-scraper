@@ -683,11 +683,11 @@ class FeatureExtractor:
                     player_lookup,
                     FIRST_VALUE(points_line) OVER (
                         PARTITION BY player_lookup
-                        ORDER BY scraped_at DESC
+                        ORDER BY created_at DESC
                     ) as vegas_points_line,
                     FIRST_VALUE(opening_line) OVER (
                         PARTITION BY player_lookup
-                        ORDER BY scraped_at DESC
+                        ORDER BY created_at DESC
                     ) as vegas_opening_line
                 FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
                 WHERE game_date = '{game_date}'
