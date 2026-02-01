@@ -1,11 +1,12 @@
-# Session 56 TODO List
+# Session 56-57 TODO List
 
-All ideas and improvements discussed during Session 56.
+All ideas and improvements discussed during Sessions 56-57.
 
 ---
 
-## COMPLETED THIS SESSION
+## COMPLETED (Sessions 56-57)
 
+### Session 56
 - [x] **Performance Diagnostics System** - Unified monitoring for Vegas sharpness, model drift, data quality
 - [x] **Experiment Registry** - BigQuery table + Python class for tracking ML experiments
 - [x] **YAML Experiment Configs** - Schema and example for reproducible experiments
@@ -16,51 +17,99 @@ All ideas and improvements discussed during Session 56.
 - [x] **Fixed Line Contamination** - Changed feature_extractor.py from AVG() to picking single best line
 - [x] **Vegas Sharpness Tracking Design** - Schema and dashboard design for tracking Vegas accuracy over time
 
+### Session 57
+- [x] **Investigate Missing Production Dates** - RESOLVED: Jan 8 had no Vegas lines (upstream issue), other dates working correctly
+- [x] **Automate Daily Diagnostics** - Added to data-quality-alerts Cloud Function (needs shared module fix)
+- [x] **Standardize Hit Rate Measurement** - Updated hit-rate-analysis skill with two standard filters
+- [x] **Model Drift Investigation** - Confirmed MODEL_DRIFT (not Vegas sharpening): Week 1 84.5% → Week 4 46.2%
+- [x] **Documentation Updates** - Added measurement guidance to CLAUDE.md
+
 ---
 
 ## HIGH PRIORITY (P0) - Do Next
 
-### 1. ~~Fix Feature Store Line Quality~~ DONE
-**Problem**: 45% of `has_vegas_line=1.0` records had estimated (averaged) Vegas lines.
+### 1. Fix evaluate_model.py to Match Production
+**Problem**: Evaluation shows 50% hit rate, but production shows 78% for premium picks.
 
-**Solution Applied**:
-- [x] Changed `feature_extractor.py` from `AVG(points_line)` to picking single best line
-- [x] Now uses `ROW_NUMBER() ... ORDER BY is_best_line DESC, bookmaker_last_update DESC`
-- [x] New feature store records will have real lines (ends in .5 or .0)
-
-**Remaining**:
-- [ ] Backfill historical feature store records with corrected lines (optional)
-- [ ] Add `line_is_actual` flag for data quality tracking (optional)
-
-**Effort**: DONE (backfill optional)
-
-### 2. Investigate Missing Production Dates
-**Problem**: 8 dates in January have 0 graded predictions (Jan 19, 21-24, 29-30).
+**Root Cause**: Evaluation includes ALL predictions, production only grades 92+ confidence.
 
 **Tasks**:
-- [ ] Check coordinator logs for these dates
-- [ ] Determine why predictions weren't generated or graded
-- [ ] Add monitoring to detect future gaps
-- [ ] Consider backfilling if data is available
+- [ ] Add `--confidence-threshold` parameter (default 0.92)
+- [ ] Filter predictions to only those meeting confidence threshold
+- [ ] Report results for both standard filters (Premium 92+/3+, High Edge 5+)
+- [ ] Add weekly breakdown to detect drift during evaluation
 
-**Effort**: 0.5 session
+**Effort**: 30 minutes
 
-### 3. Automate Daily Performance Diagnostics
-**Problem**: Diagnostics only run manually.
+### 2. Add "Find Best Filter" to hit-rate-analysis
+**Problem**: Need to test all filter combinations to find optimal trading strategy.
 
 **Tasks**:
-- [ ] Add `check_performance_diagnostics()` to data_quality_alerts Cloud Function
-- [ ] Persist results to performance_diagnostics_daily table
-- [ ] Add Slack alerting for WARNING/CRITICAL levels
-- [ ] Create simple dashboard view in admin
+- [ ] Add query to test all conf/edge combinations
+- [ ] Rank by hit rate with minimum sample size
+- [ ] Show which filter is currently performing best
 
-**Effort**: 1 session
+**Effort**: 15 minutes
+
+### 3. Fix Cloud Function Shared Module
+**Problem**: data-quality-alerts can't import performance_diagnostics in production.
+
+**Tasks**:
+- [ ] Either inline the code or properly copy shared module
+- [ ] Test deployment
+- [ ] Verify model_performance check works in production
+
+**Effort**: 30 minutes
 
 ---
 
 ## MEDIUM PRIORITY (P1)
 
-### 4. Implement Prediction Versioning/History
+### 4. Monthly Retraining Pipeline (CRITICAL)
+**Problem**: Model V8 is drifting - Week 1 hit 84%, Week 4 hit 46%.
+
+**Evidence**:
+- Model MAE: 5.8 (Week 1) → 8.4-9.5 (Weeks 2-4)
+- Vegas MAE: Stable at 4.9-7.0
+- This is MODEL_DRIFT, not Vegas sharpening
+
+**Tasks**:
+- [ ] Create automated training pipeline
+- [ ] Train on last 60-90 days of data
+- [ ] Run monthly at start of each month
+- [ ] Shadow mode before promotion
+
+**Effort**: 2-3 sessions
+
+### 5. Create `/model-experiment` Skill
+**Problem**: No easy way to run experiments from Claude.
+
+**Tasks**:
+- [ ] Create `/model-experiment` skill
+- [ ] Support specifying train/eval dates
+- [ ] Use production-equivalent evaluation with confidence filter
+- [ ] Compare to V8 baseline automatically
+- [ ] Store results in ml_experiments table
+
+**Effort**: 1-2 sessions
+
+### 6. Test Trajectory Features
+**Problem**: V8 doesn't use trajectory features that might help with drift.
+
+**New Features to Test**:
+- `pts_slope_10g` - 10-game scoring trend
+- `pts_zscore_season` - Points z-score vs season average
+- `breakout_flag` - Recent breakout indicator
+
+**Tasks**:
+- [ ] Train model with 37 features (33 + 4 trajectory)
+- [ ] Evaluate using production-equivalent mode with confidence filter
+- [ ] Compare to 33-feature V8 baseline
+- [ ] Decide if worth deploying
+
+**Effort**: 1 session
+
+### 7. Implement Prediction Versioning/History
 **Problem**: When predictions update throughout the day, old values are lost.
 
 **Tasks**:
@@ -71,18 +120,7 @@ All ideas and improvements discussed during Session 56.
 
 **Effort**: 2-3 sessions
 
-### 5. Create Model Experiment Skill
-**Problem**: No easy way to run experiments from Claude.
-
-**Tasks**:
-- [ ] Create `/model-experiment` skill
-- [ ] Support specifying train/eval dates
-- [ ] Reuse hit-rate-analysis groupings
-- [ ] Output standardized results tables
-
-**Effort**: 1-2 sessions
-
-### 6. Vegas Sharpness Dashboard (Design Complete)
+### 8. Vegas Sharpness Dashboard (Design Complete)
 **Purpose**: Track Vegas accuracy over time with graphs in admin dashboard.
 
 **Schema**: DEPLOYED (`vegas_sharpness_daily` table)
@@ -172,44 +210,75 @@ All ideas and improvements discussed during Session 56.
 
 ## RESEARCH QUESTIONS TO INVESTIGATE
 
-### Already Answered (Session 55-56):
+### Already Answered (Sessions 55-57):
 - [x] Why does model echo Vegas in January? → Shared information (both use recent stats)
 - [x] Can we predict Vegas sharpness? → Yes, ~14% swing predictable
 - [x] Is JAN_DEC better? → No, production V8 already at 57%
 - [x] Why 57% vs 49% gap? → Sample population + line contamination
+- [x] Why did coordinator not run on 8 January dates? → Jan 8 Vegas lines not fetched (upstream issue)
+- [x] Is Week 4 drop due to Vegas sharpening? → NO, it's MODEL_DRIFT (model MAE 5.8→8.4, Vegas stable)
+- [x] What's the best filter for trading? → Premium (92+ conf, 3+ edge) = 78.7% for full Jan
 
 ### Still Open:
-- [ ] Why did coordinator not run on 8 January dates?
 - [ ] Can we reduce Vegas feature weight without hurting performance?
 - [ ] Would ensemble of recent + historical models help?
 - [ ] Is there a seasonal January pattern we should model?
+- [ ] Would trajectory features (pts_slope, zscore) help combat drift?
 
 ---
 
-## DOCUMENTATION TO UPDATE
+## DOCUMENTATION UPDATED
 
-- [ ] Update CLAUDE.md with new skills
+- [x] Update CLAUDE.md with hit rate measurement guidance (Session 57)
+- [x] Update hit-rate-analysis skill with standard filters (Session 57)
 - [ ] Update troubleshooting-matrix.md with backtest methodology
-- [ ] Create handoff doc at end of session
+- [x] Create handoff doc at end of session (Session 57)
 - [ ] Update experiment documentation with production-equivalent mode
+
+---
+
+## Key Metrics (January 2026)
+
+### Model Performance by Week
+| Week | Premium (92+, 3+) | High Edge (5+) | Model MAE |
+|------|-------------------|----------------|-----------|
+| Week 1 | **84.5%** | **76.6%** | 5.80 |
+| Week 2 | 78.6% | 55.6% | 7.88 |
+| Week 3 | 70.6% | 54.7% | 9.54 |
+| Week 4 | **46.2%** | **49.3%** | 8.44 |
+
+### Standard Filters (Always Report Both)
+| Filter | Definition | Jan Hit Rate |
+|--------|------------|--------------|
+| **Premium** | `conf >= 0.92 AND edge >= 3` | 78.7% (141 bets) |
+| **High Edge** | `edge >= 5` (any conf) | 63.1% (398 bets) |
 
 ---
 
 ## Quick Reference
 
-| Priority | Task | Effort | Impact |
-|----------|------|--------|--------|
-| P0 | Fix feature store line quality | 1 session | High |
-| P0 | Investigate missing dates | 0.5 session | Medium |
-| P0 | Automate daily diagnostics | 1 session | High |
-| P1 | Prediction versioning | 2-3 sessions | Medium |
-| P1 | Model experiment skill | 1-2 sessions | Medium |
-| P1 | Vegas sharpness predictor | 2 sessions | High |
-| P1 | Trajectory features experiment | 1 session | Medium |
-| P2 | Monthly retraining pipeline | 2-3 sessions | High |
-| P2 | Shared utilities | 1 session | Low |
-| P2 | A/B shadow mode | 3-4 sessions | High |
+| Priority | Task | Effort | Impact | Status |
+|----------|------|--------|--------|--------|
+| P0 | Fix evaluate_model.py confidence filter | 30 min | High | TODO |
+| P0 | Add "find best filter" to hit-rate skill | 15 min | Medium | TODO |
+| P0 | Fix Cloud Function shared module | 30 min | Medium | TODO |
+| P1 | **Monthly retraining pipeline** | 2-3 sessions | **CRITICAL** | TODO |
+| P1 | Model experiment skill | 1-2 sessions | High | TODO |
+| P1 | Trajectory features experiment | 1 session | Medium | TODO |
+| P1 | Prediction versioning | 2-3 sessions | Medium | TODO |
+| P1 | Vegas sharpness dashboard | 2-3 sessions | Medium | TODO |
+| P2 | Shared utilities | 1 session | Low | TODO |
+| P2 | A/B shadow mode | 3-4 sessions | High | TODO |
+
+**Completed**:
+| Task | Session |
+|------|---------|
+| Fix feature store line quality | 56 |
+| Investigate missing dates | 57 |
+| Automate daily diagnostics (partial) | 57 |
+| Standardize hit rate measurement | 57 |
 
 ---
 
 *Created: 2026-01-31, Session 56*
+*Updated: 2026-01-31, Session 57*
