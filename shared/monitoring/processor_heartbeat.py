@@ -118,8 +118,14 @@ class ProcessorHeartbeat:
 
     @property
     def doc_id(self) -> str:
-        """Document ID for this processor run."""
-        return f"{self.processor_name}_{self.data_date}_{self.run_id}"
+        """
+        Document ID for this processor's heartbeat.
+
+        Uses processor_name as the ID so each processor has a single document
+        that gets updated with each heartbeat, rather than creating a new
+        document for every run (which would pollute Firestore with 100k+ docs).
+        """
+        return self.processor_name
 
     def start(self):
         """Start emitting heartbeats in background thread."""
