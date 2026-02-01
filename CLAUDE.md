@@ -515,6 +515,35 @@ GROUP BY 1 ORDER BY 1 DESC
 - Fix documentation: `docs/09-handoff/2026-01-31-SESSION-53-SHOT-ZONE-FIX-COMPLETE.md`
 - Troubleshooting: `docs/02-operations/troubleshooting-matrix.md` Section 2.4
 
+### Monitoring Permissions Error (Session 61)
+**Symptom**: `403 Permission 'monitoring.timeSeries.create' denied` errors in logs
+**Cause**: Service account missing `roles/monitoring.metricWriter` IAM role
+**Impact**: Custom metrics (hit rate, latency, etc.) not recording to Cloud Monitoring
+**Fix**:
+```bash
+# Grant monitoring write permissions to service account
+gcloud projects add-iam-policy-binding nba-props-platform \
+  --member="serviceAccount:SERVICE_ACCOUNT_EMAIL" \
+  --role="roles/monitoring.metricWriter"
+
+# Example for prediction-worker
+gcloud projects add-iam-policy-binding nba-props-platform \
+  --member="serviceAccount:prediction-worker@nba-props-platform.iam.gserviceaccount.com" \
+  --role="roles/monitoring.metricWriter"
+```
+**Verification**:
+```bash
+# Check metrics are now recording
+gcloud monitoring metrics-descriptors list --filter="custom.googleapis.com/prediction"
+
+# View recent metrics
+gcloud monitoring time-series list \
+  --filter='metric.type="custom.googleapis.com/prediction/hit_rate"' \
+  --interval-start-time="2026-02-01T00:00:00Z"
+```
+**Prevention**: When creating new Cloud Run services, ensure service account has monitoring.metricWriter role
+**References**: Session 61 handoff Part 3
+
 ## Prevention Mechanisms
 
 ### Pre-commit Hooks

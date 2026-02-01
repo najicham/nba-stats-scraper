@@ -1357,9 +1357,223 @@ gcloud run services update [SERVICE_NAME] \
 
 ---
 
-## Section 7: Quick Reference - All Health Checks
+### 7.4 - Monitoring Metrics Not Recording
+
+**Symptom:** Custom metrics (hit rate, latency, etc.) not appearing in Cloud Monitoring.
+
+**Common Log Error:**
+```
+Failed to record metric: 403 Permission 'monitoring.timeSeries.create' denied on resource
+'projects/nba-props-platform' (or it may not exist).
+```
+
+**Root Cause:** Service account missing `roles/monitoring.metricWriter` IAM role.
+
+**Impact:**
+- Cannot track prediction hit rates
+- Missing latency metrics
+- No custom dashboards
+- Lost observability data
+
+#### Diagnosis
+
+**Step 1: Check for permission errors in logs**
+
+```bash
+gcloud logging read 'resource.type="cloud_run_revision"
+  AND textPayload=~"403.*monitoring"
+  AND severity>=ERROR' \
+  --limit=20 --freshness=7d
+```
+
+**Look for:**
+- "Permission 'monitoring.timeSeries.create' denied"
+- "Permission 'monitoring.metricDescriptors.create' denied"
+
+**Step 2: Check if metrics exist**
+
+```bash
+# List custom metrics (should show prediction metrics)
+gcloud monitoring metrics-descriptors list \
+  --filter="custom.googleapis.com/prediction" \
+  --format="table(type,description)"
+
+# If empty or missing expected metrics = problem
+```
+
+**Step 3: Check service account permissions**
+
+```bash
+# Get service account for service
+SERVICE_ACCOUNT=$(gcloud run services describe prediction-worker \
+  --region=us-west2 \
+  --format="value(spec.template.spec.serviceAccountName)")
+
+# Check IAM roles
+gcloud projects get-iam-policy nba-props-platform \
+  --flatten="bindings[].members" \
+  --filter="bindings.members:serviceAccount:$SERVICE_ACCOUNT" \
+  --format="table(bindings.role)"
+```
+
+**Expected roles:**
+- `roles/monitoring.metricWriter` ← MUST HAVE
+- `roles/bigquery.dataEditor`
+- `roles/bigquery.jobUser`
+- `roles/run.invoker`
+
+**If `monitoring.metricWriter` missing:** → Root cause confirmed
+
+#### Fix Procedure
+
+**Grant monitoring.metricWriter role:**
+
+```bash
+# For prediction-worker
+gcloud projects add-iam-policy-binding nba-props-platform \
+  --member="serviceAccount:prediction-worker@nba-props-platform.iam.gserviceaccount.com" \
+  --role="roles/monitoring.metricWriter"
+
+# For other services (replace SERVICE_ACCOUNT_EMAIL)
+gcloud projects add-iam-policy-binding nba-props-platform \
+  --member="serviceAccount:SERVICE_ACCOUNT_EMAIL" \
+  --role="roles/monitoring.metricWriter"
+```
+
+**Output should confirm:**
+```
+Updated IAM policy for project [nba-props-platform].
+bindings:
+- members:
+  - serviceAccount:prediction-worker@nba-props-platform.iam.gserviceaccount.com
+  role: roles/monitoring.metricWriter
+```
+
+#### Verification
+
+**Step 1: Wait for next service execution**
+
+Metrics only get created when service runs and tries to write them.
+
+**Step 2: Check logs for success**
+
+```bash
+# Should see metric writes, no more 403 errors
+gcloud logging read 'resource.type="cloud_run_revision"
+  AND resource.labels.service_name="prediction-worker"
+  AND textPayload=~"metric"' \
+  --limit=20 --freshness=1h
+```
+
+**Step 3: Verify metrics appearing**
+
+```bash
+# Should now show custom metrics
+gcloud monitoring metrics-descriptors list \
+  --filter="custom.googleapis.com/prediction"
+
+# Should show recent data points
+gcloud monitoring time-series list \
+  --filter='metric.type="custom.googleapis.com/prediction/hit_rate"' \
+  --interval-start-time="2026-02-01T00:00:00Z" \
+  --format=json | \
+  jq -r '.[] | .points[] | [.interval.endTime, .value.doubleValue] | @tsv'
+```
+
+**Expected:** Metrics created, data points visible
+
+#### Prevention
+
+**When creating new Cloud Run services:**
+
+1. **Always grant monitoring.metricWriter:**
+```bash
+gcloud projects add-iam-policy-binding nba-props-platform \
+  --member="serviceAccount:NEW_SERVICE@nba-props-platform.iam.gserviceaccount.com" \
+  --role="roles/monitoring.metricWriter"
+```
+
+2. **Use service account template with required roles:**
+```bash
+# Create service account with all required roles
+gcloud iam service-accounts create NEW_SERVICE \
+  --display-name="NEW_SERVICE"
+
+# Grant standard roles
+for role in monitoring.metricWriter bigquery.dataEditor bigquery.jobUser; do
+  gcloud projects add-iam-policy-binding nba-props-platform \
+    --member="serviceAccount:NEW_SERVICE@nba-props-platform.iam.gserviceaccount.com" \
+    --role="roles/$role"
+done
+```
+
+3. **Add to deployment checklist:**
+- [ ] Service account created
+- [ ] monitoring.metricWriter granted
+- [ ] bigquery.dataEditor granted
+- [ ] bigquery.jobUser granted
+- [ ] Verify metrics recording after first run
+
+#### Common Mistakes
+
+**1. Granting role to wrong account:**
+```bash
+# WRONG - granting to user, not service account
+gcloud projects add-iam-policy-binding nba-props-platform \
+  --member="user:email@example.com" \
+  --role="roles/monitoring.metricWriter"
+
+# CORRECT - service account
+gcloud projects add-iam-policy-binding nba-props-platform \
+  --member="serviceAccount:SERVICE@nba-props-platform.iam.gserviceaccount.com" \
+  --role="roles/monitoring.metricWriter"
+```
+
+**2. Using default compute service account:**
+
+Default compute SA has broad permissions but may not include monitoring.metricWriter.
+Always use service-specific service accounts.
+
+**3. Forgetting to redeploy:**
+
+IAM changes take effect immediately, but code must retry metric writes.
+If service already ran and failed, wait for next scheduled run or manually trigger.
+
+#### Related Issues
+
+**Permission denied for other operations:**
+- `monitoring.metricDescriptors.create` - Same fix (monitoring.metricWriter)
+- `logging.logEntries.create` - Need `logging.logWriter` role
+- `cloudtrace.traces.patch` - Need `cloudtrace.agent` role
+
+**Metrics writing but not appearing in dashboards:**
+- Check metric filter in dashboard config
+- Verify time range selected
+- Check project ID matches
+
+#### Monitoring Permissions Reference
+
+| Operation | Required Role | Purpose |
+|-----------|---------------|---------|
+| Create custom metrics | `monitoring.metricWriter` | Define new metric types |
+| Write metric data points | `monitoring.metricWriter` | Record metric values |
+| Read metrics | `monitoring.viewer` | View in Cloud Console |
+| Create dashboards | `monitoring.editor` | Build custom dashboards |
+| Create alerts | `monitoring.alertPolicyEditor` | Set up alerting |
+
+**References:**
+- CLAUDE.md "Monitoring Permissions Error" section
+- Session 61 handoff Part 3
+- Infrastructure health checks: `docs/02-operations/infrastructure-health-checks.md`
+- GCP IAM roles: https://cloud.google.com/iam/docs/understanding-roles
+
+---
+
+## Section 8: Quick Reference - All Health Checks
 
 **Copy-paste these queries for complete system health check:**
+
+**For comprehensive infrastructure audit, see:** `docs/02-operations/infrastructure-health-checks.md`
 
 ### Phase 1 - Orchestration
 ```sql
@@ -1668,6 +1882,8 @@ for processor, count in processor_counts.most_common(10):
 | "Firestore permission denied" | 7.2 | Service account needs datastore.entities write access |
 | "Processor status stale" | 7.2 | Processor crashed or Firestore writes failing |
 | "Collection growing unbounded" | 7.3 | Old heartbeat format creating doc per run |
+| "403 Permission monitoring.timeSeries.create denied" | 7.4 | Service account needs monitoring.metricWriter role |
+| "Custom metrics not recording" | 7.4 | Missing monitoring permissions |
 | **Phase 1-4 Data** |||
 | "Insufficient data for player" | 5.1, 5.2 | Early season or missing historical data |
 | "No games scheduled" | 3.1 | Normal off-day |
@@ -1685,13 +1901,14 @@ for processor, count in processor_counts.most_common(10):
 
 ---
 
-**Document Version**: 1.2
+**Document Version**: 1.3
 **Created**: 2025-11-15
 **Last Updated**: 2026-02-01
 **Maintained By**: Engineering Team
 **Review Frequency**: Monthly or after major incidents
 
 **Version History:**
+- v1.3 (2026-02-01): Added Section 7.4: Monitoring metrics permissions troubleshooting
 - v1.2 (2026-02-01): Added Section 7: Observability Issues (dashboard health, Firestore proliferation, monitoring)
 - v1.1 (2025-11-15): Added Phase 5 prediction details (sections 1.1-1.5), XGBoost troubleshooting, updated error messages
 - v1.0 (2025-11-15): Initial version with Phase 1-4 troubleshooting
