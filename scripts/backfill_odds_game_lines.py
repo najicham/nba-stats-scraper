@@ -17,7 +17,8 @@ import time
 
 PHASE2_URL = "https://nba-phase2-raw-processors-f7p3g7f6ya-wl.a.run.app/process"
 GCS_BUCKET = "nba-scraped-data"
-GCS_PREFIX = "odds-api/game-lines"
+GCS_PREFIX = "odds-api/game-lines"  # Real-time scraped data
+GCS_PREFIX_HISTORY = "odds-api/game-lines-history"  # Historical backfill data
 
 
 def get_identity_token():
@@ -31,7 +32,8 @@ def get_identity_token():
 
 
 def list_gcs_files(date_str: str) -> list:
-    """List all JSON files for a given date."""
+    """List all JSON files for a given date. Checks both real-time and historical paths."""
+    # Try real-time path first
     path = f"gs://{GCS_BUCKET}/{GCS_PREFIX}/{date_str}/**"
     result = subprocess.run(
         ["gsutil", "ls", "-r", path],
@@ -39,6 +41,17 @@ def list_gcs_files(date_str: str) -> list:
         text=True
     )
     files = [f for f in result.stdout.strip().split('\n') if f.endswith('.json')]
+
+    # If no files found, try historical path
+    if not files:
+        path = f"gs://{GCS_BUCKET}/{GCS_PREFIX_HISTORY}/{date_str}/**"
+        result = subprocess.run(
+            ["gsutil", "ls", "-r", path],
+            capture_output=True,
+            text=True
+        )
+        files = [f for f in result.stdout.strip().split('\n') if f.endswith('.json')]
+
     return files
 
 
