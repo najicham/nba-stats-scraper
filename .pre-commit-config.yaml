@@ -94,6 +94,15 @@ repos:
         always_run: true
         verbose: true
 
+      - id: validate-scraper-config-tables
+        name: Validate scraper config table references (warning only)
+        description: Checks that BigQuery tables referenced in scraper_retry_config.yaml exist (informational, non-blocking)
+        entry: python .pre-commit-hooks/validate_scraper_config_tables.py
+        language: python
+        pass_filenames: false
+        files: ^shared/config/scraper_retry_config\.yaml$
+        verbose: true
+
   # Standard pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
