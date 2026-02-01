@@ -131,18 +131,20 @@ trap "rm -rf $BUILD_DIR" EXIT
 rsync -aL --exclude='__pycache__' --exclude='*.pyc' --exclude='.git' \
     "$SOURCE_DIR/" "$BUILD_DIR/"
 
-# Copy consolidated shared utilities (post-consolidation requirement)
-echo -e "${YELLOW}Including consolidated orchestration.shared.utils...${NC}"
-mkdir -p "$BUILD_DIR/orchestration/shared"
-rsync -aL --exclude='__pycache__' --exclude='*.pyc' \
-    "orchestration/shared/utils/" "$BUILD_DIR/orchestration/shared/utils/"
-rsync -aL --exclude='__pycache__' --exclude='*.pyc' \
-    "orchestration/shared/__init__.py" "$BUILD_DIR/orchestration/shared/__init__.py" 2>/dev/null || true
-# Create __init__.py for orchestration package
-echo "# Orchestration package" > "$BUILD_DIR/orchestration/__init__.py"
+# Copy shared modules to support imports from shared.* (post-consolidation: Jan 30, 2026)
+# orchestration/shared/ was deleted - all utilities now in shared/ only
+echo -e "${YELLOW}Including shared modules (utils, clients, validation, config)...${NC}"
+rsync -aL --exclude='__pycache__' --exclude='*.pyc' --exclude='tests/' \
+    "shared/utils/" "$BUILD_DIR/shared/utils/"
+rsync -aL --exclude='__pycache__' --exclude='*.pyc' --exclude='tests/' \
+    "shared/clients/" "$BUILD_DIR/shared/clients/"
+rsync -aL --exclude='__pycache__' --exclude='*.pyc' --exclude='tests/' \
+    "shared/validation/" "$BUILD_DIR/shared/validation/"
+rsync -aL --exclude='__pycache__' --exclude='*.pyc' --exclude='tests/' \
+    "shared/config/" "$BUILD_DIR/shared/config/"
 
 echo -e "${GREEN}✓ Build directory created: $BUILD_DIR${NC}"
-echo -e "${GREEN}✓ Consolidated utils included${NC}"
+echo -e "${GREEN}✓ Shared modules included (utils, clients, validation, config)${NC}"
 echo -e "${YELLOW}Deploying from build directory...${NC}"
 echo ""
 
