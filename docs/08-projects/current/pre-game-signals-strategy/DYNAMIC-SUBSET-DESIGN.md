@@ -1,6 +1,7 @@
 # Dynamic Subset System Design
 
 **Created**: Session 70 (2026-02-01)
+**Updated**: Session 70 (2026-02-01) - Added pick ranking system
 **Status**: DESIGN - Ready for Review
 **Builds On**: Session 75 Subset Architecture
 
@@ -8,9 +9,12 @@
 
 ## Problem Statement
 
-The existing subset system uses **static filters** (confidence thresholds, edge, direction). But we've discovered **dynamic signals** (like pct_over) that vary daily and predict performance.
+The existing subset system uses **static filters** (confidence thresholds, edge, direction). But we have two gaps:
 
-**Current gap**: No way to say "only bet today's picks IF the pre-game signal is favorable."
+1. **No dynamic signals**: No way to say "only bet today's picks IF the pre-game signal is favorable"
+2. **No ranking**: When we have 10 high-edge picks, no way to select the "best" 5
+
+This design addresses both problems.
 
 ---
 
@@ -56,12 +60,86 @@ Add a new layer to the subset system that evaluates **daily pre-game signals** b
               │
               ▼
 ┌─────────────────────────────────────────────────────┐
+│  LAYER 3B: PICK RANKING (NEW)                       │
+│  Rank picks within each subset:                     │
+│  • composite_score = (edge * 10) + (conf * 0.5)     │
+│  • pick_rank = ROW_NUMBER by score                  │
+│  • Enables "top 5" or "top 10" subsets              │
+└─────────────────────────────────────────────────────┘
+              │
+              ▼
+┌─────────────────────────────────────────────────────┐
 │  LAYER 4: PRESENTATION                              │
 │  • /subset-picks skill                              │
 │  • Daily dashboard with signal indicators           │
 │  • Performance tracking per dynamic subset          │
 └─────────────────────────────────────────────────────┘
 ```
+
+---
+
+## Pick Ranking System
+
+### The Problem
+
+Even with signal filtering, you might have 10 high-edge picks but only want to bet 5. How do you choose?
+
+### Solution: Composite Score
+
+Combine edge and confidence into a single ranking score:
+
+```
+composite_score = (edge * 10) + (confidence_score * 0.5)
+```
+
+**Why this formula?**
+- **Edge is primary**: Bigger edge = more value (multiplied by 10)
+- **Confidence is secondary**: Tiebreaker (multiplied by 0.5)
+- **Edge dominates**: A 6-point edge always beats a 5-point edge, regardless of confidence
+
+### Example Ranking
+
+| Player | Edge | Confidence | Composite Score | Rank |
+|--------|------|------------|-----------------|------|
+| Player A | 7.2 | 87% | 72 + 43.5 = **115.5** | 1 |
+| Player B | 6.5 | 91% | 65 + 45.5 = **110.5** | 2 |
+| Player C | 6.4 | 88% | 64 + 44.0 = **108.0** | 3 |
+| Player D | 5.8 | 92% | 58 + 46.0 = **104.0** | 4 |
+| Player E | 5.1 | 89% | 51 + 44.5 = **95.5** | 5 |
+
+Notice: Player A (7.2 edge, 87% conf) ranks higher than Player D (5.8 edge, 92% conf) because edge matters more.
+
+### Ranked Subsets
+
+These subsets use the composite score to limit picks:
+
+| Subset | Base Filter | Ranking | Description |
+|--------|-------------|---------|-------------|
+| `v9_high_edge_top3` | edge ≥ 5 | Top 3 by score | Ultra-selective |
+| `v9_high_edge_top5` | edge ≥ 5 | Top 5 by score | Recommended default |
+| `v9_high_edge_top10` | edge ≥ 5 | Top 10 by score | More volume |
+| `v9_high_edge_all` | edge ≥ 5 | All picks | No limit |
+
+### Combining Ranking + Signals
+
+The ranking system works **with or without** signal filtering:
+
+**Option A: Signal + Ranking**
+```
+1. Check pct_over signal → GREEN? Continue
+2. Filter to high-edge picks (edge ≥ 5)
+3. Rank by composite_score
+4. Take top 5
+```
+
+**Option B: Ranking Only (No Signal)**
+```
+1. Filter to high-edge picks (edge ≥ 5)
+2. Rank by composite_score
+3. Take top 5
+```
+
+Both are valid. The signal adds ~28% hit rate improvement, but ranking alone still gives you the best picks available.
 
 ---
 
@@ -227,6 +305,84 @@ AND ABS(predicted_points - current_points_line) >= 5
 - pct_over < 25 OR pct_over > 45
 
 **Purpose**: Shadow tracking - see if warning days really underperform.
+
+---
+
+### Subset 6: `v9_high_edge_top5`
+
+**Description**: Top 5 high-edge picks by composite score (regardless of signal).
+
+**Static Filter**:
+```sql
+system_id = 'catboost_v9'
+AND ABS(predicted_points - current_points_line) >= 5
+```
+
+**Ranking**:
+```sql
+ROW_NUMBER() OVER (
+  ORDER BY (ABS(predicted_points - current_points_line) * 10) + (confidence_score * 0.5) DESC
+) <= 5
+```
+
+**Signal Conditions**: None (works any day)
+
+**Purpose**: Always get the best 5 picks, even on RED signal days.
+
+---
+
+### Subset 7: `v9_high_edge_top5_balanced`
+
+**Description**: Top 5 high-edge picks, but only on balanced signal days.
+
+**Static Filter**:
+```sql
+system_id = 'catboost_v9'
+AND ABS(predicted_points - current_points_line) >= 5
+```
+
+**Ranking**: Top 5 by composite score
+
+**Signal Conditions**:
+- pct_over BETWEEN 25 AND 40
+
+**Purpose**: Best of both worlds - ranking + signal filtering.
+
+---
+
+### Subset 8: `v9_high_edge_top10`
+
+**Description**: Top 10 high-edge picks by composite score.
+
+**Static Filter**:
+```sql
+system_id = 'catboost_v9'
+AND ABS(predicted_points - current_points_line) >= 5
+```
+
+**Ranking**: Top 10 by composite score
+
+**Signal Conditions**: None
+
+**Purpose**: More volume while still prioritizing best picks.
+
+---
+
+### Subset 9: `v9_best_of_day`
+
+**Description**: Single best pick of the day (highest composite score).
+
+**Static Filter**:
+```sql
+system_id = 'catboost_v9'
+AND ABS(predicted_points - current_points_line) >= 5
+```
+
+**Ranking**: Top 1 by composite score
+
+**Signal Conditions**: None
+
+**Purpose**: "Lock of the day" - one high-conviction pick.
 
 ---
 
@@ -446,6 +602,144 @@ WHERE p.game_date = CURRENT_DATE()
 ORDER BY ABS(p.predicted_points - p.current_points_line) DESC;
 ```
 
+### Get Ranked Picks (Top N)
+
+```sql
+-- Get top 5 high-edge picks by composite score
+WITH ranked_picks AS (
+  SELECT
+    p.player_lookup,
+    p.predicted_points,
+    p.current_points_line,
+    ABS(p.predicted_points - p.current_points_line) as edge,
+    p.recommendation,
+    p.confidence_score,
+    -- Composite score: edge * 10 + confidence * 0.5
+    (ABS(p.predicted_points - p.current_points_line) * 10) + (p.confidence_score * 0.5) as composite_score,
+    ROW_NUMBER() OVER (
+      ORDER BY (ABS(p.predicted_points - p.current_points_line) * 10) + (p.confidence_score * 0.5) DESC
+    ) as pick_rank
+  FROM `nba-props-platform.nba_predictions.player_prop_predictions` p
+  WHERE p.game_date = CURRENT_DATE()
+    AND p.system_id = 'catboost_v9'
+    AND ABS(p.predicted_points - p.current_points_line) >= 5
+    AND p.current_points_line IS NOT NULL
+)
+SELECT * FROM ranked_picks
+WHERE pick_rank <= 5  -- Change to 10 for top10, 3 for top3, etc.
+ORDER BY pick_rank;
+```
+
+### Get Ranked Picks with Signal Context
+
+```sql
+-- Combine ranking + signal for full context
+WITH daily_signal AS (
+  SELECT * FROM `nba-props-platform.nba_predictions.daily_prediction_signals`
+  WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v9'
+),
+ranked_picks AS (
+  SELECT
+    p.*,
+    ABS(p.predicted_points - p.current_points_line) as edge,
+    (ABS(p.predicted_points - p.current_points_line) * 10) + (p.confidence_score * 0.5) as composite_score,
+    ROW_NUMBER() OVER (
+      ORDER BY (ABS(p.predicted_points - p.current_points_line) * 10) + (p.confidence_score * 0.5) DESC
+    ) as pick_rank
+  FROM `nba-props-platform.nba_predictions.player_prop_predictions` p
+  WHERE p.game_date = CURRENT_DATE()
+    AND p.system_id = 'catboost_v9'
+    AND ABS(p.predicted_points - p.current_points_line) >= 5
+    AND p.current_points_line IS NOT NULL
+)
+SELECT
+  r.pick_rank,
+  r.player_lookup,
+  ROUND(r.edge, 1) as edge,
+  r.confidence_score,
+  ROUND(r.composite_score, 1) as composite_score,
+  r.recommendation,
+  s.pct_over,
+  s.daily_signal,
+  -- Subset membership
+  CASE WHEN r.pick_rank <= 3 THEN '✅' ELSE '' END as in_top3,
+  CASE WHEN r.pick_rank <= 5 THEN '✅' ELSE '' END as in_top5,
+  CASE WHEN r.pick_rank <= 10 THEN '✅' ELSE '' END as in_top10,
+  CASE WHEN s.pct_over BETWEEN 25 AND 40 THEN '✅' ELSE '⚠️' END as signal_ok
+FROM ranked_picks r
+CROSS JOIN daily_signal s
+ORDER BY r.pick_rank;
+```
+
+### Compare Subset Performance (Historical)
+
+```sql
+-- Compare performance across different subset strategies
+WITH picks_with_results AS (
+  SELECT
+    p.game_date,
+    p.player_lookup,
+    ABS(p.predicted_points - p.current_points_line) as edge,
+    p.confidence_score,
+    p.recommendation,
+    p.current_points_line,
+    (ABS(p.predicted_points - p.current_points_line) * 10) + (p.confidence_score * 0.5) as composite_score,
+    ROW_NUMBER() OVER (
+      PARTITION BY p.game_date
+      ORDER BY (ABS(p.predicted_points - p.current_points_line) * 10) + (p.confidence_score * 0.5) DESC
+    ) as daily_rank,
+    pgs.points as actual_points,
+    CASE
+      WHEN (pgs.points > p.current_points_line AND p.recommendation = 'OVER') OR
+           (pgs.points < p.current_points_line AND p.recommendation = 'UNDER')
+      THEN 1 ELSE 0
+    END as is_correct
+  FROM nba_predictions.player_prop_predictions p
+  JOIN nba_analytics.player_game_summary pgs
+    ON p.player_lookup = pgs.player_lookup AND p.game_date = pgs.game_date
+  WHERE p.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+    AND p.system_id = 'catboost_v9'
+    AND ABS(p.predicted_points - p.current_points_line) >= 5
+    AND p.current_points_line IS NOT NULL
+    AND pgs.points != p.current_points_line  -- Exclude pushes
+)
+SELECT
+  'v9_high_edge_top3' as subset,
+  COUNT(*) as picks,
+  SUM(is_correct) as wins,
+  ROUND(100.0 * SUM(is_correct) / COUNT(*), 1) as hit_rate
+FROM picks_with_results WHERE daily_rank <= 3
+
+UNION ALL
+
+SELECT
+  'v9_high_edge_top5' as subset,
+  COUNT(*) as picks,
+  SUM(is_correct) as wins,
+  ROUND(100.0 * SUM(is_correct) / COUNT(*), 1) as hit_rate
+FROM picks_with_results WHERE daily_rank <= 5
+
+UNION ALL
+
+SELECT
+  'v9_high_edge_top10' as subset,
+  COUNT(*) as picks,
+  SUM(is_correct) as wins,
+  ROUND(100.0 * SUM(is_correct) / COUNT(*), 1) as hit_rate
+FROM picks_with_results WHERE daily_rank <= 10
+
+UNION ALL
+
+SELECT
+  'v9_high_edge_all' as subset,
+  COUNT(*) as picks,
+  SUM(is_correct) as wins,
+  ROUND(100.0 * SUM(is_correct) / COUNT(*), 1) as hit_rate
+FROM picks_with_results
+
+ORDER BY subset;
+```
+
 ---
 
 ## Success Metrics
@@ -493,11 +787,81 @@ ORDER BY ABS(p.predicted_points - p.current_points_line) DESC;
 
 ---
 
+## A/B Testing Strategy: Track All Subsets
+
+### Approach
+
+Create **all** subset variations and track performance of each. This lets us discover which combinations work best without guessing.
+
+### Subsets to Track
+
+**By Ranking (no signal filter):**
+| Subset | Filter | Expected Volume |
+|--------|--------|-----------------|
+| `v9_high_edge_top1` | Best single pick | 1/day |
+| `v9_high_edge_top3` | Top 3 by score | 3/day |
+| `v9_high_edge_top5` | Top 5 by score | 5/day |
+| `v9_high_edge_top10` | Top 10 by score | 5-10/day |
+| `v9_high_edge_all` | All high-edge | 3-15/day |
+
+**By Signal (no ranking):**
+| Subset | Signal Condition | Expected Volume |
+|--------|------------------|-----------------|
+| `v9_high_edge_balanced` | pct_over 25-40% | 0-15/day |
+| `v9_high_edge_warning` | pct_over <25% or >45% | 0-15/day |
+
+**Combined (ranking + signal):**
+| Subset | Ranking + Signal | Expected Volume |
+|--------|------------------|-----------------|
+| `v9_high_edge_top5_balanced` | Top 5 + balanced day | 0-5/day |
+| `v9_high_edge_top5_any` | Top 5 regardless | 3-5/day |
+
+### What We'll Learn
+
+After 2-4 weeks of tracking:
+
+1. **Does ranking improve hit rate?**
+   - Compare top3 vs top10 vs all
+   - Hypothesis: top3 > top5 > top10 > all
+
+2. **Does the signal filter add value on top of ranking?**
+   - Compare `top5_balanced` vs `top5_any`
+   - If similar, signal may be redundant with ranking
+
+3. **What's the optimal subset?**
+   - May find `top5_balanced` is best overall
+   - Or may find `top3_any` is simpler and just as good
+
+### Daily Tracking Query
+
+```sql
+-- Run daily to track all subset performance
+INSERT INTO `nba-props-platform.nba_predictions.subset_daily_performance`
+WITH base_data AS (
+  -- ... (full query from Compare Subset Performance section)
+)
+SELECT
+  CURRENT_DATE() as report_date,
+  subset,
+  picks,
+  wins,
+  hit_rate,
+  CURRENT_TIMESTAMP() as calculated_at
+FROM (
+  -- All subset calculations
+);
+```
+
+---
+
 ## Changelog
 
 | Date | Change |
 |------|--------|
 | 2026-02-01 | Initial design based on Session 70 findings |
+| 2026-02-01 | Added pick ranking system with composite score |
+| 2026-02-01 | Added ranked subsets (top3, top5, top10) |
+| 2026-02-01 | Added A/B testing strategy for all subsets |
 
 ---
 
