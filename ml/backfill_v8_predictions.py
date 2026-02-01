@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 """
-Backfill CatBoost V8 predictions for historical games.
+Backfill CatBoost predictions for historical games.
+
+Supports both V8 (historical training) and V9 (current season training).
 
 This script:
 1. Queries all dates from ml_feature_store_v2
 2. For each date, gets features and betting lines
-3. Runs CatBoostV8.predict() for each player
+3. Runs CatBoost.predict() for each player
 4. Inserts predictions to player_prop_predictions table
 
 Usage:
-    PYTHONPATH=. python ml/backfill_v8_predictions.py
+    # Backfill with V9 (default)
+    PYTHONPATH=. python ml/backfill_v8_predictions.py --start-date 2026-01-09 --end-date 2026-01-31
 
-    # Resume from a specific date
-    PYTHONPATH=. python ml/backfill_v8_predictions.py --start-date 2024-01-01
+    # Backfill with V8
+    PYTHONPATH=. python ml/backfill_v8_predictions.py --model-version v8 --start-date 2026-01-01
 
     # Dry run (no writes)
     PYTHONPATH=. python ml/backfill_v8_predictions.py --dry-run
@@ -44,6 +47,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from google.cloud import bigquery
 from predictions.worker.prediction_systems.catboost_v8 import CatBoostV8
+from predictions.worker.prediction_systems.catboost_v9 import CatBoostV9
 
 # Constants
 PROJECT_ID = 'nba-props-platform'
@@ -51,6 +55,10 @@ FEATURE_STORE_TABLE = 'nba_predictions.ml_feature_store_v2'
 BETTING_PROPS_TABLE = 'nba_raw.bettingpros_player_points_props'
 PREDICTIONS_TABLE = 'nba_predictions.player_prop_predictions'
 BATCH_SIZE = 500  # Insert batch size
+
+# Global model version (set by main())
+CURRENT_MODEL_VERSION = 'v9'
+CURRENT_SYSTEM_ID = 'catboost_v9'
 
 # Feature names in the feature store (must match order) - now 33 features
 FEATURE_NAMES = [
@@ -221,7 +229,7 @@ def run_prediction(
         # Format for BigQuery
         prediction = {
             'prediction_id': str(uuid.uuid4()),
-            'system_id': 'catboost_v8',
+            'system_id': CURRENT_SYSTEM_ID,
             'player_lookup': player_data['player_lookup'],
             'universal_player_id': player_data['universal_player_id'],
             'game_date': player_data['game_date'].isoformat(),
@@ -236,7 +244,7 @@ def run_prediction(
             'created_at': datetime.now(timezone.utc).isoformat(),
             'updated_at': None,
             'superseded_by': None,
-            'model_version': 'catboost_v8',
+            'model_version': CURRENT_SYSTEM_ID,
             'has_prop_line': has_prop_line,
             'line_source': 'ACTUAL_PROP' if has_prop_line else 'ESTIMATED_AVG',
             'estimated_line_value': round(betting_line, 1) if not has_prop_line else None,
@@ -333,23 +341,39 @@ def backfill_date(
 
 
 def main():
-    parser = argparse.ArgumentParser(description='Backfill CatBoost V8 predictions')
+    parser = argparse.ArgumentParser(description='Backfill CatBoost predictions')
     parser.add_argument('--start-date', type=str, help='Start date (YYYY-MM-DD)')
     parser.add_argument('--end-date', type=str, help='End date (YYYY-MM-DD)')
+    parser.add_argument('--model-version', type=str, default='v9', choices=['v8', 'v9'],
+                        help='Model version to use (default: v9)')
     parser.add_argument('--dry-run', action='store_true', help='Dry run (no writes)')
     args = parser.parse_args()
 
+    model_version = args.model_version
+    system_id = f'catboost_{model_version}'
+
     logger.info("=" * 60)
-    logger.info("CatBoost V8 Backfill Starting")
+    logger.info(f"CatBoost {model_version.upper()} Backfill Starting")
     logger.info("=" * 60)
 
     # Initialize
     client = bigquery.Client(project=PROJECT_ID)
-    model = CatBoostV8()
+
+    if model_version == 'v9':
+        logger.info("Loading CatBoost V9 (current season training)...")
+        model = CatBoostV9()
+    else:
+        logger.info("Loading CatBoost V8 (historical training)...")
+        model = CatBoostV8()
 
     if model.model is None:
-        logger.error("Failed to load CatBoost V8 model!")
+        logger.error(f"Failed to load CatBoost {model_version.upper()} model!")
         sys.exit(1)
+
+    # Store model version for use in generate_prediction
+    global CURRENT_MODEL_VERSION, CURRENT_SYSTEM_ID
+    CURRENT_MODEL_VERSION = model_version
+    CURRENT_SYSTEM_ID = system_id
 
     logger.info("Model loaded successfully")
 
