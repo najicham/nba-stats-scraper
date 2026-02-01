@@ -1,0 +1,191 @@
+# predictions/worker/prediction_systems/catboost_v9.py
+
+"""
+CatBoost V9 Prediction System - Current Season Training
+
+Session 67 (2026-02-01): New model trained on current season only.
+
+Key Differences from V8:
+- Training: Current season only (Nov 2, 2025 - Jan 8, 2026)
+- Samples: 9,993 (vs V8's 76,863 historical)
+- Same 33 features as V8 (drop-in replacement)
+
+Why Current Season Training:
+1. Avoids historical data quality issues (team_win_pct bug, Vegas mismatch)
+2. Captures current player roles, team dynamics
+3. Better calibrated for current league trends
+
+Performance (Evaluated Jan 9-31, 2026):
+- MAE: 4.82 (vs V8's 5.36)
+- Premium Hit Rate: 56.5% (vs V8's 52.5%)
+- High-Edge Hit Rate: 72.2% (vs V8's 56.9%)
+
+Monthly Retraining:
+V9 is designed for monthly retraining as the season progresses.
+Training window expands each month, keeping data fresh.
+
+Usage:
+    from predictions.worker.prediction_systems.catboost_v9 import CatBoostV9
+
+    system = CatBoostV9()
+    result = system.predict(player_lookup, features, betting_line)
+"""
+
+import logging
+from pathlib import Path
+from typing import Dict, Optional
+
+from predictions.worker.prediction_systems.catboost_v8 import (
+    CatBoostV8,
+    ModelLoadError,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class CatBoostV9(CatBoostV8):
+    """
+    CatBoost V9 - Current Season Training Model
+
+    Inherits all functionality from V8 but loads the V9 model file.
+    Uses identical features and prediction logic.
+    """
+
+    # V9 Model Configuration
+    MODEL_VERSION = "v9_current_season"
+    SYSTEM_ID = "catboost_v9"
+
+    # Training metadata (for documentation and debugging)
+    TRAINING_INFO = {
+        "approach": "current_season_only",
+        "training_start": "2025-11-02",
+        "training_end": "2026-01-08",
+        "training_samples": 9993,
+        "feature_count": 33,
+        "feature_version": "v2_33features",
+        "experiment_id": "exp_20260201_current_szn",
+        "session": 67,
+    }
+
+    def __init__(self, model_path: Optional[str] = None):
+        """
+        Initialize CatBoost V9 with current-season trained model.
+
+        Args:
+            model_path: Optional explicit path to model file.
+                       If not provided, searches for catboost_v9_33features_*.cbm
+        """
+        # Don't call super().__init__() yet - we need to set up V9-specific paths first
+        self.model = None
+        self._load_attempts = 0
+        self._last_load_error = None
+
+        if model_path:
+            self._load_model_from_path(model_path)
+        else:
+            self._load_model_from_default_location()
+
+    def _load_model_from_default_location(self):
+        """Load V9 model from default locations."""
+        import catboost as cb
+
+        # Try local models directory first
+        models_dir = Path(__file__).parent.parent.parent.parent / "models"
+        model_files = list(models_dir.glob("catboost_v9_33features_*.cbm"))
+
+        if model_files:
+            # Use most recent model file
+            model_path = sorted(model_files)[-1]
+            logger.info(f"Loading CatBoost V9 from local: {model_path}")
+            self.model = cb.CatBoostRegressor()
+            self.model.load_model(str(model_path))
+            self._model_path = str(model_path)
+            logger.info(
+                f"CatBoost V9 loaded successfully. "
+                f"Training: {self.TRAINING_INFO['training_start']} to {self.TRAINING_INFO['training_end']}. "
+                f"Ready to generate predictions with 33 features."
+            )
+            return
+
+        # Try GCS path
+        gcs_path = "gs://nba-props-platform-models/catboost/v9/"
+        logger.info(f"No local V9 model found, trying GCS: {gcs_path}")
+
+        # For now, raise error if no local model - GCS loading can be added later
+        raise ModelLoadError(
+            f"CatBoost V9 model not found. "
+            f"Expected files matching: catboost_v9_33features_*.cbm in {models_dir}. "
+            f"Run the V9 training experiment or download from GCS."
+        )
+
+    def _load_model_from_path(self, model_path: str):
+        """Load V9 model from explicit path."""
+        import catboost as cb
+
+        logger.info(f"Loading CatBoost V9 from: {model_path}")
+        self.model = cb.CatBoostRegressor()
+        self.model.load_model(model_path)
+        self._model_path = model_path
+        logger.info(f"CatBoost V9 loaded from {model_path}")
+
+    def predict(
+        self,
+        player_lookup: str,
+        features: Dict,
+        betting_line: Optional[float] = None,
+        opponent_avg: Optional[float] = None,
+        games_vs_opponent: Optional[int] = None,
+        minutes_avg_last_10: Optional[float] = None,
+        ppm_avg_last_10: Optional[float] = None,
+        vegas_line: Optional[float] = None,
+        vegas_opening: Optional[float] = None,
+    ) -> Dict:
+        """
+        Generate prediction using CatBoost V9 model.
+
+        Same interface as V8 - returns dict with prediction, confidence, metadata.
+        """
+        # Use parent class prediction logic (identical features)
+        result = super().predict(
+            player_lookup=player_lookup,
+            features=features,
+            betting_line=betting_line,
+            opponent_avg=opponent_avg,
+            games_vs_opponent=games_vs_opponent,
+            minutes_avg_last_10=minutes_avg_last_10,
+            ppm_avg_last_10=ppm_avg_last_10,
+            vegas_line=vegas_line,
+            vegas_opening=vegas_opening,
+        )
+
+        # Override metadata with V9-specific info
+        if result and 'metadata' in result:
+            result['metadata']['model_version'] = self.MODEL_VERSION
+            result['metadata']['system_id'] = self.SYSTEM_ID
+            result['metadata']['training_approach'] = self.TRAINING_INFO['approach']
+            result['metadata']['training_period'] = (
+                f"{self.TRAINING_INFO['training_start']} to {self.TRAINING_INFO['training_end']}"
+            )
+
+        return result
+
+    @property
+    def system_id(self) -> str:
+        """Return V9 system identifier."""
+        return self.SYSTEM_ID
+
+    @property
+    def model_version(self) -> str:
+        """Return V9 model version."""
+        return self.MODEL_VERSION
+
+    def get_model_info(self) -> Dict:
+        """Return V9 model information for health checks and debugging."""
+        return {
+            "system_id": self.SYSTEM_ID,
+            "model_version": self.MODEL_VERSION,
+            "model_path": getattr(self, '_model_path', 'unknown'),
+            "training_info": self.TRAINING_INFO,
+            "feature_count": 33,
+            "status": "loaded" if self.model is not None else "not_loaded",
+        }

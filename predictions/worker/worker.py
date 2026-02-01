@@ -132,7 +132,8 @@ if TYPE_CHECKING:
     from prediction_systems.moving_average_baseline import MovingAverageBaseline
     from prediction_systems.zone_matchup_v1 import ZoneMatchupV1
     from prediction_systems.similarity_balanced_v1 import SimilarityBalancedV1
-    from prediction_systems.catboost_v8 import CatBoostV8  # v8 ML model (3.40 MAE)
+    from prediction_systems.catboost_v8 import CatBoostV8  # v8 ML model (historical)
+    from prediction_systems.catboost_v9 import CatBoostV9  # v9 ML model (current season)
     from prediction_systems.ensemble_v1 import EnsembleV1
     from prediction_systems.ensemble_v1_1 import EnsembleV1_1
     from data_loaders import PredictionDataLoader, normalize_confidence, validate_features
@@ -156,7 +157,10 @@ from shared.config.gcp_config import get_project_id
 PROJECT_ID = get_project_id()
 PREDICTIONS_TABLE = os.environ.get('PREDICTIONS_TABLE', 'nba_predictions.player_prop_predictions')
 PUBSUB_READY_TOPIC = os.environ.get('PUBSUB_READY_TOPIC', 'prediction-ready')
-logger.info("✓ Environment configuration loaded")
+# CatBoost model version: 'v8' (historical training) or 'v9' (current season)
+CATBOOST_VERSION = os.environ.get('CATBOOST_VERSION', 'v9')  # Default to V9 (Session 67)
+CATBOOST_SYSTEM_ID = f'catboost_{CATBOOST_VERSION}'  # e.g., 'catboost_v9' or 'catboost_v8'
+logger.info(f"✓ Environment configuration loaded (CATBOOST_VERSION={CATBOOST_VERSION}, SYSTEM_ID={CATBOOST_SYSTEM_ID})")
 
 # Failure Classification for Retry Logic
 # Permanent failures - data won't appear on retry, ack message immediately
@@ -266,6 +270,7 @@ def get_prediction_systems() -> tuple:
     from prediction_systems.similarity_balanced_v1 import SimilarityBalancedV1
     from prediction_systems.xgboost_v1 import XGBoostV1
     from prediction_systems.catboost_v8 import CatBoostV8
+    from prediction_systems.catboost_v9 import CatBoostV9
     from prediction_systems.ensemble_v1 import EnsembleV1
     from prediction_systems.ensemble_v1_1 import EnsembleV1_1
 
@@ -276,7 +281,15 @@ def get_prediction_systems() -> tuple:
         _zone_matchup = ZoneMatchupV1()
         _similarity = SimilarityBalancedV1()
         _xgboost = XGBoostV1()  # Mock XGBoost V1 (baseline)
-        _catboost = CatBoostV8()  # CatBoost v8: 3.40 MAE (champion)
+
+        # Load CatBoost model based on CATBOOST_VERSION env var
+        if CATBOOST_VERSION == 'v9':
+            logger.info("Loading CatBoost V9 (current season training)...")
+            _catboost = CatBoostV9()  # CatBoost v9: 4.82 MAE (Session 67)
+        else:
+            logger.info("Loading CatBoost V8 (historical training)...")
+            _catboost = CatBoostV8()  # CatBoost v8: 5.36 MAE
+
         _ensemble = EnsembleV1(
             moving_average_system=_moving_average,
             zone_matchup_system=_zone_matchup,
@@ -290,7 +303,8 @@ def get_prediction_systems() -> tuple:
             xgboost_system=_xgboost,
             catboost_system=_catboost
         )
-        logger.info("All prediction systems initialized (7 systems: XGBoost V1, CatBoost V8, Ensemble V1, Ensemble V1.1, + 3 others)")
+        catboost_version = "V9" if CATBOOST_VERSION == 'v9' else "V8"
+        logger.info(f"All prediction systems initialized (7 systems: XGBoost V1, CatBoost {catboost_version}, Ensemble V1, Ensemble V1.1, + 3 others)")
     return _moving_average, _zone_matchup, _similarity, _xgboost, _catboost, _ensemble, _ensemble_v1_1
 
 _circuit_breaker: Optional['SystemCircuitBreaker'] = None
@@ -332,7 +346,7 @@ def index():
             'zone_matchup': str(_zone_matchup),
             'similarity': str(_similarity),
             'xgboost_v1': str(_xgboost),
-            'catboost_v8': str(_catboost),
+            CATBOOST_SYSTEM_ID: str(_catboost),
             'ensemble': str(_ensemble),
             'ensemble_v1_1': str(_ensemble_v1_1)
         }
@@ -1296,7 +1310,7 @@ def process_player_predictions(
                     logger.warning(f"XGBoost V1 returned None for {player_lookup}")
                     metadata['systems_failed'].append(system_id)
                     metadata['system_errors'][system_id] = 'Prediction returned None'
-                    system_predictions['catboost_v8'] = None
+                    system_predictions[CATBOOST_SYSTEM_ID] = None
         except Exception as e:
             # Record failure
             error_msg = str(e)
@@ -1307,8 +1321,8 @@ def process_player_predictions(
             metadata['system_errors'][system_id] = error_msg
             system_predictions['xgboost_v1'] = None
 
-        # System 5: CatBoost V8 (champion ML model)
-        system_id = 'catboost_v8'
+        # System 5: CatBoost (champion ML model - V8 or V9 based on CATBOOST_VERSION)
+        system_id = CATBOOST_SYSTEM_ID
         metadata['systems_attempted'].append(system_id)
         try:
             # Check circuit breaker
@@ -1332,7 +1346,7 @@ def process_player_predictions(
                     circuit_breaker.record_success(system_id)
                     metadata['systems_succeeded'].append(system_id)
 
-                    system_predictions['catboost_v8'] = {
+                    system_predictions[CATBOOST_SYSTEM_ID] = {
                         'predicted_points': result['predicted_points'],
                         'confidence': result['confidence_score'],
                         'recommendation': result['recommendation'],
@@ -1340,10 +1354,10 @@ def process_player_predictions(
                         'metadata': result
                     }
                 else:
-                    logger.warning(f"CatBoost v8 returned None for {player_lookup}")
+                    logger.warning(f"CatBoost {CATBOOST_VERSION} returned None for {player_lookup}")
                     metadata['systems_failed'].append(system_id)
                     metadata['system_errors'][system_id] = 'Prediction returned None'
-                    system_predictions['catboost_v8'] = None
+                    system_predictions[CATBOOST_SYSTEM_ID] = None
         except Exception as e:
             # Record failure
             error_msg = str(e)
