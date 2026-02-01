@@ -37,13 +37,18 @@ class FirestoreClient:
 
             # OPTIMIZATION: Only fetch recent heartbeats with a limit
             # This prevents scanning 100k+ documents on every request
-            # We limit to 100 most recent, which is enough for dashboard
-            query = collection_ref.limit(limit)
+            # Get heartbeats from last 24 hours, ordered by most recent
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+
+            query = (collection_ref
+                    .where('last_heartbeat', '>=', cutoff)
+                    .order_by('last_heartbeat', direction=firestore.Query.DESCENDING)
+                    .limit(limit))
 
             for doc in query.stream():
                 data = doc.to_dict()
                 heartbeats.append({
-                    'processor_name': doc.id,
+                    'processor_name': data.get('processor_name'),
                     'last_heartbeat': data.get('last_heartbeat'),
                     'status': data.get('status', 'unknown'),
                     'last_run_duration_seconds': data.get('last_run_duration_seconds'),
