@@ -28,38 +28,35 @@ All ideas and improvements discussed during Sessions 56-57.
 
 ## HIGH PRIORITY (P0) - Do Next
 
-### 1. Fix evaluate_model.py to Match Production
+### 1. Fix evaluate_model.py to Match Production ✅ DONE (Session 58)
 **Problem**: Evaluation shows 50% hit rate, but production shows 78% for premium picks.
 
 **Root Cause**: Evaluation includes ALL predictions, production only grades 92+ confidence.
 
 **Tasks**:
-- [ ] Add `--confidence-threshold` parameter (default 0.92)
-- [ ] Filter predictions to only those meeting confidence threshold
-- [ ] Report results for both standard filters (Premium 92+/3+, High Edge 5+)
-- [ ] Add weekly breakdown to detect drift during evaluation
+- [x] Add `--confidence-threshold` parameter (default 0.92)
+- [x] Filter predictions to only those meeting confidence threshold
+- [x] Report results for both standard filters (Premium 92+/3+, High Edge 5+)
+- [x] Add weekly breakdown to detect drift during evaluation
 
-**Effort**: 30 minutes
+**Note**: Evaluation uses backfilled data, so results won't match production exactly.
+Use for model comparison, not production forecasting.
 
-### 2. Add "Find Best Filter" to hit-rate-analysis
+### 2. Add "Find Best Filter" to hit-rate-analysis ✅ DONE (Session 58)
 **Problem**: Need to test all filter combinations to find optimal trading strategy.
 
 **Tasks**:
-- [ ] Add query to test all conf/edge combinations
-- [ ] Rank by hit rate with minimum sample size
-- [ ] Show which filter is currently performing best
+- [x] Add query to test all conf/edge combinations (Query 5 in skill)
+- [x] Rank by hit rate with minimum sample size
+- [x] Show which filter is currently performing best
 
-**Effort**: 15 minutes
-
-### 3. Fix Cloud Function Shared Module
+### 3. Fix Cloud Function Shared Module ✅ DONE (Session 58)
 **Problem**: data-quality-alerts can't import performance_diagnostics in production.
 
 **Tasks**:
-- [ ] Either inline the code or properly copy shared module
-- [ ] Test deployment
-- [ ] Verify model_performance check works in production
-
-**Effort**: 30 minutes
+- [x] Fixed deploy.sh to cd into function directory before gcloud deploy
+- [x] Created missing shared/__init__.py
+- [ ] Test deployment (not yet tested in production)
 
 ---
 
@@ -93,21 +90,28 @@ All ideas and improvements discussed during Sessions 56-57.
 
 **Effort**: 1-2 sessions
 
-### 6. Test Trajectory Features
+### 6. Test Trajectory Features ✅ TESTED (Session 58)
 **Problem**: V8 doesn't use trajectory features that might help with drift.
 
-**New Features to Test**:
-- `pts_slope_10g` - 10-game scoring trend
-- `pts_zscore_season` - Points z-score vs season average
-- `breakout_flag` - Recent breakout indicator
+**New Features Tested**:
+- `pts_slope_10g` - 10-game scoring trend (importance: 5.97)
+- `pts_vs_season_zscore` - Points z-score vs season average (importance: 4.92)
+- `breakout_flag` - Recent breakout indicator (importance: 0.00)
+- `dnp_rate` - DNP risk (importance: 0.89)
 
-**Tasks**:
-- [ ] Train model with 37 features (33 + 4 trajectory)
-- [ ] Evaluate using production-equivalent mode with confidence filter
-- [ ] Compare to 33-feature V8 baseline
-- [ ] Decide if worth deploying
+**Results** (Nov 2025 - Jan 2026 training data):
+| Model | MAE | Hit Rate |
+|-------|-----|----------|
+| 33 features | 4.399 | 50.39% |
+| 37 features | 4.430 | 49.61% |
 
-**Effort**: 1 session
+**Conclusion**: Trajectory features did NOT improve model. They add noise.
+Possible reasons:
+- Only 3 months of training data
+- Features may need tuning (window sizes, normalization)
+- The signal may already be captured by existing features
+
+**Script**: `ml/experiments/train_trajectory_test.py`
 
 ### 7. Implement Prediction Versioning/History
 **Problem**: When predictions update throughout the day, old values are lost.
@@ -136,16 +140,8 @@ All ideas and improvements discussed during Sessions 56-57.
 
 **Effort**: 2-3 sessions
 
-### 7. Trajectory Features Experiment
-**Problem**: V8 doesn't use trajectory features (pts_slope_10g, zscore, breakout_flag).
-
-**Tasks**:
-- [ ] Train model with 37 features (including trajectory)
-- [ ] Evaluate using production-equivalent mode
-- [ ] Compare to 33-feature baseline
-- [ ] Decide if worth deploying
-
-**Effort**: 1 session
+### 7. Trajectory Features Experiment ✅ DONE (Session 58)
+See #6 above - trajectory features tested, did not improve model.
 
 ---
 
