@@ -1,0 +1,281 @@
+{
+  "experiment_id": "V8_JAN_PRODEQUIV",
+  "model_path": "models/catboost_v8_33features_20260108_211817.cbm",
+  "evaluation_mode": "PRODUCTION-EQUIVALENT",
+  "production_equivalent": true,
+  "confidence_threshold": null,
+  "train_period": null,
+  "eval_period": {
+    "start": "2026-01-01",
+    "end": "2026-01-28",
+    "actual_start": "2026-01-02",
+    "actual_end": "2026-01-28",
+    "samples": 2812,
+    "vegas_coverage": 1.0
+  },
+  "confidence_stats": {
+    "min": 84.0,
+    "max": 92.0,
+    "mean": 88.5,
+    "pct_92_plus": 13.1
+  },
+  "results": {
+    "mae": 5.3641,
+    "betting": {
+      "hit_rate": 0.502360717658168,
+      "hit_rate_pct": 50.24,
+      "hits": 1064,
+      "misses": 1054,
+      "pushes": 2,
+      "bets_placed": 2120,
+      "bets_graded": 2118,
+      "roi": -0.040909090909090916,
+      "roi_pct": -4.09,
+      "profit": -86.72727272727275,
+      "breakeven_hit_rate": 52.38,
+      "min_edge_threshold": 1.0
+    },
+    "by_confidence": {
+      "high_5+": {
+        "count": 432,
+        "graded": 431,
+        "hits": 213,
+        "hit_rate": 49.42
+      },
+      "medium_3-5": {
+        "count": 580,
+        "graded": 580,
+        "hits": 296,
+        "hit_rate": 51.03
+      },
+      "low_1-3": {
+        "count": 1108,
+        "graded": 1107,
+        "hits": 555,
+        "hit_rate": 50.14
+      },
+      "pass_<1": {
+        "count": 692,
+        "graded": 692,
+        "hits": 351,
+        "hit_rate": 50.72
+      }
+    },
+    "by_direction": {
+      "OVER": {
+        "count": 965,
+        "graded": 964,
+        "hits": 471,
+        "hit_rate": 48.86
+      },
+      "UNDER": {
+        "count": 1155,
+        "graded": 1154,
+        "hits": 593,
+        "hit_rate": 51.39
+      }
+    },
+    "standard_filters": {
+      "premium": {
+        "filter": "Premium (92+ conf, 3+ edge)",
+        "bets": 60,
+        "graded": 60,
+        "hits": 34,
+        "pushes": 0,
+        "hit_rate": 56.67
+      },
+      "high_edge": {
+        "filter": "High Edge (5+ pts)",
+        "bets": 432,
+        "graded": 431,
+        "hits": 213,
+        "pushes": 1,
+        "hit_rate": 49.42
+      }
+    }
+  },
+  "weekly": {
+    "2026-W01": {
+      "samples": 364,
+      "mae": 5.3631,
+      "betting": {
+        "hit_rate": 0.4928571428571429,
+        "hit_rate_pct": 49.29,
+        "hits": 138,
+        "misses": 142,
+        "pushes": 0,
+        "bets_placed": 280,
+        "bets_graded": 280,
+        "roi": -0.0590909090909091,
+        "roi_pct": -5.91,
+        "profit": -16.545454545454547,
+        "breakeven_hit_rate": 52.38,
+        "min_edge_threshold": 1.0
+      },
+      "standard_filters": {
+        "premium": {
+          "filter": "Premium (92+ conf, 3+ edge)",
+          "bets": 7,
+          "graded": 7,
+          "hits": 4,
+          "pushes": 0,
+          "hit_rate": 57.14
+        },
+        "high_edge": {
+          "filter": "High Edge (5+ pts)",
+          "bets": 52,
+          "graded": 52,
+          "hits": 27,
+          "pushes": 0,
+          "hit_rate": 51.92
+        }
+      }
+    },
+    "2026-W02": {
+      "samples": 746,
+      "mae": 5.141,
+      "betting": {
+        "hit_rate": 0.5073529411764706,
+        "hit_rate_pct": 50.74,
+        "hits": 276,
+        "misses": 268,
+        "pushes": 0,
+        "bets_placed": 544,
+        "bets_graded": 544,
+        "roi": -0.03141711229946525,
+        "roi_pct": -3.14,
+        "profit": -17.090909090909093,
+        "breakeven_hit_rate": 52.38,
+        "min_edge_threshold": 1.0
+      },
+      "standard_filters": {
+        "premium": {
+          "filter": "Premium (92+ conf, 3+ edge)",
+          "bets": 18,
+          "graded": 18,
+          "hits": 8,
+          "pushes": 0,
+          "hit_rate": 44.44
+        },
+        "high_edge": {
+          "filter": "High Edge (5+ pts)",
+          "bets": 85,
+          "graded": 85,
+          "hits": 43,
+          "pushes": 0,
+          "hit_rate": 50.59
+        }
+      }
+    },
+    "2026-W03": {
+      "samples": 656,
+      "mae": 5.7983,
+      "betting": {
+        "hit_rate": 0.4707070707070707,
+        "hit_rate_pct": 47.07,
+        "hits": 233,
+        "misses": 262,
+        "pushes": 1,
+        "bets_placed": 496,
+        "bets_graded": 495,
+        "roi": -0.10117302052785924,
+        "roi_pct": -10.12,
+        "profit": -50.18181818181819,
+        "breakeven_hit_rate": 52.38,
+        "min_edge_threshold": 1.0
+      },
+      "standard_filters": {
+        "premium": {
+          "filter": "Premium (92+ conf, 3+ edge)",
+          "bets": 13,
+          "graded": 13,
+          "hits": 6,
+          "pushes": 0,
+          "hit_rate": 46.15
+        },
+        "high_edge": {
+          "filter": "High Edge (5+ pts)",
+          "bets": 110,
+          "graded": 109,
+          "hits": 56,
+          "pushes": 1,
+          "hit_rate": 51.38
+        }
+      }
+    },
+    "2026-W04": {
+      "samples": 684,
+      "mae": 5.2764,
+      "betting": {
+        "hit_rate": 0.53515625,
+        "hit_rate_pct": 53.52,
+        "hits": 274,
+        "misses": 238,
+        "pushes": 0,
+        "bets_placed": 512,
+        "bets_graded": 512,
+        "roi": 0.021661931818181823,
+        "roi_pct": 2.17,
+        "profit": 11.090909090909093,
+        "breakeven_hit_rate": 52.38,
+        "min_edge_threshold": 1.0
+      },
+      "standard_filters": {
+        "premium": {
+          "filter": "Premium (92+ conf, 3+ edge)",
+          "bets": 11,
+          "graded": 11,
+          "hits": 9,
+          "pushes": 0,
+          "hit_rate": 81.82
+        },
+        "high_edge": {
+          "filter": "High Edge (5+ pts)",
+          "bets": 126,
+          "graded": 126,
+          "hits": 63,
+          "pushes": 0,
+          "hit_rate": 50.0
+        }
+      }
+    },
+    "2026-W05": {
+      "samples": 362,
+      "mae": 5.2035,
+      "betting": {
+        "hit_rate": 0.49825783972125437,
+        "hit_rate_pct": 49.83,
+        "hits": 143,
+        "misses": 144,
+        "pushes": 1,
+        "bets_placed": 288,
+        "bets_graded": 287,
+        "roi": -0.04861111111111111,
+        "roi_pct": -4.86,
+        "profit": -14.0,
+        "breakeven_hit_rate": 52.38,
+        "min_edge_threshold": 1.0
+      },
+      "standard_filters": {
+        "premium": {
+          "filter": "Premium (92+ conf, 3+ edge)",
+          "bets": 11,
+          "graded": 11,
+          "hits": 7,
+          "pushes": 0,
+          "hit_rate": 63.64
+        },
+        "high_edge": {
+          "filter": "High Edge (5+ pts)",
+          "bets": 59,
+          "graded": 59,
+          "hits": 24,
+          "pushes": 0,
+          "hit_rate": 40.68
+        }
+      }
+    }
+  },
+  "monthly": null,
+  "evaluated_at": "2026-01-31T16:36:53.503966"
+}

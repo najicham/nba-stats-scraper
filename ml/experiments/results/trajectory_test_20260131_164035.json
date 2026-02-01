@@ -1,0 +1,19 @@
+{
+  "33_features": {
+    "test_mae": 4.3989,
+    "test_samples": 1241,
+    "hit_rate": 50.39,
+    "trajectory_importance": {}
+  },
+  "37_features": {
+    "test_mae": 4.4301,
+    "test_samples": 1241,
+    "hit_rate": 49.61,
+    "trajectory_importance": {
+      "dnp_rate": 0.8878331841902658,
+      "pts_slope_10g": 5.973998551171383,
+      "pts_vs_season_zscore": 4.92447990038761,
+      "breakout_flag": 0.0
+    }
+  }
+}

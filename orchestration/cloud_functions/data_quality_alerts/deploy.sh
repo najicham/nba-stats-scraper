@@ -61,6 +61,9 @@ echo "✓ Shared module copied"
 echo ""
 echo "Deploying Cloud Function..."
 
+# Change to function directory for deployment (the --source . uses current directory)
+cd "$FUNCTION_DIR"
+
 gcloud functions deploy $FUNCTION_NAME \
     --gen2 \
     --runtime python311 \

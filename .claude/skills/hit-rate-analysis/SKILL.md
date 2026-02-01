@@ -50,6 +50,15 @@ This prevents confusion when comparing analyses across sessions.
 
 ## Standard Queries
 
+| Query # | Name | Purpose |
+|---------|------|---------|
+| 1 | Best Performing Picks | Compare standard filters (run first) |
+| 2 | Weekly Trend | Detect drift over time |
+| 3 | Confidence x Edge Matrix | Full breakdown |
+| 4 | Model Beats Vegas | Compare to Vegas accuracy |
+| 5 | **Find Best Filter** | Optimize filter for current conditions |
+| 6 | Player Tier Analysis | Performance by player scoring tier |
+
 ### Query 1: Best Performing Picks Summary (ALWAYS RUN THIS FIRST)
 
 ```sql
@@ -198,7 +207,67 @@ GROUP BY 1
 ORDER BY 1
 ```
 
-### Query 5: Player Tier Analysis
+### Query 5: Find Best Filter (Optimization)
+
+```sql
+-- Test ALL confidence/edge combinations and rank by hit rate
+-- Use this to find the optimal filter for current market conditions
+WITH filter_results AS (
+  SELECT
+    conf_threshold,
+    edge_threshold,
+    COUNT(*) as bets,
+    COUNTIF(prediction_correct) as hits,
+    ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate,
+    ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) - 52.4 as edge_over_breakeven
+  FROM (
+    SELECT *,
+      CASE
+        WHEN confidence_score >= 0.95 THEN 95
+        WHEN confidence_score >= 0.92 THEN 92
+        WHEN confidence_score >= 0.90 THEN 90
+        WHEN confidence_score >= 0.87 THEN 87
+        ELSE 80
+      END as conf_threshold,
+      CASE
+        WHEN ABS(predicted_points - line_value) >= 7 THEN 7
+        WHEN ABS(predicted_points - line_value) >= 5 THEN 5
+        WHEN ABS(predicted_points - line_value) >= 4 THEN 4
+        WHEN ABS(predicted_points - line_value) >= 3 THEN 3
+        WHEN ABS(predicted_points - line_value) >= 2 THEN 2
+        ELSE 1
+      END as edge_threshold
+    FROM nba_predictions.prediction_accuracy
+    WHERE system_id = 'catboost_v8'
+      AND game_date >= @start_date AND game_date <= @end_date
+      AND prediction_correct IS NOT NULL
+  )
+  GROUP BY 1, 2
+  HAVING bets >= 20  -- Minimum sample size for statistical significance
+)
+SELECT
+  CONCAT(CAST(conf_threshold AS STRING), '+ conf, ', CAST(edge_threshold AS STRING), '+ edge') as filter,
+  bets,
+  hits,
+  hit_rate,
+  edge_over_breakeven,
+  CASE
+    WHEN hit_rate >= 70 THEN '🏆 Excellent'
+    WHEN hit_rate >= 60 THEN '✅ Good'
+    WHEN hit_rate >= 52.4 THEN '⚠️ Marginal'
+    ELSE '❌ Unprofitable'
+  END as quality
+FROM filter_results
+ORDER BY hit_rate DESC
+LIMIT 15
+```
+
+**Interpretation**:
+- The top filter is your best trading strategy for the current period
+- Compare to the standard filters (92+/3+ and 5+) to see if optimization helps
+- If optimized filter differs significantly from standard, investigate why
+
+### Query 6: Player Tier Analysis
 
 ```sql
 WITH player_tiers AS (
@@ -323,3 +392,4 @@ ORDER BY CASE tier WHEN 'Star' THEN 1 WHEN 'Starter' THEN 2 WHEN 'Rotation' THEN
 
 *Skill created: Session 55*
 *Updated: Session 57 - Added standard filters, clarified metrics confusion*
+*Updated: Session 58 - Added "Find Best Filter" query for filter optimization*
