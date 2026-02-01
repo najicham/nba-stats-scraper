@@ -6,6 +6,33 @@
 
 ---
 
+## Recommended Session Strategy
+
+### Single Session (Sonnet) - For Most Tasks
+Use **one Sonnet session** for:
+- Fixing experiment line source code
+- Running February retrain
+- Deploying updates
+- Historical feature cleanup
+
+**Why Sonnet?** These are well-defined tasks with clear implementation paths. Sonnet is faster, cheaper, and handles code changes well.
+
+### When to Use Opus
+Use **Opus** for:
+- Complex architectural decisions
+- Novel experiment design
+- Deep investigation of unexpected results
+- Writing comprehensive documentation
+
+### Parallel Sessions (Advanced)
+If you want to parallelize:
+1. **Session A (Sonnet):** Fix experiment code + February retrain
+2. **Session B (Sonnet):** Historical feature cleanup for 2024-25 season
+
+These are independent tasks that can run in parallel.
+
+---
+
 ## Quick Context
 
 Session 67 deployed CatBoost V9 with **79.4% high-edge hit rate** on backfilled predictions. However, there's a discrepancy between experiment evaluation (72.2%) and production backfill (79.4%) due to different line sources.
@@ -39,19 +66,42 @@ Task(subagent_type="Explore", prompt="Read predictions/worker/prediction_systems
 
 Experiment code uses **BettingPros Consensus** lines, but production uses **Odds API DraftKings** lines. This causes evaluation to underestimate performance.
 
+### Decision Required: Line Source Strategy
+
+**Option A: Default to Production Lines (Recommended)**
+- Change default to Odds API DraftKings
+- Matches what users actually bet on
+- Results directly comparable to production
+
+**Option B: Add `--line-source` Flag**
+- Allow user to choose: `--line-source draftkings|bettingpros|fanduel`
+- More flexible for multi-book analysis
+- Default to `draftkings` (production)
+
+**Recommendation:** Implement Option B with `draftkings` as default. This gives flexibility while matching production by default.
+
 ### The Fix
 
-In `ml/experiments/quick_retrain.py`, change `load_eval_data()`:
+In `ml/experiments/quick_retrain.py`:
 
+1. Add argument: `--line-source` with choices `['draftkings', 'bettingpros', 'fanduel']`, default `'draftkings'`
+
+2. Update `load_eval_data()`:
 ```python
-# FROM (current):
+# Current (BettingPros only):
 FROM nba_raw.bettingpros_player_points_props
 WHERE bookmaker = 'BettingPros Consensus'
 
-# TO (correct):
-FROM nba_raw.odds_api_player_points_props
-WHERE bookmaker = 'draftkings'
+# New (configurable, default draftkings):
+if line_source == 'draftkings':
+    FROM nba_raw.odds_api_player_points_props WHERE bookmaker = 'draftkings'
+elif line_source == 'bettingpros':
+    FROM nba_raw.bettingpros_player_points_props WHERE bookmaker = 'BettingPros Consensus'
+elif line_source == 'fanduel':
+    FROM nba_raw.odds_api_player_points_props WHERE bookmaker = 'fanduel'
 ```
+
+3. Also update the `/model-experiment` skill in `.claude/skills/model-experiment.md` to expose this option.
 
 ### Verify
 
@@ -60,7 +110,8 @@ After fixing, re-run the experiment:
 PYTHONPATH=. python ml/experiments/quick_retrain.py \
     --name "V9_VERIFY_LINES" \
     --train-start 2025-11-02 --train-end 2026-01-08 \
-    --eval-start 2026-01-09 --eval-end 2026-01-31
+    --eval-start 2026-01-09 --eval-end 2026-01-31 \
+    --line-source draftkings
 ```
 
 Expected: Hit rates should match backfill (~79% high-edge, ~65% premium).

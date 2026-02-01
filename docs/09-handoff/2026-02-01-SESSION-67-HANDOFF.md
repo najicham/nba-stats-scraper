@@ -85,14 +85,29 @@ The DraftKings lines may be more favorable or the sample selection differs.
 
 ### Action Required
 
-**Update experiment code** (`ml/experiments/quick_retrain.py`) to use the same line source as production for accurate evaluation:
+**Update experiment code** to use production line sources. Two options:
+
+**Option A: Default to Production (Simple)**
+Just change BettingPros → DraftKings in `ml/experiments/quick_retrain.py`
+
+**Option B: Add --line-source Flag (Recommended)**
+Add flexibility for multi-book analysis:
+```bash
+--line-source draftkings  # Default, matches production
+--line-source bettingpros # For comparison
+--line-source fanduel     # For FanDuel users
+```
+
+**Files to Update:**
+1. `ml/experiments/quick_retrain.py` - Add line source logic
+2. `.claude/skills/model-experiment.md` - Expose option in skill
 
 ```python
 # Current (BettingPros):
 FROM nba_raw.bettingpros_player_points_props
 WHERE bookmaker = 'BettingPros Consensus'
 
-# Should be (Odds API DraftKings):
+# Should be (Odds API DraftKings - default):
 FROM nba_raw.odds_api_player_points_props
 WHERE bookmaker = 'draftkings'
 ```
@@ -292,7 +307,21 @@ Run experiments from the roadmap (training windows, recency weighting).
 
 ## For Next Claude Session
 
-**IMPORTANT:** Use agents liberally to study the documentation and code:
+### Recommended Model & Session Strategy
+
+| Task Type | Model | Why |
+|-----------|-------|-----|
+| Code fixes, retraining, deployment | **Sonnet** | Well-defined tasks, faster/cheaper |
+| Complex architecture, novel experiments | **Opus** | Deep reasoning needed |
+| Historical cleanup (parallel) | **Sonnet** | Independent, straightforward |
+
+**Single Session Approach:** One Sonnet session can handle all Priority 1-3 tasks sequentially.
+
+**Parallel Approach:** Two Sonnet sessions if you want speed:
+- Session A: Fix experiment code + February retrain
+- Session B: Historical feature cleanup
+
+### Use Agents to Study Codebase
 
 ```
 # Study the experimentation infrastructure
@@ -303,12 +332,16 @@ Task(subagent_type="Explore", prompt="Read predictions/worker/prediction_systems
 
 # Check experiment code for line source issue
 Task(subagent_type="Explore", prompt="Read ml/experiments/quick_retrain.py and identify where BettingPros lines are used that should be Odds API")
+
+# Check the model-experiment skill
+Task(subagent_type="Explore", prompt="Read .claude/skills/model-experiment.md to understand how experiments are exposed to users")
 ```
 
-**Key Documents to Read:**
-1. `docs/08-projects/current/ml-challenger-experiments/README.md` - Project overview
-2. `docs/08-projects/current/ml-challenger-experiments/ML-EXPERIMENTATION-ROADMAP.md` - All experiment plans
-3. `docs/08-projects/current/ml-challenger-experiments/HISTORICAL-FEATURE-CLEANUP-PLAN.md` - Feature store cleanup
+### Key Documents to Read
+1. `docs/09-handoff/2026-02-01-SESSION-68-TAKEOVER-PROMPT.md` - **Start here** for quick context
+2. `docs/08-projects/current/ml-challenger-experiments/README.md` - Project overview
+3. `docs/08-projects/current/ml-challenger-experiments/ML-EXPERIMENTATION-ROADMAP.md` - All experiment plans
+4. `docs/08-projects/current/ml-challenger-experiments/HISTORICAL-FEATURE-CLEANUP-PLAN.md` - Feature store cleanup
 
 ---
 
