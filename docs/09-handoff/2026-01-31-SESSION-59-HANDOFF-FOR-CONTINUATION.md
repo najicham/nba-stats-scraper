@@ -210,9 +210,38 @@ PYTHONPATH=. python scripts/backfill_feature_store_vegas.py --start 2025-11-01 -
 PYTHONPATH=. python scripts/backfill_feature_store_vegas.py --start 2025-11-01 --end 2025-12-31
 ```
 
-### Priority 4: Consider V9 Training on DraftKings Only
+### Priority 4: Investigate Exactly What V8 Trained On
 
-V8 was trained on BettingPros Consensus. For V9, consider training on DraftKings-only lines to match what users actually bet on.
+**Question:** Did V8 train only on BettingPros Consensus, or did it also include DraftKings/FanDuel lines?
+
+**What we know:**
+- `ml/train_final_ensemble_v8.py` line 63 filters: `WHERE bookmaker = 'BettingPros Consensus'`
+- But we should verify this is what actually ran
+
+**Investigation needed:**
+1. Check if there's a training log or metadata file from V8 training
+2. Look for `models/ensemble_v8_*_metadata.json` - may have training details
+3. Query the actual data that would have been used:
+   ```sql
+   -- What was available for V8 training period?
+   SELECT bookmaker, COUNT(*) as records
+   FROM nba_raw.bettingpros_player_points_props
+   WHERE game_date BETWEEN '2021-11-01' AND '2024-06-01'
+     AND market_type = 'points' AND bet_side = 'over'
+   GROUP BY 1
+   ORDER BY 2 DESC
+   ```
+4. Check if the training script was ever modified to use different bookmakers
+5. Determine if we can reproduce V8's exact training data
+
+**Why this matters:**
+- If V8 trained on Consensus but users bet on DraftKings, there may be calibration mismatch
+- Understanding V8's training helps decide V9 approach
+- May explain some hit rate variance
+
+### Priority 5: Consider V9 Training on DraftKings Only
+
+Once we understand V8's training data, consider training V9 on DraftKings-only lines to match what users actually bet on.
 
 ---
 
