@@ -62,6 +62,59 @@ def get_all_imports_recursive(directory: Path, prefix: str = "") -> Set[str]:
     return all_imports
 
 
+def check_validation_symlinks(cf_dir: Path) -> list[dict]:
+    """
+    Check for missing symlinks in shared/validation/ directory.
+
+    Added after Feb 1, 2026 incident where phase3_data_quality_check.py was missing,
+    causing orchestrator to crash on startup.
+    """
+    issues = []
+
+    validation_dir = cf_dir / "shared" / "validation"
+    if not validation_dir.exists():
+        return issues  # Directory doesn't exist, will be caught by other checks
+
+    # Check shared/validation/__init__.py for imports that need symlinks
+    init_file = validation_dir / "__init__.py"
+    if not init_file.exists():
+        return issues
+
+    try:
+        with open(init_file) as f:
+            tree = ast.parse(f.read())
+
+        # Find all modules imported from shared.validation
+        required_modules = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                if node.level == 0 and node.module and node.module.startswith("shared.validation."):
+                    # from shared.validation.X import ...
+                    module_name = node.module.replace("shared.validation.", "")
+                    required_modules.add(module_name)
+
+        # Check each required module exists as a symlink or file
+        for module_name in required_modules:
+            module_file = validation_dir / f"{module_name}.py"
+
+            if not module_file.exists():
+                issues.append({
+                    "type": "MISSING_VALIDATION_MODULE",
+                    "path": f"shared/validation/{module_name}.py",
+                    "message": f"Module imported in __init__.py but file/symlink missing",
+                    "fix": f"cd {validation_dir} && ln -s ../../../../../shared/validation/{module_name}.py {module_name}.py"
+                })
+
+    except SyntaxError as e:
+        issues.append({
+            "type": "SYNTAX_ERROR",
+            "path": "shared/validation/__init__.py",
+            "message": f"Could not parse __init__.py: {e}"
+        })
+
+    return issues
+
+
 def check_shared_modules(cf_dir: Path) -> list[dict]:
     """Check if all shared module imports can be resolved."""
     issues = []
@@ -74,6 +127,10 @@ def check_shared_modules(cf_dir: Path) -> list[dict]:
             "message": "shared/ directory missing from Cloud Function"
         })
         return issues
+
+    # Check validation symlinks first (Feb 1, 2026 fix)
+    validation_issues = check_validation_symlinks(cf_dir)
+    issues.extend(validation_issues)
 
     # Get all imports from main.py and check shared modules
     main_py = cf_dir / "main.py"
@@ -274,6 +331,8 @@ def main():
         ("phase4_to_phase5", cf_base / "phase4_to_phase5"),
         ("phase5_to_phase6", cf_base / "phase5_to_phase6"),
         ("auto_backfill_orchestrator", cf_base / "auto_backfill_orchestrator"),
+        ("daily_health_summary", cf_base / "daily_health_summary"),
+        ("self_heal", cf_base / "self_heal"),
     ]
 
     # Filter if specific function requested
