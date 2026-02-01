@@ -120,7 +120,8 @@ V8 was trained on data with several quality issues:
 
 ## Related Documents
 
-- [Experiment Variables](./EXPERIMENT-VARIABLES.md) - **NEW** All configurable training variables
+- [Experiment Plan](./EXPERIMENT-PLAN.md) - **NEW** Specific experiments to run with commands
+- [Experiment Variables](./EXPERIMENT-VARIABLES.md) - All configurable training variables
 - [V8 Training Distribution Mismatch](./V8-TRAINING-DISTRIBUTION-MISMATCH.md) - Critical root cause analysis
 - [V8 Training Data Analysis](./V8-TRAINING-DATA-ANALYSIS.md) - Bookmaker analysis
 - [Data Gaps 2025-26 Season](./DATA-GAPS-2025-26-SEASON.md) - Data availability
