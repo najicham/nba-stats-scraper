@@ -62,33 +62,37 @@ Use for model comparison, not production forecasting.
 
 ## MEDIUM PRIORITY (P1)
 
-### 4. Monthly Retraining Pipeline (CRITICAL)
+### 4. Monthly Retraining Pipeline ✅ DONE (Session 58)
 **Problem**: Model V8 is drifting - Week 1 hit 84%, Week 4 hit 46%.
 
-**Evidence**:
-- Model MAE: 5.8 (Week 1) → 8.4-9.5 (Weeks 2-4)
-- Vegas MAE: Stable at 4.9-7.0
-- This is MODEL_DRIFT, not Vegas sharpening
+**Solution Implemented**:
+- `ml/experiments/quick_retrain.py` - Quick CLI tool for retraining
+- `orchestration/cloud_functions/monthly_retrain/` - Cloud Function
+- Runs on 1st of each month at 6 AM ET via Cloud Scheduler
+- Trains on last 60 days, evaluates on last 7 days
+- Compares to V8 baseline, sends Slack notification
+- Stores models in GCS, registers in ml_experiments
 
-**Tasks**:
-- [ ] Create automated training pipeline
-- [ ] Train on last 60-90 days of data
-- [ ] Run monthly at start of each month
-- [ ] Shadow mode before promotion
+**Usage**:
+```bash
+# CLI
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "FEB_MONTHLY"
 
-**Effort**: 2-3 sessions
+# Deploy Cloud Function
+cd orchestration/cloud_functions/monthly_retrain && ./deploy.sh
+```
 
-### 5. Create `/model-experiment` Skill
+### 5. Create `/model-experiment` Skill ✅ DONE (Session 58)
 **Problem**: No easy way to run experiments from Claude.
 
-**Tasks**:
-- [ ] Create `/model-experiment` skill
-- [ ] Support specifying train/eval dates
-- [ ] Use production-equivalent evaluation with confidence filter
-- [ ] Compare to V8 baseline automatically
-- [ ] Store results in ml_experiments table
+**Solution Implemented**:
+- `.claude/skills/model-experiment/SKILL.md` - New skill
+- `ml/experiments/quick_retrain.py` - Supporting script
+- Defaults: 60 days training, 7 days eval
+- Auto-compares to V8 baseline
+- Registers in ml_experiments table
 
-**Effort**: 1-2 sessions
+**Usage**: `/model-experiment` or direct script call
 
 ### 6. Test Trajectory Features ✅ TESTED (Session 58)
 **Problem**: V8 doesn't use trajectory features that might help with drift.
@@ -255,12 +259,12 @@ See #6 above - trajectory features tested, did not improve model.
 
 | Priority | Task | Effort | Impact | Status |
 |----------|------|--------|--------|--------|
-| P0 | Fix evaluate_model.py confidence filter | 30 min | High | TODO |
-| P0 | Add "find best filter" to hit-rate skill | 15 min | Medium | TODO |
-| P0 | Fix Cloud Function shared module | 30 min | Medium | TODO |
-| P1 | **Monthly retraining pipeline** | 2-3 sessions | **CRITICAL** | TODO |
-| P1 | Model experiment skill | 1-2 sessions | High | TODO |
-| P1 | Trajectory features experiment | 1 session | Medium | TODO |
+| P0 | Fix evaluate_model.py confidence filter | 30 min | High | ✅ DONE |
+| P0 | Add "find best filter" to hit-rate skill | 15 min | Medium | ✅ DONE |
+| P0 | Fix Cloud Function shared module | 30 min | Medium | ✅ DONE |
+| P1 | **Monthly retraining pipeline** | 2-3 sessions | **CRITICAL** | ✅ DONE |
+| P1 | Model experiment skill | 1-2 sessions | High | ✅ DONE |
+| P1 | Trajectory features experiment | 1 session | Medium | ✅ DONE |
 | P1 | Prediction versioning | 2-3 sessions | Medium | TODO |
 | P1 | Vegas sharpness dashboard | 2-3 sessions | Medium | TODO |
 | P2 | Shared utilities | 1 session | Low | TODO |
@@ -273,6 +277,12 @@ See #6 above - trajectory features tested, did not improve model.
 | Investigate missing dates | 57 |
 | Automate daily diagnostics (partial) | 57 |
 | Standardize hit rate measurement | 57 |
+| Fix evaluate_model.py confidence filter | 58 |
+| Add "find best filter" to hit-rate skill | 58 |
+| Fix Cloud Function shared module | 58 |
+| Test trajectory features | 58 |
+| Monthly retraining pipeline | 58 |
+| Model experiment skill | 58 |
 
 ---
 
