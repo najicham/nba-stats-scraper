@@ -1,8 +1,37 @@
 # ML Challenger Experiments Plan
 
 **Created:** 2026-02-01 (Session 61)
-**Status:** PLANNING
+**Updated:** 2026-02-01 (Session 66 - Data leakage discovery)
+**Status:** READY TO RUN
 **Goal:** Find a model that beats V8 for DraftKings betting
+
+---
+
+## CRITICAL UPDATE: Session 66 Discovery
+
+### The 84% Hit Rate Was FAKE
+
+Session 66 discovered a **data leakage bug** in `player_daily_cache_processor.py`:
+
+```python
+# BUG (before Jan 26, 2026): Included current game in rolling averages!
+WHERE game_date <= '{analysis_date}'  # CHEATING - knows future!
+
+# FIX (after Jan 26, 2026): Correctly excludes current game
+WHERE game_date < '{analysis_date}'
+```
+
+**Impact:** ALL predictions made before Jan 26, 2026 used features that included the current game's stats in rolling averages. This is data leakage - the model was "cheating" by seeing the future.
+
+### True Model Performance (No Leakage)
+
+| Filter | Predictions | Hit Rate |
+|--------|-------------|----------|
+| Premium (92+ conf, 3+ edge) | 59 | **52.5%** |
+| High Conf (92+) | 136 | **58.1%** |
+| High Edge (5+) | 437 | **57.0%** |
+
+The model is barely better than random. All historical backtesting is invalid.
 
 ---
 
@@ -11,18 +40,18 @@
 ### Current Champion: CatBoost V8
 - **Training Data:** BettingPros Consensus, Nov 2021 - Jun 2024 (~77K samples)
 - **Features:** 33 features (v2_33features)
-- **MAE:** 3.404 (test set)
-- **Status:** Production since mid-2024
+- **MAE:** 3.404 (test set) - BUT this was evaluated with leaked data!
+- **TRUE Performance:** ~52-58% hit rate
+- **Status:** Production but underperforming
 
-### Problem Discovered
-V8 performance degraded significantly in Jan 2026:
+### Real Problem (Session 66)
 
-| Period | Hit Rate | MAE |
-|--------|----------|-----|
-| Jan 2025 | 70-76% | 3.8-4.3 |
-| Jan 2026 | 48-67% | 4.4-5.9 |
+The reported performance metrics were all based on leaked data:
+- Training evaluation: Leaked
+- Backtesting: Leaked
+- Jan 1-8, 2026 hit rates: Leaked
 
-**Key Question:** Why did Jan 2026 degrade when Jan 2025 was stable?
+Only predictions made after Jan 26, 2026 (when fix was deployed) are valid.
 
 ---
 
