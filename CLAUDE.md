@@ -235,6 +235,57 @@ bq query --use_legacy_sql=false "
 
 Always query `prediction_accuracy` for grading validation, accuracy metrics, and ML analysis.
 
+### Grading Table Selection (Session 68 Learning)
+
+**CRITICAL**: Always verify grading completeness before model analysis.
+
+**Two sources of graded prediction data:**
+
+| Table | Use For | Grading Status |
+|-------|---------|----------------|
+| `prediction_accuracy` | Live production analysis, historical data | Complete for production, may lag for backfills |
+| `player_prop_predictions` + `player_game_summary` join | Backfilled predictions, any analysis with incomplete grading | Always complete |
+
+**Pre-Analysis Verification (REQUIRED)**:
+
+```sql
+-- Check grading completeness before analyzing a model
+SELECT
+  system_id,
+  COUNT(*) as predictions,
+  (SELECT COUNT(*) FROM nba_predictions.prediction_accuracy pa
+   WHERE pa.system_id = p.system_id AND pa.game_date >= DATE('2026-01-09')) as graded
+FROM nba_predictions.player_prop_predictions p
+WHERE system_id = 'catboost_v9' AND game_date >= DATE('2026-01-09')
+GROUP BY system_id
+```
+
+**Decision Rule**:
+- `graded/predictions >= 80%` → Use `prediction_accuracy`
+- `graded/predictions < 80%` → Use join approach (below)
+
+**Join Approach for Incomplete Grading**:
+
+```sql
+-- When prediction_accuracy is incomplete, use this pattern
+SELECT
+  p.system_id,
+  CASE WHEN ABS(p.predicted_points - p.current_points_line) >= 5 THEN 'High Edge' ELSE 'Other' END as tier,
+  COUNT(*) as bets,
+  ROUND(100.0 * COUNTIF(
+    (pgs.points > p.current_points_line AND p.recommendation = 'OVER') OR
+    (pgs.points < p.current_points_line AND p.recommendation = 'UNDER')
+  ) / NULLIF(COUNTIF(pgs.points != p.current_points_line), 0), 1) as hit_rate
+FROM nba_predictions.player_prop_predictions p
+JOIN nba_analytics.player_game_summary pgs
+  ON p.player_lookup = pgs.player_lookup AND p.game_date = pgs.game_date
+WHERE p.system_id = 'catboost_v9'
+  AND p.current_points_line IS NOT NULL
+GROUP BY 1, 2
+```
+
+**Why This Matters**: Session 68 analyzed V9 using `prediction_accuracy` (94 records) instead of `player_prop_predictions` (6,665 records). Wrong conclusion: "42% hit rate". Actual: **79.4% high-edge hit rate**.
+
 ### Hit Rate Measurement (IMPORTANT)
 
 **Always use these two standard filters when reporting hit rates:**
