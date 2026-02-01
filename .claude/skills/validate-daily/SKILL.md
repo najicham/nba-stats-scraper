@@ -1452,6 +1452,98 @@ ORDER BY pa.system_id, week DESC"
 - `our_edge` < 0 for 2+ consecutive weeks → Model no longer competitive
 - `our_edge` trending downward → Model drift in progress
 
+### Priority 2H: Scraper Health Monitoring (Session 70 - NEW)
+
+**Purpose**: Detect stale scrapers, failed scheduler jobs, and missing data sources.
+
+**When to run**: Daily (part of standard validation)
+
+**Why this matters**: Session 70 discovered player_movement data was 5+ months stale because no scheduler job existed. This check prevents similar issues.
+
+#### Scraper Freshness Check
+
+Query BigQuery to find scrapers with stale data:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Critical scrapers with data staleness check
+WITH scraper_freshness AS (
+  SELECT 'nbac_player_movement' as scraper, MAX(transaction_date) as last_date,
+    DATE_DIFF(CURRENT_DATE(), MAX(transaction_date), DAY) as days_stale
+  FROM \`nba-props-platform.nba_raw.nbac_player_movement\`
+
+  UNION ALL
+
+  SELECT 'nbac_injury_report' as scraper, MAX(report_date) as last_date,
+    DATE_DIFF(CURRENT_DATE(), MAX(report_date), DAY) as days_stale
+  FROM \`nba-props-platform.nba_raw.nbac_injury_report\`
+
+  UNION ALL
+
+  SELECT 'nbac_roster' as scraper, MAX(roster_date) as last_date,
+    DATE_DIFF(CURRENT_DATE(), MAX(roster_date), DAY) as days_stale
+  FROM \`nba-props-platform.nba_raw.nbac_roster\`
+
+  UNION ALL
+
+  SELECT 'bdl_injuries' as scraper, MAX(scrape_date) as last_date,
+    DATE_DIFF(CURRENT_DATE(), MAX(scrape_date), DAY) as days_stale
+  FROM \`nba-props-platform.nba_raw.bdl_injuries\`
+)
+SELECT
+  scraper,
+  last_date,
+  days_stale,
+  CASE
+    WHEN days_stale <= 2 THEN '✅ HEALTHY'
+    WHEN days_stale <= 7 THEN '🟡 STALE'
+    WHEN days_stale <= 30 THEN '🟠 WARNING'
+    ELSE '🔴 CRITICAL'
+  END as status
+FROM scraper_freshness
+ORDER BY days_stale DESC"
+```
+
+**Alert Thresholds**:
+- **≤2 days**: HEALTHY - Normal operations
+- **3-7 days**: STALE - Monitor, may be weekend gap
+- **8-30 days**: WARNING - Investigate scheduler/scraper
+- **>30 days**: CRITICAL - Scraper broken or not scheduled
+
+**If CRITICAL status found**:
+1. Check if scheduler job exists: `gcloud scheduler jobs list --location=us-west2 | grep <scraper>`
+2. Check recent logs: `gcloud logging read 'resource.labels.service_name="nba-scrapers" AND jsonPayload.scraper_name="<scraper>"' --limit=10`
+3. Verify scraper is registered: Check `scrapers/registry.py`
+4. See comprehensive audit: `docs/08-projects/current/scraper-health-audit/COMPREHENSIVE-AUDIT-2026-02-01.md`
+
+#### Scheduler Job Failures
+
+Check for scheduled jobs that failed in last 24 hours:
+
+```bash
+# Check failed scheduler jobs
+gcloud logging read 'resource.type="cloud_scheduler_job"
+  AND severity>=ERROR' \
+  --limit=10 \
+  --freshness=24h \
+  --format="table(timestamp, resource.labels.job_name, jsonPayload.message)"
+```
+
+**Alert if any jobs failed** - These are critical for data freshness.
+
+#### Known Issues Tracker
+
+**Current known stale scrapers** (as of Session 70):
+- `br_season_roster`: 9 days stale (scheduled but failing)
+- `espn_roster`: 3 days stale (scheduled but failing)
+- `bdl_player_box_scores`: 7 days stale (catchup logic broken)
+
+**Deprecated scrapers** (ignore if stale):
+- `bdl_games`: Replaced by bdl_box_scores (to be confirmed)
+- `bp_player_props`: Replaced by oddsa_player_props (to be confirmed)
+
+**For updates**: See scraper health audit document for latest status.
+
 ### Priority 3: Quality Verification (Run if issues suspected)
 
 #### 3A. Spot Check Accuracy
