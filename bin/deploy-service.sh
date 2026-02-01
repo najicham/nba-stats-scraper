@@ -13,6 +13,7 @@
 #   - nba-scrapers
 #   - nba-phase1-scrapers
 #   - unified-dashboard
+#   - nba-grading-service
 
 set -e
 
@@ -37,6 +38,7 @@ if [ -z "$SERVICE" ]; then
     echo "  - nba-scrapers"
     echo "  - nba-phase1-scrapers"
     echo "  - unified-dashboard"
+    echo "  - nba-grading-service"
     exit 1
 fi
 
@@ -66,6 +68,10 @@ case $SERVICE in
     DOCKERFILE="services/unified_dashboard/Dockerfile"
     EXPECTED_SERVICE="unified-dashboard"
     ;;
+  nba-grading-service)
+    DOCKERFILE="data_processors/grading/nba/Dockerfile"
+    EXPECTED_SERVICE="nba_grading_service"
+    ;;
   *)
     echo "ERROR: Unknown service: $SERVICE"
     echo ""
@@ -77,6 +83,7 @@ case $SERVICE in
     echo "  - nba-scrapers"
     echo "  - nba-phase1-scrapers"
     echo "  - unified-dashboard"
+    echo "  - nba-grading-service"
     exit 1
     ;;
 esac
