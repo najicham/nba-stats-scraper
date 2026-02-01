@@ -34,6 +34,7 @@ from google.cloud import firestore
 from google.cloud import bigquery
 
 from shared.clients import get_firestore_client, get_bigquery_client
+from shared.utils.firestore_retry import retry_on_firestore_error
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +178,7 @@ class ProcessorHeartbeat:
                 except Exception as e:
                     logger.error(f"Failed to emit heartbeat: {e}", exc_info=True)
 
+    @retry_on_firestore_error
     def _emit_heartbeat(self, final_status: str = None):
         """Write heartbeat to Firestore."""
         now = datetime.now(timezone.utc)
