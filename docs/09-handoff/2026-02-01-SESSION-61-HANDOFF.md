@@ -850,5 +850,192 @@ gcloud run services describe nba-phase4-precompute-processors \
 
 ---
 
-*Session 61 Complete - 2026-02-01*
+*Session 61 Part 1 Complete - 2026-02-01*
 *Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>*
+
+---
+
+# Session 61 Part 2: Feature Drift Discovery
+
+**Date:** 2026-02-01 (later same day)
+**Status:** CRITICAL FINDING - Root Cause of V8 Degradation Found
+
+---
+
+## Executive Summary
+
+Part 2 of Session 61 discovered the **root cause of V8 model degradation**: the `vegas_line` feature (player points prop line) dropped from 99.4% coverage in Jan 2025 to 43.4% in Jan 2026. This directly caused hit rates to collapse from 70-76% to 48-67%.
+
+**Key Clarification:** `vegas_line` is NOT the team spread - it's the player's points prop line (e.g., "LeBron O/U 25.5 points"). The model uses this as a critical input feature.
+
+---
+
+## What Was Accomplished
+
+### 1. DraftKings Cascade Deployed
+- Deployed `nba-phase3-analytics-processors` with new betting cascade
+- Cascade priority: Odds API DK > BettingPros DK > Odds API FD > BettingPros FD > Consensus
+- Commit: `8df5beb7`
+
+### 2. Bootstrap Period Discovery
+**Key Finding:** Oct 2025 has NO feature store data BY DESIGN
+
+| Detail | Value |
+|--------|-------|
+| Season Start | Oct 21, 2025 |
+| Bootstrap Period | Oct 21 - Nov 3 (first 14 days) |
+| Feature Store Start | Nov 4 (correct) |
+
+Added 2025-26 season start date to `shared/config/nba_season_dates.py` fallback dict.
+
+### 3. Phase 3 Context Backfill Completed
+Added `game_spread` (team point spread) to Oct-Nov context records:
+
+| Month | Coverage |
+|-------|----------|
+| Oct 2025 | 100% |
+| Nov 2025 | 83.4% |
+
+### 4. ROOT CAUSE FOUND: Vegas Line Feature Drift
+
+**CRITICAL DISCOVERY**
+
+| Period | vegas_line Coverage | Hit Rate |
+|--------|---------------------|----------|
+| Jan 2025 | **99.4%** | 70-76% |
+| Jan 2026 | **43.4%** | 48-67% |
+
+**Why this happened:** The 2025-26 season feature store was generated including ALL players, not just those with betting lines. This diluted the vegas_line coverage.
+
+```python
+# feature_extractor.py line 162 (backfill mode)
+FALSE AS has_prop_line,  -- No betting lines for backfill
+CAST(NULL AS FLOAT64) AS current_points_line
+```
+
+**Impact on high-edge picks:**
+
+| Edge Bucket | Jan 2025 | Jan 2026 | Drop |
+|-------------|----------|----------|------|
+| 0-2 (low) | 60.3% | 52.2% | -8% |
+| 2-5 (medium) | 72.3% | 55.3% | -17% |
+| **5+ (high)** | **86.1%** | **60.5%** | **-26%** |
+
+### 5. Created Validation Skill
+New skill: `.claude/skills/validate-feature-drift.md`
+
+Detects feature degradation compared to previous season. Would have caught this issue early.
+
+### 6. Documented Experiments
+Created `docs/08-projects/current/ml-challenger-experiments/EXPERIMENT-PLAN.md` with 6 proposed experiments:
+
+| ID | Hypothesis |
+|----|------------|
+| exp_20260201_dk_only | DK-trained model better for DK bets |
+| exp_20260201_dk_bettingpros | More BettingPros DK data helps |
+| exp_20260201_recency_90d | 90-day recency weighting |
+| exp_20260201_recency_180d | 180-day recency weighting |
+| exp_20260201_current_szn | Current season only |
+| exp_20260201_multi_book | Multi-book with indicator feature |
+
+### 7. Model Naming Convention Confirmed
+```
+exp_YYYYMMDD_hypothesis[_vN]  - For experiments
+catboost_vN                    - Only for production-promoted models
+```
+
+---
+
+## Critical Question Remaining
+
+**Do we need to fix the feature store BEFORE running experiments?**
+
+Options:
+1. **Option A:** Fix backfill mode to include betting data, re-run feature store
+2. **Option B:** Filter to only players with props (matches original behavior)
+3. **Option C:** Train model to handle missing vegas_line
+
+Recommendation: **Option A** - Fix the data first, then train.
+
+---
+
+## Files Created/Updated (Part 2)
+
+| File | Purpose |
+|------|---------|
+| `.claude/skills/validate-feature-drift.md` | NEW: Feature drift validation |
+| `docs/08-projects/current/feature-quality-monitoring/2026-02-01-VEGAS-LINE-DRIFT-INCIDENT.md` | NEW: Incident documentation |
+| `docs/08-projects/current/ml-challenger-experiments/EXPERIMENT-PLAN.md` | NEW: 6 experiments planned |
+| `shared/config/nba_season_dates.py` | UPDATED: Added 2025-26 season start |
+| `bin/backfill/verify_phase3_for_phase4.py` | UPDATED: Better bootstrap handling |
+
+---
+
+## Commits (Part 2)
+
+```
+1dcf77bd docs: Add feature drift detection and vegas_line incident analysis
+ba79892d fix: Add 2025-26 season start date and improve bootstrap period handling
+550d767a docs: Clarify Oct 2025 feature store is empty by design (bootstrap)
+```
+
+---
+
+## Next Session Priorities (Updated)
+
+### Priority 1: Fix Feature Store Pipeline
+The feature store needs vegas_line populated. Options:
+1. Modify `feature_extractor.py` backfill mode to join with betting data
+2. Re-run feature store generation for Nov 2025 - Feb 2026
+3. Verify coverage improves to >95%
+
+### Priority 2: Run Experiments (after fix)
+1. Start with `exp_20260201_dk_only` (simplest change)
+2. Compare to V8 baseline
+3. Iterate based on results
+
+### Priority 3: Validation Enhancements
+1. Add vegas_line coverage check to `/validate-daily`
+2. Test new `/validate-feature-drift` skill
+3. Consider automated alerts for feature degradation
+
+---
+
+## Verification Commands
+
+```bash
+# Check vegas_line coverage in feature store
+bq query --use_legacy_sql=false "
+SELECT FORMAT_DATE('%Y-%m', game_date) as month,
+  ROUND(100.0 * COUNTIF(features[OFFSET(25)] > 0) / COUNT(*), 1) as vegas_line_pct
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= '2025-11-01'
+  AND ARRAY_LENGTH(features) >= 33
+GROUP BY 1 ORDER BY 1"
+
+# Check Phase 3 context current_points_line
+bq query --use_legacy_sql=false "
+SELECT FORMAT_DATE('%Y-%m', game_date) as month,
+  ROUND(COUNTIF(current_points_line > 0) * 100.0 / COUNT(*), 1) as pct
+FROM nba_analytics.upcoming_player_game_context
+WHERE game_date >= '2025-10-01'
+GROUP BY 1 ORDER BY 1"
+
+# Run new feature drift validation
+/validate-feature-drift
+```
+
+---
+
+## Key Learning
+
+**The model didn't degrade - the data did.**
+
+V8 is fine. The issue is that 57% of Jan 2026 predictions are missing their vegas_line feature (the player's prop line), which is a critical model input. When this feature is 0, predictions degrade significantly.
+
+This was detectable, but we didn't have validation checking feature store quality vs historical baseline. The new `/validate-feature-drift` skill addresses this gap.
+
+---
+
+*Session 61 Part 2 Complete - 2026-02-01*
+*Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>*
