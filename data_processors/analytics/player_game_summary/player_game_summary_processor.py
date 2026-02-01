@@ -307,8 +307,8 @@ class PlayerGameSummaryProcessor(
                 'date_field': 'game_date',
                 'check_type': 'date_range',
                 'expected_count_min': 20,  # ~20-30 team games per day
-                'max_age_hours_warn': 24,
-                'max_age_hours_fail': 72,
+                'max_age_hours_warn': 48,  # Increased from 24h - allow for delayed team processing
+                'max_age_hours_fail': 168,  # Increased from 72h (Session 57) - prevents cascade failure when team processors have "no data" bug
                 'critical': True  # CRITICAL: Processing order enforcement (2026-01-27 fix)
             }
         }
