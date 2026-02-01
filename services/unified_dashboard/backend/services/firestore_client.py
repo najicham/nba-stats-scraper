@@ -21,9 +21,12 @@ class FirestoreClient:
         self.db = firestore.Client(project=project_id)
         self.project_id = project_id
 
-    def get_processor_heartbeats(self) -> List[Dict[str, Any]]:
+    def get_processor_heartbeats(self, limit: int = 100) -> List[Dict[str, Any]]:
         """
-        Get all processor heartbeats
+        Get recent processor heartbeats (optimized with limit)
+
+        Args:
+            limit: Maximum number of heartbeats to return (default: 100)
 
         Returns:
             List of heartbeat records with processor name, last_heartbeat, status
@@ -32,7 +35,12 @@ class FirestoreClient:
             heartbeats = []
             collection_ref = self.db.collection('processor_heartbeats')
 
-            for doc in collection_ref.stream():
+            # OPTIMIZATION: Only fetch recent heartbeats with a limit
+            # This prevents scanning 100k+ documents on every request
+            # We limit to 100 most recent, which is enough for dashboard
+            query = collection_ref.limit(limit)
+
+            for doc in query.stream():
                 data = doc.to_dict()
                 heartbeats.append({
                     'processor_name': doc.id,
@@ -42,6 +50,7 @@ class FirestoreClient:
                     'is_stale': self._is_heartbeat_stale(data.get('last_heartbeat'))
                 })
 
+            logger.info(f"Fetched {len(heartbeats)} heartbeats (limit: {limit})")
             return heartbeats
         except Exception as e:
             logger.error(f"Error fetching processor heartbeats: {e}")

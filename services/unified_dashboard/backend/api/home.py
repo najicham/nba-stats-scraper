@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse
 from services.firestore_client import FirestoreClient
 from services.bigquery_client import BigQueryClient
 from utils.health_calculator import HealthScoreCalculator
+from utils.cache import cache
 
 logger = logging.getLogger(__name__)
 
@@ -27,21 +28,36 @@ router = APIRouter()
 firestore_client = FirestoreClient()
 bigquery_client = BigQueryClient()
 
+# Cache TTL in seconds
+CACHE_TTL = 300  # 5 minutes
+
 
 @router.get("/home")
 async def get_home_data() -> Dict[str, Any]:
     """
-    Get all data for the home/command center page
+    Get all data for the home/command center page (with caching)
 
     Returns:
         Comprehensive home page data including health score, alerts, summary
     """
+    # Try to get from cache first
+    cache_key = "home_data"
+    cached_data = cache.get(cache_key, ttl_seconds=CACHE_TTL)
+    if cached_data:
+        logger.info(f"Returning cached home data (TTL: {CACHE_TTL}s)")
+        # Mark as cached and return
+        cached_data['metadata']['cached'] = True
+        cached_data['timestamp'] = datetime.now(timezone.utc).isoformat()
+        return cached_data
+
     try:
+        logger.info("Cache miss - fetching fresh data")
+
         # Fetch data from multiple sources in parallel (conceptually)
         # In production, consider using asyncio.gather for true parallelism
 
-        # Firestore data (real-time state)
-        heartbeats = firestore_client.get_processor_heartbeats()
+        # Firestore data (real-time state) - OPTIMIZED: limited to 100 docs
+        heartbeats = firestore_client.get_processor_heartbeats(limit=100)
         phase_completions = firestore_client.get_all_phase_completions()
         circuit_breakers = firestore_client.get_circuit_breaker_states()
 
@@ -75,7 +91,8 @@ async def get_home_data() -> Dict[str, Any]:
             processor_stats=processor_stats
         )
 
-        return {
+        # Build response
+        response_data = {
             'timestamp': datetime.now(timezone.utc).isoformat(),
             'health': health,
             'alerts': alerts,
@@ -87,9 +104,16 @@ async def get_home_data() -> Dict[str, Any]:
                     'firestore': 'real-time',
                     'bigquery': 'last 24h'
                 },
-                'refresh_interval': 60  # Suggest refresh every 60 seconds
+                'refresh_interval': 60,  # Suggest refresh every 60 seconds
+                'cached': False,
+                'cache_ttl': CACHE_TTL
             }
         }
+
+        # Cache the response
+        cache.set(cache_key, response_data)
+
+        return response_data
 
     except Exception as e:
         logger.error(f"Error fetching home data: {e}", exc_info=True)
@@ -99,13 +123,18 @@ async def get_home_data() -> Dict[str, Any]:
 @router.get("/home/health")
 async def get_health_score() -> Dict[str, Any]:
     """
-    Get just the health score (lightweight endpoint)
+    Get just the health score (lightweight endpoint, uses cache)
 
     Returns:
         Health score and status
     """
+    # Use cached home data if available
+    cached_data = cache.get("home_data", ttl_seconds=CACHE_TTL)
+    if cached_data and 'health' in cached_data:
+        return cached_data['health']
+
     try:
-        heartbeats = firestore_client.get_processor_heartbeats()
+        heartbeats = firestore_client.get_processor_heartbeats(limit=100)
         phase_completions = firestore_client.get_all_phase_completions()
         summary = bigquery_client.get_todays_summary()
         processor_stats = bigquery_client.get_processor_run_stats()
@@ -124,6 +153,22 @@ async def get_health_score() -> Dict[str, Any]:
     except Exception as e:
         logger.error(f"Error calculating health score: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error calculating health: {str(e)}")
+
+
+@router.get("/home/cache/stats")
+async def get_cache_stats() -> Dict[str, Any]:
+    """Get cache statistics"""
+    return {
+        'cache_stats': cache.stats(),
+        'ttl_seconds': CACHE_TTL
+    }
+
+
+@router.post("/home/cache/clear")
+async def clear_cache() -> Dict[str, Any]:
+    """Clear the cache (forces fresh data fetch)"""
+    cache.clear("home_data")
+    return {'status': 'cache cleared'}
 
 
 def _detect_critical_alerts(
