@@ -110,8 +110,11 @@ Use `./bin/deploy-service.sh <service-name>` for all deployments:
 |---------|------------|
 | prediction-coordinator | predictions/coordinator/Dockerfile |
 | prediction-worker | predictions/worker/Dockerfile |
+| mlb-prediction-worker | predictions/mlb/Dockerfile |
 | nba-phase3-analytics-processors | data_processors/analytics/Dockerfile |
 | nba-phase4-precompute-processors | data_processors/precompute/Dockerfile |
+| nba-phase2-processors | data_processors/raw/Dockerfile |
+| nba-scrapers | scrapers/Dockerfile |
 
 The script:
 1. Builds from repo root with correct Dockerfile
@@ -119,6 +122,20 @@ The script:
 3. Sets BUILD_COMMIT and BUILD_TIMESTAMP env vars
 4. Deploys to Cloud Run
 5. Shows recent logs for verification
+
+### Dockerfile Organization
+
+**See `deployment/dockerfiles/README.md` for complete conventions.**
+
+Key principles:
+- Service Dockerfiles stay with service code (e.g., `predictions/worker/Dockerfile`)
+- Utility/validator Dockerfiles go in `deployment/dockerfiles/{sport}/`
+- NO Dockerfiles at repository root
+- ALL builds happen from repository root (for `shared/` module access)
+
+Utility Dockerfiles (validators, backfill jobs) are organized by sport:
+- `deployment/dockerfiles/mlb/` - MLB validators and monitors
+- `deployment/dockerfiles/nba/` - NBA utilities and backfill jobs
 
 ### Startup Verification
 
