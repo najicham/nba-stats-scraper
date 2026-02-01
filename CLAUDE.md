@@ -86,6 +86,44 @@ nba-stats-scraper/
 | `docs/05-development/` | Development guides, best practices |
 | `docs/09-handoff/` | Session handoff documents |
 
+## ML Models
+
+### Current Production Model: CatBoost V9
+
+| Property | Value |
+|----------|-------|
+| System ID | `catboost_v9` |
+| Training | Current season only (Nov 2025+) |
+| Features | 33 (same as V8) |
+| Premium Hit Rate | 56.5% |
+| High-Edge Hit Rate | 72.2% |
+| MAE | 4.82 |
+
+**Why V9?** V8's 84% hit rate was fake due to data leakage (Session 66). V9 is trained on clean, current season data only.
+
+### Model Version Control
+
+```bash
+# Default: V9 (current season training)
+CATBOOST_VERSION=v9 ./bin/deploy-service.sh prediction-worker
+
+# Rollback to V8 if needed
+CATBOOST_VERSION=v8 ./bin/deploy-service.sh prediction-worker
+```
+
+### Monthly Retraining
+
+V9 is designed for monthly retraining:
+
+```bash
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "V9_FEB_RETRAIN" \
+    --train-start 2025-11-02 \
+    --train-end 2026-01-31
+```
+
+**See:** `docs/08-projects/current/ml-challenger-experiments/` for full documentation.
+
 ## Deployment Patterns
 
 ### CRITICAL: Always deploy from repo root
@@ -218,13 +256,13 @@ These are DIFFERENT. You can have 78% hit rate but only 40% model-beats-vegas.
 **Always show weekly trends** to catch drift - monthly averages can mask recent degradation.
 
 ```sql
--- Standard hit rate query
+-- Standard hit rate query (use catboost_v9 for new predictions, catboost_v8 for historical)
 SELECT
   'Premium (92+ conf, 3+ edge)' as filter,
   COUNT(*) as bets,
   ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate
 FROM nba_predictions.prediction_accuracy
-WHERE system_id = 'catboost_v8'
+WHERE system_id = 'catboost_v9'  -- or 'catboost_v8' for pre-Feb 2026
   AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
   AND confidence_score >= 0.92
   AND ABS(predicted_points - line_value) >= 3
