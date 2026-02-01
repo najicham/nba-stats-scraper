@@ -15,8 +15,20 @@ A multi-layer system to detect ML feature quality issues before they impact pred
 |-------|---------------|--------|
 | Pre-write validation | <1 hour | ✅ Implemented |
 | Daily health monitoring | <24 hours | ✅ Implemented |
-| Drift detection | <48 hours | ⚠️ Partial (12/37 features) |
+| Drift detection (vs last season) | <48 hours | ✅ `/validate-feature-drift` skill (Session 61) |
 | Real-time alerting | <30 min | ❌ Not implemented |
+
+### Critical: Vegas Line Drift Incident (Session 61)
+
+**Root cause found:** Feature store `vegas_line` coverage dropped from **99.4%** (Jan 2025) to **43.4%** (Jan 2026).
+
+This caused V8 hit rate to collapse from 70-76% to 48-67% (high-edge: 86% → 60%).
+
+**Why:** 2025-26 season feature store was generated in backfill mode which includes ALL players but sets `has_prop_line=FALSE`. Last season only included players with props.
+
+**Fix needed:** Modify backfill mode to join with betting data, re-run feature store for 2025-26.
+
+See: `2026-02-01-VEGAS-LINE-DRIFT-INCIDENT.md`
 
 ---
 
