@@ -385,6 +385,46 @@ gcloud logging read 'resource.type="cloud_run_revision"
 2. Add missing fields with `ALTER TABLE ... ADD COLUMN`
 3. Update schema SQL file in `schemas/bigquery/`
 
+### Silent BigQuery Write Failure (Session 59)
+**Symptom**: Processor completes successfully, Firestore completion events publish, but BigQuery table has zero records
+**Cause**: BigQuery write fails (wrong table reference, missing dataset, permissions) but processor doesn't fail the request
+**Real Example**: Session 59 - `upcoming_team_game_context` backfill appeared successful, published Firestore completion (5/5), but wrote 0 records due to missing `dataset_id` in table reference
+**Detection**:
+```bash
+# Check logs for BigQuery 404 errors
+gcloud logging read 'resource.type="cloud_run_revision"
+  AND severity>=ERROR
+  AND textPayload=~"404.*Dataset"' \
+  --limit=20 --freshness=2h
+
+# Verify record counts match expectations
+bq query --use_legacy_sql=false "
+  SELECT game_date, COUNT(*) as records, MAX(processed_at) as latest
+  FROM nba_analytics.upcoming_team_game_context
+  WHERE processed_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 HOUR)
+  GROUP BY game_date"
+```
+**Common Causes**:
+1. **Missing dataset in table reference**: `f"{project}.{table}"` instead of `f"{project}.{dataset}.{table}"`
+2. **Wrong dataset name**: Typo or project name duplicated (e.g., `nba-props-platform:nba-props-platform`)
+3. **Permission errors**: Service account lacks BigQuery write permissions
+4. **Table doesn't exist**: Processor assumes table exists but it was deleted/renamed
+
+**Fix**:
+1. Always use `f"{self.project_id}.{self.dataset_id}.{self.table_name}"` pattern from base class
+2. Add error handling that fails completion if BigQuery writes fail
+3. Add integration tests that verify actual BigQuery writes
+4. Monitor for "404 Not found: Dataset" errors in production logs
+
+**Prevention**:
+```python
+# WRONG - Missing dataset
+table_id = f"{self.project_id}.{self.table_name}"
+
+# CORRECT - Use dataset_id from base class
+table_id = f"{self.project_id}.{self.dataset_id}.{self.table_name}"
+```
+
 ### Deployment Drift (Session 58)
 **Symptom**: Service missing recent bug fixes, known bugs recurring in production
 **Cause**: Manual deployments, no automation - fixes committed but never deployed
