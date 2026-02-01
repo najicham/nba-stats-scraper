@@ -1667,6 +1667,26 @@ def format_prediction_for_bigquery(
             'ppm_avg_last_10': features.get('ppm_avg_last_10'),
             'avg_points_vs_opponent': features.get('avg_points_vs_opponent'),
             'team_win_pct': features.get('team_win_pct'),
+
+        # Session 67: Full feature snapshot for ALL predictions (not just CatBoost)
+        # Enables debugging and reproducibility for any prediction system
+        'features_snapshot': json.dumps({
+            'points_avg_last_5': features.get('points_avg_last_5'),
+            'points_avg_last_10': features.get('points_avg_last_10'),
+            'points_avg_season': features.get('points_avg_season'),
+            'points_std_last_10': features.get('points_std_last_10'),
+            'vegas_points_line': features.get('vegas_points_line'),
+            'has_vegas_line': features.get('has_vegas_line'),
+            'minutes_avg_last_10': features.get('minutes_avg_last_10'),
+            'ppm_avg_last_10': features.get('ppm_avg_last_10'),
+            'fatigue_score': features.get('fatigue_score'),
+            'opponent_def_rating': features.get('opponent_def_rating'),
+            'team_win_pct': features.get('team_win_pct'),
+            'back_to_back': features.get('back_to_back'),
+            'home_away': features.get('home_away'),
+            'feature_version': features.get('feature_version'),
+            'feature_quality_score': features.get('feature_quality_score'),
+        }),
             'pace_score': features.get('pace_score'),
             'usage_spike_score': features.get('usage_spike_score'),
             'feature_quality_score': features.get('feature_quality_score'),
@@ -1691,28 +1711,17 @@ def format_prediction_for_bigquery(
             'model_version': 'v1'  # Set model version for tracking
         })
 
-    elif system_id == 'catboost_v8' and 'metadata' in prediction:
+    elif system_id.startswith('catboost_') and 'metadata' in prediction:
         metadata = prediction['metadata']
         record.update({
-            'model_version': metadata.get('model_version', 'catboost_v8'),
+            'model_version': metadata.get('model_version', system_id),
             'feature_importance': json.dumps({
                 'model_type': metadata.get('model_type'),
                 'feature_count': metadata.get('feature_count', 33),
-            }) if metadata.get('model_type') else None,
-            # v4.1: Full feature snapshot for debugging and reproducibility
-            'features_snapshot': json.dumps({
-                'points_avg_last_5': features.get('points_avg_last_5'),
-                'points_avg_last_10': features.get('points_avg_last_10'),
-                'points_avg_season': features.get('points_avg_season'),
-                'vegas_points_line': features.get('vegas_points_line'),
-                'has_vegas_line': features.get('has_vegas_line'),
-                'minutes_avg_last_10': features.get('minutes_avg_last_10'),
-                'ppm_avg_last_10': features.get('ppm_avg_last_10'),
-                'fatigue_score': features.get('fatigue_score'),
-                'opponent_def_rating': features.get('opponent_def_rating'),
-            }),
-            'feature_version': features.get('feature_version', 'v2_33features'),
-            'feature_quality_score': features.get('feature_quality_score'),
+                'training_approach': metadata.get('training_approach'),  # V9: 'current_season_only'
+                'training_period': metadata.get('training_period'),  # V9: date range
+            }) if metadata.get('model_type') or metadata.get('training_approach') else None,
+            # Note: features_snapshot now set in base record for ALL systems (Session 67)
         })
     
     elif system_id == 'ensemble_v1' and 'metadata' in prediction:
