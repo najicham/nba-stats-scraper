@@ -286,20 +286,12 @@ class GameDataLoader:
         """
         player_game_pairs = [(p['player_lookup'], p['game_id']) for p in players_to_process]
 
-        # Use the same source as the driver query (need to get from parent)
-        # For now, default to odds_api - caller should pass _props_source
-        use_bettingpros = getattr(self, '_props_source', 'odds_api') == 'bettingpros'
-
-        if use_bettingpros:
-            logger.info(f"Extracting prop lines from BettingPros for {len(player_game_pairs)} players")
-            self.prop_lines = betting_extractor.extract_prop_lines_from_bettingpros(
-                player_game_pairs, self.target_date
-            )
-        else:
-            logger.info(f"Extracting prop lines from Odds API for {len(player_game_pairs)} players")
-            self.prop_lines = betting_extractor.extract_prop_lines_from_odds_api(
-                player_game_pairs, self.target_date
-            )
+        # Use cascade: Odds API DraftKings -> BettingPros DraftKings -> FanDuel -> Consensus
+        # See betting_data.py for full cascade documentation
+        logger.info(f"Extracting prop lines with cascade for {len(player_game_pairs)} players")
+        self.prop_lines = betting_extractor.extract_prop_lines_with_cascade(
+            player_game_pairs, self.target_date
+        )
 
     def _extract_game_lines(self, players_to_process: List[Dict], betting_extractor) -> None:
         """

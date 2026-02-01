@@ -495,18 +495,33 @@ class AsyncUpcomingPlayerGameContextProcessor(
             raise
 
     async def _extract_prop_lines_async(self) -> None:
-        """Async prop lines extraction."""
+        """
+        Async prop lines extraction with cascade.
+
+        Cascade order:
+        1. Odds API DraftKings (primary, most real-time)
+        2. BettingPros DraftKings (fills 15% coverage gap)
+        3. Odds API FanDuel
+        4. BettingPros FanDuel
+        5. BettingPros Consensus (last resort)
+        """
         player_lookups = list(set([p['player_lookup'] for p in self.players_to_process]))
 
-        use_bettingpros = getattr(self, '_props_source', 'odds_api') == 'bettingpros'
+        # Step 1: Try Odds API first (already prioritizes DraftKings)
+        await self._extract_prop_lines_from_odds_api_async(player_lookups)
 
-        if use_bettingpros:
-            await self._extract_prop_lines_from_bettingpros_async(player_lookups)
-        else:
-            await self._extract_prop_lines_from_odds_api_async(player_lookups)
+        # Step 2: Find players without lines and try BettingPros
+        missing_lookups = [
+            p['player_lookup'] for p in self.players_to_process
+            if self.prop_lines.get((p['player_lookup'], p['game_id']), {}).get('current_line') is None
+        ]
+
+        if missing_lookups:
+            logger.info(f"[ASYNC] Cascade: {len(missing_lookups)} players missing, trying BettingPros")
+            await self._extract_prop_lines_from_bettingpros_async(list(set(missing_lookups)))
 
     async def _extract_prop_lines_from_odds_api_async(self, player_lookups: List[str]) -> None:
-        """Async Odds API prop lines extraction."""
+        """Async Odds API prop lines extraction with DraftKings priority."""
         query = f"""
         WITH opening_lines AS (
             SELECT
@@ -516,7 +531,14 @@ class AsyncUpcomingPlayerGameContextProcessor(
                 bookmaker as opening_source,
                 ROW_NUMBER() OVER (
                     PARTITION BY player_lookup, game_id
-                    ORDER BY snapshot_timestamp ASC
+                    ORDER BY
+                        -- DraftKings priority, then earliest timestamp
+                        CASE LOWER(bookmaker)
+                            WHEN 'draftkings' THEN 1
+                            WHEN 'fanduel' THEN 2
+                            ELSE 99
+                        END,
+                        snapshot_timestamp ASC
                 ) as rn
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
             WHERE player_lookup IN UNNEST(@player_lookups)
@@ -530,7 +552,14 @@ class AsyncUpcomingPlayerGameContextProcessor(
                 bookmaker as current_source,
                 ROW_NUMBER() OVER (
                     PARTITION BY player_lookup, game_id
-                    ORDER BY snapshot_timestamp DESC
+                    ORDER BY
+                        -- DraftKings priority, then most recent timestamp
+                        CASE LOWER(bookmaker)
+                            WHEN 'draftkings' THEN 1
+                            WHEN 'fanduel' THEN 2
+                            ELSE 99
+                        END,
+                        snapshot_timestamp DESC
                 ) as rn
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
             WHERE player_lookup IN UNNEST(@player_lookups)
@@ -602,7 +631,7 @@ class AsyncUpcomingPlayerGameContextProcessor(
                 }
 
     async def _extract_prop_lines_from_bettingpros_async(self, player_lookups: List[str]) -> None:
-        """Async BettingPros prop lines extraction."""
+        """Async BettingPros prop lines extraction with DraftKings priority."""
         query = f"""
         WITH best_lines AS (
             SELECT
@@ -613,12 +642,22 @@ class AsyncUpcomingPlayerGameContextProcessor(
                 bookmaker_last_update,
                 ROW_NUMBER() OVER (
                     PARTITION BY player_lookup
-                    ORDER BY is_best_line DESC, bookmaker_last_update DESC
+                    ORDER BY
+                        -- Bookmaker priority: DraftKings > FanDuel > others > Consensus
+                        CASE bookmaker
+                            WHEN 'DraftKings' THEN 1
+                            WHEN 'FanDuel' THEN 2
+                            WHEN 'BettingPros Consensus' THEN 99
+                            ELSE 50
+                        END,
+                        is_best_line DESC,
+                        bookmaker_last_update DESC
                 ) as rn
             FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
             WHERE player_lookup IN UNNEST(@player_lookups)
               AND game_date = @game_date
               AND is_active = TRUE
+              AND bet_side = 'over'  -- Only need one side for line value
         )
         SELECT
             player_lookup,
@@ -640,7 +679,8 @@ class AsyncUpcomingPlayerGameContextProcessor(
             results = await self.execute_query_async(query, job_config)
             logger.info(f"[ASYNC] BettingPros query returned {len(results)} prop line records")
 
-            # Create lookup dict
+            # Only fill in for players missing from Odds API (cascade behavior)
+            filled_count = 0
             for row in results:
                 player_lookup = row['player_lookup']
                 # Find game_id from players_to_process
@@ -648,11 +688,17 @@ class AsyncUpcomingPlayerGameContextProcessor(
                     if player_info['player_lookup'] == player_lookup:
                         key = (player_lookup, player_info['game_id'])
 
+                        # Only fill if no line from Odds API (cascade)
+                        existing = self.prop_lines.get(key, {})
+                        if existing.get('current_line') is not None:
+                            break  # Already have a line from Odds API
+
+                        bookmaker = row.get('bookmaker', 'unknown')
                         prop_info = {
                             'opening_line': row.get('opening_line'),
-                            'opening_source': row.get('bookmaker'),
+                            'opening_source': f"bettingpros_{bookmaker}",
                             'current_line': row.get('current_line'),
-                            'current_source': row.get('bookmaker'),
+                            'current_source': f"bettingpros_{bookmaker}",
                             'line_movement': None
                         }
 
@@ -660,9 +706,12 @@ class AsyncUpcomingPlayerGameContextProcessor(
                             prop_info['line_movement'] = prop_info['current_line'] - prop_info['opening_line']
 
                         self.prop_lines[key] = prop_info
+                        filled_count += 1
                         break
 
-            # Set empty prop info for players without lines
+            logger.info(f"[ASYNC] Cascade: BettingPros filled {filled_count} missing players")
+
+            # Set empty prop info for players still without lines
             for player_info in self.players_to_process:
                 key = (player_info['player_lookup'], player_info['game_id'])
                 if key not in self.prop_lines:
@@ -676,16 +725,17 @@ class AsyncUpcomingPlayerGameContextProcessor(
 
         except (GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded) as e:
             logger.error(f"[ASYNC] BigQuery error extracting prop lines from BettingPros: {e}")
-            # Set empty prop info for all players
+            # Don't overwrite Odds API results on error - just ensure all players have entries
             for player_info in self.players_to_process:
                 key = (player_info['player_lookup'], player_info['game_id'])
-                self.prop_lines[key] = {
-                    'opening_line': None,
-                    'opening_source': None,
-                    'current_line': None,
-                    'current_source': None,
-                    'line_movement': None
-                }
+                if key not in self.prop_lines:
+                    self.prop_lines[key] = {
+                        'opening_line': None,
+                        'opening_source': None,
+                        'current_line': None,
+                        'current_source': None,
+                        'line_movement': None
+                    }
 
     async def _extract_game_lines_async(self) -> None:
         """Async game lines extraction - call sync version."""

@@ -770,6 +770,10 @@ class PredictionAccuracyProcessor:
             'line_source': self._safe_string(prediction.get('line_source', 'ACTUAL_PROP')),
             'estimated_line_value': round_numeric(self._safe_float(prediction.get('estimated_line_value')), 1),
 
+            # Bookmaker tracking (Session 60 - for per-bookmaker hit rate analysis)
+            'line_bookmaker': self._safe_string(prediction.get('sportsbook')),
+            'line_source_api': self._safe_string(prediction.get('line_source_api')),
+
             # Confidence tier filtering (v3.4 - shadow tracking)
             # Enables tracking of filtered picks' actual performance
             'is_actionable': bool(prediction.get('is_actionable', True)),

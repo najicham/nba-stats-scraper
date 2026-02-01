@@ -5,6 +5,15 @@ Betting Data Module - Prop Lines, Game Lines, and Public Betting
 
 Extracted from upcoming_player_game_context_processor.py for maintainability.
 Contains functions for extracting and processing betting-related data.
+
+BOOKMAKER CASCADE (as of Session 60, Jan 2026):
+1. Odds API DraftKings - Primary, most real-time
+2. BettingPros DraftKings - Fills 15% coverage gap
+3. Odds API FanDuel - If no DraftKings available
+4. BettingPros FanDuel - Fallback
+5. BettingPros Consensus - Last resort only
+
+See: docs/08-projects/current/odds-data-cascade-investigation/README.md
 """
 
 import logging
@@ -15,6 +24,24 @@ from google.cloud import bigquery
 from google.api_core.exceptions import GoogleAPIError, NotFound, ServiceUnavailable, DeadlineExceeded
 
 logger = logging.getLogger(__name__)
+
+# Bookmaker priority order (lower = higher priority)
+BOOKMAKER_PRIORITY = {
+    # Odds API uses lowercase
+    'draftkings': 1,
+    'fanduel': 2,
+    # BettingPros uses mixed case
+    'DraftKings': 1,
+    'FanDuel': 2,
+    'BettingPros Consensus': 99,  # Last resort
+}
+
+
+def get_bookmaker_priority(bookmaker: Optional[str]) -> int:
+    """Get priority for a bookmaker (lower = higher priority)."""
+    if bookmaker is None:
+        return 999
+    return BOOKMAKER_PRIORITY.get(bookmaker, 50)  # Unknown books get mid priority
 
 
 class BettingDataExtractor:
@@ -53,6 +80,7 @@ class BettingDataExtractor:
         prop_lines = {}
 
         # Build batch query - get opening and current lines for all players in one query
+        # Priority: DraftKings (1) > FanDuel (2) > others
         player_lookups = list(set([p[0] for p in player_game_pairs]))
 
         batch_query = f"""
@@ -64,7 +92,14 @@ class BettingDataExtractor:
                 bookmaker as opening_source,
                 ROW_NUMBER() OVER (
                     PARTITION BY player_lookup, game_id
-                    ORDER BY snapshot_timestamp ASC
+                    ORDER BY
+                        -- DraftKings priority, then earliest timestamp
+                        CASE LOWER(bookmaker)
+                            WHEN 'draftkings' THEN 1
+                            WHEN 'fanduel' THEN 2
+                            ELSE 99
+                        END,
+                        snapshot_timestamp ASC
                 ) as rn
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
             WHERE player_lookup IN UNNEST(@player_lookups)
@@ -78,7 +113,14 @@ class BettingDataExtractor:
                 bookmaker as current_source,
                 ROW_NUMBER() OVER (
                     PARTITION BY player_lookup, game_id
-                    ORDER BY snapshot_timestamp DESC
+                    ORDER BY
+                        -- DraftKings priority, then most recent timestamp
+                        CASE LOWER(bookmaker)
+                            WHEN 'draftkings' THEN 1
+                            WHEN 'fanduel' THEN 2
+                            ELSE 99
+                        END,
+                        snapshot_timestamp DESC
                 ) as rn
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
             WHERE player_lookup IN UNNEST(@player_lookups)
@@ -165,6 +207,7 @@ class BettingDataExtractor:
         prop_lines = {}
 
         # Batch query for efficiency - get all players at once
+        # Priority: DraftKings (1) > FanDuel (2) > Consensus (99)
         player_lookups = list(set([p[0] for p in player_game_pairs]))
 
         batch_query = f"""
@@ -177,13 +220,23 @@ class BettingDataExtractor:
                 bookmaker_last_update,
                 ROW_NUMBER() OVER (
                     PARTITION BY player_lookup
-                    ORDER BY is_best_line DESC, bookmaker_last_update DESC
+                    ORDER BY
+                        -- Bookmaker priority: DraftKings > FanDuel > others > Consensus
+                        CASE bookmaker
+                            WHEN 'DraftKings' THEN 1
+                            WHEN 'FanDuel' THEN 2
+                            WHEN 'BettingPros Consensus' THEN 99
+                            ELSE 50
+                        END,
+                        is_best_line DESC,
+                        bookmaker_last_update DESC
                 ) as rn
             FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
             WHERE player_lookup IN UNNEST(@player_lookups)
               AND game_date = @game_date
               AND market_type = 'points'
               AND is_active = TRUE
+              AND bet_side = 'over'  -- Only need one side for line value
         )
         SELECT
             player_lookup,
@@ -244,6 +297,65 @@ class BettingDataExtractor:
             logger.error(f"Data error extracting prop lines from BettingPros: {e}")
             for player_lookup, game_id in player_game_pairs:
                 prop_lines[(player_lookup, game_id)] = self._empty_prop_info()
+
+        return prop_lines
+
+    def extract_prop_lines_with_cascade(
+        self,
+        player_game_pairs: List[Tuple[str, str]],
+        target_date: date
+    ) -> Dict[Tuple[str, str], Dict]:
+        """
+        Extract prop lines using the full bookmaker cascade.
+
+        Cascade order:
+        1. Odds API DraftKings (primary, most real-time)
+        2. BettingPros DraftKings (fills 15% coverage gap)
+        3. Odds API FanDuel (if no DraftKings available)
+        4. BettingPros FanDuel (fallback)
+        5. BettingPros Consensus (last resort only)
+
+        Args:
+            player_game_pairs: List of (player_lookup, game_id) tuples
+            target_date: Target game date
+
+        Returns:
+            Dict mapping (player_lookup, game_id) to prop info dict with source tracking
+        """
+        # Step 1: Try Odds API first (already prioritizes DraftKings internally)
+        logger.info(f"Cascade: Trying Odds API for {len(player_game_pairs)} players")
+        prop_lines = self.extract_prop_lines_from_odds_api(player_game_pairs, target_date)
+
+        # Find players without lines from Odds API
+        missing_pairs = [
+            pair for pair in player_game_pairs
+            if prop_lines.get(pair, {}).get('current_line') is None
+        ]
+
+        if missing_pairs:
+            logger.info(f"Cascade: {len(missing_pairs)} players missing from Odds API, trying BettingPros")
+
+            # Step 2: Try BettingPros for missing players
+            # (already prioritizes DraftKings > FanDuel > Consensus internally)
+            bp_lines = self.extract_prop_lines_from_bettingpros(missing_pairs, target_date)
+
+            # Merge BettingPros results into main dict
+            filled_count = 0
+            for pair, bp_info in bp_lines.items():
+                if bp_info.get('current_line') is not None:
+                    # Add source prefix to distinguish
+                    bp_info['current_source'] = f"bettingpros_{bp_info.get('current_source', 'unknown')}"
+                    bp_info['opening_source'] = f"bettingpros_{bp_info.get('opening_source', 'unknown')}"
+                    prop_lines[pair] = bp_info
+                    filled_count += 1
+
+            logger.info(f"Cascade: BettingPros filled {filled_count} additional players")
+
+        # Log final coverage
+        total = len(player_game_pairs)
+        covered = sum(1 for pair in player_game_pairs
+                     if prop_lines.get(pair, {}).get('current_line') is not None)
+        logger.info(f"Cascade: Final coverage {covered}/{total} ({100*covered/total:.1f}%)")
 
         return prop_lines
 

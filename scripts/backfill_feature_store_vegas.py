@@ -67,7 +67,7 @@ def get_fixable_records(client: bigquery.Client, start_date: str, end_date: str)
         f.feature_version,
         f.feature_count,
         f.features,
-        f.quality_score,
+        f.feature_quality_score,
         f.quality_tier,
         p.current_points_line,
         p.opening_points_line,

@@ -1,14 +1,15 @@
 -- ============================================================================
--- Prediction Accuracy Table Schema (v4)
+-- Prediction Accuracy Table Schema (v5)
 -- ============================================================================
 -- Dataset: nba_predictions
 -- Table: prediction_accuracy
 -- Purpose: Grade predictions against actual results for ML training
--- Updated: 2026-01-12 - v4: Added DNP/injury voiding fields
+-- Updated: 2026-01-31 - v5: Added bookmaker tracking fields
 -- History:
 --   v2: Added system_id, signed_error, margin fields, thresholds
 --   v3: Added team_abbr, opponent_team_abbr, minutes_played, confidence_decile
 --   v4: Added is_voided, void_reason, pre_game_injury_flag, injury tracking
+--   v5: Added line_bookmaker, line_source_api for per-bookmaker hit rate analysis
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.prediction_accuracy` (
@@ -50,6 +51,17 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.prediction_accura
   -- Threshold Accuracy (was prediction within N points?)
   within_3_points BOOLEAN,
   within_5_points BOOLEAN,
+
+  -- Line Source Tracking (added v3.x)
+  has_prop_line BOOLEAN,                  -- TRUE if player had a real betting line
+  line_source STRING,                     -- 'ACTUAL_PROP', 'NO_PROP_LINE', 'ESTIMATED_AVG'
+  estimated_line_value NUMERIC(5, 1),     -- Estimated line if no prop line available
+  is_actionable BOOLEAN,                  -- TRUE if pick passed confidence tier filter
+  filter_reason STRING,                   -- Reason if filtered (low_confidence, etc.)
+
+  -- Bookmaker Tracking (v5) - For per-bookmaker hit rate analysis
+  line_bookmaker STRING,                  -- Sportsbook: DRAFTKINGS, FANDUEL, etc.
+  line_source_api STRING,                 -- API source: ODDS_API, BETTINGPROS
 
   -- DNP/Injury Voiding (v4) - Treat DNP like voided bets
   is_voided BOOLEAN,                    -- TRUE = exclude from accuracy metrics (like sportsbook void)
