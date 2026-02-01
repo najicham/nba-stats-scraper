@@ -1,0 +1,7 @@
+{
+  "name": "subset-picks",
+  "description": "Query picks from dynamic subsets with signal context",
+  "version": "1.0.0",
+  "created": "2026-02-01",
+  "author": "Session 70"
+}
