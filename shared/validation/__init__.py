@@ -1,60 +1,19 @@
 """
-Pipeline Validation Module
+Validation utilities for config and data validation.
 
-Comprehensive validation for the NBA stats processing pipeline.
-Validates data flow, completeness, and quality across all phases.
-
-Usage:
-    from shared.validation import validate_date, ValidationResult
-
-    result = validate_date('2021-10-19')
-    print(result.overall_status)
-
-Historical Completeness (Jan 2026):
-    from shared.validation.historical_completeness import assess_historical_completeness
-
-    result = assess_historical_completeness(games_found=8, games_available=50)
-    print(result.is_complete, result.is_bootstrap)
+Created: Session 70 (2026-02-01)
 """
 
-from shared.validation.config import (
-    EXPECTED_PREDICTION_SYSTEMS,
-    PHASE2_SOURCES,
-    PHASE3_TABLES,
-    PHASE4_TABLES,
-    QUALITY_TIERS,
-)
-
-# Historical Completeness Tracking (Data Cascade Architecture - Jan 2026)
-from shared.validation.historical_completeness import (
-    assess_historical_completeness,
-    should_skip_feature_generation,
-    HistoricalCompletenessResult,
-    WINDOW_SIZE,
-    MINIMUM_GAMES_THRESHOLD,
-)
-
-# Phase 3 Data Quality Check (Pipeline Resilience - Jan 2026)
-from shared.validation.phase3_data_quality_check import (
-    Phase3DataQualityChecker,
-    QualityCheckResult,
-    check_phase3_quality,
+from .scraper_config_validator import (
+    validate_enabled_scrapers,
+    should_process_scraper,
+    get_enabled_scrapers,
+    check_table_exists,
 )
 
 __all__ = [
-    'EXPECTED_PREDICTION_SYSTEMS',
-    'PHASE2_SOURCES',
-    'PHASE3_TABLES',
-    'PHASE4_TABLES',
-    'QUALITY_TIERS',
-    # Historical Completeness
-    'assess_historical_completeness',
-    'should_skip_feature_generation',
-    'HistoricalCompletenessResult',
-    'WINDOW_SIZE',
-    'MINIMUM_GAMES_THRESHOLD',
-    # Phase 3 Data Quality Check
-    'Phase3DataQualityChecker',
-    'QualityCheckResult',
-    'check_phase3_quality',
+    'validate_enabled_scrapers',
+    'should_process_scraper',
+    'get_enabled_scrapers',
+    'check_table_exists',
 ]
