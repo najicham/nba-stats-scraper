@@ -1,9 +1,15 @@
 # Firestore Heartbeats Investigation
 
 **Date:** 2026-02-01
-**Status:** 🔴 Active Issue - Requires Investigation
+**Status:** ✅ RESOLVED - See [Resolution Document](2026-02-01-FIRESTORE-HEARTBEATS-RESOLUTION.md)
 **Priority:** Medium (Monitoring broken, but pipeline working)
-**Session:** To be assigned
+**Session:** Completed by Sonnet 4.5 on 2026-02-01
+
+**Resolution Summary:**
+- Fixed missing Firestore permissions on prediction-worker service account
+- Added retry logic to heartbeat writes (commit c2a929f1)
+- Identified secondary issues (ImportError, processor name mismatch)
+- Full details in [FIRESTORE-HEARTBEATS-RESOLUTION.md](2026-02-01-FIRESTORE-HEARTBEATS-RESOLUTION.md)
 
 ---
 
