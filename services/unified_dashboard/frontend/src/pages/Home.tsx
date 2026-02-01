@@ -65,8 +65,8 @@ export default function Home() {
   const fetchData = async () => {
     try {
       setLoading(true)
-      // Call backend directly instead of relying on proxy
-      const apiUrl = process.env.REACT_APP_API_URL || 'http://localhost:8080'
+      // Call backend directly - use Vite env vars or default to localhost
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080'
       const response = await axios.get(`${apiUrl}/api/home`)
       setData(response.data)
       setLastRefresh(new Date())

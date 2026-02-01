@@ -29,7 +29,7 @@ WHERE bookmaker = 'BettingPros Consensus' AND bet_side = 'over'
 
 **Implication:** Model calibrated to Consensus lines, not DraftKings where users bet.
 
-**Documentation:** Full analysis at `docs/08-projects/current/odds-data-cascade-investigation/V8-TRAINING-DATA-ANALYSIS.md`
+**Documentation:** Full analysis at `docs/05-ml/V8-TRAINING-DATA-ANALYSIS.md`
 
 ---
 
@@ -162,7 +162,7 @@ scripts/backfill_feature_store_vegas.py                                      BUG
 
 ### New Files
 ```
-docs/08-projects/current/odds-data-cascade-investigation/V8-TRAINING-DATA-ANALYSIS.md
+docs/05-ml/V8-TRAINING-DATA-ANALYSIS.md
 .claude/skills/validate-scraped-data.md
 ```
 
@@ -269,7 +269,7 @@ Consider BettingPros for training data.
 
 ## Related Documents
 
-- **V8 Training Analysis:** `docs/08-projects/current/odds-data-cascade-investigation/V8-TRAINING-DATA-ANALYSIS.md`
+- **V8 Training Analysis:** `docs/05-ml/V8-TRAINING-DATA-ANALYSIS.md`
 - **Cascade Investigation:** `docs/08-projects/current/odds-data-cascade-investigation/README.md`
 - **Session 59 Handoff:** `docs/09-handoff/2026-01-31-SESSION-59-HANDOFF-FOR-CONTINUATION.md`
 

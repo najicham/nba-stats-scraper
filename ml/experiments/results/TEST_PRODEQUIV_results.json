@@ -1,0 +1,74 @@
+{
+  "experiment_id": "TEST_PRODEQUIV",
+  "model_path": "models/catboost_v10_33features_20260114_125142.cbm",
+  "evaluation_mode": "PRODUCTION-EQUIVALENT",
+  "production_equivalent": true,
+  "train_period": null,
+  "eval_period": {
+    "start": "2026-01-20",
+    "end": "2026-01-25",
+    "actual_start": "2026-01-20",
+    "actual_end": "2026-01-25",
+    "samples": 575,
+    "vegas_coverage": 1.0
+  },
+  "results": {
+    "mae": 5.1755,
+    "betting": {
+      "hit_rate": 0.5193370165745856,
+      "hit_rate_pct": 51.93,
+      "hits": 94,
+      "misses": 87,
+      "pushes": 0,
+      "bets_placed": 181,
+      "bets_graded": 181,
+      "roi": -0.008538422903063794,
+      "roi_pct": -0.85,
+      "profit": -1.5454545454545467,
+      "breakeven_hit_rate": 52.38,
+      "min_edge_threshold": 3.0
+    },
+    "by_confidence": {
+      "high_5+": {
+        "count": 80,
+        "graded": 80,
+        "hits": 38,
+        "hit_rate": 47.5
+      },
+      "medium_3-5": {
+        "count": 101,
+        "graded": 101,
+        "hits": 56,
+        "hit_rate": 55.45
+      },
+      "low_1-3": {
+        "count": 226,
+        "graded": 226,
+        "hits": 122,
+        "hit_rate": 53.98
+      },
+      "pass_<1": {
+        "count": 168,
+        "graded": 168,
+        "hits": 80,
+        "hit_rate": 47.62
+      }
+    },
+    "by_direction": {
+      "OVER": {
+        "count": 65,
+        "graded": 65,
+        "hits": 33,
+        "hit_rate": 50.77
+      },
+      "UNDER": {
+        "count": 116,
+        "graded": 116,
+        "hits": 61,
+        "hit_rate": 52.59
+      }
+    }
+  },
+  "monthly": null,
+  "evaluated_at": "2026-01-31T14:40:27.000783"
+}

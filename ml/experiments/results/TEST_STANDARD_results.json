@@ -1,0 +1,74 @@
+{
+  "experiment_id": "TEST_STANDARD",
+  "model_path": "models/catboost_v10_33features_20260114_125142.cbm",
+  "evaluation_mode": "STANDARD",
+  "production_equivalent": false,
+  "train_period": null,
+  "eval_period": {
+    "start": "2026-01-20",
+    "end": "2026-01-25",
+    "actual_start": "2026-01-20",
+    "actual_end": "2026-01-25",
+    "samples": 886,
+    "vegas_coverage": 0.649
+  },
+  "results": {
+    "mae": 4.7228,
+    "betting": {
+      "hit_rate": 0.5053191489361702,
+      "hit_rate_pct": 50.53,
+      "hits": 95,
+      "misses": 93,
+      "pushes": 0,
+      "bets_placed": 188,
+      "bets_graded": 188,
+      "roi": -0.03529980657640234,
+      "roi_pct": -3.53,
+      "profit": -6.63636363636364,
+      "breakeven_hit_rate": 52.38,
+      "min_edge_threshold": 3.0
+    },
+    "by_confidence": {
+      "high_5+": {
+        "count": 78,
+        "graded": 78,
+        "hits": 38,
+        "hit_rate": 48.72
+      },
+      "medium_3-5": {
+        "count": 110,
+        "graded": 110,
+        "hits": 57,
+        "hit_rate": 51.82
+      },
+      "low_1-3": {
+        "count": 228,
+        "graded": 228,
+        "hits": 120,
+        "hit_rate": 52.63
+      },
+      "pass_<1": {
+        "count": 159,
+        "graded": 159,
+        "hits": 84,
+        "hit_rate": 52.83
+      }
+    },
+    "by_direction": {
+      "OVER": {
+        "count": 70,
+        "graded": 70,
+        "hits": 34,
+        "hit_rate": 48.57
+      },
+      "UNDER": {
+        "count": 118,
+        "graded": 118,
+        "hits": 61,
+        "hit_rate": 51.69
+      }
+    }
+  },
+  "monthly": null,
+  "evaluated_at": "2026-01-31T14:39:22.977898"
+}
