@@ -102,7 +102,7 @@ def get_features_and_lines_for_date(
             f.days_rest
         FROM `{FEATURE_STORE_TABLE}` f
         WHERE f.game_date = @game_date
-          AND f.feature_count = 33  -- Only v2_33features records
+          AND f.feature_count IN (33, 37)  -- Accept v2_33features and v2_37features
     ),
     best_lines AS (
         SELECT
