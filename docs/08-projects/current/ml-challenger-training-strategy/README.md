@@ -120,7 +120,8 @@ V8 was trained on data with several quality issues:
 
 ## Related Documents
 
-- [V8 Training Distribution Mismatch](./V8-TRAINING-DISTRIBUTION-MISMATCH.md) - **NEW** Critical root cause analysis
+- [Experiment Variables](./EXPERIMENT-VARIABLES.md) - **NEW** All configurable training variables
+- [V8 Training Distribution Mismatch](./V8-TRAINING-DISTRIBUTION-MISMATCH.md) - Critical root cause analysis
 - [V8 Training Data Analysis](./V8-TRAINING-DATA-ANALYSIS.md) - Bookmaker analysis
 - [Data Gaps 2025-26 Season](./DATA-GAPS-2025-26-SEASON.md) - Data availability
 - [Vegas Line Root Cause](../feature-quality-monitoring/2026-02-01-VEGAS-LINE-ROOT-CAUSE-ANALYSIS.md)
@@ -135,6 +136,7 @@ V8 was trained on data with several quality issues:
 |---------|------|-----------|
 | 60 | 2026-01-31 | V8 training data investigation, DraftKings cascade implementation |
 | 62 | 2026-02-01 | **MAJOR:** Discovered team_win_pct bug, vegas coverage drop, training/inference mismatch |
+| 68 | 2026-02-01 | Added experiment variables doc, fixed line source in quick_retrain.py |
 
 ---
 
