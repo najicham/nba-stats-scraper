@@ -180,6 +180,40 @@ bq query --use_legacy_sql=false "
 
 Always query `prediction_accuracy` for grading validation, accuracy metrics, and ML analysis.
 
+### Hit Rate Measurement (IMPORTANT)
+
+**Always use these two standard filters when reporting hit rates:**
+
+| Filter Name | Definition | Use Case |
+|-------------|------------|----------|
+| **Premium Picks** | `confidence_score >= 0.92 AND ABS(predicted_points - line_value) >= 3` | Highest hit rate, fewer bets |
+| **High Edge Picks** | `ABS(predicted_points - line_value) >= 5` (any confidence) | Larger sample size |
+
+**Don't confuse these metrics:**
+
+| Metric | What It Measures | Good Value |
+|--------|------------------|------------|
+| **Hit Rate** | % correct OVER/UNDER calls (`prediction_correct = TRUE`) | ≥52.4% |
+| **Model Beats Vegas** | % where model closer to actual than Vegas line | ≥50% |
+
+These are DIFFERENT. You can have 78% hit rate but only 40% model-beats-vegas.
+
+**Always show weekly trends** to catch drift - monthly averages can mask recent degradation.
+
+```sql
+-- Standard hit rate query
+SELECT
+  'Premium (92+ conf, 3+ edge)' as filter,
+  COUNT(*) as bets,
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate
+FROM nba_predictions.prediction_accuracy
+WHERE system_id = 'catboost_v8'
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+  AND confidence_score >= 0.92
+  AND ABS(predicted_points - line_value) >= 3
+  AND prediction_correct IS NOT NULL
+```
+
 ### Schedule Data
 
 **IMPORTANT:** Use the correct schedule table:
