@@ -305,9 +305,101 @@ ORDER BY coverage_pct ASC"
    GROUP BY 1, 2
    ```
 
-### Phase 0.5: Orchestrator Health (CRITICAL)
+### Phase 0.5: Pre-Game Signal Check (NEW - Session 70)
 
-**IMPORTANT**: Check orchestrator health BEFORE other validations. If ANY Phase 0.5 check fails, this is a P1 CRITICAL issue - STOP and report immediately.
+**IMPORTANT**: Check daily prediction signals for model performance indicators.
+
+**Why this matters**: The pct_over signal (% of predictions recommending OVER) correlates with model performance. When pct_over <25% (UNDER_HEAVY), historical hit rate drops from 82% → 54% on high-edge picks (p=0.0065).
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Check today's pre-game signals for V9
+SELECT
+  game_date,
+  system_id,
+  total_picks,
+  high_edge_picks,
+  pct_over,
+  pct_under,
+  skew_category,
+  volume_category,
+  daily_signal,
+  signal_explanation
+FROM \`nba-props-platform.nba_predictions.daily_prediction_signals\`
+WHERE game_date = CURRENT_DATE()
+  AND system_id = 'catboost_v9'
+ORDER BY system_id"
+```
+
+**Expected**: Signal data exists for today
+
+**Signal Interpretation**:
+
+| Signal | pct_over | Meaning | Historical Performance |
+|--------|----------|---------|----------------------|
+| 🟢 **GREEN** | 25-40% | Balanced predictions | 82% hit rate on high-edge picks |
+| 🟡 **YELLOW** | >40% OR <3 high-edge picks | Unusual skew or low volume | Monitor closely |
+| 🔴 **RED** | <25% | Heavy UNDER skew | 54% hit rate - barely above breakeven |
+
+**Thresholds**:
+- **GREEN**: Normal operation, full confidence in picks
+- **YELLOW**: Caution - monitor performance closely
+- **RED**: Warning - reduce bet sizing or skip day
+
+**If RED signal detected**:
+1. ⚠️ P2 WARNING: Model showing heavy UNDER skew
+2. Impact: High-edge picks historically 54% vs 82% on balanced days
+3. Recommendation: Reduce bet sizing by 50% or skip high-edge picks today
+4. Note: This is a pre-game indicator, not a hard failure
+5. Track actual performance tonight to validate signal
+
+**If signal data missing**:
+1. Check if predictions exist for today: `bq query "SELECT COUNT(*) FROM nba_predictions.player_prop_predictions WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v9'"`
+2. If predictions exist but no signal → Signal calculation may need manual run
+3. Run signal calculation: See `docs/08-projects/current/pre-game-signals-strategy/DYNAMIC-SUBSET-DESIGN.md` for INSERT query
+
+**Output Format**:
+
+```
+### Pre-Game Signal Check
+| Metric | Value | Status |
+|--------|-------|--------|
+| pct_over | 35.5% | 🟢 BALANCED |
+| high_edge_picks | 8 | ✅ OK |
+| Daily Signal | GREEN | Full confidence |
+
+Signal: Balanced signals - historical 82% hit rate on high-edge picks
+```
+
+Or if RED:
+
+```
+### Pre-Game Signal Check
+| Metric | Value | Status |
+|--------|-------|--------|
+| pct_over | 10.6% | 🔴 UNDER_HEAVY |
+| high_edge_picks | 4 | ✅ OK |
+| Daily Signal | RED | ⚠️ CAUTION |
+
+⚠️ WARNING: Heavy UNDER skew detected
+   - Historical performance: 54% hit rate vs 82% on balanced days
+   - Statistical significance: p=0.0065
+   - Recommendation: Reduce bet sizing by 50% or skip high-edge picks
+   - This is Day 1 analysis - validate signal tonight
+
+Signal: Heavy UNDER skew - historically 54% hit rate vs 82% on balanced days
+```
+
+**Related Documentation**:
+- Signal discovery: `docs/08-projects/current/pre-game-signals-strategy/README.md`
+- System design: `docs/08-projects/current/pre-game-signals-strategy/DYNAMIC-SUBSET-DESIGN.md`
+- Statistical validation: Session 70 findings (23 days, p=0.0065)
+
+### Phase 0.6: Orchestrator Health (CRITICAL)
+
+**IMPORTANT**: Check orchestrator health BEFORE other validations. If ANY Phase 0.6 check fails, this is a P1 CRITICAL issue - STOP and report immediately.
 
 **Why this matters**: Orchestrator failures can cause 2+ day silent data gaps. The orchestrator transitions data between phases (2→3, 3→4, 4→5) after all processors complete. If it fails, new data stops flowing even though scrapers keep running.
 
@@ -493,7 +585,7 @@ EOF
 
 **Critical Alerts**:
 
-If ANY Phase 0.5 check fails, send alert to critical error channel:
+If ANY Phase 0.6 check fails, send alert to critical error channel:
 
 ```bash
 # Use the critical error Slack webhook
@@ -517,12 +609,12 @@ curl -X POST "$SLACK_WEBHOOK_URL_ERROR" \
 
 **Slack Webhook Configuration**:
 - Primary alerts: `SLACK_WEBHOOK_URL` → #daily-orchestration
-- Critical errors: `SLACK_WEBHOOK_URL_ERROR` → #app-error-alerts ⚠️ **Use this for Phase 0.5 failures**
+- Critical errors: `SLACK_WEBHOOK_URL_ERROR` → #app-error-alerts ⚠️ **Use this for Phase 0.6 failures**
 - Warnings: `SLACK_WEBHOOK_URL_WARNING` → #nba-alerts
 
-**If ALL Phase 0.5 checks pass**: Continue to Phase 1
+**If ALL Phase 0.6 checks pass**: Continue to Phase 1
 
-**If ANY Phase 0.5 check fails**: STOP, report issue with P1 CRITICAL severity, do NOT continue to Phase 1
+**If ANY Phase 0.6 check fails**: STOP, report issue with P1 CRITICAL severity, do NOT continue to Phase 1
 
 ### Phase 1: Run Baseline Health Check
 
