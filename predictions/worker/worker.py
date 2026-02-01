@@ -52,6 +52,12 @@ validate_required_env_vars(
 )
 logger.info("✓ Environment variables validated")
 
+# Session 64: Build tracking for debugging hit rate issues
+# These enable fast investigation by filtering predictions by code version
+BUILD_COMMIT_SHA = os.environ.get('BUILD_COMMIT', 'unknown')
+DEPLOYMENT_REVISION = os.environ.get('K_REVISION', 'unknown')
+logger.info(f"✓ Build tracking: commit={BUILD_COMMIT_SHA[:8] if BUILD_COMMIT_SHA != 'unknown' else 'unknown'}, revision={DEPLOYMENT_REVISION}")
+
 
 def validate_ml_model_availability():
     """
@@ -1630,7 +1636,27 @@ def format_prediction_for_bigquery(
             json.dumps(features.get('teammate_injury_impact', {}).get('out_starters'))
             if features.get('teammate_injury_impact', {}).get('out_starters') else None
         ),
-        'injury_checked_at': features.get('injury_checked_at')
+        'injury_checked_at': features.get('injury_checked_at'),
+
+        # Session 64: Build tracking for debugging hit rate issues
+        # These enable fast investigation by filtering predictions by code version
+        'build_commit_sha': BUILD_COMMIT_SHA,
+        'deployment_revision': DEPLOYMENT_REVISION,
+        'predicted_at': datetime.utcnow().isoformat(),
+
+        # Session 64: Critical features snapshot for debugging
+        # Without this, we couldn't prove the Jan 2026 hit rate collapse was caused
+        # by broken feature enrichment (took 2+ hours to investigate)
+        'critical_features': json.dumps({
+            'vegas_points_line': features.get('vegas_points_line'),
+            'has_vegas_line': 1.0 if features.get('vegas_points_line') else 0.0,
+            'ppm_avg_last_10': features.get('ppm_avg_last_10'),
+            'avg_points_vs_opponent': features.get('avg_points_vs_opponent'),
+            'team_win_pct': features.get('team_win_pct'),
+            'pace_score': features.get('pace_score'),
+            'usage_spike_score': features.get('usage_spike_score'),
+            'feature_quality_score': features.get('feature_quality_score'),
+        }),
     }
 
     # Add system-specific fields
