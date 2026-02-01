@@ -56,7 +56,9 @@ This caused V8 hit rate to collapse from 70-76% to 48-67% (high-edge: 86% → 60
 
 **Impact:** Daily mode gets Vegas lines from Phase 3 which only has 43% coverage, while backfill queries raw betting tables with 95% coverage.
 
-**See:** `2026-02-01-SESSION-63-INVESTIGATION-FINDINGS.md` - Full investigation
+**See:**
+- `2026-02-01-SESSION-63-INVESTIGATION-FINDINGS.md` - Full investigation
+- `V8-FIX-EXECUTION-PLAN.md` - Step-by-step fix plan
 
 ---
 

@@ -140,13 +140,74 @@ A docs/09-handoff/2026-02-01-SESSION-63-HANDOFF.md
 
 ---
 
+## Execution Plan Created
+
+**See:** `docs/08-projects/current/feature-quality-monitoring/V8-FIX-EXECUTION-PLAN.md`
+
+### Phase 1: Verify Hypothesis (DO FIRST)
+
+**Test Date:** `2026-01-12` (43.7% hit rate, 87 predictions)
+
+1. Save current predictions and features to CSV
+2. Create staging table `ml_feature_store_v2_staging`
+3. Re-run feature store for Jan 12 with backfill_mode=True → staging
+4. Compare Vegas coverage (expect: 43% → 90%+)
+5. Re-run predictions using staging features
+6. Compare hit rates
+
+**Decision Point:** If Vegas coverage increases AND hit rate improves → proceed to Phase 2
+
+### Phase 2: Fix Daily Orchestration
+
+**Recommended Fix:** Modify `_batch_extract_vegas_lines()` to ALWAYS use raw betting tables.
+
+**Rationale:** Raw tables have better coverage, no downside to using them for daily.
+
+### Phase 3: Add Monitoring
+
+1. Add `feature_source_mode` column ('daily'/'backfill')
+2. Add `predicted_at` timestamp
+3. Add broken feature detection to /validate-daily
+4. Add daily vs backfill comparison alert
+
+### Phase 4: Backfill & Consider Retrain
+
+1. Re-run feature store backfill (Nov 2025 - Feb 2026)
+2. Verify coverage >90%
+3. Decide on V8 retrain vs V9
+
+---
+
 ## Next Session Checklist
 
-1. [ ] Commit Session 62+63 changes
-2. [ ] Fix daily Vegas source (critical)
-3. [ ] Test fix by re-running predictions for a few Jan 9+ dates
-4. [ ] Verify hit rates improve
-5. [ ] Add monitoring for daily vs backfill differences
+1. [x] Commit Session 62+63 changes ✅
+2. [ ] **Phase 1.1:** Save current state for Jan 12
+3. [ ] **Phase 1.2:** Create test script for single-date backfill
+4. [ ] **Phase 1.3:** Run test and compare features
+5. [ ] **Phase 1.4:** Re-run predictions (manual if needed)
+6. [ ] **Phase 1.5:** Analyze results and decide
+
+---
+
+## Quick Commands for Next Session
+
+```bash
+# Save current predictions for Jan 12
+bq query --use_legacy_sql=false --format=csv "
+SELECT player_lookup, predicted_points, actual_points, prediction_correct
+FROM nba_predictions.prediction_accuracy
+WHERE system_id = 'catboost_v8' AND game_date = '2026-01-12'
+" > /tmp/predictions_jan12_before.csv
+
+# Check current Vegas coverage for Jan 12
+bq query --use_legacy_sql=false "
+SELECT
+  COUNT(*) as total,
+  COUNTIF(features[OFFSET(25)] > 0) as with_vegas,
+  ROUND(100.0 * COUNTIF(features[OFFSET(25)] > 0) / COUNT(*), 1) as coverage
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date = '2026-01-12' AND ARRAY_LENGTH(features) >= 33"
+```
 
 ---
 
