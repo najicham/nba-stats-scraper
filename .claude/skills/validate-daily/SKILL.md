@@ -217,6 +217,94 @@ else:
 "
 ```
 
+### Phase 0.4: Grading Completeness Check (Session 68 Fix)
+
+**IMPORTANT**: Check if grading pipeline is up-to-date for all active models.
+
+**Why this matters**: Backfilled predictions may not be graded yet. If `prediction_accuracy` is missing data, model analysis will be wrong.
+
+**Real Example (Session 68)**: V9 had 6,665 predictions but only 94 graded (1.4% coverage). Analysis incorrectly showed 42% hit rate when actual was 79.4%.
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Check grading completeness for all active models (last 7 days)
+WITH prediction_counts AS (
+  SELECT
+    'player_prop_predictions' as source,
+    system_id,
+    COUNT(*) as record_count
+  FROM nba_predictions.player_prop_predictions
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+    AND current_points_line IS NOT NULL
+  GROUP BY system_id
+
+  UNION ALL
+
+  SELECT
+    'prediction_accuracy' as source,
+    system_id,
+    COUNT(*) as record_count
+  FROM nba_predictions.prediction_accuracy
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  GROUP BY system_id
+)
+SELECT
+  system_id,
+  MAX(CASE WHEN source = 'player_prop_predictions' THEN record_count END) as predictions,
+  MAX(CASE WHEN source = 'prediction_accuracy' THEN record_count END) as graded,
+  ROUND(100.0 * MAX(CASE WHEN source = 'prediction_accuracy' THEN record_count END) /
+        NULLIF(MAX(CASE WHEN source = 'player_prop_predictions' THEN record_count END), 0), 1) as coverage_pct,
+  CASE
+    WHEN ROUND(100.0 * MAX(CASE WHEN source = 'prediction_accuracy' THEN record_count END) /
+         NULLIF(MAX(CASE WHEN source = 'player_prop_predictions' THEN record_count END), 0), 1) < 50
+    THEN '🔴 CRITICAL - Run grading backfill'
+    WHEN ROUND(100.0 * MAX(CASE WHEN source = 'prediction_accuracy' THEN record_count END) /
+         NULLIF(MAX(CASE WHEN source = 'player_prop_predictions' THEN record_count END), 0), 1) < 80
+    THEN '🟡 WARNING - Partial grading gap'
+    ELSE '✅ OK'
+  END as status
+FROM prediction_counts
+GROUP BY system_id
+ORDER BY coverage_pct ASC"
+```
+
+**Expected**: All models show ≥80% grading coverage
+
+**Thresholds**:
+- **<50% coverage** → 🔴 CRITICAL - Grading backfill needed immediately
+- **50-80% coverage** → 🟡 WARNING - Partial gap, may affect analysis
+- **≥80% coverage** → ✅ OK
+
+**If CRITICAL or WARNING**:
+
+1. Run grading backfill:
+   ```bash
+   PYTHONPATH=. python backfill_jobs/grading/prediction_accuracy/prediction_accuracy_grading_backfill.py \
+     --start-date <first-date> --end-date <last-date>
+   ```
+
+2. **Until grading is complete**, use this query for accurate model analysis:
+   ```sql
+   -- Correct approach when prediction_accuracy is incomplete
+   SELECT
+     p.system_id,
+     CASE WHEN ABS(p.predicted_points - p.current_points_line) >= 5 THEN 'High Edge' ELSE 'Other' END as tier,
+     COUNT(*) as bets,
+     ROUND(100.0 * COUNTIF(
+       (pgs.points > p.current_points_line AND p.recommendation = 'OVER') OR
+       (pgs.points < p.current_points_line AND p.recommendation = 'UNDER')
+     ) / NULLIF(COUNTIF(pgs.points != p.current_points_line), 0), 1) as hit_rate
+   FROM nba_predictions.player_prop_predictions p
+   JOIN nba_analytics.player_game_summary pgs
+     ON p.player_lookup = pgs.player_lookup AND p.game_date = pgs.game_date
+   WHERE p.system_id = 'catboost_v9'
+     AND p.current_points_line IS NOT NULL
+     AND p.game_date >= '2026-01-09'
+   GROUP BY 1, 2
+   ```
+
 ### Phase 0.5: Orchestrator Health (CRITICAL)
 
 **IMPORTANT**: Check orchestrator health BEFORE other validations. If ANY Phase 0.5 check fails, this is a P1 CRITICAL issue - STOP and report immediately.
