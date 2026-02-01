@@ -953,7 +953,69 @@ ORDER BY s.game_date DESC"
 
 **Known Issue**: BDB had an outage Jan 17-24, 2026 with 0-57% coverage. Games from that period have been marked as failed in pending_bdb_games. Current coverage (Jan 25+) is 100%.
 
-### Priority 2E: Model Drift Monitoring (Session 28)
+### Priority 2E: Scraped Data Coverage (Session 60)
+
+Quick check for raw odds data gaps in the last 7 days:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Quick scraped data coverage check (last 7 days)
+WITH schedule AS (
+  SELECT game_date, COUNT(*) as games
+  FROM \`nba-props-platform.nba_raw.nbac_schedule\`
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+    AND game_date < CURRENT_DATE()
+    AND game_status_text = 'Final'
+  GROUP BY 1
+),
+game_lines AS (
+  SELECT game_date, COUNT(DISTINCT game_id) as games_with_lines
+  FROM \`nba-props-platform.nba_raw.odds_api_game_lines\`
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+    AND market_key = 'spreads'
+  GROUP BY 1
+),
+player_props AS (
+  SELECT game_date, COUNT(DISTINCT player_lookup) as players_with_props
+  FROM \`nba-props-platform.nba_raw.odds_api_player_points_props\`
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  GROUP BY 1
+)
+SELECT
+  s.game_date,
+  s.games as scheduled,
+  COALESCE(gl.games_with_lines, 0) as game_lines,
+  COALESCE(pp.players_with_props, 0) as player_props,
+  CASE
+    WHEN COALESCE(gl.games_with_lines, 0) = 0 THEN '🔴 MISSING LINES'
+    WHEN COALESCE(gl.games_with_lines, 0) < s.games * 0.9 THEN '🟡 PARTIAL LINES'
+    ELSE '✅'
+  END as lines_status,
+  CASE
+    WHEN COALESCE(pp.players_with_props, 0) = 0 THEN '🔴 MISSING PROPS'
+    WHEN COALESCE(pp.players_with_props, 0) < 200 THEN '🟡 LOW PROPS'
+    ELSE '✅'
+  END as props_status
+FROM schedule s
+LEFT JOIN game_lines gl ON s.game_date = gl.game_date
+LEFT JOIN player_props pp ON s.game_date = pp.game_date
+ORDER BY s.game_date DESC"
+```
+
+**Expected**: All dates show ✅ for both lines and props
+
+**Thresholds**:
+- **Game lines**: ≥90% of scheduled games should have spreads
+- **Player props**: ≥200 players per game day expected
+
+**If gaps found**:
+1. Run `/validate-scraped-data` for full analysis (checks GCS vs BigQuery)
+2. Determine if data exists in GCS but wasn't processed → run processor
+3. Determine if data needs scraping from historical API → run backfill scraper
+
+**Note**: This is a quick check. For historical gap analysis or determining if gaps need scraping vs processing, use `/validate-scraped-data`.
+
+### Priority 2F: Model Drift Monitoring (Session 28)
 
 #### Weekly Hit Rate Trend
 
@@ -1431,6 +1493,8 @@ Key fields:
 | **Model Bias** | ±2 pts | ±3-5 pts | >±5 pts |
 | **Vegas Edge** | >0.5 pts | 0-0.5 pts | <0 pts |
 | **BDB Coverage** | ≥90% | 50-89% | <50% |
+| **Game Lines Coverage** | ≥90% | 70-89% | <70% |
+| **Player Props Coverage** | ≥200/day | 100-199/day | <100/day |
 
 **Key Thresholds to Remember**:
 - **63% minutes coverage** → CRITICAL (not WARNING!)
