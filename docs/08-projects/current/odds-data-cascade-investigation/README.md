@@ -393,11 +393,49 @@ User proposed: `Odds API DK > Odds API FD > BettingPros DK > BettingPros FD`
    - BettingPros Consensus is an aggregate (may have slight delay)
    - Having BettingPros as fallback increases coverage to ~100%
 
+### Coverage Comparison: Odds API vs BettingPros DraftKings (2024-25 Season)
+
+After accounting for over/under and multiple snapshots (apples-to-apples):
+
+| Metric | Odds API DK | BettingPros DK | Difference |
+|--------|-------------|----------------|------------|
+| **Unique player/games** | 15,855 | 18,254 | **+2,399 (15% more)** |
+| Game days | 213 | 213 | Same |
+| Unique players | 383 | 413 | +30 more |
+
+**Overlap Analysis:**
+
+| Category | Player/Games |
+|----------|-------------|
+| In **BOTH** sources | 14,754 (93% of Odds API) |
+| **Only** in Odds API | 1,101 |
+| **Only** in BettingPros | 3,500 |
+
+**Conclusion:** BettingPros DraftKings has 15% more coverage, primarily from additional
+bench/lower-minute players that Odds API doesn't capture.
+
+### Recommended Cascade (Updated)
+
+Based on coverage analysis, the cascade should be:
+
+```
+1. Odds API DraftKings (primary - most real-time)
+2. BettingPros DraftKings (fills 15% coverage gap)
+3. Odds API FanDuel (if no DK available)
+4. BettingPros FanDuel (fallback)
+5. BettingPros Consensus (last resort)
+```
+
+**Rationale:** Use Odds API DraftKings first (most real-time), but fall back to
+BettingPros DraftKings for the ~2,400 player/games that Odds API doesn't have.
+This gives us DraftKings-consistent lines with maximum coverage.
+
 ### Current Gaps
 
 1. **Player props don't have explicit DK > FD priority** - Just takes "latest" snapshot
 2. **No cross-source bookmaker normalization** - "DraftKings" vs "draftkings" vs "DK"
 3. **Phase 3 queries both sources in UNION** - Doesn't prioritize
+4. **BettingPros DraftKings not used as DK fallback** - Currently falls to Consensus
 
 ### Implementation Status
 
