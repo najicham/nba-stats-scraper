@@ -391,14 +391,26 @@ class UpcomingTeamGameContextProcessor(
         season_year = self.target_date.year if self.target_date.month >= 10 else self.target_date.year - 1
         self.season_start_date = date(season_year, 10, 1)
 
-        # SMART REPROCESSING: Check if we can skip processing
-        skip, reason = self.should_skip_processing(self.target_date)
-        if skip:
-            logger.info(f"✅ SMART REPROCESSING: Skipping processing - {reason}")
-            self.raw_data = []
-            return
+        # SMART REPROCESSING DISABLED for forward-looking processors
+        #
+        # This processor generates context for UPCOMING games, which means:
+        # - Even if Phase 2 source data hasn't changed, we need to run
+        # - New future games appear on the schedule that need context calculated
+        # - Fatigue/travel metrics change as teams play more games
+        #
+        # Smart-skip is appropriate for HISTORICAL processors (player_game_summary, team_offense)
+        # but INCORRECT for FORWARD-LOOKING processors (upcoming_team_game_context).
+        #
+        # Bug fixed: 2026-01-31 - Previously caused data gaps when smart-skip incorrectly
+        # skipped generating context for Jan 29-31 games.
+        #
+        # skip, reason = self.should_skip_processing(self.target_date)
+        # if skip:
+        #     logger.info(f"✅ SMART REPROCESSING: Skipping processing - {reason}")
+        #     self.raw_data = []
+        #     return
 
-        logger.info(f"🔄 PROCESSING: {reason}")
+        logger.info(f"🔄 PROCESSING: Forward-looking processor - always run to generate upcoming game context")
 
         # ====================================================================
         # STEP 1: Check Dependencies
@@ -421,11 +433,11 @@ class UpcomingTeamGameContextProcessor(
             end_date = date.fromisoformat(end_date_str)
         else:
             end_date = end_date_str
-        
-        # Check all dependencies
+
+        # Check all dependencies (requires string dates)
         dep_check = self.check_dependencies(
-            start_date=start_date,
-            end_date=end_date
+            start_date=start_date_str,
+            end_date=end_date_str
         )
         
         # Log dependency status

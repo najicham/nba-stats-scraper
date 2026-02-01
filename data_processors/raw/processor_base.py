@@ -1602,138 +1602,144 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
             raise ValueError(error_msg)
         
         if not rows:
-            logger.warning("No rows to insert")
-            return
-        
-        # Insert to BigQuery using batch loading (not streaming)
-        logger.info(f"Batch loading {len(rows)} rows to {table_id}")
-        
-        try:
-            import io
-            import json
-            
-            # Get target table schema for enforcement
-            try:
-                table = self.bq_client.get_table(table_id)
-                table_schema = table.schema
-            except Exception as schema_e:
-                logger.warning(f"Could not get table schema, proceeding without enforcement: {schema_e}")
-                table_schema = None
-            
-            # Convert rows to NDJSON
-            ndjson_data = "\n".join(json.dumps(row) for row in rows)
-            ndjson_bytes = ndjson_data.encode('utf-8')
-            
-            # Configure load job with schema enforcement
-            job_config = bigquery.LoadJobConfig(
-                schema=table_schema,  # Enforce exact schema
-                source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
-                write_disposition=self.write_disposition,
-                autodetect=False
-            )
-            
-            # Load to target table
-            load_job = self.bq_client.load_table_from_file(
-                io.BytesIO(ndjson_bytes),
-                table_id,
-                job_config=job_config
-            )
-
-            # Wait for completion with retry logic for serialization conflicts
-            retry_config = retry.Retry(
-                predicate=is_serialization_error,
-                initial=1.0,      # Start with 1 second
-                maximum=60.0,     # Max 60 seconds between retries
-                multiplier=2.0,   # Double delay each retry
-                deadline=300.0,   # Total max 5 minutes
-                timeout=60.0      # Individual operation timeout
-            )
+            logger.warning("No rows to insert - completing without BigQuery write")
+            # IMPORTANT: Don't return early! We need to publish completion event
+            # even for 0-record runs so downstream phases are triggered.
+            # This fixes orchestration gaps where Phase 3 processors aren't triggered
+            # when Phase 2 completes with 0 records.
+            self.stats['records_saved'] = 0
+            self.stats['zero_record_completion'] = True
+            # Fall through to end of method so completion event gets published
+        else:
+            # Insert to BigQuery using batch loading (not streaming)
+            logger.info(f"Batch loading {len(rows)} rows to {table_id}")
 
             try:
-                # Use retry wrapper for serialization conflicts
-                retry_config(load_job.result)(timeout=60)
-                self.stats["rows_inserted"] = len(rows)
-                logger.info(f"✅ Successfully batch loaded {len(rows)} rows")
-
-            except Exception as load_e:
-                # Retry logic for streaming buffer conflicts (fixed 2026-01-25)
-                # Previously: rows were silently skipped causing data loss
-                # Now: exponential backoff retry before failing
-                if "streaming buffer" in str(load_e).lower():
-                    max_retries = 3
-                    retry_successful = False
-
-                    for attempt in range(max_retries):
-                        backoff_seconds = (2 ** attempt) * 60  # 60s, 120s, 240s
-                        logger.warning(
-                            f"⚠️ Streaming buffer conflict detected (attempt {attempt + 1}/{max_retries}). "
-                            f"Retrying in {backoff_seconds}s for {len(rows)} rows"
-                        )
-                        time.sleep(backoff_seconds)
-
-                        try:
-                            # Retry the load operation with same parameters as original
-                            load_job = self.bq_client.load_table_from_file(
-                                io.BytesIO(ndjson_bytes),
-                                table_id,
-                                job_config=job_config
+                import io
+                import json
+                
+                # Get target table schema for enforcement
+                try:
+                    table = self.bq_client.get_table(table_id)
+                    table_schema = table.schema
+                except Exception as schema_e:
+                    logger.warning(f"Could not get table schema, proceeding without enforcement: {schema_e}")
+                    table_schema = None
+                
+                # Convert rows to NDJSON
+                ndjson_data = "\n".join(json.dumps(row) for row in rows)
+                ndjson_bytes = ndjson_data.encode('utf-8')
+                
+                # Configure load job with schema enforcement
+                job_config = bigquery.LoadJobConfig(
+                    schema=table_schema,  # Enforce exact schema
+                    source_format=bigquery.SourceFormat.NEWLINE_DELIMITED_JSON,
+                    write_disposition=self.write_disposition,
+                    autodetect=False
+                )
+                
+                # Load to target table
+                load_job = self.bq_client.load_table_from_file(
+                    io.BytesIO(ndjson_bytes),
+                    table_id,
+                    job_config=job_config
+                )
+    
+                # Wait for completion with retry logic for serialization conflicts
+                retry_config = retry.Retry(
+                    predicate=is_serialization_error,
+                    initial=1.0,      # Start with 1 second
+                    maximum=60.0,     # Max 60 seconds between retries
+                    multiplier=2.0,   # Double delay each retry
+                    deadline=300.0,   # Total max 5 minutes
+                    timeout=60.0      # Individual operation timeout
+                )
+    
+                try:
+                    # Use retry wrapper for serialization conflicts
+                    retry_config(load_job.result)(timeout=60)
+                    self.stats["rows_inserted"] = len(rows)
+                    logger.info(f"✅ Successfully batch loaded {len(rows)} rows")
+    
+                except Exception as load_e:
+                    # Retry logic for streaming buffer conflicts (fixed 2026-01-25)
+                    # Previously: rows were silently skipped causing data loss
+                    # Now: exponential backoff retry before failing
+                    if "streaming buffer" in str(load_e).lower():
+                        max_retries = 3
+                        retry_successful = False
+    
+                        for attempt in range(max_retries):
+                            backoff_seconds = (2 ** attempt) * 60  # 60s, 120s, 240s
+                            logger.warning(
+                                f"⚠️ Streaming buffer conflict detected (attempt {attempt + 1}/{max_retries}). "
+                                f"Retrying in {backoff_seconds}s for {len(rows)} rows"
                             )
-                            retry_config(load_job.result)(timeout=60)
-                            self.stats["rows_inserted"] = len(rows)
-                            logger.info(f"✅ Successfully loaded {len(rows)} rows after {attempt + 1} retries")
-                            retry_successful = True
-                            break
-                        except Exception as retry_e:
-                            if "streaming buffer" not in str(retry_e).lower():
-                                # Different error - fail immediately
-                                raise retry_e
-                            # Continue retrying if still streaming buffer issue
-                            if attempt == max_retries - 1:
-                                # Final attempt failed
-                                logger.error(
-                                    f"❌ Streaming buffer conflict persists after {max_retries} retries. "
-                                    f"FAILING to prevent data loss of {len(rows)} rows"
+                            time.sleep(backoff_seconds)
+    
+                            try:
+                                # Retry the load operation with same parameters as original
+                                load_job = self.bq_client.load_table_from_file(
+                                    io.BytesIO(ndjson_bytes),
+                                    table_id,
+                                    job_config=job_config
                                 )
-
-                    if not retry_successful:
-                        # Notify operators and raise exception (don't silently skip)
-                        try:
-                            notify_error(
-                                title=f"Streaming Buffer Failure: {self.__class__.__name__}",
-                                message=f"Failed to load {len(rows)} rows after {max_retries} retries due to streaming buffer conflicts",
-                                details={
-                                    'processor': self.__class__.__name__,
-                                    'run_id': self.run_id,
-                                    'rows_affected': len(rows),
-                                    'table': self.table_name,
-                                    'dataset': self.dataset_id,
-                                    'retries_attempted': max_retries,
-                                    'total_wait_time': '420 seconds (7 minutes)',
-                                    'remediation': 'Check for active streaming inserts. Manual intervention required.',
-                                },
-                                processor_name=self.__class__.__name__
+                                retry_config(load_job.result)(timeout=60)
+                                self.stats["rows_inserted"] = len(rows)
+                                logger.info(f"✅ Successfully loaded {len(rows)} rows after {attempt + 1} retries")
+                                retry_successful = True
+                                break
+                            except Exception as retry_e:
+                                if "streaming buffer" not in str(retry_e).lower():
+                                    # Different error - fail immediately
+                                    raise retry_e
+                                # Continue retrying if still streaming buffer issue
+                                if attempt == max_retries - 1:
+                                    # Final attempt failed
+                                    logger.error(
+                                        f"❌ Streaming buffer conflict persists after {max_retries} retries. "
+                                        f"FAILING to prevent data loss of {len(rows)} rows"
+                                    )
+    
+                        if not retry_successful:
+                            # Notify operators and raise exception (don't silently skip)
+                            try:
+                                notify_error(
+                                    title=f"Streaming Buffer Failure: {self.__class__.__name__}",
+                                    message=f"Failed to load {len(rows)} rows after {max_retries} retries due to streaming buffer conflicts",
+                                    details={
+                                        'processor': self.__class__.__name__,
+                                        'run_id': self.run_id,
+                                        'rows_affected': len(rows),
+                                        'table': self.table_name,
+                                        'dataset': self.dataset_id,
+                                        'retries_attempted': max_retries,
+                                        'total_wait_time': '420 seconds (7 minutes)',
+                                        'remediation': 'Check for active streaming inserts. Manual intervention required.',
+                                    },
+                                    processor_name=self.__class__.__name__
+                                )
+                            except Exception as notify_ex:
+                                logger.warning(f"Failed to send streaming buffer failure notification: {notify_ex}")
+    
+                            raise Exception(
+                                f"BigQuery streaming buffer conflict persisted after {max_retries} retries "
+                                f"(waited 420s total). Cannot complete batch load to prevent data loss."
                             )
-                        except Exception as notify_ex:
-                            logger.warning(f"Failed to send streaming buffer failure notification: {notify_ex}")
-
-                        raise Exception(
-                            f"BigQuery streaming buffer conflict persisted after {max_retries} retries "
-                            f"(waited 420s total). Cannot complete batch load to prevent data loss."
-                        )
-
-                    return  # Success after retry
-                # Log if this was a serialization conflict that exhausted retries
-                elif is_serialization_error(load_e):
-                    logger.error(f"❌ BigQuery serialization conflict - retries exhausted after 5 minutes")
-                    logger.error(f"This may indicate live scrapers running during backfill")
-                    raise load_e
-                else:
-                    raise load_e
-            
-        except Exception as e:
-            error_msg = f"BigQuery batch load failed: {str(e)}"
-            logger.error(error_msg)
-            raise Exception(error_msg)
+    
+                        return  # Success after retry
+                    # Log if this was a serialization conflict that exhausted retries
+                    elif is_serialization_error(load_e):
+                        logger.error(f"❌ BigQuery serialization conflict - retries exhausted after 5 minutes")
+                        logger.error(f"This may indicate live scrapers running during backfill")
+                        raise load_e
+                    else:
+                        raise load_e
+                
+            except Exception as e:
+                error_msg = f"BigQuery batch load failed: {str(e)}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
 
     def _publish_completion_event(self) -> None:
         """
