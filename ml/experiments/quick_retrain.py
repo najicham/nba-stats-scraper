@@ -15,12 +15,17 @@ Usage:
         --train-start 2025-12-01 --train-end 2026-01-20 \
         --eval-start 2026-01-21 --eval-end 2026-01-28
 
+    # Use different line source (default is draftkings to match production)
+    PYTHONPATH=. python ml/experiments/quick_retrain.py \
+        --name "V9_VERIFY" \
+        --line-source draftkings
+
     # Dry run
     PYTHONPATH=. python ml/experiments/quick_retrain.py --name "TEST" --dry-run
 
 Features:
 - Simple date range defaults (--train-days 60, --eval-days 7)
-- Production-equivalent evaluation with real BettingPros lines
+- Production-equivalent evaluation with configurable line source (default: DraftKings)
 - Automatic comparison to V8 baseline
 - Registers in ml_experiments table
 - Clear recommendation output
@@ -84,6 +89,11 @@ def parse_args():
     parser.add_argument('--train-days', type=int, default=60, help='Days of training (default: 60)')
     parser.add_argument('--eval-days', type=int, default=7, help='Days of eval (default: 7)')
 
+    # Line source for evaluation
+    parser.add_argument('--line-source', choices=['draftkings', 'bettingpros', 'fanduel'],
+                       default='draftkings',
+                       help='Sportsbook for eval lines (default: draftkings to match production)')
+
     parser.add_argument('--dry-run', action='store_true', help='Show plan only')
     parser.add_argument('--skip-register', action='store_true', help='Skip ml_experiments')
     return parser.parse_args()
@@ -127,13 +137,34 @@ def load_train_data(client, start, end):
     return client.query(query).to_dataframe()
 
 
-def load_eval_data(client, start, end):
-    """Load eval data with real prop lines."""
+def load_eval_data(client, start, end, line_source='draftkings'):
+    """Load eval data with real prop lines.
+
+    Args:
+        client: BigQuery client
+        start: Start date (YYYY-MM-DD)
+        end: End date (YYYY-MM-DD)
+        line_source: 'draftkings' (default, matches production), 'bettingpros', or 'fanduel'
+    """
+    # Configure table and filter based on line source
+    if line_source == 'draftkings':
+        table = f"`{PROJECT_ID}.nba_raw.odds_api_player_points_props`"
+        bookmaker_filter = "bookmaker = 'draftkings'"
+        line_col = "points_line"
+    elif line_source == 'fanduel':
+        table = f"`{PROJECT_ID}.nba_raw.odds_api_player_points_props`"
+        bookmaker_filter = "bookmaker = 'fanduel'"
+        line_col = "points_line"
+    else:  # bettingpros
+        table = f"`{PROJECT_ID}.nba_raw.bettingpros_player_points_props`"
+        bookmaker_filter = "bookmaker = 'BettingPros Consensus' AND bet_side = 'over'"
+        line_col = "points_line"
+
     query = f"""
     WITH lines AS (
-      SELECT game_date, player_lookup, points_line as line
-      FROM `{PROJECT_ID}.nba_raw.bettingpros_player_points_props`
-      WHERE bookmaker = 'BettingPros Consensus' AND bet_side = 'over'
+      SELECT game_date, player_lookup, {line_col} as line
+      FROM {table}
+      WHERE {bookmaker_filter}
         AND game_date BETWEEN '{start}' AND '{end}'
       QUALIFY ROW_NUMBER() OVER (PARTITION BY game_date, player_lookup ORDER BY processed_at DESC) = 1
     )
@@ -193,6 +224,7 @@ def main():
     print("=" * 70)
     print(f"Training:   {dates['train_start']} to {dates['train_end']} ({train_days_actual} days)")
     print(f"Evaluation: {dates['eval_start']} to {dates['eval_end']} ({eval_days_actual} days)")
+    print(f"Line Source: {args.line_source}")
     print()
 
     if args.dry_run:
@@ -207,7 +239,7 @@ def main():
     print(f"  {len(df_train):,} samples")
 
     print("Loading evaluation data...")
-    df_eval = load_eval_data(client, dates['eval_start'], dates['eval_end'])
+    df_eval = load_eval_data(client, dates['eval_start'], dates['eval_end'], args.line_source)
     print(f"  {len(df_eval):,} samples")
 
     if len(df_train) < 1000 or len(df_eval) < 100:
@@ -326,7 +358,7 @@ def main():
                 'experiment_name': args.name,
                 'experiment_type': 'monthly_retrain',
                 'hypothesis': args.hypothesis or f'Monthly retrain {train_days_actual}d train, {eval_days_actual}d eval',
-                'config_json': json.dumps({'train_days': train_days_actual, 'eval_days': eval_days_actual, 'features': 33}),
+                'config_json': json.dumps({'train_days': train_days_actual, 'eval_days': eval_days_actual, 'features': 33, 'line_source': args.line_source}),
                 'train_period': {'start_date': dates['train_start'], 'end_date': dates['train_end'], 'samples': len(df_train)},
                 'eval_period': {'start_date': dates['eval_start'], 'end_date': dates['eval_end'], 'samples': len(df_eval)},
                 'results_json': json.dumps({

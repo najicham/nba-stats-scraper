@@ -16,7 +16,7 @@ Train a CatBoost challenger model on recent data and compare to V8 baseline.
 ## Quick Start
 
 ```bash
-# Default: Last 60 days training, 7 days eval
+# Default: Last 60 days training, 7 days eval, DraftKings lines
 PYTHONPATH=. python ml/experiments/quick_retrain.py --name "FEB_MONTHLY"
 
 # Custom dates
@@ -24,6 +24,11 @@ PYTHONPATH=. python ml/experiments/quick_retrain.py \
     --name "CUSTOM_TEST" \
     --train-start 2025-12-01 --train-end 2026-01-20 \
     --eval-start 2026-01-21 --eval-end 2026-01-28
+
+# Use different line source (default is draftkings to match production)
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "BETTINGPROS_TEST" \
+    --line-source bettingpros
 
 # Dry run (show plan only)
 PYTHONPATH=. python ml/experiments/quick_retrain.py --name "TEST" --dry-run
@@ -38,10 +43,16 @@ PYTHONPATH=. python ml/experiments/quick_retrain.py --name "TEST" --dry-run
 | `--eval-days` | 7 | Days of evaluation data |
 | `--train-start/end` | Auto | Explicit training dates |
 | `--eval-start/end` | Auto | Explicit eval dates |
+| `--line-source` | draftkings | Sportsbook for eval lines: `draftkings`, `bettingpros`, `fanduel` |
 | `--hypothesis` | Auto | What we're testing |
 | `--tags` | "monthly" | Comma-separated tags |
 | `--dry-run` | False | Show plan without executing |
 | `--skip-register` | False | Skip ml_experiments table |
+
+**Line Sources:**
+- `draftkings` (default): Matches production - uses Odds API DraftKings lines
+- `fanduel`: Uses Odds API FanDuel lines
+- `bettingpros`: Uses BettingPros Consensus lines (legacy)
 
 ## Output Format
 

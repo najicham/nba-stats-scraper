@@ -1139,30 +1139,47 @@ Production mode only includes expected players (130-200/day) who mostly have Veg
 
 ### Priority 2G: Model Drift Monitoring (Session 28)
 
+**IMPORTANT**: Check ALL active models. As of Jan 31, 2026:
+- `catboost_v8`: Historical model (ended Jan 28, 2026)
+- `catboost_v9`: Current production model (Jan 31+)
+- `ensemble_v1_1`: Active ensemble model
+
 #### Weekly Hit Rate Trend
 
 Check model performance over the past 4 weeks to detect drift:
 
 ```bash
 bq query --use_legacy_sql=false "
--- Weekly hit rate check for model drift detection
+-- Weekly hit rate check for model drift detection (ALL MODELS)
+WITH active_models AS (
+  SELECT DISTINCT system_id
+  FROM nba_predictions.prediction_accuracy
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
+    AND (system_id LIKE 'catboost_%' OR system_id LIKE 'ensemble_%')
+)
 SELECT
-  DATE_TRUNC(game_date, WEEK) as week_start,
+  pa.system_id,
+  DATE_TRUNC(pa.game_date, WEEK) as week_start,
   COUNT(*) as predictions,
-  ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 1) as hit_rate,
-  ROUND(AVG(predicted_points - actual_points), 2) as bias,
+  ROUND(100.0 * COUNTIF(pa.prediction_correct) / NULLIF(COUNTIF(pa.prediction_correct IS NOT NULL), 0), 1) as hit_rate,
+  ROUND(AVG(pa.predicted_points - pa.actual_points), 2) as bias,
   CASE
-    WHEN ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 1) < 55 THEN '🔴 CRITICAL'
-    WHEN ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 1) < 60 THEN '🟡 WARNING'
+    WHEN ROUND(100.0 * COUNTIF(pa.prediction_correct) / NULLIF(COUNTIF(pa.prediction_correct IS NOT NULL), 0), 1) < 55 THEN '🔴 CRITICAL'
+    WHEN ROUND(100.0 * COUNTIF(pa.prediction_correct) / NULLIF(COUNTIF(pa.prediction_correct IS NOT NULL), 0), 1) < 60 THEN '🟡 WARNING'
     ELSE '✅ OK'
   END as status
-FROM nba_predictions.prediction_accuracy
-WHERE system_id = 'catboost_v8'
-  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
-  AND prediction_correct IS NOT NULL
-GROUP BY 1
-ORDER BY 1 DESC"
+FROM nba_predictions.prediction_accuracy pa
+WHERE pa.system_id IN (SELECT system_id FROM active_models)
+  AND pa.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
+  AND pa.prediction_correct IS NOT NULL
+GROUP BY pa.system_id, week_start
+ORDER BY pa.system_id, week_start DESC"
 ```
+
+**Model Version Notes**:
+- **catboost_v9**: Current production model (use for predictions after Jan 30, 2026)
+- **catboost_v8**: Legacy model (use for historical analysis Jan 18-28, 2026)
+- **ensemble models**: Check alongside primary models for comparison
 
 **Expected**: Hit rate ≥60% each week
 
@@ -1179,28 +1196,35 @@ ORDER BY 1 DESC"
 
 #### Player Tier Performance Breakdown
 
-Check if degradation is uniform or tier-specific:
+Check if degradation is uniform or tier-specific (shows ALL active models):
 
 ```bash
 bq query --use_legacy_sql=false "
--- Performance by player scoring tier (last 4 weeks)
+-- Performance by player scoring tier (last 4 weeks, ALL MODELS)
+WITH active_models AS (
+  SELECT DISTINCT system_id
+  FROM nba_predictions.prediction_accuracy
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
+    AND (system_id LIKE 'catboost_%' OR system_id LIKE 'ensemble_%')
+)
 SELECT
-  DATE_TRUNC(game_date, WEEK) as week,
+  pa.system_id,
+  DATE_TRUNC(pa.game_date, WEEK) as week,
   CASE
-    WHEN actual_points >= 25 THEN '1_stars_25+'
-    WHEN actual_points >= 15 THEN '2_starters_15-25'
-    WHEN actual_points >= 5 THEN '3_rotation_5-15'
+    WHEN pa.actual_points >= 25 THEN '1_stars_25+'
+    WHEN pa.actual_points >= 15 THEN '2_starters_15-25'
+    WHEN pa.actual_points >= 5 THEN '3_rotation_5-15'
     ELSE '4_bench_<5'
   END as tier,
   COUNT(*) as predictions,
-  ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 1) as hit_rate,
-  ROUND(AVG(predicted_points - actual_points), 2) as bias
-FROM nba_predictions.prediction_accuracy
-WHERE system_id = 'catboost_v8'
-  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
-  AND prediction_correct IS NOT NULL
-GROUP BY 1, 2
-ORDER BY 1 DESC, 2"
+  ROUND(100.0 * COUNTIF(pa.prediction_correct) / NULLIF(COUNTIF(pa.prediction_correct IS NOT NULL), 0), 1) as hit_rate,
+  ROUND(AVG(pa.predicted_points - pa.actual_points), 2) as bias
+FROM nba_predictions.prediction_accuracy pa
+WHERE pa.system_id IN (SELECT system_id FROM active_models)
+  AND pa.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
+  AND pa.prediction_correct IS NOT NULL
+GROUP BY pa.system_id, week, tier
+ORDER BY pa.system_id, week DESC, tier"
 ```
 
 **What to look for**:
@@ -1215,24 +1239,31 @@ ORDER BY 1 DESC, 2"
 
 #### Model vs Vegas Comparison
 
-Check if our edge over Vegas is eroding:
+Check if our edge over Vegas is eroding (compares ALL active models):
 
 ```bash
 bq query --use_legacy_sql=false "
--- Our MAE vs Vegas MAE (last 4 weeks)
+-- Our MAE vs Vegas MAE (last 4 weeks, ALL MODELS)
+WITH active_models AS (
+  SELECT DISTINCT system_id
+  FROM nba_predictions.prediction_accuracy
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
+    AND (system_id LIKE 'catboost_%' OR system_id LIKE 'ensemble_%')
+)
 SELECT
-  DATE_TRUNC(game_date, WEEK) as week,
+  pa.system_id,
+  DATE_TRUNC(pa.game_date, WEEK) as week,
   COUNT(*) as predictions,
-  ROUND(AVG(ABS(predicted_points - actual_points)), 2) as our_mae,
-  ROUND(AVG(ABS(line_value - actual_points)), 2) as vegas_mae,
-  ROUND(AVG(ABS(line_value - actual_points)) - AVG(ABS(predicted_points - actual_points)), 2) as our_edge
-FROM nba_predictions.prediction_accuracy
-WHERE system_id = 'catboost_v8'
-  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
-  AND line_value IS NOT NULL
-  AND prediction_correct IS NOT NULL
-GROUP BY 1
-ORDER BY 1 DESC"
+  ROUND(AVG(ABS(pa.predicted_points - pa.actual_points)), 2) as our_mae,
+  ROUND(AVG(ABS(pa.line_value - pa.actual_points)), 2) as vegas_mae,
+  ROUND(AVG(ABS(pa.line_value - pa.actual_points)) - AVG(ABS(pa.predicted_points - pa.actual_points)), 2) as our_edge
+FROM nba_predictions.prediction_accuracy pa
+WHERE pa.system_id IN (SELECT system_id FROM active_models)
+  AND pa.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
+  AND pa.line_value IS NOT NULL
+  AND pa.prediction_correct IS NOT NULL
+GROUP BY pa.system_id, week
+ORDER BY pa.system_id, week DESC"
 ```
 
 **Expected**: `our_edge` > 0 (we're more accurate than Vegas)
@@ -1802,8 +1833,20 @@ python scripts/spot_check_data_accuracy.py --samples 10
 python scripts/verify_golden_dataset.py
 python scripts/verify_golden_dataset.py --verbose  # With detailed calculations
 
-# Model drift monitoring (Session 28)
-bq query --use_legacy_sql=false "SELECT DATE_TRUNC(game_date, WEEK) as week, ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 1) as hit_rate FROM nba_predictions.prediction_accuracy WHERE system_id = 'catboost_v8' AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK) GROUP BY 1 ORDER BY 1 DESC"
+# Model drift monitoring (Session 28) - Updated for multi-model support
+# Check ALL active models (catboost_v8, catboost_v9, ensemble_v1_1)
+bq query --use_legacy_sql=false "
+WITH active_models AS (
+  SELECT DISTINCT system_id FROM nba_predictions.prediction_accuracy
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
+    AND (system_id LIKE 'catboost_%' OR system_id LIKE 'ensemble_%')
+)
+SELECT system_id, DATE_TRUNC(game_date, WEEK) as week,
+  ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 1) as hit_rate
+FROM nba_predictions.prediction_accuracy
+WHERE system_id IN (SELECT system_id FROM active_models)
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
+GROUP BY system_id, week ORDER BY system_id, week DESC"
 
 # Manual triggers (if needed)
 gcloud scheduler jobs run same-day-phase3
