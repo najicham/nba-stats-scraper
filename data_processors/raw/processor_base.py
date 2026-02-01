@@ -517,13 +517,15 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
             # This enables 15-minute detection of stuck processors vs 4-hour timeout
             if HEARTBEAT_AVAILABLE:
                 try:
+                    # Use p2_{table_name} format for consistency with orchestrator logs
+                    heartbeat_name = f"p2_{self.table_name}" if hasattr(self, 'table_name') and self.table_name else self.__class__.__name__
                     self.heartbeat = ProcessorHeartbeat(
-                        processor_name=self.__class__.__name__,
+                        processor_name=heartbeat_name,
                         run_id=self.run_id,
                         data_date=str(data_date) if data_date else None
                     )
                     self.heartbeat.start()
-                    logger.debug(f"💓 Heartbeat started for {self.__class__.__name__}")
+                    logger.debug(f"💓 Heartbeat started for {heartbeat_name}")
                 except Exception as hb_e:
                     logger.warning(f"Failed to start heartbeat: {hb_e}")
                     self.heartbeat = None
