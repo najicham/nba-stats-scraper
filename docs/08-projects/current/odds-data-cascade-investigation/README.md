@@ -318,6 +318,97 @@ Predictions made Nov 2025:
 
 ---
 
+## Cascade Priority Documentation (Session 59)
+
+### Current Implementation
+
+#### 1. Game Lines (Spreads/Totals)
+
+**Source:** `odds_api_game_lines` ONLY (no BettingPros fallback)
+
+**Bookmaker Priority:**
+```sql
+-- From odds_api_game_lines_preferred view
+ORDER BY
+  CASE bookmaker_key
+    WHEN 'draftkings' THEN 1
+    WHEN 'fanduel' THEN 2
+    ELSE 99
+  END,
+  snapshot_timestamp DESC  -- If both exist, take latest
+```
+
+**Files:**
+- View: `schemas/bigquery/raw/odds_game_lines_views.sql`
+- Calculator: `data_processors/analytics/upcoming_team_game_context/calculators/betting_context.py`
+
+#### 2. Player Props (Phase 3)
+
+**Source Priority:**
+1. `odds_api_player_points_props` (called first in processor)
+2. `bettingpros_player_points_props` (fallback if odds_api missing)
+
+**Bookmaker Priority within Odds API:**
+- Currently uses ROW_NUMBER() by `snapshot_timestamp` (latest wins)
+- NO explicit DraftKings > FanDuel priority for player props
+
+**Files:**
+- `data_processors/analytics/upcoming_player_game_context/betting_data.py`
+
+#### 3. Feature Store (Phase 4) - FIXED
+
+**Source:** Now reads from `upcoming_player_game_context` (Phase 3)
+- Inherits Phase 3 cascade logic automatically
+
+### Snapshot Tracking
+
+| Field | Table | Description |
+|-------|-------|-------------|
+| `snapshot_timestamp` | odds_api_player_points_props | When the line was captured |
+| `minutes_before_tipoff` | odds_api_player_points_props | Minutes until game start |
+| `game_start_time` | odds_api_player_points_props | Game tipoff time |
+| `capture_timestamp` | odds_api_player_points_props | When scraper ran |
+| `snapshot_tag` | odds_api_player_points_props | Scrape type (e.g., 'pregame') |
+
+### Recommended Cascade (Session 59 Discussion)
+
+User proposed: `Odds API DK > Odds API FD > BettingPros DK > BettingPros FD`
+
+**My recommendation:** This is a good priority order, but with nuances:
+
+1. **For Game Lines:** Current implementation is correct (Odds API only, DK > FD)
+
+2. **For Player Props:** Should implement explicit bookmaker priority:
+   ```
+   1. Odds API DraftKings
+   2. Odds API FanDuel
+   3. BettingPros DraftKings (bookmaker='DraftKings')
+   4. BettingPros FanDuel (bookmaker='FanDuel')
+   5. BettingPros Consensus (bookmaker='BettingPros Consensus')
+   ```
+
+3. **Rationale:**
+   - DraftKings has highest volume and sharpest lines
+   - FanDuel is reliable backup
+   - BettingPros Consensus is an aggregate (may have slight delay)
+   - Having BettingPros as fallback increases coverage to ~100%
+
+### Current Gaps
+
+1. **Player props don't have explicit DK > FD priority** - Just takes "latest" snapshot
+2. **No cross-source bookmaker normalization** - "DraftKings" vs "draftkings" vs "DK"
+3. **Phase 3 queries both sources in UNION** - Doesn't prioritize
+
+### Implementation Status
+
+| Component | DK > FD Priority | Odds API > BettingPros | Status |
+|-----------|------------------|------------------------|--------|
+| Game Lines | ✅ Yes | N/A (Odds API only) | Complete |
+| Player Props (Phase 3) | ❌ No | ✅ Yes (query order) | Needs fix |
+| Feature Store (Phase 4) | N/A | ✅ Yes (reads Phase 3) | Fixed |
+
+---
+
 ## Related Files
 
 | File | Role |

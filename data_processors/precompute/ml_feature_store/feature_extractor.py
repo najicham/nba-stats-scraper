@@ -609,60 +609,52 @@ class FeatureExtractor:
         Batch extract Vegas betting lines for all players.
 
         Features extracted:
-        - vegas_points_line: Best available points line (NOT averaged)
-        - vegas_opening_line: Opening line from same source
-        - vegas_line_move: Line movement (current - opening)
+        - vegas_points_line: Current points line from Phase 3
+        - vegas_opening_line: Opening line from Phase 3
+        - vegas_line_move: Line movement (pre-calculated in Phase 3)
         - has_vegas_line: Boolean flag (1.0 = real line, 0.0 = no line)
 
-        Source: bettingpros_player_points_props (Phase 2 raw data)
+        Source: upcoming_player_game_context (Phase 3 analytics)
 
-        IMPORTANT: We use the "best" single line (is_best_line=TRUE or most recent),
-        NOT an average across sportsbooks. Averaging produces decimal values like
-        13.847 which don't match real sportsbook lines (always end in .5 or .0).
-        This matches how production worker gets lines.
+        ARCHITECTURE NOTE (Session 59 fix):
+        Previously queried bettingpros_player_points_props directly, which caused
+        missing Vegas data when bettingpros scraper was down (Oct-Nov 2025).
+
+        Now reads from Phase 3 which implements the correct cascade:
+        1. odds_api_player_points_props (primary - DraftKings/FanDuel)
+        2. bettingpros_player_points_props (fallback)
+
+        This follows the Phase 3 → Phase 4 architecture pattern and ensures
+        Vegas data is available as long as ANY source has it.
         """
         if not player_lookups:
             return
 
-        # Pick the single "best" line per player, matching production behavior
-        # Priority: is_best_line flag, then most recent update
+        # Read from Phase 3 which already has the cascade logic
         query = f"""
-        WITH ranked_lines AS (
-            SELECT
-                player_lookup,
-                points_line,
-                opening_line,
-                ROW_NUMBER() OVER (
-                    PARTITION BY player_lookup
-                    ORDER BY is_best_line DESC, bookmaker_last_update DESC
-                ) as rn
-            FROM `{self.project_id}.nba_raw.bettingpros_player_points_props`
-            WHERE game_date = '{game_date}'
-              AND market_type = 'points'
-              AND bet_side = 'over'
-              AND points_line IS NOT NULL
-              AND is_active = TRUE
-        )
         SELECT
             player_lookup,
-            points_line as vegas_points_line,
-            opening_line as vegas_opening_line,
-            1.0 as has_vegas_line
-        FROM ranked_lines
-        WHERE rn = 1
+            current_points_line as vegas_points_line,
+            opening_points_line as vegas_opening_line,
+            line_movement as vegas_line_move,
+            CASE WHEN has_prop_line = TRUE THEN 1.0 ELSE 0.0 END as has_vegas_line
+        FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
+        WHERE game_date = '{game_date}'
+          AND current_points_line IS NOT NULL
+          AND current_points_line > 0
         """
-        result = self._safe_query(query, "batch_extract")
+        result = self._safe_query(query, "batch_extract_vegas_lines")
 
         if not result.empty:
             for record in result.to_dict('records'):
-                # Calculate line move
-                record['vegas_line_move'] = (
-                    (record['vegas_points_line'] or 0) -
-                    (record['vegas_opening_line'] or record['vegas_points_line'] or 0)
-                )
+                # Convert Decimal types to float for consistency
+                record['vegas_points_line'] = float(record['vegas_points_line']) if record['vegas_points_line'] else 0.0
+                record['vegas_opening_line'] = float(record['vegas_opening_line']) if record['vegas_opening_line'] else record['vegas_points_line']
+                record['vegas_line_move'] = float(record['vegas_line_move']) if record['vegas_line_move'] else 0.0
+                record['has_vegas_line'] = float(record['has_vegas_line'])
                 self._vegas_lines_lookup[record['player_lookup']] = record
 
-        logger.debug(f"Batch vegas_lines: {len(self._vegas_lines_lookup)} players")
+        logger.debug(f"Batch vegas_lines: {len(self._vegas_lines_lookup)} players (from Phase 3)")
 
     def _batch_extract_opponent_history(self, game_date: date, players_with_games: List[Dict]) -> None:
         """
