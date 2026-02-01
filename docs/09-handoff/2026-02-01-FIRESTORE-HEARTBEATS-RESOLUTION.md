@@ -167,26 +167,66 @@ except (RuntimeError, OSError, ValueError) as e:  # Narrower exception list
 
 ## Additional Issues Found (Not Fixed Yet)
 
-### 4. Processor Name Mismatch (Possible)
+### 4. Processor Name Mismatch (CONFIRMED - Low Priority)
 
-**Finding:** Jan 28 commit `ac1d4c47` refactored processor naming convention.
+**Finding:** Jan 28 commit `ac1d4c47` refactored processor naming convention, creating a mismatch between Phase 2 heartbeat names and orchestrator expectations.
 
-**Changes:**
-- Introduced explicit `CLASS_TO_CONFIG_MAP` for name normalization
-- Changed expected format from `bdl_player_boxscores` to `p2_bdl_box_scores`
+**Investigation Completed:** Feb 1, 2026
 
-**Potential Impact:**
-- Heartbeats written with class name: `BdlPlayerBoxScoresProcessor`
-- Orchestrator expects: `p2_bdl_box_scores`
-- Dashboard queries: `bdl_player_boxscores`
-- **Result:** Names don't match, heartbeats appear stale even if written
+**Root Cause:**
+Different processor phases use different naming approaches:
 
-**Status:** NOT FIXED - requires investigation of how dashboard queries heartbeats
+| Phase | Heartbeat Name Source | Example |
+|-------|----------------------|---------|
+| **Phase 2** | `self.__class__.__name__` | `BdlPlayerBoxScoresProcessor` |
+| **Phase 3** | `self.processor_name` property | `PlayerGameSummaryProcessor` |
+| **Phase 4** | `self.processor_name` property | `MLFeatureStoreProcessor` |
 
-**Recommendation:** Standardize processor naming across:
-1. Heartbeat writes (`ProcessorHeartbeat` initialization)
-2. Orchestrator expectations (`CLASS_TO_CONFIG_MAP`)
-3. Dashboard queries (health score calculation)
+**Phase 2 is inconsistent:**
+- Writes heartbeats with class name: `BdlPlayerBoxScoresProcessor`
+- Orchestrator expects config name: `p2_bdl_box_scores`
+- Result: Two naming schemes for same processors
+
+**Impact Assessment:**
+- ✅ **NOT a functional issue** - heartbeats work, pipeline runs normally
+- ✅ **Stale detection still works** - queries by status, not name
+- ❌ **Observability confusion** - orchestrator logs show different names than heartbeats
+- ❌ **Monitoring difficulty** - hard to correlate orchestrator logs with heartbeat data
+
+**Affected Processors (Phase 2 only):**
+- `BdlPlayerBoxScoresProcessor` → `p2_bdl_box_scores`
+- `BdlBoxscoresProcessor` → `p2_bdl_boxscores`
+- `BigDataBallPbpProcessor` → `p2_bigdataball_pbp`
+- `NbacGamebookProcessor` → `p2_nbac_gamebook`
+- `NbacPlayerBoxscoreProcessor` → `p2_nbac_player_boxscore`
+- `NbacTeamBoxscoreProcessor` → `p2_nbac_team_boxscore`
+
+**Status:** NOT FIXED - **Low Priority** (observability only, no functional impact)
+
+**Fix Options:**
+
+**Option 1: Fix Phase 2 Processors (Recommended for Future)**
+```python
+# In data_processors/raw/processor_base.py line 520
+# Change from:
+processor_name=self.__class__.__name__,
+# To:
+processor_name=self.processor_name,  # Use consistent property
+```
+
+**Option 2: Normalize in Dashboard**
+```python
+# Use CLASS_TO_CONFIG_MAP to translate names in dashboard
+from orchestration.cloud_functions.phase2_to_phase3.main import CLASS_TO_CONFIG_MAP
+
+def normalize_processor_name(name: str) -> str:
+    return CLASS_TO_CONFIG_MAP.get(name, name)
+```
+
+**Recommendation:**
+- Document for future refactoring sprint
+- Fix during next Phase 2 processor maintenance
+- Low priority - only affects observability, not operations
 
 ---
 
@@ -201,6 +241,9 @@ except (RuntimeError, OSError, ValueError) as e:  # Narrower exception list
 | **Feb 1 01:00** | Processors still running | BigQuery shows successful runs |
 | **Feb 1 09:37** | Permission fix applied | Granted `roles/datastore.user` to prediction-worker |
 | **Feb 1 09:45** | Retry logic committed | Commit `c2a929f1` |
+| **Feb 1 10:15** | Dashboard bug fixed | Commit `8f9a5ca3` - corrected processor name field |
+| **Feb 1 10:52** | Dashboard deployed | Unified dashboard live on Cloud Run |
+| **Feb 1 11:15** | Name mismatch investigated | Confirmed Phase 2 only, low priority |
 
 ---
 
@@ -240,6 +283,46 @@ gcloud projects get-iam-policy nba-props-platform \
 - Transient Firestore errors (503, 504, 429) now automatically retry
 - Reduces false positives from temporary Firestore unavailability
 - Makes heartbeat system more resilient
+
+---
+
+### Fix 3: Fix Dashboard Heartbeat Query ✅
+
+**File:** `services/unified_dashboard/backend/services/firestore_client.py`
+**Commit:** `8f9a5ca3`
+**Deployed:** `unified-dashboard` Cloud Run service
+
+**Problems Found:**
+1. Used `doc.id` instead of actual processor name field
+2. No time-based filtering (queried random old documents)
+3. Showed 100 "stale processors" when system was healthy
+
+**Changes:**
+```python
+# Line 46: Changed from doc.id to actual field
+'processor_name': data.get('processor_name'),  # Was: doc.id
+
+# Lines 41-44: Added time-based query
+cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+query = (collection_ref
+        .where('last_heartbeat', '>=', cutoff)
+        .order_by('last_heartbeat', direction=firestore.Query.DESCENDING)
+        .limit(limit))
+```
+
+**Impact:**
+- Dashboard now queries heartbeats from last 24 hours only
+- Uses actual processor names instead of document IDs
+- Health score will reflect actual system status (70-80/100 instead of 35/100)
+- Resolves false "critical health" alerts
+
+**Deployment:**
+```bash
+Service: unified-dashboard
+URL: https://unified-dashboard-756957797294.us-west2.run.app
+Revision: unified-dashboard-00001-khn
+Status: Live
+```
 
 ---
 
@@ -304,20 +387,23 @@ After fixes are verified (within 24 hours):
 ### High Priority
 
 1. **Verify heartbeat fixes work** (wait for 7:00 AM ET run)
-2. **Investigate processor name mismatch** (dashboard might query wrong names)
+2. **Verify dashboard health score improved** to 70+/100
 3. **Add alerting for heartbeat failures** (detect future issues faster)
 
 ### Medium Priority
 
-4. **Standardize processor naming** across heartbeats, orchestrator, dashboard
-5. **Add pre-commit hook** to validate processor name consistency
-6. **Enhance heartbeat error logging** (upgrade WARNING to ERROR with Sentry)
+4. **Enhance heartbeat error logging** (upgrade WARNING to ERROR with Sentry)
+5. **Add metrics tracking** for heartbeat success rate
+6. **Create dashboard** showing heartbeat write success/failure trends
 
 ### Low Priority
 
-7. **Add heartbeat health check endpoint** for real-time monitoring
-8. **Create metrics/dashboard** for heartbeat success rate
+7. **Fix Phase 2 processor name mismatch** (observability only, no functional impact)
+   - Change Phase 2 to use `self.processor_name` instead of `self.__class__.__name__`
+   - OR add name normalization in dashboard using `CLASS_TO_CONFIG_MAP`
+8. **Add heartbeat health check endpoint** for real-time monitoring
 9. **Document heartbeat system** in operations runbook
+10. **Add pre-commit hook** to validate processor name consistency
 
 ---
 
