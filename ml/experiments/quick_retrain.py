@@ -37,7 +37,7 @@ import uuid
 import json
 import numpy as np
 import pandas as pd
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from google.cloud import bigquery
 from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import train_test_split
@@ -180,11 +180,19 @@ def main():
     dates = get_dates(args)
     exp_id = str(uuid.uuid4())[:8]
 
+    # Compute actual day counts from dates
+    train_start_dt = datetime.strptime(dates['train_start'], '%Y-%m-%d').date()
+    train_end_dt = datetime.strptime(dates['train_end'], '%Y-%m-%d').date()
+    eval_start_dt = datetime.strptime(dates['eval_start'], '%Y-%m-%d').date()
+    eval_end_dt = datetime.strptime(dates['eval_end'], '%Y-%m-%d').date()
+    train_days_actual = (train_end_dt - train_start_dt).days + 1
+    eval_days_actual = (eval_end_dt - eval_start_dt).days + 1
+
     print("=" * 70)
     print(f" QUICK RETRAIN: {args.name}")
     print("=" * 70)
-    print(f"Training:   {dates['train_start']} to {dates['train_end']} ({args.train_days} days)")
-    print(f"Evaluation: {dates['eval_start']} to {dates['eval_end']} ({args.eval_days} days)")
+    print(f"Training:   {dates['train_start']} to {dates['train_end']} ({train_days_actual} days)")
+    print(f"Evaluation: {dates['eval_start']} to {dates['eval_end']} ({eval_days_actual} days)")
     print()
 
     if args.dry_run:
@@ -251,31 +259,59 @@ def main():
     print(" RESULTS vs V8 BASELINE")
     print("=" * 70)
 
-    def compare(name, new_val, baseline, higher_better=True):
+    MIN_BETS_RELIABLE = 50  # Minimum bets for statistically reliable hit rate
+
+    def compare(name, new_val, baseline, n_bets, higher_better=True):
         if new_val is None:
-            return f"{name}: N/A"
+            return f"{name}: N/A", None
         diff = new_val - baseline
         symbol = "+" if diff > 0 else ""
         better = (diff > 0) == higher_better
+
+        # Add sample size warning
+        size_warn = "" if n_bets >= MIN_BETS_RELIABLE else f" (n={n_bets}, LOW)"
+
         emoji = "✅" if better else "❌" if abs(diff) > 2 else "⚠️"
-        return f"{name}: {new_val:.2f}% vs {baseline:.2f}% ({symbol}{diff:.2f}%) {emoji}"
+        return f"{name}: {new_val:.2f}% vs {baseline:.2f}% ({symbol}{diff:.2f}%) {emoji}{size_warn}", better
 
-    print(f"MAE: {mae:.4f} vs {V8_BASELINE['mae']:.4f} ({mae - V8_BASELINE['mae']:+.4f})")
+    mae_diff = mae - V8_BASELINE['mae']
+    mae_emoji = "✅" if mae_diff < 0 else "❌" if mae_diff > 0.2 else "⚠️"
+    print(f"MAE: {mae:.4f} vs {V8_BASELINE['mae']:.4f} ({mae_diff:+.4f}) {mae_emoji}")
     print()
-    print(compare("Hit Rate (all)", hr_all, V8_BASELINE['hit_rate_all']))
-    print(compare("Hit Rate (high edge 5+)", hr_high, V8_BASELINE['hit_rate_high_edge']))
-    print(compare("Hit Rate (premium ~92+/3+)", hr_prem, V8_BASELINE['hit_rate_premium']))
 
-    # Recommendation
+    hr_all_str, hr_all_better = compare("Hit Rate (all)", hr_all, V8_BASELINE['hit_rate_all'], bets_all)
+    hr_high_str, hr_high_better = compare("Hit Rate (high edge 5+)", hr_high, V8_BASELINE['hit_rate_high_edge'], bets_high)
+    hr_prem_str, hr_prem_better = compare("Hit Rate (premium ~92+/3+)", hr_prem, V8_BASELINE['hit_rate_premium'], bets_prem)
+
+    print(hr_all_str)
+    print(hr_high_str)
+    print(hr_prem_str)
+
+    # Recommendation with sample size awareness
     print("\n" + "-" * 40)
     mae_better = mae < V8_BASELINE['mae']
-    hr_better = (hr_all or 0) > V8_BASELINE['hit_rate_all']
 
-    if mae_better and hr_better:
-        print("✅ RECOMMEND: Beats V8 on MAE and hit rate - consider shadow mode")
+    # Check filtered metrics only if sample size is reliable
+    high_edge_reliable = bets_high >= MIN_BETS_RELIABLE
+    premium_reliable = bets_prem >= MIN_BETS_RELIABLE
+
+    # Warnings for low sample sizes
+    if not high_edge_reliable or not premium_reliable:
+        print(f"⚠️  LOW SAMPLE SIZE: high_edge={bets_high}, premium={bets_prem} (need {MIN_BETS_RELIABLE}+)")
+        print("    Filtered hit rates are NOT statistically reliable.")
+        print()
+
+    # Core decision: MAE + overall hit rate (always reliable with enough eval data)
+    if mae_better and hr_all_better:
+        if high_edge_reliable and hr_high_better is False:
+            print("⚠️ MIXED: Better MAE/overall but worse on high-edge filter")
+        elif premium_reliable and hr_prem_better is False:
+            print("⚠️ MIXED: Better MAE/overall but worse on premium filter")
+        else:
+            print("✅ RECOMMEND: Beats V8 on MAE and hit rate - consider shadow mode")
     elif mae_better:
         print("⚠️ MIXED: Better MAE but similar/lower hit rate")
-    elif hr_better:
+    elif hr_all_better:
         print("⚠️ MIXED: Better hit rate but worse MAE")
     else:
         print("❌ V8 still better - try different training window")
@@ -289,8 +325,8 @@ def main():
                 'experiment_id': exp_id,
                 'experiment_name': args.name,
                 'experiment_type': 'monthly_retrain',
-                'hypothesis': args.hypothesis or f'Monthly retrain {args.train_days}d',
-                'config_json': json.dumps({'train_days': args.train_days, 'features': 33}),
+                'hypothesis': args.hypothesis or f'Monthly retrain {train_days_actual}d train, {eval_days_actual}d eval',
+                'config_json': json.dumps({'train_days': train_days_actual, 'eval_days': eval_days_actual, 'features': 33}),
                 'train_period': {'start_date': dates['train_start'], 'end_date': dates['train_end'], 'samples': len(df_train)},
                 'eval_period': {'start_date': dates['eval_start'], 'end_date': dates['eval_end'], 'samples': len(df_eval)},
                 'results_json': json.dumps({
@@ -302,8 +338,8 @@ def main():
                 'model_path': str(model_path),
                 'status': 'completed',
                 'tags': [t.strip() for t in args.tags.split(',') if t.strip()],
-                'created_at': datetime.utcnow().isoformat(),
-                'completed_at': datetime.utcnow().isoformat(),
+                'created_at': datetime.now(timezone.utc).isoformat(),
+                'completed_at': datetime.now(timezone.utc).isoformat(),
             }
             errors = client.insert_rows_json(f"{PROJECT_ID}.nba_predictions.ml_experiments", [row])
             if not errors:

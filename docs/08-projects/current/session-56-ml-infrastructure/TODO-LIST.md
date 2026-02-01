@@ -26,6 +26,45 @@ All ideas and improvements discussed during Sessions 56-57.
 
 ---
 
+## CRITICAL DATA QUALITY ISSUES (Session 59 Discovery)
+
+### Vegas Data Pipeline Failure (Nov 13 - Dec 19, 2025)
+**Problem**: Vegas line data missing for 5+ weeks, corrupting feature store.
+
+| Date Range | Vegas Line Coverage |
+|------------|---------------------|
+| Nov 4-12, 2025 | Partial |
+| **Nov 13 - Dec 19, 2025** | **0% (BROKEN)** |
+| Dec 20-31, 2025 | Restored |
+
+**Impact**: 68.6% of Oct-Dec 2025 feature store records have `vegas_line = 0`
+
+**Tasks**:
+- [ ] Investigate why Vegas scraper failed (check `bettingpros_player_points_props`)
+- [ ] Backfill Vegas lines for Nov 13 - Dec 19, 2025 if possible
+- [ ] Add data quality gate to monthly retrain: `assert pct_with_vegas > 0.90`
+- [ ] Add alerting when Vegas line coverage drops below 95%
+
+### October 2025 Feature Store Gap
+**Problem**: Oct 21-31, 2025 games exist in `player_game_summary` but not in `ml_feature_store_v2`.
+
+**Tasks**:
+- [ ] Run feature store backfill for Oct 21-31, 2025
+- [ ] Verify feature_count >= 33 for all records
+- [ ] Add to monthly validation check
+
+### Key Finding: MAE vs Hit Rate Paradox
+**Session 59 discovered**: A model with lower MAE (5.13 vs 5.36) had WORSE hit rate (49% vs 55%).
+
+**Root Cause**: Model trained on corrupted data learned wrong patterns:
+- Learned `vegas_line = 0` is normal (68.6% of training)
+- During inference, Vegas lines are always available
+- Model doesn't leverage Vegas information correctly
+
+**Documentation**: See `docs/05-development/model-comparison-v8-vs-monthly-retrain.md`
+
+---
+
 ## HIGH PRIORITY (P0) - Do Next
 
 ### 1. Fix evaluate_model.py to Match Production ✅ DONE (Session 58)
@@ -219,11 +258,16 @@ See #6 above - trajectory features tested, did not improve model.
 - [x] Is Week 4 drop due to Vegas sharpening? → NO, it's MODEL_DRIFT (model MAE 5.8→8.4, Vegas stable)
 - [x] What's the best filter for trading? → Premium (92+ conf, 3+ edge) = 78.7% for full Jan
 
+### Answered (Session 59):
+- [x] Would trajectory features help combat drift? → **NO**, 37f model worse than 33f (Session 58)
+- [x] Can we retrain on recent data to fix drift? → **NO**, recent data has quality issues (Session 59)
+- [x] Why does V8 have better hit rate despite higher MAE? → **Training data quality** - V8 had 99% Vegas coverage, recent data has 31%
+
 ### Still Open:
 - [ ] Can we reduce Vegas feature weight without hurting performance?
 - [ ] Would ensemble of recent + historical models help?
 - [ ] Is there a seasonal January pattern we should model?
-- [ ] Would trajectory features (pts_slope, zscore) help combat drift?
+- [ ] Can we fix the Vegas data gap and retrain successfully?
 
 ---
 
@@ -283,8 +327,13 @@ See #6 above - trajectory features tested, did not improve model.
 | Test trajectory features | 58 |
 | Monthly retraining pipeline | 58 |
 | Model experiment skill | 58 |
+| Fix quick_retrain.py recommendation logic | 59 |
+| Fix datetime.utcnow() deprecation | 59 |
+| Deep dive: V8 vs monthly retrain comparison | 59 |
+| Document MAE vs Hit Rate paradox | 59 |
+| Discover Vegas data pipeline failure | 59 |
 
 ---
 
 *Created: 2026-01-31, Session 56*
-*Updated: 2026-01-31, Session 57*
+*Updated: 2026-01-31, Session 59*
