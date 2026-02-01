@@ -134,6 +134,7 @@ if TYPE_CHECKING:
     from prediction_systems.similarity_balanced_v1 import SimilarityBalancedV1
     from prediction_systems.catboost_v8 import CatBoostV8  # v8 ML model (historical)
     from prediction_systems.catboost_v9 import CatBoostV9  # v9 ML model (current season)
+    from prediction_systems.catboost_monthly import CatBoostMonthly  # monthly retrained models
     from prediction_systems.ensemble_v1 import EnsembleV1
     from prediction_systems.ensemble_v1_1 import EnsembleV1_1
     from data_loaders import PredictionDataLoader, normalize_confidence, validate_features
@@ -195,6 +196,7 @@ _xgboost: Optional['XGBoostV1'] = None
 _catboost: Optional['CatBoostV8'] = None
 _ensemble: Optional['EnsembleV1'] = None
 _ensemble_v1_1: Optional['EnsembleV1_1'] = None
+_monthly_models: Optional[list] = None  # List of CatBoostMonthly instances
 _staging_writer: Optional['BatchStagingWriter'] = None
 _injury_filter: Optional['InjuryFilter'] = None
 
@@ -271,10 +273,11 @@ def get_prediction_systems() -> tuple:
     from prediction_systems.xgboost_v1 import XGBoostV1
     from prediction_systems.catboost_v8 import CatBoostV8
     from prediction_systems.catboost_v9 import CatBoostV9
+    from prediction_systems.catboost_monthly import get_enabled_monthly_models
     from prediction_systems.ensemble_v1 import EnsembleV1
     from prediction_systems.ensemble_v1_1 import EnsembleV1_1
 
-    global _moving_average, _zone_matchup, _similarity, _xgboost, _catboost, _ensemble, _ensemble_v1_1
+    global _moving_average, _zone_matchup, _similarity, _xgboost, _catboost, _ensemble, _ensemble_v1_1, _monthly_models
     if _ensemble is None:
         logger.info("Initializing prediction systems...")
         _moving_average = MovingAverageBaseline()
@@ -290,6 +293,14 @@ def get_prediction_systems() -> tuple:
             logger.info("Loading CatBoost V8 (historical training)...")
             _catboost = CatBoostV8()  # CatBoost v8: 5.36 MAE
 
+        # Load monthly models (Session 68)
+        logger.info("Loading monthly models...")
+        _monthly_models = get_enabled_monthly_models()
+        if _monthly_models:
+            logger.info(f"Loaded {len(_monthly_models)} monthly model(s): {[m.model_id for m in _monthly_models]}")
+        else:
+            logger.info("No monthly models enabled")
+
         _ensemble = EnsembleV1(
             moving_average_system=_moving_average,
             zone_matchup_system=_zone_matchup,
@@ -304,7 +315,9 @@ def get_prediction_systems() -> tuple:
             catboost_system=_catboost
         )
         catboost_version = "V9" if CATBOOST_VERSION == 'v9' else "V8"
-        logger.info(f"All prediction systems initialized (7 systems: XGBoost V1, CatBoost {catboost_version}, Ensemble V1, Ensemble V1.1, + 3 others)")
+        monthly_count = len(_monthly_models) if _monthly_models else 0
+        total_systems = 7 + monthly_count
+        logger.info(f"All prediction systems initialized ({total_systems} systems: XGBoost V1, CatBoost {catboost_version}, {monthly_count} monthly models, Ensemble V1, Ensemble V1.1, + 3 others)")
     return _moving_average, _zone_matchup, _similarity, _xgboost, _catboost, _ensemble, _ensemble_v1_1
 
 _circuit_breaker: Optional['SystemCircuitBreaker'] = None
@@ -1451,6 +1464,55 @@ def process_player_predictions(
             metadata['systems_failed'].append(system_id)
             metadata['system_errors'][system_id] = error_msg
             system_predictions['ensemble_v1_1'] = None
+
+        # Monthly Models (Session 68): Run all enabled monthly retrained models
+        if _monthly_models:
+            for monthly_model in _monthly_models:
+                system_id = monthly_model.model_id
+                metadata['systems_attempted'].append(system_id)
+                try:
+                    # Check circuit breaker
+                    state, skip_reason = circuit_breaker.check_circuit(system_id)
+                    if state == 'OPEN':
+                        logger.warning(f"Circuit breaker OPEN for {system_id}: {skip_reason}")
+                        metadata['circuit_breaker_triggered'] = True
+                        metadata['circuits_opened'].append(system_id)
+                        metadata['systems_failed'].append(system_id)
+                        metadata['system_errors'][system_id] = f'Circuit breaker open: {skip_reason}'
+                        system_predictions[system_id] = None
+                    else:
+                        result = monthly_model.predict(
+                            player_lookup=player_lookup,
+                            features=features,
+                            betting_line=line_value
+                        )
+
+                        if result['predicted_points'] is not None:
+                            # Record success
+                            circuit_breaker.record_success(system_id)
+                            metadata['systems_succeeded'].append(system_id)
+
+                            system_predictions[system_id] = {
+                                'predicted_points': result['predicted_points'],
+                                'confidence': result['confidence_score'],
+                                'recommendation': result['recommendation'],
+                                'system_type': 'dict',
+                                'metadata': result
+                            }
+                        else:
+                            logger.warning(f"Monthly model {system_id} returned None for {player_lookup}")
+                            metadata['systems_failed'].append(system_id)
+                            metadata['system_errors'][system_id] = 'Prediction returned None'
+                            system_predictions[system_id] = None
+                except Exception as e:
+                    # Record failure
+                    error_msg = str(e)
+                    circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
+
+                    logger.error(f"Monthly model {system_id} failed for {player_lookup}: {e}", exc_info=True)
+                    metadata['systems_failed'].append(system_id)
+                    metadata['system_errors'][system_id] = error_msg
+                    system_predictions[system_id] = None
 
         # Convert system predictions to BigQuery format
         for system_id, prediction in system_predictions.items():
