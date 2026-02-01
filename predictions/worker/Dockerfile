@@ -35,6 +35,11 @@ COPY predictions/shared/ ./predictions/shared/
 # Copy worker code and dependencies
 COPY predictions/worker/ ./predictions/worker/
 
+# Copy monthly retrained model files (Session 70)
+# V8 and V9 can fallback to GCS, but monthly models need local files
+# Only copy the specific monthly models (catboost_v9_YYYY_MM.cbm pattern)
+COPY models/catboost_v9_2026_02.cbm ./models/
+
 # Set working directory to worker for running the service
 WORKDIR /app/predictions/worker
 
