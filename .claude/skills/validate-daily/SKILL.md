@@ -131,6 +131,92 @@ gcloud logging read "resource.type=bigquery_resource AND protoPayload.status.mes
 
 **Common cause**: `pipeline_logger` writing too many events to partitioned `run_history` table
 
+### Phase 0.2: Heartbeat System Health (NEW)
+
+**IMPORTANT**: Check Firestore heartbeat collection for document proliferation.
+
+**Why this matters**: Heartbeat documents should be ONE per processor (one doc gets updated). If processors create NEW documents for each run, the collection grows unbounded (100k+ docs), causing performance degradation and Firestore costs.
+
+**What to check**:
+
+```bash
+# Check Firestore heartbeat document count
+python3 -c "
+from google.cloud import firestore
+db = firestore.Client(project='nba-props-platform')
+docs = list(db.collection('processor_heartbeats').stream())
+bad = [d for d in docs if '_None_' in d.id or '_202' in d.id]
+total = len(docs)
+bad_count = len(bad)
+
+print(f'Total heartbeat documents: {total}')
+print(f'Bad format (old pattern): {bad_count}')
+print(f'Expected: ~30-50 documents')
+
+if bad_count > 0:
+    print(f'\n⚠️  WARNING: {bad_count} old format documents detected!')
+    print('Sample bad documents:')
+    for doc in bad[:5]:
+        print(f'  {doc.id}')
+    print('\nAction: Run bin/cleanup-heartbeat-docs.py')
+
+if total > 100:
+    print(f'\n⚠️  WARNING: Too many documents ({total})!')
+    print('Expected: ~30-50 (one per active processor)')
+    print('Possible cause: Heartbeat code creating new docs instead of updating')
+    print('Action: Check shared/monitoring/processor_heartbeat.py')
+"
+```
+
+**Expected result**:
+- Total documents: 30-50
+- Bad format documents: 0
+
+**If issues detected**:
+
+| Issue | Severity | Action |
+|-------|----------|--------|
+| Bad format docs > 0 | P2 | Run `bin/cleanup-heartbeat-docs.py` to clean up |
+| Total docs > 100 | P1 | Investigate which service creating bad docs, redeploy |
+| Total docs > 500 | P0 CRITICAL | Immediate cleanup + service fix |
+
+**Cleanup command**:
+```bash
+# Preview cleanup
+python bin/cleanup-heartbeat-docs.py --dry-run
+
+# Execute cleanup
+python bin/cleanup-heartbeat-docs.py
+```
+
+**Investigation command** (if proliferation detected):
+```bash
+# Find which processors created docs in last hour
+python3 -c "
+from google.cloud import firestore
+from datetime import datetime, timedelta
+db = firestore.Client(project='nba-props-platform')
+docs = list(db.collection('processor_heartbeats').stream())
+cutoff = datetime.now() - timedelta(hours=1)
+
+recent_bad = []
+for doc in docs:
+    data = doc.to_dict()
+    last_hb = data.get('last_heartbeat')
+    if '_None_' in doc.id or '_202' in doc.id:
+        if last_hb and hasattr(last_hb, 'replace') and last_hb.replace(tzinfo=None) > cutoff:
+            recent_bad.append(doc.id)
+
+if recent_bad:
+    print(f'⚠️  {len(recent_bad)} bad documents created in last hour')
+    print('Offending processors:')
+    for doc_id in set([d.split('_None_')[0].split('_202')[0] for d in recent_bad]):
+        print(f'  {doc_id}')
+else:
+    print('✅ No new bad documents in last hour')
+"
+```
+
 ### Phase 0.5: Orchestrator Health (CRITICAL)
 
 **IMPORTANT**: Check orchestrator health BEFORE other validations. If ANY Phase 0.5 check fails, this is a P1 CRITICAL issue - STOP and report immediately.

@@ -115,7 +115,7 @@ echo "Build timestamp: $BUILD_TIMESTAMP"
 echo "=============================================="
 
 echo ""
-echo "[1/4] Building $SERVICE from repo root with $DOCKERFILE..."
+echo "[1/6] Building $SERVICE from repo root with $DOCKERFILE..."
 docker build \
     -t "$REGISTRY/$SERVICE:latest" \
     -t "$REGISTRY/$SERVICE:$BUILD_COMMIT" \
@@ -124,12 +124,12 @@ docker build \
     -f "$DOCKERFILE" .
 
 echo ""
-echo "[2/4] Pushing image..."
+echo "[2/6] Pushing image..."
 docker push "$REGISTRY/$SERVICE:latest"
 docker push "$REGISTRY/$SERVICE:$BUILD_COMMIT"
 
 echo ""
-echo "[3/4] Deploying to Cloud Run..."
+echo "[3/6] Deploying to Cloud Run..."
 gcloud run deploy "$SERVICE" \
     --image="$REGISTRY/$SERVICE:latest" \
     --region="$REGION" \
@@ -138,7 +138,7 @@ gcloud run deploy "$SERVICE" \
     --quiet
 
 echo ""
-echo "[4/4] Verifying deployment..."
+echo "[4/6] Verifying deployment..."
 sleep 10
 
 # Get the latest revision
@@ -167,7 +167,7 @@ gcloud logging read \
 
 # Post-deployment service identity verification
 echo ""
-echo "[5/5] Verifying service identity..."
+echo "[5/6] Verifying service identity..."
 
 SERVICE_URL=$(gcloud run services describe "$SERVICE" \
     --region="$REGION" \
@@ -232,4 +232,40 @@ else
         echo "WARNING: Could not verify service identity after $MAX_RETRIES attempts"
         echo "Please manually verify: curl $SERVICE_URL/health"
     fi
+fi
+
+# [6/6] Verify heartbeat code is correct
+echo ""
+echo "[6/6] Verifying heartbeat code..."
+
+# Check if heartbeat fix is in deployed image
+HEARTBEAT_CHECK=$(docker run --rm "$REGISTRY/$SERVICE:$BUILD_COMMIT" \
+    cat /app/shared/monitoring/processor_heartbeat.py 2>/dev/null | \
+    grep -c "return self.processor_name" || echo "0")
+
+if [ "$HEARTBEAT_CHECK" -eq "0" ]; then
+    echo ""
+    echo "=============================================="
+    echo "⚠️  HEARTBEAT CODE VERIFICATION FAILED"
+    echo "=============================================="
+    echo "The deployed image may not have the heartbeat fix."
+    echo ""
+    echo "Expected: 'return self.processor_name' in processor_heartbeat.py"
+    echo "Found:    Different or missing code"
+    echo ""
+    echo "This could cause Firestore document proliferation!"
+    echo ""
+    echo "Actions:"
+    echo "1. Check shared/monitoring/processor_heartbeat.py in main branch"
+    echo "2. Verify Docker build included latest code"
+    echo "3. Consider rebuilding with --no-cache flag"
+    echo "=============================================="
+else
+    echo ""
+    echo "=============================================="
+    echo "✅ HEARTBEAT CODE VERIFIED"
+    echo "=============================================="
+    echo "Heartbeat fix confirmed in deployed image"
+    echo "Document ID format: processor_name (correct)"
+    echo "=============================================="
 fi

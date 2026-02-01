@@ -2,18 +2,27 @@
 """
 Cleanup Old Heartbeat Documents
 
-This script removes heartbeat documents that use the old doc_id format
-(processor_name_date_run_id) and keeps only the new format (processor_name).
+This script removes heartbeat documents that use old doc_id formats
+and keeps only the new format (processor_name).
 
 Background:
 - Old implementation created a new document for every processor run
-- This resulted in 106k+ documents for just 30 unique processors
+- This resulted in 100k+ documents for just 30 unique processors
 - New implementation uses processor_name as doc_id (one doc per processor)
+
+Old formats detected (all cleaned):
+- Date-based: ProcessorName_2026-01-31_abc123
+- None-based: ProcessorName_None_abc123 (from backfill jobs)
+- Year-based: ProcessorName_202601_abc123
+
+New formats (kept):
+- ProcessorName (e.g., PlayerGameSummaryProcessor)
+- p2_tablename (e.g., p2_nba_raw.nbac_team_boxscore)
 
 This script:
 1. Queries all heartbeat documents
-2. Identifies documents with old format (contains underscores + date + run_id)
-3. For each processor, keeps the most recent heartbeat
+2. Identifies documents with old formats (date, _None_, _202)
+3. Groups by processor name
 4. Deletes old format documents in batches
 
 Usage:
@@ -21,6 +30,7 @@ Usage:
     python bin/cleanup-heartbeat-docs.py            # Actually delete
 
 Created: 2026-02-01
+Updated: 2026-02-01 (Session 63 Part 2 - Added _None_ and _202 detection)
 """
 
 import argparse
@@ -38,20 +48,31 @@ logger = logging.getLogger(__name__)
 
 def is_old_format_doc_id(doc_id: str) -> bool:
     """
-    Check if document ID uses old format (processor_name_date_run_id).
+    Check if document ID uses old format.
 
-    Old format examples:
-    - PlayerGameSummaryProcessor_2026-01-31_abc123
-    - MLFeatureStoreProcessor_2026-01-30_def456
+    Old format examples (all to be cleaned):
+    - PlayerGameSummaryProcessor_2026-01-31_abc123  (date-based)
+    - NbacTeamBoxscoreProcessor_None_097ffc9c       (_None_ format from backfill jobs)
+    - BettingPropsProcessor_2026_abc123             (year-based)
+    - SomeProcessor_202601_abc123                   (_202 prefix from timestamps)
 
-    New format examples:
+    New format examples (keep):
     - PlayerGameSummaryProcessor
-    - MLFeatureStoreProcessor
+    - p2_nba_raw.nbac_team_boxscore
+    - AsyncUpcomingPlayerGameContextProcessor
     """
-    # If doc_id contains a date pattern (YYYY-MM-DD), it's old format
+    # Pattern 1: Contains "_None_" (from backfill jobs)
+    if '_None_' in doc_id:
+        return True
+
+    # Pattern 2: Contains "_202" (year prefix or timestamp)
+    if '_202' in doc_id:
+        return True
+
+    # Pattern 3: Contains date pattern (YYYY-MM-DD)
     parts = doc_id.split('_')
 
-    # Old format has at least 3 parts: processor_name, date, run_id
+    # Old format has at least 3 parts: processor_name, date/None/year, run_id
     if len(parts) < 3:
         return False
 
@@ -97,18 +118,24 @@ def cleanup_old_heartbeats(dry_run: bool = True):
     # Group old docs by processor name (extract from doc_id)
     processor_groups = defaultdict(list)
     for doc in old_format_docs:
-        # Extract processor name (everything before the first date pattern)
+        # Extract processor name (everything before the first date/None/year pattern)
         parts = doc.id.split('_')
         processor_name_parts = []
 
         for part in parts:
-            # Stop when we hit a date pattern
+            # Stop when we hit a date pattern (YYYY-MM-DD)
             if len(part) == 10 and part.count('-') == 2:
                 try:
                     datetime.strptime(part, '%Y-%m-%d')
                     break
                 except ValueError:
                     pass
+            # Stop when we hit "None"
+            if part == 'None':
+                break
+            # Stop when we hit a year (202X)
+            if part.startswith('202') and len(part) >= 4:
+                break
             processor_name_parts.append(part)
 
         processor_name = '_'.join(processor_name_parts) if processor_name_parts else 'unknown'
