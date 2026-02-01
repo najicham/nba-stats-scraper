@@ -88,6 +88,7 @@ from shared.endpoints.health import create_health_blueprint, HealthChecker
 
 # Postponement detection (Jan 2026)
 from shared.utils.postponement_detector import PostponementDetector
+from predictions.coordinator.signal_calculator import calculate_daily_signals
 
 # Configure logging
 logging.basicConfig(
@@ -2183,6 +2184,22 @@ def publish_batch_summary_from_firestore(batch_id: str):
                     f"from {consolidation_result.staging_tables_merged} staging tables, "
                     f"cleaned={consolidation_result.staging_tables_cleaned}"
                 )
+
+                # Step 1.5: Calculate daily prediction signals (Session 71)
+                try:
+                    logger.info(f"Calculating daily prediction signals for {game_date}...")
+                    signal_result = calculate_daily_signals(game_date=game_date)
+                    if signal_result['success']:
+                        logger.info(
+                            f"Daily signals calculated: {signal_result['systems_processed']} systems"
+                        )
+                    else:
+                        logger.warning(
+                            f"Signal calculation failed (non-fatal): {signal_result.get('error')}"
+                        )
+                except Exception as signal_err:
+                    # Don't fail batch if signal calculation fails
+                    logger.warning(f"Signal calculation failed (non-fatal): {signal_err}")
             else:
                 logger.error(f"Consolidation FAILED: {consolidation_result.error_message}", exc_info=True)
         except Exception as e:
@@ -2317,6 +2334,22 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
                     'staging_tables_cleaned': consolidation_result.staging_tables_cleaned,
                     'success': True
                 }
+
+                # Step 1.5: Calculate daily prediction signals (Session 71)
+                try:
+                    logger.info(f"Calculating daily prediction signals for {game_date}...")
+                    signal_result = calculate_daily_signals(game_date=game_date)
+                    if signal_result['success']:
+                        logger.info(
+                            f"Daily signals calculated: {signal_result['systems_processed']} systems"
+                        )
+                    else:
+                        logger.warning(
+                            f"Signal calculation failed (non-fatal): {signal_result.get('error')}"
+                        )
+                except Exception as signal_err:
+                    # Don't fail batch if signal calculation fails
+                    logger.warning(f"Signal calculation failed (non-fatal): {signal_err}")
             else:
                 logger.error(f"❌ Consolidation failed: {consolidation_result.error_message}", exc_info=True)
                 summary['consolidation'] = {

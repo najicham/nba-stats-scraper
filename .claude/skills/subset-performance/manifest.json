@@ -1,0 +1,6 @@
+{
+  "name": "subset-performance",
+  "description": "Compare performance across all defined dynamic subsets",
+  "user_invocable": true,
+  "version": "1.0.0"
+}
