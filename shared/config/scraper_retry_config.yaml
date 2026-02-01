@@ -424,8 +424,12 @@ scrapers:
   # --------------------------------------------------------------------------
   # ESPN ROSTERS - Team roster updates
   # --------------------------------------------------------------------------
+  # DISABLED 2026-02-01: Table nba_raw.espn_team_roster does not exist
+  # This was causing /catchup endpoint errors with:
+  #   "400 Unrecognized name: processed_at at [24:23]"
+  # Re-enable after creating the table or removing this config entirely
   espn_roster:
-    enabled: true
+    enabled: false  # Disabled - table doesn't exist
     priority: MEDIUM
 
     comparison:
