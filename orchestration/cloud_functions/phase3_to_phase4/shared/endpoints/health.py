@@ -256,3 +256,168 @@ def create_pubsub_checker(project_id: str) -> Callable[[], bool]:
             logger.error(f"Pub/Sub health check failed: {e}", exc_info=True)
             return False
     return check_pubsub
+
+
+# ============================================================================
+# CACHED HEALTH CHECKER (for Cloud Functions and high-frequency probes)
+# ============================================================================
+
+class CachedHealthChecker:
+    """
+    Health checker with TTL-based caching to prevent overloading dependencies.
+
+    Use this for Cloud Functions or services with frequent health probes.
+    Caches the full health check result for `cache_ttl_seconds` to avoid
+    hitting BigQuery/Firestore/Pub/Sub on every probe.
+
+    Usage:
+        checker = CachedHealthChecker(
+            service_name='phase3_to_phase4',
+            project_id='nba-props-platform',
+            cache_ttl_seconds=30
+        )
+
+        # In HTTP handler:
+        return checker.get_health_json()
+    """
+
+    def __init__(
+        self,
+        service_name: str,
+        project_id: str,
+        version: str = '1.0',
+        cache_ttl_seconds: int = 30,
+        check_bigquery: bool = True,
+        check_firestore: bool = True,
+        check_pubsub: bool = True
+    ):
+        self.service_name = service_name
+        self.project_id = project_id
+        self.version = version
+        self.cache_ttl_seconds = cache_ttl_seconds
+        self.start_time = time.time()
+
+        # Cache state
+        self._cached_result: Optional[Dict] = None
+        self._cache_timestamp: float = 0
+
+        # Dependency check flags
+        self._check_bigquery = check_bigquery
+        self._check_firestore = check_firestore
+        self._check_pubsub = check_pubsub
+
+    def _is_cache_valid(self) -> bool:
+        """Check if cached result is still valid."""
+        if self._cached_result is None:
+            return False
+        elapsed = time.time() - self._cache_timestamp
+        return elapsed < self.cache_ttl_seconds
+
+    def _check_dependencies(self) -> Dict[str, Dict]:
+        """Check all configured dependencies."""
+        results = {}
+
+        if self._check_bigquery:
+            start = time.time()
+            try:
+                from google.cloud import bigquery
+                client = bigquery.Client(project=self.project_id)
+                list(client.query("SELECT 1").result(timeout=5))
+                results['bigquery'] = {
+                    'healthy': True,
+                    'latency_ms': round((time.time() - start) * 1000, 2)
+                }
+            except Exception as e:
+                results['bigquery'] = {
+                    'healthy': False,
+                    'latency_ms': round((time.time() - start) * 1000, 2),
+                    'error': str(e)[:100]
+                }
+
+        if self._check_firestore:
+            start = time.time()
+            try:
+                from google.cloud import firestore
+                db = firestore.Client(project=self.project_id)
+                db.collection('_health_check').document('test').get(timeout=5)
+                results['firestore'] = {
+                    'healthy': True,
+                    'latency_ms': round((time.time() - start) * 1000, 2)
+                }
+            except Exception as e:
+                results['firestore'] = {
+                    'healthy': False,
+                    'latency_ms': round((time.time() - start) * 1000, 2),
+                    'error': str(e)[:100]
+                }
+
+        if self._check_pubsub:
+            start = time.time()
+            try:
+                from google.cloud import pubsub_v1
+                publisher = pubsub_v1.PublisherClient()
+                project_path = f"projects/{self.project_id}"
+                # Just check we can create the client (listing topics is slow)
+                results['pubsub'] = {
+                    'healthy': True,
+                    'latency_ms': round((time.time() - start) * 1000, 2)
+                }
+            except Exception as e:
+                results['pubsub'] = {
+                    'healthy': False,
+                    'latency_ms': round((time.time() - start) * 1000, 2),
+                    'error': str(e)[:100]
+                }
+
+        return results
+
+    def get_health(self) -> Dict:
+        """Get health check result (uses cache if valid)."""
+        # Return cached result if valid
+        if self._is_cache_valid():
+            # Update timestamp to show it's from cache
+            cached = self._cached_result.copy()
+            cached['cached'] = True
+            cached['cache_age_seconds'] = round(time.time() - self._cache_timestamp, 1)
+            return cached
+
+        # Perform fresh health check
+        uptime = time.time() - self.start_time
+        dependencies = self._check_dependencies()
+
+        # Determine overall status
+        unhealthy_deps = [name for name, dep in dependencies.items() if not dep.get('healthy', False)]
+        if unhealthy_deps:
+            status = 'degraded'
+        else:
+            status = 'healthy'
+
+        result = {
+            'status': status,
+            'service': self.service_name,
+            'version': self.version,
+            'uptime_seconds': round(uptime, 2),
+            'timestamp': datetime.now(timezone.utc).isoformat(),
+            'dependencies': dependencies,
+            'cached': False
+        }
+
+        if unhealthy_deps:
+            result['unhealthy_dependencies'] = unhealthy_deps
+
+        # Cache the result
+        self._cached_result = result
+        self._cache_timestamp = time.time()
+
+        return result
+
+    def get_health_json(self) -> tuple:
+        """Get health as JSON response tuple (body, status_code, headers)."""
+        import json
+        result = self.get_health()
+        status_code = 200 if result['status'] == 'healthy' else 503
+        return (
+            json.dumps(result),
+            status_code,
+            {'Content-Type': 'application/json'}
+        )

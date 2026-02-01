@@ -29,6 +29,7 @@ from .rate_limiter import (
     should_send_alert,
     get_error_signature,
     RateLimitConfig,
+    reset_alert_manager,
 )
 
 __all__ = [
@@ -37,4 +38,5 @@ __all__ = [
     'should_send_alert',
     'get_error_signature',
     'RateLimitConfig',
+    'reset_alert_manager',
 ]
