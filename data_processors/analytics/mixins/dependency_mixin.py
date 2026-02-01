@@ -187,6 +187,24 @@ class DependencyMixin:
                 max_age_warn = config.get('max_age_hours_warn', 24)
                 max_age_fail = config.get('max_age_hours_fail', 72)
 
+                # Skip stale checks for historical dates (backfill/reprocessing)
+                # If we're processing data older than the fail threshold, the data's
+                # processed_at timestamp will naturally be old - this is expected.
+                try:
+                    end_dt = datetime.strptime(end_date, '%Y-%m-%d').date()
+                    days_old = (datetime.now(timezone.utc).date() - end_dt).days
+                    if days_old * 24 > max_age_fail:
+                        logger.info(
+                            f"Skipping stale check for historical date {end_date} "
+                            f"({days_old} days old, {table_name})"
+                        )
+                        # Historical data - skip freshness validation
+                        results['details'][table_name] = details
+                        continue
+                except (ValueError, AttributeError):
+                    # If date parsing fails, proceed with normal stale check
+                    pass
+
                 if details['age_hours'] > max_age_fail:
                     results['all_fresh'] = False
                     stale_msg = (f"{table_name}: {details['age_hours']:.1f}h old "
