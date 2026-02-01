@@ -383,12 +383,98 @@ After fixing:
 
 ---
 
-**Status:** 🔴 Open - Ready for Investigation
-**Assigned:** Next available Sonnet session
-**Estimated Time:** 2-4 hours (investigation + fix + verification)
+**Status:** ✅ RESOLVED - 2026-02-01
+**Assigned:** Completed
+**Actual Time:** 30 minutes (investigation + fix + deployment)
+
+---
+
+## RESOLUTION (2026-02-01)
+
+### Root Cause Identified
+
+**Missing `__init__.py` file in `shared/monitoring/` directory**
+
+The `shared/monitoring/` directory was missing an `__init__.py` file, which prevented Python from recognizing it as a package. When processors tried to import:
+
+```python
+from shared.monitoring.processor_heartbeat import ProcessorHeartbeat
+```
+
+They received an `ImportError`, which was silently caught:
+
+```python
+try:
+    from shared.monitoring.processor_heartbeat import ProcessorHeartbeat
+    HEARTBEAT_AVAILABLE = True
+except ImportError:
+    ProcessorHeartbeat = None
+    HEARTBEAT_AVAILABLE = False  # Heartbeats silently disabled!
+```
+
+This explains:
+- **Timeline**: Heartbeats stopped Jan 26-27 when services were re-deployed after heartbeat code was added (Jan 24)
+- **No error logs**: ImportError was caught and swallowed
+- **Pipeline still works**: Heartbeats are non-critical, so processing continued normally
+- **Local tests passed**: `__pycache__` or different Python path resolution masked the issue locally
+
+### Fix Applied
+
+**Commit:** `30e1f345` - "fix: Add missing __init__.py to shared/monitoring package"
+
+1. Created `shared/monitoring/__init__.py` with proper package exports
+2. Deployed to Phase 3 analytics processors (revision `00163-6hz`)
+3. Deployed to Phase 4 precompute processors (revision `00089-z4t`)
+
+**Files Changed:**
+- `shared/monitoring/__init__.py` (new file)
+
+**Deployments:**
+- `nba-phase3-analytics-processors`: ✅ Deployed at 2026-02-01 01:28:56 UTC
+- `nba-phase4-precompute-processors`: ✅ Deployed at 2026-02-01 01:29:31 UTC
+
+### Verification Steps
+
+Heartbeats will resume when processors next run. To verify:
+
+```bash
+# Check for new heartbeats (after processors run)
+gcloud firestore documents list processor_heartbeats --limit=10 --format="table(document,updateTime)" --project=nba-props-platform
+
+# Or query via Python
+python3 << 'EOF'
+from google.cloud import firestore
+from datetime import datetime, timezone, timedelta
+
+db = firestore.Client(project='nba-props-platform')
+cutoff = datetime.now(timezone.utc) - timedelta(hours=1)
+
+recent = db.collection('processor_heartbeats').where('last_heartbeat', '>=', cutoff).limit(5).stream()
+
+print("Recent heartbeats (last hour):")
+for doc in recent:
+    data = doc.to_dict()
+    print(f"  {data.get('processor_name')} - {data.get('last_heartbeat')}")
+EOF
+```
+
+### Prevention
+
+**Added to future checks:**
+1. Pre-commit hook should validate Python package structure (all directories with .py files have __init__.py)
+2. Deployment verification should test import paths
+3. Unit tests should verify heartbeat imports work
+
+### Lessons Learned
+
+1. **Silent failures are dangerous**: The try/except pattern hid the real issue
+2. **Package structure matters**: Missing `__init__.py` is easy to overlook
+3. **Verify imports in deployed containers**: Local environment may differ from production
+4. **Test negative cases**: Should have tested that heartbeats fail gracefully AND log errors
 
 ---
 
 *Created: 2026-02-01*
-*Last Updated: 2026-02-01*
-*For: Future investigation session*
+*Investigated: 2026-02-01*
+*Resolved: 2026-02-01*
+*Resolution Time: 30 minutes*
