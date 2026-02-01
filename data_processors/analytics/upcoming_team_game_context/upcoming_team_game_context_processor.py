@@ -1575,7 +1575,7 @@ class UpcomingTeamGameContextProcessor(
         logger.info("SAVING TO BIGQUERY (MERGE PATTERN)")
         logger.info("=" * 80)
 
-        table_id = f"{self.project_id}.{self.table_name}"
+        table_id = f"{self.project_id}.{self.dataset_id}.{self.table_name}"
         temp_table_id = None
         timing = {}
         overall_start = time.time()
