@@ -192,8 +192,13 @@ record['vegas_line_source'] = 'raw_tables' if self.is_backfill_mode else 'phase3
 
 ## Next Session Checklist
 
+### Schema Changes - ✅ COMPLETE
+- [x] `player_prop_predictions`: Added build_commit_sha, deployment_revision, predicted_at, critical_features
+- [x] `ml_feature_store_v2`: Added build_commit_sha, feature_source_mode, vegas_line_source
+- [x] `prediction_accuracy`: Added build_commit_sha, critical_features
+- [x] Created `prediction_execution_log` table
+
 ### Immediate (Do First)
-- [ ] Run schema ALTER TABLE statements (see above)
 - [ ] Deploy prediction worker with new fields populated
 - [ ] Test that new fields are being written
 
