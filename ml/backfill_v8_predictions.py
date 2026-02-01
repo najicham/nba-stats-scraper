@@ -340,6 +340,57 @@ def backfill_date(
     return len(players), total_inserted
 
 
+def run_grading_backfill(start_date: date, end_date: date, dry_run: bool = False) -> bool:
+    """
+    Automatically trigger grading backfill after predictions are generated.
+
+    This ensures prediction_accuracy table stays in sync with player_prop_predictions.
+    Added in Session 68 to prevent grading gaps.
+
+    Args:
+        start_date: Start date for grading
+        end_date: End date for grading
+        dry_run: If True, only log what would be done
+
+    Returns:
+        True if grading completed successfully, False otherwise
+    """
+    if dry_run:
+        logger.info(f"[DRY RUN] Would trigger grading backfill for {start_date} to {end_date}")
+        return True
+
+    logger.info("=" * 60)
+    logger.info(f"STEP 2: Running grading backfill for {start_date} to {end_date}")
+    logger.info("=" * 60)
+
+    try:
+        # Import grading backfill
+        from backfill_jobs.grading.prediction_accuracy.prediction_accuracy_grading_backfill import (
+            PredictionAccuracyBackfill
+        )
+
+        # Run grading backfill
+        grader = PredictionAccuracyBackfill()
+        grader.run_backfill(start_date, end_date, dry_run=False, checkpoint=None)
+
+        logger.info("✅ Grading backfill completed successfully")
+        return True
+
+    except ImportError as e:
+        logger.error(f"❌ Failed to import grading backfill: {e}")
+        logger.error("Manual grading backfill required:")
+        logger.error(f"  PYTHONPATH=. python backfill_jobs/grading/prediction_accuracy/prediction_accuracy_grading_backfill.py \\")
+        logger.error(f"    --start-date {start_date} --end-date {end_date}")
+        return False
+
+    except Exception as e:
+        logger.error(f"❌ Failed to run grading backfill: {e}")
+        logger.error("Manual grading backfill required:")
+        logger.error(f"  PYTHONPATH=. python backfill_jobs/grading/prediction_accuracy/prediction_accuracy_grading_backfill.py \\")
+        logger.error(f"    --start-date {start_date} --end-date {end_date}")
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(description='Backfill CatBoost predictions')
     parser.add_argument('--start-date', type=str, help='Start date (YYYY-MM-DD)')
@@ -424,16 +475,45 @@ def main():
             f"ETA: {eta_minutes:.0f}m"
         )
 
-    # Summary
+    # Summary of Step 1
     duration = time.time() - start_time
     logger.info("=" * 60)
-    logger.info("BACKFILL COMPLETE")
+    logger.info("STEP 1 COMPLETE: Predictions Generated")
     logger.info(f"Dates processed: {len(all_dates)}")
     logger.info(f"Total players: {total_players:,}")
     logger.info(f"Total predictions: {total_predictions:,}")
     logger.info(f"Duration: {duration/60:.1f} minutes")
     logger.info(f"Rate: {total_predictions/duration:.0f} predictions/second")
     logger.info("=" * 60)
+
+    # Step 2: Auto-trigger grading backfill (Session 68 fix)
+    if all_dates and not args.dry_run:
+        start = all_dates[0]
+        end = all_dates[-1]
+        logger.info("")
+        logger.info("Starting automatic grading backfill...")
+
+        grading_success = run_grading_backfill(start, end, dry_run=args.dry_run)
+
+        logger.info("")
+        logger.info("=" * 60)
+        if grading_success:
+            logger.info("BACKFILL COMPLETE (PREDICTIONS + GRADING)")
+            logger.info(f"✅ Predictions: {len(all_dates)} dates, {total_predictions:,} records")
+            logger.info(f"✅ Grading: {start} to {end}")
+            logger.info("Both player_prop_predictions and prediction_accuracy are now in sync")
+        else:
+            logger.info("PARTIAL COMPLETION")
+            logger.info(f"✅ Predictions: {len(all_dates)} dates, {total_predictions:,} records")
+            logger.info(f"❌ Grading: Failed - see error above")
+            logger.info("Run grading manually to complete sync")
+        logger.info("=" * 60)
+    elif args.dry_run:
+        logger.info("")
+        logger.info("[DRY RUN] Would run grading backfill after predictions")
+        run_grading_backfill(all_dates[0] if all_dates else date.today(),
+                            all_dates[-1] if all_dates else date.today(),
+                            dry_run=True)
 
 
 if __name__ == '__main__':
