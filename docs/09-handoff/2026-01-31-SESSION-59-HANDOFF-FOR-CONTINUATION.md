@@ -1,7 +1,7 @@
 # Session 59 Handoff - Odds Data Investigation (For Continuation)
 
 **Date:** 2026-01-31
-**Status:** Investigation in progress - needs continuation
+**Status:** Investigation complete, implementation needed
 **Priority:** P1 - Affects ML training and betting accuracy
 
 ---
@@ -11,6 +11,10 @@
 This session investigated why the ML feature store had missing Vegas line data. The investigation uncovered deeper questions about which data source to use for training and grading.
 
 **Key project doc:** `docs/08-projects/current/odds-data-cascade-investigation/README.md`
+
+### Key Decision Made
+
+**Use BettingPros DraftKings as fallback for Odds API DraftKings.** This adds 15% more coverage (2,400 player/games per season) while keeping all lines DraftKings-consistent.
 
 ---
 
@@ -98,16 +102,33 @@ BettingPros is NOT just an aggregate. It has lines from specific books:
 
 ### Q4: What cascade priority should we use?
 
-**Proposed (not yet implemented for player props):**
+**DECIDED - Implement this cascade:**
 ```
-1. Odds API DraftKings
-2. Odds API FanDuel
-3. BettingPros DraftKings
-4. BettingPros FanDuel
-5. BettingPros Consensus (fallback)
+1. Odds API DraftKings      ← Primary (most real-time)
+2. BettingPros DraftKings   ← Fills 15% coverage gap
+3. Odds API FanDuel         ← If no DK anywhere
+4. BettingPros FanDuel      ← Fallback
+5. BettingPros Consensus    ← Last resort only
 ```
 
-**Currently:** No explicit DK > FD priority in player props code.
+**Currently:** No explicit DK > FD priority, and BettingPros DK not used as fallback.
+
+### Q5: How much extra coverage does BettingPros DraftKings provide?
+
+**ANSWERED (2024-25 Season, apples-to-apples comparison):**
+
+| Metric | Odds API DK | BettingPros DK | Difference |
+|--------|-------------|----------------|------------|
+| Unique player/games | 15,855 | 18,254 | **+15%** |
+| Unique players | 383 | 413 | +30 |
+
+| Overlap | Player/Games |
+|---------|-------------|
+| In BOTH sources | 14,754 (93%) |
+| Only in Odds API | 1,101 |
+| Only in BettingPros | 3,500 |
+
+**Conclusion:** BettingPros DraftKings captures ~2,400 more player/games (bench players) that Odds API misses. Using it as fallback gives DraftKings-consistent lines with maximum coverage.
 
 ---
 
@@ -137,7 +158,38 @@ Can fix ~3,500 records from Nov-Dec 2025 with missing Vegas data.
 
 ## Recommended Next Steps
 
-### Priority 1: Add Bookmaker to Grading
+### Priority 1: Implement New Cascade in betting_data.py
+
+**File:** `data_processors/analytics/upcoming_player_game_context/betting_data.py`
+
+**Goal:** Implement this cascade for player props:
+```
+1. Odds API DraftKings
+2. BettingPros DraftKings  ← NEW
+3. Odds API FanDuel
+4. BettingPros FanDuel
+5. BettingPros Consensus
+```
+
+**Implementation approach:**
+1. Modify `extract_prop_lines_from_odds_api()` to prefer DraftKings over FanDuel
+2. Modify `extract_prop_lines_from_bettingpros()` to prefer DraftKings over FanDuel over Consensus
+3. Ensure Phase 3 tries Odds API DK first, then BettingPros DK, before moving to FD
+
+**SQL pattern to add:**
+```sql
+ORDER BY
+  CASE bookmaker
+    WHEN 'draftkings' THEN 1
+    WHEN 'DraftKings' THEN 1
+    WHEN 'fanduel' THEN 2
+    WHEN 'FanDuel' THEN 2
+    ELSE 99  -- Consensus and others
+  END,
+  snapshot_timestamp DESC
+```
+
+### Priority 2: Add Bookmaker to Grading
 
 1. **Schema change:** Add `line_bookmaker STRING` to `prediction_accuracy`
 2. **Populate from:** `upcoming_player_game_context.current_points_line_source`
@@ -150,43 +202,17 @@ Can fix ~3,500 records from Nov-Dec 2025 with missing Vegas data.
    GROUP BY 1
    ```
 
-### Priority 2: Analyze Line Differences
+### Priority 3: Run Backfill Script
 
-Compare Consensus vs DraftKings lines:
-```sql
-SELECT
-  FORMAT_DATE('%Y-%m', game_date) as month,
-  ROUND(AVG(ABS(consensus_line - dk_line)), 2) as avg_diff
-FROM (
-  SELECT game_date, player_lookup,
-    MAX(CASE WHEN bookmaker = 'BettingPros Consensus' THEN points_line END) as consensus_line,
-    MAX(CASE WHEN bookmaker = 'DraftKings' THEN points_line END) as dk_line
-  FROM nba_raw.bettingpros_player_points_props
-  WHERE market_type = 'points' AND bet_side = 'over'
-    AND game_date >= '2024-01-01'
-  GROUP BY 1, 2
-  HAVING consensus_line IS NOT NULL AND dk_line IS NOT NULL
-)
-GROUP BY 1
-ORDER BY 1
+```bash
+# Fix Oct-Nov 2025 feature store data
+PYTHONPATH=. python scripts/backfill_feature_store_vegas.py --start 2025-11-01 --end 2025-12-31 --dry-run
+PYTHONPATH=. python scripts/backfill_feature_store_vegas.py --start 2025-11-01 --end 2025-12-31
 ```
 
-### Priority 3: Implement DK > FD Priority
+### Priority 4: Consider V9 Training on DraftKings Only
 
-**File:** `data_processors/analytics/upcoming_player_game_context/betting_data.py`
-
-Add to both `extract_prop_lines_from_odds_api()` and `extract_prop_lines_from_bettingpros()`:
-```sql
-ORDER BY
-  CASE bookmaker
-    WHEN 'draftkings' THEN 1
-    WHEN 'DraftKings' THEN 1
-    WHEN 'fanduel' THEN 2
-    WHEN 'FanDuel' THEN 2
-    ELSE 99
-  END,
-  snapshot_timestamp DESC
-```
+V8 was trained on BettingPros Consensus. For V9, consider training on DraftKings-only lines to match what users actually bet on.
 
 ---
 
@@ -306,12 +332,20 @@ bde97bd7 feat: Fix feature store to use Phase 3 cascade for Vegas lines
 
 ## Summary for Continuation
 
-1. **V8 uses BettingPros Consensus** - May want to retrain on DraftKings
-2. **BettingPros has more data** - Because of over/under, more snapshots, more history
-3. **We track bookmaker in Phase 3** - But not in grading table
-4. **Feature store is fixed** - Now uses Phase 3 cascade
-5. **Need to add bookmaker to grading** - To analyze per-book hit rates
-6. **Need to implement DK > FD priority** - For player props cascade
+### What's Done
+1. ✅ **Feature store fixed** - Now reads from Phase 3 (inherits cascade)
+2. ✅ **Investigation complete** - BettingPros DK has 15% more coverage than Odds API DK
+3. ✅ **Decision made** - Use BettingPros DraftKings as fallback for Odds API DraftKings
+4. ✅ **Backfill script ready** - `scripts/backfill_feature_store_vegas.py`
+
+### What Needs Implementation
+1. **Implement new cascade in betting_data.py** - DK priority + BettingPros DK as fallback
+2. **Add bookmaker to prediction_accuracy** - For per-book hit rate analysis
+3. **Run backfill script** - Fix Oct-Nov 2025 data
+4. **Consider V9 on DraftKings** - V8 used Consensus
+
+### Key Insight
+BettingPros DraftKings provides 2,400 extra player/games per season (15% more coverage) that Odds API misses. These are real DraftKings lines, so using them as fallback keeps predictions DraftKings-consistent while maximizing coverage.
 
 ---
 
