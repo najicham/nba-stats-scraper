@@ -225,9 +225,19 @@ WHERE system_id = 'catboost_v8'
 
 **Column names:** `home_team_tricode`, `away_team_tricode`, `game_id`, `game_date`, `game_status`
 
+**Game Status Codes** (IMPORTANT for investigation):
+- `game_status = 1`: **Scheduled** - Game has not started yet
+- `game_status = 2`: **In Progress** - Game is currently being played
+- `game_status = 3`: **Final** - Game has completed
+
 ```sql
--- Example: Get today's games
-SELECT game_id, away_team_tricode, home_team_tricode, game_status
+-- Example: Get today's games with status
+SELECT game_id, away_team_tricode, home_team_tricode, game_status,
+  CASE game_status
+    WHEN 1 THEN 'Scheduled'
+    WHEN 2 THEN 'In Progress'
+    WHEN 3 THEN 'Final'
+  END as status_text
 FROM nba_reference.nba_schedule
 WHERE game_date = CURRENT_DATE()
 ```
@@ -262,13 +272,28 @@ gcloud logging read 'resource.type="cloud_run_revision" AND severity>=ERROR' --l
 2. Add missing fields with `ALTER TABLE ... ADD COLUMN`
 3. Update schema SQL file in `schemas/bigquery/`
 
-### Deployment Drift
-**Symptom**: Service missing recent bug fixes
-**Cause**: Manual deployments, no automation
+### Deployment Drift (Session 58)
+**Symptom**: Service missing recent bug fixes, known bugs recurring in production
+**Cause**: Manual deployments, no automation - fixes committed but never deployed
+**Real Example**: Session 57 quota fixes (Jan 31) not deployed until Session 58 (Feb 1), causing 24 hours of recurring errors
 **Fix**:
-1. Run `./bin/check-deployment-drift.sh --verbose`
-2. Rebuild and deploy stale services
-3. GitHub workflow will create issues for future drift
+1. After committing bug fixes, **ALWAYS deploy immediately**: `./bin/deploy-service.sh <service-name>`
+2. **Verify deployment**: Check deployed commit matches latest main
+3. Run `./bin/check-deployment-drift.sh --verbose` to detect drift
+4. GitHub workflow will create issues for future drift
+
+**Deployment Verification** (CRITICAL after bug fixes):
+```bash
+# Check what's currently deployed
+gcloud run services describe nba-phase3-analytics-processors --region=us-west2 \
+  --format="value(metadata.labels.commit-sha)"
+
+# Compare to latest main
+git log -1 --format="%h"
+
+# If different, redeploy immediately!
+./bin/deploy-service.sh nba-phase3-analytics-processors
+```
 
 ### Quota Exceeded
 **Symptom**: "Exceeded rate limits: too many partition modifications"
@@ -292,6 +317,28 @@ gcloud logging read 'resource.type="cloud_run_revision" AND severity>=ERROR' --l
 2. Look for `bdl_readiness = 'READY_TO_ENABLE'` (requires <5% major discrepancies for 7 consecutive days)
 3. Daily automated check runs at 7 PM ET via `data-quality-alerts` Cloud Function
 **Re-enabling**: When `bdl_readiness = 'READY_TO_ENABLE'`, set `USE_BDL_DATA = True` in `player_game_summary_processor.py`
+
+### Validation Timing Confusion (Session 58)
+**Symptom**: Validation shows "missing data" but games haven't finished yet
+**Cause**: Checking data for in-progress games, timezone confusion (UTC vs ET)
+**Real Example**: Jan 31 validation at 8:56 PM EST showed "missing data" - games were in progress!
+**Fix**:
+1. **Always check current time** when investigating "missing" data
+2. Use correct validation mode:
+   - **Pre-game check**: For today's games (8 AM - 6 PM ET) - expect predictions but no final stats
+   - **Post-game check**: For yesterday's games (6 AM - noon ET next day) - expect complete data
+3. Verify game status in schedule before assuming scraper failure:
+```bash
+# Check if games have actually finished
+bq query --use_legacy_sql=false "
+SELECT game_id, home_team_tricode, game_status,
+  CASE game_status WHEN 1 THEN 'Scheduled' WHEN 2 THEN 'In Progress' WHEN 3 THEN 'Final' END as status
+FROM nba_reference.nba_schedule
+WHERE game_date = '<date-to-check>'"
+```
+4. **Timezone awareness**:
+   - UTC vs ET vs PT can differ by dates
+   - Feb 1 01:00 UTC = Jan 31 20:00 EST (still Saturday night!)
 
 ### Shot Zone Data Quality (FIXED Jan 2026)
 **Symptom**: Shot zone rates look wrong - paint rate too low (<30%) or three rate too high (>50%)
