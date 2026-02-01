@@ -86,8 +86,9 @@ class CatBoostV9(CatBoostV8):
             self._load_model_from_default_location()
 
     def _load_model_from_default_location(self):
-        """Load V9 model from default locations."""
+        """Load V9 model from default locations (local first, then GCS)."""
         import catboost as cb
+        import os
 
         # Try local models directory first
         models_dir = Path(__file__).parent.parent.parent.parent / "models"
@@ -107,26 +108,48 @@ class CatBoostV9(CatBoostV8):
             )
             return
 
-        # Try GCS path
-        gcs_path = "gs://nba-props-platform-models/catboost/v9/"
-        logger.info(f"No local V9 model found, trying GCS: {gcs_path}")
-
-        # For now, raise error if no local model - GCS loading can be added later
-        raise ModelLoadError(
-            f"CatBoost V9 model not found. "
-            f"Expected files matching: catboost_v9_33features_*.cbm in {models_dir}. "
-            f"Run the V9 training experiment or download from GCS."
+        # Try GCS - check for environment variable or use default path
+        gcs_path = os.environ.get(
+            'CATBOOST_V9_MODEL_PATH',
+            'gs://nba-props-platform-models/catboost/v9/catboost_v9_33features_20260201_011018.cbm'
         )
+        logger.info(f"No local V9 model found, loading from GCS: {gcs_path}")
+
+        # Load from GCS using parent class method
+        self._load_model_from_path(gcs_path)
 
     def _load_model_from_path(self, model_path: str):
-        """Load V9 model from explicit path."""
+        """Load V9 model from explicit path (local or GCS)."""
         import catboost as cb
 
         logger.info(f"Loading CatBoost V9 from: {model_path}")
-        self.model = cb.CatBoostRegressor()
-        self.model.load_model(model_path)
+
+        if model_path.startswith("gs://"):
+            # Load from GCS
+            from shared.clients import get_storage_client
+            parts = model_path.replace("gs://", "").split("/", 1)
+            bucket_name, blob_path = parts[0], parts[1]
+
+            client = get_storage_client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(blob_path)
+            local_path = "/tmp/catboost_v9.cbm"
+            blob.download_to_filename(local_path)
+            logger.info(f"Downloaded V9 model from GCS to {local_path}")
+
+            self.model = cb.CatBoostRegressor()
+            self.model.load_model(local_path)
+        else:
+            # Load from local path
+            self.model = cb.CatBoostRegressor()
+            self.model.load_model(model_path)
+
         self._model_path = model_path
-        logger.info(f"CatBoost V9 loaded from {model_path}")
+        logger.info(
+            f"CatBoost V9 loaded successfully. "
+            f"Training: {self.TRAINING_INFO['training_start']} to {self.TRAINING_INFO['training_end']}. "
+            f"Ready to generate predictions with 33 features."
+        )
 
     def predict(
         self,
