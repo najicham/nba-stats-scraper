@@ -39,7 +39,8 @@ Start here: What's the symptom?
 ├─ Pipeline didn't run on schedule → Section 3: Timing Issues
 ├─ Processing taking too long → Section 4: Performance Issues
 ├─ Early season errors → Section 5: Early Season Issues
-└─ Database/infrastructure errors → Section 6: Infrastructure Issues
+├─ Database/infrastructure errors → Section 6: Infrastructure Issues
+└─ Dashboard/monitoring issues → Section 7: Observability Issues
 ```
 
 ---
@@ -1418,6 +1419,213 @@ WHERE prediction_date = CURRENT_DATE();
 
 ---
 
+## Section 7: Observability Issues (Dashboard & Monitoring)
+
+### 7.1 - Dashboard Shows Low Health Score
+
+**Symptom:** Unified dashboard shows services health score <50/100 when most services are running.
+
+**Example:** Dashboard showed 39/100 health score in Session 61, but all services were actually healthy.
+
+#### Root Cause: Firestore Document Proliferation
+
+**Problem:** Heartbeat system creating multiple documents per processor instead of one.
+
+**How it happens:**
+- Old heartbeat implementation used `f"{processor_name}_{data_date}_{run_id}"` as document ID
+- Each processor run created a NEW Firestore document instead of updating existing one
+- Dashboard query (`ORDER BY last_heartbeat DESC LIMIT 100`) returned mix of current + stale docs
+- Health score calculation saw multiple stale entries per processor → artificially low score
+
+**Diagnosis:**
+
+```bash
+# Check Firestore document count (should be ~30, one per processor)
+# If >100, indicates proliferation issue
+gcloud firestore documents list processor_heartbeats --limit=200 2>/dev/null | wc -l
+
+# Check for duplicate processor entries in dashboard
+curl https://unified-dashboard-f7p3g7f6ya-wl.a.run.app/api/services/health
+```
+
+**Expected:**
+- Firestore collection: ~30 documents (one per unique processor)
+- Health score: 70-100/100 (based on actual service health)
+
+**If document count >100:**
+- Indicates old heartbeat format still in use
+- Multiple documents exist per processor
+- Dashboard showing stale/duplicate entries
+
+#### Fix Procedures
+
+**Step 1: Verify heartbeat fix is deployed**
+
+Check which services have the heartbeat fix deployed:
+
+```bash
+# Check Phase 3 deployment
+gcloud run services describe nba-phase3-analytics-processors \
+  --region=us-west2 \
+  --format="value(spec.template.spec.containers[0].env)" | \
+  grep BUILD_COMMIT
+
+# Should be commit e1c10e88 or later (Feb 1, 2026+)
+```
+
+Repeat for:
+- `nba-phase2-raw-processors`
+- `nba-phase3-analytics-processors`
+- `nba-phase4-precompute-processors`
+
+**Step 2: Deploy heartbeat fix to any missing services**
+
+```bash
+# Deploy services that don't have the fix
+./bin/deploy-service.sh nba-phase2-processors
+./bin/deploy-service.sh nba-phase3-analytics-processors
+./bin/deploy-service.sh nba-phase4-precompute-processors
+```
+
+**Step 3: Run Firestore cleanup script**
+
+After all services deployed with fix:
+
+```bash
+# Preview what will be deleted
+python bin/cleanup-heartbeat-docs.py --dry-run
+
+# Shows breakdown like:
+#   106,234 total documents
+#   30 unique processors
+#   106,204 documents to delete
+
+# Execute cleanup (requires typing 'DELETE' to confirm)
+python bin/cleanup-heartbeat-docs.py
+```
+
+**Step 4: Verify health score improved**
+
+Wait 5-10 minutes for processors to emit new heartbeats, then:
+
+```bash
+# Check dashboard health score
+curl https://unified-dashboard-f7p3g7f6ya-wl.a.run.app/api/services/health
+
+# Expected: 70-100/100 (was 39/100 before fix)
+```
+
+#### Prevention
+
+**Monitor Firestore collection size:**
+
+```bash
+# Should stay ~30 documents (one per processor)
+# If growing, indicates a service deployed without heartbeat fix
+gcloud firestore documents list processor_heartbeats --limit=50 | wc -l
+```
+
+**Alert if collection exceeds 50 documents** - indicates issue.
+
+**References:**
+- Heartbeat implementation: `shared/monitoring/processor_heartbeat.py`
+- Cleanup script: `bin/cleanup-heartbeat-docs.py`
+- Session 61 handoff: `docs/09-handoff/2026-02-01-SESSION-61-HANDOFF.md`
+- CLAUDE.md Heartbeat System section
+
+---
+
+### 7.2 - Dashboard Shows Stale Processor Status
+
+**Symptom:** Dashboard shows processor as "running" but last heartbeat was hours/days ago.
+
+**Potential Causes:**
+
+#### Cause 1: Processor crashed without updating status
+
+```bash
+# Check if processor actually running
+gcloud logging read 'resource.type="cloud_run_revision"
+  AND resource.labels.service_name="nba-phase3-analytics-processors"
+  AND timestamp>=2026-02-01T00:00:00Z' \
+  --limit=10 \
+  --format=json
+```
+
+**If no recent logs:**
+- Processor not running
+- Heartbeat status is stale
+- Manually update Firestore document or wait for next run
+
+**If recent logs show errors:**
+- Processor crashed mid-run
+- Check error logs for root cause
+- Re-trigger processor after fixing issue
+
+#### Cause 2: Firestore write failures
+
+```bash
+# Check for Firestore permission errors
+gcloud logging read 'resource.type="cloud_run_revision"
+  AND textPayload=~"Firestore"
+  AND severity>=ERROR' \
+  --limit=20
+```
+
+**Common errors:**
+- "Permission denied" - Service account needs Firestore write access
+- "Deadline exceeded" - Network issues or Firestore unavailable
+
+**Fix:** Check service account permissions for `datastore.entities.create/update`
+
+#### Cause 3: Multiple documents per processor (proliferation)
+
+See Section 7.1 above - run cleanup script.
+
+---
+
+### 7.3 - Firestore Collection Growing Unbounded
+
+**Symptom:** Firestore `processor_heartbeats` collection has thousands of documents.
+
+**Root Cause:** Old heartbeat format creating document per run instead of updating single document.
+
+**Diagnosis:**
+
+```python
+from google.cloud import firestore
+db = firestore.Client(project='nba-props-platform')
+docs = list(db.collection('processor_heartbeats').stream())
+
+print(f"Total documents: {len(docs)}")
+
+# Group by processor name
+from collections import Counter
+processor_counts = Counter()
+for doc in docs:
+    # Extract processor name (before first underscore + date pattern)
+    parts = doc.id.split('_')
+    processor_name = parts[0] if len(parts) > 0 else doc.id
+    processor_counts[processor_name] += 1
+
+print("\nDocuments per processor:")
+for processor, count in processor_counts.most_common(10):
+    print(f"  {processor}: {count} documents")
+```
+
+**Expected:** Each processor should have 1 document (maybe 2-3 during transition)
+
+**If 100+ docs per processor:** Old heartbeat format still in use
+
+**Fix:** Follow Section 7.1 steps (deploy heartbeat fix, run cleanup script)
+
+**Cost Impact:**
+- 106,000 documents = ~$0.30/day in Firestore costs
+- 30 documents = ~$0.001/day
+- **Savings: $110/year** from fixing proliferation
+
+---
+
 ## Section 8: Escalation Path
 
 ### When to Escalate
@@ -1455,6 +1663,11 @@ WHERE prediction_date = CURRENT_DATE();
 | "Table not found" | 6.1 | Schema not created |
 | "Timeout exceeded" | 6.2 | Cloud Run timeout (60 min limit) |
 | "Out of memory" | 6.3 | Need more memory allocation |
+| **Observability/Monitoring** |||
+| "Dashboard health score <50/100" | 7.1 | Firestore document proliferation |
+| "Firestore permission denied" | 7.2 | Service account needs datastore.entities write access |
+| "Processor status stale" | 7.2 | Processor crashed or Firestore writes failing |
+| "Collection growing unbounded" | 7.3 | Old heartbeat format creating doc per run |
 | **Phase 1-4 Data** |||
 | "Insufficient data for player" | 5.1, 5.2 | Early season or missing historical data |
 | "No games scheduled" | 3.1 | Normal off-day |
@@ -1472,12 +1685,13 @@ WHERE prediction_date = CURRENT_DATE();
 
 ---
 
-**Document Version**: 1.1
+**Document Version**: 1.2
 **Created**: 2025-11-15
-**Last Updated**: 2025-12-27
+**Last Updated**: 2026-02-01
 **Maintained By**: Engineering Team
 **Review Frequency**: Monthly or after major incidents
 
 **Version History:**
+- v1.2 (2026-02-01): Added Section 7: Observability Issues (dashboard health, Firestore proliferation, monitoring)
 - v1.1 (2025-11-15): Added Phase 5 prediction details (sections 1.1-1.5), XGBoost troubleshooting, updated error messages
 - v1.0 (2025-11-15): Initial version with Phase 1-4 troubleshooting

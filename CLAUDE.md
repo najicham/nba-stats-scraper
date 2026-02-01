@@ -279,6 +279,102 @@ gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.serv
 gcloud logging read 'resource.type="cloud_run_revision" AND severity>=ERROR' --limit=20
 ```
 
+## Heartbeat System
+
+**Purpose:** Processors emit periodic heartbeats to Firestore to track health and progress in the unified dashboard.
+
+**Implementation:** `shared/monitoring/processor_heartbeat.py`
+
+### How It Works
+
+1. **Each processor has ONE Firestore document** identified by `processor_name`
+2. **Heartbeats update this single document** with current status, progress, timestamp
+3. **Dashboard queries Firestore** to show health score and recent activity
+4. **Document structure:**
+   ```python
+   {
+       "processor_name": "PlayerGameSummaryProcessor",
+       "status": "running",  # or "completed", "failed"
+       "last_heartbeat": timestamp,
+       "progress": {"current": 50, "total": 100},
+       "data_date": "2026-02-01",
+       "run_id": "abc123"
+   }
+   ```
+
+### Critical Design: One Document Per Processor
+
+**Correct implementation (current):**
+```python
+@property
+def doc_id(self) -> str:
+    """Uses processor_name as ID - each processor has ONE document."""
+    return self.processor_name
+```
+
+**Anti-pattern (old, WRONG):**
+```python
+# DON'T DO THIS - creates unbounded document growth!
+def doc_id(self) -> str:
+    return f"{self.processor_name}_{self.data_date}_{self.run_id}"
+```
+
+**Why this matters:**
+- Old pattern created 106,000+ documents for 30 processors (3,500 new docs/day)
+- Dashboard showed low health scores (39/100) due to stale duplicates
+- Firestore costs and query performance degraded
+
+### When to Run Cleanup Script
+
+Run `bin/cleanup-heartbeat-docs.py` if:
+- Dashboard health score is unexpectedly low (<50/100)
+- Firestore collection has >100 documents (should be ~30)
+- After deploying heartbeat fix to all services
+
+**Usage:**
+```bash
+# Preview what will be deleted
+python bin/cleanup-heartbeat-docs.py --dry-run
+
+# Execute cleanup (requires confirmation)
+python bin/cleanup-heartbeat-docs.py
+```
+
+**Expected result:** Reduces collection from 106k+ docs to ~30 docs (one per processor)
+
+### Verifying Heartbeat System
+
+```bash
+# Check Firestore document count (should be ~30)
+gcloud firestore collections list
+
+# Check dashboard health score (should be 70+/100)
+curl https://unified-dashboard-f7p3g7f6ya-wl.a.run.app/api/services/health
+
+# View recent heartbeats in logs
+gcloud logging read 'resource.type="cloud_run_revision"
+  AND jsonPayload.message=~"Heartbeat"' \
+  --limit=20 \
+  --format=json
+```
+
+### Troubleshooting
+
+**Low dashboard health score:**
+1. Check if all services deployed with heartbeat fix
+2. Run cleanup script to remove old documents
+3. Verify Firestore collection size (~30 docs)
+
+**Firestore collection growing:**
+- Indicates a service still using old heartbeat format
+- Deploy latest version of service with heartbeat fix
+- Run cleanup script after deployment
+
+**References:**
+- Implementation: `shared/monitoring/processor_heartbeat.py`
+- Cleanup script: `bin/cleanup-heartbeat-docs.py`
+- Session 61 handoff: `docs/09-handoff/2026-02-01-SESSION-61-HANDOFF.md`
+
 ## Common Issues and Fixes
 
 ### Schema Mismatch
