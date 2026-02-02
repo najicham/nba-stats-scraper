@@ -2,13 +2,13 @@
 
 ## Session Summary
 
-Created evening analytics scheduler jobs to reduce the 6-18 hour gap in game processing. Discovered that schedulers depend on gamebook data which only becomes available the next morning. Performed early validation on the one completed Feb 1 game.
+Created evening analytics scheduler jobs AND implemented boxscore fallback for same-day processing. Successfully processed Feb 1 data using live boxscores when gamebook wasn't available. Validated RED signal with 67.7% overall hit rate.
 
 ---
 
-## Accomplishments
+## Major Accomplishments
 
-### 1. Evening Schedulers Created
+### 1. Evening Schedulers Created ✅
 
 | Job | Schedule | Purpose |
 |-----|----------|---------|
@@ -17,86 +17,60 @@ Created evening analytics scheduler jobs to reduce the 6-18 hour gap in game pro
 | `evening-analytics-1am-et` | Daily 1 AM ET | West Coast games |
 | `morning-analytics-catchup-9am-et` | Daily 9 AM ET | Safety net |
 
-**Verification:**
-```bash
-gcloud scheduler jobs list --location=us-west2 | grep -E "evening|catchup"
+### 2. Boxscore Fallback Implemented ✅
+
+**Problem:** Gamebook data only available next morning, blocking same-day processing.
+
+**Solution:** Added `nbac_player_boxscores` as fallback source in `PlayerGameSummaryProcessor`.
+
+When gamebook has 0 records, processor now automatically falls back to live boxscores:
+- Checks `nbac_gamebook_player_stats` first (PRIMARY)
+- If empty, checks `nbac_player_boxscores` where `game_status = 'Final'` (FALLBACK)
+- Uses `_use_boxscore_fallback` flag to switch extraction query
+- `primary_source_used` column tracks which source was used
+
+**Verified Working:**
+```
+Feb 1 processing: 148 records, 7 games, ALL from nbac_boxscores fallback
+Jan 31 processing: Uses gamebook primary (118 records)
 ```
 
-### 2. Service Account Fix
+### 3. Feb 1 RED Signal Validated ✅
 
-Fixed the scheduler script to use the correct service account (`756957797294-compute@developer.gserviceaccount.com`) matching existing analytics jobs.
+| Tier | Picks | Hits | Hit Rate |
+|------|-------|------|----------|
+| High Edge (5+) | 3 | 2 | **66.7%** |
+| Other | 62 | 42 | **67.7%** |
+| **Total** | **65** | **44** | **67.7%** |
 
-### 3. Early Signal Validation (MIL@BOS only)
+**Better than expected** (50-65% target for RED signal day).
 
-| Metric | Value | Notes |
-|--------|-------|-------|
-| Total picks | 7 | One complete game |
-| Hit rate | 57.1% | 4/7 correct |
-| High-edge picks | 1 | Edge = 5.2 |
-| High-edge hit rate | 0% | 0/1 (missed by 0.5 pts) |
+**High Edge Picks Detail:**
 
-**Notable:** Jaylen Brown - predicted UNDER 29.5, actual 30. Missed by half a point.
-
----
-
-## Key Finding: Gamebook Data Dependency
-
-### The Problem
-
-The evening schedulers trigger `PlayerGameSummaryProcessor`, but it requires `nbac_gamebook_player_stats` as its PRIMARY data source.
-
-| Data Source | Feb 1 Status | Availability |
-|-------------|--------------|--------------|
-| `nbac_player_boxscores` | 152 records | Available during games |
-| `nbac_gamebook_player_stats` | 0 records | Only available next morning |
-
-### Why This Matters
-
-1. Boxscores are scraped every 3 minutes during games
-2. Gamebook data (from PDF parsing) is only processed overnight
-3. Evening schedulers can't process analytics until gamebook exists
-
-### Implication
-
-**The evening schedulers will work once gamebook data is available**, but they won't enable same-day processing. The real fix requires either:
-
-1. Running gamebook scraper after each game completes
-2. Making PlayerGameSummaryProcessor fall back to boxscores
-3. Creating a separate "quick grading" processor using boxscores
+| Player | Game | Predicted | Line | Rec | Edge | Actual | Result |
+|--------|------|-----------|------|-----|------|--------|--------|
+| Rui Hachimura | LAL@NYK | 14.6 | 8.5 | OVER | 6.1 | 11 | **HIT** |
+| DeAndre Ayton | LAL@NYK | 15.1 | 9.5 | OVER | 5.6 | 11 | **HIT** |
+| Jaylen Brown | MIL@BOS | 24.3 | 29.5 | UNDER | 5.2 | 30 | MISS (by 0.5!) |
 
 ---
 
-## Feb 1 Game Status (as of 11:15 PM ET)
+## Technical Changes
 
-| Status | Count | Games |
-|--------|-------|-------|
-| Final | 1 | MIL@BOS |
-| In Progress | 4 | CHI@MIA, BKN@DET, UTA@TOR, SAC@WAS |
-| Scheduled | 5 | OKC@DEN, LAL@NYK, CLE@POR, LAC@PHX, ORL@SAS |
+### PlayerGameSummaryProcessor Updates
 
----
+1. **New flag:** `USE_NBAC_BOXSCORES_FALLBACK = True`
+2. **Modified `_check_source_data_available()`:** Tries boxscores when gamebook empty
+3. **Added `nbac_boxscore_data` CTE:** In extraction query for boxscore source
+4. **Modified `combined_data` CTE:** Uses boxscores when `_use_boxscore_fallback` is True
+5. **Logging:** Shows which source is being used
 
-## Feb 1 Signal Status
+### Key Design Decision
 
-| Model | pct_over | Signal |
-|-------|----------|--------|
-| catboost_v9 | 10.6% | RED |
-| catboost_v8 | 0.0% | RED |
-| ensemble_v1 | 0.6% | RED |
-| zone_matchup_v1 | 10.1% | RED |
-
-All models show RED signal for Feb 1.
-
----
-
-## Feb 2 Predictions
-
-| Status | Value |
-|--------|-------|
-| Games | 4 (NOP@CHA, HOU@IND, PHI@LAC, MIN@MEM) |
-| Predictions | 59 per model |
-| Vegas lines | 0 (scraped at 7 AM ET) |
-| Signals | Not yet calculated |
+Boxscores are a **fallback source** (substitutes for gamebook), not an **additional source**:
+- No new source tracking columns (no `source_nbac_box_*` fields)
+- Reuses same column structure as gamebook
+- `primary_source_used` tracks actual source: `'nbac_gamebook'` or `'nbac_boxscores'`
 
 ---
 
@@ -105,36 +79,30 @@ All models show RED signal for Feb 1.
 | Commit | Description |
 |--------|-------------|
 | 52e2ee8d | fix: Use correct service account for evening analytics schedulers |
+| cb848469 | feat: Add nbac_player_boxscores as evening processing fallback |
+| ffc0c595 | fix: Remove boxscore dependency entry to avoid schema mismatch |
+
+---
+
+## Deployments
+
+| Service | Status |
+|---------|--------|
+| nba-phase3-analytics-processors | Deployed with boxscore fallback |
+
+---
+
+## Feb 1 Signal Status
+
+| Model | pct_over | Signal | Hit Rate |
+|-------|----------|--------|----------|
+| catboost_v9 | 10.6% | RED | **67.7%** |
 
 ---
 
 ## Next Session Priorities
 
-### 1. Validate Full Feb 1 Signal (HIGH)
-
-Once gamebook data is available (~6 AM ET), validate RED signal hit rates:
-
-```sql
-SELECT
-  CASE WHEN ABS(p.predicted_points - p.current_points_line) >= 5 THEN 'High Edge' ELSE 'Other' END as tier,
-  COUNT(*) as picks,
-  ROUND(100.0 * COUNTIF(
-    (pgs.points > p.current_points_line AND p.recommendation = 'OVER') OR
-    (pgs.points < p.current_points_line AND p.recommendation = 'UNDER')
-  ) / NULLIF(COUNTIF(pgs.points != p.current_points_line), 0), 1) as hit_rate
-FROM nba_predictions.player_prop_predictions p
-JOIN nba_analytics.player_game_summary pgs
-  ON p.player_lookup = pgs.player_lookup AND p.game_date = pgs.game_date
-WHERE p.game_date = DATE('2026-02-01')
-  AND p.system_id = 'catboost_v9'
-  AND p.current_points_line IS NOT NULL
-  AND p.recommendation != 'PASS'
-GROUP BY 1
-```
-
-Expected: 50-65% overall hit rate for RED signal day.
-
-### 2. Verify Feb 2 Vegas Lines (After 7 AM ET)
+### 1. Verify Feb 2 Vegas Lines (After 7 AM ET)
 
 ```sql
 SELECT system_id, COUNT(*) as predictions,
@@ -144,60 +112,35 @@ WHERE game_date = DATE('2026-02-02')
 GROUP BY system_id
 ```
 
-### 3. Investigate Gamebook Scraper Automation
+### 2. Monitor Evening Scheduler Execution
 
-For same-day analytics processing, explore:
-1. When does gamebook PDF become available after game completion?
-2. Can we trigger gamebook scraper on game_status = 3?
-3. Alternative: Create boxscore-based "quick grading" processor
-
-See: `docs/08-projects/current/evening-analytics-processing/`
-
-### 4. Check Evening Scheduler Execution
-
-Verify the schedulers run correctly:
-
+The schedulers should now work with the boxscore fallback:
 ```bash
-# Check job runs
-gcloud scheduler jobs describe evening-analytics-10pm-et --location=us-west2 \
+# Check 1 AM job ran (processes yesterday's games)
+gcloud scheduler jobs describe evening-analytics-1am-et --location=us-west2 \
   --format="value(status.lastAttemptTime)"
-
-# Check logs
-gcloud logging read 'resource.type="cloud_run_revision"
-  AND resource.labels.service_name="nba-phase3-analytics-processors"
-  AND timestamp>="2026-02-02T03:00:00Z"' --limit=20
 ```
+
+### 3. Validate Feb 2 Signal After Games Complete
+
+Feb 2 has 4 games - validate signal accuracy once complete.
 
 ---
 
 ## Verification Commands
 
 ```bash
+# Check Feb 1 data sources
+bq query --use_legacy_sql=false "
+SELECT game_date, COUNT(*) as records,
+  COUNTIF(primary_source_used = 'nbac_boxscores') as from_boxscores,
+  COUNTIF(primary_source_used = 'nbac_gamebook') as from_gamebook
+FROM nba_analytics.player_game_summary
+WHERE game_date >= DATE('2026-02-01')
+GROUP BY game_date ORDER BY game_date"
+
 # Check scheduler jobs
 gcloud scheduler jobs list --location=us-west2 | grep -E "evening|catchup"
-
-# Check Feb 1 data status
-bq query --use_legacy_sql=false "
-SELECT
-  'boxscores' as src, COUNT(*) as records
-FROM nba_raw.nbac_player_boxscores WHERE game_date = DATE('2026-02-01')
-UNION ALL
-SELECT
-  'gamebook' as src, COUNT(*) as records
-FROM nba_raw.nbac_gamebook_player_stats WHERE game_date = DATE('2026-02-01')
-UNION ALL
-SELECT
-  'player_game_summary' as src, COUNT(*) as records
-FROM nba_analytics.player_game_summary WHERE game_date = DATE('2026-02-01')"
-
-# Check game completion status
-bq query --use_legacy_sql=false "
-SELECT game_status,
-  CASE game_status WHEN 1 THEN 'Scheduled' WHEN 2 THEN 'In Progress' WHEN 3 THEN 'Final' END as status,
-  COUNT(*) as games
-FROM nba_reference.nba_schedule
-WHERE game_date = DATE('2026-02-01')
-GROUP BY game_status"
 ```
 
 ---
@@ -207,6 +150,7 @@ GROUP BY game_status"
 | File | Change |
 |------|--------|
 | `bin/orchestrators/setup_evening_analytics_schedulers.sh` | Fixed service account |
+| `data_processors/analytics/player_game_summary/player_game_summary_processor.py` | Added boxscore fallback |
 
 ---
 
