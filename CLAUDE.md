@@ -483,6 +483,49 @@ gcloud logging read 'resource.type="cloud_run_revision"
 - Cleanup script: `bin/cleanup-heartbeat-docs.py`
 - Session 61 handoff: `docs/09-handoff/2026-02-01-SESSION-61-HANDOFF.md`
 
+## Evening Analytics Processing (Session 73)
+
+**Purpose:** Process completed games same-night instead of waiting until 6 AM next day.
+
+### Evening Schedulers
+
+| Job | Schedule (ET) | Purpose |
+|-----|---------------|---------|
+| `evening-analytics-6pm-et` | 6 PM Sat/Sun | Weekend matinees |
+| `evening-analytics-10pm-et` | 10 PM Daily | 7 PM games |
+| `evening-analytics-1am-et` | 1 AM Daily | West Coast games |
+| `morning-analytics-catchup-9am-et` | 9 AM Daily | Safety net |
+
+### Boxscore Fallback
+
+`PlayerGameSummaryProcessor` normally requires `nbac_gamebook_player_stats` (from PDF parsing, available next morning). For evening processing, it falls back to `nbac_player_boxscores` (scraped live during games).
+
+**How it works:**
+```
+Check nbac_gamebook_player_stats → Has data? → Use gamebook (gold)
+                                      ↓ No
+Check nbac_player_boxscores (Final) → Has data? → Use boxscores (silver)
+                                      ↓ No
+                                Skip processing
+```
+
+**Configuration:** `USE_NBAC_BOXSCORES_FALLBACK = True` in `player_game_summary_processor.py`
+
+**Verify which source was used:**
+```sql
+SELECT game_date,
+  COUNTIF(primary_source_used = 'nbac_boxscores') as from_boxscores,
+  COUNTIF(primary_source_used = 'nbac_gamebook') as from_gamebook
+FROM nba_analytics.player_game_summary
+WHERE game_date >= CURRENT_DATE() - 3
+GROUP BY game_date ORDER BY game_date DESC
+```
+
+**References:**
+- Implementation: `data_processors/analytics/player_game_summary/player_game_summary_processor.py`
+- Project docs: `docs/08-projects/current/evening-analytics-processing/`
+- Session 73 handoff: `docs/09-handoff/2026-02-02-SESSION-73-HANDOFF.md`
+
 ## Common Issues and Fixes
 
 ### Schema Mismatch

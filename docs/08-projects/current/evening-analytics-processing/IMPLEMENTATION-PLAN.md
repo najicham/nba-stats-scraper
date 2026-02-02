@@ -1,8 +1,8 @@
 # Evening Analytics Processing - Implementation Plan
 
 **Created**: February 2, 2026
-**Session**: 72
-**Status**: Planning
+**Session**: 72, 73
+**Status**: Phase 1 COMPLETE, Phase 1.5 COMPLETE
 
 ---
 
@@ -92,6 +92,50 @@ FROM nba_analytics.player_game_summary
 WHERE game_date = CURRENT_DATE()
 GROUP BY game_date"
 ```
+
+---
+
+## Phase 1.5: Boxscore Fallback (IMPLEMENTED - Session 73)
+
+### Problem Discovered
+
+Phase 1 schedulers weren't working because `PlayerGameSummaryProcessor` requires `nbac_gamebook_player_stats` as its primary data source, but gamebook data only becomes available the next morning (from PDF parsing).
+
+### Solution Implemented
+
+Added `nbac_player_boxscores` as a fallback source when gamebook isn't available.
+
+**How it works:**
+1. Processor checks `nbac_gamebook_player_stats` first (PRIMARY)
+2. If empty, checks `nbac_player_boxscores` where `game_status = 'Final'` (FALLBACK)
+3. Uses `_use_boxscore_fallback` flag to switch extraction query
+4. `primary_source_used` column tracks which source was used
+
+**Key Code Changes:**
+- `USE_NBAC_BOXSCORES_FALLBACK = True` flag in processor
+- Modified `_check_source_data_available()` to check both sources
+- Added `nbac_boxscore_data` CTE to extraction query
+
+**Data Quality:**
+- Boxscores have 100% match on points with gamebook
+- Missing from boxscores: `player_status`, `dnp_reason` (injury info)
+- Gamebook can still enrich data when it runs in the morning
+
+### Verification
+
+```sql
+-- Check which source was used
+SELECT game_date, COUNT(*) as records,
+  COUNTIF(primary_source_used = 'nbac_boxscores') as from_boxscores,
+  COUNTIF(primary_source_used = 'nbac_gamebook') as from_gamebook
+FROM nba_analytics.player_game_summary
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
+GROUP BY game_date ORDER BY game_date DESC
+```
+
+### Result
+
+Feb 1, 2026: Successfully processed 148 records from 7 games using boxscore fallback at 12:13 AM ET (same night as games).
 
 ---
 
