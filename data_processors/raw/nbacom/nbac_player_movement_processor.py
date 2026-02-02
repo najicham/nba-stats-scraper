@@ -248,16 +248,16 @@ class NbacPlayerMovementProcessor(SmartIdempotencyMixin, ProcessorBase):
                         'transaction_type': transaction['Transaction_Type'],
                         'transaction_date': transaction_dt.date().isoformat(),
                         'season_year': season_year,
-                        'player_id': transaction['PLAYER_ID'],
+                        'player_id': int(transaction['PLAYER_ID']),  # Cast to int for BigQuery
                         'player_slug': transaction.get('PLAYER_SLUG', ''),
                         'player_full_name': player_full_name,
                         'player_lookup': player_lookup,
-                        'is_player_transaction': transaction['PLAYER_ID'] != 0,
-                        'team_id': transaction['TEAM_ID'],
+                        'is_player_transaction': int(transaction['PLAYER_ID']) != 0,  # Cast to int
+                        'team_id': int(transaction['TEAM_ID']),  # Cast to int for BigQuery
                         'team_slug': team_slug,
                         'team_abbr': team_abbr,
                         'transaction_description': transaction['TRANSACTION_DESCRIPTION'],
-                        'additional_sort': transaction.get('Additional_Sort', 0),
+                        'additional_sort': int(transaction.get('Additional_Sort', 0)),  # Cast to int
                         'group_sort': transaction['GroupSort'],
                         'source_file_path': file_path,
                         'scrape_timestamp': scrape_timestamp,
