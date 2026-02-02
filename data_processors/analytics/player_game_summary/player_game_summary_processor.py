@@ -89,11 +89,20 @@ class PlayerGameSummaryProcessor(
     USE_BDL_DATA = False
 
     # =========================================================================
+    # ENABLED 2026-02-02: Use NBA.com live boxscores as fallback for evening processing.
+    # Gamebook PDFs are only available the next morning, but nbac_player_boxscores
+    # is scraped live during games and has 100% accurate stats.
+    # This enables same-day processing when gamebook isn't available yet.
+    # See: docs/09-handoff/2026-02-02-SESSION-73-HANDOFF.md
+    USE_NBAC_BOXSCORES_FALLBACK = True
+
+    # =========================================================================
     # Pattern #1: Smart Skip Configuration
     # =========================================================================
     RELEVANT_SOURCES = {
         # Player stats sources - RELEVANT
         'nbac_gamebook_player_stats': True,
+        'nbac_player_boxscores': True,  # ENABLED 2026-02-02: Evening processing fallback
         'bdl_player_boxscores': False,  # DISABLED - BDL data quality issues (2026-01-28)
 
         # Shot zone sources - RELEVANT
@@ -239,7 +248,21 @@ class PlayerGameSummaryProcessor(
                 'critical': True
             },
             
-            # SOURCE 2: BDL Boxscores (FALLBACK - Non-Critical)
+            # SOURCE 2: NBA.com Live Boxscores (FALLBACK - Evening Processing)
+            # ENABLED 2026-02-02: For same-day processing when gamebook isn't available
+            # Scraped live every 3 min during games, 100% accurate stats
+            'nba_raw.nbac_player_boxscores': {
+                'field_prefix': 'source_nbac_box',
+                'description': 'NBA.com live boxscores - evening processing fallback',
+                'date_field': 'game_date',
+                'check_type': 'date_range',
+                'expected_count_min': 200,
+                'max_age_hours_warn': 6,  # Live data, should be fresh
+                'max_age_hours_fail': 24,
+                'critical': False  # Fallback when gamebook not available
+            },
+
+            # SOURCE 3: BDL Boxscores (FALLBACK - Non-Critical)
             'nba_raw.bdl_player_boxscores': {
                 'field_prefix': 'source_bdl',
                 'description': 'BDL boxscores - fallback for basic stats',
@@ -384,9 +407,11 @@ class PlayerGameSummaryProcessor(
         """
         Pre-extraction check for upstream data availability.
 
-        Runs a quick COUNT(*) query on the primary source (nbac_gamebook_player_stats)
-        to verify data exists before running expensive extraction queries.
-        This prevents "No data extracted" errors and wasted BigQuery costs.
+        Checks sources in order:
+        1. nbac_gamebook_player_stats (PRIMARY - from gamebook PDF, available next morning)
+        2. nbac_player_boxscores (FALLBACK - from live API, available same-day)
+
+        Sets self._use_boxscore_fallback to indicate which source will be used.
 
         Args:
             start_date: Start date (YYYY-MM-DD)
@@ -395,24 +420,55 @@ class PlayerGameSummaryProcessor(
         Returns:
             (is_available, record_count) - True if data exists, False otherwise
         """
-        query = f"""
+        # Initialize fallback flag
+        self._use_boxscore_fallback = False
+
+        # Check PRIMARY source: gamebook
+        gamebook_query = f"""
         SELECT COUNT(*) as record_count
         FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
         WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
             AND player_status = 'active'
         """
         try:
-            result = self.bq_client.query(query).result()
-            count = next(result).record_count
-            is_available = count > 0
+            result = self.bq_client.query(gamebook_query).result()
+            gamebook_count = next(result).record_count
 
-            if not is_available:
+            if gamebook_count > 0:
+                logger.info(f"PRIMARY source available: nbac_gamebook_player_stats has {gamebook_count} records")
+                return True, gamebook_count
+
+            # Gamebook has no data - try boxscore fallback if enabled
+            if self.USE_NBAC_BOXSCORES_FALLBACK:
+                boxscore_query = f"""
+                SELECT COUNT(*) as record_count
+                FROM `{self.project_id}.nba_raw.nbac_player_boxscores`
+                WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+                    AND game_status = 'Final'
+                """
+                result = self.bq_client.query(boxscore_query).result()
+                boxscore_count = next(result).record_count
+
+                if boxscore_count > 0:
+                    logger.info(
+                        f"FALLBACK source available: nbac_player_boxscores has {boxscore_count} records "
+                        f"(gamebook has 0 - using live boxscores for evening processing)"
+                    )
+                    self._use_boxscore_fallback = True
+                    return True, boxscore_count
+
+                logger.warning(
+                    f"No source data available: both nbac_gamebook_player_stats (0 records) "
+                    f"and nbac_player_boxscores (0 Final games) have no data for {start_date} to {end_date}"
+                )
+            else:
                 logger.warning(
                     f"No source data available: nbac_gamebook_player_stats has 0 records "
                     f"for date range {start_date} to {end_date}"
                 )
 
-            return is_available, count
+            return False, 0
+
         except Exception as e:
             logger.error(f"Error checking source data availability: {e}")
             # On error, proceed with extraction (fail gracefully)
@@ -637,7 +693,14 @@ class PlayerGameSummaryProcessor(
             self.raw_data = pd.DataFrame()
             return
 
-        logger.info(f"PRE-EXTRACTION CHECK: Found {source_count} records in source table")
+        # Log which source we're using
+        if getattr(self, '_use_boxscore_fallback', False):
+            logger.info(
+                f"PRE-EXTRACTION CHECK: Using BOXSCORE FALLBACK - found {source_count} records "
+                f"(gamebook not available, using nbac_player_boxscores for evening processing)"
+            )
+        else:
+            logger.info(f"PRE-EXTRACTION CHECK: Found {source_count} records in gamebook (primary source)")
 
         # DEPENDENCY CHECKING: Already done in base class run() method!
         # Base class calls check_dependencies() and track_source_usage()
@@ -778,17 +841,68 @@ class PlayerGameSummaryProcessor(
             WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
                 {player_filter_clause}
         ),
-        
+
+        -- NBA.com Live Boxscores (FALLBACK - for evening processing)
+        -- ENABLED 2026-02-02: Use when gamebook not available yet
+        -- Only includes Final games (game_status = 'Final')
+        nbac_boxscore_data AS (
+            SELECT
+                game_id,
+                game_date,
+                season_year,
+                player_lookup,
+                player_full_name,
+                team_abbr,
+                'active' as player_status,  -- Boxscores don't have DNP - those players aren't in the data
+                CAST(NULL AS STRING) as dnp_reason,
+                -- Team context from boxscore
+                home_team_abbr as source_home_team,
+                away_team_abbr as source_away_team,
+
+                -- Core stats
+                points,
+                assists,
+                total_rebounds,
+                offensive_rebounds,
+                defensive_rebounds,
+                steals,
+                blocks,
+                turnovers,
+                personal_fouls,
+
+                -- Shooting stats
+                field_goals_made,
+                field_goals_attempted,
+                three_pointers_made,
+                three_pointers_attempted,
+                free_throws_made,
+                free_throws_attempted,
+
+                -- Game context (minutes is STRING in boxscores, need to handle)
+                minutes,
+                plus_minus,
+
+                -- Metadata
+                processed_at as source_processed_at,
+                'nbac_boxscores' as primary_source
+
+            FROM `{self.project_id}.nba_raw.nbac_player_boxscores`
+            WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+                AND game_status = 'Final'  -- Only completed games
+                {player_filter_clause}
+        ),
+
         -- Combine with NBA.com priority (player-level merge)
-        -- NBA.com is preferred source when available; BDL fills gaps for missing players
+        -- Priority: gamebook > boxscores > BDL
         -- CRITICAL FIX (2026-01-27): Changed from game-level to player-level merge
         --   Previously excluded 119 players/day including Jayson Tatum, Kyrie Irving, etc.
         -- DISABLED (2026-01-28): BDL data quality issues - using NBA.com only
         --   BDL returns ~50% of actual minutes/points for many players
         --   Set USE_BDL_DATA = True to re-enable
+        -- ENABLED (2026-02-02): nbac_player_boxscores as evening fallback
         combined_data AS (
-            -- All NBA.com data (primary source)
-            SELECT * FROM nba_com_data
+            {"-- Using boxscore fallback (gamebook not available)" if getattr(self, '_use_boxscore_fallback', False) else "-- All NBA.com gamebook data (primary source)"}
+            SELECT * FROM {"nbac_boxscore_data" if getattr(self, '_use_boxscore_fallback', False) else "nba_com_data"}
             {"" if self.USE_BDL_DATA else "-- BDL DISABLED: Data quality issues (2026-01-28)"}
             {'''
             UNION ALL
