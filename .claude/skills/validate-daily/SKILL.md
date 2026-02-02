@@ -612,9 +612,109 @@ curl -X POST "$SLACK_WEBHOOK_URL_ERROR" \
 - Critical errors: `SLACK_WEBHOOK_URL_ERROR` → #app-error-alerts ⚠️ **Use this for Phase 0.6 failures**
 - Warnings: `SLACK_WEBHOOK_URL_WARNING` → #nba-alerts
 
-**If ALL Phase 0.6 checks pass**: Continue to Phase 1
+**If ALL Phase 0.6 checks pass**: Continue to Phase 0.7
 
 **If ANY Phase 0.6 check fails**: STOP, report issue with P1 CRITICAL severity, do NOT continue to Phase 1
+
+### Phase 0.7: Vegas Line Coverage Check (Session 77)
+
+**Purpose**: Monitor Vegas line availability to detect coverage regressions early.
+
+**When to run**: Every day, checks last 1 day of data
+
+**What to check**:
+
+```bash
+./bin/monitoring/check_vegas_line_coverage.sh --days 1
+```
+
+**Expected result**:
+- Coverage: ≥80% (healthy)
+- Status: ✅ PASS
+
+**Alert thresholds**:
+- <80%: 🟡 WARNING
+- <50%: 🔴 CRITICAL
+
+**If issues detected**:
+
+| Issue | Severity | Action |
+|-------|----------|--------|
+| Coverage <50% | P1 CRITICAL | Investigate BettingPros scraper, check recent logs |
+| Coverage 50-79% | P2 WARNING | Monitor for trend, may be temporary |
+| Coverage ≥80% | OK | No action needed |
+
+**Common causes**:
+- BettingPros scraper failures
+- BettingPros API changes
+- Temporary unavailability of betting lines
+
+**Investigation commands**:
+```bash
+# Check recent BettingPros scrapes
+bq query --use_legacy_sql=false "
+  SELECT game_date, COUNT(*) as records, COUNT(DISTINCT player_lookup) as players
+  FROM nba_raw.bettingpros_player_points_props
+  WHERE game_date >= CURRENT_DATE() - 3
+  GROUP BY game_date
+  ORDER BY game_date DESC"
+
+# Check scraper logs
+gcloud logging read 'resource.type="cloud_run_revision"
+  AND resource.labels.service_name="nba-phase1-scrapers"
+  AND jsonPayload.scraper="bettingpros"' \
+  --limit=20 --format=json
+```
+
+### Phase 0.8: Grading Completeness Check (Session 77)
+
+**Purpose**: Ensure predictions are being graded consistently across all models.
+
+**When to run**: Every day, checks last 3 days of data
+
+**What to check**:
+
+```bash
+./bin/monitoring/check_grading_completeness.sh --days 3
+```
+
+**Expected result**:
+- All models: ≥80% graded
+- Status: ✅ PASS
+
+**Alert thresholds**:
+- Model <80%: 🟡 WARNING
+- Model <50%: 🔴 CRITICAL
+
+**If issues detected**:
+
+| Issue | Severity | Action |
+|-------|----------|--------|
+| Any model <50% | P1 CRITICAL | Investigate prediction-grader service |
+| Any model 50-79% | P2 WARNING | Monitor for trend |
+| All models ≥80% | OK | No action needed |
+
+**Common causes**:
+- Grader service not running
+- Pub/Sub subscription issues
+- Feature store data unavailable for grading
+
+**Investigation commands**:
+```bash
+# Check grader service logs
+gcloud logging read 'resource.type="cloud_run_revision"
+  AND resource.labels.service_name="prediction-grader"' \
+  --limit=20 --format=json
+
+# Check Pub/Sub subscription backlog
+gcloud pubsub subscriptions describe prediction-grader-sub \
+  --format="value(numUndeliveredMessages)"
+
+# Manual grading trigger (if needed)
+curl -X POST https://prediction-grader-f7p3g7f6ya-wl.a.run.app/grade \
+  -H "Content-Type: application/json" \
+  -d '{"game_date": "YYYY-MM-DD"}'
+```
 
 ### Phase 1: Run Baseline Health Check
 
