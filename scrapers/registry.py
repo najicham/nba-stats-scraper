@@ -126,6 +126,14 @@ NBA_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
     ),
 
     # ========================================================================
+    # Kalshi Scrapers (1 total) - Prediction Market
+    # ========================================================================
+    "kalshi_player_props": (
+        "scrapers.kalshi.kalshi_player_props",
+        "KalshiPlayerProps"
+    ),
+
+    # ========================================================================
     # Basketball Reference Scrapers (1 total)
     # ========================================================================
     "br_season_roster": (
