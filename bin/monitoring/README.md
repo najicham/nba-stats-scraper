@@ -1,5 +1,56 @@
 # Monitoring Setup
 
+## Automated Monitoring (Cloud Scheduler)
+
+Two critical checks run automatically on Cloud Scheduler:
+
+### 1. Weekly Model Drift Check
+- **Script:** `weekly_model_drift_check.sh`
+- **Schedule:** Mondays 9:00 AM ET
+- **Purpose:** Detect model performance degradation
+- **Alerts:** Slack (WARNING/CRITICAL)
+
+### 2. Daily Grading Completeness Check
+- **Script:** `check_grading_completeness.sh`
+- **Schedule:** Daily 9:00 AM ET
+- **Purpose:** Monitor prediction grading pipeline
+- **Alerts:** Slack (WARNING/CRITICAL)
+
+**Documentation:**
+- Complete setup guide: `AUTOMATED_MONITORING_SETUP.md`
+- Deployment checklist: `DEPLOYMENT_CHECKLIST.md`
+
+**Quick Deploy:**
+```bash
+# 1. Deploy monitoring jobs
+./bin/deploy-monitoring-job.sh weekly-model-drift-check
+./bin/deploy-monitoring-job.sh grading-completeness-check
+
+# 2. Set environment variables (Slack webhooks)
+gcloud run jobs update nba-weekly-model-drift-check --region=us-west2 \
+  --set-env-vars=SLACK_WEBHOOK_URL_WARNING=$WEBHOOK,SLACK_WEBHOOK_URL_ERROR=$WEBHOOK
+
+gcloud run jobs update nba-grading-completeness-check --region=us-west2 \
+  --set-env-vars=SLACK_WEBHOOK_URL_WARNING=$WEBHOOK
+
+# 3. Set up schedulers
+./bin/monitoring/setup_weekly_drift_check_scheduler.sh
+./bin/monitoring/setup_daily_grading_check_scheduler.sh
+```
+
+**Manual Execution:**
+```bash
+# Run locally
+./bin/monitoring/weekly_model_drift_check.sh
+./bin/monitoring/check_grading_completeness.sh
+
+# Trigger via scheduler
+gcloud scheduler jobs run weekly-model-drift-check --location=us-west2
+gcloud scheduler jobs run daily-grading-completeness-check --location=us-west2
+```
+
+---
+
 ## Monitoring Scripts
 
 ### Scraper Failure Cleanup (`cleanup_scraper_failures.py`)
