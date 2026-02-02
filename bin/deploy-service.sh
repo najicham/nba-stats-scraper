@@ -115,7 +115,7 @@ echo "Build timestamp: $BUILD_TIMESTAMP"
 echo "=============================================="
 
 echo ""
-echo "[1/6] Building $SERVICE from repo root with $DOCKERFILE..."
+echo "[1/7] Building $SERVICE from repo root with $DOCKERFILE..."
 docker build \
     -t "$REGISTRY/$SERVICE:latest" \
     -t "$REGISTRY/$SERVICE:$BUILD_COMMIT" \
@@ -124,12 +124,12 @@ docker build \
     -f "$DOCKERFILE" .
 
 echo ""
-echo "[2/6] Pushing image..."
+echo "[2/7] Pushing image..."
 docker push "$REGISTRY/$SERVICE:latest"
 docker push "$REGISTRY/$SERVICE:$BUILD_COMMIT"
 
 echo ""
-echo "[3/6] Deploying to Cloud Run..."
+echo "[3/7] Deploying to Cloud Run..."
 gcloud run deploy "$SERVICE" \
     --image="$REGISTRY/$SERVICE:latest" \
     --region="$REGION" \
@@ -138,7 +138,7 @@ gcloud run deploy "$SERVICE" \
     --quiet
 
 echo ""
-echo "[4/6] Verifying deployment..."
+echo "[4/7] Verifying deployment..."
 sleep 10
 
 # Get the latest revision
@@ -167,7 +167,7 @@ gcloud logging read \
 
 # Post-deployment service identity verification
 echo ""
-echo "[5/6] Verifying service identity..."
+echo "[5/7] Verifying service identity..."
 
 SERVICE_URL=$(gcloud run services describe "$SERVICE" \
     --region="$REGION" \
@@ -234,9 +234,9 @@ else
     fi
 fi
 
-# [6/6] Verify heartbeat code is correct
+# [6/7] Verify heartbeat code is correct
 echo ""
-echo "[6/6] Verifying heartbeat code..."
+echo "[6/7] Verifying heartbeat code..."
 
 # Check if heartbeat fix is in deployed image
 HEARTBEAT_CHECK=$(docker run --rm "$REGISTRY/$SERVICE:$BUILD_COMMIT" \
@@ -269,3 +269,114 @@ else
     echo "Document ID format: processor_name (correct)"
     echo "=============================================="
 fi
+
+# [7/7] Service-specific validation
+echo ""
+echo "[7/7] Service-specific validation..."
+
+case $SERVICE in
+  prediction-worker)
+    echo ""
+    echo "Checking recent predictions..."
+    RECENT_PREDICTIONS=$(bq query --use_legacy_sql=false --format=csv \
+      "SELECT COUNT(*) as cnt FROM nba_predictions.player_prop_predictions
+       WHERE created_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 2 HOUR)" 2>/dev/null | tail -1)
+
+    if [ "$RECENT_PREDICTIONS" = "0" ] || [ -z "$RECENT_PREDICTIONS" ]; then
+      echo "⚠️  WARNING: No predictions created in last 2 hours"
+      echo "   This may be expected if no games are scheduled"
+      echo "   Check scheduler: gcloud scheduler jobs list --location=us-west2 | grep predictions"
+    else
+      echo "✅ Recent predictions found: $RECENT_PREDICTIONS"
+    fi
+    ;;
+
+  prediction-coordinator)
+    echo ""
+    echo "Checking batch execution logs..."
+    BATCH_ERRORS=$(gcloud logging read \
+      "resource.type=\"cloud_run_revision\"
+       AND resource.labels.service_name=\"prediction-coordinator\"
+       AND severity>=ERROR" \
+      --limit=5 \
+      --format="value(timestamp,textPayload)" \
+      --project="$PROJECT" 2>/dev/null | head -5)
+
+    if [ -z "$BATCH_ERRORS" ]; then
+      echo "✅ No recent errors in coordinator logs"
+    else
+      echo "⚠️  WARNING: Recent errors detected:"
+      echo "$BATCH_ERRORS"
+    fi
+    ;;
+
+  nba-phase4-precompute-processors)
+    echo ""
+    echo "Checking Vegas line coverage..."
+    if [ -f "bin/monitoring/check_vegas_line_coverage.sh" ]; then
+      ./bin/monitoring/check_vegas_line_coverage.sh --days 1 || \
+        echo "⚠️  WARNING: Vegas line coverage check failed - monitor closely"
+    else
+      echo "⚠️  WARNING: Vegas line coverage script not found"
+    fi
+    ;;
+
+  nba-phase3-analytics-processors)
+    echo ""
+    echo "Checking processor heartbeats..."
+    # Check if processors have sent heartbeats recently
+    HEARTBEAT_AGE=$(gcloud logging read \
+      "resource.type=\"cloud_run_revision\"
+       AND resource.labels.service_name=\"nba-phase3-analytics-processors\"
+       AND jsonPayload.message=~\"Heartbeat\"" \
+      --limit=1 \
+      --format="value(timestamp)" \
+      --project="$PROJECT" 2>/dev/null | head -1)
+
+    if [ -z "$HEARTBEAT_AGE" ]; then
+      echo "⚠️  WARNING: No recent heartbeats found"
+      echo "   Service may not be processing data"
+    else
+      echo "✅ Recent heartbeat detected: $HEARTBEAT_AGE"
+    fi
+    ;;
+
+  nba-grading-service)
+    echo ""
+    echo "Checking grading completeness..."
+    if [ -f "bin/monitoring/check_grading_completeness.sh" ]; then
+      ./bin/monitoring/check_grading_completeness.sh || \
+        echo "⚠️  WARNING: Grading completeness check failed"
+    else
+      echo "⚠️  WARNING: Grading completeness script not found"
+    fi
+    ;;
+
+  *)
+    echo "No service-specific validation configured for $SERVICE"
+    ;;
+esac
+
+# Check for errors in recent logs (all services)
+echo ""
+echo "Checking for recent errors..."
+ERROR_COUNT=$(gcloud logging read \
+  "resource.type=\"cloud_run_revision\"
+   AND resource.labels.service_name=\"$SERVICE\"
+   AND severity>=ERROR
+   AND timestamp>=\"$(date -u -d '10 minutes ago' +%Y-%m-%dT%H:%M:%SZ)\"" \
+  --limit=10 \
+  --format="value(severity)" \
+  --project="$PROJECT" 2>/dev/null | wc -l)
+
+if [ "$ERROR_COUNT" -eq 0 ]; then
+  echo "✅ No errors in last 10 minutes"
+else
+  echo "⚠️  WARNING: $ERROR_COUNT errors detected in last 10 minutes"
+  echo "   Review logs: gcloud logging read 'resource.labels.service_name=\"$SERVICE\" AND severity>=ERROR' --limit=10"
+fi
+
+echo ""
+echo "=============================================="
+echo "POST-DEPLOYMENT VALIDATION COMPLETE"
+echo "=============================================="
