@@ -1,0 +1,41 @@
+# Dockerfile for NBA Props Platform Health Check
+# Runs the unified health check script with all dependencies
+# Designed to be used as a Cloud Run Job triggered by Cloud Scheduler
+
+FROM google/cloud-sdk:alpine
+
+# Install Python and required packages
+RUN apk add --no-cache \
+    python3 \
+    py3-pip \
+    bash \
+    curl \
+    && rm -rf /var/cache/apk/*
+
+# Install Python dependencies
+RUN pip3 install --no-cache-dir \
+    google-cloud-firestore==2.14.0 \
+    google-cloud-bigquery==3.15.0
+
+# Set working directory
+WORKDIR /app
+
+# Copy monitoring scripts
+COPY bin/monitoring/ ./bin/monitoring/
+
+# Make scripts executable
+RUN chmod +x ./bin/monitoring/*.sh
+
+# Set environment variables
+ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/app/bin/monitoring:${PATH}"
+
+# Default command: run scheduled health check (without deployment drift)
+CMD ["./bin/monitoring/unified-health-check-scheduled.sh", "--verbose"]
+
+# Labels
+LABEL maintainer="NBA Props Platform"
+LABEL description="Unified health check for NBA Props Platform"
+LABEL version="1.0.0"
+LABEL component="monitoring"
