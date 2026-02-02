@@ -645,6 +645,49 @@ table_id = f"{self.project_id}.{self.table_name}"
 table_id = f"{self.project_id}.{self.dataset_id}.{self.table_name}"
 ```
 
+### Prediction Deactivation Bug (Session 78)
+**Symptom**: Grading shows unexpectedly low coverage; most ACTUAL_PROP predictions have `is_active=FALSE` while NO_PROP_LINE predictions have `is_active=TRUE`
+**Cause**: Deactivation query in `batch_staging_writer.py` partitioned by `(game_id, player_lookup)` but NOT by `system_id`, causing all but ONE prediction system to be deactivated per player/game
+**Real Example**: Session 78 - Feb 1 had 169 ACTUAL_PROP predictions with `is_active=FALSE`, only 1 with TRUE. Grading only processed 1 V9 prediction instead of ~120
+**Impact**: 85% of predictions excluded from grading, causing false "low hit rate" conclusions
+**Detection**:
+```sql
+-- Check is_active distribution by line_source (should mostly be TRUE for ACTUAL_PROP)
+SELECT game_date, line_source, is_active, COUNT(*) as cnt
+FROM nba_predictions.player_prop_predictions
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
+  AND system_id = 'catboost_v9'
+GROUP BY 1, 2, 3
+ORDER BY 1, 2, 3;
+
+-- Bug symptom: ACTUAL_PROP mostly is_active=FALSE, NO_PROP_LINE is is_active=TRUE
+```
+**Fix**: Added `system_id` to deactivation partition in `predictions/shared/batch_staging_writer.py:516`
+```python
+# WRONG (old):
+PARTITION BY game_id, player_lookup
+
+# CORRECT (fixed):
+PARTITION BY game_id, player_lookup, system_id
+```
+**Data Repair** (if bug recurs):
+```sql
+-- Re-activate predictions that should be active
+UPDATE `nba_predictions.player_prop_predictions` T
+SET is_active = TRUE, updated_at = CURRENT_TIMESTAMP()
+WHERE game_date >= DATE('YYYY-MM-DD')
+  AND is_active = FALSE
+  AND prediction_id IN (
+    SELECT prediction_id FROM (
+      SELECT prediction_id,
+        ROW_NUMBER() OVER (PARTITION BY game_id, player_lookup, system_id ORDER BY created_at DESC) as rn
+      FROM `nba_predictions.player_prop_predictions`
+      WHERE game_date >= DATE('YYYY-MM-DD')
+    ) WHERE rn = 1
+  )
+```
+**References**: Session 78 handoff, `predictions/shared/batch_staging_writer.py`
+
 ### Deployment Drift (Session 58)
 **Symptom**: Service missing recent bug fixes, known bugs recurring in production
 **Cause**: Manual deployments, no automation - fixes committed but never deployed
