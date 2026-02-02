@@ -526,6 +526,58 @@ GROUP BY game_date ORDER BY game_date DESC
 - Project docs: `docs/08-projects/current/evening-analytics-processing/`
 - Session 73 handoff: `docs/09-handoff/2026-02-02-SESSION-73-HANDOFF.md`
 
+## Early Prediction Timing (Session 74)
+
+**Purpose:** Generate predictions earlier (2:30 AM ET) using REAL_LINES_ONLY mode, instead of waiting until 7 AM.
+
+### Background
+
+Vegas lines are available at ~2:00 AM ET (from BettingPros), but predictions were running at 7:00 AM. This 5-hour delay meant predictions might miss optimal timing for user consumption.
+
+### Prediction Schedulers
+
+| Job | Schedule (ET) | Mode | Expected Players |
+|-----|---------------|------|-----------------|
+| `predictions-early` | 2:30 AM | REAL_LINES_ONLY | ~140 |
+| `overnight-predictions` | 7:00 AM | ALL_PLAYERS | ~200 |
+| `same-day-predictions` | 11:30 AM | ALL_PLAYERS | Catch stragglers |
+
+### REAL_LINES_ONLY Mode
+
+The `require_real_lines` parameter filters out players without real betting lines:
+
+```bash
+# Early predictions - only players WITH real lines
+curl -X POST https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/start \
+  -H "Content-Type: application/json" \
+  -d '{"game_date": "TODAY", "require_real_lines": true, "force": true}'
+```
+
+**How it works:**
+- Players with `line_source='ACTUAL_PROP'` are included
+- Players with `line_source='NO_PROP_LINE'` are filtered out
+- Results in ~140 high-quality predictions at 2:30 AM
+
+### Verify Line Availability
+
+```sql
+-- Check lines available for today
+SELECT COUNT(DISTINCT player_lookup) as players_with_lines
+FROM nba_raw.bettingpros_player_points_props
+WHERE game_date = CURRENT_DATE() AND points_line IS NOT NULL;
+
+-- Check line source distribution for today's predictions
+SELECT line_source, COUNT(*) as cnt
+FROM nba_predictions.player_prop_predictions
+WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v9'
+GROUP BY line_source;
+```
+
+**References:**
+- Implementation: `predictions/coordinator/player_loader.py`, `predictions/coordinator/coordinator.py`
+- Setup script: `bin/orchestrators/setup_early_predictions_scheduler.sh`
+- Project docs: `docs/08-projects/current/prediction-timing-improvement/DESIGN.md`
+
 ## Common Issues and Fixes
 
 ### Schema Mismatch

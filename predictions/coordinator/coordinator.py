@@ -676,7 +676,8 @@ def start_prediction_batch():
         "parent_processor": "MLFeatureStore",  # optional
         "dataset_prefix": "test",       # optional - for test dataset isolation
         "skip_completeness_check": false,  # skip data completeness validation
-        "skip_postponement_check": false   # skip postponed game detection
+        "skip_postponement_check": false,  # skip postponed game detection
+        "require_real_lines": false     # only predict for players WITH real lines (Session 74)
     }
 
     Returns:
@@ -716,16 +717,21 @@ def start_prediction_batch():
         )
         force = request_data.get('force', False)
 
+        # Session 74: Real lines only mode for early predictions
+        # When True, only generate predictions for players WITH real betting lines
+        require_real_lines = request_data.get('require_real_lines', False)
+
         # Extract correlation tracking (for pipeline tracing Phase 1→5)
         correlation_id = request_data.get('correlation_id') or str(uuid.uuid4())[:8]
         parent_processor = request_data.get('parent_processor')
         dataset_prefix = request_data.get('dataset_prefix', '')  # Optional test dataset prefix
         current_correlation_id = correlation_id
 
+        mode_desc = "REAL_LINES_ONLY" if require_real_lines else "ALL_PLAYERS"
         logger.info(
             f"Starting prediction batch for {game_date} "
             f"(correlation_id={correlation_id}, parent={parent_processor}, "
-            f"dataset_prefix={dataset_prefix or 'production'})"
+            f"mode={mode_desc}, dataset_prefix={dataset_prefix or 'production'})"
         )
 
         # =========================================================================
@@ -824,11 +830,13 @@ def start_prediction_batch():
         logger.info(f"Game date summary: {summary_stats}")
 
         # Create prediction requests
+        # Session 74: Pass require_real_lines for early prediction mode
         requests = get_player_loader().create_prediction_requests(
             game_date=game_date,
             min_minutes=min_minutes,
             use_multiple_lines=use_multiple_lines,
-            dataset_prefix=dataset_prefix
+            dataset_prefix=dataset_prefix,
+            require_real_lines=require_real_lines
         )
 
         if not requests:

@@ -72,7 +72,8 @@ class PlayerLoader:
         game_date: date,
         min_minutes: int = 15,
         use_multiple_lines: bool = False,
-        dataset_prefix: str = None
+        dataset_prefix: str = None,
+        require_real_lines: bool = False
     ) -> List[Dict]:
         """
         Create prediction requests for all players with games on given date
@@ -82,10 +83,13 @@ class PlayerLoader:
             min_minutes: Minimum projected minutes (default: 15)
             use_multiple_lines: If True, test multiple betting lines (default: False)
             dataset_prefix: Optional dataset prefix override (defaults to instance prefix)
+            require_real_lines: If True, only include players WITH real betting lines (Session 74).
+                              Players with NO_PROP_LINE will be filtered out.
+                              Used for early prediction runs when real lines are available.
 
         Returns:
             List of prediction request dicts, one per player
-            
+
         Example Return:
             [
                 {
@@ -100,7 +104,8 @@ class PlayerLoader:
         # Use provided dataset_prefix or fall back to instance default
         prefix = dataset_prefix if dataset_prefix is not None else self.dataset_prefix
 
-        logger.info(f"Creating prediction requests for {game_date} (min_minutes={min_minutes}, dataset_prefix={prefix or 'production'})")
+        mode_desc = "REAL_LINES_ONLY" if require_real_lines else "ALL_PLAYERS"
+        logger.info(f"Creating prediction requests for {game_date} (min_minutes={min_minutes}, mode={mode_desc}, dataset_prefix={prefix or 'production'})")
 
         # Validate date before querying
         if not validate_game_date(game_date):
@@ -109,18 +114,18 @@ class PlayerLoader:
 
         # Get all players with games on this date
         players = self._query_players_for_date(game_date, min_minutes, dataset_prefix=prefix)
-        
+
         if not players:
             logger.warning(f"No players found for {game_date}")
             return []
-        
+
         logger.info(f"Found {len(players)} players for {game_date}")
 
-        # Create prediction requests, filtering out only bootstrap players (v3.10)
-        # Players without prop lines still get predictions (for accuracy tracking)
+        # Create prediction requests, filtering based on mode
         requests = []
         bootstrap_skipped = 0
         no_prop_line_count = 0
+        no_prop_line_filtered = 0
         for player in players:
             request = self._create_request_for_player(
                 player,
@@ -133,16 +138,24 @@ class PlayerLoader:
                 logger.debug(f"Skipping {player['player_lookup']} - needs bootstrap")
                 continue
 
-            # Track no-prop-line players (still included for accuracy tracking)
+            # Track/filter no-prop-line players based on mode (Session 74)
             if request.get('line_source') == 'NO_PROP_LINE':
                 no_prop_line_count += 1
+                if require_real_lines:
+                    # Filter out players without real lines (early prediction mode)
+                    no_prop_line_filtered += 1
+                    logger.debug(f"Filtering {player['player_lookup']} - no real betting line (require_real_lines=True)")
+                    continue
 
             requests.append(request)
 
         if bootstrap_skipped > 0:
             logger.info(f"Skipped {bootstrap_skipped} players needing bootstrap")
         if no_prop_line_count > 0:
-            logger.info(f"Including {no_prop_line_count} players without betting lines (for accuracy tracking)")
+            if require_real_lines:
+                logger.info(f"Filtered {no_prop_line_filtered}/{no_prop_line_count} players without real lines (REAL_LINES_ONLY mode)")
+            else:
+                logger.info(f"Including {no_prop_line_count} players without betting lines (for accuracy tracking)")
 
         return requests
     

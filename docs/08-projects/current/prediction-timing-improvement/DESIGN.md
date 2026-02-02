@@ -1,15 +1,15 @@
 # Prediction Timing Improvement - Design Document
 
 **Created**: February 2, 2026
-**Session**: 73
-**Status**: Design
+**Session**: 73 (Design), 74 (Implementation)
+**Status**: IMPLEMENTED ✅
 
 ---
 
 ## Problem Statement
 
 **Current State:**
-- Predictions triggered at 6:15 AM ET
+- Predictions triggered at 7:00 AM ET
 - Vegas lines available at 2:00 AM ET (80%+ of players)
 - Predictions run WITHOUT real lines - silently fall back to estimated lines (season averages)
 - Result: Lower quality predictions that may need re-running
@@ -25,7 +25,7 @@
 
 | Time (ET) | Players with Lines | Source |
 |-----------|-------------------|--------|
-| 2:00 AM | 80-85% | Morning line scrape |
+| 2:00 AM | 80-85% (~144 players) | BettingPros morning scrape |
 | 7:00 AM | 80-85% | No change (business hours just starting) |
 | 10:00 AM | 85-90% | Midday updates |
 | 3:00 PM | 90-95% | Pregame updates |
@@ -37,97 +37,73 @@
 
 ---
 
-## Proposed Solution
+## Solution (IMPLEMENTED in Session 74)
 
-### Key Insight
+### 1. REQUIRE_REAL_LINES Mode ✅
 
-Sportsbooks only offer lines for ~40-50% of players (starters + key rotation). Bench players rarely get lines. The quality gate should NOT block predictions because bench players lack lines.
-
-**Actual line availability (Feb 1 example):**
-- 2 AM ET: 144 players have lines (from BettingPros)
-- Throughout day: Grows to 177 players by 7 PM
-- Total players in context: 326
-- Coverage: 44-54% (but these are the IMPORTANT players)
-
-### 1. Line Quality Gate (IMPLEMENTED)
-
-Added `validate_line_coverage()` to `DataFreshnessValidator`:
-- Tracks real line coverage for visibility
-- Logs coverage at startup (warning if low)
-- Can be used to SKIP predictions entirely (optional)
+Added `require_real_lines` parameter to coordinator:
 
 ```python
-valid, reason, details = validator.validate_line_coverage(game_date, min_coverage_pct=70.0)
-# details['line_coverage_pct'] = 44.0  # Example
+# Request to /start endpoint
+{
+    "game_date": "TODAY",
+    "require_real_lines": true,  # Only predict players WITH real lines
+    "force": true
+}
 ```
 
-### 2. Prediction Strategy: Real Lines Only Mode
+**Implementation:**
+- `player_loader.create_prediction_requests()` - Added `require_real_lines` parameter
+- `coordinator.py` /start endpoint - Accepts and passes parameter
+- Players with `line_source='NO_PROP_LINE'` are filtered out when `require_real_lines=True`
 
-**New approach:** Instead of blocking all predictions or using estimates:
+### 2. Early Prediction Scheduler ✅
 
-1. **`REQUIRE_REAL_LINES = True`** (new coordinator config)
-2. Only generate predictions for players WITH real lines
-3. Skip players without lines (no estimated predictions)
-4. Track `line_source` in predictions: `'real'` or `'estimated'`
+Created `predictions-early` scheduler:
 
-**Benefits:**
-- Quality predictions only (no estimates to re-run)
-- Earlier predictions for players with lines (2 AM vs 6 AM)
-- Clear visibility into which predictions have real data
+| Job | Schedule | Mode | Expected |
+|-----|----------|------|----------|
+| `predictions-early` | 2:30 AM ET | REAL_LINES_ONLY | ~140 players |
+| `overnight-predictions` | 7:00 AM ET | ALL_PLAYERS | ~200 players |
+| `same-day-predictions` | 11:30 AM ET | ALL_PLAYERS | Catch stragglers |
 
-### 3. New Prediction Schedule
+**Setup Script:** `bin/orchestrators/setup_early_predictions_scheduler.sh`
 
-| Job | Time (ET) | Purpose | Expected Players |
-|-----|-----------|---------|-----------------|
-| `predictions-early` | 2:30 AM | First batch with real lines | ~140 players |
-| `predictions-morning` | 7:00 AM | Catch any new lines | ~5-10 new players |
-| `predictions-midday` | 12:00 PM | Final refresh | ~10-20 new players |
+### 3. Line Source Tracking ✅
 
-### 4. Tracking Prediction Quality
+Already implemented in schema:
+- `line_source`: 'ACTUAL_PROP', 'NO_PROP_LINE', 'ESTIMATED_AVG'
+- `line_source_api`: 'ODDS_API', 'BETTINGPROS', NULL
+- `sportsbook`: 'DRAFTKINGS', 'FANDUEL', etc.
 
-Add to `player_prop_predictions` table:
-- `line_source`: `'odds_api'`, `'bettingpros'`, `'estimated'`
-- `prediction_batch`: `'early'`, `'morning'`, `'midday'`
-
-Query to see prediction quality:
+**Query to verify:**
 ```sql
-SELECT line_source, COUNT(*) as predictions
+SELECT line_source, line_source_api, COUNT(*) as predictions
 FROM nba_predictions.player_prop_predictions
 WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v9'
-GROUP BY line_source
+GROUP BY 1, 2
 ```
 
 ---
 
-## Implementation Plan
-
-### Phase 1: Quality Gate (This Session)
-
-1. Add `validate_line_coverage()` to `DataFreshnessValidator`
-2. Add `line_coverage_pct` to coordinator startup logging
-3. Add `REQUIRE_REAL_LINES = True` flag (can disable for testing)
-
-### Phase 2: Earlier Scheduling (Future)
-
-1. Create `predictions-early` scheduler job at 2:30 AM ET
-2. Modify coordinator to check line quality gate before proceeding
-3. Add Slack notification when predictions skip due to low line coverage
-
-### Phase 3: Refresh Predictions (Future)
-
-1. Add `line_source` column to `player_prop_predictions` table
-2. Create `predictions-refresh` job that only updates estimated→real
-3. Track refresh metrics
-
----
-
-## Files to Modify
+## Files Modified (Session 74)
 
 | File | Change |
 |------|--------|
-| `predictions/coordinator/data_freshness_validator.py` | Add `validate_line_coverage()` |
-| `predictions/coordinator/coordinator.py` | Call line validation at startup |
-| `config/workflows.yaml` | Update prediction timing (Phase 2) |
+| `predictions/coordinator/player_loader.py` | Added `require_real_lines` parameter |
+| `predictions/coordinator/coordinator.py` | Accept and pass `require_real_lines` |
+| `bin/orchestrators/setup_early_predictions_scheduler.sh` | New scheduler script |
+
+---
+
+## Prediction Schedule (Updated)
+
+| Job | Time (ET) | Mode | Purpose |
+|-----|-----------|------|---------|
+| `predictions-early` | 2:30 AM | REAL_LINES_ONLY | First batch with real lines |
+| `overnight-predictions` | 7:00 AM | ALL_PLAYERS | Full run including NO_PROP_LINE |
+| `same-day-predictions` | 11:30 AM | ALL_PLAYERS | Catch late additions |
+| `same-day-predictions-tomorrow` | 6:00 PM | ALL_PLAYERS | Next day predictions |
 
 ---
 
@@ -135,16 +111,38 @@ GROUP BY line_source
 
 | Metric | Before | After |
 |--------|--------|-------|
-| % predictions with real lines | ~0% at 6:15 AM | 70%+ |
-| Time to first prediction | 6:15 AM | 2:30 AM (if quality met) |
-| Predictions needing refresh | Unknown | Tracked |
+| Time to first prediction | 7:00 AM | 2:30 AM |
+| % predictions with real lines (early) | N/A | 100% |
+| Players predicted early | 0 | ~140 |
 
 ---
 
-## Risks
+## Verification
+
+```bash
+# Check scheduler exists
+gcloud scheduler jobs describe predictions-early --location=us-west2
+
+# Check line availability for today
+bq query --use_legacy_sql=false "
+SELECT COUNT(DISTINCT player_lookup) as players_with_lines
+FROM nba_raw.bettingpros_player_points_props
+WHERE game_date = CURRENT_DATE() AND points_line IS NOT NULL"
+
+# Check predictions have real lines
+bq query --use_legacy_sql=false "
+SELECT line_source, COUNT(*) as cnt
+FROM nba_predictions.player_prop_predictions
+WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v9'
+GROUP BY line_source"
+```
+
+---
+
+## Risks and Mitigations
 
 | Risk | Mitigation |
 |------|------------|
-| No predictions if lines never arrive | 7 AM fallback with lower threshold |
-| Refresh causing duplicates | Use MERGE with update logic |
-| Over-complicated scheduling | Start simple, add complexity only if needed |
+| No predictions if lines never arrive | 7 AM fallback runs ALL_PLAYERS mode |
+| Early predictions miss late-added players | 7 AM and 11:30 AM schedulers catch them |
+| Scheduler fails silently | Existing prediction monitoring alerts |
