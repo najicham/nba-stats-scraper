@@ -111,12 +111,22 @@ MODIFIED:
 - **Issue:** Thought player props used `KXNBA` series
 - **Finding:** Props use separate series: `KXNBAPTS`, `KXNBAREB`, `KXNBAAST`, etc.
 
-## Next Session Checklist
+## CRITICAL: Next Session Must Do
 
-### Must Do
-- [ ] Verify `nba-phase2-raw-processors` deployment completed with commit `6f195068`
-- [ ] If not deployed, run: `./bin/deploy-service.sh nba-phase2-raw-processors`
-- [ ] Test processor: trigger Kalshi processing and verify BigQuery load
+### 1. Deploy Processor (NOT YET DEPLOYED)
+The raw processor deployment did NOT complete this session. Run:
+```bash
+./bin/deploy-service.sh nba-phase2-raw-processors
+```
+Then verify commit is `6f195068`:
+```bash
+gcloud run services describe nba-phase2-raw-processors --region=us-west2 --format="value(metadata.labels.commit-sha)"
+```
+
+### 2. Test Processor
+Once deployed, trigger processing to load GCS data to BigQuery automatically.
+
+## Other Next Session Tasks
 
 ### Should Do
 - [ ] Add Kalshi data to prediction output (populate the new fields)
