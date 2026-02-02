@@ -513,7 +513,8 @@ class BatchConsolidator:
               SELECT
                 prediction_id,
                 ROW_NUMBER() OVER (
-                  PARTITION BY game_id, player_lookup
+                  -- SESSION 78 FIX: Include system_id so each system keeps its latest prediction active
+                  PARTITION BY game_id, player_lookup, system_id
                   ORDER BY created_at DESC
                 ) as row_num
               FROM `{main_table}`
