@@ -1,13 +1,22 @@
 #!/bin/bash
 #
-# Check Grading Completeness by Model
+# Check Grading Completeness by Model (Improved - Session 80)
 #
-# This script monitors grading coverage for all active prediction models
-# to detect when grading falls behind (like the Session 77 issue).
+# This script monitors grading coverage for active prediction models with improved accuracy.
 #
-# Expected coverage: ≥80%
-# Alert threshold: <50% for any model
-# Critical threshold: Any model with 0% grading
+# KEY IMPROVEMENT (Session 80):
+# - Only counts GRADABLE predictions (ACTUAL_PROP/ESTIMATED_AVG with lines) in coverage calculation
+# - Tracks line availability separately (what % of predictions have real betting lines)
+# - Shows ungradable prediction count for visibility
+#
+# This prevents false alarms when predictions lack betting lines (which is expected behavior).
+#
+# Metrics:
+# 1. Grading Coverage = graded / gradable predictions (ACTUAL_PROP + ESTIMATED_AVG)
+#    - Expected: ≥80% OK, 50-79% WARNING, <50% CRITICAL
+# 2. Line Availability = ACTUAL_PROP / total predictions
+#    - Expected: ≥60% OK, 40-60% WARNING, <40% CRITICAL
+# 3. Ungradable Count = NO_PROP_LINE predictions (informational)
 #
 # Usage:
 #   ./bin/monitoring/check_grading_completeness.sh [--days N] [--alert URL]
@@ -45,93 +54,117 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-echo "=== Grading Completeness Check ==="
+echo "=== Grading Completeness Check (Improved) ==="
 echo "Last $DAYS_LOOKBACK days"
 echo ""
 
-# Run BigQuery check
+# Run improved BigQuery check
 RESULT=$(bq query --use_legacy_sql=false --format=csv "
-WITH prediction_counts AS (
+WITH prediction_breakdown AS (
+  -- Count ALL predictions (active and inactive) for accurate coverage calculation
+  -- We grade based on what was predicted, not just what's currently active
   SELECT
-    'player_prop_predictions' as source,
     system_id,
-    COUNT(*) as record_count
+    COUNT(*) as total_predictions,
+    COUNTIF(line_source = 'ACTUAL_PROP') as actual_prop_count,
+    COUNTIF(line_source = 'ESTIMATED_AVG') as estimated_avg_count,
+    COUNTIF(line_source = 'NO_PROP_LINE') as no_prop_line_count,
+    COUNTIF(line_source IN ('ACTUAL_PROP', 'ESTIMATED_AVG')) as gradable_count
   FROM nba_predictions.player_prop_predictions
   WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL $DAYS_LOOKBACK DAY)
-    AND current_points_line IS NOT NULL
   GROUP BY system_id
-
-  UNION ALL
-
+),
+graded_counts AS (
   SELECT
-    'prediction_accuracy' as source,
     system_id,
-    COUNT(*) as record_count
+    COUNT(*) as graded_count
   FROM nba_predictions.prediction_accuracy
   WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL $DAYS_LOOKBACK DAY)
   GROUP BY system_id
 )
 SELECT
-  system_id,
-  MAX(CASE WHEN source = 'player_prop_predictions' THEN record_count END) as predictions,
-  MAX(CASE WHEN source = 'prediction_accuracy' THEN record_count END) as graded,
-  ROUND(100.0 * MAX(CASE WHEN source = 'prediction_accuracy' THEN record_count END) /
-        NULLIF(MAX(CASE WHEN source = 'player_prop_predictions' THEN record_count END), 0), 1) as coverage_pct,
+  p.system_id,
+  p.total_predictions,
+  p.gradable_count,
+  COALESCE(g.graded_count, 0) as graded,
+  p.no_prop_line_count as ungradable,
+  -- Grading coverage (only gradable predictions)
+  ROUND(100.0 * COALESCE(g.graded_count, 0) / NULLIF(p.gradable_count, 0), 1) as grading_coverage_pct,
+  -- Line availability (actual props vs total)
+  ROUND(100.0 * p.actual_prop_count / NULLIF(p.total_predictions, 0), 1) as line_availability_pct,
+  -- Status based on grading coverage
   CASE
-    WHEN ROUND(100.0 * MAX(CASE WHEN source = 'prediction_accuracy' THEN record_count END) /
-         NULLIF(MAX(CASE WHEN source = 'player_prop_predictions' THEN record_count END), 0), 1) < 50
-    THEN 'CRITICAL'
-    WHEN ROUND(100.0 * MAX(CASE WHEN source = 'prediction_accuracy' THEN record_count END) /
-         NULLIF(MAX(CASE WHEN source = 'player_prop_predictions' THEN record_count END), 0), 1) < 80
-    THEN 'WARNING'
+    WHEN p.gradable_count = 0 THEN 'N/A'
+    WHEN ROUND(100.0 * COALESCE(g.graded_count, 0) / NULLIF(p.gradable_count, 0), 1) < 50 THEN 'CRITICAL'
+    WHEN ROUND(100.0 * COALESCE(g.graded_count, 0) / NULLIF(p.gradable_count, 0), 1) < 80 THEN 'WARNING'
     ELSE 'OK'
-  END as status
-FROM prediction_counts
-GROUP BY system_id
-HAVING MAX(CASE WHEN source = 'player_prop_predictions' THEN record_count END) > 0
-ORDER BY coverage_pct ASC
+  END as grading_status,
+  -- Status based on line availability
+  CASE
+    WHEN ROUND(100.0 * p.actual_prop_count / NULLIF(p.total_predictions, 0), 1) < 40 THEN 'LOW'
+    WHEN ROUND(100.0 * p.actual_prop_count / NULLIF(p.total_predictions, 0), 1) < 60 THEN 'MEDIUM'
+    ELSE 'GOOD'
+  END as line_status
+FROM prediction_breakdown p
+LEFT JOIN graded_counts g USING (system_id)
+WHERE p.total_predictions > 0
+ORDER BY grading_coverage_pct ASC NULLS LAST, p.total_predictions DESC
 " 2>&1)
 
 echo "$RESULT"
 echo ""
 
-# Count issues
-CRITICAL_COUNT=$(echo "$RESULT" | grep -c "CRITICAL" || echo "0")
-WARNING_COUNT=$(echo "$RESULT" | grep -c "WARNING" || echo "0")
+# Parse results for summary
+CRITICAL_COUNT=$(echo "$RESULT" | grep -c ",CRITICAL," || echo "0")
+WARNING_COUNT=$(echo "$RESULT" | grep -c ",WARNING," || echo "0")
+LOW_LINE_COUNT=$(echo "$RESULT" | grep -c ",LOW\$" || echo "0")
 
-# Determine overall status
+# Determine overall grading status
 if [[ $CRITICAL_COUNT -gt 0 ]]; then
-    STATUS="🔴 CRITICAL"
+    GRADING_STATUS="🔴 CRITICAL"
     EXIT_CODE=2
-    MESSAGE="$CRITICAL_COUNT model(s) with <50% grading coverage"
+    GRADING_MESSAGE="$CRITICAL_COUNT model(s) with <50% grading coverage"
 elif [[ $WARNING_COUNT -gt 0 ]]; then
-    STATUS="🟡 WARNING"
+    GRADING_STATUS="🟡 WARNING"
     EXIT_CODE=1
-    MESSAGE="$WARNING_COUNT model(s) with 50-79% grading coverage"
+    GRADING_MESSAGE="$WARNING_COUNT model(s) with 50-79% grading coverage"
 else
-    STATUS="✅ HEALTHY"
+    GRADING_STATUS="✅ HEALTHY"
     EXIT_CODE=0
-    MESSAGE="All models ≥80% grading coverage"
+    GRADING_MESSAGE="All models ≥80% grading coverage"
 fi
 
-echo "Overall Status: $STATUS"
-echo "$MESSAGE"
+# Line availability status (informational, doesn't affect exit code)
+if [[ $LOW_LINE_COUNT -gt 0 ]]; then
+    LINE_STATUS="⚠️  $LOW_LINE_COUNT model(s) with <40% line availability"
+else
+    LINE_STATUS="✅ Good line availability across models"
+fi
+
+echo "=== Summary ==="
+echo "Grading Coverage: $GRADING_STATUS"
+echo "  $GRADING_MESSAGE"
+echo ""
+echo "Line Availability: $LINE_STATUS"
+echo ""
+echo "Note: Grading coverage only counts predictions with betting lines (ACTUAL_PROP/ESTIMATED_AVG)."
+echo "      NO_PROP_LINE predictions are shown separately as 'ungradable' for visibility."
 echo ""
 
 # Send alert if needed
 if [[ $EXIT_CODE -gt 0 ]] && [[ -n "$ALERT_WEBHOOK" ]]; then
-    MODELS=$(echo "$RESULT" | grep -E "CRITICAL|WARNING" | awk -F',' '{print $1 ": " $4 "%"}' | paste -sd '\\n' -)
+    MODELS=$(echo "$RESULT" | grep -E ",CRITICAL,|,WARNING," | awk -F',' '{print $1 ": " $6 "% grading coverage"}' | paste -sd '\\n' -)
 
     echo "Sending alert..."
     curl -X POST "$ALERT_WEBHOOK" \
         -H 'Content-Type: application/json' \
         -d "{
-            \"text\": \"$STATUS: Grading Completeness Issue\",
+            \"text\": \"$GRADING_STATUS: Grading Completeness Issue\",
             \"blocks\": [{
                 \"type\": \"section\",
                 \"text\": {
                     \"type\": \"mrkdwn\",
-                    \"text\": \"*Grading Completeness Alert*\n\n$MESSAGE\n\n*Affected Models:*\n$MODELS\n\n*Action*: Run grading backfill: \\\`PYTHONPATH=. python backfill_jobs/grading/prediction_accuracy/prediction_accuracy_grading_backfill.py --start-date <date> --end-date <date>\\\`\"
+                    \"text\": \"*Grading Completeness Alert*\n\n$GRADING_MESSAGE\n\n*Affected Models:*\n$MODELS\n\n*Action*: Run grading backfill: \\\`PYTHONPATH=. python backfill_jobs/grading/prediction_accuracy/prediction_accuracy_grading_backfill.py --start-date <date> --end-date <date>\\\`\"
                 }
             }]
         }" || true
