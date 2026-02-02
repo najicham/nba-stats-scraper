@@ -28,7 +28,7 @@ PROJECT_ID="nba-props-platform"
 REGION="us-west2"
 TIMEZONE="America/New_York"
 SERVICE_URL="https://nba-phase3-analytics-processors-756957797294.us-west2.run.app"
-SERVICE_ACCOUNT="phase3-invoker@nba-props-platform.iam.gserviceaccount.com"
+SERVICE_ACCOUNT="756957797294-compute@developer.gserviceaccount.com"
 
 # Parse arguments
 DRY_RUN=false
