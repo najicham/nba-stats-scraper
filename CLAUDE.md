@@ -564,6 +564,77 @@ git log -1 --format="%h"
 2. Or use streaming inserts with `insert_rows_json`
 3. Or buffer writes and flush in batches
 
+### BigQuery Partition Filter Required (Sessions 73-74)
+**Symptom**: 400 BadRequest errors with message "Cannot query over table without a filter over column(s) 'game_date' that can be used for partition elimination"
+**Cause**: Querying partitioned table without required partition filter
+**Real Example**: Sessions 73-74 - cleanup processor queried 21 Phase 2 tables, but 12 required partition filters
+**Impact**:
+- Scheduler returning 400 errors
+- Cleanup processor failing silently
+- Automation broken
+
+**Detection**:
+```bash
+# Check for partition filter errors
+gcloud logging read 'resource.type="cloud_run_revision"
+  AND severity>=ERROR
+  AND textPayload=~"partition elimination"' \
+  --limit=10
+
+# Check table partition requirements
+bq show --format=json nba-props-platform:nba_raw.TABLE_NAME | \
+  jq '{requirePartitionFilter: .requirePartitionFilter, partitionField: .timePartitioning.field}'
+```
+
+**Root Cause**:
+- Tables with `requirePartitionFilter: true` MUST have partition column filter in WHERE clause
+- 12 of 21 Phase 2 tables require partition filters (game_date or roster_date)
+- Query only filtered by `processed_at`, not partition columns
+
+**Fix Pattern**:
+```python
+# Map tables to their partition fields
+partition_fields = {
+    'espn_team_rosters': 'roster_date',  # Non-standard partition field
+    # Most tables use 'game_date'
+}
+
+# List tables requiring partition filters
+partitioned_tables = [
+    'bdl_player_boxscores', 'espn_scoreboard', 'espn_team_rosters',
+    'espn_boxscores', 'bigdataball_play_by_play', 'odds_api_game_lines',
+    'bettingpros_player_points_props', 'nbac_schedule', 'nbac_team_boxscore',
+    'nbac_play_by_play', 'nbac_scoreboard_v2', 'nbac_referee_game_assignments'
+]
+
+# Add conditional partition filter
+if table in partitioned_tables:
+    partition_field = partition_fields.get(table, 'game_date')
+    partition_filter = f"AND {partition_field} >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)"
+else:
+    partition_filter = ""
+
+# Build query with both filters
+query = f"""
+    SELECT * FROM `nba_raw.{table}`
+    WHERE processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 4 HOUR)
+    {partition_filter}
+"""
+```
+
+**Key Learnings**:
+1. Check table schema for `requirePartitionFilter` before querying
+2. Partition filter lookback should be wider than processing lookback (7 days vs 4 hours)
+3. Different tables may use different partition fields (game_date vs roster_date)
+4. Multiple bugs can cause same 400 error symptom
+
+**Prevention**:
+- Query table schema before building UNION queries
+- Add integration tests for full scheduler flow
+- Monitor for partition elimination errors specifically
+
+**References**: Sessions 73-74 handoffs, `orchestration/cleanup_processor.py`
+
 ### Feature Validation Errors
 **Symptom**: "fatigue_score=-1.0 outside range"
 **Cause**: Validation rejects sentinel values
