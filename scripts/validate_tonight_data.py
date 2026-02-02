@@ -527,11 +527,13 @@ class TonightDataValidator:
                 COUNTIF(minutes_played IS NOT NULL) as has_minutes,
                 COUNTIF(usage_rate IS NOT NULL) as has_usage_rate,
                 COUNTIF(source_team_last_updated IS NOT NULL) as has_team_join,
-                ROUND(100.0 * COUNTIF(minutes_played IS NOT NULL) / NULLIF(COUNT(*), 0), 1) as minutes_pct,
+                ROUND(100.0 * COUNTIF(minutes_played IS NOT NULL) / NULLIF(COUNT(*), 0), 1) as minutes_pct_all,
                 ROUND(100.0 * COUNTIF(usage_rate IS NOT NULL) / NULLIF(COUNT(*), 0), 1) as usage_rate_pct,
-                -- For active players only (minutes > 0)
+                -- For active players only (minutes > 0) - THIS IS THE CORRECT METRIC
                 COUNTIF(minutes_played > 0) as active_players,
                 COUNTIF(minutes_played > 0 AND usage_rate IS NOT NULL) as active_with_usage,
+                -- Active players minutes coverage (should be 100% if data extraction works)
+                ROUND(100.0 * COUNTIF(minutes_played > 0) / NULLIF(COUNTIF(minutes_played > 0), 0), 1) as active_minutes_pct,
                 ROUND(100.0 * COUNTIF(minutes_played > 0 AND usage_rate IS NOT NULL) / NULLIF(COUNTIF(minutes_played > 0), 0), 1) as active_usage_pct
             FROM `{self.project}.nba_analytics.player_game_summary`
             WHERE game_date = '{check_date}'
@@ -546,14 +548,17 @@ class TonightDataValidator:
             return False
 
         total = result.total_records
-        minutes_pct = result.minutes_pct or 0
+        minutes_pct_all = result.minutes_pct_all or 0  # All players (includes inactive/DNP)
+        active_minutes_pct = result.active_minutes_pct or 0  # Active players only - CORRECT METRIC
+        active_players = result.active_players or 0
         usage_rate_pct = result.usage_rate_pct or 0
         active_usage_pct = result.active_usage_pct or 0
         has_team_join = result.has_team_join or 0
 
         self.stats['pgs_date_checked'] = str(check_date)
         self.stats['pgs_total_records'] = total
-        self.stats['pgs_minutes_pct'] = minutes_pct
+        self.stats['pgs_active_players'] = active_players
+        self.stats['pgs_active_minutes_pct'] = active_minutes_pct  # Use active metric
         self.stats['pgs_usage_rate_pct'] = usage_rate_pct
         self.stats['pgs_active_usage_pct'] = active_usage_pct
 
@@ -568,14 +573,14 @@ class TonightDataValidator:
         USAGE_WARNING_THRESHOLD = float(get_usage_rate_coverage_threshold('warning'))
         USAGE_CRITICAL_THRESHOLD = float(get_usage_rate_coverage_threshold('critical'))
 
-        # Check minutes_played coverage with two-level threshold
-        if minutes_pct < MINUTES_CRITICAL_THRESHOLD:
+        # Check minutes_played coverage for ACTIVE players only (inactive/DNP players legitimately have NULL minutes)
+        if active_minutes_pct < MINUTES_CRITICAL_THRESHOLD:
             self.add_issue('data_quality',
-                f'minutes_played coverage is {minutes_pct}% (CRITICAL threshold: {MINUTES_CRITICAL_THRESHOLD}%) for {check_date}',
+                f'Active player minutes_played coverage is {active_minutes_pct}% (CRITICAL threshold: {MINUTES_CRITICAL_THRESHOLD}%) for {check_date}. {active_players} active players found.',
                 severity='CRITICAL')
-        elif minutes_pct < MINUTES_WARNING_THRESHOLD:
+        elif active_minutes_pct < MINUTES_WARNING_THRESHOLD:
             self.add_issue('data_quality',
-                f'minutes_played coverage is {minutes_pct}% (WARNING threshold: {MINUTES_WARNING_THRESHOLD}%) for {check_date}',
+                f'Active player minutes_played coverage is {active_minutes_pct}% (WARNING threshold: {MINUTES_WARNING_THRESHOLD}%) for {check_date}. {active_players} active players found.',
                 severity='WARNING')
 
         # Check usage_rate coverage for active players with two-level threshold
@@ -594,10 +599,10 @@ class TonightDataValidator:
                 f'No team stats join detected (source_team_last_updated all NULL) for {check_date}')
 
         # Determine status icon and message
-        if minutes_pct < MINUTES_CRITICAL_THRESHOLD or active_usage_pct < USAGE_CRITICAL_THRESHOLD:
+        if active_minutes_pct < MINUTES_CRITICAL_THRESHOLD or active_usage_pct < USAGE_CRITICAL_THRESHOLD:
             status_icon = '❌'
             status_text = 'CRITICAL'
-        elif minutes_pct < MINUTES_WARNING_THRESHOLD or active_usage_pct < USAGE_WARNING_THRESHOLD:
+        elif active_minutes_pct < MINUTES_WARNING_THRESHOLD or active_usage_pct < USAGE_WARNING_THRESHOLD:
             status_icon = '⚠️'
             status_text = 'WARNING'
         else:
@@ -606,12 +611,12 @@ class TonightDataValidator:
 
         # Print status
         print(f"{status_icon} Data Quality ({check_date}): {status_text}")
-        print(f"   - {total} player-game records")
-        print(f"   - minutes_played: {minutes_pct}% coverage (warning: {MINUTES_WARNING_THRESHOLD}%, critical: {MINUTES_CRITICAL_THRESHOLD}%)")
-        print(f"   - usage_rate: {active_usage_pct}% for active players (warning: {USAGE_WARNING_THRESHOLD}%, critical: {USAGE_CRITICAL_THRESHOLD}%)")
+        print(f"   - {total} total player-game records ({active_players} active, {total - active_players} inactive/DNP)")
+        print(f"   - Active player minutes: {active_minutes_pct}% coverage (warning: {MINUTES_WARNING_THRESHOLD}%, critical: {MINUTES_CRITICAL_THRESHOLD}%)")
+        print(f"   - Active player usage_rate: {active_usage_pct}% coverage (warning: {USAGE_WARNING_THRESHOLD}%, critical: {USAGE_CRITICAL_THRESHOLD}%)")
         print(f"   - Team stats joined: {'Yes' if has_team_join > 0 else 'No'}")
 
-        return minutes_pct >= MINUTES_CRITICAL_THRESHOLD and active_usage_pct >= USAGE_CRITICAL_THRESHOLD
+        return active_minutes_pct >= MINUTES_CRITICAL_THRESHOLD and active_usage_pct >= USAGE_CRITICAL_THRESHOLD
 
     def check_field_completeness(self, check_date: date) -> bool:
         """
