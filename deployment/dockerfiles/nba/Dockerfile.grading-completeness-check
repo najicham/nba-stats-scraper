@@ -1,0 +1,23 @@
+# Dockerfile for NBA Grading Completeness Check
+# Cloud Run Job for monitoring grading pipeline health
+#
+# Build from repository root:
+#   docker build -f deployment/dockerfiles/nba/Dockerfile.grading-completeness-check -t grading-completeness-check .
+
+FROM google/cloud-sdk:slim
+
+WORKDIR /app
+
+# Install required tools (awk is included in base image)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the monitoring script
+COPY bin/monitoring/check_grading_completeness.sh /app/
+
+# Make script executable
+RUN chmod +x /app/check_grading_completeness.sh
+
+# Run the script
+ENTRYPOINT ["/app/check_grading_completeness.sh"]

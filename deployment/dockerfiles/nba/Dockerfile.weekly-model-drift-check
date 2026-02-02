@@ -1,0 +1,23 @@
+# Dockerfile for NBA Weekly Model Drift Check
+# Cloud Run Job for monitoring model performance degradation
+#
+# Build from repository root:
+#   docker build -f deployment/dockerfiles/nba/Dockerfile.weekly-model-drift-check -t weekly-model-drift-check .
+
+FROM google/cloud-sdk:slim
+
+WORKDIR /app
+
+# Install required tools (awk is included in base image)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the monitoring script
+COPY bin/monitoring/weekly_model_drift_check.sh /app/
+
+# Make script executable
+RUN chmod +x /app/weekly_model_drift_check.sh
+
+# Run the script
+ENTRYPOINT ["/app/weekly_model_drift_check.sh"]

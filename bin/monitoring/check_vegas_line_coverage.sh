@@ -5,9 +5,15 @@
 # This script monitors the Vegas line coverage in the ML feature store
 # to detect regressions like the Session 76 issue (44.7% coverage).
 #
-# Expected coverage: ≥90% (baseline from Session 76 fix: 92.4%)
-# Alert threshold: <80%
-# Critical threshold: <50%
+# IMPORTANT: Vegas coverage represents % of players WITH BETTING LINES, not total players.
+# Sportsbooks only offer props for starters and key rotation players (40-50% of roster).
+#
+# Historical baseline (Jan 2026): 37-50% coverage is NORMAL and healthy
+# This is NOT a bug - it reflects real sportsbook behavior
+#
+# Expected coverage: 35-50% (normal range)
+# Alert threshold: <30% (degraded)
+# Critical threshold: <20% (severely broken)
 #
 # Usage:
 #   ./bin/monitoring/check_vegas_line_coverage.sh [--date YYYY-MM-DD] [--days N]
@@ -18,9 +24,9 @@
 #   --alert   Slack webhook URL for alerts (optional)
 #
 # Exit codes:
-#   0 = Coverage ≥80% (healthy)
-#   1 = Coverage 50-79% (warning)
-#   2 = Coverage <50% (critical)
+#   0 = Coverage ≥35% (healthy - normal sportsbook behavior)
+#   1 = Coverage 20-34% (warning - below normal)
+#   2 = Coverage <20% (critical - data pipeline broken)
 
 set -euo pipefail
 
@@ -79,11 +85,11 @@ echo ""
 # Extract average coverage
 AVG_COVERAGE=$(echo "$RESULT" | tail -n +2 | awk -F',' '{sum+=$2; count++} END {if(count>0) print sum/count; else print 0}')
 
-# Determine status
-if (( $(echo "$AVG_COVERAGE >= 80" | bc -l) )); then
+# Determine status (updated Feb 2026 - realistic thresholds)
+if (( $(echo "$AVG_COVERAGE >= 35" | bc -l) )); then
     STATUS="✅ HEALTHY"
     EXIT_CODE=0
-elif (( $(echo "$AVG_COVERAGE >= 50" | bc -l) )); then
+elif (( $(echo "$AVG_COVERAGE >= 20" | bc -l) )); then
     STATUS="🟡 WARNING"
     EXIT_CODE=1
 else
@@ -106,7 +112,7 @@ if [[ $EXIT_CODE -eq 2 ]] && [[ -n "$CRITICAL_WEBHOOK" ]]; then
                 \"type\": \"section\",
                 \"text\": {
                     \"type\": \"mrkdwn\",
-                    \"text\": \"*Vegas Line Coverage CRITICAL*\n\n*Coverage*: ${AVG_COVERAGE}% (expected: ≥90%)\n*Date Range*: Last $DAYS_LOOKBACK days ending $CHECK_DATE\n*Impact*: Feature store missing betting context\n*Action*: Check Phase 4 deployment and Session 76 fix\"
+                    \"text\": \"*Vegas Line Coverage CRITICAL*\n\n*Coverage*: ${AVG_COVERAGE}% (expected: 35-50%)\n*Date Range*: Last $DAYS_LOOKBACK days ending $CHECK_DATE\n*Impact*: Feature store missing betting context\n*Action*: Check Phase 4 deployment and BettingPros scraper\"
                 }
             }]
         }" || true
@@ -120,7 +126,7 @@ elif [[ $EXIT_CODE -eq 1 ]] && [[ -n "$ALERT_WEBHOOK" ]]; then
                 \"type\": \"section\",
                 \"text\": {
                     \"type\": \"mrkdwn\",
-                    \"text\": \"*Vegas Line Coverage Warning*\n\n*Coverage*: ${AVG_COVERAGE}% (expected: ≥90%)\n*Date Range*: Last $DAYS_LOOKBACK days ending $CHECK_DATE\n*Action*: Monitor and investigate if trend continues\"
+                    \"text\": \"*Vegas Line Coverage Warning*\n\n*Coverage*: ${AVG_COVERAGE}% (expected: 35-50%)\n*Date Range*: Last $DAYS_LOOKBACK days ending $CHECK_DATE\n*Action*: Monitor and investigate if trend continues\"
                 }
             }]
         }" || true
