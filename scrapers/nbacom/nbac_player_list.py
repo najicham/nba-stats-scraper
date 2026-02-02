@@ -133,9 +133,16 @@ class GetNbaComPlayerList(ScraperBase, ScraperFlaskMixin):
     # ------------------------------------------------------------------ #
     def set_additional_opts(self) -> None:
         super().set_additional_opts()
-        # Default season → current calendar year
+        # Default season → current NBA season (not calendar year)
+        # NBA season runs Oct-Jun, so:
+        # Oct-Dec: use current year (e.g., Oct 2025 → 2025-26 season)
+        # Jan-Sep: use previous year (e.g., Feb 2026 → 2025-26 season)
         if not self.opts.get("season"):
-            self.opts["season"] = str(datetime.now(timezone.utc).year)
+            now = datetime.now(timezone.utc)
+            if now.month >= 10:  # October or later
+                self.opts["season"] = str(now.year)
+            else:  # January-September
+                self.opts["season"] = str(now.year - 1)
         # Timestamp for exporters
         self.opts["time"] = datetime.now(timezone.utc).strftime("%H-%M-%S")
 
