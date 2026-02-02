@@ -22,6 +22,7 @@ from google.cloud import bigquery
 
 from shared.utils.slack_channels import send_to_slack
 from shared.utils.email_alerting import EmailAlerter
+from shared.utils.sms_notifier import SMSNotifier
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,11 @@ class SubsetPicksNotifier:
             logger.warning(f"Email alerter not configured: {e}")
             self.email_alerter = None
 
+        # Initialize SMS notifier (optional)
+        self.sms_notifier = SMSNotifier()
+        if not self.sms_notifier.is_configured():
+            logger.debug("SMS notifier not configured (optional)")
+
         # Slack webhook for betting signals
         self.slack_webhook = os.environ.get('SLACK_WEBHOOK_URL_SIGNALS')
 
@@ -49,19 +55,21 @@ class SubsetPicksNotifier:
         subset_id: str = 'v9_high_edge_top5',
         game_date: Optional[str] = None,
         send_slack: bool = True,
-        send_email: bool = True
+        send_email: bool = True,
+        send_sms: bool = True
     ) -> Dict[str, bool]:
         """
-        Send daily subset picks via Slack and Email.
+        Send daily subset picks via Slack, Email, and SMS.
 
         Args:
             subset_id: Subset to query (default: v9_high_edge_top5)
             game_date: Game date (YYYY-MM-DD) or None for today
             send_slack: Whether to send Slack notification
             send_email: Whether to send Email notification
+            send_sms: Whether to send SMS notification
 
         Returns:
-            Dict with success status: {'slack': bool, 'email': bool}
+            Dict with success status: {'slack': bool, 'email': bool, 'sms': bool}
         """
         if game_date is None:
             game_date = date.today().isoformat()
@@ -73,7 +81,7 @@ class SubsetPicksNotifier:
 
         if not picks_data:
             logger.warning(f"No picks data found for {subset_id} on {game_date}")
-            return {'slack': False, 'email': False}
+            return {'slack': False, 'email': False, 'sms': False}
 
         results = {}
 
@@ -94,6 +102,16 @@ class SubsetPicksNotifier:
                 results['email'] = False
         else:
             results['email'] = False
+
+        # Send SMS notification
+        if send_sms:
+            if self.sms_notifier.is_configured():
+                results['sms'] = self._send_sms_notification(picks_data, subset_id)
+            else:
+                logger.debug("SMS notifier not configured, skipping SMS")
+                results['sms'] = False
+        else:
+            results['sms'] = False
 
         return results
 
@@ -488,10 +506,31 @@ _View all subsets: /subset-picks_"""
             logger.error(f"Error sending email notification: {e}", exc_info=True)
             return False
 
+    def _send_sms_notification(self, picks_data: Dict, subset_id: str) -> bool:
+        """Send SMS notification with picks."""
+        try:
+            success = self.sms_notifier.send_picks_sms(
+                picks_data,
+                max_picks=3,  # SMS length limit
+                include_historical=True
+            )
+
+            if success:
+                logger.info(f"Sent SMS notification for {subset_id}")
+            else:
+                logger.error(f"Failed to send SMS notification for {subset_id}")
+
+            return success
+
+        except Exception as e:
+            logger.error(f"Error sending SMS notification: {e}", exc_info=True)
+            return False
+
 
 def send_daily_picks(
     subset_id: str = 'v9_high_edge_top5',
-    game_date: Optional[str] = None
+    game_date: Optional[str] = None,
+    send_sms: bool = True
 ) -> Dict[str, bool]:
     """
     Convenience function to send daily picks.
@@ -499,12 +538,17 @@ def send_daily_picks(
     Args:
         subset_id: Subset to send (default: v9_high_edge_top5)
         game_date: Game date or None for today
+        send_sms: Whether to send SMS (default: True)
 
     Returns:
-        Dict with success status: {'slack': bool, 'email': bool}
+        Dict with success status: {'slack': bool, 'email': bool, 'sms': bool}
     """
     notifier = SubsetPicksNotifier()
-    return notifier.send_daily_notifications(subset_id=subset_id, game_date=game_date)
+    return notifier.send_daily_notifications(
+        subset_id=subset_id,
+        game_date=game_date,
+        send_sms=send_sms
+    )
 
 
 if __name__ == '__main__':

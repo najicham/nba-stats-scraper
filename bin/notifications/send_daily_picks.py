@@ -56,6 +56,16 @@ def main():
         help='Send only Email notification'
     )
     parser.add_argument(
+        '--sms-only',
+        action='store_true',
+        help='Send only SMS notification'
+    )
+    parser.add_argument(
+        '--no-sms',
+        action='store_true',
+        help='Skip SMS notification'
+    )
+    parser.add_argument(
         '--test',
         action='store_true',
         help='Test mode - show what would be sent without actually sending'
@@ -64,13 +74,22 @@ def main():
     args = parser.parse_args()
 
     # Determine what to send
-    send_slack = not args.email_only
-    send_email = not args.slack_only
+    if args.slack_only:
+        send_slack, send_email, send_sms = True, False, False
+    elif args.email_only:
+        send_slack, send_email, send_sms = False, True, False
+    elif args.sms_only:
+        send_slack, send_email, send_sms = False, False, True
+    else:
+        # Send all by default
+        send_slack = True
+        send_email = True
+        send_sms = not args.no_sms  # Allow disabling SMS
 
     game_date = args.date or date.today().isoformat()
 
     logger.info(f"Sending daily picks for {args.subset} on {game_date}")
-    logger.info(f"Channels: Slack={send_slack}, Email={send_email}")
+    logger.info(f"Channels: Slack={send_slack}, Email={send_email}, SMS={send_sms}")
 
     if args.test:
         logger.info("TEST MODE - Not actually sending")
@@ -101,7 +120,8 @@ def main():
             subset_id=args.subset,
             game_date=game_date,
             send_slack=send_slack,
-            send_email=send_email
+            send_email=send_email,
+            send_sms=send_sms
         )
 
         # Log results
@@ -115,15 +135,21 @@ def main():
         elif send_email:
             logger.error("❌ Email notification failed")
 
+        if results.get('sms'):
+            logger.info("✅ SMS notification sent successfully")
+        elif send_sms:
+            logger.error("❌ SMS notification failed")
+
         # Exit code based on results
-        if send_slack and send_email:
-            success = results.get('slack') and results.get('email')
-        elif send_slack:
-            success = results.get('slack')
-        elif send_email:
-            success = results.get('email')
-        else:
-            success = False
+        success_list = []
+        if send_slack:
+            success_list.append(results.get('slack', False))
+        if send_email:
+            success_list.append(results.get('email', False))
+        if send_sms:
+            success_list.append(results.get('sms', False))
+
+        success = all(success_list) if success_list else False
 
         return 0 if success else 1
 
