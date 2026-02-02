@@ -32,22 +32,39 @@ ls -la docs/09-handoff/ | tail -5
 ```
 
 ### 4. Manual Scraper Triggers (When Needed)
+
+**Trade Detection & Registry Update (FULLY AUTOMATED - Session 74)**
+
+System now automatically updates player registry within 30 minutes of trade detection:
+
 ```bash
-# Player movement (automated but can run manually)
+# Automated Flow (no manual triggers needed):
+# 1. Player movement scraper: 8 AM & 2 PM ET (detects trades)
+# 2. Registry processor: 8:10 AM & 2:10 PM ET (updates teams)
+# 3. BR rosters: 6:30 AM ET daily (validation)
+
+# Manual triggers (if needed for testing):
+# Player movement
 curl -X POST https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape \
   -H "Content-Type: application/json" \
   -d '{"scraper":"nbac_player_movement","year":"2026","group":"prod"}'
 
-# BR roster scraper + processor
+# Registry update from player movement (immediate)
+./bin/process-player-movement.sh --lookback-hours 48
+
+# BR roster backfill (validation only, not needed for trades)
 gcloud run jobs execute br-rosters-backfill --region=us-west2
 # Wait 2-3 min, then:
 PYTHONPATH=. GCP_PROJECT_ID=nba-props-platform \
 python backfill_jobs/raw/br_roster_processor/br_roster_processor_raw_backfill.py \
   --season 2024 --teams all
-
-# Player list refresh (for trades)
-gcloud run jobs execute nbac-player-list-processor --region=us-west2
 ```
+
+**Registry Update Latency:**
+- **Before Session 74**: 24-48 hours (waited for Basketball Reference)
+- **After Session 74**: 30 minutes (uses NBA.com player movement data)
+
+**Trade Deadline Ready:** ✅ Fully automated, no manual intervention needed
 
 ## Using Agents Effectively
 
