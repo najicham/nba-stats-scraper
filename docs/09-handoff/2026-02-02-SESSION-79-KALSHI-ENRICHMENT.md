@@ -42,11 +42,21 @@ Completed Kalshi integration from Session 78 by deploying the raw processor and 
 ### 4. Services Deployed ✅
 | Service | Revision |
 |---------|----------|
+| nba-phase2-raw-processors | 00132-hdq |
 | prediction-coordinator | 00132-xrv |
 | prediction-worker | 00070-vj6 |
 
-### 5. Commit
-- `5967c900`: feat: Add Kalshi prediction market data to predictions
+### 5. Updated Skills ✅
+- Added **Phase 0.9: Kalshi Data Health** to `/validate-daily` skill
+- Monitors Kalshi scraper output and data availability
+- Alert thresholds for 0 props (critical) or <50 props (warning)
+
+### 6. Commits
+| Commit | Description |
+|--------|-------------|
+| `5967c900` | feat: Add Kalshi prediction market data to predictions |
+| `19974b56` | docs: Add Session 79 handoff |
+| `0157dee5` | docs: Add Kalshi validation to validate-daily skill |
 
 ## How It Works
 
@@ -69,7 +79,7 @@ line_discrepancy     -- Kalshi line - Vegas line
 
 ## Testing
 
-The enrichment will be active for the next prediction run. To verify:
+The enrichment will be active for the next prediction run (2:30 AM or 7:00 AM ET). To verify:
 
 ```sql
 -- Check if Kalshi data populated after next prediction run
@@ -81,24 +91,74 @@ SELECT
   kalshi_yes_price,
   kalshi_liquidity
 FROM nba_predictions.player_prop_predictions
-WHERE game_date = CURRENT_DATE()
+WHERE game_date >= '2026-02-03'
   AND system_id = 'catboost_v9'
   AND kalshi_available = TRUE
 ORDER BY ABS(line_discrepancy) DESC
 LIMIT 10;
 ```
 
-## Remaining Tasks
+## Future Plans
 
-### Should Do (Future Sessions)
-- [ ] Create arbitrage detection alert (when `line_discrepancy >= 2`)
-- [ ] Add Kalshi data quality to daily validation
-- [ ] Track Kalshi line coverage statistics
+### Priority 1: Quick Wins (Next Session)
+- [ ] **Arbitrage Alert**: Create notification when `|line_discrepancy| >= 2` points
+  - Could use Cloud Function triggered by prediction completion
+  - Send to Discord/Slack when opportunities detected
+- [ ] **Add Kalshi to /top-picks**: Show Kalshi line comparison in output
+  - Modify skill to include `kalshi_line` and `line_discrepancy` columns
 
-### Could Do
-- [ ] Build Kalshi-specific dashboard view
-- [ ] Track Kalshi line movements over time
-- [ ] Compare Kalshi vs Vegas closing line accuracy
+### Priority 2: Analytics (Future)
+- [ ] **Kalshi Coverage Tracking**: Daily stats on Kalshi vs Vegas coverage
+  - What % of predictions have Kalshi data?
+  - Which players have best Kalshi liquidity?
+- [ ] **Line Accuracy Comparison**: After games complete, compare:
+  - Which was closer to actual: Kalshi line or Vegas line?
+  - Track over time to identify systematic differences
+- [ ] **Arbitrage ROI Analysis**: Backtest profitability of betting divergences
+  - When Kalshi differs from Vegas by 2+ pts, what's the hit rate?
+
+### Priority 3: Features (Later)
+- [ ] **Kalshi Dashboard View**: Dedicated view for Kalshi opportunities
+- [ ] **Line Movement Tracking**: Store historical Kalshi lines to track movement
+- [ ] **Multi-Prop Kalshi**: Extend to rebounds, assists, threes (currently points only)
+- [ ] **Kalshi as Signal**: Could line discrepancy be a predictive feature?
+
+## Architecture Reference
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     KALSHI DATA FLOW                            │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  Kalshi API ──► Scraper ──► GCS ──► Processor ──► BigQuery     │
+│  (2 AM ET)      (nba-scrapers)      (raw-processors)            │
+│                                                                 │
+│                           │                                     │
+│                           ▼                                     │
+│                  nba_raw.kalshi_player_props                    │
+│                           │                                     │
+│                           ▼                                     │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ Prediction Coordinator                                   │   │
+│  │  1. Query Vegas line (OddsAPI/BettingPros)              │   │
+│  │  2. Query Kalshi line (closest to Vegas)                │   │
+│  │  3. Calculate line_discrepancy                          │   │
+│  │  4. Pass to worker via Pub/Sub                          │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                           │                                     │
+│                           ▼                                     │
+│  ┌─────────────────────────────────────────────────────────┐   │
+│  │ Prediction Worker                                        │   │
+│  │  1. Extract Kalshi fields from request                  │   │
+│  │  2. Include in BigQuery prediction record               │   │
+│  └─────────────────────────────────────────────────────────┘   │
+│                           │                                     │
+│                           ▼                                     │
+│           nba_predictions.player_prop_predictions               │
+│           (with kalshi_available, kalshi_line, etc.)            │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ## Useful Commands
 
@@ -110,7 +170,7 @@ FROM nba_raw.kalshi_player_props
 WHERE game_date = CURRENT_DATE()
 GROUP BY prop_type"
 
-# Find arbitrage opportunities
+# Find arbitrage opportunities (after predictions run)
 bq query --use_legacy_sql=false "
 SELECT p.player_lookup, p.current_points_line as vegas, p.kalshi_line,
        p.line_discrepancy, p.kalshi_yes_price
@@ -120,8 +180,19 @@ WHERE p.game_date = CURRENT_DATE()
   AND ABS(p.line_discrepancy) >= 2
 ORDER BY ABS(p.line_discrepancy) DESC"
 
-# Trigger manual prediction run (requires auth)
-gcloud scheduler jobs run overnight-predictions --location=us-west2
+# Compare Kalshi vs Vegas line availability
+bq query --use_legacy_sql=false "
+SELECT
+  COUNT(*) as total_predictions,
+  COUNTIF(kalshi_available) as with_kalshi,
+  ROUND(100.0 * COUNTIF(kalshi_available) / COUNT(*), 1) as kalshi_pct
+FROM nba_predictions.player_prop_predictions
+WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v9'"
+
+# Manual Kalshi scrape
+curl -X POST "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape" \
+  -H "Content-Type: application/json" \
+  -d '{"scraper":"kalshi_player_props","date":"TODAY","group":"prod"}'
 ```
 
 ## Files Modified
@@ -134,8 +205,32 @@ MODIFIED:
 ├── predictions/worker/worker.py (+16 lines)
 │   └── Added Kalshi field extraction
 │   └── Added Kalshi fields to BigQuery record
+├── .claude/skills/validate-daily/SKILL.md (+55 lines)
+│   └── Added Phase 0.9: Kalshi Data Health check
 ```
 
-## Key Insight
+## Key Insights
 
-Kalshi offers multiple lines per player (3-5 different thresholds like 19.5, 24.5, 29.5 points). We match the Kalshi line closest to Vegas for the `line_discrepancy` calculation, enabling arbitrage detection when the markets diverge significantly.
+### Why Kalshi Matters
+| Traditional Sportsbook | Kalshi |
+|----------------------|--------|
+| Limits winning bettors | No limits (profits from fees) |
+| 1 line per player | 3-5 lines per player |
+| State regulated | CFTC regulated (federal) |
+| -110/-110 vig | ~2% transaction fee |
+
+### Line Matching Strategy
+Kalshi offers multiple lines per player (e.g., 19.5, 24.5, 29.5 points). We match the Kalshi line **closest to Vegas** for the `line_discrepancy` calculation. This enables:
+- Arbitrage detection when markets diverge
+- Alternative entry points for betting
+- Market efficiency analysis
+
+## Related Documentation
+
+- Session 78 Handoff: `docs/09-handoff/2026-02-02-SESSION-78-KALSHI-INTEGRATION.md`
+- Kalshi Project: `docs/08-projects/current/kalshi-integration/`
+- Prediction Schema: `schemas/bigquery/predictions/kalshi_fields_alter.sql`
+
+---
+
+*Session 79 Complete. Kalshi integration fully operational.*
