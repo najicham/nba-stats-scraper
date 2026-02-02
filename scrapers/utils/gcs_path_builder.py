@@ -97,6 +97,9 @@ class GCSPathBuilder:
         "bettingpros_events": "bettingpros/events/%(date)s/%(timestamp)s.json",
         "bettingpros_player_props": "bettingpros/player-props/%(market_type)s/%(date)s/%(timestamp)s.json",
 
+        # Kalshi Scrapers
+        "kalshi_player_props": "kalshi/player-props/%(date)s/%(timestamp)s.json",
+
         # Big Data Ball
         # "big_data_ball_play_by_play": "big-data-ball/play-by-play/%(date)s/game_%(game_id)s/%(timestamp)s.csv",
         "bigdataball_pbp": "big-data-ball/%(nba_season)s/%(date)s/game_%(game_id)s/%(filename)s.csv",

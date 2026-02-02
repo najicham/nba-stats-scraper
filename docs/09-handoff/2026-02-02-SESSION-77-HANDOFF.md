@@ -2,126 +2,132 @@
 
 ## Session Summary
 
-Completed pre-2:30 AM early predictions preparation: deployed prediction services with run_mode tracking, fixed Feb 1 player_game_summary to all 10 games using boxscore fallback.
+Fixed critical bug in `prediction_run_mode` tracking - field wasn't being extracted from `line_source_info` to `features` dict. Also validated overnight processing and deployed the fix.
 
 ---
 
 ## Accomplishments
 
-### 1. Deployed Prediction Services with run_mode Tracking ✅
+### 1. Fixed prediction_run_mode Bug ✅
 
-Services now include `prediction_run_mode` field to distinguish EARLY vs OVERNIGHT predictions:
+**Bug discovered:** Session 76 added `prediction_run_mode` to `line_source_info` at worker.py:551 but forgot to extract it to `features` dict. Result: all predictions defaulted to `'OVERNIGHT'` regardless of actual run mode.
 
+**Fix:** Added line to extract `prediction_run_mode` from `line_source_info` to `features`:
+```python
+# Session 77 FIX: Extract prediction_run_mode for BigQuery record
+features['prediction_run_mode'] = line_source_info.get('prediction_run_mode', 'OVERNIGHT')
+```
+
+**Commit:** `d83a2acb`
+
+**Deployment:**
 | Service | Revision | Status |
 |---------|----------|--------|
-| prediction-coordinator | 00130-4cw | ✅ Deployed |
-| prediction-worker | 00066-td2 | ✅ Deployed |
+| prediction-coordinator | 00130-4cw | ✅ Deployed (Session 77 early) |
+| prediction-worker | 00067-ddg | ✅ Deployed with fix |
 
-**Deployed at:** 2:03 AM ET Feb 2
-**Early predictions scheduler:** 2:30 AM ET Feb 2 (first run with new code)
+### 2. Validated Overnight Processing ✅
 
-### 2. Fixed Feb 1 player_game_summary ✅
+**Feb 1 player_game_summary:**
+- 539 total records, 10 games
+- 319 players with minutes (59.2%) - rest are DNP/inactive
+- All games processed correctly
 
-Feb 1 had 10 games but only 7 were processed initially (missing gamebook data). Used boxscore fallback via local backfill:
+**Feb 2 Predictions:**
+- 213 predictions with `ACTUAL_PROP` (created 2:32-2:33 AM)
+- 59 predictions with `NO_PROP_LINE` (from 6:05 PM same-day-tomorrow)
+- Early scheduler ran correctly but tagged as `OVERNIGHT` due to bug (now fixed)
 
-| Before | After |
-|--------|-------|
-| 7 games, 148 records | 10 games, 228 records |
+**Feb 2 Feature Store:**
+- 148 features for 4 games ✅
 
-**Command used:**
+### 3. Model Performance Check ✅
+
+**Weekly Hit Rate (last 4 weeks):**
+| Week | V8 | V9 |
+|------|-----|-----|
+| Jan 25 | 56.5% | 51.6% |
+| Jan 18 | 48.7% | 56.4% |
+| Jan 11 | 55.7% | 55.6% |
+| Jan 4 | 61.5% | 54.2% |
+
+**High-Edge Performance (last 14 days):**
+| System | High Edge (5+) | Other |
+|--------|----------------|-------|
+| catboost_v9 | **74.0%** | 52.8% |
+| catboost_v8 | 50.6% | 52.6% |
+
+**V9 high-edge performance is excellent at 74%!**
+
+### 4. Daily Signal Status ⚠️
+
+Feb 2 shows **RED signal** with pct_over=6.6% (heavy UNDER skew):
+- 213 total picks, 44 high-edge picks
+- Historical data: Heavy UNDER skew correlates with lower hit rate
+- Recommendation: Monitor closely, consider reduced sizing
+
+---
+
+## Issues Found
+
+### 🟡 P2: Phase 3 Completion Only 1/5
+
+Phase 3 for Feb 2 shows only `upcoming_player_game_context` completed. Other processors may not have triggered yet (it's still morning).
+
+**Check later:**
 ```bash
-PYTHONPATH=. GCP_PROJECT_ID=nba-props-platform \
-python backfill_jobs/analytics/player_game_summary/player_game_summary_analytics_backfill.py \
-  --start-date 2026-02-01 --end-date 2026-02-01
+python3 -c "
+from google.cloud import firestore
+db = firestore.Client()
+doc = db.collection('phase3_completion').document('2026-02-02').get()
+print(doc.to_dict() if doc.exists else 'No record')
+"
 ```
 
-**Note:** Validation flagged `three_pointers_attempted` and `usage_rate` coverage at 0% - this is expected when using boxscore fallback (these fields come from play-by-play which isn't in boxscores).
+### 🟡 P2: Grading Backfill Needed
 
-### 3. Feb 2 Early Predictions Readiness ✅
-
-| Component | Status | Count |
-|-----------|--------|-------|
-| Games scheduled | ✅ | 4 |
-| Players with lines | ✅ | 59 |
-| Players in feature store | ✅ | 138 |
-| Prediction services deployed | ✅ | Both updated |
-
----
-
-## Verification Queries for Next Session
-
-### 1. Verify Early Predictions Ran (After 2:35 AM ET)
-
-```sql
--- Check if early predictions ran with correct mode
-SELECT
-  prediction_run_mode,
-  line_source,
-  COUNT(*) as predictions
-FROM nba_predictions.player_prop_predictions
-WHERE game_date = DATE('2026-02-02')
-  AND system_id = 'catboost_v9'
-GROUP BY 1, 2
-ORDER BY 1;
-```
-
-**Expected Results:**
-- ~50-60 predictions with `prediction_run_mode='EARLY'` and `line_source='ACTUAL_PROP'`
-
-### 2. Check Prediction Creation Times
-
-```sql
-SELECT
-  prediction_run_mode,
-  FORMAT_TIMESTAMP('%H:%M', created_at, 'America/New_York') as time_ET,
-  COUNT(*) as predictions
-FROM nba_predictions.player_prop_predictions
-WHERE game_date = DATE('2026-02-02') AND system_id = 'catboost_v9'
-GROUP BY 1, 2
-ORDER BY 2;
-```
-
----
-
-## Pending Items
-
-### Priority 1: Verify Early Predictions (After 2:30 AM ET)
-Run the verification queries above to confirm:
-- `prediction_run_mode='EARLY'` is populated
-- Only `line_source='ACTUAL_PROP'` predictions (no NO_PROP_LINE)
-- ~50-60 predictions for the 4-game slate
-
-### Priority 2: Grading Backfill (P2)
-Ensemble models have low grading coverage:
+Feb 1 only has 1 graded prediction for V9. Need to run grading backfill:
 
 ```bash
 PYTHONPATH=. python backfill_jobs/grading/prediction_accuracy/prediction_accuracy_grading_backfill.py \
   --start-date 2026-01-25 \
-  --end-date 2026-02-01 \
-  --systems catboost_v8,catboost_v9,ensemble_v1,ensemble_v1_1
+  --end-date 2026-02-01
 ```
-
-### Priority 3: Gamebook Data Investigation (P2)
-Feb 1 gamebook data never arrived in `nbac_gamebook_player_stats`. Check:
-- Gamebook scraper scheduler
-- GCS for gamebook files
-- Scraper logs for errors
 
 ---
 
 ## Files Modified
 
-None - deployments only
+| File | Change |
+|------|--------|
+| `predictions/worker/worker.py` | Added extraction of prediction_run_mode to features |
 
 ---
 
-## Key Observations
+## Verification for Next Session
 
-1. **Boxscore fallback works well** - Successfully processed all 10 Feb 1 games using boxscore data when gamebook wasn't available
+### 1. Verify run_mode Fix Works
 
-2. **Session 76 deployment was incomplete** - The run_mode tracking code was committed but services weren't fully deployed. This session completed the deployment.
+After next prediction run (11:30 AM same-day or tomorrow's early):
+```sql
+SELECT prediction_run_mode, COUNT(*)
+FROM nba_predictions.player_prop_predictions
+WHERE game_date >= DATE('2026-02-03') AND system_id = 'catboost_v9'
+GROUP BY 1;
+```
 
-3. **Feb 2 is a light schedule** - Only 4 games means smaller prediction volume (~50-60 EARLY predictions vs ~140 on typical days)
+**Expected:** Should see `EARLY` and `OVERNIGHT` as distinct values
+
+### 2. Feb 2 Game Results
+
+Games tonight (4 games): CHA vs NOP, IND vs HOU, MEM vs MIN, LAC vs PHI
+
+After games complete, verify grading:
+```sql
+SELECT COUNT(*), COUNTIF(prediction_correct IS NOT NULL) as graded
+FROM nba_predictions.prediction_accuracy
+WHERE game_date = DATE('2026-02-02') AND system_id = 'catboost_v9';
+```
 
 ---
 
@@ -129,6 +135,7 @@ None - deployments only
 
 - Session 76 Handoff: `docs/09-handoff/2026-02-02-SESSION-76-HANDOFF.md`
 - Early Prediction Design: `docs/08-projects/current/prediction-timing-improvement/DESIGN.md`
+- Bug fix commit: `d83a2acb`
 
 ---
 
