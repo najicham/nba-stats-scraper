@@ -264,10 +264,14 @@ class CleanupProcessor:
         Note: This assumes Phase 2 tables have source_file_path field
         Adjust query based on your actual Phase 2 schema
         """
-        # All Phase 2 raw tables that track source_file_path
+        # All Phase 2 raw tables that track source_file_path AND have processed_at column
         # IMPORTANT: Table names must match actual processor output tables
         # Verified against: grep -rh "table_name = 'nba_raw" data_processors/raw/
-        # Last verified: Session 11 (2026-01-29)
+        # Last verified: Session 73 (2026-02-02)
+        #
+        # NOTE: Some tables (nbac_player_movement, nbac_team_rosters, nbac_player_list,
+        # nbac_gamebook_game_info) do not have processed_at column and are excluded
+        # from this cleanup query to prevent BigQuery errors.
         phase2_tables = [
             # NBAC (nba.com) tables
             'nbac_schedule',
@@ -276,7 +280,7 @@ class CleanupProcessor:
             'nbac_injury_report',
             'nbac_scoreboard_v2',
             'nbac_gamebook_player_stats',  # Was: nbac_gamebook_pdf
-            'nbac_player_movement',
+            # Excluded: 'nbac_player_movement' - no processed_at column
             'nbac_referee_game_assignments',  # Was: nbac_referee
             # BallDontLie tables
             'bdl_player_boxscores',
