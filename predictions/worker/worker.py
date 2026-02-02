@@ -1819,6 +1819,14 @@ def format_prediction_for_bigquery(
                 'training_period': metadata.get('training_period'),  # V9: date range
             }) if metadata.get('model_type') or metadata.get('training_approach') else None,
             # Note: features_snapshot now set in base record for ALL systems (Session 67)
+
+            # Session 84: Model attribution tracking
+            'model_file_name': metadata.get('model_file_name'),
+            'model_training_start_date': metadata.get('model_training_start_date'),
+            'model_training_end_date': metadata.get('model_training_end_date'),
+            'model_expected_mae': metadata.get('model_expected_mae'),
+            'model_expected_hit_rate': metadata.get('model_expected_hit_rate'),
+            'model_trained_at': metadata.get('model_trained_at'),
         })
     
     elif system_id == 'ensemble_v1' and 'metadata' in prediction:

@@ -57,17 +57,20 @@ class CatBoostV9(CatBoostV8):
 
     # Training metadata (for documentation and debugging)
     # NOTE: These reflect the DEFAULT model loaded by CATBOOST_V9_MODEL_PATH env var
-    # Current default: catboost_v9_feb_02_retrain.cbm (Session 76)
+    # Current default: catboost_v9_feb_02_retrain.cbm (Session 82)
     TRAINING_INFO = {
         "approach": "current_season_only",
         "training_start": "2025-11-02",
         "training_end": "2026-01-31",  # Updated to match catboost_v9_feb_02_retrain.cbm
         "training_days": 91,
-        "mae": 4.12,  # Session 76 retrain performance
+        "mae": 4.12,  # Session 82 retrain performance
+        "high_edge_hit_rate": 74.6,  # High-edge (5+ edge) hit rate from validation
+        "premium_hit_rate": 56.5,  # Premium (92+ conf, 3+ edge) hit rate
         "feature_count": 33,
         "feature_version": "v2_33features",
         "model_file": "catboost_v9_feb_02_retrain.cbm",
-        "session": 76,  # Session that trained this model
+        "session": 82,  # Session that deployed this model
+        "trained_at": "2026-02-02T10:15:00Z",  # When this model was trained
     }
 
     def __init__(self, model_path: Optional[str] = None):
@@ -82,6 +85,8 @@ class CatBoostV9(CatBoostV8):
         self.model = None
         self._load_attempts = 0
         self._last_load_error = None
+        self._model_path = None
+        self._model_file_name = None
 
         if model_path:
             self._load_model_from_path(model_path)
@@ -104,8 +109,9 @@ class CatBoostV9(CatBoostV8):
             self.model = cb.CatBoostRegressor()
             self.model.load_model(str(model_path))
             self._model_path = str(model_path)
+            self._model_file_name = model_path.name
             logger.info(
-                f"CatBoost V9 loaded successfully. "
+                f"CatBoost V9 loaded successfully from {self._model_file_name}. "
                 f"Training: {self.TRAINING_INFO['training_start']} to {self.TRAINING_INFO['training_end']}. "
                 f"Ready to generate predictions with 33 features."
             )
@@ -124,6 +130,7 @@ class CatBoostV9(CatBoostV8):
     def _load_model_from_path(self, model_path: str):
         """Load V9 model from explicit path (local or GCS)."""
         import catboost as cb
+        from pathlib import Path
 
         logger.info(f"Loading CatBoost V9 from: {model_path}")
 
@@ -142,14 +149,18 @@ class CatBoostV9(CatBoostV8):
 
             self.model = cb.CatBoostRegressor()
             self.model.load_model(local_path)
+
+            # Extract file name from GCS path
+            self._model_file_name = Path(blob_path).name
         else:
             # Load from local path
             self.model = cb.CatBoostRegressor()
             self.model.load_model(model_path)
+            self._model_file_name = Path(model_path).name
 
         self._model_path = model_path
         logger.info(
-            f"CatBoost V9 loaded successfully. "
+            f"CatBoost V9 loaded successfully from {self._model_file_name}. "
             f"Training: {self.TRAINING_INFO['training_start']} to {self.TRAINING_INFO['training_end']}. "
             f"Ready to generate predictions with 33 features."
         )
@@ -184,7 +195,7 @@ class CatBoostV9(CatBoostV8):
             vegas_opening=vegas_opening,
         )
 
-        # Override metadata with V9-specific info
+        # Override metadata with V9-specific info + model attribution (Session 84)
         if result and 'metadata' in result:
             result['metadata']['model_version'] = self.MODEL_VERSION
             result['metadata']['system_id'] = self.SYSTEM_ID
@@ -192,6 +203,14 @@ class CatBoostV9(CatBoostV8):
             result['metadata']['training_period'] = (
                 f"{self.TRAINING_INFO['training_start']} to {self.TRAINING_INFO['training_end']}"
             )
+
+            # Session 84: Model attribution tracking
+            result['metadata']['model_file_name'] = self._model_file_name
+            result['metadata']['model_training_start_date'] = self.TRAINING_INFO['training_start']
+            result['metadata']['model_training_end_date'] = self.TRAINING_INFO['training_end']
+            result['metadata']['model_expected_mae'] = self.TRAINING_INFO['mae']
+            result['metadata']['model_expected_hit_rate'] = self.TRAINING_INFO['high_edge_hit_rate']
+            result['metadata']['model_trained_at'] = self.TRAINING_INFO['trained_at']
 
         return result
 
