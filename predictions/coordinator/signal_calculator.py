@@ -6,6 +6,7 @@ Calculates and stores pre-game signals after predictions are generated.
 Signals indicate the quality of betting conditions for the day.
 
 Session 71: Automation of signal calculation after batch completion.
+Session 71: Added Slack alerts for signal notifications.
 """
 
 import logging
@@ -19,6 +20,9 @@ logger = logging.getLogger(__name__)
 # Project configuration
 PROJECT_ID = 'nba-props-platform'
 SIGNALS_TABLE = f'{PROJECT_ID}.nba_predictions.daily_prediction_signals'
+
+# Primary model to send alerts for (avoid spamming with all 7+ models)
+PRIMARY_ALERT_MODEL = 'catboost_v9'
 
 
 def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dict:
@@ -119,21 +123,37 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
 
         logger.info(f"Daily signals calculated: {rows_affected} system(s) for {game_date}")
 
-        # Log signal summary for monitoring
+        # Log signal summary for monitoring and send Slack alert
         if rows_affected > 0:
             summary_query = f"""
-            SELECT system_id, total_picks, pct_over, daily_signal, signal_explanation
+            SELECT system_id, total_picks, high_edge_picks, pct_over, daily_signal, signal_explanation
             FROM `{SIGNALS_TABLE}`
             WHERE game_date = @game_date
             ORDER BY system_id
             """
             summary_result = client.query(summary_query, job_config=job_config).result()
 
+            primary_signal_data = None
             for row in summary_result:
                 logger.info(
                     f"  {row.system_id}: {row.total_picks} picks, "
                     f"pct_over={row.pct_over}%, signal={row.daily_signal}"
                 )
+                # Capture primary model for Slack alert
+                if row.system_id == PRIMARY_ALERT_MODEL:
+                    primary_signal_data = {
+                        'game_date': game_date,
+                        'system_id': row.system_id,
+                        'total_picks': row.total_picks,
+                        'high_edge_picks': row.high_edge_picks,
+                        'pct_over': row.pct_over,
+                        'daily_signal': row.daily_signal,
+                        'signal_explanation': row.signal_explanation
+                    }
+
+            # Send Slack alert for primary model
+            if primary_signal_data:
+                _send_signal_slack_alert(primary_signal_data)
 
         return {
             'success': True,
@@ -148,6 +168,43 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
             'systems_processed': 0,
             'error': str(e)
         }
+
+
+def _send_signal_slack_alert(signal_data: dict) -> bool:
+    """
+    Send Slack alert for the daily signal.
+
+    Only sends for the primary model (catboost_v9) to avoid spam.
+    Alerts on all signal types (RED, YELLOW, GREEN) for daily awareness.
+
+    Args:
+        signal_data: Dict with signal information
+
+    Returns:
+        True if sent successfully
+    """
+    try:
+        from shared.utils.slack_channels import send_signal_alert_to_slack
+
+        daily_signal = signal_data.get('daily_signal', 'UNKNOWN')
+        game_date = signal_data.get('game_date', 'Unknown')
+
+        # Send alert
+        success = send_signal_alert_to_slack(signal_data)
+
+        if success:
+            logger.info(f"Slack alert sent: {daily_signal} signal for {game_date}")
+        else:
+            logger.debug(f"Slack alert not sent (webhook not configured)")
+
+        return success
+
+    except ImportError as e:
+        logger.debug(f"Slack alerting not available: {e}")
+        return False
+    except Exception as e:
+        logger.warning(f"Failed to send Slack signal alert (non-fatal): {e}")
+        return False
 
 
 def get_daily_signal(game_date: str, system_id: str = 'catboost_v9') -> Optional[dict]:

@@ -48,6 +48,23 @@ Completed Phase 4 and Phase 5 of the dynamic subset system, and fixed the monthl
 /subset-performance --subset v9_high*  # Filter by pattern
 ```
 
+### 4. Phase 6: Slack Signal Alerts (Commit: pending)
+
+**Channel**: `#nba-betting-signals`
+
+**Webhook**: `SLACK_WEBHOOK_URL_SIGNALS`
+
+**Implementation**:
+- Added `send_signal_alert_to_slack()` to `shared/utils/slack_channels.py`
+- Integrated into `signal_calculator.py` after signal calculation
+- Alerts for catboost_v9 only (primary model)
+- Different formatting for RED/YELLOW/GREEN signals
+
+**Alert Behavior**:
+- RED: Warning with "consider reducing bet sizing"
+- YELLOW: Caution notice
+- GREEN: Confirmation to bet normally
+
 ---
 
 ## Deployments
@@ -55,7 +72,19 @@ Completed Phase 4 and Phase 5 of the dynamic subset system, and fixed the monthl
 | Service | Commit | Status |
 |---------|--------|--------|
 | prediction-worker | `0c51370e` | DEPLOYED (includes monthly model) |
-| prediction-coordinator | `257807b9` | DEPLOYING (includes signal calculation) |
+| prediction-coordinator | `257807b9` | DEPLOYED (includes signal calculation) |
+| prediction-coordinator | (pending) | NEEDS REDEPLOY (for Slack alerts) |
+
+**Note**: After committing Slack alert code, redeploy coordinator:
+```bash
+./bin/deploy-service.sh prediction-coordinator
+```
+
+Also set the Slack webhook environment variable:
+```bash
+gcloud run services update prediction-coordinator --region=us-west2 \
+  --set-env-vars="SLACK_WEBHOOK_URL_SIGNALS=https://hooks.slack.com/services/..."
+```
 
 ---
 
@@ -148,10 +177,12 @@ Should see signals automatically calculated after batch completion.
 
 | File | Change |
 |------|--------|
-| `predictions/coordinator/signal_calculator.py` | NEW - Signal calculation utility |
+| `predictions/coordinator/signal_calculator.py` | NEW - Signal calculation utility + Slack integration |
 | `predictions/coordinator/coordinator.py` | Added signal calculation after consolidation |
 | `.claude/skills/subset-performance/SKILL.md` | NEW - Subset comparison skill |
 | `.claude/skills/subset-performance/manifest.json` | NEW - Skill manifest |
+| `shared/utils/slack_channels.py` | Added `send_signal_alert_to_slack()` function |
+| `docs/08-projects/current/pre-game-signals-strategy/*` | Updated for Phase 6 completion |
 
 ---
 

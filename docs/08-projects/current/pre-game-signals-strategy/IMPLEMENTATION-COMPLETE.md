@@ -1,8 +1,8 @@
-# Pre-Game Signals System - Phases 1-5 Implementation Complete
+# Pre-Game Signals System - Phases 1-6 Implementation Complete
 
 **Date**: February 1, 2026
 **Session**: 70-71
-**Status**: ✅ COMPLETE - All phases implemented and deployed
+**Status**: ✅ COMPLETE - All 6 phases implemented and deployed
 
 ---
 
@@ -294,14 +294,48 @@ CREATE TABLE `nba-props-platform.nba_predictions.dynamic_subset_definitions` (
 
 ---
 
-## Future Work (Phase 6+)
+## Phase 6: Slack Signal Alerts ✅ (Session 71)
+
+**Implemented**: Proactive Slack alerts for daily signals.
+
+**Channel**: `#nba-betting-signals`
+
+**Webhook Env Var**: `SLACK_WEBHOOK_URL_SIGNALS`
+
+**Behavior**:
+- Sends alert after signals are calculated (automatic)
+- Alerts for catboost_v9 only (primary model, avoids spam)
+- Different formatting for RED/YELLOW/GREEN signals
+- RED signals include warning to reduce bet sizing
+
+**Alert Example (RED)**:
+```
+:warning: RED Signal Day - 2026-02-01
+
+:red_circle: Signal: RED
+:chart_with_upwards_trend: pct_over: 10.6%
+:dart: High-edge picks: 4
+:bar_chart: Total picks: 170
+:robot_face: Model: catboost_v9
+
+Heavy UNDER skew - historically 54% hit rate vs 82% on balanced days
+
+:point_right: Consider reducing bet sizing or skipping today
+```
+
+**Files Changed**:
+- `shared/utils/slack_channels.py` - Added `send_signal_alert_to_slack()`
+- `predictions/coordinator/signal_calculator.py` - Integrated Slack calls
+
+---
+
+## Future Work (Phase 7+)
 
 **NOT implemented yet**:
 
 1. **Dashboard Integration**
    - Signal indicator on unified dashboard
    - Subset performance widgets
-   - Slack alerts for RED signal days
 
 2. **Additional Signals**
    - Line movement tracking
@@ -333,12 +367,16 @@ CREATE TABLE `nba-props-platform.nba_predictions.dynamic_subset_definitions` (
 
 **Coordinator Modified**:
 - `predictions/coordinator/coordinator.py` (auto signal calculation)
-- `predictions/coordinator/signal_calculator.py` (Phase 4 utility)
+- `predictions/coordinator/signal_calculator.py` (Phase 4 utility + Slack integration)
+
+**Slack Utilities Modified**:
+- `shared/utils/slack_channels.py` (added `send_signal_alert_to_slack`)
 
 **Git Commits**:
 1. `2e6f7c70` - Phase 1: Signal infrastructure and validate-daily integration
 2. `99bf7381` - Phases 2+3: Dynamic subsets and /subset-picks skill
 3. `257807b9` - Phases 4+5: Auto signal calculation and /subset-performance skill
+4. (pending) - Phase 6: Slack signal alerts
 
 ---
 
@@ -363,7 +401,6 @@ CREATE TABLE `nba-props-platform.nba_predictions.dynamic_subset_definitions` (
 1. **Sample Size**: Only 23 days of data for signal validation (Jan 9-31)
 2. **OVER_HEAVY**: Only 1 day in dataset, threshold may need adjustment
 3. **Single Model**: Validated only for catboost_v9 (need to test V8, ensembles)
-4. **No Proactive Alerts**: RED signal day warnings not sent via Slack/email (only in /validate-daily)
 
 ---
 

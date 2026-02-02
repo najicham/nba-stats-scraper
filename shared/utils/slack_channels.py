@@ -4,10 +4,11 @@ Slack Channel Utilities
 Provides direct Slack posting to specific channels for specialized alerts.
 Complements the notification_system.py which routes by severity level.
 
-Channel Mapping (6 channels):
+Channel Mapping (7 channels):
 - #daily-orchestration: Daily health, stale cleanup, phase timeouts (primary orchestration channel)
 - #nba-pipeline-health: Backfill progress (INFO level) - legacy
 - #nba-predictions: Prediction completion (special channel)
+- #nba-betting-signals: Pre-game signal alerts (RED signal warnings)
 - #nba-alerts: Stalls, quality issues, stale data (WARNING level)
 - #app-error-alerts: Processor failures, critical issues (ERROR/CRITICAL level)
 - #gap-monitoring: Gap detection alerts (existing, unchanged)
@@ -16,22 +17,25 @@ Environment Variables:
 - SLACK_WEBHOOK_URL: #daily-orchestration (primary - used by Cloud Functions)
 - SLACK_WEBHOOK_URL_INFO: #nba-pipeline-health (legacy)
 - SLACK_WEBHOOK_URL_PREDICTIONS: #nba-predictions
+- SLACK_WEBHOOK_URL_SIGNALS: #nba-betting-signals
 - SLACK_WEBHOOK_URL_WARNING: #nba-alerts
 - SLACK_WEBHOOK_URL_ERROR: #app-error-alerts
 - SLACK_WEBHOOK_URL_CRITICAL: #app-error-alerts
 
-Webhook URLs (updated 2026-01-12):
+Webhook URLs (updated 2026-02-01):
 - #daily-orchestration: https://hooks.slack.com/services/T0900NBTAET/B0A85Q6BB45/...
 - #nba-pipeline-health: https://hooks.slack.com/services/T0900NBTAET/B0A0JN42AF7/... (legacy)
 - #nba-predictions: https://hooks.slack.com/services/T0900NBTAET/B0A11329F1P/...
+- #nba-betting-signals: https://hooks.slack.com/services/T0900NBTAET/B0AC8KCNGNA/...
 - #nba-alerts: https://hooks.slack.com/services/T0900NBTAET/B0A0FPJUVK5/...
 - #app-error-alerts: https://hooks.slack.com/services/T0900NBTAET/B09HHJXMN8M/...
 - #gap-monitoring: https://hooks.slack.com/services/T0900NBTAET/B09JTE8TUR2/...
 
-Version: 1.3
+Version: 1.4
 Created: 2025-11-30
 Updated: 2026-01-12 - Added #daily-orchestration as primary channel
 Updated: 2026-01-25 - Unified on send_slack_webhook_with_retry for all calls
+Updated: 2026-02-01 - Added #nba-betting-signals for pre-game signal alerts (Session 71)
 """
 
 import logging
@@ -228,6 +232,69 @@ _Check Cloud Run logs for the missing processors_"""
     return send_to_slack(webhook_url, text, icon_emoji=":warning:")
 
 
+def send_signal_alert_to_slack(signal_data: Dict) -> bool:
+    """
+    Send pre-game signal alert to #nba-betting-signals channel.
+
+    Alerts on RED signal days to warn about reduced expected performance.
+    Also sends daily summaries on GREEN days for confirmation.
+
+    Args:
+        signal_data: Dict containing:
+            - game_date: str (YYYY-MM-DD)
+            - system_id: str (e.g., 'catboost_v9')
+            - pct_over: float (percentage)
+            - daily_signal: str ('RED', 'YELLOW', 'GREEN')
+            - high_edge_picks: int
+            - total_picks: int
+            - signal_explanation: str
+
+    Returns:
+        True if sent successfully
+    """
+    webhook_url = os.environ.get('SLACK_WEBHOOK_URL_SIGNALS')
+    if not webhook_url:
+        logger.debug("SLACK_WEBHOOK_URL_SIGNALS not set, skipping signal alert")
+        return False
+
+    game_date = signal_data.get('game_date', 'Unknown')
+    system_id = signal_data.get('system_id', 'catboost_v9')
+    pct_over = signal_data.get('pct_over', 0)
+    daily_signal = signal_data.get('daily_signal', 'UNKNOWN')
+    high_edge_picks = signal_data.get('high_edge_picks', 0)
+    total_picks = signal_data.get('total_picks', 0)
+    explanation = signal_data.get('signal_explanation', '')
+
+    # Choose emoji and tone based on signal
+    if daily_signal == 'RED':
+        emoji = ":red_circle:"
+        header = f":warning: *RED Signal Day - {game_date}*"
+        action = "\n\n:point_right: *Consider reducing bet sizing or skipping today*"
+        icon = ":warning:"
+    elif daily_signal == 'YELLOW':
+        emoji = ":large_yellow_circle:"
+        header = f":eyes: *YELLOW Signal Day - {game_date}*"
+        action = "\n\n:point_right: *Proceed with caution*"
+        icon = ":eyes:"
+    else:  # GREEN
+        emoji = ":large_green_circle:"
+        header = f":white_check_mark: *GREEN Signal Day - {game_date}*"
+        action = "\n\n:point_right: *Normal confidence - bet as usual*"
+        icon = ":basketball:"
+
+    text = f"""{header}
+
+{emoji} *Signal:* {daily_signal}
+:chart_with_upwards_trend: *pct_over:* {pct_over}%
+:dart: *High-edge picks:* {high_edge_picks}
+:bar_chart: *Total picks:* {total_picks}
+:robot_face: *Model:* {system_id}
+
+_{explanation}_{action}"""
+
+    return send_to_slack(webhook_url, text, icon_emoji=icon)
+
+
 def test_all_channels() -> Dict[str, bool]:
     """
     Send test messages to all configured channels.
@@ -267,5 +334,16 @@ def test_all_channels() -> Dict[str, bool]:
         )
     else:
         results['#nba-alerts'] = False
+
+    # Test #nba-betting-signals
+    webhook = os.environ.get('SLACK_WEBHOOK_URL_SIGNALS')
+    if webhook:
+        results['#nba-betting-signals'] = send_to_slack(
+            webhook,
+            "🏀 Test message to #nba-betting-signals\n\nThis channel receives daily pre-game signal alerts (RED/YELLOW/GREEN).",
+            icon_emoji=":basketball:"
+        )
+    else:
+        results['#nba-betting-signals'] = False
 
     return results
