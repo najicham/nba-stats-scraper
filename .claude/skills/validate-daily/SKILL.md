@@ -716,6 +716,61 @@ curl -X POST https://prediction-grader-f7p3g7f6ya-wl.a.run.app/grade \
   -d '{"game_date": "YYYY-MM-DD"}'
 ```
 
+### Phase 0.9: Kalshi Data Health (Session 79)
+
+**Purpose**: Monitor Kalshi prediction market data availability.
+
+**When to run**: Every day after 7 AM UTC (2 AM ET scrape should complete by then)
+
+**What to check**:
+
+```sql
+-- Check Kalshi data for today
+SELECT
+  game_date,
+  COUNT(*) as total_props,
+  COUNT(DISTINCT player_lookup) as players,
+  COUNTIF(prop_type = 'points') as points_props,
+  COUNTIF(liquidity_score = 'HIGH') as high_liquidity
+FROM `nba-props-platform.nba_raw.kalshi_player_props`
+WHERE game_date = CURRENT_DATE()
+GROUP BY game_date;
+```
+
+**Expected result**:
+- Total props: 200-400 (depends on games scheduled)
+- Players: 40-60
+- Points props: ≥40 (for prediction enrichment)
+- High liquidity: ≥50%
+
+**Alert thresholds**:
+- 0 props: 🔴 CRITICAL (scraper failed)
+- <50 props: 🟡 WARNING (partial data)
+- ≥100 props: ✅ OK
+
+**If issues detected**:
+
+| Issue | Severity | Action |
+|-------|----------|--------|
+| 0 props for today | P2 WARNING | Check Kalshi scraper logs, may be no games or API issue |
+| <50 props | P3 LOW | May be limited Kalshi coverage, not critical |
+
+**Note**: Kalshi coverage is supplementary - predictions work fine without it. This is monitoring only.
+
+**Investigation commands**:
+```bash
+# Check Kalshi scraper logs
+gcloud logging read 'resource.type="cloud_run_revision"
+  AND resource.labels.service_name="nba-scrapers"
+  AND textPayload=~"kalshi"' \
+  --limit=20 --freshness=6h
+
+# Manual trigger if needed
+curl -X POST "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape" \
+  -H "Content-Type: application/json" \
+  -d '{"scraper":"kalshi_player_props","date":"TODAY","group":"prod"}'
+```
+
 ### Phase 1: Run Baseline Health Check
 
 ```bash
