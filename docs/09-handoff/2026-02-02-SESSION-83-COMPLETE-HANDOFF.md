@@ -254,7 +254,8 @@ Picks delivered at 8:30 AM ET daily via all configured channels.
 - [x] Created validation scripts
 
 ### ⏳ Pending (Next Session):
-- [ ] Validate NEW V9 model performance (after games)
+- [ ] Validate NEW V9 model performance (after games) - **CRITICAL PRIORITY**
+- [ ] **ADD MODEL ATTRIBUTION TO PICKS** - Track which exact model file generated each prediction
 - [ ] Configure Slack webhook
 - [ ] Setup Twilio SMS (tonight)
 - [ ] Setup Brevo Email (tomorrow)
@@ -263,6 +264,8 @@ Picks delivered at 8:30 AM ET daily via all configured channels.
 ---
 
 ## 🔮 Next Session Start
+
+**READ THIS**: `docs/09-handoff/SESSION-84-START-PROMPT.md`
 
 **First command**:
 ```bash
@@ -280,6 +283,12 @@ WHERE game_date = DATE('2026-02-02') AND game_status = 3"
 - Validate NEW V9 model: 74.6% hit rate (vs OLD: 50.84%)
 - Confirm model deployment successful
 - RED signal day hypothesis test (79.5% UNDER bias → lower HR?)
+
+**CRITICAL TASK**: Add model attribution to predictions
+- Problem: Can't tell which model file generated the 75.9% historical HR
+- Solution: Add model_file_name, training dates, MAE to predictions table
+- Update notifications to show: "Model: CatBoost V9 Feb-02 Retrain (MAE 4.12, trained 11/2-1/31)"
+- Add to both `player_prop_predictions` and notification messages
 
 **Then**:
 - Configure Slack webhook (if needed)
