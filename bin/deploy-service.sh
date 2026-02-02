@@ -128,13 +128,78 @@ echo "[2/7] Pushing image..."
 docker push "$REGISTRY/$SERVICE:latest"
 docker push "$REGISTRY/$SERVICE:$BUILD_COMMIT"
 
+# Service-specific env var handling
+ENV_VARS="BUILD_COMMIT=$BUILD_COMMIT,BUILD_TIMESTAMP=$BUILD_TIMESTAMP,GCP_PROJECT_ID=$PROJECT"
+
+if [ "$SERVICE" = "prediction-worker" ]; then
+    echo ""
+    echo "[2.5/7] Validating prediction-worker environment..."
+
+    # Check if .env.required exists
+    ENV_TEMPLATE="predictions/worker/env.template"
+    if [ ! -f "$ENV_TEMPLATE" ]; then
+        echo "WARNING: $ENV_TEMPLATE not found, using defaults"
+    fi
+
+    # Get current env vars from deployed service
+    echo "Fetching current service configuration..."
+    CURRENT_ENV=$(gcloud run services describe "$SERVICE" \
+        --region="$REGION" \
+        --project="$PROJECT" \
+        --format="json" 2>/dev/null | jq -r '.spec.template.spec.containers[0].env // []')
+
+    # Check for required env vars
+    REQUIRED_VARS=("CATBOOST_V8_MODEL_PATH" "CATBOOST_V9_MODEL_PATH" "PUBSUB_READY_TOPIC")
+    MISSING_VARS=()
+
+    for VAR in "${REQUIRED_VARS[@]}"; do
+        CURRENT_VAL=$(echo "$CURRENT_ENV" | jq -r ".[] | select(.name==\"$VAR\") | .value // empty")
+        if [ -z "$CURRENT_VAL" ]; then
+            # Try to get from .env.required template
+            if [ -f "$ENV_TEMPLATE" ]; then
+                TEMPLATE_VAL=$(grep "^$VAR=" "$ENV_TEMPLATE" | cut -d'=' -f2-)
+                if [ -n "$TEMPLATE_VAL" ]; then
+                    echo "  $VAR: Using template value"
+                    ENV_VARS="$ENV_VARS,$VAR=$TEMPLATE_VAL"
+                else
+                    MISSING_VARS+=("$VAR")
+                fi
+            else
+                MISSING_VARS+=("$VAR")
+            fi
+        else
+            echo "  $VAR: Preserving current value"
+            ENV_VARS="$ENV_VARS,$VAR=$CURRENT_VAL"
+        fi
+    done
+
+    if [ ${#MISSING_VARS[@]} -gt 0 ]; then
+        echo ""
+        echo "=============================================="
+        echo "ERROR: Missing required environment variables"
+        echo "=============================================="
+        echo "The following vars are required but not configured:"
+        for VAR in "${MISSING_VARS[@]}"; do
+            echo "  - $VAR"
+        done
+        echo ""
+        echo "Options:"
+        echo "1. Add them to predictions/worker/env.template"
+        echo "2. Set manually: gcloud run services update $SERVICE --update-env-vars=\"VAR=value\""
+        echo "=============================================="
+        exit 1
+    fi
+
+    echo "  All required env vars validated"
+fi
+
 echo ""
 echo "[3/7] Deploying to Cloud Run..."
 gcloud run deploy "$SERVICE" \
     --image="$REGISTRY/$SERVICE:latest" \
     --region="$REGION" \
     --project="$PROJECT" \
-    --update-env-vars="BUILD_COMMIT=$BUILD_COMMIT,BUILD_TIMESTAMP=$BUILD_TIMESTAMP,GCP_PROJECT_ID=$PROJECT" \
+    --update-env-vars="$ENV_VARS" \
     --quiet
 
 echo ""
@@ -276,6 +341,33 @@ echo "[7/7] Service-specific validation..."
 
 case $SERVICE in
   prediction-worker)
+    echo ""
+    echo "Verifying environment variables..."
+    DEPLOYED_ENV=$(gcloud run services describe "$SERVICE" \
+        --region="$REGION" \
+        --project="$PROJECT" \
+        --format="json" 2>/dev/null | jq -r '.spec.template.spec.containers[0].env // []')
+
+    ENV_CHECK_PASS=true
+    for VAR in "GCP_PROJECT_ID" "CATBOOST_V8_MODEL_PATH" "CATBOOST_V9_MODEL_PATH" "PUBSUB_READY_TOPIC"; do
+        VAL=$(echo "$DEPLOYED_ENV" | jq -r ".[] | select(.name==\"$VAR\") | .value // empty")
+        if [ -n "$VAL" ]; then
+            # Truncate long values for display
+            DISPLAY_VAL="${VAL:0:50}"
+            [ ${#VAL} -gt 50 ] && DISPLAY_VAL="${DISPLAY_VAL}..."
+            echo "  ✅ $VAR = $DISPLAY_VAL"
+        else
+            echo "  ❌ $VAR = MISSING"
+            ENV_CHECK_PASS=false
+        fi
+    done
+
+    if [ "$ENV_CHECK_PASS" = false ]; then
+        echo ""
+        echo "⚠️  WARNING: Some environment variables are missing!"
+        echo "   The worker may fail to start. Check logs."
+    fi
+
     echo ""
     echo "Checking recent predictions..."
     RECENT_PREDICTIONS=$(bq query --use_legacy_sql=false --format=csv \

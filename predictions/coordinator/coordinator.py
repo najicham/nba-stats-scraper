@@ -1960,6 +1960,170 @@ def cleanup_duplicate_predictions():
         }), 500
 
 
+@app.route('/check-signal', methods=['POST'])
+@require_api_key
+def check_prediction_signal():
+    """
+    Check today's prediction signals for anomalies.
+
+    SESSION 81: Monitors for extreme UNDER/OVER skews that historically
+    correlate with lower hit rates. Returns signal status and can send alerts.
+
+    Based on Session 70 analysis:
+    - Balanced (25-45% OVER): 82% hit rate on high-edge picks
+    - Heavy UNDER (<25% OVER): 54% hit rate (barely above breakeven)
+
+    Request body:
+    {
+        "game_date": "2026-02-02",  // Optional: defaults to TODAY
+        "send_alert": true          // Optional: send Slack alert if RED (default: true)
+    }
+
+    Returns:
+        200 OK with signal status (GREEN/YELLOW/RED)
+    """
+    from zoneinfo import ZoneInfo
+
+    try:
+        request_data = request.get_json() or {}
+        game_date_str = request_data.get('game_date', 'TODAY')
+        send_alert = request_data.get('send_alert', True)
+
+        # Resolve date
+        if game_date_str.upper() == "TODAY":
+            game_date = datetime.now(ZoneInfo('America/New_York')).date()
+            game_date_str = game_date.isoformat()
+
+        logger.info(f"Checking prediction signal for {game_date_str}")
+
+        # Query signal data
+        bq_client = get_bigquery_client()
+        query = f"""
+        SELECT
+          game_date,
+          system_id,
+          total_picks,
+          high_edge_picks,
+          ROUND(pct_over, 1) as pct_over,
+          ROUND(pct_under, 1) as pct_under,
+          daily_signal,
+          signal_explanation,
+          skew_category
+        FROM nba_predictions.daily_prediction_signals
+        WHERE game_date = DATE('{game_date_str}')
+          AND system_id = 'catboost_v9'
+        LIMIT 1
+        """
+
+        result = list(bq_client.query(query).result())
+
+        if not result:
+            return jsonify({
+                'status': 'warning',
+                'message': f'No signal data found for {game_date_str}',
+                'game_date': game_date_str,
+                'signal': None
+            }), 200
+
+        row = result[0]
+        signal = row.daily_signal
+        pct_over = row.pct_over
+        explanation = row.signal_explanation
+
+        response = {
+            'status': 'success',
+            'game_date': game_date_str,
+            'signal': signal,
+            'pct_over': pct_over,
+            'total_picks': row.total_picks,
+            'high_edge_picks': row.high_edge_picks,
+            'explanation': explanation,
+            'skew_category': row.skew_category
+        }
+
+        # Log and potentially alert
+        if signal == 'RED':
+            logger.warning(
+                f"RED signal detected for {game_date_str}: "
+                f"{pct_over}% OVER - {explanation}"
+            )
+
+            # Could add Slack webhook here if send_alert is True
+            # For now, just log the warning
+
+        elif signal == 'YELLOW':
+            logger.info(f"YELLOW signal for {game_date_str}: {explanation}")
+        else:
+            logger.info(f"GREEN signal for {game_date_str}: balanced predictions")
+
+        return jsonify(response), 200
+
+    except Exception as e:
+        logger.error(f"Error in check_prediction_signal: {e}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+
+@app.route('/cleanup-staging', methods=['POST'])
+@require_api_key
+def cleanup_staging_tables():
+    """
+    Clean up orphaned staging tables from failed or incomplete prediction batches.
+
+    SESSION 81 FIX: Staging tables accumulate when batch consolidation fails
+    or is interrupted. This endpoint removes tables older than max_age_hours.
+
+    Recommended usage:
+    - Cloud Scheduler job runs daily at 3 AM ET
+    - Or call manually after investigating failed batches
+
+    Request body:
+    {
+        "max_age_hours": 24,  // Optional: delete tables older than this (default: 24)
+        "dry_run": false      // Optional: just count without deleting
+    }
+
+    Returns:
+        200 OK with cleanup results
+    """
+    try:
+        request_data = request.get_json() or {}
+        max_age_hours = request_data.get('max_age_hours', 24)
+        dry_run = request_data.get('dry_run', False)
+
+        logger.info(
+            f"Starting staging table cleanup (max_age_hours={max_age_hours}, "
+            f"dry_run={dry_run})"
+        )
+
+        # Use the batch consolidator's cleanup method
+        consolidator = get_batch_consolidator()
+        result = consolidator.cleanup_orphaned_staging_tables(
+            max_age_hours=max_age_hours,
+            dry_run=dry_run
+        )
+
+        logger.info(
+            f"Staging cleanup {'(DRY RUN) ' if dry_run else ''}"
+            f"complete: found={result.get('tables_found', 0)}, "
+            f"deleted={result.get('tables_deleted', 0)}"
+        )
+
+        return jsonify({
+            'status': 'success',
+            **result
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error in cleanup_staging_tables: {e}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+
 def publish_with_retry(publisher, topic_path: str, message_bytes: bytes,
                        player_lookup: str, max_retries: int = 3) -> bool:
     """

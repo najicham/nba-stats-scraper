@@ -972,7 +972,7 @@ class BatchConsolidator:
                 error_message=error_msg
             )
 
-    def cleanup_orphaned_staging_tables(self, max_age_hours: int = 24) -> int:
+    def cleanup_orphaned_staging_tables(self, max_age_hours: int = 24, dry_run: bool = False) -> dict:
         """
         Clean up orphaned staging tables older than the specified age.
 
@@ -980,9 +980,14 @@ class BatchConsolidator:
 
         Args:
             max_age_hours: Maximum age of staging tables to keep (default: 24)
+            dry_run: If True, only count tables without deleting (default: False)
 
         Returns:
-            Number of tables deleted
+            Dictionary with cleanup results:
+            - tables_found: Total staging tables found
+            - tables_deleted: Number of tables deleted (0 if dry_run)
+            - tables_skipped: Tables not old enough
+            - errors: List of tables that failed to delete
         """
         import datetime
 
@@ -990,10 +995,15 @@ class BatchConsolidator:
         tables = list(self.bq_client.list_tables(dataset_ref))
 
         cutoff_time = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=max_age_hours)
+
+        tables_found = 0
         deleted_count = 0
+        skipped_count = 0
+        errors = []
 
         for table in tables:
             if table.table_id.startswith("_staging_"):
+                tables_found += 1
                 try:
                     # Get table metadata to check creation time
                     full_table = self.bq_client.get_table(
@@ -1001,24 +1011,45 @@ class BatchConsolidator:
                     )
 
                     if full_table.created < cutoff_time:
-                        self.bq_client.delete_table(full_table, not_found_ok=True)
-                        deleted_count += 1
-                        logger.info(
-                            f"Deleted orphaned staging table: {table.table_id} "
-                            f"(created: {full_table.created})"
-                        )
+                        if dry_run:
+                            logger.info(
+                                f"[DRY RUN] Would delete staging table: {table.table_id} "
+                                f"(created: {full_table.created})"
+                            )
+                            deleted_count += 1
+                        else:
+                            self.bq_client.delete_table(full_table, not_found_ok=True)
+                            deleted_count += 1
+                            logger.info(
+                                f"Deleted orphaned staging table: {table.table_id} "
+                                f"(created: {full_table.created})"
+                            )
+                    else:
+                        skipped_count += 1
 
-                except gcp_exceptions.NotFound as e:
+                except gcp_exceptions.NotFound:
                     logger.debug(f"Staging table already deleted: {table.table_id}")
                 except gcp_exceptions.Forbidden as e:
                     logger.warning(f"Permission denied checking/deleting table {table.table_id}: {e}")
+                    errors.append({"table": table.table_id, "error": str(e)})
                 except gcp_exceptions.ServiceUnavailable as e:
                     logger.warning(f"Service unavailable checking/deleting table {table.table_id}: {e}")
+                    errors.append({"table": table.table_id, "error": str(e)})
                 except Exception as e:
                     logger.warning(f"Unexpected error checking/deleting table {table.table_id} ({type(e).__name__}): {e}")
+                    errors.append({"table": table.table_id, "error": str(e)})
 
-        logger.info(f"Cleaned up {deleted_count} orphaned staging tables")
-        return deleted_count
+        action = "would delete" if dry_run else "deleted"
+        logger.info(f"Staging cleanup: {action} {deleted_count}/{tables_found} tables, skipped {skipped_count}")
+
+        return {
+            "tables_found": tables_found,
+            "tables_deleted": deleted_count,
+            "tables_skipped": skipped_count,
+            "errors": errors,
+            "dry_run": dry_run,
+            "max_age_hours": max_age_hours
+        }
 
 
 # Convenience functions for common usage patterns
