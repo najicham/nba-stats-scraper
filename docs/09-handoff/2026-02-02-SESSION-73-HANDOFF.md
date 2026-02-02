@@ -2,40 +2,50 @@
 
 ## Session Summary
 
-Created evening analytics scheduler jobs AND implemented boxscore fallback for same-day processing. Successfully processed Feb 1 data using live boxscores when gamebook wasn't available. Validated RED signal with 67.7% overall hit rate.
+Major accomplishments:
+1. Created 4 evening analytics scheduler jobs
+2. Implemented boxscore fallback for same-day processing (working!)
+3. Validated Feb 1 RED signal: **67.7% hit rate**
+4. Documented everything in CLAUDE.md
+5. Investigated prediction timing - Vegas lines available at 2 AM ET but predictions run at 6:15 AM
+6. Implemented line coverage validation in DataFreshnessValidator
 
 ---
 
-## Major Accomplishments
+## 1. Evening Schedulers Created ✅
 
-### 1. Evening Schedulers Created ✅
+| Job | Schedule (ET) | Purpose |
+|-----|---------------|---------|
+| `evening-analytics-6pm-et` | 6 PM Sat/Sun | Weekend matinees |
+| `evening-analytics-10pm-et` | 10 PM Daily | 7 PM games |
+| `evening-analytics-1am-et` | 1 AM Daily | West Coast games |
+| `morning-analytics-catchup-9am-et` | 9 AM Daily | Safety net |
 
-| Job | Schedule | Purpose |
-|-----|----------|---------|
-| `evening-analytics-6pm-et` | Sat/Sun 6 PM ET | Weekend matinees |
-| `evening-analytics-10pm-et` | Daily 10 PM ET | 7 PM games |
-| `evening-analytics-1am-et` | Daily 1 AM ET | West Coast games |
-| `morning-analytics-catchup-9am-et` | Daily 9 AM ET | Safety net |
+---
 
-### 2. Boxscore Fallback Implemented ✅
+## 2. Boxscore Fallback Implemented ✅
 
-**Problem:** Gamebook data only available next morning, blocking same-day processing.
+**Problem:** `PlayerGameSummaryProcessor` required gamebook data (only available next morning).
 
-**Solution:** Added `nbac_player_boxscores` as fallback source in `PlayerGameSummaryProcessor`.
+**Solution:** Fall back to `nbac_player_boxscores` when gamebook is empty.
 
-When gamebook has 0 records, processor now automatically falls back to live boxscores:
-- Checks `nbac_gamebook_player_stats` first (PRIMARY)
-- If empty, checks `nbac_player_boxscores` where `game_status = 'Final'` (FALLBACK)
-- Uses `_use_boxscore_fallback` flag to switch extraction query
-- `primary_source_used` column tracks which source was used
+**Code changes in `player_game_summary_processor.py`:**
+- `USE_NBAC_BOXSCORES_FALLBACK = True` flag
+- Modified `_check_source_data_available()` to check boxscores when gamebook=0
+- Added `nbac_boxscore_data` CTE to extraction query
+- `primary_source_used` column tracks: `'nbac_gamebook'` or `'nbac_boxscores'`
 
-**Verified Working:**
+**Verified working:**
 ```
-Feb 1 processing: 148 records, 7 games, ALL from nbac_boxscores fallback
-Jan 31 processing: Uses gamebook primary (118 records)
+Feb 1: 148 records from boxscores (gamebook had 0)
+Jan 31: 118 records from gamebook (primary)
 ```
 
-### 3. Feb 1 RED Signal Validated ✅
+**Deployed:** nba-phase3-analytics-processors
+
+---
+
+## 3. Feb 1 RED Signal Validated ✅
 
 | Tier | Picks | Hits | Hit Rate |
 |------|-------|------|----------|
@@ -43,34 +53,50 @@ Jan 31 processing: Uses gamebook primary (118 records)
 | Other | 62 | 42 | **67.7%** |
 | **Total** | **65** | **44** | **67.7%** |
 
-**Better than expected** (50-65% target for RED signal day).
-
-**High Edge Picks Detail:**
-
-| Player | Game | Predicted | Line | Rec | Edge | Actual | Result |
-|--------|------|-----------|------|-----|------|--------|--------|
-| Rui Hachimura | LAL@NYK | 14.6 | 8.5 | OVER | 6.1 | 11 | **HIT** |
-| DeAndre Ayton | LAL@NYK | 15.1 | 9.5 | OVER | 5.6 | 11 | **HIT** |
-| Jaylen Brown | MIL@BOS | 24.3 | 29.5 | UNDER | 5.2 | 30 | MISS (by 0.5!) |
+Better than 50-65% target for RED signal day.
 
 ---
 
-## Technical Changes
+## 4. Prediction Timing Investigation
 
-### PlayerGameSummaryProcessor Updates
+### Key Finding: Lines Available Earlier Than Predictions Run
 
-1. **New flag:** `USE_NBAC_BOXSCORES_FALLBACK = True`
-2. **Modified `_check_source_data_available()`:** Tries boxscores when gamebook empty
-3. **Added `nbac_boxscore_data` CTE:** In extraction query for boxscore source
-4. **Modified `combined_data` CTE:** Uses boxscores when `_use_boxscore_fallback` is True
-5. **Logging:** Shows which source is being used
+| Time (ET) | Players with Lines | Current Action |
+|-----------|-------------------|----------------|
+| **2:00 AM** | ~144 players | Lines available! |
+| **6:15 AM** | ~145 players | Predictions run (4h delay) |
+| **12:00 PM** | ~152 players | More lines added |
 
-### Key Design Decision
+**Problem:** Predictions at 6:15 AM may use estimated lines because the coordinator doesn't verify line availability.
 
-Boxscores are a **fallback source** (substitutes for gamebook), not an **additional source**:
-- No new source tracking columns (no `source_nbac_box_*` fields)
-- Reuses same column structure as gamebook
-- `primary_source_used` tracks actual source: `'nbac_gamebook'` or `'nbac_boxscores'`
+### Implemented: Line Coverage Validation
+
+Added `validate_line_coverage()` to `DataFreshnessValidator`:
+
+```python
+validator = DataFreshnessValidator()
+valid, reason, details = validator.validate_line_coverage(date(2026, 2, 1), min_coverage_pct=70.0)
+# Returns coverage %, players with/without lines
+```
+
+### Design Document Created
+
+`docs/08-projects/current/prediction-timing-improvement/DESIGN.md`
+
+**Proposed schedule:**
+| Job | Time (ET) | Purpose |
+|-----|-----------|---------|
+| `predictions-early` | 2:30 AM | First batch (~140 players with real lines) |
+| `predictions-morning` | 7:00 AM | Catch new lines |
+| `predictions-midday` | 12:00 PM | Final refresh |
+
+---
+
+## 5. Documentation Updated
+
+- **CLAUDE.md**: Added "Evening Analytics Processing" section
+- **IMPLEMENTATION-PLAN.md**: Updated with Phase 1.5 (boxscore fallback)
+- **prediction-timing-improvement/DESIGN.md**: New design document
 
 ---
 
@@ -81,76 +107,81 @@ Boxscores are a **fallback source** (substitutes for gamebook), not an **additio
 | 52e2ee8d | fix: Use correct service account for evening analytics schedulers |
 | cb848469 | feat: Add nbac_player_boxscores as evening processing fallback |
 | ffc0c595 | fix: Remove boxscore dependency entry to avoid schema mismatch |
-
----
-
-## Deployments
-
-| Service | Status |
-|---------|--------|
-| nba-phase3-analytics-processors | Deployed with boxscore fallback |
-
----
-
-## Feb 1 Signal Status
-
-| Model | pct_over | Signal | Hit Rate |
-|-------|----------|--------|----------|
-| catboost_v9 | 10.6% | RED | **67.7%** |
+| 51c9ec37 | docs: Update Session 73 handoff |
+| a6283b56 | feat: Add line coverage validation and prediction timing design |
 
 ---
 
 ## Next Session Priorities
 
-### 1. Verify Feb 2 Vegas Lines (After 7 AM ET)
+### 1. HIGH: Implement Earlier Prediction Timing
+
+The groundwork is done. Next steps:
+1. Add `REQUIRE_REAL_LINES = True` flag to coordinator
+2. Create `predictions-early` scheduler at 2:30 AM ET
+3. Track `line_source` in predictions ('real' vs 'estimated')
+
+See: `docs/08-projects/current/prediction-timing-improvement/DESIGN.md`
+
+### 2. Verify Feb 2 Data
 
 ```sql
+-- Check Feb 2 predictions have lines (after 7 AM ET)
 SELECT system_id, COUNT(*) as predictions,
   COUNTIF(current_points_line IS NOT NULL) as has_lines
 FROM nba_predictions.player_prop_predictions
 WHERE game_date = DATE('2026-02-02')
-GROUP BY system_id
-```
+GROUP BY system_id;
 
-### 2. Monitor Evening Scheduler Execution
-
-The schedulers should now work with the boxscore fallback:
-```bash
-# Check 1 AM job ran (processes yesterday's games)
-gcloud scheduler jobs describe evening-analytics-1am-et --location=us-west2 \
-  --format="value(status.lastAttemptTime)"
-```
-
-### 3. Validate Feb 2 Signal After Games Complete
-
-Feb 2 has 4 games - validate signal accuracy once complete.
-
----
-
-## Verification Commands
-
-```bash
-# Check Feb 1 data sources
-bq query --use_legacy_sql=false "
+-- Check evening scheduler ran
 SELECT game_date, COUNT(*) as records,
-  COUNTIF(primary_source_used = 'nbac_boxscores') as from_boxscores,
-  COUNTIF(primary_source_used = 'nbac_gamebook') as from_gamebook
+  COUNTIF(primary_source_used = 'nbac_boxscores') as from_boxscores
 FROM nba_analytics.player_game_summary
 WHERE game_date >= DATE('2026-02-01')
-GROUP BY game_date ORDER BY game_date"
-
-# Check scheduler jobs
-gcloud scheduler jobs list --location=us-west2 | grep -E "evening|catchup"
+GROUP BY game_date ORDER BY game_date;
 ```
+
+### 3. Validate Feb 2 Signal (After Games)
+
+Feb 2 has 4 games: NOP@CHA, HOU@IND, PHI@LAC, MIN@MEM
 
 ---
 
-## Key Files Modified
+## Key Files
 
-| File | Change |
-|------|--------|
-| `bin/orchestrators/setup_evening_analytics_schedulers.sh` | Fixed service account |
-| `data_processors/analytics/player_game_summary/player_game_summary_processor.py` | Added boxscore fallback |
+| File | Purpose |
+|------|---------|
+| `data_processors/analytics/player_game_summary/player_game_summary_processor.py` | Boxscore fallback |
+| `predictions/coordinator/data_freshness_validator.py` | Line coverage validation |
+| `bin/orchestrators/setup_evening_analytics_schedulers.sh` | Scheduler setup |
+| `docs/08-projects/current/prediction-timing-improvement/DESIGN.md` | Timing design |
+| `docs/08-projects/current/evening-analytics-processing/` | Evening processing docs |
+
+---
+
+## Quick Reference
+
+```bash
+# Check boxscore fallback working
+bq query --use_legacy_sql=false "
+SELECT game_date, primary_source_used, COUNT(*)
+FROM nba_analytics.player_game_summary
+WHERE game_date >= CURRENT_DATE() - 3
+GROUP BY 1, 2 ORDER BY 1"
+
+# Check line coverage for today
+PYTHONPATH=. python3 -c "
+from datetime import date
+from predictions.coordinator.data_freshness_validator import DataFreshnessValidator
+v = DataFreshnessValidator()
+valid, reason, details = v.validate_line_coverage(date.today())
+print(f'Coverage: {details.get(\"line_coverage_pct\", 0)}%')
+print(f'Players with lines: {details.get(\"players_matched_with_lines\", 0)}')
+"
+
+# Check evening schedulers
+gcloud scheduler jobs list --location=us-west2 | grep -E "evening|catchup"
+```
 
 ---
 
