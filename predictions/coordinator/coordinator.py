@@ -721,6 +721,12 @@ def start_prediction_batch():
         # When True, only generate predictions for players WITH real betting lines
         require_real_lines = request_data.get('require_real_lines', False)
 
+        # Session 76: Track run mode for analysis (EARLY, OVERNIGHT, SAME_DAY, BACKFILL)
+        # This enables studying early vs morning prediction performance
+        prediction_run_mode = request_data.get('prediction_run_mode', 'OVERNIGHT')
+        if require_real_lines:
+            prediction_run_mode = 'EARLY'  # Override if require_real_lines is set
+
         # Extract correlation tracking (for pipeline tracing Phase 1→5)
         correlation_id = request_data.get('correlation_id') or str(uuid.uuid4())[:8]
         parent_processor = request_data.get('parent_processor')
@@ -731,7 +737,8 @@ def start_prediction_batch():
         logger.info(
             f"Starting prediction batch for {game_date} "
             f"(correlation_id={correlation_id}, parent={parent_processor}, "
-            f"mode={mode_desc}, dataset_prefix={dataset_prefix or 'production'})"
+            f"mode={mode_desc}, run_mode={prediction_run_mode}, "
+            f"dataset_prefix={dataset_prefix or 'production'})"
         )
 
         # =========================================================================
@@ -1037,7 +1044,10 @@ def start_prediction_batch():
             viable_requests = requests
 
         # Publish viable requests to Pub/Sub (with batch historical data if available)
-        published_count = publish_prediction_requests(viable_requests, batch_id, batch_historical_games, dataset_prefix)
+        # Session 76: Include prediction_run_mode for traceability
+        published_count = publish_prediction_requests(
+            viable_requests, batch_id, batch_historical_games, dataset_prefix, prediction_run_mode
+        )
         
         logger.info(f"Published {published_count}/{len(requests)} prediction requests")
         
@@ -1999,7 +2009,8 @@ def publish_prediction_requests(
     requests: List[Dict],
     batch_id: str,
     batch_historical_games: Optional[Dict[str, List[Dict]]] = None,
-    dataset_prefix: str = ''
+    dataset_prefix: str = '',
+    prediction_run_mode: str = 'OVERNIGHT'
 ) -> int:
     """
     Publish prediction requests to Pub/Sub
@@ -2010,6 +2021,7 @@ def publish_prediction_requests(
         batch_historical_games: Optional pre-loaded historical games (batch optimization)
                                 Dict mapping player_lookup -> list of historical games
         dataset_prefix: Optional dataset prefix for test isolation (e.g., "test")
+        prediction_run_mode: Run mode for traceability (EARLY, OVERNIGHT, SAME_DAY, BACKFILL)
 
     Returns:
         Number of successfully published messages
@@ -2028,7 +2040,8 @@ def publish_prediction_requests(
                 **request_data,
                 'batch_id': batch_id,
                 'timestamp': datetime.now().isoformat(),
-                'correlation_id': current_correlation_id or batch_id  # Include correlation_id for tracing
+                'correlation_id': current_correlation_id or batch_id,  # Include correlation_id for tracing
+                'prediction_run_mode': prediction_run_mode  # Session 76: Track run mode for analysis
             }
 
             # Add dataset_prefix for test isolation if specified

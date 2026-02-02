@@ -515,6 +515,7 @@ def handle_prediction_request():
         game_id = request_data['game_id']
         line_values = request_data.get('line_values') or []  # Handle explicit None from JSON
         batch_id = request_data.get('batch_id')  # From coordinator for staging writes
+        prediction_run_mode = request_data.get('prediction_run_mode', 'OVERNIGHT')  # Session 76: Traceability
 
         # BATCH OPTIMIZATION: Extract pre-loaded historical games if available
         historical_games_batch = request_data.get('historical_games_batch')
@@ -545,7 +546,9 @@ def handle_prediction_request():
             'line_minutes_before_game': request_data.get('line_minutes_before_game'),  # Minutes before tipoff
             # v4.0: Team context for teammate injury impact
             'team_abbr': request_data.get('team_abbr'),
-            'opponent_team_abbr': request_data.get('opponent_team_abbr')
+            'opponent_team_abbr': request_data.get('opponent_team_abbr'),
+            # Session 76: Run mode tracking for early vs overnight analysis
+            'prediction_run_mode': prediction_run_mode
         }
 
         # Convert date string to date object
@@ -1719,6 +1722,9 @@ def format_prediction_for_bigquery(
         'build_commit_sha': BUILD_COMMIT_SHA,
         'deployment_revision': DEPLOYMENT_REVISION,
         'predicted_at': datetime.utcnow().isoformat(),
+
+        # Session 76: Run mode for early vs overnight analysis
+        'prediction_run_mode': features.get('prediction_run_mode', 'OVERNIGHT'),
 
         # Session 64: Critical features snapshot for debugging
         # Without this, we couldn't prove the Jan 2026 hit rate collapse was caused
