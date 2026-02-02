@@ -13,7 +13,8 @@ RUN apk add --no-cache \
     && rm -rf /var/cache/apk/*
 
 # Install Python dependencies
-RUN pip3 install --no-cache-dir \
+# Use --break-system-packages since we control the entire container environment
+RUN pip3 install --no-cache-dir --break-system-packages \
     google-cloud-firestore==2.14.0 \
     google-cloud-bigquery==3.15.0
 
