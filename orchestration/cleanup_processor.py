@@ -304,11 +304,37 @@ class CleanupProcessor:
         ]
 
         # Build UNION ALL query for all tables
+        # CRITICAL: Many tables require partition filters for BigQuery compliance
+        # Map table names to their partition field (if partitioned)
+        partition_fields = {
+            'espn_team_rosters': 'roster_date',  # Uses roster_date, not game_date
+            # All other partitioned tables use game_date
+        }
+
         table_queries = []
         for table in phase2_tables:
+            # Get partition field for this table (default to game_date for most tables)
+            partition_field = partition_fields.get(table, 'game_date')
+
+            # Add partition filter if table is known to be partitioned
+            # Using 7-day lookback for partition filter (much wider than lookback_hours)
+            # to ensure we don't miss any files while satisfying BigQuery requirements
+            partitioned_tables = [
+                'bdl_player_boxscores', 'espn_scoreboard', 'espn_team_rosters',
+                'espn_boxscores', 'bigdataball_play_by_play', 'odds_api_game_lines',
+                'bettingpros_player_points_props', 'nbac_schedule', 'nbac_team_boxscore',
+                'nbac_play_by_play', 'nbac_scoreboard_v2', 'nbac_referee_game_assignments'
+            ]
+
+            if table in partitioned_tables:
+                partition_filter = f"AND {partition_field} >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)"
+            else:
+                partition_filter = ""
+
             table_queries.append(f"""
                 SELECT source_file_path FROM `nba-props-platform.nba_raw.{table}`
                 WHERE processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL {self.lookback_hours + 1} HOUR)
+                {partition_filter}
             """)
 
         query = f"""
