@@ -6,19 +6,19 @@ CatBoost V9 Prediction System - Current Season Training
 Session 67 (2026-02-01): New model trained on current season only.
 
 Key Differences from V8:
-- Training: Current season only (Nov 2, 2025 - Jan 8, 2026)
-- Samples: 9,993 (vs V8's 76,863 historical)
+- Training: Current season only (Nov 2, 2025 - Jan 31, 2026) - 91 days
 - Same 33 features as V8 (drop-in replacement)
+- Continuous retraining: Model retrained monthly with expanding data window
 
 Why Current Season Training:
 1. Avoids historical data quality issues (team_win_pct bug, Vegas mismatch)
 2. Captures current player roles, team dynamics
 3. Better calibrated for current league trends
 
-Performance (Evaluated Jan 9-31, 2026):
-- MAE: 4.82 (vs V8's 5.36)
+Performance (catboost_v9_feb_02_retrain.cbm - Session 76):
+- MAE: 4.12 (vs V8's 5.36) - 23% improvement
 - Premium Hit Rate: 56.5% (vs V8's 52.5%)
-- High-Edge Hit Rate: 72.2% (vs V8's 56.9%)
+- High-Edge Hit Rate: 74.6% (vs V8's 56.9%)
 
 Monthly Retraining:
 V9 is designed for monthly retraining as the season progresses.
@@ -56,15 +56,18 @@ class CatBoostV9(CatBoostV8):
     SYSTEM_ID = "catboost_v9"
 
     # Training metadata (for documentation and debugging)
+    # NOTE: These reflect the DEFAULT model loaded by CATBOOST_V9_MODEL_PATH env var
+    # Current default: catboost_v9_feb_02_retrain.cbm (Session 76)
     TRAINING_INFO = {
         "approach": "current_season_only",
         "training_start": "2025-11-02",
-        "training_end": "2026-01-08",
-        "training_samples": 9993,
+        "training_end": "2026-01-31",  # Updated to match catboost_v9_feb_02_retrain.cbm
+        "training_days": 91,
+        "mae": 4.12,  # Session 76 retrain performance
         "feature_count": 33,
         "feature_version": "v2_33features",
-        "experiment_id": "exp_20260201_current_szn",
-        "session": 67,
+        "model_file": "catboost_v9_feb_02_retrain.cbm",
+        "session": 76,  # Session that trained this model
     }
 
     def __init__(self, model_path: Optional[str] = None):
