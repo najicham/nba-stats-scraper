@@ -1758,6 +1758,165 @@ WHERE prediction_date = CURRENT_DATE();
 
 ---
 
+### 6.5 - BigQuery Partition Filter Required (400 BadRequest)
+
+**Symptom:** 400 BadRequest errors with message "Cannot query over table without a filter over column(s) 'game_date' that can be used for partition elimination"
+
+**Common in:**
+- Cleanup processor querying multiple tables
+- UNION ALL queries across Phase 2 tables
+- Any query on partitioned tables without date filters
+
+**Real Example (Sessions 73-74):**
+- Cleanup processor queried 21 Phase 2 tables
+- 12 tables required partition filters (game_date or roster_date)
+- Query only filtered by `processed_at`, causing 400 errors
+- Both `/scrape` and `/cleanup` endpoints failing
+
+#### Diagnosis
+
+**Step 1: Check for partition filter errors in logs**
+```bash
+# Search for partition elimination errors
+gcloud logging read 'resource.type="cloud_run_revision"
+  AND severity>=ERROR
+  AND textPayload=~"partition elimination"' \
+  --limit=10 --format=json
+```
+
+**Look for:**
+- Table name mentioned in error (e.g., `bdl_player_boxscores`)
+- Partition column name (usually `game_date`, sometimes `roster_date`)
+- BigQuery error code 400
+
+**Step 2: Verify table partition requirements**
+```bash
+# Check if table requires partition filter
+bq show --format=json nba-props-platform:nba_raw.TABLE_NAME | \
+  jq '{requirePartitionFilter: .requirePartitionFilter,
+       partitionField: .timePartitioning.field}'
+```
+
+**If `requirePartitionFilter: true`:**
+→ Table MUST have partition column in WHERE clause
+
+**Step 3: Identify affected tables**
+
+**Tables requiring partition filters (as of Feb 2026):**
+- `bdl_player_boxscores` (game_date)
+- `espn_scoreboard` (game_date)
+- `espn_team_rosters` (**roster_date** - different!)
+- `espn_boxscores` (game_date)
+- `bigdataball_play_by_play` (game_date)
+- `odds_api_game_lines` (game_date)
+- `bettingpros_player_points_props` (game_date)
+- `nbac_schedule` (game_date)
+- `nbac_team_boxscore` (game_date)
+- `nbac_play_by_play` (game_date)
+- `nbac_scoreboard_v2` (game_date)
+- `nbac_referee_game_assignments` (game_date)
+
+#### Fix Procedures
+
+**1. Add partition filter to query**
+
+Bad (causes 400 error):
+```sql
+SELECT * FROM `nba_raw.bdl_player_boxscores`
+WHERE processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 4 HOUR)
+```
+
+Good (includes partition filter):
+```sql
+SELECT * FROM `nba_raw.bdl_player_boxscores`
+WHERE processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 4 HOUR)
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+```
+
+**2. For UNION queries, add conditional filters**
+
+```python
+# Map tables to their partition fields
+partition_fields = {
+    'espn_team_rosters': 'roster_date',  # Non-standard!
+    # Most tables use 'game_date'
+}
+
+# List tables requiring filters
+partitioned_tables = [
+    'bdl_player_boxscores', 'espn_scoreboard',
+    'espn_team_rosters', # ... (see full list above)
+]
+
+# Build query with conditional partition filter
+for table in all_tables:
+    if table in partitioned_tables:
+        partition_field = partition_fields.get(table, 'game_date')
+        partition_filter = f"AND {partition_field} >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)"
+    else:
+        partition_filter = ""
+
+    query = f"""
+        SELECT * FROM `nba_raw.{table}`
+        WHERE processed_at > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 4 HOUR)
+        {partition_filter}
+    """
+```
+
+**3. Deploy and verify**
+```bash
+# Deploy fix
+./bin/deploy-service.sh nba-scrapers
+
+# Test endpoint
+curl -X POST https://SERVICE_URL/cleanup
+
+# Verify no 400 errors
+gcloud logging read 'httpRequest.status=400 AND timestamp>="2026-02-XX"' --limit=5
+```
+
+#### Prevention
+
+**1. Query table schema before building queries**
+```python
+from google.cloud import bigquery
+client = bigquery.Client()
+
+table = client.get_table("nba_raw.TABLE_NAME")
+if table.require_partition_filter:
+    partition_field = table.time_partitioning.field
+    # Add partition filter to query
+```
+
+**2. Use wider lookback for partition filters**
+- Processing lookback: 4 hours (for data freshness)
+- Partition filter: 7 days (for BigQuery compliance)
+- Partition filter should be WIDER to avoid missing data
+
+**3. Test UNION queries carefully**
+- Check ALL tables for partition requirements
+- Different tables may use different partition fields
+- Add integration tests for full query execution
+
+**Common Mistakes:**
+❌ Using same lookback for partition filter and processing (too narrow)
+❌ Assuming all tables use `game_date` (some use `roster_date`)
+❌ Testing only individual tables (UNION queries fail differently)
+❌ Fixing one 400 error and assuming all are fixed (multiple bugs can cause same symptom)
+
+**Key Learnings:**
+- 12 of 21 Phase 2 tables require partition filters
+- Multiple bugs can cause same 400 error symptom
+- Always check table schema for `requirePartitionFilter`
+- Partition filter lookback should be wider than processing lookback
+
+**References:**
+- Session 74 handoff: `docs/09-handoff/2026-02-02-SESSION-74-HANDOFF.md`
+- Cleanup processor: `orchestration/cleanup_processor.py`
+- CLAUDE.md Common Issues section
+
+---
+
 ## Section 7: Observability Issues (Dashboard & Monitoring)
 
 ### 7.1 - Dashboard Shows Low Health Score
