@@ -848,6 +848,9 @@ def process_player_predictions(
     features['was_line_fallback'] = line_source_info.get('was_line_fallback', False)
     # v3.6: Add line timing tracking (how close to closing line)
     features['line_minutes_before_game'] = line_source_info.get('line_minutes_before_game')
+    # Session 77 FIX: Extract prediction_run_mode for BigQuery record
+    # Bug: Session 76 added to line_source_info but forgot to extract to features
+    features['prediction_run_mode'] = line_source_info.get('prediction_run_mode', 'OVERNIGHT')
 
     # v3.7 (Session 24 FIX): Add CatBoost V8 required features
     # The ml_feature_store_v2 only has 25 base features, but CatBoost V8 needs 33.
