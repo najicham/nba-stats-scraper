@@ -86,6 +86,7 @@ from data_processors.raw.espn.espn_team_roster_processor import EspnTeamRosterPr
 from data_processors.raw.espn.espn_roster_batch_processor import EspnRosterBatchProcessor
 from data_processors.raw.espn.espn_scoreboard_processor import EspnScoreboardProcessor
 from data_processors.raw.bettingpros.bettingpros_player_props_processor import BettingPropsProcessor
+from data_processors.raw.kalshi.kalshi_props_processor import KalshiPropsProcessor
 from data_processors.raw.bigdataball.bigdataball_pbp_processor import BigDataBallPbpProcessor
 from data_processors.raw.nbacom.nbac_referee_processor import NbacRefereeProcessor
 from data_processors.raw.oddsapi.odds_game_lines_processor import OddsGameLinesProcessor
@@ -145,6 +146,8 @@ PROCESSOR_REGISTRY = {
     'espn/scoreboard': EspnScoreboardProcessor,
 
     'bettingpros/player-props': BettingPropsProcessor,
+
+    'kalshi/player-props': KalshiPropsProcessor,
 
     'big-data-ball': BigDataBallPbpProcessor,
 
