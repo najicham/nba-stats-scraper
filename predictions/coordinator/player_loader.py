@@ -390,6 +390,15 @@ class PlayerLoader:
             use_multiple_lines
         )
 
+        # Session 79: Query Kalshi prediction market data
+        # Use the base line (Vegas or estimated) to find closest Kalshi line
+        vegas_line = line_info.get('base_line')
+        kalshi_info = self._query_kalshi_line(
+            player['player_lookup'],
+            game_date,
+            vegas_line
+        )
+
         # Create request message with line source tracking (v3.2, v3.3)
         request = {
             'player_lookup': player['player_lookup'],
@@ -422,7 +431,16 @@ class PlayerLoader:
             'line_minutes_before_game': line_info.get('line_minutes_before_game'),  # Minutes before tipoff
 
             # Issue 3: New player handling
-            'needs_bootstrap': line_info.get('needs_bootstrap', False)
+            'needs_bootstrap': line_info.get('needs_bootstrap', False),
+
+            # Session 79: Kalshi prediction market data
+            'kalshi_available': kalshi_info.get('kalshi_available', False) if kalshi_info else False,
+            'kalshi_line': kalshi_info.get('kalshi_line') if kalshi_info else None,
+            'kalshi_yes_price': kalshi_info.get('kalshi_yes_price') if kalshi_info else None,
+            'kalshi_no_price': kalshi_info.get('kalshi_no_price') if kalshi_info else None,
+            'kalshi_liquidity': kalshi_info.get('kalshi_liquidity') if kalshi_info else None,
+            'kalshi_market_ticker': kalshi_info.get('kalshi_market_ticker') if kalshi_info else None,
+            'line_discrepancy': kalshi_info.get('line_discrepancy') if kalshi_info else None,
         }
 
         return request
@@ -750,6 +768,102 @@ class PlayerLoader:
             return None
         except Exception as e:
             logger.warning(f"No {sportsbook} line in bettingpros for {player_lookup}: {e}")
+            return None
+
+    def _query_kalshi_line(
+        self,
+        player_lookup: str,
+        game_date: date,
+        vegas_line: Optional[float] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Query Kalshi prediction market for player prop lines.
+
+        Session 79: Kalshi offers multiple lines per player (e.g., 19.5, 24.5, 29.5).
+        We find the line closest to the Vegas line for comparison.
+
+        Args:
+            player_lookup: Player identifier
+            game_date: Game date
+            vegas_line: Vegas line to find closest Kalshi line to
+
+        Returns:
+            Dict with kalshi_line, kalshi_yes_price, kalshi_no_price,
+            kalshi_liquidity, kalshi_market_ticker, line_discrepancy
+            or None if no Kalshi data
+        """
+        try:
+            # Query Kalshi data - find the line closest to Vegas line
+            if vegas_line is not None:
+                # Find the Kalshi line closest to Vegas line
+                query = """
+                    SELECT
+                        line_value,
+                        yes_bid,
+                        no_bid,
+                        liquidity_score,
+                        market_ticker,
+                        ABS(line_value - @vegas_line) as line_diff
+                    FROM `{project}.nba_raw.kalshi_player_props`
+                    WHERE game_date = @game_date
+                      AND player_lookup = @player_lookup
+                      AND prop_type = 'points'
+                      AND market_status = 'active'
+                    ORDER BY line_diff ASC
+                    LIMIT 1
+                """.format(project=self.project_id)
+
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                        bigquery.ScalarQueryParameter("player_lookup", "STRING", player_lookup),
+                        bigquery.ScalarQueryParameter("vegas_line", "FLOAT64", vegas_line),
+                    ]
+                )
+            else:
+                # No Vegas line - just get the first available Kalshi line
+                query = """
+                    SELECT
+                        line_value,
+                        yes_bid,
+                        no_bid,
+                        liquidity_score,
+                        market_ticker
+                    FROM `{project}.nba_raw.kalshi_player_props`
+                    WHERE game_date = @game_date
+                      AND player_lookup = @player_lookup
+                      AND prop_type = 'points'
+                      AND market_status = 'active'
+                    ORDER BY total_volume DESC
+                    LIMIT 1
+                """.format(project=self.project_id)
+
+                job_config = bigquery.QueryJobConfig(
+                    query_parameters=[
+                        bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+                        bigquery.ScalarQueryParameter("player_lookup", "STRING", player_lookup),
+                    ]
+                )
+
+            results = self.bq_client.query(query, job_config=job_config).result(timeout=30)
+            row = next(results, None)
+
+            if row is not None and row.line_value is not None:
+                kalshi_line = float(row.line_value)
+                line_discrepancy = round(kalshi_line - vegas_line, 1) if vegas_line else None
+
+                return {
+                    'kalshi_available': True,
+                    'kalshi_line': kalshi_line,
+                    'kalshi_yes_price': int(row.yes_bid) if row.yes_bid else None,
+                    'kalshi_no_price': int(row.no_bid) if row.no_bid else None,
+                    'kalshi_liquidity': row.liquidity_score,
+                    'kalshi_market_ticker': row.market_ticker,
+                    'line_discrepancy': line_discrepancy
+                }
+            return None
+        except Exception as e:
+            logger.debug(f"No Kalshi line for {player_lookup}: {e}")
             return None
 
     def _track_line_source(self, source: str, player_lookup: str):

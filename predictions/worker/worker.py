@@ -548,7 +548,15 @@ def handle_prediction_request():
             'team_abbr': request_data.get('team_abbr'),
             'opponent_team_abbr': request_data.get('opponent_team_abbr'),
             # Session 76: Run mode tracking for early vs overnight analysis
-            'prediction_run_mode': prediction_run_mode
+            'prediction_run_mode': prediction_run_mode,
+            # Session 79: Kalshi prediction market data
+            'kalshi_available': request_data.get('kalshi_available', False),
+            'kalshi_line': request_data.get('kalshi_line'),
+            'kalshi_yes_price': request_data.get('kalshi_yes_price'),
+            'kalshi_no_price': request_data.get('kalshi_no_price'),
+            'kalshi_liquidity': request_data.get('kalshi_liquidity'),
+            'kalshi_market_ticker': request_data.get('kalshi_market_ticker'),
+            'line_discrepancy': request_data.get('line_discrepancy'),
         }
 
         # Convert date string to date object
@@ -851,6 +859,15 @@ def process_player_predictions(
     # Session 77 FIX: Extract prediction_run_mode for BigQuery record
     # Bug: Session 76 added to line_source_info but forgot to extract to features
     features['prediction_run_mode'] = line_source_info.get('prediction_run_mode', 'OVERNIGHT')
+
+    # Session 79: Extract Kalshi prediction market data
+    features['kalshi_available'] = line_source_info.get('kalshi_available', False)
+    features['kalshi_line'] = line_source_info.get('kalshi_line')
+    features['kalshi_yes_price'] = line_source_info.get('kalshi_yes_price')
+    features['kalshi_no_price'] = line_source_info.get('kalshi_no_price')
+    features['kalshi_liquidity'] = line_source_info.get('kalshi_liquidity')
+    features['kalshi_market_ticker'] = line_source_info.get('kalshi_market_ticker')
+    features['line_discrepancy'] = line_source_info.get('line_discrepancy')
 
     # v3.7 (Session 24 FIX): Add CatBoost V8 required features
     # The ml_feature_store_v2 only has 25 base features, but CatBoost V8 needs 33.
@@ -1728,6 +1745,15 @@ def format_prediction_for_bigquery(
 
         # Session 76: Run mode for early vs overnight analysis
         'prediction_run_mode': features.get('prediction_run_mode', 'OVERNIGHT'),
+
+        # Session 79: Kalshi prediction market data
+        'kalshi_available': features.get('kalshi_available', False),
+        'kalshi_line': features.get('kalshi_line'),
+        'kalshi_yes_price': features.get('kalshi_yes_price'),
+        'kalshi_no_price': features.get('kalshi_no_price'),
+        'kalshi_liquidity': features.get('kalshi_liquidity'),
+        'kalshi_market_ticker': features.get('kalshi_market_ticker'),
+        'line_discrepancy': features.get('line_discrepancy'),
 
         # Session 64: Critical features snapshot for debugging
         # Without this, we couldn't prove the Jan 2026 hit rate collapse was caused
