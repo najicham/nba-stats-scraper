@@ -248,21 +248,13 @@ class PlayerGameSummaryProcessor(
                 'critical': True
             },
             
-            # SOURCE 2: NBA.com Live Boxscores (FALLBACK - Evening Processing)
-            # ENABLED 2026-02-02: For same-day processing when gamebook isn't available
-            # Scraped live every 3 min during games, 100% accurate stats
-            'nba_raw.nbac_player_boxscores': {
-                'field_prefix': 'source_nbac_box',
-                'description': 'NBA.com live boxscores - evening processing fallback',
-                'date_field': 'game_date',
-                'check_type': 'date_range',
-                'expected_count_min': 200,
-                'max_age_hours_warn': 6,  # Live data, should be fresh
-                'max_age_hours_fail': 24,
-                'critical': False  # Fallback when gamebook not available
-            },
+            # NOTE: nbac_player_boxscores is NOT listed as a dependency because it's used as a
+            # FALLBACK source (substitutes for gamebook when not available), not an additional source.
+            # Availability is checked in _check_source_data_available() and used via the
+            # extraction query's nbac_boxscore_data CTE when gamebook has 0 records.
+            # This avoids generating new source tracking columns (source_nbac_box_*).
 
-            # SOURCE 3: BDL Boxscores (FALLBACK - Non-Critical)
+            # SOURCE 2: BDL Boxscores (FALLBACK - Non-Critical)
             'nba_raw.bdl_player_boxscores': {
                 'field_prefix': 'source_bdl',
                 'description': 'BDL boxscores - fallback for basic stats',
