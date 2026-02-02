@@ -1,359 +1,213 @@
-# Session 73 Handoff - Scheduler 400 Error Fix
+# Session 73 Handoff - February 2, 2026
 
-**Date**: February 2, 2026
-**Session Duration**: ~2.5 hours
-**Context Used**: 76K/200K tokens (38%)
-**Status**: ✅ CRITICAL BUG FIXED
+## Session Summary
 
----
-
-## Executive Summary
-
-**Mission**: Continue from Session 72 - verify automation and address remaining tasks
-
-**Actual Result**: Discovered and fixed CRITICAL scheduler bug causing all automated runs to fail silently
-
-**Key Achievement**: Found root cause of scheduler 400 errors (cleanup processor schema bug), deployed fix, verified resolution. Automation now functional.
+Created evening analytics scheduler jobs to reduce the 6-18 hour gap in game processing. Discovered that schedulers depend on gamebook data which only becomes available the next morning. Performed early validation on the one completed Feb 1 game.
 
 ---
 
-## Critical Bug Fixed
+## Accomplishments
+
+### 1. Evening Schedulers Created
+
+| Job | Schedule | Purpose |
+|-----|----------|---------|
+| `evening-analytics-6pm-et` | Sat/Sun 6 PM ET | Weekend matinees |
+| `evening-analytics-10pm-et` | Daily 10 PM ET | 7 PM games |
+| `evening-analytics-1am-et` | Daily 1 AM ET | West Coast games |
+| `morning-analytics-catchup-9am-et` | Daily 9 AM ET | Safety net |
+
+**Verification:**
+```bash
+gcloud scheduler jobs list --location=us-west2 | grep -E "evening|catchup"
+```
+
+### 2. Service Account Fix
+
+Fixed the scheduler script to use the correct service account (`756957797294-compute@developer.gserviceaccount.com`) matching existing analytics jobs.
+
+### 3. Early Signal Validation (MIL@BOS only)
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| Total picks | 7 | One complete game |
+| Hit rate | 57.1% | 4/7 correct |
+| High-edge picks | 1 | Edge = 5.2 |
+| High-edge hit rate | 0% | 0/1 (missed by 0.5 pts) |
+
+**Notable:** Jaylen Brown - predicted UNDER 29.5, actual 30. Missed by half a point.
+
+---
+
+## Key Finding: Gamebook Data Dependency
 
 ### The Problem
 
-**Symptom**: Scheduler returning 400 (Bad Request) errors at 8 AM & 2 PM ET daily
+The evening schedulers trigger `PlayerGameSummaryProcessor`, but it requires `nbac_gamebook_player_stats` as its PRIMARY data source.
 
-**Impact**:
-- Player movement automation failing despite showing "success" in scheduler logs
-- No data being collected during scheduled runs
-- Manual triggers working fine (masked the automation failure)
+| Data Source | Feb 1 Status | Availability |
+|-------------|--------------|--------------|
+| `nbac_player_boxscores` | 152 records | Available during games |
+| `nbac_gamebook_player_stats` | 0 records | Only available next morning |
 
-**Discovery Process**:
-1. Started session expecting to verify 8 AM ET run
-2. Checked logs - found Status 400 at both 8 AM and 2 PM ET scheduled times
-3. Manual test of `/scrape` endpoint succeeded
-4. Investigated deployment drift (false lead - code was actually deployed)
-5. Traced error to `/cleanup` endpoint (runs alongside schedulers)
-6. Found BigQuery error: `Unrecognized name: processed_at at [24:23]`
-7. Identified 4 tables missing `processed_at` column
+### Why This Matters
 
-### Root Cause
+1. Boxscores are scraped every 3 minutes during games
+2. Gamebook data (from PDF parsing) is only processed overnight
+3. Evening schedulers can't process analytics until gamebook exists
 
-**File**: `orchestration/cleanup_processor.py:307`
+### Implication
 
-**Issue**: Cleanup processor queries `processed_at` column on 21 Phase 2 tables, but 4 tables don't have that column:
-- `nbac_player_movement` ✗
-- `nbac_team_rosters` ✗ (not in query list)
-- `nbac_player_list` ✗ (not in query list)
-- `nbac_gamebook_game_info` ✗ (not in query list)
+**The evening schedulers will work once gamebook data is available**, but they won't enable same-day processing. The real fix requires either:
 
-**Why scheduler failed but manual tests succeeded**:
-- Scheduler triggers multiple endpoints: `/scrape`, `/cleanup`, `/evaluate`, `/fix-stale-schedule`
-- `/cleanup` fails with 400 BadRequest → entire scheduler execution marked as failed
-- Manual `/scrape` tests don't trigger `/cleanup` → succeed normally
-
-### The Fix
-
-**Commit**: `82a2934b`
-**File**: `orchestration/cleanup_processor.py`
-**Change**: Removed `nbac_player_movement` from table list in cleanup query
-**Documentation**: Added comment explaining excluded tables
-
-```python
-# Before (line 279):
-'nbac_player_movement',
-
-# After (removed, with comment):
-# Excluded: 'nbac_player_movement' - no processed_at column
-```
-
-### Deployment
-
-**Service**: `nba-scrapers`
-**Revision**: `nba-scrapers-00116-47d`
-**Commit**: `82a2934b`
-**Deployed**: Feb 2, 2026 03:47 UTC
-
-**Verification**:
-```bash
-# Cleanup endpoint test
-curl -X POST https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/cleanup
-# Result: ✅ Success - processed 148 files in 4.1s, no errors
-```
+1. Running gamebook scraper after each game completes
+2. Making PlayerGameSummaryProcessor fall back to boxscores
+3. Creating a separate "quick grading" processor using boxscores
 
 ---
 
-## Investigation: Deployment Drift (False Lead)
+## Feb 1 Game Status (as of 11:15 PM ET)
 
-**Initial Finding**: Deployed commit showed `2de48c04` (Jan 22) instead of latest main
-
-**Conclusion**: Label mismatch only - actual code WAS deployed correctly
-
-**Evidence**:
-1. Player list scraper returns `"season":"2025"` (proves Session 72 fix is active)
-2. Manual tests work perfectly with expected behavior
-3. Session 72 handoff noted "cosmetic labeling issue"
-
-**Learning**: Always verify actual functionality, not just deployment labels
+| Status | Count | Games |
+|--------|-------|-------|
+| Final | 1 | MIL@BOS |
+| In Progress | 4 | CHI@MIA, BKN@DET, UTA@TOR, SAC@WAS |
+| Scheduled | 5 | OKC@DEN, LAL@NYK, CLE@POR, LAC@PHX, ORL@SAS |
 
 ---
 
-## System Health Status
+## Feb 1 Signal Status
 
-### ✅ Working After Fix
-- Player movement scraper: Returns 9,205 records
-- Player list scraper: Returns 546 players (correct NBA season 2025)
-- ESPN roster scraper: 30 teams, 528 players
-- Cleanup processor: Processes files without errors
+| Model | pct_over | Signal |
+|-------|----------|--------|
+| catboost_v9 | 10.6% | RED |
+| catboost_v8 | 0.0% | RED |
+| ensemble_v1 | 0.6% | RED |
+| zone_matchup_v1 | 10.1% | RED |
 
-### ⏳ Pending Verification
-- **Tomorrow's scheduler runs** (Feb 3):
-  - 8 AM ET (13:00 UTC) - should now succeed with Status 200
-  - 2 PM ET (19:00 UTC) - should now succeed with Status 200
-  - See Task #5 for monitoring commands
+All models show RED signal for Feb 1.
 
 ---
 
-## Tasks Summary
+## Feb 2 Predictions
 
-| Task | Status | Description |
-|------|--------|-------------|
-| #1 | ✅ Completed | Investigate deployment drift - found code was actually deployed |
-| #2 | ✅ Completed | Deploy latest code - determined not needed |
-| #3 | ✅ Completed | Root cause analysis - identified cleanup processor bug |
-| #4 | ✅ Completed | Fix cleanup processor - removed nbac_player_movement from query |
-| #5 | ⏳ Pending | Verify scheduler runs tomorrow (Feb 3) |
-
----
-
-## Files Modified
-
-### Code Changes (Deployed)
-
-```
-orchestration/cleanup_processor.py
-  - Removed nbac_player_movement from Phase 2 table list
-  - Added documentation for excluded tables
-  - Prevents BigQuery error when querying processed_at
-  - Deployed: nba-scrapers-00116-47d (82a2934b)
-```
-
-### Documentation
-
-```
-docs/09-handoff/2026-02-02-SESSION-73-HANDOFF.md
-  - This handoff document
-```
-
----
-
-## Key Learnings
-
-### 1. Silent Failures Are Dangerous
-
-**Problem**: Scheduler showed "success" but was actually failing
-- Scheduler logs showed INFO/ERROR mix but no clear failure
-- No alerts triggered
-- Manual tests masked the automation failure
-
-**Lesson**: Monitor actual data freshness, not just scheduler execution status
-
-### 2. Schema Assumptions Can Break Silently
-
-**Problem**: Cleanup processor assumed all Phase 2 tables have `processed_at`
-- No schema validation
-- Query failed when table didn't match assumption
-- Error only visible in BigQuery logs
-
-**Lesson**: Always verify schema compatibility before querying multiple tables in UNION
-
-### 3. Verify Functionality, Not Just Labels
-
-**Problem**: Deployment labels showed old commit, caused false investigation
-- Spent time investigating "deployment drift"
-- Actual code was correctly deployed
-- Labels were cosmetic issue only
-
-**Lesson**: Test actual behavior to verify deployments, not just metadata
-
-### 4. Scheduler Complexity Hides Failures
-
-**Problem**: Scheduler triggers 4+ endpoints, any failure marks entire run as failed
-- `/scrape`, `/cleanup`, `/evaluate`, `/fix-stale-schedule` all run
-- One 400 error stops the whole flow
-- Manual tests of individual endpoints don't catch this
-
-**Lesson**: Test full scheduler flow, not just individual endpoints
-
----
-
-## Trade Deadline Readiness
-
-**Status**: ✅ READY (pending verification)
-
-### Pre-Session 73
-- ❌ Automation failing (400 errors)
-- ✅ Manual triggers working
-- ✅ Playbook complete
-- ⚠️ System partially functional
-
-### Post-Session 73
-- ✅ Automation fixed (cleanup bug resolved)
-- ✅ Manual triggers working
-- ✅ Playbook complete
-- ✅ System fully functional (pending verification)
-
-**Next Verification**: Monitor Feb 3 scheduled runs (Task #5)
-
----
-
-## Recommended Follow-up
-
-### Immediate (Next Session)
-
-1. **Verify Feb 3 Scheduler Runs** (Task #5)
-   - Check 8 AM ET and 2 PM ET runs succeed
-   - Confirm Status 200, no BadRequest errors
-   - Verify data appears in BigQuery
-
-2. **Add Schema Validation to Cleanup Processor**
-   - Query table schemas before building UNION
-   - Only include tables with required columns
-   - Prevent future schema compatibility issues
-
-### Short-term (Before Trade Deadline - Feb 6)
-
-3. **Test Full Scheduler Flow**
-   - Trigger scheduler manually
-   - Verify all 4 endpoints succeed together
-   - Monitor complete execution chain
-
-4. **Add Data Freshness Monitoring**
-   - Alert when player_movement data is >6 hours old
-   - Don't rely on scheduler "success" status
-   - Monitor actual data, not just execution logs
-
-### Medium-term (After Trade Deadline)
-
-5. **Add `processed_at` to Missing Tables**
-   - Consider adding column to nbac_player_movement
-   - Standardize schema across all Phase 2 tables
-   - Enable full cleanup functionality
-
-6. **Improve Scheduler Error Visibility**
-   - Separate success/failure for each endpoint
-   - Don't fail entire run if one endpoint fails
-   - Better alerting on specific failures
-
----
-
-## Verification Commands
-
-### Check Tomorrow's Scheduler Runs (Feb 3)
-
-```bash
-# 1. Check scheduler execution logs
-gcloud logging read 'resource.type="cloud_scheduler_job"
-  AND resource.labels.job_id="nbac-player-movement-daily"
-  AND timestamp>="2026-02-03T13:00:00Z"' --limit=10
-
-# 2. Check for 400 errors in service logs
-gcloud logging read 'resource.type="cloud_run_revision"
-  AND resource.labels.service_name="nba-scrapers"
-  AND httpRequest.status=400
-  AND timestamp>="2026-02-03T13:00:00Z"' --limit=10
-
-# 3. Verify player movement data freshness
-bq query --use_legacy_sql=false "
-  SELECT MAX(scrape_timestamp) as latest,
-         COUNT(*) as records
-  FROM nba_raw.nbac_player_movement
-  WHERE scrape_timestamp >= TIMESTAMP('2026-02-03 13:00:00 UTC')"
-
-# 4. Check cleanup endpoint health
-curl -X POST https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/cleanup \
-  -H "Content-Type: application/json" -d '{}'
-```
-
-### Manual Player Movement Trigger (if needed)
-
-```bash
-curl -X POST https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape \
-  -H "Content-Type: application/json" \
-  -d '{"scraper":"nbac_player_movement","year":"2026","group":"prod"}'
-```
-
----
-
-## Session Metrics
-
-| Metric | Value |
+| Status | Value |
 |--------|-------|
-| **Context Usage** | 76K/200K (38%) |
-| **Tasks Created** | 5 |
-| **Tasks Completed** | 4 |
-| **Critical Bugs Found** | 1 (scheduler 400 error) |
-| **Bugs Fixed** | 1 (cleanup processor schema) |
-| **Code Deployments** | 1 (nba-scrapers-00116-47d) |
-| **Services Fixed** | Scheduler automation |
-| **Lines of Code Changed** | 4 (orchestration/cleanup_processor.py) |
-| **Documentation Created** | 1 handoff doc |
+| Games | 4 (NOP@CHA, HOU@IND, PHI@LAC, MIN@MEM) |
+| Predictions | 59 per model |
+| Vegas lines | 0 (scraped at 7 AM ET) |
+| Signals | Not yet calculated |
 
 ---
 
-## What NOT to Do
+## Commits This Session
 
-❌ Don't assume deployment labels are accurate - test functionality instead
-❌ Don't trust scheduler "success" logs - verify actual data
-❌ Don't test endpoints in isolation - test full scheduler flow
-❌ Don't assume all tables have the same schema - validate first
-❌ Don't skip verification after fixes - always test in production
-
-✅ Do monitor actual data freshness, not just execution status
-✅ Do verify full automation flow, not just individual components
-✅ Do add schema validation for UNION queries across multiple tables
-✅ Do test fixes immediately after deployment
-✅ Do document schema assumptions and exclusions
+| Commit | Description |
+|--------|-------------|
+| 52e2ee8d | fix: Use correct service account for evening analytics schedulers |
 
 ---
 
 ## Next Session Priorities
 
-1. **CRITICAL**: Verify Feb 3 scheduler runs (8 AM & 2 PM ET) - Task #5
-2. Monitor trade deadline automation (Feb 6)
-3. Add schema validation to cleanup processor (prevent recurrence)
-4. Implement data freshness monitoring
+### 1. Validate Full Feb 1 Signal (HIGH)
+
+Once gamebook data is available (~6 AM ET), validate RED signal hit rates:
+
+```sql
+SELECT
+  CASE WHEN ABS(p.predicted_points - p.current_points_line) >= 5 THEN 'High Edge' ELSE 'Other' END as tier,
+  COUNT(*) as picks,
+  ROUND(100.0 * COUNTIF(
+    (pgs.points > p.current_points_line AND p.recommendation = 'OVER') OR
+    (pgs.points < p.current_points_line AND p.recommendation = 'UNDER')
+  ) / NULLIF(COUNTIF(pgs.points != p.current_points_line), 0), 1) as hit_rate
+FROM nba_predictions.player_prop_predictions p
+JOIN nba_analytics.player_game_summary pgs
+  ON p.player_lookup = pgs.player_lookup AND p.game_date = pgs.game_date
+WHERE p.game_date = DATE('2026-02-01')
+  AND p.system_id = 'catboost_v9'
+  AND p.current_points_line IS NOT NULL
+  AND p.recommendation != 'PASS'
+GROUP BY 1
+```
+
+Expected: 50-65% overall hit rate for RED signal day.
+
+### 2. Verify Feb 2 Vegas Lines (After 7 AM ET)
+
+```sql
+SELECT system_id, COUNT(*) as predictions,
+  COUNTIF(current_points_line IS NOT NULL) as has_lines
+FROM nba_predictions.player_prop_predictions
+WHERE game_date = DATE('2026-02-02')
+GROUP BY system_id
+```
+
+### 3. Investigate Gamebook Scraper Automation
+
+For same-day analytics processing, explore:
+1. When does gamebook PDF become available after game completion?
+2. Can we trigger gamebook scraper on game_status = 3?
+3. Alternative: Create boxscore-based "quick grading" processor
+
+See: `docs/08-projects/current/evening-analytics-processing/`
+
+### 4. Check Evening Scheduler Execution
+
+Verify the schedulers run correctly:
+
+```bash
+# Check job runs
+gcloud scheduler jobs describe evening-analytics-10pm-et --location=us-west2 \
+  --format="value(status.lastAttemptTime)"
+
+# Check logs
+gcloud logging read 'resource.type="cloud_run_revision"
+  AND resource.labels.service_name="nba-phase3-analytics-processors"
+  AND timestamp>="2026-02-02T03:00:00Z"' --limit=20
+```
 
 ---
 
-## Questions You Might Have
+## Verification Commands
 
-**Q: Is the scheduler fixed?**
-A: YES - cleanup endpoint tested successfully, no more 400 errors. Final verification tomorrow.
+```bash
+# Check scheduler jobs
+gcloud scheduler jobs list --location=us-west2 | grep -E "evening|catchup"
 
-**Q: Why did Session 72 not catch this?**
-A: Session 72 tested manual triggers and data freshness, but didn't test scheduled runs end-to-end.
+# Check Feb 1 data status
+bq query --use_legacy_sql=false "
+SELECT
+  'boxscores' as src, COUNT(*) as records
+FROM nba_raw.nbac_player_boxscores WHERE game_date = DATE('2026-02-01')
+UNION ALL
+SELECT
+  'gamebook' as src, COUNT(*) as records
+FROM nba_raw.nbac_gamebook_player_stats WHERE game_date = DATE('2026-02-01')
+UNION ALL
+SELECT
+  'player_game_summary' as src, COUNT(*) as records
+FROM nba_analytics.player_game_summary WHERE game_date = DATE('2026-02-01')"
 
-**Q: Is the system ready for trade deadline (Feb 6)?**
-A: YES - pending verification of tomorrow's scheduled runs. Manual triggers work as backup.
-
-**Q: What if tomorrow's runs still fail?**
-A: Check Task #5 for monitoring commands. Manual triggers available as fallback.
-
-**Q: Should we add processed_at to missing tables?**
-A: Optional - current fix works. Consider for long-term schema standardization.
+# Check game completion status
+bq query --use_legacy_sql=false "
+SELECT game_status,
+  CASE game_status WHEN 1 THEN 'Scheduled' WHEN 2 THEN 'In Progress' WHEN 3 THEN 'Final' END as status,
+  COUNT(*) as games
+FROM nba_reference.nba_schedule
+WHERE game_date = DATE('2026-02-01')
+GROUP BY game_status"
+```
 
 ---
 
-## Summary
+## Key Files Modified
 
-**Session 73 in one sentence**: Discovered and fixed critical scheduler bug where cleanup processor queried non-existent column, causing all automated runs to fail with 400 errors.
-
-**Impact**: Automation now functional, trade deadline readiness achieved, system fully operational pending final verification.
-
-**Next Steps**: Monitor Feb 3 scheduler runs, verify fix resolves issue in production.
+| File | Change |
+|------|--------|
+| `bin/orchestrators/setup_evening_analytics_schedulers.sh` | Fixed service account |
 
 ---
 
-*Prepared for Session 74*
-*All critical systems operational, automation restored*
+*Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>*
