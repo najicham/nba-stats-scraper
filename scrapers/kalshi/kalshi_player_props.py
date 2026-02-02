@@ -586,7 +586,8 @@ class KalshiPlayerProps(ScraperBase, ScraperFlaskMixin):
 
     def transform_data(self) -> Dict:
         """Transform data - already done in download_and_decode."""
-        return self.download_data
+        self.data = self.download_data
+        return self.data
 
     def get_scraper_stats(self) -> Dict[str, Any]:
         """Return scraper statistics."""
