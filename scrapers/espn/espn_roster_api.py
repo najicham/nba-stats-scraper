@@ -61,11 +61,9 @@ except ImportError:
     # Fallback if notification system not available
     def notify_error(*args, **kwargs):
         pass
-    def notify_warning(*args, **kwargs): pass  #
-    ):
+    def notify_warning(*args, **kwargs):
         pass
-    def notify_info(*args, **kwargs): pass  #
-    ):
+    def notify_info(*args, **kwargs):
         pass
 
 logger = logging.getLogger("scraper_base")
