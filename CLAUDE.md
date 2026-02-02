@@ -18,6 +18,7 @@ This file contains instructions and context for Claude Code sessions working on 
 ```bash
 ls -la docs/09-handoff/ | tail -5
 # Read the most recent handoff document
+# Latest: 2026-02-02-SESSION-71-FINAL-HANDOFF.md
 ```
 
 ### 2. Run Daily Validation
@@ -28,6 +29,24 @@ ls -la docs/09-handoff/ | tail -5
 ### 3. Check Deployment Drift
 ```bash
 ./bin/check-deployment-drift.sh --verbose
+```
+
+### 4. Manual Scraper Triggers (When Needed)
+```bash
+# Player movement (automated but can run manually)
+curl -X POST https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape \
+  -H "Content-Type: application/json" \
+  -d '{"scraper":"nbac_player_movement","year":"2026","group":"prod"}'
+
+# BR roster scraper + processor
+gcloud run jobs execute br-rosters-backfill --region=us-west2
+# Wait 2-3 min, then:
+PYTHONPATH=. GCP_PROJECT_ID=nba-props-platform \
+python backfill_jobs/raw/br_roster_processor/br_roster_processor_raw_backfill.py \
+  --season 2024 --teams all
+
+# Player list refresh (for trades)
+gcloud run jobs execute nbac-player-list-processor --region=us-west2
 ```
 
 ## Using Agents Effectively
