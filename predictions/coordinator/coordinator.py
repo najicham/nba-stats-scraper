@@ -1997,7 +1997,8 @@ def check_prediction_signal():
         logger.info(f"Checking prediction signal for {game_date_str}")
 
         # Query signal data
-        bq_client = get_bigquery_client()
+        from shared.clients import get_bigquery_client
+        bq_client = get_bigquery_client(PROJECT_ID)
         query = f"""
         SELECT
           game_date,
