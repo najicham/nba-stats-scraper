@@ -274,3 +274,49 @@ ADD COLUMN IF NOT EXISTS feature_quality_score FLOAT64
 -- Last Updated: February 1, 2026
 -- Status: Production Ready
 -- ============================================================================
+
+-- ============================================================================
+-- Schema Migration: Add Missing Fields (Session 79)
+-- Detected by pre-commit hook validate_schema_fields.py
+-- ============================================================================
+
+-- Session 64: Build & deployment tracking for debugging
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS build_commit_sha STRING OPTIONS(description="Git commit hash of deployed code (Session 64 traceability)");
+
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS deployment_revision STRING OPTIONS(description="Cloud Run revision name (Session 64 traceability)");
+
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS predicted_at TIMESTAMP OPTIONS(description="Exact timestamp when prediction was generated (Session 64)");
+
+-- Session 76: Prediction run mode tracking
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS prediction_run_mode STRING OPTIONS(description="OVERNIGHT, EARLY, SAME_DAY - which prediction run generated this (Session 76)");
+
+-- Session 79: Kalshi prediction market integration
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS kalshi_available BOOLEAN OPTIONS(description="TRUE if Kalshi has a prediction market for this prop");
+
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS kalshi_line NUMERIC(4,1) OPTIONS(description="Kalshi prediction market line (points)");
+
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS kalshi_yes_price NUMERIC(5,2) OPTIONS(description="Kalshi YES price (cents, 0-100)");
+
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS kalshi_no_price NUMERIC(5,2) OPTIONS(description="Kalshi NO price (cents, 0-100)");
+
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS kalshi_market_ticker STRING OPTIONS(description="Kalshi market ticker symbol");
+
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS kalshi_liquidity INT64 OPTIONS(description="Total contracts traded in Kalshi market");
+
+-- Feature quality tracking
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS critical_features JSON OPTIONS(description="List of critical features that used fallback values");
+
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS line_discrepancy NUMERIC(5,2) OPTIONS(description="Difference between multiple line sources (if applicable)");
+
