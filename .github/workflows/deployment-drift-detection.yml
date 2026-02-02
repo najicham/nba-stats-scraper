@@ -1,0 +1,217 @@
+name: Deployment Drift Detection
+
+on:
+  schedule:
+    # Run every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    # Allow manual triggering
+
+permissions:
+  contents: read
+  issues: write  # For creating drift issues
+
+jobs:
+  check-drift:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # Full history for commit comparison
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v1
+
+      - name: Check Phase 4 Deployment Drift
+        id: phase4
+        run: |
+          SERVICE="nba-phase4-precompute-processors"
+
+          DEPLOYED=$(gcloud run services describe $SERVICE \
+            --region=us-west2 \
+            --format="value(metadata.labels.commit-sha)" 2>/dev/null || echo "unknown")
+
+          LATEST=$(git rev-parse HEAD)
+
+          echo "deployed=$DEPLOYED" >> $GITHUB_OUTPUT
+          echo "latest=$LATEST" >> $GITHUB_OUTPUT
+
+          if [ "$DEPLOYED" != "$LATEST" ]; then
+            COMMITS_BEHIND=$(git rev-list --count $DEPLOYED..$LATEST 2>/dev/null || echo "unknown")
+            echo "drift=true" >> $GITHUB_OUTPUT
+            echo "commits_behind=$COMMITS_BEHIND" >> $GITHUB_OUTPUT
+            echo "::warning::Phase 4 deployment drift: $COMMITS_BEHIND commits behind"
+          else
+            echo "drift=false" >> $GITHUB_OUTPUT
+            echo "::notice::Phase 4 deployment up to date"
+          fi
+
+      - name: Check Prediction Worker Drift
+        id: pred_worker
+        run: |
+          SERVICE="prediction-worker"
+
+          DEPLOYED=$(gcloud run services describe $SERVICE \
+            --region=us-west2 \
+            --format="value(metadata.labels.commit-sha)" 2>/dev/null || echo "unknown")
+
+          LATEST=$(git rev-parse HEAD)
+
+          echo "deployed=$DEPLOYED" >> $GITHUB_OUTPUT
+
+          if [ "$DEPLOYED" != "$LATEST" ]; then
+            COMMITS_BEHIND=$(git rev-list --count $DEPLOYED..$LATEST 2>/dev/null || echo "unknown")
+            echo "drift=true" >> $GITHUB_OUTPUT
+            echo "commits_behind=$COMMITS_BEHIND" >> $GITHUB_OUTPUT
+            echo "::warning::Prediction worker drift: $COMMITS_BEHIND commits behind"
+          else
+            echo "drift=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Check Phase 3 Processors Drift
+        id: phase3
+        run: |
+          SERVICE="nba-phase3-analytics-processors"
+
+          DEPLOYED=$(gcloud run services describe $SERVICE \
+            --region=us-west2 \
+            --format="value(metadata.labels.commit-sha)" 2>/dev/null || echo "unknown")
+
+          LATEST=$(git rev-parse HEAD)
+
+          echo "deployed=$DEPLOYED" >> $GITHUB_OUTPUT
+
+          if [ "$DEPLOYED" != "$LATEST" ]; then
+            COMMITS_BEHIND=$(git rev-list --count $DEPLOYED..$LATEST 2>/dev/null || echo "unknown")
+            echo "drift=true" >> $GITHUB_OUTPUT
+            echo "commits_behind=$COMMITS_BEHIND" >> $GITHUB_OUTPUT
+            echo "::warning::Phase 3 drift: $COMMITS_BEHIND commits behind"
+          else
+            echo "drift=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Issue for Phase 4 Drift
+        if: steps.phase4.outputs.drift == 'true'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const deployed = '${{ steps.phase4.outputs.deployed }}';
+            const latest = '${{ steps.phase4.outputs.latest }}';
+            const commitsBehind = '${{ steps.phase4.outputs.commits_behind }}';
+
+            // Check if issue already exists
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'deployment-drift,phase-4'
+            });
+
+            if (issues.data.length > 0) {
+              console.log('Drift issue already exists, updating...');
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issues.data[0].number,
+                body: `🔄 Updated: Still ${commitsBehind} commits behind (deployed: \`${deployed.substring(0, 8)}\`, latest: \`${latest.substring(0, 8)}\`)`
+              });
+            } else {
+              console.log('Creating new drift issue...');
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: '🚨 Deployment Drift: Phase 4 is ' + commitsBehind + ' commits behind',
+                labels: ['deployment-drift', 'P1', 'phase-4'],
+                body: `## Deployment Drift Detected\n\n**Service**: nba-phase4-precompute-processors\n**Deployed Commit**: \`${deployed}\`\n**Latest Commit**: \`${latest}\`\n**Commits Behind**: ${commitsBehind}\n\n### Impact\n\nThis service may be missing recent bug fixes or features. The Session 77 Vegas line coverage regression was caused by deployment drift.\n\n### Action Required\n\nDeploy the latest code:\n\`\`\`bash\n./bin/deploy-service.sh nba-phase4-precompute-processors\n\`\`\`\n\n### Verification\n\nAfter deployment:\n- [ ] Health check passes: \`curl https://SERVICE_URL/health\`\n- [ ] No error rate increase in logs\n- [ ] Vegas line coverage ≥90%: \`./bin/monitoring/check_vegas_line_coverage.sh\`\n- [ ] Drift resolved: \`./bin/check-deployment-drift.sh\`\n\n### Prevention\n\nThis issue was auto-created by the deployment drift detection workflow, which runs every 6 hours to catch drift early.\n\n**Detection Time**: Within 6 hours of drift occurring\n**Auto-created**: Yes\n**Workflow**: .github/workflows/deployment-drift-detection.yml`
+              });
+            }
+
+      - name: Create Issue for Prediction Worker Drift
+        if: steps.pred_worker.outputs.drift == 'true'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const deployed = '${{ steps.pred_worker.outputs.deployed }}';
+            const latest = '${{ steps.pred_worker.outputs.latest }}';
+            const commitsBehind = '${{ steps.pred_worker.outputs.commits_behind }}';
+
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'deployment-drift,prediction-worker'
+            });
+
+            if (issues.data.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: '🚨 Deployment Drift: Prediction Worker is ' + commitsBehind + ' commits behind',
+                labels: ['deployment-drift', 'P1', 'prediction-worker'],
+                body: `## Deployment Drift Detected\n\n**Service**: prediction-worker\n**Deployed**: \`${deployed}\`\n**Latest**: \`${latest}\`\n**Commits Behind**: ${commitsBehind}\n\n### Action\n\`\`\`bash\n./bin/deploy-service.sh prediction-worker\n\`\`\``
+              });
+            }
+
+      - name: Create Issue for Phase 3 Drift
+        if: steps.phase3.outputs.drift == 'true'
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const deployed = '${{ steps.phase3.outputs.deployed }}';
+            const latest = '${{ steps.phase3.outputs.latest }}';
+            const commitsBehind = '${{ steps.phase3.outputs.commits_behind }}';
+
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'deployment-drift,phase-3'
+            });
+
+            if (issues.data.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: '🚨 Deployment Drift: Phase 3 is ' + commitsBehind + ' commits behind',
+                labels: ['deployment-drift', 'P1', 'phase-3'],
+                body: `## Deployment Drift Detected\n\n**Service**: nba-phase3-analytics-processors\n**Deployed**: \`${deployed}\`\n**Latest**: \`${latest}\`\n**Commits Behind**: ${commitsBehind}\n\n### Action\n\`\`\`bash\n./bin/deploy-service.sh nba-phase3-analytics-processors\n\`\`\``
+              });
+            }
+
+      - name: Summary
+        run: |
+          echo "### Deployment Drift Check Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Service | Status | Commits Behind |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|--------|----------------|" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ steps.phase4.outputs.drift }}" == "true" ]; then
+            echo "| Phase 4 | ❌ DRIFT | ${{ steps.phase4.outputs.commits_behind }} |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Phase 4 | ✅ OK | 0 |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ steps.pred_worker.outputs.drift }}" == "true" ]; then
+            echo "| Prediction Worker | ❌ DRIFT | ${{ steps.pred_worker.outputs.commits_behind }} |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Prediction Worker | ✅ OK | 0 |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ steps.phase3.outputs.drift }}" == "true" ]; then
+            echo "| Phase 3 | ❌ DRIFT | ${{ steps.phase3.outputs.commits_behind }} |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Phase 3 | ✅ OK | 0 |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Fail workflow if critical drift detected
+        if: steps.phase4.outputs.drift == 'true'
+        run: |
+          echo "::error::Critical service (Phase 4) has deployment drift"
+          exit 1
