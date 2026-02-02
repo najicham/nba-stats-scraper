@@ -1,8 +1,8 @@
-# Pre-Game Signals System - Phases 1-3 Implementation Complete
+# Pre-Game Signals System - Phases 1-5 Implementation Complete
 
 **Date**: February 1, 2026
 **Session**: 70-71
-**Status**: ✅ COMPLETE - Ready for production use and A/B testing
+**Status**: ✅ COMPLETE - All phases implemented and deployed
 
 ---
 
@@ -251,32 +251,65 @@ CREATE TABLE `nba-props-platform.nba_predictions.dynamic_subset_definitions` (
 
 ---
 
-## Next Steps (Phase 4+)
+## Phase 4: Automated Signal Calculation ✅ (Session 71)
 
-**NOT implemented yet (future work)**:
+**Implemented**: Signal calculation now runs automatically after batch consolidation.
 
-1. **Automated Signal Calculation**
-   - Trigger after predictions are generated
-   - Store signals automatically in daily_prediction_signals
-   - Currently: Manual INSERT query
+**Components**:
+- `predictions/coordinator/signal_calculator.py` - Utility module
+- Integration in `coordinator.py` (both Firestore and legacy paths)
 
-2. **/subset-performance Skill**
-   - Compare all subsets side-by-side
-   - Statistical significance tests
-   - Trend analysis
+**How It Works**:
+1. Predictions consolidate into main table
+2. Signal calculator runs automatically
+3. Signals stored in `daily_prediction_signals`
+4. No manual intervention needed
 
-3. **Dashboard Integration**
+**Commit**: `257807b9`
+
+---
+
+## Phase 5: /subset-performance Skill ✅ (Session 71)
+
+**Implemented**: Compare subset performance across time periods.
+
+**Usage**:
+```bash
+/subset-performance                    # Last 7 days
+/subset-performance --period 14        # Last 14 days
+/subset-performance --subset v9_high*  # Filter by pattern
+```
+
+**Outputs**:
+- Hit rates by subset
+- ROI estimates
+- Signal effectiveness comparison (GREEN vs RED)
+- Key insights and recommendations
+
+**Files Created**:
+- `.claude/skills/subset-performance/SKILL.md`
+- `.claude/skills/subset-performance/manifest.json`
+
+**Commit**: `257807b9`
+
+---
+
+## Future Work (Phase 6+)
+
+**NOT implemented yet**:
+
+1. **Dashboard Integration**
    - Signal indicator on unified dashboard
    - Subset performance widgets
    - Slack alerts for RED signal days
 
-4. **Additional Signals**
+2. **Additional Signals**
    - Line movement tracking
    - Model agreement (V8+V9 consensus)
    - Back-to-back game factors
    - Per-game signals (vs per-day)
 
-5. **Threshold Tuning**
+3. **Threshold Tuning**
    - Validate 25% and 40% thresholds with more data
    - Consider ROC curve analysis for optimal cutoffs
    - Expand OVER_HEAVY analysis (only 1 day currently)
@@ -286,19 +319,26 @@ CREATE TABLE `nba-props-platform.nba_predictions.dynamic_subset_definitions` (
 ## Files Changed
 
 **BigQuery Tables Created**:
-- `nba_predictions.daily_prediction_signals` (165 rows)
+- `nba_predictions.daily_prediction_signals` (165+ rows)
 - `nba_predictions.dynamic_subset_definitions` (9 rows)
 
 **Skills Added**:
 - `.claude/skills/subset-picks/SKILL.md`
 - `.claude/skills/subset-picks/manifest.json`
+- `.claude/skills/subset-performance/SKILL.md` (Phase 5)
+- `.claude/skills/subset-performance/manifest.json` (Phase 5)
 
 **Skills Modified**:
 - `.claude/skills/validate-daily/SKILL.md` (added Phase 0.5 signal check)
 
+**Coordinator Modified**:
+- `predictions/coordinator/coordinator.py` (auto signal calculation)
+- `predictions/coordinator/signal_calculator.py` (Phase 4 utility)
+
 **Git Commits**:
 1. `2e6f7c70` - Phase 1: Signal infrastructure and validate-daily integration
 2. `99bf7381` - Phases 2+3: Dynamic subsets and /subset-picks skill
+3. `257807b9` - Phases 4+5: Auto signal calculation and /subset-performance skill
 
 ---
 
@@ -323,8 +363,7 @@ CREATE TABLE `nba-props-platform.nba_predictions.dynamic_subset_definitions` (
 1. **Sample Size**: Only 23 days of data for signal validation (Jan 9-31)
 2. **OVER_HEAVY**: Only 1 day in dataset, threshold may need adjustment
 3. **Single Model**: Validated only for catboost_v9 (need to test V8, ensembles)
-4. **Manual Calculation**: Signals not auto-calculated after predictions yet
-5. **No Alerts**: RED signal day warnings not sent proactively (only in /validate-daily)
+4. **No Proactive Alerts**: RED signal day warnings not sent via Slack/email (only in /validate-daily)
 
 ---
 
@@ -353,12 +392,21 @@ Based on historical data (Jan 9-31, 2026):
 
 ---
 
-**Status**: System is production-ready. Begin using `/subset-picks` for daily picks selection and monitor performance across all 9 subsets for A/B testing insights.
+**Status**: System is production-ready and fully automated. All 5 phases complete.
 
-**Next Session**: Monitor signal effectiveness over next 7 days. If signal continues to correlate with performance, consider implementing Phase 4 (automated signal calculation).
+**Available Skills**:
+- `/subset-picks` - Get picks from any subset with signal context
+- `/subset-performance` - Compare subset performance over time
+- `/validate-daily` - Includes signal check in Phase 0.5
+
+**Next Steps**:
+1. Monitor signal effectiveness over next 7-14 days
+2. Validate Feb 1 RED signal (expect ~50-55% hit rate)
+3. Review `/subset-performance` output to identify best-performing subsets
+4. Consider Phase 6 work (dashboard integration, Slack alerts)
 
 ---
 
-*Implemented by: Claude Sonnet 4.5*
+*Implemented by: Claude Sonnet 4.5 (Phases 1-3), Claude Opus 4.5 (Phases 4-5)*
 *Sessions: 70 (design), 71 (implementation)*
 *Date: February 1, 2026*
