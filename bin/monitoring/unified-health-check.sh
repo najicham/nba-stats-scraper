@@ -50,8 +50,8 @@ echo ""
 # Check 1: Vegas Line Coverage
 echo "[1/6] Vegas Line Coverage..."
 if $VERBOSE; then
-    ./bin/monitoring/check_vegas_line_coverage.sh --days 1
-    CHECK_RESULT=$?
+    ./bin/monitoring/check_vegas_line_coverage.sh --days 1 || CHECK_RESULT=$?
+    CHECK_RESULT=${CHECK_RESULT:-0}
 else
     OUTPUT=$(./bin/monitoring/check_vegas_line_coverage.sh --days 1 2>&1) || CHECK_RESULT=$?
     CHECK_RESULT=${CHECK_RESULT:-0}
@@ -59,22 +59,22 @@ fi
 
 if [[ $CHECK_RESULT -eq 0 ]]; then
     echo "✅ PASS"
-    ((PASSED_CHECKS++))
+    PASSED_CHECKS=$((PASSED_CHECKS + 1))
 elif [[ $CHECK_RESULT -eq 1 ]]; then
     echo "🟡 WARNING"
-    if $VERBOSE; then echo "$OUTPUT"; fi
+    if ! $VERBOSE && [[ -n "${OUTPUT:-}" ]]; then echo "$OUTPUT"; fi
 else
     echo "🔴 CRITICAL FAILURE"
-    ((CRITICAL_FAILURES++))
-    if $VERBOSE; then echo "$OUTPUT"; fi
+    CRITICAL_FAILURES=$((CRITICAL_FAILURES + 1))
+    if ! $VERBOSE && [[ -n "${OUTPUT:-}" ]]; then echo "$OUTPUT"; fi
 fi
-((TOTAL_CHECKS++))
+TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
 
 # Check 2: Grading Completeness
 echo "[2/6] Grading Completeness..."
 if $VERBOSE; then
-    ./bin/monitoring/check_grading_completeness.sh --days 3
-    CHECK_RESULT=$?
+    ./bin/monitoring/check_grading_completeness.sh --days 3 || CHECK_RESULT=$?
+    CHECK_RESULT=${CHECK_RESULT:-0}
 else
     OUTPUT=$(./bin/monitoring/check_grading_completeness.sh --days 3 2>&1) || CHECK_RESULT=$?
     CHECK_RESULT=${CHECK_RESULT:-0}
@@ -82,16 +82,16 @@ fi
 
 if [[ $CHECK_RESULT -eq 0 ]]; then
     echo "✅ PASS"
-    ((PASSED_CHECKS++))
+    PASSED_CHECKS=$((PASSED_CHECKS + 1))
 elif [[ $CHECK_RESULT -eq 1 ]]; then
     echo "🟡 WARNING"
-    if $VERBOSE; then echo "$OUTPUT"; fi
+    if ! $VERBOSE && [[ -n "${OUTPUT:-}" ]]; then echo "$OUTPUT"; fi
 else
     echo "🔴 CRITICAL FAILURE"
-    ((CRITICAL_FAILURES++))
-    if $VERBOSE; then echo "$OUTPUT"; fi
+    CRITICAL_FAILURES=$((CRITICAL_FAILURES + 1))
+    if ! $VERBOSE && [[ -n "${OUTPUT:-}" ]]; then echo "$OUTPUT"; fi
 fi
-((TOTAL_CHECKS++))
+TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
 
 # Check 3: Phase 3 Completion (yesterday)
 echo "[3/6] Phase 3 Completion..."
@@ -110,14 +110,14 @@ else:
 
 if [[ $COMPLETE -eq 5 ]]; then
     echo "✅ PASS (5/5)"
-    ((PASSED_CHECKS++))
+    PASSED_CHECKS=$((PASSED_CHECKS + 1))
 elif [[ $COMPLETE -ge 3 ]]; then
     echo "🟡 WARNING ($COMPLETE/5)"
 else
     echo "🔴 CRITICAL FAILURE ($COMPLETE/5)"
-    ((CRITICAL_FAILURES++))
+    CRITICAL_FAILURES=$((CRITICAL_FAILURES + 1))
 fi
-((TOTAL_CHECKS++))
+TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
 
 # Check 4: Recent Predictions (today)
 echo "[4/6] Recent Predictions..."
@@ -127,14 +127,14 @@ PRED_COUNT=$(bq query --use_legacy_sql=false --format=csv --quiet \
 
 if [[ $PRED_COUNT -gt 100 ]]; then
     echo "✅ PASS ($PRED_COUNT predictions)"
-    ((PASSED_CHECKS++))
+    PASSED_CHECKS=$((PASSED_CHECKS + 1))
 elif [[ $PRED_COUNT -gt 50 ]]; then
     echo "🟡 WARNING ($PRED_COUNT predictions - expected >100)"
 else
     echo "🔴 CRITICAL FAILURE ($PRED_COUNT predictions)"
-    ((CRITICAL_FAILURES++))
+    CRITICAL_FAILURES=$((CRITICAL_FAILURES + 1))
 fi
-((TOTAL_CHECKS++))
+TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
 
 # Check 5: BDB Coverage (yesterday)
 echo "[5/6] BDB Play-by-Play Coverage..."
@@ -148,34 +148,36 @@ BDB_COV=$(bq query --use_legacy_sql=false --format=csv --quiet \
      FROM nba_raw.bigdataball_play_by_play
      WHERE game_date = CURRENT_DATE() - 1
    )
-   SELECT ROUND(100.0 * COALESCE(has_bdb, 0) / NULLIF(total, 0), 0) FROM schedule, bdb" 2>/dev/null | tail -1 || echo "0")
+   SELECT CAST(ROUND(100.0 * COALESCE(has_bdb, 0) / NULLIF(total, 0), 0) AS INT64) FROM schedule, bdb" 2>/dev/null | tail -1 || echo "0")
 
 # Handle NULL/empty result
 BDB_COV=${BDB_COV:-0}
+# Remove any decimal point that might slip through
+BDB_COV=${BDB_COV%.*}
 
 if [[ $BDB_COV -ge 90 ]]; then
     echo "✅ PASS ($BDB_COV%)"
-    ((PASSED_CHECKS++))
+    PASSED_CHECKS=$((PASSED_CHECKS + 1))
 elif [[ $BDB_COV -ge 50 ]]; then
     echo "🟡 WARNING ($BDB_COV%)"
 else
     echo "🔴 CRITICAL FAILURE ($BDB_COV%)"
-    ((CRITICAL_FAILURES++))
+    CRITICAL_FAILURES=$((CRITICAL_FAILURES + 1))
 fi
-((TOTAL_CHECKS++))
+TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
 
 # Check 6: Deployment Drift
 echo "[6/6] Deployment Drift..."
 if ./bin/check-deployment-drift.sh > /dev/null 2>&1; then
     echo "✅ PASS"
-    ((PASSED_CHECKS++))
+    PASSED_CHECKS=$((PASSED_CHECKS + 1))
 else
     echo "🟡 WARNING (some services out of date)"
     if $VERBOSE; then
         ./bin/check-deployment-drift.sh
     fi
 fi
-((TOTAL_CHECKS++))
+TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
 
 # Calculate health score
 HEALTH_SCORE=$((100 * PASSED_CHECKS / TOTAL_CHECKS))
