@@ -67,6 +67,14 @@ from shared.validation.historical_completeness import (
 # Configure logging
 logger = logging.getLogger(__name__)
 
+# Session 97: Phase 4 Completion Gate
+# Minimum records required to consider Phase 4 "complete" for a game date
+# Lower threshold for dates with few games (e.g., 4 games = ~100 players)
+PHASE4_MINIMUM_RECORDS = 50
+# Maximum data staleness for SAME-DAY processing (hours)
+# For historical dates, we only check existence, not staleness
+PHASE4_MAX_STALENESS_HOURS = 6
+
 # Feature version and names
 # v2_33features: Added 8 new features for V8 CatBoost model (Jan 2026)
 # - Vegas lines (4): betting context for value detection
@@ -557,7 +565,109 @@ class MLFeatureStoreProcessor(
                 'critical': True
             }
         }
-    
+
+    # ========================================================================
+    # SESSION 97: PHASE 4 COMPLETION GATE
+    # ========================================================================
+
+    def _check_phase4_completion_gate(self, analysis_date: str) -> tuple:
+        """
+        Verify Phase 4 data exists and is fresh before generating features.
+
+        This gate prevents the Feb 2 issue (Session 96) where ML Feature Store
+        ran BEFORE Phase 4 completed, causing predictions to use stale/default
+        feature values (40 points instead of 100 points), resulting in 49.1% hit rate.
+
+        Checks:
+        1. player_daily_cache has sufficient records for the game_date
+        2. player_composite_factors has sufficient records for the game_date
+        3. For same-day processing: Data freshness within PHASE4_MAX_STALENESS_HOURS
+        4. For historical processing: Only check data existence (staleness OK)
+
+        Args:
+            analysis_date: Target game date (YYYY-MM-DD)
+
+        Returns:
+            tuple: (is_complete: bool, details: str)
+        """
+        try:
+            from datetime import date as date_type
+
+            # Parse analysis_date
+            if isinstance(analysis_date, str):
+                target_date = date_type.fromisoformat(analysis_date)
+            else:
+                target_date = analysis_date
+
+            today = date_type.today()
+            is_same_day = (target_date == today)
+
+            query = f"""
+            WITH cache_check AS (
+                SELECT
+                    COUNT(*) as records,
+                    MAX(created_at) as last_created
+                FROM `{self.project_id}.nba_precompute.player_daily_cache`
+                WHERE cache_date = DATE('{analysis_date}')
+            ),
+            composite_check AS (
+                SELECT
+                    COUNT(*) as records,
+                    MAX(created_at) as last_created
+                FROM `{self.project_id}.nba_precompute.player_composite_factors`
+                WHERE game_date = DATE('{analysis_date}')
+            )
+            SELECT
+                c.records as cache_records,
+                c.last_created as cache_created,
+                TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), c.last_created, HOUR) as cache_hours_old,
+                f.records as composite_records,
+                f.last_created as composite_created,
+                TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), f.last_created, HOUR) as composite_hours_old
+            FROM cache_check c, composite_check f
+            """
+
+            result = self.bq_client.query(query).result()
+            row = next(iter(result), None)
+
+            if not row:
+                return False, "Query returned no results"
+
+            cache_records = row.cache_records or 0
+            composite_records = row.composite_records or 0
+            cache_hours = row.cache_hours_old
+            composite_hours = row.composite_hours_old
+
+            issues = []
+
+            # Check record counts (always required)
+            if cache_records < PHASE4_MINIMUM_RECORDS:
+                issues.append(f"player_daily_cache: {cache_records} records (need {PHASE4_MINIMUM_RECORDS}+)")
+            if composite_records < PHASE4_MINIMUM_RECORDS:
+                issues.append(f"player_composite_factors: {composite_records} records (need {PHASE4_MINIMUM_RECORDS}+)")
+
+            # Check data freshness ONLY for same-day processing
+            # For historical dates, data existence is sufficient
+            if is_same_day:
+                if cache_hours is not None and cache_hours > PHASE4_MAX_STALENESS_HOURS:
+                    issues.append(f"player_daily_cache is {cache_hours}h old (max {PHASE4_MAX_STALENESS_HOURS}h for same-day)")
+                if composite_hours is not None and composite_hours > PHASE4_MAX_STALENESS_HOURS:
+                    issues.append(f"player_composite_factors is {composite_hours}h old (max {PHASE4_MAX_STALENESS_HOURS}h for same-day)")
+
+            if issues:
+                return False, "; ".join(issues)
+
+            mode = "same-day" if is_same_day else "historical"
+            details = (
+                f"[{mode}] cache={cache_records} records ({cache_hours}h old), "
+                f"composite={composite_records} records ({composite_hours}h old)"
+            )
+            return True, details
+
+        except Exception as e:
+            logger.error(f"Error checking Phase 4 completion: {e}")
+            return False, f"Error: {str(e)}"
+
     # ========================================================================
     # DATA EXTRACTION
     # ========================================================================
@@ -612,6 +722,25 @@ class MLFeatureStoreProcessor(
         # (Already checked by base class, but we log stale data warning here for MLFS-specific context)
         if self.missing_dependencies_list:
             logger.warning(f"Stale Phase 4 data detected (from base class check)")
+
+        # Session 97: Phase 4 Completion Gate
+        # Verify Phase 4 data exists and is fresh before proceeding
+        # This prevents using stale features that caused Feb 2 49.1% hit rate
+        # Skip gate in backfill mode - backfill is explicitly for reprocessing with existing data
+        if self.is_backfill_mode:
+            logger.info(f"SESSION 97 QUALITY_GATE SKIPPED: Backfill mode - Phase 4 data assumed present")
+        else:
+            phase4_complete, phase4_details = self._check_phase4_completion_gate(analysis_date)
+            if not phase4_complete:
+                error_msg = (
+                    f"SESSION 97 QUALITY_GATE FAILED: Phase 4 incomplete for {analysis_date}. "
+                    f"Details: {phase4_details}. "
+                    f"ML Feature Store should NOT run until Phase 4 completes."
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg)
+            else:
+                logger.info(f"SESSION 97 QUALITY_GATE PASSED: Phase 4 complete for {analysis_date}. {phase4_details}")
 
         # Get players with games today
         # v3.3: In backfill mode, query actual played roster instead of expected roster

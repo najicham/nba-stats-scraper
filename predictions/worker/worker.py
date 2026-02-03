@@ -1764,6 +1764,7 @@ def format_prediction_for_bigquery(
             'ppm_avg_last_10': features.get('ppm_avg_last_10'),
             'avg_points_vs_opponent': features.get('avg_points_vs_opponent'),
             'team_win_pct': features.get('team_win_pct'),
+        }),
 
         # Session 67: Full feature snapshot for ALL predictions (not just CatBoost)
         # Enables debugging and reproducibility for any prediction system
@@ -1782,12 +1783,16 @@ def format_prediction_for_bigquery(
             'back_to_back': features.get('back_to_back'),
             'home_away': features.get('home_away'),
             'feature_version': features.get('feature_version'),
-            'feature_quality_score': features.get('feature_quality_score'),
-        }),
             'pace_score': features.get('pace_score'),
             'usage_spike_score': features.get('usage_spike_score'),
             'feature_quality_score': features.get('feature_quality_score'),
         }),
+
+        # Session 97: Feature quality tracking - enables filtering predictions by data quality
+        # feature_quality_score: 0-100 score based on data completeness from ml_feature_store_v2
+        # low_quality_flag: True if quality < 70% (predictions made with incomplete data)
+        'feature_quality_score': features.get('feature_quality_score'),
+        'low_quality_flag': features.get('feature_quality_score', 100) < 70,  # True if quality < 70%
     }
 
     # Add system-specific fields
