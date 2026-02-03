@@ -1037,27 +1037,12 @@ class FeatureExtractor:
         # Check if batch cache is available for this date
         use_batch = (self._batch_cache_date == game_date)
 
-        # Debug: Show cache status for first few players
-        if not hasattr(self, '_debug_cache_logged'):
-            self._debug_cache_logged = True
-            logger.warning(f"DEBUG_CACHE: batch_cache_date={self._batch_cache_date} (type={type(self._batch_cache_date)})")
-            logger.warning(f"DEBUG_CACHE: game_date={game_date} (type={type(game_date)})")
-            logger.warning(f"DEBUG_CACHE: use_batch={use_batch}")
-            logger.warning(f"DEBUG_CACHE: composite_factors_lookup has {len(self._composite_factors_lookup)} entries")
-
         if use_batch:
             # Use batch cache (O(1) lookups - no BQ queries!)
             cache_data = self._daily_cache_lookup.get(player_lookup, {})
             phase4_data.update(cache_data)
 
             composite_data = self._composite_factors_lookup.get(player_lookup, {})
-            # Debug: Check if composite_data has the expected fields
-            if not hasattr(self, '_debug_composite_logged_count'):
-                self._debug_composite_logged_count = 0
-            if self._debug_composite_logged_count < 5:
-                self._debug_composite_logged_count += 1
-                fatigue_value = composite_data.get('fatigue_score')
-                logger.warning(f"DEBUG_COMPOSITE: player={player_lookup}, fatigue_value={fatigue_value}, type={type(fatigue_value)}")
             phase4_data.update(composite_data)
 
             shot_zone_data = self._shot_zone_lookup.get(player_lookup, {})
@@ -1066,11 +1051,6 @@ class FeatureExtractor:
             if opponent_team_abbr:
                 team_defense_data = self._team_defense_lookup.get(opponent_team_abbr, {})
                 phase4_data.update(team_defense_data)
-
-            # Debug: Check what's in phase4_data AFTER all updates
-            if self._debug_composite_logged_count <= 5:
-                fatigue_in_final = phase4_data.get('fatigue_score')
-                logger.warning(f"DEBUG_PHASE4_FINAL: player={player_lookup}, fatigue_in_phase4_data={fatigue_in_final}")
         else:
             # Fall back to per-player queries (slow but works without batch)
             logger.debug(f"Extracting Phase 4 data for {player_lookup} on {game_date} (no batch cache)")

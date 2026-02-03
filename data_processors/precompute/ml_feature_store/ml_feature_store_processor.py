@@ -1748,22 +1748,8 @@ class MLFeatureStoreProcessor(
         Returns:
             float: Feature value
         """
-        # Debug: Check what's in phase4_data for fatigue_score (first 5 calls only)
-        if field_name == 'fatigue_score':
-            if not hasattr(self, '_debug_phase4_only_count'):
-                self._debug_phase4_only_count = 0
-            if self._debug_phase4_only_count < 5:
-                self._debug_phase4_only_count += 1
-                has_field = field_name in phase4_data
-                field_value = phase4_data.get(field_name)
-                all_keys = list(phase4_data.keys())[:10]
-                logger.warning(f"DEBUG_GET_FEATURE: field={field_name}, has_field={has_field}, value={field_value}, keys={all_keys}")
-
         if field_name in phase4_data and phase4_data[field_name] is not None:
             feature_sources[index] = 'phase4'
-            # Debug: Confirm we're returning phase4 value (first 5 times for fatigue_score)
-            if field_name == 'fatigue_score' and hasattr(self, '_debug_phase4_only_count') and self._debug_phase4_only_count <= 5:
-                logger.warning(f"DEBUG_PHASE4_RETURN: Returning phase4 value {phase4_data[field_name]} for {field_name}")
             return float(phase4_data[field_name])
 
         # No Phase 3 fallback - use default
