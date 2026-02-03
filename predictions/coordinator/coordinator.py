@@ -28,7 +28,7 @@ import secrets
 import threading
 import uuid
 from typing import Dict, List, Optional, TYPE_CHECKING
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import base64
 import time
 
@@ -991,6 +991,36 @@ def start_prediction_batch():
         except Exception as e:
             # Don't fail the batch if run history logging fails
             logger.warning(f"Failed to log batch start (non-fatal): {e}")
+
+        # =========================================================================
+        # ANALYTICS QUALITY CHECK (Session 96)
+        # Check analytics data quality (usage_rate, minutes) before making predictions
+        # This catches issues like Feb 2 where usage_rate was 0% for all games
+        # =========================================================================
+        try:
+            from predictions.coordinator.quality_gate import AnalyticsQualityGate
+
+            analytics_gate = AnalyticsQualityGate(project_id=PROJECT_ID, dataset_prefix=dataset_prefix)
+
+            # Check yesterday's data quality (the data we're using to make predictions)
+            yesterday = game_date - timedelta(days=1)
+            analytics_quality = analytics_gate.check_analytics_quality(yesterday)
+
+            if not analytics_quality.passes_threshold:
+                # Log critical warning but don't block (alerting is separate)
+                logger.warning(
+                    f"ANALYTICS_QUALITY_GATE: Data quality issues detected for {yesterday}: "
+                    f"{analytics_quality.issues}"
+                )
+            else:
+                logger.info(
+                    f"ANALYTICS_QUALITY_GATE: Data quality OK for {yesterday}: "
+                    f"usage_rate={analytics_quality.usage_rate_coverage_pct}%, "
+                    f"minutes={analytics_quality.minutes_coverage_pct}%"
+                )
+        except Exception as e:
+            # Don't block predictions if quality check fails
+            logger.warning(f"Failed to check analytics quality (non-fatal): {e}")
 
         # =========================================================================
         # QUALITY GATE: "Predict Once, Never Replace" (Session 95)

@@ -248,6 +248,33 @@ Create at `docs/09-handoff/YYYY-MM-DD-SESSION-N-HANDOFF.md`:
 [Prioritized TODO]
 ```
 
+## End of Session Checklist
+
+**CRITICAL:** Before ending any session where code was changed:
+
+```bash
+# 1. Check deployment drift
+./bin/check-deployment-drift.sh --verbose
+
+# 2. Deploy stale services (if any)
+./bin/deploy-service.sh <service-name>
+
+# 3. Verify deployments
+./bin/whats-deployed.sh
+
+# 4. Create handoff document
+```
+
+**Why this matters:** Sessions 64, 81, 82, and 97 had fixes committed but not deployed, causing recurring issues. Deployment drift is the #1 cause of "already fixed" bugs reappearing.
+
+| If you changed... | Deploy... |
+|-------------------|-----------|
+| `predictions/worker/` | `prediction-worker` |
+| `predictions/coordinator/` | `prediction-coordinator` |
+| `data_processors/analytics/` | `nba-phase3-analytics-processors` |
+| `data_processors/precompute/` | `nba-phase4-precompute-processors` |
+| `shared/` | ALL services that use shared code |
+
 ## Conventions
 
 ### Commit Messages

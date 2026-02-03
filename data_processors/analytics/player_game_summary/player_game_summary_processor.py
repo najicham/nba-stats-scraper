@@ -33,6 +33,7 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
+from google.api_core.exceptions import NotFound
 from data_processors.analytics.analytics_base import AnalyticsProcessorBase
 from shared.utils.notification_system import notify_error, notify_warning, notify_info
 
@@ -1362,18 +1363,70 @@ class PlayerGameSummaryProcessor(
             return None
     
     def get_analytics_stats(self) -> Dict:
-        """Return processing stats for monitoring."""
+        """Return processing stats for monitoring including data quality metrics."""
         if not self.transformed_data:
             return {}
 
         stats = self.registry_handler.get_stats() if self._registry_handler else {}
+
+        # Calculate data quality metrics from transformed data (Session 96)
+        quality_metrics = self._calculate_quality_metrics()
+
         return {
             'records_processed': len(self.transformed_data),
             **stats,
             'source_nbac_completeness': getattr(self, 'source_nbac_completeness_pct', None),
             'source_bdl_completeness': getattr(self, 'source_bdl_completeness_pct', None),
-            'source_odds_completeness': getattr(self, 'source_odds_completeness_pct', None)
+            'source_odds_completeness': getattr(self, 'source_odds_completeness_pct', None),
+            **quality_metrics
         }
+
+    def _calculate_quality_metrics(self) -> Dict:
+        """
+        Calculate data quality metrics from transformed data (Session 96).
+
+        Returns metrics about usage_rate and minutes coverage which are
+        critical for ML feature quality downstream.
+        """
+        if not self.transformed_data:
+            return {}
+
+        try:
+            import pandas as pd
+
+            df = pd.DataFrame(self.transformed_data)
+            if df.empty:
+                return {}
+
+            # Filter to active players only (exclude DNPs)
+            active_df = df[df.get('is_dnp', True) == False] if 'is_dnp' in df.columns else df
+
+            total_active = len(active_df)
+            if total_active == 0:
+                return {'quality_total_active': 0, 'quality_usage_rate_pct': 0, 'quality_minutes_pct': 0}
+
+            # Count players with usage_rate
+            has_usage_rate = active_df['usage_rate'].notna().sum() if 'usage_rate' in active_df.columns else 0
+            usage_rate_pct = round(100.0 * has_usage_rate / total_active, 1)
+
+            # Count players with minutes
+            has_minutes = (active_df['minutes_played'].notna() & (active_df['minutes_played'] > 0)).sum() if 'minutes_played' in active_df.columns else 0
+            minutes_pct = round(100.0 * has_minutes / total_active, 1)
+
+            # Per-game breakdown for detailed logging
+            game_count = df['game_id'].nunique() if 'game_id' in df.columns else 0
+
+            return {
+                'quality_total_active': total_active,
+                'quality_has_usage_rate': int(has_usage_rate),
+                'quality_usage_rate_pct': usage_rate_pct,
+                'quality_has_minutes': int(has_minutes),
+                'quality_minutes_pct': minutes_pct,
+                'quality_game_count': game_count,
+            }
+        except Exception as e:
+            logger.warning(f"Failed to calculate quality metrics: {e}")
+            return {}
 
     def save_registry_failures(self, failures: List[Dict]) -> None:
         """
@@ -1404,6 +1457,12 @@ class PlayerGameSummaryProcessor(
 
         stats = self.get_analytics_stats()
 
+        # Check data quality and alert if issues (Session 96)
+        self._check_and_alert_quality(stats)
+
+        # Write quality metrics to tracking table (Session 96)
+        self._write_quality_metrics(stats)
+
         try:
             notify_info(
                 title="Player Game Summary: Complete",
@@ -1417,6 +1476,107 @@ class PlayerGameSummaryProcessor(
             )
         except Exception as e:
             logger.warning(f"Failed to send notification: {e}")
+
+    def _check_and_alert_quality(self, stats: Dict) -> None:
+        """
+        Check data quality metrics and send alerts if below thresholds (Session 96).
+
+        Thresholds:
+        - CRITICAL: usage_rate < 50% (should block predictions)
+        - WARNING: usage_rate < 80% (degraded quality)
+        """
+        CRITICAL_THRESHOLD = 50.0
+        WARNING_THRESHOLD = 80.0
+
+        usage_rate_pct = stats.get('quality_usage_rate_pct', 100.0)
+        minutes_pct = stats.get('quality_minutes_pct', 100.0)
+        game_count = stats.get('quality_game_count', 0)
+
+        # Skip if no games processed
+        if game_count == 0:
+            return
+
+        issues = []
+
+        # Check usage_rate coverage
+        if usage_rate_pct < CRITICAL_THRESHOLD:
+            issues.append(f"CRITICAL: usage_rate coverage {usage_rate_pct}% < {CRITICAL_THRESHOLD}%")
+        elif usage_rate_pct < WARNING_THRESHOLD:
+            issues.append(f"WARNING: usage_rate coverage {usage_rate_pct}% < {WARNING_THRESHOLD}%")
+
+        # Check minutes coverage
+        if minutes_pct < 80.0:
+            issues.append(f"WARNING: minutes coverage {minutes_pct}% < 80%")
+
+        if issues:
+            severity = "CRITICAL" if usage_rate_pct < CRITICAL_THRESHOLD else "WARNING"
+            logger.warning(
+                f"DATA_QUALITY_{severity}: {', '.join(issues)} | "
+                f"games={game_count}, active={stats.get('quality_total_active', 0)}"
+            )
+
+            # Send Slack alert for critical issues
+            if usage_rate_pct < CRITICAL_THRESHOLD:
+                try:
+                    notify_warning(
+                        title=f"Player Game Summary: Data Quality {severity}",
+                        message=f"usage_rate coverage is {usage_rate_pct}% (threshold: {CRITICAL_THRESHOLD}%)",
+                        details={
+                            'processor': 'player_game_summary',
+                            'date_range': f"{self.opts.get('start_date')} to {self.opts.get('end_date')}",
+                            'issues': issues,
+                            'usage_rate_pct': usage_rate_pct,
+                            'minutes_pct': minutes_pct,
+                            'game_count': game_count,
+                            'total_active': stats.get('quality_total_active', 0),
+                        },
+                        processor_name=self.__class__.__name__
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to send quality alert: {e}")
+        else:
+            logger.info(
+                f"DATA_QUALITY_OK: usage_rate={usage_rate_pct}%, minutes={minutes_pct}%, "
+                f"games={game_count}, active={stats.get('quality_total_active', 0)}"
+            )
+
+    def _write_quality_metrics(self, stats: Dict) -> None:
+        """
+        Write quality metrics to tracking table for historical analysis (Session 96).
+
+        Table: nba_analytics.data_quality_history
+        """
+        try:
+            # Build quality record
+            record = {
+                'check_timestamp': datetime.now(timezone.utc).isoformat(),
+                'check_date': self.opts.get('end_date', self.opts.get('start_date')),
+                'processor': 'player_game_summary',
+                'game_count': stats.get('quality_game_count', 0),
+                'total_active_players': stats.get('quality_total_active', 0),
+                'usage_rate_coverage_pct': stats.get('quality_usage_rate_pct', 0),
+                'minutes_coverage_pct': stats.get('quality_minutes_pct', 0),
+                'records_processed': stats.get('records_processed', 0),
+                'run_id': getattr(self, 'run_id', None),
+            }
+
+            # Write to BigQuery (create table if not exists)
+            table_id = f"{self.project_id}.nba_analytics.data_quality_history"
+
+            try:
+                errors = self.bq_client.insert_rows_json(table_id, [record])
+                if errors:
+                    logger.warning(f"Failed to write quality metrics: {errors}")
+                else:
+                    logger.debug(f"Wrote quality metrics to {table_id}")
+            except NotFound:
+                # Table doesn't exist yet - log but don't fail
+                logger.info(f"Quality history table {table_id} not found - skipping metrics write")
+            except Exception as e:
+                logger.warning(f"Failed to write quality metrics: {e}")
+
+        except Exception as e:
+            logger.warning(f"Failed to build quality metrics record: {e}")
 
     def _validate_analytics_player_counts(self) -> None:
         """
