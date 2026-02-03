@@ -287,7 +287,8 @@ class ExecutionLogger:
                 'game_id': game_id,
                 # REQUIRED: REPEATED fields cannot be NULL in BigQuery
                 # Convert any falsy value (None, [], "") to empty list
-                'line_values_requested': [float(v) for v in line_values_requested] if line_values_requested else [],
+                # Also filter out None values inside the list (Session 94 fix)
+                'line_values_requested': [float(v) for v in line_values_requested if v is not None] if line_values_requested else [],
 
                 # Execution results
                 'success': success,
