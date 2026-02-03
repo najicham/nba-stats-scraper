@@ -344,20 +344,24 @@ class PlayerGameSummaryProcessor(
 
     def _check_team_stats_available(self, start_date: str, end_date: str) -> tuple[bool, int]:
         """
-        Check if team_offense_game_summary has data for the target dates.
+        Check team_offense_game_summary data availability (INFORMATIONAL ONLY).
 
-        This prevents NULL usage_rate by ensuring team stats exist before
-        player_game_summary calculates usage_rate (Bug #2 fix, 2026-01-27).
+        Session 96 Update: This method is now for MONITORING only, not a gate.
+        usage_rate is calculated per-game based on whether THAT game has team stats.
+        A global threshold no longer blocks all usage_rate calculations.
 
-        Compares actual team-game count against expected count from the NBA
-        schedule. This handles light game days (1-4 games) correctly.
+        Previous behavior (Bug #2 fix, 2026-01-27): Used as a global gate that
+        blocked ALL usage_rate calculations if threshold wasn't met.
+
+        Current behavior (Session 96): Returns availability info for logging/alerts,
+        but usage_rate is calculated per-game regardless of this threshold.
 
         Args:
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
 
         Returns:
-            (is_available, record_count)
+            (meets_threshold, record_count) - For monitoring purposes only
         """
         # Get actual team-game count from team_offense_game_summary
         query = f"""
@@ -702,18 +706,20 @@ class PlayerGameSummaryProcessor(
         # Base class calls check_dependencies() and track_source_usage()
         # before calling this method, so all source_* attributes are populated.
 
-        # TEAM STATS AVAILABILITY CHECK (2026-01-27: Bug #2 fix)
-        # Check if team stats exist before processing to prevent NULL usage_rate
+        # TEAM STATS AVAILABILITY CHECK (Informational only - Session 96)
+        # This check is now for MONITORING purposes, not a gate.
+        # usage_rate is calculated per-game based on whether THAT game has team stats.
+        # A global threshold no longer blocks all calculations.
         team_stats_available, team_stats_count = self._check_team_stats_available(start_date, end_date)
-        self._team_stats_available = team_stats_available
+        self._team_stats_available = team_stats_available  # Keep for backward compat, but not used as gate
 
         if not team_stats_available:
-            # Log and track for monitoring
+            # Log for monitoring - but processing continues per-game
             self.track_source_coverage_event(
                 event_type=SourceCoverageEventType.DEPENDENCY_STALE,
                 severity=SourceCoverageSeverity.WARNING,
                 source='team_offense_game_summary',
-                message=f"Team stats not available, usage_rate will be NULL",
+                message=f"Team stats below threshold - some games may have NULL usage_rate",
                 details={'team_stats_count': team_stats_count}
             )
 
@@ -1693,13 +1699,17 @@ class PlayerGameSummaryProcessor(
                     if total_shots > 0:
                         ts_pct = row['points'] / (2 * total_shots)
 
-            # Calculate usage_rate (requires team stats)
-            # Only calculate if team stats were available at processing time (Bug #2 fix)
+            # Calculate usage_rate (requires team stats for THIS game)
+            # Session 96: Changed from global threshold to per-game calculation
+            # If team stats exist for THIS game (via JOIN), calculate usage_rate
+            # If not, leave NULL only for this game's players (not ALL players)
             usage_rate = None
-            if (self._team_stats_available and
+            has_team_stats_for_game = (
                 pd.notna(row.get('team_fg_attempts')) and
                 pd.notna(row.get('team_ft_attempts')) and
-                pd.notna(row.get('team_turnovers')) and
+                pd.notna(row.get('team_turnovers'))
+            )
+            if (has_team_stats_for_game and
                 pd.notna(row['field_goals_attempted']) and
                 pd.notna(row['turnovers']) and
                 minutes_decimal and minutes_decimal > 0):
@@ -1847,8 +1857,9 @@ class PlayerGameSummaryProcessor(
 
                 # Data lineage integrity (2026-01-27)
                 'processing_context': self._determine_processing_context(),
-                'data_quality_flag': 'complete' if (usage_rate is not None and self._team_stats_available) else ('partial_no_team_stats' if not self._team_stats_available else 'partial'),
-                'team_stats_available_at_processing': self._team_stats_available,
+                # Session 96: data_quality_flag now per-game based on whether THIS game has team stats
+                'data_quality_flag': 'complete' if (usage_rate is not None and has_team_stats_for_game) else ('partial_no_team_stats' if not has_team_stats_for_game else 'partial'),
+                'team_stats_available_at_processing': has_team_stats_for_game,  # Per-game, not global
 
                 # Shot zone completeness tracking (2026-01-31)
                 # Tracks if all three zones have data from same PBP source (not mixed with box score)
@@ -2308,13 +2319,15 @@ class PlayerGameSummaryProcessor(
                         if total_shots > 0:
                             ts_pct = row['points'] / (2 * total_shots)
 
-                # Calculate usage_rate (requires team stats)
-                # Only calculate if team stats were available at processing time (Bug #2 fix)
+                # Calculate usage_rate (requires team stats for THIS game)
+                # Session 96: Changed from global threshold to per-game calculation
                 usage_rate = None
-                if (self._team_stats_available and
+                has_team_stats_for_game = (
                     pd.notna(row.get('team_fg_attempts')) and
                     pd.notna(row.get('team_ft_attempts')) and
-                    pd.notna(row.get('team_turnovers')) and
+                    pd.notna(row.get('team_turnovers'))
+                )
+                if (has_team_stats_for_game and
                     pd.notna(row['field_goals_attempted']) and
                     pd.notna(row['turnovers']) and
                     minutes_decimal and minutes_decimal > 0):
@@ -2436,8 +2449,9 @@ class PlayerGameSummaryProcessor(
 
                     # Data lineage integrity (2026-01-27)
                     'processing_context': self._determine_processing_context(),
-                    'data_quality_flag': 'complete' if (usage_rate is not None and self._team_stats_available) else ('partial_no_team_stats' if not self._team_stats_available else 'partial'),
-                    'team_stats_available_at_processing': self._team_stats_available,
+                    # Session 96: data_quality_flag now per-game based on whether THIS game has team stats
+                    'data_quality_flag': 'complete' if (usage_rate is not None and has_team_stats_for_game) else ('partial_no_team_stats' if not has_team_stats_for_game else 'partial'),
+                    'team_stats_available_at_processing': has_team_stats_for_game,  # Per-game, not global
 
                     # Shot zone completeness tracking (2026-01-31)
                     # Tracks if all three zones have data from same PBP source (not mixed with box score)
