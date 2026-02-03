@@ -149,6 +149,63 @@ WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v9'"
 2. **Check Hit Rate Trends** - After games complete, verify prediction quality
 3. **RED Signal Follow-up** - Track actual results vs RED signal warning
 
-## No Outstanding Issues
+## Phase 3 Orchestration Investigation (Session 105 Continued)
 
-All Session 104 fixes deployed. All services up to date. No deployment drift.
+### Issue Discovered
+
+`/validate-daily` showed Phase 3 incomplete (1/5 processors). Investigation found:
+
+**Data flows correctly, but Firestore tracking is incomplete.**
+
+### Key Findings
+
+1. **`upcoming_team_game_context` has data but no completion recorded:**
+   - 20 records created at 17:50:13 for game_date 2026-02-03
+   - NO entry in `nba_orchestration.phase_completions`
+   - NO entry in Firestore `phase3_completion/2026-02-03`
+
+2. **Different processor types:**
+   | Processor | Type | For 2026-02-03 |
+   |-----------|------|----------------|
+   | player_game_summary | Completed games | N/A - games not played yet |
+   | team_offense/defense | Completed games | N/A |
+   | upcoming_player_game_context | Upcoming games | ✅ 339 records + completion |
+   | upcoming_team_game_context | Upcoming games | ❌ 20 records, NO completion |
+
+3. **Pipeline still works despite tracking issue:**
+   - Phase 4 ml_feature_store_v2: 236 records for 2026-02-04
+   - Predictions: 1909 for 2026-02-03
+   - Phase 4 triggers through alternative mechanism
+
+### Likely Causes
+
+1. Manual run with `skip_downstream_trigger=True`
+2. Completion publishing failed silently after data write
+3. No Phase 2 trigger from `nbac_schedule` processor
+
+### Impact
+
+- **Data flow:** ✅ Working
+- **Monitoring:** ⚠️ `/validate-daily` shows false incomplete
+- **Alerting:** ⚠️ Phase completion alerts may be missing
+
+### Next Steps for Investigation
+
+1. Check if `nbac_schedule` scraper publishes completions
+2. Add logging to `_publish_completion_message()` in analytics_base.py
+3. Consider fallback trigger for Phase 4 (time-based or reduced quorum)
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| data_processors/analytics/analytics_base.py:1463 | `_publish_completion_message()` |
+| data_processors/analytics/main_analytics_service.py:703 | `skip_downstream_trigger` handling |
+| orchestration/cloud_functions/phase3_to_phase4/main.py | Firestore orchestrator |
+
+---
+
+## No Outstanding Critical Issues
+
+All Session 104 fixes deployed. Data pipeline working correctly.
+Low-priority: Phase 3 Firestore tracking incomplete (investigation findings above).
