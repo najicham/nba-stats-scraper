@@ -131,11 +131,14 @@ nba-stats-scraper/
 | System ID | `catboost_v9` |
 | Training | Current season only (Nov 2025+) |
 | Features | 33 (same as V8) |
-| Premium Hit Rate | 56.5% |
-| High-Edge Hit Rate | 72.2% |
+| **Medium Quality (3+ edge)** | **65.0% hit rate, +24.0% ROI** ✅ **RECOMMENDED** |
+| **High Quality (5+ edge)** | **79.0% hit rate, +50.9% ROI** ✅ |
+| All Bets (no filter) | 54.7% hit rate, +4.5% ROI ⚠️ |
 | MAE | 4.82 |
 
 **Why V9?** V8's 84% hit rate was fake due to data leakage (Session 66). V9 is trained on clean, current season data only.
+
+**CRITICAL (Session 81):** Use edge >= 3 filter for profitable betting. 73% of predictions have edge < 3 and lose money.
 
 ### Model Version Control
 
@@ -324,12 +327,21 @@ GROUP BY 1, 2
 
 ### Hit Rate Measurement (IMPORTANT)
 
-**Always use these two standard filters when reporting hit rates:**
+**CRITICAL (Session 81):** Always exclude PASS recommendations (non-bets) from hit rate calculations!
 
-| Filter Name | Definition | Use Case |
-|-------------|------------|----------|
-| **Premium Picks** | `confidence_score >= 0.92 AND ABS(predicted_points - line_value) >= 3` | Highest hit rate, fewer bets |
-| **High Edge Picks** | `ABS(predicted_points - line_value) >= 5` (any confidence) | Larger sample size |
+**Standard quality tiers by EDGE (Session 81 finding: confidence doesn't predict profitability):**
+
+| Tier | Definition | Hit Rate | ROI | Use Case |
+|------|------------|----------|-----|----------|
+| **High Quality** | `ABS(predicted_points - line_value) >= 5` | 79.0% | +50.9% | Best picks, lower volume (~5/day) |
+| **Medium Quality** | `ABS(predicted_points - line_value) >= 3` | 65.0% | +24.0% | **RECOMMENDED** - Best profit/volume balance (~17/day) |
+| **Low Quality** | `ABS(predicted_points - line_value) < 3` | 50.9% | -2.5% | ❌ DO NOT USE - Loses money |
+
+**Key Learnings (Session 81):**
+- ❌ **Confidence-based filters DON'T WORK** - Model can be 95% confident in low-edge predictions that lose money
+- ✅ **Edge >= 3 is optimal** - Maximizes total profit (+97.9 units vs +68.5 for all bets)
+- ✅ **Edge >= 5 has best ROI** (50.9%) but sacrifices total profit for selectivity
+- ⚠️ **73% of bets have edge < 3** and lose money - must filter these out
 
 **Don't confuse these metrics:**
 
@@ -343,18 +355,27 @@ These are DIFFERENT. You can have 78% hit rate but only 40% model-beats-vegas.
 **Always show weekly trends** to catch drift - monthly averages can mask recent degradation.
 
 ```sql
--- Standard hit rate query (use catboost_v9 for new predictions, catboost_v8 for historical)
+-- CORRECT hit rate query (Session 81) - Edge-based tiers, exclude PASS
 SELECT
-  'Premium (92+ conf, 3+ edge)' as filter,
+  CASE
+    WHEN ABS(predicted_points - line_value) >= 5 THEN 'High Quality (5+ edge)'
+    WHEN ABS(predicted_points - line_value) >= 3 THEN 'Medium Quality (3-5 edge)'
+    ELSE 'Low Quality (<3 edge)'
+  END as tier,
   COUNT(*) as bets,
-  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate,
+  ROUND(SUM(CASE WHEN prediction_correct THEN 0.909 ELSE -1.0 END), 1) as profit_units,
+  ROUND(SUM(CASE WHEN prediction_correct THEN 0.909 ELSE -1.0 END) / COUNT(*) * 100, 1) as roi_pct
 FROM nba_predictions.prediction_accuracy
-WHERE system_id = 'catboost_v9'  -- or 'catboost_v8' for pre-Feb 2026
+WHERE system_id = 'catboost_v9'
   AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
-  AND confidence_score >= 0.92
-  AND ABS(predicted_points - line_value) >= 3
+  AND recommendation IN ('OVER', 'UNDER')  -- CRITICAL: Exclude PASS (non-bets)
   AND prediction_correct IS NOT NULL
+GROUP BY tier
+ORDER BY MIN(ABS(predicted_points - line_value)) DESC
 ```
+
+**Reference:** See `docs/08-projects/current/prediction-quality-analysis/SESSION-81-DEEP-DIVE.md` for complete analysis.
 
 ### Schedule Data
 
