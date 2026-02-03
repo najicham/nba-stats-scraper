@@ -620,6 +620,105 @@ WHERE game_date >= DATE('YYYY-MM-DD')
 
 **Reference**: Session 78 handoff, Session 80 data repair
 
+### Phase 0.47: Session 97 Quality Gate Check (CRITICAL)
+
+**IMPORTANT**: Verify the ML Feature Store quality gate is functioning correctly.
+
+**Why this matters**: Session 97 implemented a quality gate that prevents ML Feature Store from running when Phase 4 hasn't completed. This prevents the Feb 2, 2026 issue where stale Phase 4 data caused 49.1% hit rate (vs expected 55%+). The quality gate requires sufficient records in `player_daily_cache` and `player_composite_factors`.
+
+**What to check**:
+
+```bash
+# Check if quality gate has been triggered recently (indicates it's working)
+gcloud logging read 'textPayload=~"QUALITY_GATE"' --limit=5 --freshness=6h \
+  --format="table(timestamp,textPayload)" 2>/dev/null
+```
+
+**Expected Result**:
+- If Phase 4 incomplete: Should see `QUALITY_GATE FAILED` messages
+- If Phase 4 complete: No quality gate failures (or PASSED messages)
+
+**Check Phase 4 data sufficiency**:
+
+```bash
+GAME_DATE=$(date +%Y-%m-%d)
+bq query --use_legacy_sql=false "
+SELECT
+  'player_daily_cache' as table_name,
+  COUNT(*) as records,
+  CASE
+    WHEN COUNT(*) >= 50 THEN '✅ OK'
+    WHEN COUNT(*) > 0 THEN '🟡 LOW'
+    ELSE '🔴 EMPTY'
+  END as status
+FROM nba_precompute.player_daily_cache
+WHERE cache_date = DATE('${GAME_DATE}')"
+```
+
+**Thresholds**:
+- **≥50 records**: OK - Sufficient data for predictions
+- **1-49 records**: WARNING - Partial data, investigate
+- **0 records**: CRITICAL - Phase 4 hasn't run for today yet
+
+**Check phase trigger status** (Session 98 finding):
+
+```bash
+python3 << 'EOF'
+from google.cloud import firestore
+from datetime import datetime, timedelta
+
+db = firestore.Client(project='nba-props-platform')
+yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+today = datetime.now().strftime('%Y-%m-%d')
+
+# Check Phase 2 → Phase 3 trigger
+print(f"Phase 2 Completion for {yesterday}:")
+doc = db.collection('phase2_completion').document(yesterday).get()
+if doc.exists:
+    data = doc.to_dict()
+    completed = len([k for k in data.keys() if not k.startswith('_')])
+    triggered = data.get('_triggered', False)
+    print(f"  Processors: {completed}, Phase 3 triggered: {triggered}")
+    if completed >= 5 and not triggered:
+        print(f"  🔴 BUG: Phase 2 complete but Phase 3 NOT triggered!")
+else:
+    print("  No record found")
+
+# Check Phase 3 → Phase 4 trigger
+print(f"\nPhase 3 Completion for {today}:")
+doc = db.collection('phase3_completion').document(today).get()
+if doc.exists:
+    data = doc.to_dict()
+    completed = len([k for k in data.keys() if not k.startswith('_')])
+    triggered = data.get('_triggered', False)
+    print(f"  Processors: {completed}/5, Phase 4 triggered: {triggered}")
+    if completed >= 5 and not triggered:
+        print(f"  🔴 BUG: Phase 3 complete but Phase 4 NOT triggered!")
+else:
+    print("  No record found")
+EOF
+```
+
+**If trigger issue detected** (processors complete but `_triggered = False`):
+- 🔴 P1 CRITICAL: Orchestrator not triggering next phase
+- Impact: Pipeline stalls, downstream phases don't run
+- Immediate action: Manually trigger the next phase
+- Root cause: Check Cloud Function orchestrator logs
+
+**Manual Phase Triggers**:
+```bash
+# Trigger Phase 3
+gcloud scheduler jobs run same-day-phase3 --location=us-west2
+
+# Trigger Phase 4
+gcloud scheduler jobs run same-day-phase4 --location=us-west2
+
+# Trigger Phase 5 (predictions)
+gcloud scheduler jobs run same-day-phase5 --location=us-west2
+```
+
+**Reference**: Session 97 handoff, Session 98 validation findings
+
 ### Phase 0.5: Pre-Game Signal Check (NEW - Session 70)
 
 **IMPORTANT**: Check daily prediction signals for model performance indicators.
@@ -2645,6 +2744,8 @@ Key fields:
 | **Prediction Coverage** | ≥90% | 70-89% | <70% |
 | **Game Context Coverage** | 100% | 95-99% | <95% |
 | **Phase 3 Completion** | 5/5 | 3-4/5 | 0-2/5 |
+| **Phase 4 Daily Cache** | ≥50 records | 1-49 records | 0 records |
+| **Phase Trigger Status** | _triggered=True | N/A | _triggered=False when complete |
 | **Phase Execution Logs** | All phases logged | 1-2 missing | No logs found |
 | **Weekly Hit Rate** | ≥65% | 55-64% | <55% |
 | **Model Bias** | ±2 pts | ±3-5 pts | >±5 pts |
@@ -2668,6 +2769,8 @@ Key fields:
 - Phase 3 completion 0-2/5 processors
 - Phase execution log completely empty for a date
 - BDB coverage <50% for multiple consecutive days
+- Phase trigger failure (_triggered=False when processors complete)
+- Phase 4 daily cache empty for today (0 records)
 
 **🟡 P2 HIGH** (Within 1 Hour):
 - Data quality issue 70-89% coverage
@@ -2708,6 +2811,7 @@ Provide a clear, concise summary structured like this:
 | Phase 3 (Analytics) | ✅/⚠️/❌ | [completion %] |
 | Phase 4 (Precompute) | ✅/⚠️/❌ | [feature count] |
 | Phase 5 (Predictions) | ✅/⚠️/❌ | [prediction count] |
+| Session 97 Quality Gate | ✅/⚠️/❌ | Working/Blocked/Bypassed |
 | Spot Checks | ✅/⚠️/❌ | [accuracy %] |
 | Model Drift | ✅/⚠️/❌ | [4-week trend, tier breakdown] |
 | BDB Coverage | ✅/⚠️/❌ | [X]% (pending: [Y] games) |
