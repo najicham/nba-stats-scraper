@@ -182,11 +182,14 @@ WHERE game_date = '2026-01-15'
 
 **Symptom**: Source fields exist but derived metrics are NULL.
 
+**Session 96 Context**: On Feb 2, 2026, usage_rate was 0% for ALL games because a global threshold (80%) blocked all calculations when 1 of 4 games was delayed. This was fixed by changing to per-game calculation.
+
 **Possible causes**:
-1. Team stats missing (can't calculate usage_rate without team stats)
+1. Team stats missing for specific games (can't calculate usage_rate without team stats)
 2. Division by zero in calculation
 3. Join to team_offense_game_summary failing
 4. Calculation logic error
+5. ~~Global threshold blocking~~ (FIXED in Session 96 - now per-game)
 
 **How to investigate**:
 ```sql
@@ -287,9 +290,34 @@ After running this skill, you should know:
 - [ ] Recommended remediation steps
 - [ ] Whether recent fixes worked (if re-running after backfill)
 
+## Automated Monitoring (Session 96)
+
+The following automated checks complement manual historical validation:
+
+| Check | When | What |
+|-------|------|------|
+| `analytics-quality-check` Cloud Function | 7:30 AM ET daily | Checks yesterday's usage_rate/minutes coverage |
+| Processor quality metrics | After each run | Emits DATA_QUALITY_OK/WARNING/CRITICAL logs |
+| `data_quality_history` table | After each run | Stores metrics for trend analysis |
+
+**Query historical quality metrics:**
+```sql
+SELECT
+  check_date,
+  processor,
+  usage_rate_coverage_pct,
+  minutes_coverage_pct,
+  game_count,
+  total_active_players
+FROM nba_analytics.data_quality_history
+WHERE check_date BETWEEN @start_date AND @end_date
+ORDER BY check_date DESC
+```
+
 ## Notes
 
 - This skill is READ-ONLY - it identifies issues but doesn't fix them
 - For automated validation after backfills, use `BackfillValidator` module
 - Historical data before processor improvements may have lower quality
 - Focus on CRITICAL issues first (source fields NULL) before WARNING issues
+- See `docs/02-operations/runbooks/data-quality-runbook.md` for investigation procedures

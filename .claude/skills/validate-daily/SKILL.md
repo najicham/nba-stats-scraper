@@ -1562,6 +1562,53 @@ WHERE game_date = DATE('${GAME_DATE}')"
 - If raw data missing minutes → Scraper extraction bug
 - If API not returning minutes → Source data issue
 
+#### 1A3. Usage Rate Coverage Check (CRITICAL - Session 96)
+
+**IMPORTANT**: This check was added after Feb 2, 2026 when 0% usage_rate coverage went undetected. usage_rate is a critical ML feature - low coverage degrades prediction quality.
+
+```bash
+GAME_DATE=$(date -d "yesterday" +%Y-%m-%d)
+
+bq query --use_legacy_sql=false "
+SELECT
+  game_id,
+  COUNTIF(is_dnp = FALSE) as active_players,
+  COUNTIF(is_dnp = FALSE AND usage_rate IS NOT NULL AND usage_rate > 0) as has_usage_rate,
+  ROUND(100.0 * COUNTIF(is_dnp = FALSE AND usage_rate IS NOT NULL AND usage_rate > 0) /
+    NULLIF(COUNTIF(is_dnp = FALSE), 0), 1) as usage_rate_pct,
+  CASE
+    WHEN ROUND(100.0 * COUNTIF(is_dnp = FALSE AND usage_rate IS NOT NULL AND usage_rate > 0) /
+      NULLIF(COUNTIF(is_dnp = FALSE), 0), 1) >= 80 THEN 'OK'
+    WHEN ROUND(100.0 * COUNTIF(is_dnp = FALSE AND usage_rate IS NOT NULL AND usage_rate > 0) /
+      NULLIF(COUNTIF(is_dnp = FALSE), 0), 1) >= 50 THEN 'WARNING'
+    ELSE 'CRITICAL'
+  END as status
+FROM \`nba-props-platform.nba_analytics.player_game_summary\`
+WHERE game_date = DATE('${GAME_DATE}')
+GROUP BY game_id
+ORDER BY usage_rate_pct ASC"
+```
+
+**Thresholds (per-game)**:
+- **≥80%**: OK - Expected coverage level
+- **50-79%**: WARNING - Some games missing team data
+- **<50%**: CRITICAL - Major data quality issue
+
+**What to check if CRITICAL**:
+1. Check if team_offense_game_summary has data: `bq query "SELECT game_id, COUNT(*) FROM nba_analytics.team_offense_game_summary WHERE game_date = '${GAME_DATE}' GROUP BY 1"`
+2. Check data quality history: `bq query "SELECT * FROM nba_analytics.data_quality_history WHERE check_date = '${GAME_DATE}' ORDER BY check_timestamp DESC LIMIT 5"`
+3. Check processor logs for DATA_QUALITY_CRITICAL alerts
+
+**Root Cause Investigation**:
+- If team_offense_game_summary missing for a game → Team processor didn't run
+- If team data exists but usage_rate NULL → Player processor ran before team data was ready
+- If 0% for ALL games → Check if global threshold blocked calculation (should be fixed in Session 96)
+
+**Related Monitoring**:
+- Cloud Function `analytics-quality-check` runs at 7:30 AM ET and sends Slack alerts
+- Processor now emits DATA_QUALITY_OK/WARNING/CRITICAL logs after each run
+- Historical data available in `nba_analytics.data_quality_history` table
+
 #### 1B. Prediction Grading Complete
 
 Verify predictions were graded against actual results:
