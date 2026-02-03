@@ -228,8 +228,8 @@ else:
 PYEOF
 )
 
-  # Run test in container
-  if docker run --rm "$REGISTRY/$SERVICE:$BUILD_COMMIT" python3 -c "$TEST_SCRIPT" "$MAIN_MODULE" "$CRITICAL_DEPS"; then
+  # Run test in container (pass GCP_PROJECT_ID for modules that validate env at import)
+  if docker run --rm -e GCP_PROJECT_ID="$PROJECT" "$REGISTRY/$SERVICE:$BUILD_COMMIT" python3 -c "$TEST_SCRIPT" "$MAIN_MODULE" "$CRITICAL_DEPS"; then
     echo ""
     echo "✅ Docker dependency test PASSED"
   else
