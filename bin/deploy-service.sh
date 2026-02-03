@@ -229,7 +229,11 @@ PYEOF
 )
 
   # Run test in container (pass GCP_PROJECT_ID for modules that validate env at import)
-  if docker run --rm -e GCP_PROJECT_ID="$PROJECT" "$REGISTRY/$SERVICE:$BUILD_COMMIT" python3 -c "$TEST_SCRIPT" "$MAIN_MODULE" "$CRITICAL_DEPS"; then
+  # Also pass CATBOOST_V8_MODEL_PATH for prediction-worker validation (Session 96 fix)
+  if docker run --rm \
+    -e GCP_PROJECT_ID="$PROJECT" \
+    -e CATBOOST_V8_MODEL_PATH="gs://nba-props-platform-models/catboost/v8/dummy.cbm" \
+    "$REGISTRY/$SERVICE:$BUILD_COMMIT" python3 -c "$TEST_SCRIPT" "$MAIN_MODULE" "$CRITICAL_DEPS"; then
     echo ""
     echo "✅ Docker dependency test PASSED"
   else
