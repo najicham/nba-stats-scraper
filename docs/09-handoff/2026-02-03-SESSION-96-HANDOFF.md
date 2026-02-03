@@ -1,270 +1,108 @@
-# Session 96 Handoff - ML Feature Quality Investigation
+# Session 96 Handoff - February 3, 2026
 
-**Date:** 2026-02-03
-**Model:** Claude Opus 4.5
-**Focus:** Root cause analysis of poor ML feature quality and prevention strategies
+## Session Summary
 
----
+Fixed critical usage_rate 0% bug and set up automated morning deployment monitoring.
 
-## Executive Summary
+## Fixes Applied
 
-Session 96 investigated why Feb 2 predictions had poor hit rate (49.1%) despite having "high-edge" picks. The root cause was **timing misalignment** between Phase 4 data generation and ML feature store updates, causing predictions to use stale/default feature values.
+| Issue | Fix | Status |
+|-------|-----|--------|
+| **P0: usage_rate 0% bug** | Lowered threshold from 80% to 50% in `_check_team_stats_available()` | ✅ Fixed & Deployed |
+| **P1: Morning health monitoring** | Created Cloud Function + Scheduler for 6 AM ET daily drift checks | ✅ Deployed |
+| **P2: Missing PHI-LAC game** | Investigated - data was backfilled at 11:30 AM ET, now complete | ✅ Resolved |
 
----
+## Root Causes
 
-## Key Findings
+### usage_rate 0% Bug
+**Problem:** Feb 2 had 0% usage_rate coverage despite valid team data existing.
 
-### 1. The Feb 2 Failure Pattern
+**Root Cause:** `_check_team_stats_available()` used an 80% threshold that blocked ALL usage_rate calculations when a single game was delayed. With 4 games and 1 delayed (PHI-LAC), the 3/4 = 75% didn't meet the 80% threshold.
 
-All 9 missed high-edge picks on Feb 2 were **UNDER bets** for players with **low feature quality (71.38%)**:
+**Fix:** Lowered threshold from 80% to 50% in `player_game_summary_processor.py:383`.
 
-| Player | Edge | Predicted | Actual | Result |
-|--------|------|-----------|--------|--------|
-| treymurphyiii | 11.4 | 11.1 | 27 | MISS |
-| jarenjacksonjr | 8.7 | 13.8 | 30 | MISS |
-| jabarismithjr | 8.1 | 9.4 | 19 | MISS |
-| kobesanders | 6.5 | 5.0 | 17 | MISS |
-| kellyoubrejr | 6.2 | 8.3 | 15 | MISS |
-| vincewilliamsjr | 4.7 | 3.8 | 16 | MISS |
+**Impact:** Now usage_rate is calculated for all games that have valid team data, rather than blocking everything.
 
-**Pattern:** Low-quality features cause **underprediction** (predicting fewer points than actual), creating **false high-edge UNDER signals**.
+### PHI-LAC Missing Data
+**Problem:** PHI-LAC game (0022500715) had 0 records in BDL at 00:45 ET.
 
-### 2. Root Cause: Timing Misalignment
+**Resolution:** Data was automatically backfilled at 11:30 AM ET. Current state:
+- BDL: 35 records ✅
+- Analytics: 35 records, 21 active players ✅
+- Usage rate: 100% coverage ✅
 
-The Feb 2 data pipeline had a critical timing issue:
+## Infrastructure Deployed
 
-| Event | Time (ET) | Issue |
-|-------|-----------|-------|
-| ML Features Feb 2 | Feb 2, 6:00 AM | Created BEFORE Phase 4 |
-| Predictions Feb 2 | Feb 2, 4:38 PM | Used stale features |
-| Phase 4 Feb 2 | Feb 3, 2:00 AM | Created AFTER predictions |
+### Morning Deployment Check
+- **Cloud Function:** `morning-deployment-check` (Gen2, Python 3.11)
+- **Cloud Scheduler:** `morning-deployment-check` (6 AM ET daily)
+- **Purpose:** Detect stale Cloud Run deployments and send Slack alerts
+- **Method:** Compares `commit-sha` label on services vs latest GitHub commits
 
-**The ML feature store ran 20+ hours BEFORE Phase 4 completed**, causing:
-- Features used default values (40 points) instead of Phase 4 data (100 points)
-- Quality score dropped to 71.38% (vs expected 85%+)
-- Model systematically underpredicted
+## Commits
 
-### 3. Quality Score Calculation
+| Commit | Description |
+|--------|-------------|
+| `395df684` | fix: Lower team stats threshold from 80% to 50% for usage_rate calc |
+| `7d01ccff` | feat: Add Cloud Function for morning deployment check |
 
-From `data_processors/precompute/ml_feature_store/quality_scorer.py`:
-
-| Data Source | Quality Points |
-|-------------|----------------|
-| Phase 4 | 100 |
-| Phase 3 | 87 |
-| Default (missing) | 40 |
-| Calculated | 100 |
-
-A quality score of 71.38% indicates ~40% of features used default values.
-
-### 4. Current Schedule (Session 95)
-
-| Time (ET) | Job | Purpose |
-|-----------|-----|---------|
-| 6:00 AM | overnight-phase4 | Generate Phase 4 precompute |
-| 7:00 AM | ml-feature-store-7am-et | Refresh features AFTER Phase 4 |
-| 8:00 AM | overnight-predictions | FIRST mode (85%+ quality) |
-| 9-12 PM | predictions-Xam | RETRY mode (85%+ quality) |
-| 1:00 PM | predictions-final-retry | 80%+ quality |
-| 4:00 PM | predictions-last-call | Force all remaining |
-
-This schedule should prevent the Feb 2 issue going forward.
-
----
-
-## Prevention Strategies
-
-### Already Implemented (Session 95)
-
-1. **Quality Gate System** - Only predict when feature quality >= 85%
-2. **Multiple Feature Store Refreshes** - 7 AM, 10 AM, 1 PM ET
-3. **LAST_CALL Mode** - Force predictions at 4 PM with `forced_prediction` flag
-4. **Quality Tracking** - `low_quality_flag` and `feature_quality_score` in predictions
-
-### Recommended Additional Improvements
-
-#### P0: Critical - Implement Now
-
-1. **Feature Quality Dashboard Alert**
-   - Alert when avg feature quality < 80% for upcoming games
-   - Trigger: After each ML feature store run
-   - Action: Slack notification to #nba-alerts
-
-2. **Phase 4 Completion Gate**
-   - Don't run ML feature store until Phase 4 confirms completion
-   - Add dependency check in ml-feature-store scheduler
-   - Query: `SELECT COUNT(*) FROM nba_precompute.player_composite_factors WHERE game_date = CURRENT_DATE()`
-
-3. **Pre-Prediction Quality Check**
-   - Before making any prediction, verify feature quality
-   - If quality < 85% and mode != LAST_CALL, skip and log
-   - Already partially implemented in quality_gate.py
-
-#### P1: Important - This Week
-
-4. **Historical Quality Tracking Table**
-   ```sql
-   CREATE TABLE nba_predictions.feature_quality_history (
-     game_date DATE,
-     check_time TIMESTAMP,
-     total_players INT,
-     high_quality_pct FLOAT,
-     avg_quality FLOAT,
-     phase4_coverage FLOAT,
-     prediction_mode STRING
-   )
-   ```
-
-5. **Quality-Aware Recommendation System**
-   - Don't recommend OVER/UNDER for low-quality predictions
-   - Set recommendation = 'LOW_QUALITY_SKIP' instead
-   - Add to prediction output for transparency
-
-6. **Automated Backfill Trigger**
-   - If Phase 4 data missing for >20% of players at 10 AM, trigger backfill
-   - Monitor completion and retry ML feature store
-
-#### P2: Nice to Have - Future
-
-7. **ML Model Quality Calibration**
-   - Train separate model on low-quality features
-   - Use appropriate model based on feature quality tier
-
-8. **Real-time Feature Quality Monitoring**
-   - Prometheus metrics for feature quality
-   - Grafana dashboard with quality trends
-
----
-
-## Verification Queries
-
-### Check Feature Quality Distribution
-```sql
-SELECT
-  game_date,
-  ROUND(AVG(feature_quality_score), 1) as avg_quality,
-  COUNTIF(feature_quality_score >= 85) as high,
-  COUNTIF(feature_quality_score >= 80 AND feature_quality_score < 85) as medium,
-  COUNTIF(feature_quality_score < 80) as low
-FROM nba_predictions.ml_feature_store_v2
-WHERE game_date >= CURRENT_DATE() - 7
-GROUP BY game_date
-ORDER BY game_date DESC;
-```
-
-### Check Timing Sequence
-```sql
-SELECT
-  'Phase 4' as source,
-  game_date,
-  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M ET', MAX(created_at), 'America/New_York') as created
-FROM nba_precompute.player_composite_factors
-WHERE game_date >= CURRENT_DATE() - 3
-GROUP BY game_date
-UNION ALL
-SELECT
-  'ML Features' as source,
-  game_date,
-  FORMAT_TIMESTAMP('%Y-%m-%d %H:%M ET', MAX(created_at), 'America/New_York') as created
-FROM nba_predictions.ml_feature_store_v2
-WHERE game_date >= CURRENT_DATE() - 3
-GROUP BY game_date
-ORDER BY game_date DESC, source;
-```
-
-### Check Quality Gate Logs
-```bash
-gcloud logging read 'resource.labels.service_name="prediction-coordinator" AND textPayload=~"QUALITY_GATE"' --limit=20
-```
-
-### Verify Hit Rate by Quality Tier
-```sql
-SELECT
-  CASE
-    WHEN f.feature_quality_score >= 85 THEN 'High (85+)'
-    WHEN f.feature_quality_score >= 80 THEN 'Medium (80-85)'
-    ELSE 'Low (<80)'
-  END as quality_tier,
-  COUNT(*) as predictions,
-  COUNTIF(a.prediction_correct) as wins,
-  ROUND(100.0 * COUNTIF(a.prediction_correct) / COUNT(*), 1) as hit_rate
-FROM nba_predictions.prediction_accuracy a
-JOIN nba_predictions.ml_feature_store_v2 f
-  ON a.player_lookup = f.player_lookup AND a.game_date = f.game_date
-WHERE a.system_id = 'catboost_v9'
-  AND a.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
-  AND a.recommendation IN ('OVER', 'UNDER')
-GROUP BY quality_tier
-ORDER BY quality_tier;
-```
-
----
-
-## Commits This Session
-
-```
-eec1cf65 fix(deploy): Pass CATBOOST_V8_MODEL_PATH to Docker test
-```
-
----
-
-## Deployments This Session
+## Deployments
 
 | Service | Status | Commit |
 |---------|--------|--------|
-| prediction-worker | DEPLOYED | b18aa475 |
+| nba-phase3-analytics-processors | ✅ Deployed | 395df684 |
+| morning-deployment-check (Cloud Function) | ✅ New | 7d01ccff |
 
----
+## Verification
 
-## Reminders Updated
+### Feb 2 Data Quality (After Fixes)
+```
+Game ID              | Active | Usage Rate Coverage
+---------------------|--------|--------------------
+20260202_HOU_IND    | 21     | 95.2%
+20260202_MIN_MEM    | 19     | 100.0%
+20260202_NOP_CHA    | 19     | 100.0%
+20260202_PHI_LAC    | 21     | 100.0%
+```
 
-| ID | Status | Description |
-|----|--------|-------------|
-| rem_009 | COMPLETED | Feb 2 games graded (49.1% hit rate) |
-| rem_008 | PENDING | Verify model attribution after next prediction run |
+### Morning Check Test
+```json
+{
+  "status": "stale",
+  "stale_count": 2,
+  "healthy_count": 3,
+  "stale_services": ["nba-phase4-precompute-processors", "nba-phase1-scrapers"]
+}
+```
 
----
+## Known Issues (Remaining)
+
+1. **Phase 4 precompute** - Running slightly stale code (changes in `shared/`)
+2. **Phase 1 scrapers** - Running slightly stale code (changes in `shared/`)
+
+These can be deployed with:
+```bash
+./bin/deploy-service.sh nba-phase4-precompute-processors
+./bin/deploy-service.sh nba-phase1-scrapers
+```
 
 ## Next Session Checklist
 
-### Verify Quality Gate Working
-- [ ] Check tomorrow's (Feb 4) predictions have `prediction_attempt` populated
-- [ ] Verify `model_file_name` is NOT NULL for new predictions
-- [ ] Check quality gate logs show correct thresholds being applied
+1. [ ] Run `/validate-daily` to verify Feb 3 pipeline health
+2. [ ] Check morning deployment check ran at 6 AM ET (check Slack)
+3. [ ] Deploy Phase 4 and Phase 1 if they have relevant changes
+4. [ ] Verify Feb 3 predictions have good feature quality (85%+)
 
-### Implement P0 Prevention
-- [ ] Add feature quality alert after ML feature store runs
-- [ ] Add Phase 4 completion check before ML feature store
-- [ ] Test quality gate behavior at LAST_CALL mode
+## Files Changed
 
-### Monitor Hit Rates
-- [ ] Track Feb 4 predictions by quality tier
-- [ ] Compare high-quality vs low-quality hit rates
-- [ ] Verify edge filtering still works (5+ edge should be ~60%+)
+| File | Change |
+|------|--------|
+| `data_processors/analytics/player_game_summary/player_game_summary_processor.py` | Lowered threshold 80%→50% |
+| `functions/monitoring/morning_deployment_check/main.py` | New Cloud Function |
+| `functions/monitoring/morning_deployment_check/requirements.txt` | New dependencies |
 
 ---
 
-## Key Files
-
-| File | Purpose |
-|------|---------|
-| `predictions/coordinator/quality_gate.py` | Quality gate logic |
-| `predictions/coordinator/quality_alerts.py` | Alerting system |
-| `data_processors/precompute/ml_feature_store/quality_scorer.py` | Quality score calculation |
-| `bin/deploy-service.sh` | Deploy script (fixed Docker test) |
-
----
-
-## Summary
-
-**Root cause:** ML feature store ran before Phase 4 completed, causing predictions to use default feature values (40 points) instead of real data (100 points).
-
-**Impact:** Low-quality features caused systematic underprediction, creating false high-edge UNDER signals that had ~40% hit rate.
-
-**Solution:** Session 95's quality gate system should prevent this by waiting for 85%+ quality features before predicting. Verify it's working tomorrow.
-
-**Prevention:** Add Phase 4 completion gate, feature quality alerts, and historical quality tracking.
-
----
-
-## Session 96 Complete
+**Session Duration:** ~45 minutes
+**Primary Focus:** Bug fix + infrastructure
+**Co-Authored-By:** Claude Opus 4.5 <noreply@anthropic.com>
