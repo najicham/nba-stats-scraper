@@ -2182,6 +2182,12 @@ for processor, count in processor_counts.most_common(10):
 | "Worker spawn failed" | 1.1 | Coordinator couldn't create worker instances |
 | "All predictions are PASS" | 1.4 | Normal (confidence/edge filtering), or early season |
 | "systems_count < 4" | 1.5 | One or more prediction systems failed (likely XGBoost) |
+| **Data Quality** |||
+| "403 Forbidden" (CloudFront) | 2.1 | IP blocking due to rapid requests - enable proxy rotation |
+| "JOIN failed: game_id mismatch" | 2.2 | Tables use different formats (AWAY_HOME vs HOME_AWAY) - use game_id_reversed |
+| "NoneType has no attribute 'get'" (REPEATED) | 2.3 | REPEATED field is NULL instead of [] - use `field or []` pattern |
+| **Cloud Functions** |||
+| "ModuleNotFoundError: shared" | 6.1 | Symlink failure in Cloud Function deployment - run symlink validation |
 
 ---
 

@@ -1,278 +1,456 @@
 # Environment Variables Reference
 
-**Last Updated:** 2026-01-24
+Comprehensive documentation of all environment variables used in the NBA Props Platform.
+
+## Table of Contents
+
+- [GCP Configuration](#gcp-configuration)
+- [API Keys and Secrets](#api-keys-and-secrets)
+- [Email Configuration](#email-configuration)
+- [Slack Configuration](#slack-configuration)
+- [Feature Flags](#feature-flags)
+- [Timeout Configuration](#timeout-configuration)
+- [Circuit Breaker Configuration](#circuit-breaker-configuration)
+- [Orchestration Configuration](#orchestration-configuration)
+- [Service URLs](#service-urls)
+- [Testing Configuration](#testing-configuration)
+- [ML/Prediction Configuration](#mlprediction-configuration)
+- [Monitoring Configuration](#monitoring-configuration)
+- [Local Development](#local-development)
 
 ---
 
-## Overview
+## GCP Configuration
 
-This document lists all environment variables used by the NBA Props Platform, organized by category.
+Core Google Cloud Platform settings.
 
----
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `GCP_PROJECT_ID` | Primary GCP project identifier | No | `nba-props-platform` | All services, processors, orchestration |
+| `GCP_PROJECT` | Legacy project ID (backward compatibility) | No | Falls back to `GCP_PROJECT_ID` | Legacy code paths |
+| `GCP_PROJECT_NUMBER` | GCP project number for Cloud Run URLs | No | `756957797294` | `shared/config/service_urls.py` |
+| `GCP_REGION` | Primary GCP region | No | `us-west2` | `shared/config/gcp_config.py` |
+| `GCS_BUCKET` | Override GCS bucket name | No | Sport-specific default | `shared/config/gcp_config.py` |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Path to service account JSON | No | Auto-detected | All GCP clients |
+| `GOOGLE_CLOUD_PROJECT` | Alternative project ID env var | No | - | Authentication utilities |
 
-## Required Variables
+### BigQuery Datasets
 
-### GCP Configuration
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `BIGQUERY_DATASET` | Default BigQuery dataset | No | `nba_analytics` | Data processors |
+| `DATASET_PREFIX` | Prefix for test datasets | No | `test_` | Testing/replay pipelines |
+| `PREDICTIONS_TABLE` | Full table path for predictions | No | `nba_predictions.player_prop_predictions` | Prediction services |
+| `FEATURE_STORE_TABLE` | Full table path for feature store | No | `nba_predictions.ml_feature_store_v2` | ML feature loading |
 
-| Variable | Description | Default | Required |
-|----------|-------------|---------|----------|
-| `GCP_PROJECT_ID` | GCP project ID | `nba-props-platform` | Yes |
-| `GCP_PROJECT` | Alias for GCP_PROJECT_ID | - | No |
-| `GCP_PROJECT_NUMBER` | GCP project number | `756957797294` | No |
-| `GCP_REGION` | Default GCP region | `us-west2` | No |
-| `GCS_BUCKET` | Override default GCS bucket | - | No |
-| `GOOGLE_CLOUD_PROJECT` | Auto-set by Cloud Run | - | No |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Service account key path | - | Local only |
+### GCS Buckets
 
-### Authentication
-
-| Variable | Description | Default | Required |
-|----------|-------------|---------|----------|
-| `VALID_API_KEYS` | Comma-separated API keys for authentication | - | Production |
-| `ADMIN_DASHBOARD_API_KEY` | Admin dashboard API key | - | Production |
-| `COORDINATOR_API_KEY` | Prediction coordinator API key | - | Production |
-
-### Environment
-
-| Variable | Description | Default | Required |
-|----------|-------------|---------|----------|
-| `ENVIRONMENT` | Environment name | `production` | No |
-| `SPORT` | Sport configuration (`nba` or `mlb`) | `nba` | No |
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `GCS_BUCKET_RAW` | Bucket for raw scraped data | No | `nba-scraped-data` | Scrapers, processors |
+| `GCS_BUCKET_PROCESSED` | Bucket for processed data | No | `nba-analytics-processed-data` | Analytics processors |
+| `GCS_RAW_DATA_BUCKET` | Alternative raw data bucket | No | `nba-raw-data` | Freshness monitoring |
+| `GCS_PREFIX` | Prefix for test GCS paths | No | `test/` | Testing/replay pipelines |
 
 ---
 
-## Alerting & Notifications
+## API Keys and Secrets
 
-### Slack
+All secrets should be stored in GCP Secret Manager. Environment variables serve as local fallbacks.
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SLACK_WEBHOOK_URL` | General Slack webhook | - |
-| `SLACK_WEBHOOK_URL_PREDICTIONS` | Predictions channel webhook | - |
-| `SLACK_WEBHOOK_URL_INFO` | Info channel webhook | - |
-| `SLACK_WEBHOOK_URL_WARNING` | Warning channel webhook | - |
-| `SLACK_WEBHOOK_URL_ERROR` | Error channel webhook | - |
+| Variable | Description | Required | Default | Secret Manager Key |
+|----------|-------------|----------|---------|-------------------|
+| `ODDS_API_KEY` | The Odds API key | Yes (for odds scraping) | - | `odds-api-key` |
+| `BDL_API_KEY` | Ball Don't Lie API key | Yes (for BDL scraping) | - | `bdl-api-key` |
+| `BETTINGPROS_API_KEY` | BettingPros API key | No | - | `bettingpros-api-key` |
+| `ANTHROPIC_API_KEY` | Anthropic Claude API key | No | - | `anthropic-api-key` |
+| `SENDGRID_API_KEY` | SendGrid API key (legacy) | No | - | - |
+| `COORDINATOR_API_KEY` | API key for coordinator service auth | Yes (production) | - | `coordinator-api-key` |
+| `SENTRY_DSN` | Sentry error tracking DSN | No | - | `sentry-dsn` |
+| `SENTRY_RELEASE` | Sentry release version tag | No | `unknown` | Sentry integration |
 
-### Email (Brevo/SMTP)
+---
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `BREVO_SMTP_HOST` | SMTP server host | `smtp-relay.brevo.com` |
-| `BREVO_SMTP_PORT` | SMTP server port | `587` |
-| `BREVO_SMTP_USERNAME` | SMTP username | - |
-| `BREVO_SMTP_PASSWORD` | SMTP password | - |
-| `BREVO_FROM_EMAIL` | Sender email address | - |
-| `BREVO_FROM_NAME` | Sender display name | `NBA Registry System` |
+## Email Configuration
 
-### Email (AWS SES)
+### AWS SES (Primary)
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `AWS_SES_REGION` | AWS SES region | `us-west-2` |
-| `AWS_SES_ACCESS_KEY_ID` | AWS access key | - |
-| `AWS_SES_SECRET_ACCESS_KEY` | AWS secret key | - |
-| `AWS_SES_FROM_EMAIL` | Sender email | `alert@989.ninja` |
-| `AWS_SES_FROM_NAME` | Sender name | `NBA Registry System` |
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `AWS_SES_ACCESS_KEY_ID` | AWS access key for SES | Yes (for email) | - | Email alerting |
+| `AWS_SES_SECRET_ACCESS_KEY` | AWS secret key for SES | Yes (for email) | - | Email alerting |
+| `AWS_SES_REGION` | AWS region for SES | No | `us-west-2` | Email alerting |
+| `AWS_SES_FROM_EMAIL` | Sender email address | No | `alert@989.ninja` | Email alerting |
+| `AWS_SES_FROM_NAME` | Sender display name | No | `NBA Registry System` | Email alerting |
+
+### Brevo SMTP (Fallback)
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `BREVO_SMTP_HOST` | Brevo SMTP server | No | `smtp-relay.brevo.com` | Email alerting fallback |
+| `BREVO_SMTP_PORT` | Brevo SMTP port | No | `587` | Email alerting fallback |
+| `BREVO_SMTP_USERNAME` | Brevo SMTP username | No | - | Email alerting fallback |
+| `BREVO_SMTP_PASSWORD` | Brevo SMTP password | No | - | Email alerting fallback |
+| `BREVO_FROM_EMAIL` | Brevo sender email | No | `alert@989.ninja` | Email alerting fallback |
+| `BREVO_FROM_NAME` | Brevo sender name | No | `NBA System` | Email alerting fallback |
+
+### Generic SMTP
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `SMTP_HOST` | Generic SMTP host | No | - | Processor alerting |
+| `SMTP_PORT` | Generic SMTP port | No | `587` | Processor alerting |
+| `SMTP_USER` | Generic SMTP username | No | - | Processor alerting |
 
 ### Email Recipients
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `EMAIL_ALERTS_TO` | Alert recipients (comma-separated) | - |
-| `EMAIL_CRITICAL_TO` | Critical alert recipients | - |
-| `ALERT_FROM_EMAIL` | Alert sender address | - |
-| `ALERT_RECIPIENTS` | Alert recipients | - |
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `EMAIL_ALERTS_TO` | Comma-separated alert recipients | Yes (for alerts) | - | All email alerting |
+| `EMAIL_CRITICAL_TO` | Comma-separated critical alert recipients | No | Same as `EMAIL_ALERTS_TO` | Critical alerts |
+| `ALERT_FROM_EMAIL` | Alert sender email | No | `nba-processors@nba-props-platform.com` | Processor alerting |
+| `ALERT_RECIPIENTS` | Alternative alert recipients | No | - | Processor alerting |
+| `EMAIL_ALERTS_ENABLED` | Enable/disable email alerts | No | `true` | Notification system |
 
 ### Email Thresholds
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD` | Max unresolved players | `50` |
-| `EMAIL_ALERT_SUCCESS_RATE_THRESHOLD` | Min success rate % | `90.0` |
-| `EMAIL_ALERT_MAX_PROCESSING_TIME` | Max processing time (min) | `30` |
-
-### Rate Limiting (Notifications)
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `NOTIFICATION_RATE_LIMIT_PER_HOUR` | Max notifications/hour | `5` |
-| `NOTIFICATION_COOLDOWN_MINUTES` | Cooldown period | `60` |
-| `NOTIFICATION_AGGREGATE_THRESHOLD` | Aggregate threshold | `3` |
-| `NOTIFICATION_RATE_LIMITING_ENABLED` | Enable rate limiting | `true` |
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `EMAIL_ALERT_UNRESOLVED_COUNT_THRESHOLD` | Trigger alert after N unresolved players | No | `50` | Player registry |
+| `EMAIL_ALERT_SUCCESS_RATE_THRESHOLD` | Minimum success rate percentage | No | `90.0` | Email alerting |
+| `EMAIL_ALERT_MAX_PROCESSING_TIME` | Maximum processing time (minutes) | No | `30` | Email alerting |
 
 ---
 
-## Monitoring & Observability
+## Slack Configuration
 
-### Sentry
+### Webhook URLs
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `SENTRY_DSN` | Sentry DSN | - |
-| `SENTRY_RELEASE` | Release version | `unknown` |
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `SLACK_WEBHOOK_URL` | Default Slack webhook | No | - | All Slack notifications |
+| `SLACK_WEBHOOK_URL_INFO` | Info-level webhook | No | Falls back to default | Notification system |
+| `SLACK_WEBHOOK_URL_WARNING` | Warning-level webhook | No | Falls back to default | Notification system |
+| `SLACK_WEBHOOK_URL_ERROR` | Error-level webhook | No | Falls back to default | Critical alerts |
+| `SLACK_WEBHOOK_URL_CRITICAL` | Critical-level webhook | No | Falls back to default | Critical alerts |
+| `SLACK_WEBHOOK_URL_PREDICTIONS` | Predictions channel webhook | No | - | Prediction notifications |
+| `SLACK_WEBHOOK_URL_CONSISTENCY` | Consistency monitoring webhook | No | - | Batch state manager |
+| `SLACK_WEBHOOK_URL_REMINDERS` | Reminders channel webhook | No | - | Scheduled reminders |
 
-### Logging
+### Slack Settings
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ENABLE_STRUCTURED_LOGGING` | Enable JSON logging | `false` |
-| `LOG_LEVEL` | Logging level | `INFO` |
-
-### Execution Tracking
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ORCHESTRATION_DATASET` | Orchestration dataset | `nba_orchestration` |
-| `PHASE_EXECUTION_LOG_TABLE` | Execution log table | `phase_execution_log` |
-
----
-
-## Timeouts
-
-All timeout values are in seconds unless noted.
-
-### HTTP & Network
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `TIMEOUT_HTTP_REQUEST` | General HTTP timeout | `30` |
-| `TIMEOUT_SCRAPER_HTTP` | Scraper HTTP timeout | `60` |
-| `TIMEOUT_HEALTH_CHECK` | Health check timeout | `10` |
-| `TIMEOUT_SLACK_WEBHOOK` | Slack webhook timeout | `10` |
-
-### BigQuery
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `TIMEOUT_BIGQUERY_QUERY` | Query timeout | `120` |
-| `TIMEOUT_BIGQUERY_LARGE_QUERY` | Large query timeout | `300` |
-| `TIMEOUT_BIGQUERY_LOAD` | Load job timeout | `180` |
-
-### Firestore
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `TIMEOUT_FIRESTORE_READ` | Read timeout | `30` |
-| `TIMEOUT_FIRESTORE_WRITE` | Write timeout | `30` |
-| `TIMEOUT_FIRESTORE_TRANSACTION` | Transaction timeout | `60` |
-
-### Pub/Sub & Workflows
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `TIMEOUT_PUBSUB_PUBLISH` | Publish timeout | `30` |
-| `TIMEOUT_WORKFLOW_EXECUTION` | Workflow timeout | `3600` |
-| `TIMEOUT_SCHEDULER_JOB` | Scheduler job timeout | `540` |
-
-### ML & Batch
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `TIMEOUT_ML_INFERENCE` | Inference timeout | `60` |
-| `TIMEOUT_ML_TRAINING` | Training timeout | `7200` |
-| `TIMEOUT_BATCH_CONSOLIDATION` | Batch consolidation | `300` |
-| `TIMEOUT_DATA_LOADER_BATCH` | Data loader batch | `120` |
-| `TIMEOUT_STALL_DETECTION` | Stall detection | `1800` |
-
----
-
-## Rate Limiting (API)
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `RATE_LIMIT_ENABLED` | Enable rate limiting | `true` |
-| `RATE_LIMIT_DEFAULT_RPM` | Default requests/minute | `60` |
-| `RATE_LIMIT_BACKOFF_THRESHOLD` | Backoff threshold | `0.8` |
-| `RATE_LIMIT_{SOURCE}_RPM` | Per-source rate limit | - |
-
----
-
-## Caching
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `ENABLE_QUERY_CACHING` | Enable BigQuery cache | `true` |
-| `QUERY_CACHE_TTL_SECONDS` | Cache TTL | `3600` |
-
----
-
-## Proxies
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PROXYFUEL_CREDENTIALS` | ProxyFuel credentials | - |
-| `DECODO_PROXY_CREDENTIALS` | Decodo credentials | - |
-| `BRIGHTDATA_CREDENTIALS` | BrightData credentials | - |
-
----
-
-## External APIs
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `BETTINGPROS_API_KEY` | BettingPros API key | - |
-| `ODDS_API_KEY` | The Odds API key | - |
-| `SENDGRID_API_KEY` | SendGrid API key | - |
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `SLACK_ALERTS_ENABLED` | Enable/disable Slack alerts | No | `false` | Notification system |
+| `SLACK_CHANNEL` | Default Slack channel | No | `#nba-alerts` | Processor alerting |
 
 ---
 
 ## Feature Flags
 
-Feature flags are configured via environment variables with the pattern:
-```
-FEATURE_{FLAG_NAME}=true|false
-```
+Enable/disable features for gradual rollout. All default to `false` unless noted.
 
-See `shared/config/feature_flags.py` for available flags.
+### Week 1 Features
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `ENABLE_PHASE2_COMPLETION_DEADLINE` | Enable Phase 2 completion deadlines | No | `false` | Feature flags |
+| `PHASE2_COMPLETION_TIMEOUT_MINUTES` | Phase 2 completion timeout | No | `30` | Feature flags |
+| `ENABLE_SUBCOLLECTION_COMPLETIONS` | Enable Firestore subcollection writes | No | `false` | Batch state manager |
+| `DUAL_WRITE_MODE` | Write to both old and new structures | No | `true` | Batch state manager |
+| `USE_SUBCOLLECTION_READS` | Read from new Firestore structure | No | `false` | Batch state manager |
+| `ENABLE_QUERY_CACHING` | Enable BigQuery query caching | No | `false` | Feature flags |
+| `QUERY_CACHE_TTL_SECONDS` | Query cache TTL | No | `3600` | Feature flags |
+| `ENABLE_IDEMPOTENCY_KEYS` | Enable idempotency for deduplication | No | `false` | Coordinator |
+| `DEDUP_TTL_DAYS` | Deduplication TTL in days | No | `7` | Coordinator |
+| `ENABLE_PARALLEL_CONFIG` | Enable parallel configuration loading | No | `false` | Feature flags |
+| `ENABLE_CENTRALIZED_TIMEOUTS` | Use centralized timeout config | No | `false` | Feature flags |
+| `ENABLE_STRUCTURED_LOGGING` | Enable structured JSON logging | No | `false` | Feature flags |
+| `ENABLE_HEALTH_CHECK_METRICS` | Enable health check metrics | No | `false` | Feature flags |
+
+### Week 2-3 Features
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `ENABLE_PROMETHEUS_METRICS` | Enable Prometheus metrics export | No | `false` | Feature flags |
+| `ENABLE_UNIVERSAL_RETRY` | Enable universal retry logic | No | `false` | Feature flags |
+| `ENABLE_ASYNC_PHASE1` | Enable async Phase 1 processing | No | `false` | Feature flags |
+| `ENABLE_ASYNC_COMPLETE` | Enable full async processing | No | `false` | Feature flags |
+| `ENABLE_INTEGRATION_TESTS` | Enable integration test suite | No | `false` | Feature flags |
 
 ---
 
-## Cloud Run Auto-Set Variables
+## Timeout Configuration
 
-These are automatically set by Cloud Run:
+All timeout values are in seconds unless noted. Override via `TIMEOUT_*` prefix.
 
-| Variable | Description |
-|----------|-------------|
-| `K_SERVICE` | Service name |
-| `K_REVISION` | Revision ID |
-| `HOSTNAME` | Container hostname |
-| `PORT` | Server port (usually 8080) |
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `TIMEOUT_HTTP_REQUEST` | Standard HTTP request timeout | No | `30` | HTTP clients |
+| `TIMEOUT_SCRAPER_HTTP` | Scraper HTTP timeout | No | `180` | Scrapers |
+| `TIMEOUT_HEALTH_CHECK` | Health check timeout | No | `10` | Service health checks |
+| `TIMEOUT_SLACK_WEBHOOK` | Slack webhook timeout | No | `10` | Slack notifications |
+| `TIMEOUT_BIGQUERY_QUERY` | Standard BigQuery query timeout | No | `60` | BigQuery operations |
+| `TIMEOUT_BIGQUERY_LARGE_QUERY` | Large BigQuery query timeout | No | `300` | Batch BigQuery operations |
+| `TIMEOUT_BIGQUERY_LOAD` | BigQuery load job timeout | No | `60` | Data loading |
+| `TIMEOUT_FIRESTORE_READ` | Firestore read timeout | No | `10` | Firestore operations |
+| `TIMEOUT_FIRESTORE_WRITE` | Firestore write timeout | No | `10` | Firestore operations |
+| `TIMEOUT_FIRESTORE_TRANSACTION` | Firestore transaction timeout | No | `30` | Firestore transactions |
+| `TIMEOUT_PUBSUB_PUBLISH` | Pub/Sub publish timeout | No | `60` | Pub/Sub publishers |
+| `TIMEOUT_WORKFLOW_EXECUTION` | Workflow execution timeout | No | `600` | Workflow executor |
+| `TIMEOUT_SCHEDULER_JOB` | Cloud Scheduler job timeout | No | `600` | Scheduler jobs |
+| `TIMEOUT_ML_INFERENCE` | ML model inference timeout | No | `30` | Prediction workers |
+| `TIMEOUT_ML_TRAINING` | ML model training timeout | No | `3600` | Model training |
+| `TIMEOUT_BATCH_CONSOLIDATION` | Batch consolidation timeout | No | `300` | Batch processors |
+| `TIMEOUT_DATA_LOADER_BATCH` | Data loader batch timeout | No | `120` | Data loaders |
+| `TIMEOUT_STALL_DETECTION` | Stall detection threshold | No | `600` | Monitoring |
 
 ---
 
-## Example .env File
+## Circuit Breaker Configuration
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `CIRCUIT_BREAKER_THRESHOLD` | Failures before circuit opens | No | `5` | All processors |
+| `CIRCUIT_BREAKER_TIMEOUT_MINUTES` | Minutes to stay open | No | `30` | All processors |
+| `CIRCUIT_BREAKER_ENTITY_LOCKOUT_HOURS` | Entity-specific lockout duration | No | - | Orchestration config |
+| `CIRCUIT_BREAKER_AUTO_RESET` | Auto-reset circuit breakers | No | - | Orchestration config |
+
+---
+
+## Orchestration Configuration
+
+### Processing Modes
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `PROCESSING_MODE` | Processing mode (game-day/backfill/off-day) | No | Auto-detected | All processors |
+| `PREDICTION_MODE` | Prediction generation mode | No | - | Prediction coordinator |
+| `SPORT` | Current sport context (nba/mlb) | No | `nba` | Sport configuration |
+| `ENVIRONMENT` | Deployment environment | No | `production` | All services |
+
+### Pub/Sub Topics
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `PREDICTION_REQUEST_TOPIC` | Topic for prediction requests | No | `prediction-request-prod` | Coordinator |
+| `PREDICTION_READY_TOPIC` | Topic for ready predictions | No | `prediction-ready-prod` | Coordinator |
+| `BATCH_SUMMARY_TOPIC` | Topic for batch summaries | No | `prediction-batch-complete` | Coordinator |
+
+### Worker Configuration
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `WORKER_MAX_INSTANCES` | Maximum worker instances | No | - | Orchestration config |
+| `WORKER_CONCURRENCY` | Worker concurrency level | No | - | Orchestration config |
+| `WORKER_EMERGENCY_MODE` | Enable emergency mode | No | - | Orchestration config |
+
+### Self-Healing Configuration
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `SELF_HEALING_DML_BACKOFF_ENABLED` | Enable DML backoff | No | - | Orchestration config |
+| `SELF_HEALING_DML_MAX_RETRIES` | Maximum DML retries | No | - | Orchestration config |
+| `SELF_HEALING_ALERT_ON_DML_LIMIT` | Alert when DML limit reached | No | - | Orchestration config |
+| `SELF_HEALING_AUTO_REDUCE_CONCURRENCY` | Auto-reduce concurrency on errors | No | - | Orchestration config |
+
+### Schedule Staleness
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `SCHEDULE_STALENESS_OVERRIDE_HOURS` | Override staleness threshold | No | - | Orchestration config |
+| `SCHEDULE_STALENESS_OVERRIDE_EXPIRES` | Override expiration time | No | - | Orchestration config |
+| `SCHEDULE_MIN_GAME_DATES` | Minimum game dates threshold | No | `50` | Schedule API |
+| `SCHEDULE_MIN_GAMES` | Minimum games threshold | No | `100` | Schedule API |
+
+---
+
+## Service URLs
+
+Override Cloud Run service URLs for local development or alternate deployments.
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `SERVICE_URL` | Generic service URL override | No | `http://localhost:8080` | Workflow executor |
+| `PHASE1_SCRAPERS_URL` | Phase 1 scrapers service URL | No | Auto-generated | Service URLs |
+| `PHASE2_PROCESSORS_URL` | Phase 2 processors service URL | No | Auto-generated | Service URLs |
+| `PHASE3_ANALYTICS_URL` | Phase 3 analytics service URL | No | Auto-generated | Service URLs |
+| `ANALYTICS_PROCESSOR_URL` | Analytics processor URL | No | - | Phase 3 to 4 orchestration |
+| `PHASE4_PRECOMPUTE_URL` | Phase 4 precompute service URL | No | Auto-generated | Service URLs |
+| `PRECOMPUTE_PROCESSOR_URL` | Precompute processor URL | No | - | Phase 3 to 4 orchestration |
+| `PREDICTION_COORDINATOR_URL` | Prediction coordinator URL | No | Auto-generated | Service URLs |
+| `PREDICTION_WORKER_URL` | Prediction worker URL | No | Auto-generated | Service URLs |
+| `COORDINATOR_URL` | Alternative coordinator URL | No | - | Various services |
+| `WORKER_URL` | Alternative worker URL | No | - | Various services |
+| `PHASE6_EXPORT_URL` | Phase 6 export service URL | No | Auto-generated | Service URLs |
+| `MLB_PREDICTION_WORKER_URL` | MLB prediction worker URL | No | Auto-generated | Service URLs |
+| `MLB_GRADING_SERVICE_URL` | MLB grading service URL | No | Auto-generated | Service URLs |
+
+---
+
+## Testing Configuration
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `DATASET_PREFIX` | Prefix for test BigQuery datasets | No | `test_` | Testing pipelines |
+| `GCS_PREFIX` | Prefix for test GCS paths | No | `test/` | Testing pipelines |
+| `REQUIRED_ENV_VARS` | Comma-separated required env vars | No | - | Environment validation |
+
+---
+
+## ML/Prediction Configuration
+
+### NBA Models
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `CATBOOST_V8_MODEL_PATH` | Path to CatBoost v8 model | No | - | CatBoost predictor |
+| `PREDICTION_MIN_QUALITY_THRESHOLD` | Minimum prediction quality score | No | `70.0` | Data loaders |
+| `USE_MULTIPLE_LINES_DEFAULT` | Use multiple betting lines | No | - | Orchestration config |
+
+### MLB Models
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `MLB_ACTIVE_SYSTEMS` | Comma-separated active prediction systems | No | `v1_baseline` | MLB config |
+| `MLB_V1_MODEL_PATH` | Path to MLB v1 baseline model | No | GCS default path | MLB predictor |
+| `MLB_V1_6_MODEL_PATH` | Path to MLB v1.6 rolling model | No | GCS default path | MLB predictor |
+| `MLB_PITCHER_STRIKEOUTS_MODEL_PATH` | Path to pitcher strikeouts model | No | GCS default path | MLB predictor |
+| `MLB_ENSEMBLE_V1_WEIGHT` | Weight for v1 model in ensemble | No | `0.3` | MLB ensemble |
+| `MLB_ENSEMBLE_V1_6_WEIGHT` | Weight for v1.6 model in ensemble | No | `0.5` | MLB ensemble |
+| `BACKFILL_MODE` | Enable backfill mode for predictions | No | `false` | MLB worker |
+
+### AI Resolution
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `AI_RESOLUTION_MODEL` | Claude model for AI name resolution | No | `claude-3-haiku-20240307` | AI resolver |
+| `AI_HIGH_CONFIDENCE_THRESHOLD` | High confidence threshold | No | `0.9` | AI resolver |
+| `AI_LOW_CONFIDENCE_THRESHOLD` | Low confidence threshold | No | `0.7` | AI resolver |
+
+---
+
+## Monitoring Configuration
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `STALL_THRESHOLD_MINUTES` | Minutes before stall alert | No | `30` | Stall detection |
+| `TRANSITION_LOOKBACK_DAYS` | Days to look back for transitions | No | `7` | Transition monitor |
+| `SEND_DAILY_SUMMARY` | Send daily performance summary | No | `true` | System performance |
+| `HEALTH_CHECK_ENABLED` | Enable health checks | No | `true` | Phase 3 to 4 |
+| `HEALTH_CHECK_TIMEOUT` | Health check timeout | No | `5` | Phase 3 to 4 |
+| `MODE_AWARE_ENABLED` | Enable mode-aware processing | No | `true` | Phase 3 to 4 |
+
+---
+
+## Notification Rate Limiting
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `NOTIFICATION_RATE_LIMIT_PER_HOUR` | Max notifications per hour | No | `5` | Rate limiter |
+| `NOTIFICATION_COOLDOWN_MINUTES` | Cooldown between notifications | No | `60` | Rate limiter |
+| `NOTIFICATION_AGGREGATE_THRESHOLD` | Threshold for aggregating alerts | No | `3` | Rate limiter |
+| `NOTIFICATION_RATE_LIMITING_ENABLED` | Enable rate limiting | No | `true` | Rate limiter |
+
+---
+
+## Discord Configuration
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `DISCORD_ALERTS_ENABLED` | Enable Discord notifications | No | `false` | Notification system |
+| `DISCORD_WEBHOOK_URL_INFO` | Info-level Discord webhook | No | - | Notification system |
+| `DISCORD_WEBHOOK_URL_WARNING` | Warning-level Discord webhook | No | - | Notification system |
+| `DISCORD_WEBHOOK_URL_CRITICAL` | Critical-level Discord webhook | No | - | Notification system |
+
+---
+
+## Local Development
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `LOCAL_DEV` | Enable local development mode | No | `false` | All services |
+| `PORT` | Service port | No | `8080` | All services |
+| `PYTHONPATH` | Python module path | No | - | Docker containers |
+
+### Database (Local Development)
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `POSTGRES_DB` | PostgreSQL database name | No | `nba_dev` | Local PostgreSQL |
+| `POSTGRES_USER` | PostgreSQL username | No | `postgres` | Local PostgreSQL |
+| `POSTGRES_PASSWORD` | PostgreSQL password | No | `postgres` | Local PostgreSQL |
+| `POSTGRES_HOST` | PostgreSQL host | No | `localhost` | Local PostgreSQL |
+| `POSTGRES_PORT` | PostgreSQL port | No | `5432` | Local PostgreSQL |
+
+### Redis (Local Development)
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `REDIS_HOST` | Redis host | No | `localhost` | Local Redis |
+| `REDIS_PORT` | Redis port | No | `6379` | Local Redis |
+
+### MinIO (Local Development)
+
+| Variable | Description | Required | Default | Used In |
+|----------|-------------|----------|---------|---------|
+| `MINIO_ROOT_USER` | MinIO root user | No | `minioadmin` | Local MinIO |
+| `MINIO_ROOT_PASSWORD` | MinIO root password | No | `minioadmin` | Local MinIO |
+| `MINIO_HOST` | MinIO host | No | `localhost` | Local MinIO |
+| `MINIO_PORT` | MinIO port | No | `9000` | Local MinIO |
+
+---
+
+## Cloud Run Environment Variables
+
+These are automatically set by Cloud Run and can be read but should not be set manually.
+
+| Variable | Description | Used In |
+|----------|-------------|---------|
+| `K_SERVICE` | Cloud Run service name | Logging, metrics |
+| `K_REVISION` | Cloud Run revision ID | Logging, metrics |
+| `HOSTNAME` | Container hostname | Logging |
+| `PROJECT_ID` | Alternative project ID | Authentication |
+| `TRIGGERED_BY` | Trigger source identifier | Run history |
+| `CLOUD_RUN_REVISION` | Alternative revision ID | Execution logging |
+
+---
+
+## Quick Start
+
+### Minimum Required for Local Development
 
 ```bash
-# Required
-GCP_PROJECT_ID=nba-props-platform
-ENVIRONMENT=development
+# .env file for local development
+PROJECT_ID=nba-props-platform
+LOCAL_DEV=true
+LOG_LEVEL=INFO
 
-# Authentication
-VALID_API_KEYS=key1,key2
-ADMIN_DASHBOARD_API_KEY=admin-key
-
-# Slack
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/xxx
-
-# Email (Brevo)
-BREVO_SMTP_USERNAME=user@example.com
-BREVO_SMTP_PASSWORD=password
-BREVO_FROM_EMAIL=alerts@example.com
-EMAIL_ALERTS_TO=team@example.com
-
-# Sentry
-SENTRY_DSN=https://xxx@sentry.io/xxx
-
-# Optional overrides
-TIMEOUT_BIGQUERY_QUERY=180
-ENABLE_QUERY_CACHING=true
-RATE_LIMIT_DEFAULT_RPM=100
+# API Keys (get from GCP Secret Manager or your admin)
+ODDS_API_KEY=your-key-here
+BDL_API_KEY=your-key-here
 ```
+
+### Minimum Required for Production
+
+The following are required for production deployment:
+
+1. **GCP Configuration**: `GCP_PROJECT_ID` (or defaults will be used)
+2. **API Keys**: All API keys in GCP Secret Manager
+3. **Email Alerting**: `AWS_SES_ACCESS_KEY_ID`, `AWS_SES_SECRET_ACCESS_KEY`, `EMAIL_ALERTS_TO`
+4. **Slack Alerting** (optional): `SLACK_WEBHOOK_URL`, `SLACK_ALERTS_ENABLED=true`
 
 ---
 
 ## Related Documentation
 
-- [Deployment Guide](../04-deployment/)
-- [Service URLs Configuration](../../shared/config/service_urls.py)
-- [Timeout Configuration](../../shared/config/timeout_config.py)
+- [Architecture Overview](/docs/01-architecture/README.md)
+- [Operations Guide](/docs/02-operations/README.md)
+- [Deployment Guide](/docs/04-deployment/README.md)
+- [Feature Flags Configuration](/shared/config/feature_flags.py)
+- [Timeout Configuration](/shared/config/timeout_config.py)
+- [GCP Configuration](/shared/config/gcp_config.py)
+
+---
+
+*Last Updated: 2026-01-23*

@@ -11,6 +11,8 @@ Detailed documentation for major system features. For quick reference, see CLAUD
 3. [Early Prediction Timing](#early-prediction-timing)
 4. [Model Attribution Tracking](#model-attribution-tracking)
 5. [Enhanced Notifications](#enhanced-notifications)
+6. [Phase 6 - Subset Exporters](#phase-6---subset-exporters)
+7. [Dynamic Subset System](#dynamic-subset-system)
 
 ---
 
@@ -235,3 +237,247 @@ Top 5 Picks:
 **Backward Compatible:** Gracefully handles predictions without attribution (pre-Feb 4)
 
 **References:** Session 83 Task #4, Session 85
+
+---
+
+## Phase 6 - Subset Exporters
+
+**Purpose:** Export curated prediction subsets to GCS for clean public API access, keeping proprietary data private.
+
+**Background:** Phase 6 is the final step in the six-phase data pipeline:
+1. Phase 1 - Scrapers → Cloud Storage JSON
+2. Phase 2 - Raw Processing → BigQuery raw tables
+3. Phase 3 - Analytics → Player/team summaries
+4. Phase 4 - Precompute → Performance aggregates
+5. Phase 5 - Predictions → ML models (CatBoost V9)
+6. **Phase 6 - Publishing → JSON exports to GCS API**
+
+### Four Subset Exporters
+
+| Exporter | Output | Purpose | Location |
+|----------|--------|---------|----------|
+| **AllSubsetsPicksExporter** | `all_subsets_combined.json` | All 9 subset picks in one file | `predictions/exporters/all_subsets_picks_exporter.py` |
+| **SubsetDefinitionsExporter** | `subset_definitions.json` | Subset metadata (names, criteria, edge thresholds) | `predictions/exporters/subset_definitions_exporter.py` |
+| **DailySignalsExporter** | `daily_signals.json` | Daily prediction signals (GREEN/YELLOW/RED) | `predictions/exporters/daily_signals_exporter.py` |
+| **SubsetPerformanceExporter** | `subset_performance.json` | Performance metrics by subset | `predictions/exporters/subset_performance_exporter.py` |
+
+### Data Privacy
+
+**Excluded from exports:**
+- Proprietary features (usage_rate, rest_impact, matchup_advantage)
+- Model training data
+- Internal system metadata
+- Raw scraper data
+
+**Included in exports:**
+- Player name, team
+- Game info (opponent, home/away, date, time)
+- Prop market (line_value, recommendation)
+- Edge and confidence scores
+- Subset classification
+- Model attribution (which model generated prediction)
+
+### AllSubsetsPicksExporter - Combined File Approach
+
+**File:** `all_subsets_combined.json`
+
+**Structure:**
+```json
+{
+  "generated_at": "2026-02-02T14:30:00Z",
+  "game_date": "2026-02-02",
+  "system_id": "catboost_v9",
+  "subsets": [
+    {
+      "subset_id": "high_edge",
+      "subset_name": "High Edge (5+)",
+      "criteria": "edge >= 5.0",
+      "picks": [
+        {
+          "player_name": "LeBron James",
+          "team": "LAL",
+          "opponent": "GSW",
+          "home_away": "HOME",
+          "game_time": "19:30",
+          "prop_market": "points",
+          "line_value": 25.5,
+          "recommendation": "OVER",
+          "edge": 6.2,
+          "confidence": 87.3,
+          "model_file": "catboost_v9_feb_retrain.cbm"
+        }
+      ]
+    },
+    {
+      "subset_id": "medium_edge",
+      "subset_name": "Medium Edge (3-5)",
+      "criteria": "edge >= 3.0 AND edge < 5.0",
+      "picks": [...]
+    }
+  ]
+}
+```
+
+**Design Decision:** Single combined file instead of 9 separate files
+- **Pros:** Atomic consistency, simpler API, fewer HTTP requests
+- **Cons:** Larger file size (~200-500 KB vs 9 × 20-60 KB)
+- **Chosen:** Combined approach for simplicity and consistency
+
+### Deployment
+
+**Trigger:** Phase 5 completion event via Pub/Sub
+
+**GCS Bucket:** `gs://nba-props-api-exports/`
+
+**Paths:**
+```
+/subsets/all_subsets_combined.json
+/subsets/subset_definitions.json
+/daily/daily_signals.json
+/performance/subset_performance.json
+```
+
+**Access:** Public read, CORS enabled for web access
+
+### Verification Query
+
+```sql
+SELECT game_date, COUNT(*) as total_picks
+FROM `nba_predictions.player_prop_predictions`
+WHERE game_date >= CURRENT_DATE()
+  AND system_id = 'catboost_v9'
+  AND ABS(predicted_points - line_value) >= 3.0  -- Medium+ edge
+GROUP BY game_date
+```
+
+**Implementation:** Sessions 87-91, Opus architectural review in Session 91
+
+---
+
+## Dynamic Subset System
+
+**Purpose:** Classify predictions into 9 strategic subsets based on edge, confidence, market type, and game context for signal-aware betting strategies.
+
+**Background:** Analysis showed 73% of predictions have edge < 3 and lose money. Subset system enables filtering to profitable picks only.
+
+### 9 Subsets Defined
+
+| Subset ID | Criteria | Hit Rate | ROI | Typical Count |
+|-----------|----------|----------|-----|---------------|
+| **high_edge** | edge >= 5.0 | 79.0% | +50.9% | 15-25 picks/day |
+| **medium_edge** | edge >= 3.0 AND edge < 5.0 | 65.0% | +24.0% | 40-60 picks/day |
+| **high_confidence** | confidence >= 85% | 68.5% | +28.3% | 30-50 picks/day |
+| **points_specialists** | prop_market = 'points' AND edge >= 3 | 66.2% | +26.1% | 20-35 picks/day |
+| **assists_specialists** | prop_market = 'assists' AND edge >= 3 | 64.8% | +23.7% | 10-20 picks/day |
+| **rebounds_specialists** | prop_market = 'rebounds' AND edge >= 3 | 63.5% | +21.9% | 10-20 picks/day |
+| **home_advantage** | home_away = 'HOME' AND edge >= 3 | 65.8% | +25.4% | 25-40 picks/day |
+| **primetime_games** | game_time >= 19:00 AND edge >= 3 | 66.9% | +27.2% | 15-30 picks/day |
+| **all_picks** | No filter (reference baseline) | 54.7% | +4.5% | 150-250 picks/day |
+
+### Signal-Aware Filtering
+
+**Daily Signal System:** Predicts overall prediction quality for the day
+
+| Signal | Meaning | Action | Expected Hit Rate |
+|--------|---------|--------|-------------------|
+| **GREEN** | High confidence day (>15 high-edge picks, >60% overall edge) | Bet medium+ edge picks | 82% on GREEN days |
+| **YELLOW** | Mixed day (5-15 high-edge picks) | Bet high-edge only | 68% on YELLOW days |
+| **RED** | Low confidence day (<5 high-edge picks) | Skip or bet high-edge only | 51% on RED days |
+
+**Strategy:** On GREEN days, bet `medium_edge` + `high_edge`. On RED days, skip or bet `high_edge` only.
+
+### Implementation
+
+**Subset Classification:**
+```python
+def classify_subset(prediction: dict) -> List[str]:
+    """Classify prediction into applicable subsets."""
+    subsets = []
+
+    edge = prediction.get('edge', 0)
+    confidence = prediction.get('confidence', 0)
+    prop_market = prediction.get('prop_market')
+    home_away = prediction.get('home_away')
+    game_time = prediction.get('game_time')
+
+    # Edge-based
+    if edge >= 5.0:
+        subsets.append('high_edge')
+    if 3.0 <= edge < 5.0:
+        subsets.append('medium_edge')
+
+    # Confidence-based
+    if confidence >= 85.0:
+        subsets.append('high_confidence')
+
+    # Market specialists (with edge filter)
+    if edge >= 3.0:
+        if prop_market == 'points':
+            subsets.append('points_specialists')
+        elif prop_market == 'assists':
+            subsets.append('assists_specialists')
+        elif prop_market == 'rebounds':
+            subsets.append('rebounds_specialists')
+
+    # Context-based (with edge filter)
+    if edge >= 3.0:
+        if home_away == 'HOME':
+            subsets.append('home_advantage')
+        if game_time and game_time >= '19:00':
+            subsets.append('primetime_games')
+
+    # Reference baseline
+    subsets.append('all_picks')
+
+    return subsets
+```
+
+**Daily Signal Calculation:**
+```sql
+SELECT
+  game_date,
+  COUNT(*) as total_picks,
+  COUNTIF(edge >= 5.0) as high_edge_picks,
+  COUNTIF(edge >= 3.0) as medium_plus_edge_picks,
+  ROUND(AVG(edge), 2) as avg_edge,
+  ROUND(100.0 * COUNTIF(edge >= 5.0) / COUNT(*), 1) as pct_high_edge,
+  CASE
+    WHEN COUNTIF(edge >= 5.0) > 15 AND AVG(edge) > 3.5 THEN 'GREEN'
+    WHEN COUNTIF(edge >= 5.0) BETWEEN 5 AND 15 THEN 'YELLOW'
+    ELSE 'RED'
+  END as daily_signal
+FROM nba_predictions.player_prop_predictions
+WHERE game_date = CURRENT_DATE()
+  AND system_id = 'catboost_v9'
+GROUP BY game_date
+```
+
+### Performance Validation
+
+**Query to verify subset performance:**
+```sql
+SELECT
+  subset_id,
+  COUNT(*) as bets,
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate,
+  ROUND(100.0 * (SUM(IF(prediction_correct, 1, 0)) - SUM(IF(NOT prediction_correct, 1.1, 0))) / COUNT(*), 1) as roi
+FROM nba_predictions.prediction_accuracy,
+  UNNEST(subsets) as subset_id
+WHERE system_id = 'catboost_v9'
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+GROUP BY subset_id
+ORDER BY roi DESC
+```
+
+### Key Learnings
+
+1. **Edge >= 3 threshold is critical:** 73% of predictions below this lose money
+2. **GREEN day strategy works:** 82% hit rate vs 54.7% baseline
+3. **Combined file export:** Simpler than 9 separate files
+4. **Subset overlap is intentional:** One pick can belong to multiple subsets (e.g., high_edge + points_specialists)
+
+**Implementation:** Sessions 71-91, Subset definitions in `predictions/exporters/subset_definitions.json`
+
+**References:**
+- 2026-01.md summary lines 40-41, 74-76
+- Phase 6 architecture review (Session 91)

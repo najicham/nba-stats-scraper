@@ -1,0 +1,33 @@
+# Documentation Cleanup Task
+
+Please clean up and organize the project documentation. This is a multi-phase task.
+
+## Required Reading First
+
+Before starting, read these two documents:
+1. `docs/08-projects/DOCUMENTATION-HYGIENE-GUIDE.md` - The rules and workflow
+2. `docs/08-projects/CLEANUP-PROMPT-2026-02.md` - Detailed step-by-step instructions
+
+## Quick Summary
+
+The `docs/08-projects/current/` directory has 125+ projects but most are completed or stale. Your job:
+
+1. **Assess** - Categorize each project (keep/complete/archive)
+2. **Summarize** - Extract key learnings before archiving
+3. **Move** - Organize projects into proper directories
+4. **Sync** - Update root docs (CLAUDE.md, troubleshooting, etc.) with learnings
+5. **Report** - Document what was done
+
+## Key Rules
+
+- Don't delete anything, only move
+- Summarize learnings BEFORE archiving
+- Update root docs with patterns discovered
+- Create monthly summaries in `docs/08-projects/summaries/`
+- Group archived projects by month
+
+## Start Here
+
+Read the two documents mentioned above, then begin with Phase 1: Assess Current State.
+
+Take your time - this can be split across multiple sessions if needed. Quality over speed.
