@@ -127,4 +127,97 @@ Should show ACTUAL_PROP predictions after 2:30 AM ET.
 
 **Previous**: [Session 82 Handoff](./2026-02-02-SESSION-82-HANDOFF.md)
 
-**Session 85 - Complete**
+---
+
+## Session 85 (Part 2) - Model Validation & Enhancements
+
+**Time**: 4:00 PM - [ONGOING]
+**Focus**: Deploy drift fixes, validate NEW V9 model, enhance notifications
+**Status**: ⏳ IN PROGRESS - Awaiting game completion
+
+### Deployment Drift Cleared
+
+**Services Updated**:
+- nba-phase3-analytics-processors → 4:11 PM PST (rev 00173-vgf)
+- nba-phase4-precompute-processors → 4:11 PM PST (rev 00096-nml)
+- prediction-coordinator → 4:09 PM PST (rev 00093-gvh)
+
+All at commit `599200e1`
+
+### Enhanced Notifications with Model Metadata ✅
+
+**Objective**: Session 83 Task #4 - Add model attribution to daily picks
+
+**Changes**: `shared/notifications/subset_picks_notifier.py`
+- Added 6 model attribution fields to BigQuery query
+- Enhanced Slack: Show model name, MAE, hit rate
+- Enhanced Email: Detailed model info box with training period
+
+**Example Output** (starting Feb 4):
+```
+🤖 Model: V9 Feb 02 Retrain (MAE: 4.12, HR: 74.6%)
+```
+
+**Status**: ✅ Code ready, tested, awaiting commit
+
+### Model Attribution Investigation
+
+**Objective**: Answer "Which model produced 75.9% hit rate?"
+
+**Findings**:
+- Feb 2 predictions: 0% attribution (before deployment)
+- Feb 3 predictions: 0% attribution (generated at 3:12 PM before 4:51 PM deployment)
+- **Actual deployment**: prediction-worker rev 00080-5jr at 4:51 PM PST
+
+**Model Files in GCS**:
+1. catboost_v9_33features_20260201_011018.cbm (OLD)
+2. catboost_v9_feb_02_retrain.cbm (NEW)
+
+**Conclusion**: ⏳ Cannot answer yet - no attribution data exists
+- First predictions with attribution: Feb 4 (after 11:30 PM or 4 AM runs)
+- Action: Re-run analysis Feb 3 morning
+
+### Tasks Status
+
+| Task | Status | Notes |
+|------|--------|-------|
+| #1: Enhanced notifications | ✅ Complete | Ready for commit |
+| #2: Model attribution analysis | ✅ Partial | Awaiting Feb 4 data |
+| #3: Validate NEW V9 model | ⏳ Waiting | Games finish ~10 PM PST |
+| #4: Verify attribution system | ⏳ Waiting | Feb 4 predictions |
+| #5: RED signal analysis | ⏳ Waiting | Games finish ~10 PM PST |
+| #6: Documentation | 🔄 In Progress | This handoff |
+
+### Next Steps (Tonight)
+
+1. **~10 PM PST**: Run NEW V9 model validation
+   ```bash
+   ./bin/validate-feb2-model-performance.sh
+   ```
+
+2. **~11:30 PM PST**: Feb 4 early predictions generate (will have attribution)
+
+3. **Feb 3 Morning**: Verify model attribution
+   ```bash
+   ./bin/verify-model-attribution.sh --game-date 2026-02-04
+   ```
+
+### Code to Commit
+
+```bash
+git add shared/notifications/subset_picks_notifier.py
+git commit -m "feat: Add model attribution to daily subset picks notifications
+
+Enhanced Slack and Email notifications to show model metadata:
+- Model file name
+- Expected MAE and hit rate
+- Training period
+
+Resolves Session 83 Task #4
+
+Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
+```
+
+---
+
+**Session 85 - Part 1 Complete, Part 2 In Progress**
