@@ -992,55 +992,97 @@ def start_prediction_batch():
             # Don't fail the batch if run history logging fails
             logger.warning(f"Failed to log batch start (non-fatal): {e}")
 
-        # PRE-FLIGHT QUALITY FILTER: Check feature quality before publishing to Pub/Sub
-        # This prevents workers from processing low-quality predictions that will fail anyway
-        # Added: Jan 20, 2026 - Quick Win #3 from Agent Findings (15-25% faster batch processing)
+        # =========================================================================
+        # QUALITY GATE: "Predict Once, Never Replace" (Session 95)
+        # - Check for existing predictions (skip if already predicted)
+        # - Apply mode-based quality thresholds (FIRST=85%, RETRY=85%, FINAL_RETRY=80%, LAST_CALL=0%)
+        # - Set quality flags on predictions
+        # - Send alerts for quality issues
+        # =========================================================================
         viable_requests = []
-        filtered_count = 0
+        quality_gate_results = {}  # Maps player_lookup to QualityGateResult
 
         try:
-            from shared.clients import get_bigquery_client
-            bq_client = get_bigquery_client(PROJECT_ID)
+            from predictions.coordinator.quality_gate import QualityGate, parse_prediction_mode
+            from predictions.coordinator.quality_alerts import check_and_send_quality_alerts, log_quality_metrics
 
-            # Query feature quality scores for all players in this batch
+            # Parse prediction mode
+            mode = parse_prediction_mode(prediction_run_mode)
+            logger.info(f"QUALITY_GATE: Applying mode={mode.value} for {game_date}")
+
+            # Initialize quality gate
+            quality_gate = QualityGate(project_id=PROJECT_ID, dataset_prefix=dataset_prefix)
+
+            # Get player lookups from requests
             player_lookups = [r.get('player_lookup') for r in requests if r.get('player_lookup')]
-            if player_lookups:
-                query = f"""
-                    SELECT player_lookup, feature_quality_score
-                    FROM `{PROJECT_ID}.{dataset_prefix}precompute.ml_feature_store_v2`
-                    WHERE player_lookup IN UNNEST(@player_lookups)
-                """
-                job_config = bigquery.QueryJobConfig(
-                    query_parameters=[
-                        bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups)
-                    ]
-                )
-                quality_scores = {row.player_lookup: row.feature_quality_score
-                                for row in bq_client.query(query, job_config=job_config).result()}
 
-                # Filter requests based on quality threshold
+            if player_lookups:
+                # Apply quality gate
+                gate_results, summary = quality_gate.apply_quality_gate(
+                    game_date=game_date,
+                    player_lookups=player_lookups,
+                    mode=mode
+                )
+
+                # Build lookup for results
+                quality_gate_results = {r.player_lookup: r for r in gate_results}
+
+                # Filter requests and add quality flags
                 for pred_request in requests:
                     player_lookup = pred_request.get('player_lookup')
-                    quality_score = quality_scores.get(player_lookup, 0)
+                    gate_result = quality_gate_results.get(player_lookup)
 
-                    if quality_score < 70 and quality_score > 0:
-                        logger.warning(
-                            f"PRE-FLIGHT FILTER: Skipping {player_lookup} (quality={quality_score:.1f}% < 70%)",
-                            extra={'player_lookup': player_lookup, 'quality_score': quality_score, 'filter_reason': 'quality_too_low'}
-                        )
-                        filtered_count += 1
-                    else:
+                    if gate_result and gate_result.should_predict:
+                        # Add quality flags to request
+                        pred_request['feature_quality_score'] = gate_result.feature_quality_score
+                        pred_request['low_quality_flag'] = gate_result.low_quality_flag
+                        pred_request['forced_prediction'] = gate_result.forced_prediction
+                        pred_request['prediction_attempt'] = gate_result.prediction_attempt
                         viable_requests.append(pred_request)
+                    elif gate_result:
+                        logger.debug(
+                            f"QUALITY_GATE: Skipping {player_lookup} - {gate_result.reason}"
+                        )
+
+                # Log quality metrics for monitoring
+                log_quality_metrics(
+                    game_date=game_date,
+                    mode=mode.value,
+                    summary_dict={
+                        'total_players': summary.total_players,
+                        'players_to_predict': summary.players_to_predict,
+                        'players_skipped_existing': summary.players_skipped_existing,
+                        'players_skipped_low_quality': summary.players_skipped_low_quality,
+                        'players_forced': summary.players_forced,
+                        'avg_quality_score': summary.avg_quality_score,
+                        'quality_distribution': summary.quality_distribution,
+                    }
+                )
+
+                # Check for and send quality alerts
+                check_and_send_quality_alerts(
+                    game_date=game_date,
+                    mode=mode.value,
+                    total_players=summary.total_players,
+                    players_to_predict=summary.players_to_predict,
+                    players_skipped_existing=summary.players_skipped_existing,
+                    players_skipped_low_quality=summary.players_skipped_low_quality,
+                    players_forced=summary.players_forced,
+                    avg_quality_score=summary.avg_quality_score,
+                    quality_distribution=summary.quality_distribution
+                )
 
                 logger.info(
-                    f"PRE-FLIGHT FILTER: {len(viable_requests)}/{len(requests)} viable "
-                    f"({filtered_count} filtered for low quality)"
+                    f"QUALITY_GATE: {len(viable_requests)}/{len(requests)} players will get predictions "
+                    f"(skipped_existing={summary.players_skipped_existing}, "
+                    f"skipped_low_quality={summary.players_skipped_low_quality}, "
+                    f"forced={summary.players_forced})"
                 )
             else:
                 viable_requests = requests
         except Exception as e:
-            # Non-fatal: If pre-flight filter fails, publish all requests (workers will handle filtering)
-            logger.warning(f"PRE-FLIGHT FILTER: Failed to check quality scores (publishing all): {e}")
+            # Non-fatal: If quality gate fails, fall back to publishing all requests
+            logger.error(f"QUALITY_GATE: Failed to apply quality gate (publishing all): {e}", exc_info=True)
             viable_requests = requests
 
         # Publish viable requests to Pub/Sub (with batch historical data if available)
