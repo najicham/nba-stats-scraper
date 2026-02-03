@@ -2,107 +2,132 @@
 
 ## Session Summary
 
-Fixed critical usage_rate 0% bug and set up automated morning deployment monitoring.
+Fixed critical usage_rate 0% bug and implemented comprehensive long-term prevention system.
 
 ## Fixes Applied
 
 | Issue | Fix | Status |
 |-------|-----|--------|
-| **P0: usage_rate 0% bug** | Lowered threshold from 80% to 50% in `_check_team_stats_available()` | ✅ Fixed & Deployed |
-| **P1: Morning health monitoring** | Created Cloud Function + Scheduler for 6 AM ET daily drift checks | ✅ Deployed |
-| **P2: Missing PHI-LAC game** | Investigated - data was backfilled at 11:30 AM ET, now complete | ✅ Resolved |
+| **P0: usage_rate 0% bug** | Per-game calculation instead of global threshold | ✅ Complete |
+| **P1: Morning deployment monitoring** | Cloud Function + Scheduler for 6 AM ET daily | ✅ Deployed |
+| **P1: Analytics quality alerts** | Cloud Function + Scheduler for 7:30 AM ET daily | ✅ Deployed |
+| **P1: Unit tests** | 11 tests for usage_rate edge cases | ✅ Complete |
+| **P2: Analytics quality gate** | Added to quality_gate.py | ✅ Complete |
+| **P2: Data quality runbook** | Investigation procedures | ✅ Complete |
+| **P2: PHI-LAC investigation** | Data backfilled, now complete | ✅ Resolved |
 
-## Root Causes
+## Root Cause Analysis
 
 ### usage_rate 0% Bug
 **Problem:** Feb 2 had 0% usage_rate coverage despite valid team data existing.
 
-**Root Cause:** `_check_team_stats_available()` used an 80% threshold that blocked ALL usage_rate calculations when a single game was delayed. With 4 games and 1 delayed (PHI-LAC), the 3/4 = 75% didn't meet the 80% threshold.
+**Root Cause:** `_check_team_stats_available()` used an 80% threshold that blocked ALL usage_rate calculations when a single game was delayed. With 4 games and 1 delayed (PHI-LAC), 3/4 = 75% didn't meet threshold.
 
-**Fix:** Lowered threshold from 80% to 50% in `player_game_summary_processor.py:383`.
+**Fix Applied:**
+1. **Band-aid:** Lowered threshold from 80% to 50%
+2. **Proper fix:** Changed to per-game calculation - each game's usage_rate is calculated based on whether THAT game has team data, not a global threshold
 
-**Impact:** Now usage_rate is calculated for all games that have valid team data, rather than blocking everything.
+**Impact:** One delayed game no longer blocks usage_rate for other games.
 
-### PHI-LAC Missing Data
-**Problem:** PHI-LAC game (0022500715) had 0 records in BDL at 00:45 ET.
+## Long-Term Prevention System
 
-**Resolution:** Data was automatically backfilled at 11:30 AM ET. Current state:
-- BDL: 35 records ✅
-- Analytics: 35 records, 21 active players ✅
-- Usage rate: 100% coverage ✅
+### 1. Per-Game Usage Rate Calculation (P0)
+Changed from global threshold to per-game:
+- Removed dependency on `self._team_stats_available` flag
+- Now checks if each row has `team_fg_attempts`, `team_ft_attempts`, `team_turnovers`
+- `data_quality_flag` and `team_stats_available_at_processing` now per-game
 
-## Infrastructure Deployed
+### 2. Analytics Quality Check (P1)
+- **Cloud Function:** `analytics-quality-check`
+- **Scheduler:** `analytics-quality-check-morning` (7:30 AM ET)
+- **Checks:** usage_rate >= 80%, minutes >= 90%, active players >= 15 per game
+- **Alerts:** Slack #nba-alerts on issues
 
-### Morning Deployment Check
-- **Cloud Function:** `morning-deployment-check` (Gen2, Python 3.11)
-- **Cloud Scheduler:** `morning-deployment-check` (6 AM ET daily)
-- **Purpose:** Detect stale Cloud Run deployments and send Slack alerts
-- **Method:** Compares `commit-sha` label on services vs latest GitHub commits
+### 3. Unit Tests (P1)
+11 tests in `tests/data_processors/analytics/test_usage_rate_calculation.py`:
+- Partial team data scenarios
+- One game delayed (the Feb 2 case)
+- All/no team data edge cases
+- Formula verification
+
+### 4. Analytics Quality Gate (P2)
+Added `AnalyticsQualityGate` class to `quality_gate.py`:
+- Blocks predictions if usage_rate < 50%
+- Warns if usage_rate < 80%
+- Runs before prediction batches
+
+### 5. Data Quality Runbook (P2)
+`docs/02-operations/runbooks/data-quality-runbook.md`:
+- Quick diagnosis queries
+- Root cause lookup table
+- Fix procedures
 
 ## Commits
 
 | Commit | Description |
 |--------|-------------|
-| `395df684` | fix: Lower team stats threshold from 80% to 50% for usage_rate calc |
+| `395df684` | fix: Lower team stats threshold from 80% to 50% (band-aid) |
 | `7d01ccff` | feat: Add Cloud Function for morning deployment check |
+| `cf25b5e2` | refactor: Change usage_rate to per-game calculation |
+| `c44bbfeb` | feat: Add comprehensive prevention system |
 
-## Deployments
+## Infrastructure Deployed
 
-| Service | Status | Commit |
-|---------|--------|--------|
-| nba-phase3-analytics-processors | ✅ Deployed | 395df684 |
-| morning-deployment-check (Cloud Function) | ✅ New | 7d01ccff |
+| Resource | Type | Schedule |
+|----------|------|----------|
+| `morning-deployment-check` | Cloud Function | 6 AM ET daily |
+| `analytics-quality-check` | Cloud Function | 7:30 AM ET daily |
+| `morning-deployment-check` | Cloud Scheduler | 0 11 * * * UTC |
+| `analytics-quality-check-morning` | Cloud Scheduler | 30 12 * * * UTC |
 
 ## Verification
 
-### Feb 2 Data Quality (After Fixes)
+### Feb 2 Data Quality (After All Fixes)
 ```
-Game ID              | Active | Usage Rate Coverage
----------------------|--------|--------------------
-20260202_HOU_IND    | 21     | 95.2%
-20260202_MIN_MEM    | 19     | 100.0%
-20260202_NOP_CHA    | 19     | 100.0%
-20260202_PHI_LAC    | 21     | 100.0%
+Game ID              | Active | Usage Rate | Coverage
+---------------------|--------|------------|----------
+20260202_HOU_IND    | 21     | 20         | 95.2%
+20260202_MIN_MEM    | 19     | 19         | 100.0%
+20260202_NOP_CHA    | 19     | 19         | 100.0%
+20260202_PHI_LAC    | 21     | 21         | 100.0%
+
+Overall: 98.8% usage_rate coverage (was 0%)
 ```
 
-### Morning Check Test
+### Analytics Quality Check Test
 ```json
 {
-  "status": "stale",
-  "stale_count": 2,
-  "healthy_count": 3,
-  "stale_services": ["nba-phase4-precompute-processors", "nba-phase1-scrapers"]
+  "status": "OK",
+  "metrics": {
+    "game_count": 4,
+    "total_active": 80,
+    "usage_rate_coverage_pct": 98.8,
+    "minutes_coverage_pct": 100.0
+  }
 }
 ```
-
-## Known Issues (Remaining)
-
-1. **Phase 4 precompute** - Running slightly stale code (changes in `shared/`)
-2. **Phase 1 scrapers** - Running slightly stale code (changes in `shared/`)
-
-These can be deployed with:
-```bash
-./bin/deploy-service.sh nba-phase4-precompute-processors
-./bin/deploy-service.sh nba-phase1-scrapers
-```
-
-## Next Session Checklist
-
-1. [ ] Run `/validate-daily` to verify Feb 3 pipeline health
-2. [ ] Check morning deployment check ran at 6 AM ET (check Slack)
-3. [ ] Deploy Phase 4 and Phase 1 if they have relevant changes
-4. [ ] Verify Feb 3 predictions have good feature quality (85%+)
 
 ## Files Changed
 
 | File | Change |
 |------|--------|
-| `data_processors/analytics/player_game_summary/player_game_summary_processor.py` | Lowered threshold 80%→50% |
-| `functions/monitoring/morning_deployment_check/main.py` | New Cloud Function |
-| `functions/monitoring/morning_deployment_check/requirements.txt` | New dependencies |
+| `data_processors/analytics/player_game_summary/player_game_summary_processor.py` | Per-game usage_rate logic |
+| `predictions/coordinator/quality_gate.py` | Added AnalyticsQualityGate |
+| `functions/monitoring/morning_deployment_check/` | Deployment check function |
+| `functions/monitoring/analytics_quality_check/` | Analytics quality function |
+| `tests/data_processors/analytics/test_usage_rate_calculation.py` | 11 unit tests |
+| `docs/02-operations/runbooks/data-quality-runbook.md` | Investigation runbook |
+| `docs/08-projects/current/usage-rate-prevention/` | Project documentation |
+
+## Next Session Checklist
+
+1. [ ] Run `/validate-daily` to verify Feb 3 pipeline health
+2. [ ] Check morning alerts ran (6 AM deployment, 7:30 AM analytics)
+3. [ ] Verify Feb 3 predictions have good feature quality (85%+)
+4. [ ] Move usage-rate-prevention project to completed/
 
 ---
 
-**Session Duration:** ~45 minutes
-**Primary Focus:** Bug fix + infrastructure
+**Session Duration:** ~2 hours
+**Primary Focus:** Bug fix + long-term prevention
 **Co-Authored-By:** Claude Opus 4.5 <noreply@anthropic.com>
