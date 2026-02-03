@@ -726,6 +726,52 @@ curl -X POST "${COORDINATOR_URL}/regenerate-with-supersede" \
 
 **Reference**: Session 102 handoff, `docs/09-handoff/2026-02-03-SESSION-102-HANDOFF.md`
 
+### Phase 0.466: Model Bias Check (Session 102 - CRITICAL)
+
+**IMPORTANT**: Verify model predictions are not systematically biased by player tier.
+
+**Why this matters**: Session 102 discovered CatBoost V9 has regression-to-mean bias. Stars are under-predicted by ~9 pts, causing high-edge UNDER picks on stars to systematically lose. Feb 2 went 0/7 on high-edge picks.
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Check model bias by player tier (should be <3 pts for all)
+SELECT
+  CASE
+    WHEN actual_points >= 25 THEN '1_Stars (25+)'
+    WHEN actual_points >= 15 THEN '2_Starters (15-24)'
+    WHEN actual_points >= 5 THEN '3_Role (5-14)'
+    ELSE '4_Bench (<5)'
+  END as tier,
+  COUNT(*) as n,
+  ROUND(AVG(predicted_points - actual_points), 1) as bias,
+  CASE WHEN ABS(AVG(predicted_points - actual_points)) > 3 THEN '❌ FAIL' ELSE '✅ OK' END as status
+FROM nba_predictions.prediction_accuracy
+WHERE system_id = 'catboost_v9'
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+GROUP BY 1
+ORDER BY 1"
+```
+
+**Expected Result**:
+- All tiers should have bias < 3 pts
+- Stars and Bench tiers are most prone to bias
+
+**If FAIL (any tier has bias > 3 pts)**:
+
+| Tier | Bias Direction | Root Cause |
+|------|----------------|------------|
+| Stars (25+) | Under-predicted | Regression-to-mean |
+| Bench (<5) | Over-predicted | Regression-to-mean |
+
+**Resolution**:
+1. Check `docs/08-projects/current/feature-mismatch-investigation/MODEL-BIAS-INVESTIGATION.md`
+2. Consider adding tier recalibration in worker.py
+3. Plan V10 model retraining with tier features
+
+**Reference**: Session 102 handoff, `docs/09-handoff/2026-02-03-SESSION-102-MODEL-INVESTIGATION-HANDOFF.md`
+
 ### Phase 0.47: Session 97 Quality Gate Check (CRITICAL)
 
 **IMPORTANT**: Verify the ML Feature Store quality gate is functioning correctly.
