@@ -425,7 +425,9 @@ class FeatureExtractor:
 
         # If no results, use most recent composite factors per player (Session 95)
         # This handles upcoming games where composite factors aren't calculated yet
+        used_fallback = False
         if result.empty:
+            used_fallback = True
             logger.warning(f"FALLBACK: No composite_factors for exact date {game_date}, using most recent per player")
             query = f"""
             WITH ranked AS (
@@ -448,9 +450,10 @@ class FeatureExtractor:
         if not result.empty:
             for record in result.to_dict('records'):
                 self._composite_factors_lookup[record['player_lookup']] = record
-            logger.warning(f"FALLBACK_RESULT: Loaded {len(self._composite_factors_lookup)} composite_factors from fallback query")
+            source = "fallback query" if used_fallback else "exact date match"
+            logger.info(f"Loaded {len(self._composite_factors_lookup)} composite_factors from {source}")
         else:
-            logger.warning(f"FALLBACK_EMPTY: No composite_factors found even with fallback query")
+            logger.warning(f"No composite_factors found for {game_date}")
 
     def _batch_extract_shot_zone(self, game_date: date) -> None:
         """
