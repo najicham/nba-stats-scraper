@@ -115,7 +115,7 @@ echo "Build timestamp: $BUILD_TIMESTAMP"
 echo "=============================================="
 
 echo ""
-echo "[1/7] Building $SERVICE from repo root with $DOCKERFILE..."
+echo "[1/8] Building $SERVICE from repo root with $DOCKERFILE..."
 docker build \
     -t "$REGISTRY/$SERVICE:latest" \
     -t "$REGISTRY/$SERVICE:$BUILD_COMMIT" \
@@ -123,8 +123,143 @@ docker build \
     --build-arg BUILD_TIMESTAMP="$BUILD_TIMESTAMP" \
     -f "$DOCKERFILE" .
 
+# [2/8] P0-2: Docker Dependency Verification (Session 89)
 echo ""
-echo "[2/7] Pushing image..."
+echo "[2/8] Testing Docker dependencies (P0-2)..."
+echo "This prevents missing dependency outages like Session 80 (38 hours down)"
+
+# Map service to main module and critical dependencies
+case $SERVICE in
+  prediction-coordinator)
+    MAIN_MODULE="coordinator"
+    CRITICAL_DEPS="google.cloud.bigquery google.cloud.pubsub_v1 google.cloud.firestore flask pandas"
+    ;;
+  prediction-worker)
+    MAIN_MODULE="worker"
+    CRITICAL_DEPS="google.cloud.bigquery google.cloud.pubsub_v1 google.cloud.firestore flask catboost pandas sklearn"
+    ;;
+  nba-phase2-raw-processors)
+    MAIN_MODULE="raw_processor_main"
+    CRITICAL_DEPS="google.cloud.bigquery google.cloud.firestore flask pandas"
+    ;;
+  nba-phase3-analytics-processors)
+    MAIN_MODULE="analytics_main"
+    CRITICAL_DEPS="google.cloud.bigquery google.cloud.firestore flask pandas"
+    ;;
+  nba-phase4-precompute-processors)
+    MAIN_MODULE="precompute_main"
+    CRITICAL_DEPS="google.cloud.bigquery google.cloud.firestore flask pandas"
+    ;;
+  nba-scrapers|nba-phase1-scrapers)
+    MAIN_MODULE="scraper_main"
+    CRITICAL_DEPS="google.cloud.bigquery google.cloud.storage flask pandas requests"
+    ;;
+  unified-dashboard)
+    MAIN_MODULE="app"
+    CRITICAL_DEPS="flask google.cloud.firestore google.cloud.bigquery pandas"
+    ;;
+  nba-grading-service)
+    MAIN_MODULE="nba_grading_service"
+    CRITICAL_DEPS="google.cloud.bigquery google.cloud.pubsub_v1 google.cloud.firestore flask pandas"
+    ;;
+  *)
+    echo "WARNING: No dependency test configured for $SERVICE, skipping..."
+    MAIN_MODULE=""
+    CRITICAL_DEPS=""
+    ;;
+esac
+
+# Run dependency test if configured
+if [ -n "$MAIN_MODULE" ]; then
+  # Create test script
+  TEST_SCRIPT=$(cat <<'PYEOF'
+import sys
+import importlib
+
+# Get args: main_module critical_deps...
+main_module = sys.argv[1]
+critical_deps = sys.argv[2].split() if len(sys.argv) > 2 else []
+
+print(f"Testing imports for module: {main_module}")
+print(f"Critical dependencies: {len(critical_deps)}")
+print("")
+
+failed = []
+
+# Test main module
+print(f"[1/2] Testing main module: {main_module}")
+try:
+    importlib.import_module(main_module)
+    print(f"  ✅ {main_module} imports successfully")
+except ImportError as e:
+    print(f"  ❌ CRITICAL: {main_module} import failed: {e}")
+    failed.append(("MAIN_MODULE", main_module, str(e)))
+
+# Test critical dependencies
+print(f"\n[2/2] Testing {len(critical_deps)} critical dependencies:")
+for dep in critical_deps:
+    try:
+        importlib.import_module(dep)
+        print(f"  ✅ {dep}")
+    except ImportError as e:
+        print(f"  ❌ {dep}: {e}")
+        failed.append(("DEPENDENCY", dep, str(e)))
+
+print("")
+if failed:
+    print("=" * 60)
+    print("❌ DEPENDENCY TEST FAILED")
+    print("=" * 60)
+    print(f"Missing {len(failed)} critical import(s):")
+    for import_type, name, error in failed:
+        print(f"  [{import_type}] {name}")
+        print(f"    Error: {error}")
+    print("")
+    print("This would cause service crashes in production!")
+    print("=" * 60)
+    sys.exit(1)
+else:
+    print("=" * 60)
+    print("✅ ALL DEPENDENCIES VERIFIED")
+    print("=" * 60)
+    print("All critical imports work correctly")
+    print("Service should start successfully")
+    print("=" * 60)
+PYEOF
+)
+
+  # Run test in container
+  if docker run --rm "$REGISTRY/$SERVICE:$BUILD_COMMIT" python3 -c "$TEST_SCRIPT" "$MAIN_MODULE" "$CRITICAL_DEPS"; then
+    echo ""
+    echo "✅ Docker dependency test PASSED"
+  else
+    echo ""
+    echo "=============================================="
+    echo "🚨 BLOCKING DEPLOYMENT - MISSING DEPENDENCIES"
+    echo "=============================================="
+    echo ""
+    echo "The Docker image is missing critical dependencies!"
+    echo "This would cause service crashes like Session 80 (38hr outage)."
+    echo ""
+    echo "Actions to fix:"
+    echo "1. Check $DOCKERFILE for correct requirements.txt"
+    echo "2. Verify requirements.txt includes all needed packages"
+    echo "3. Add missing packages to requirements.txt"
+    echo "4. Rebuild and try again"
+    echo ""
+    echo "Common causes:"
+    echo "  - Package in requirements.txt but wrong name"
+    echo "  - Missing from requirements.txt entirely"
+    echo "  - Wrong Python version in Dockerfile"
+    echo "=============================================="
+    exit 1
+  fi
+else
+  echo "⚠️  No dependency test configured, proceeding..."
+fi
+
+echo ""
+echo "[3/8] Pushing image..."
 docker push "$REGISTRY/$SERVICE:latest"
 docker push "$REGISTRY/$SERVICE:$BUILD_COMMIT"
 
@@ -133,7 +268,7 @@ ENV_VARS="BUILD_COMMIT=$BUILD_COMMIT,BUILD_TIMESTAMP=$BUILD_TIMESTAMP,GCP_PROJEC
 
 if [ "$SERVICE" = "prediction-worker" ]; then
     echo ""
-    echo "[2.5/7] Validating prediction-worker environment..."
+    echo "[3.5/8] Validating prediction-worker environment..."
 
     # Check if .env.required exists
     ENV_TEMPLATE="predictions/worker/env.template"
@@ -194,7 +329,7 @@ if [ "$SERVICE" = "prediction-worker" ]; then
 fi
 
 echo ""
-echo "[3/7] Deploying to Cloud Run..."
+echo "[4/8] Deploying to Cloud Run..."
 gcloud run deploy "$SERVICE" \
     --image="$REGISTRY/$SERVICE:latest" \
     --region="$REGION" \
@@ -204,7 +339,7 @@ gcloud run deploy "$SERVICE" \
     --quiet
 
 echo ""
-echo "[4/7] Verifying deployment..."
+echo "[5/8] Verifying deployment..."
 sleep 10
 
 # Get the latest revision
@@ -233,7 +368,7 @@ gcloud logging read \
 
 # Post-deployment service identity verification
 echo ""
-echo "[5/7] Verifying service identity..."
+echo "[6/8] Verifying service identity..."
 
 SERVICE_URL=$(gcloud run services describe "$SERVICE" \
     --region="$REGION" \
@@ -300,9 +435,9 @@ else
     fi
 fi
 
-# [6/7] Verify heartbeat code is correct
+# [7/8] Verify heartbeat code is correct
 echo ""
-echo "[6/7] Verifying heartbeat code..."
+echo "[7/8] Verifying heartbeat code..."
 
 # Check if heartbeat fix is in deployed image
 HEARTBEAT_CHECK=$(docker run --rm "$REGISTRY/$SERVICE:$BUILD_COMMIT" \
@@ -336,9 +471,9 @@ else
     echo "=============================================="
 fi
 
-# [7/7] Service-specific validation
+# [8/8] Service-specific validation
 echo ""
-echo "[7/7] Service-specific validation..."
+echo "[8/8] Service-specific validation..."
 
 # Run BigQuery write verification for applicable services (Session 88 P0-1)
 echo ""
@@ -375,6 +510,38 @@ if [ -f "bin/monitoring/verify-bigquery-writes.sh" ]; then
 else
   echo "⚠️  WARNING: BigQuery write verification script not found"
   echo "   Expected: bin/monitoring/verify-bigquery-writes.sh"
+fi
+
+# P1-2: Environment Variable Drift Detection (Session 89)
+echo ""
+echo "Verifying environment variables preserved..."
+if [ -f "bin/monitoring/verify-env-vars-preserved.sh" ]; then
+  if ./bin/monitoring/verify-env-vars-preserved.sh "$SERVICE"; then
+    echo "✅ Environment variable verification passed"
+  else
+    EXIT_CODE=$?
+    if [ "$EXIT_CODE" -eq 1 ]; then
+      echo ""
+      echo "=============================================="
+      echo "🚨 CRITICAL: Environment variable drift detected"
+      echo "=============================================="
+      echo "Required environment variables are missing after deployment!"
+      echo ""
+      echo "This is a P1 CRITICAL issue (Session 89 P1-2)"
+      echo ""
+      echo "Next steps:"
+      echo "1. Check if --set-env-vars was used (should be --update-env-vars)"
+      echo "2. Re-deploy with correct environment variables"
+      echo "3. Verify service can start successfully"
+      echo "=============================================="
+      # Don't exit - let deployment complete but warn loudly
+    elif [ "$EXIT_CODE" -eq 2 ]; then
+      echo "ℹ️  No env var requirements defined for $SERVICE (skipped)"
+    fi
+  fi
+else
+  echo "⚠️  WARNING: Environment variable verification script not found"
+  echo "   Expected: bin/monitoring/verify-env-vars-preserved.sh"
 fi
 
 case $SERVICE in
