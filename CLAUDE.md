@@ -977,6 +977,131 @@ WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v9'
 ```
 **References**: Session 70, Session 85 validation, `hit-rate-analysis` skill Query 7
 
+### Model Attribution Tracking (Session 84/85)
+
+**Purpose**: Track which exact model file generated which predictions for debugging, A/B testing, and compliance.
+
+**Schema Fields** (added to `player_prop_predictions`):
+```sql
+model_file_name STRING,               -- e.g., "catboost_v9_feb_02_retrain.cbm"
+model_training_start_date DATE,       -- Training period start
+model_training_end_date DATE,         -- Training period end
+model_expected_mae FLOAT64,           -- Expected mean absolute error
+model_expected_hit_rate FLOAT64,      -- Expected hit rate percentage
+model_trained_at TIMESTAMP            -- When model was trained
+```
+
+**Deployment Timeline** (Session 85 Finding):
+- Session 84 reported "deployed at 3:22 PM PST"
+- **Actual deployment**: 4:51 PM PST (prediction-worker rev 00080-5jr)
+- First predictions WITH attribution: Feb 4, 2026
+
+**Always verify deployment timestamps**:
+```bash
+gcloud run services describe prediction-worker --region=us-west2 \
+  --format="value(status.latestReadyRevisionName,status.conditions[0].lastTransitionTime)"
+```
+
+**Check attribution coverage**:
+```bash
+./bin/verify-model-attribution.sh --game-date YYYY-MM-DD
+```
+
+**Query performance by model file**:
+```sql
+SELECT model_file_name, COUNT(*) as predictions,
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate,
+  ROUND(AVG(ABS(predicted_points - actual_points)), 2) as mae
+FROM nba_predictions.prediction_accuracy
+WHERE system_id = 'catboost_v9'
+  AND model_file_name IS NOT NULL
+  AND ABS(predicted_points - line_value) >= 5  -- High-edge
+GROUP BY model_file_name
+ORDER BY mae ASC
+```
+
+**References**: Session 84 deployment, Session 85 investigation, `docs/08-projects/current/model-attribution-tracking/`
+
+### Mode-Aware Orchestration (Session 85 Discovery)
+
+**Finding**: Phase 3→4 orchestrator is MODE-AWARE - different processor expectations by time of day.
+
+**Orchestration Modes**:
+
+| Mode | Expected Processors | When | Purpose |
+|------|-------------------|------|---------|
+| **overnight** | 5/5 (all) | 6-8 AM ET | Process yesterday's complete games |
+| **same_day** | 1/1 (upcoming_player_game_context) | 10:30 AM / 5 PM ET | Prepare today's prediction context |
+| **tomorrow** | 1/1 (upcoming_player_game_context) | Variable | Prepare tomorrow's context |
+
+**Why This Matters**:
+- Validation showing "1/5 complete" looks bad but is actually "1/1 (same_day mode)" = 100% ✅
+- Firestore document has `_mode` field indicating orchestration mode
+- Phase 4 triggers when mode expectations are met, not when all 5 processors complete
+
+**Check mode-aware completion**:
+```bash
+# Use the mode-aware checker utility
+PYTHONPATH=. python shared/validation/phase3_completion_checker.py 2026-02-02 --verbose
+
+# Output: ✅ Phase 3: 1/1 (same_day mode) (Phase 4 triggered: all_complete)
+```
+
+**Firestore Document Structure**:
+```python
+{
+  "_mode": "same_day",              # Orchestration mode
+  "_triggered": true,               # Phase 4 triggered?
+  "_trigger_reason": "all_complete", # Why triggered
+  "_completed_count": 1,            # Number complete
+  "upcoming_player_game_context": {  # Processor completion details
+    "status": "success",
+    "completed_at": "...",
+    "record_count": 139
+  }
+}
+```
+
+**Implementation**: `orchestration/cloud_functions/phase3_to_phase4/main.py`
+- Line 190-199: `get_expected_processors_for_mode()`
+- Line 236: `should_trigger_phase4()` - checks mode-aware expectations
+
+**Recommendation**: Update validation scripts to be mode-aware to eliminate false "incomplete" alarms.
+
+**References**: Session 85 investigation, `shared/validation/phase3_completion_checker.py`
+
+### Enhanced Notifications with Model Metadata (Session 85)
+
+**Feature**: Daily subset picks notifications now include model attribution metadata.
+
+**What Users See** (starting Feb 4, 2026):
+
+**Slack**:
+```
+🏀 Today's Top Picks - 2026-02-04
+
+🟢 GREEN SIGNAL (35.5% OVER)
+✅ Normal confidence - bet as usual
+
+🤖 Model: V9 Feb 02 Retrain (MAE: 4.12, HR: 74.6%)
+
+Top 5 Picks:
+1. Player Name - OVER 25.5 pts
+   Edge: 6.5 | Conf: 89%
+...
+```
+
+**Email**: Detailed model info box with training period dates
+
+**Implementation**: `shared/notifications/subset_picks_notifier.py`
+- Lines 140-144: Model attribution fields in query
+- Lines 320-327: Slack formatting
+- Lines 435-455: Email formatting
+
+**Backward Compatible**: Gracefully handles predictions without attribution (pre-Feb 4)
+
+**References**: Session 83 Task #4, Session 85 implementation
+
 ## Prevention Mechanisms
 
 ### Pre-commit Hooks
