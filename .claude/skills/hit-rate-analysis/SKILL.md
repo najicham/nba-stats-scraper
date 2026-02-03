@@ -7,14 +7,41 @@ description: Analyze prediction hit rates with consistent groupings by confidenc
 
 Provides consistent, standardized hit rate analysis across confidence levels, edge thresholds, player tiers, and time periods.
 
-## IMPORTANT: Standard Filters
+## 🚨 SESSION 81 CRITICAL UPDATE (Feb 2, 2026)
 
-**Always report BOTH of these filters for consistency:**
+**BREAKING DISCOVERY**: Confidence-based filters DON'T WORK!
+
+**Key Findings:**
+- 39% of predictions are PASS (non-bets) - MUST exclude from hit rate calculations
+- Confidence score does NOT predict profitability
+- Edge is the ONLY filter that matters
+- 73% of predictions have edge < 3 and lose money
+
+**NEW Standard Filters (Edge-Based):**
+
+| Filter Name | Definition | Performance | Use Case |
+|-------------|------------|-------------|----------|
+| **Medium Quality** | `edge >= 3` + exclude PASS | 65.0% hit rate, +24.0% ROI | **RECOMMENDED** - Best profit/volume |
+| **High Quality** | `edge >= 5` + exclude PASS | 79.0% hit rate, +50.9% ROI | Best ROI, lower volume |
+
+**CRITICAL**: Always add `AND recommendation IN ('OVER', 'UNDER')` to exclude PASS recommendations!
+
+**OLD Filters (DEPRECATED - Don't Use):**
+- ❌ "Premium (92+ conf, 3+ edge)" - Confidence doesn't help, small sample
+- ❌ Any confidence-based filter - Model can be 95% confident in low-edge losing bets
+
+**See**: `docs/08-projects/current/prediction-quality-analysis/SESSION-81-DEEP-DIVE.md`
+
+---
+
+## IMPORTANT: Standard Filters (PRE-SESSION 81 - DEPRECATED)
+
+**⚠️ WARNING: These filters are OUTDATED. Use edge-based filters above instead.**
 
 | Filter Name | Definition | Use Case |
 |-------------|------------|----------|
-| **Premium Picks** | `confidence >= 0.92 AND edge >= 3` | Highest hit rate, fewer bets |
-| **High Edge Picks** | `edge >= 5` (any confidence) | Larger sample, still profitable |
+| **Premium Picks** | `confidence >= 0.92 AND edge >= 3` | DEPRECATED - confidence doesn't predict profitability |
+| **High Edge Picks** | `edge >= 5` (any confidence) | Still valid but should exclude PASS |
 
 This prevents confusion when comparing analyses across sessions.
 
