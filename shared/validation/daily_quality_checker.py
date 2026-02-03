@@ -117,6 +117,25 @@ QUALITY_CHECKS: List[QualityCheck] = [
         description='Percentage of DNPs marked (should be >0 for dates with games)'
     ),
 
+    # Session 104: Add check for NULL is_dnp values (data quality bug prevention)
+    QualityCheck(
+        name='pct_dnp_null',
+        table_name='player_game_summary',
+        metric_name='pct_dnp_null',
+        query="""
+            SELECT
+                ROUND(100.0 * COUNTIF(is_dnp IS NULL) / NULLIF(COUNT(*), 0), 1) as value,
+                COUNT(*) as total_records,
+                COUNTIF(is_dnp IS NULL) as null_count
+            FROM `nba-props-platform.nba_analytics.player_game_summary`
+            WHERE game_date = @check_date
+        """,
+        threshold_warning=0.1,  # Alert if any NULL values
+        threshold_critical=1.0,  # Fail if >1% NULL
+        direction='above',
+        description='Percentage of records with NULL is_dnp (should be 0% - boolean field must be TRUE/FALSE)'
+    ),
+
     QualityCheck(
         name='record_count',
         table_name='player_game_summary',

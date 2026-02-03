@@ -1071,6 +1071,19 @@ def process_player_predictions(
         metadata['injury_has_warning'] = injury_status.has_warning
         metadata['injury_should_skip'] = injury_status.should_skip
 
+        # v4.2: CRITICAL FIX - Actually skip predictions for OUT players
+        # Previously the should_skip flag was recorded but never enforced
+        # Session 104: Fix to prevent 40% of predictions being wasted on DNP players
+        if injury_status.should_skip:
+            logger.warning(
+                f"⛔ Skipping prediction for {player_lookup}: Player is "
+                f"{injury_status.injury_status.upper() if injury_status.injury_status else 'OUT'} "
+                f"({injury_status.reason or 'no reason provided'})"
+            )
+            metadata['error_message'] = f"Player injury status: {injury_status.message}"
+            metadata['skip_reason'] = 'player_injury_out'
+            return {'predictions': [], 'metadata': metadata}
+
         if injury_status.has_warning:
             logger.info(
                 f"⚠️ Injury flag for {player_lookup}: {injury_status.injury_status} - "
