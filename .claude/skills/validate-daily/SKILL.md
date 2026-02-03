@@ -1025,6 +1025,72 @@ PYTHONPATH=. python bin/maintenance/cleanup_team_duplicates.py --execute
 
 **Reference**: Session 103 handoff, investigation of usage_rate spot check failures
 
+### Phase 0.495: Team Stats Completeness Check (Session 105 - NEW)
+
+**IMPORTANT**: Verify all teams that played have team_offense_game_summary records.
+
+**Why this matters**: Session 105 discovered that some teams were missing from team_offense_game_summary even after duplicate cleanup. This caused usage_rate to be NULL for those teams' players, degrading prediction quality.
+
+**What to check**:
+
+```bash
+GAME_DATE=$(date -d "yesterday" +%Y-%m-%d)
+
+bq query --use_legacy_sql=false "
+-- Compare expected teams (from schedule) vs actual teams (from team_offense)
+WITH expected_teams AS (
+  SELECT game_date, away_team_tricode as team_abbr FROM nba_reference.nba_schedule
+  WHERE game_date = DATE('${GAME_DATE}') AND game_status = 3
+  UNION ALL
+  SELECT game_date, home_team_tricode FROM nba_reference.nba_schedule
+  WHERE game_date = DATE('${GAME_DATE}') AND game_status = 3
+),
+actual_teams AS (
+  SELECT game_date, team_abbr FROM nba_analytics.team_offense_game_summary
+  WHERE game_date = DATE('${GAME_DATE}')
+)
+SELECT
+  e.game_date,
+  COUNT(DISTINCT e.team_abbr) as expected,
+  COUNT(DISTINCT a.team_abbr) as actual,
+  COUNT(DISTINCT e.team_abbr) - COUNT(DISTINCT a.team_abbr) as missing,
+  STRING_AGG(DISTINCT CASE WHEN a.team_abbr IS NULL THEN e.team_abbr END ORDER BY e.team_abbr) as missing_teams
+FROM expected_teams e
+LEFT JOIN actual_teams a ON e.game_date = a.game_date AND e.team_abbr = a.team_abbr
+GROUP BY e.game_date"
+```
+
+**Expected Result**:
+- `missing = 0` (all teams have records)
+- `missing_teams` is NULL
+
+**If missing teams found**:
+
+| Missing | Severity | Action |
+|---------|----------|--------|
+| 1-2 teams | P2 WARNING | Reprocess team_offense for that date |
+| 3+ teams | P1 CRITICAL | Major processing failure |
+
+**Fix Command**:
+```bash
+# Reprocess team_offense_game_summary for the affected date
+ANALYTICS_URL="https://nba-phase3-analytics-processors-756957797294.us-west2.run.app"
+TOKEN=$(gcloud auth print-identity-token)
+
+curl -X POST "${ANALYTICS_URL}/process-date-range" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "start_date": "YYYY-MM-DD",
+    "end_date": "YYYY-MM-DD",
+    "processors": ["TeamOffenseGameSummaryProcessor"],
+    "backfill_mode": true,
+    "trigger_reason": "missing_team_stats_fix"
+  }'
+```
+
+**Reference**: Session 105 handoff - fixed MEM, MIN, NOP missing for Feb 2
+
 ### Phase 0.5: Pre-Game Signal Check (NEW - Session 70)
 
 **IMPORTANT**: Check daily prediction signals for model performance indicators.

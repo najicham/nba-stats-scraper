@@ -142,8 +142,76 @@ BDL API was disabled on 2026-01-28 due to persistent data quality issues:
 
 The API continues running for monitoring purposes. Re-enablement requires 7+ consecutive days of good quality data.
 
+## Injury Data Quality Check (Session 105 - NEW)
+
+BDL also provides injury data via `bdl_injuries` table. Compare against NBA.com `nbac_injury_report`.
+
+### Check Injury Data Coverage
+
+```sql
+-- Compare injury sources for today
+SELECT
+  'bdl_injuries' as source,
+  COUNT(*) as records,
+  COUNT(DISTINCT player_lookup) as players,
+  COUNT(DISTINCT team_abbr) as teams
+FROM nba_raw.bdl_injuries
+WHERE scrape_date = CURRENT_DATE()
+
+UNION ALL
+
+SELECT
+  'nbac_injury_report',
+  COUNT(*),
+  COUNT(DISTINCT player_lookup),
+  COUNT(DISTINCT team)
+FROM nba_raw.nbac_injury_report
+WHERE report_date = CURRENT_DATE()
+```
+
+### Compare Injury Status
+
+```sql
+-- Check for mismatches between BDL and NBAC injury status
+WITH bdl AS (
+  SELECT player_lookup, injury_status_normalized as bdl_status, team_abbr
+  FROM nba_raw.bdl_injuries
+  WHERE scrape_date = CURRENT_DATE()
+),
+nbac AS (
+  SELECT player_lookup, LOWER(status) as nbac_status, team
+  FROM nba_raw.nbac_injury_report
+  WHERE report_date = CURRENT_DATE()
+)
+SELECT
+  COALESCE(b.player_lookup, n.player_lookup) as player,
+  b.bdl_status,
+  n.nbac_status,
+  CASE
+    WHEN b.player_lookup IS NULL THEN 'BDL_MISSING'
+    WHEN n.player_lookup IS NULL THEN 'NBAC_MISSING'
+    WHEN b.bdl_status = n.nbac_status THEN 'MATCH'
+    ELSE 'STATUS_DIFF'
+  END as comparison
+FROM bdl b
+FULL OUTER JOIN nbac n ON b.player_lookup = n.player_lookup
+WHERE b.bdl_status IS NULL OR n.nbac_status IS NULL OR b.bdl_status != n.nbac_status
+ORDER BY comparison, player
+```
+
+### Injury Quality Thresholds
+
+| Metric | Good | Warning | Critical |
+|--------|------|---------|----------|
+| Status Match Rate | >= 80% | 60-79% | < 60% |
+| Coverage (vs NBAC) | >= 90% | 70-89% | < 70% |
+| Missing in BDL | < 10% | 10-20% | > 20% |
+
+**Note**: BDL injury data was enabled in Session 105. Monitor quality before using for predictions.
+
 ## Related Files
 
 - Quality monitoring: `bin/monitoring/check_bdl_data_quality.py`
 - Processor disable flag: `data_processors/analytics/player_game_summary/player_game_summary_processor.py` (line 90: `USE_BDL_DATA = False`)
 - Quality trend view: `nba_orchestration.bdl_quality_trend`
+- Injury scheduler: `bdl-injuries-hourly` (runs every 4 hours)
