@@ -139,19 +139,19 @@ case $SERVICE in
     CRITICAL_DEPS="google.cloud.bigquery google.cloud.pubsub_v1 google.cloud.firestore flask catboost pandas sklearn"
     ;;
   nba-phase2-raw-processors)
-    MAIN_MODULE="raw_processor_main"
+    MAIN_MODULE="main_processor_service"
     CRITICAL_DEPS="google.cloud.bigquery google.cloud.firestore flask pandas"
     ;;
   nba-phase3-analytics-processors)
-    MAIN_MODULE="analytics_main"
+    MAIN_MODULE="main_analytics_service"
     CRITICAL_DEPS="google.cloud.bigquery google.cloud.firestore flask pandas"
     ;;
   nba-phase4-precompute-processors)
-    MAIN_MODULE="precompute_main"
+    MAIN_MODULE="main_precompute_service"
     CRITICAL_DEPS="google.cloud.bigquery google.cloud.firestore flask pandas"
     ;;
   nba-scrapers|nba-phase1-scrapers)
-    MAIN_MODULE="scraper_main"
+    MAIN_MODULE="scrapers.main_scraper_service"
     CRITICAL_DEPS="google.cloud.bigquery google.cloud.storage flask pandas requests"
     ;;
   unified-dashboard)
