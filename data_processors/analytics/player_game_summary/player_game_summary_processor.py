@@ -378,9 +378,13 @@ class PlayerGameSummaryProcessor(
         expected_result = self.bq_client.query(expected_query).result()
         expected_count = next(expected_result).expected_team_game_count
 
-        # Consider ready if we have at least 80% of expected data
+        # Consider ready if we have at least 50% of expected data
         # or if no games are scheduled (allow processing to continue)
-        threshold_pct = 0.80
+        # NOTE: Lowered from 80% to 50% in Session 96 - the previous threshold
+        # blocked ALL usage_rate calculations when a single game was delayed,
+        # even for games that had valid team data. 50% ensures we calculate
+        # usage_rate for available games rather than blocking everything.
+        threshold_pct = 0.50
         if expected_count == 0:
             is_available = True  # No games scheduled, allow processing
         else:
