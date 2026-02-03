@@ -1,138 +1,158 @@
-# Session 97 Handoff - February 3, 2026
+# Session 97 Handoff - 2026-02-03
 
 ## Session Summary
 
-Investigated Feb 2 prediction failures (0% high-edge hit rate), fixed feature quality tracking code bug, and deployed fixes to prediction-worker.
-
-## Issues Investigated
-
-### Feb 2 High-Edge Predictions: 0% Hit Rate
-**Finding:** All 7 high-edge picks on Feb 2 failed - NOT due to stale features as initially suspected.
-
-**Root Cause Analysis:**
-- Feature store had correct rolling averages (verified against backfilled cache)
-- Cache was backfilled correctly in Session 96
-- Model behavior issue: massive under-prediction for several players
-  - treymurphyiii: predicted 11.1, avg was 17.2, actual was 27
-  - jarenjacksonjr: predicted 13.8, avg was 20.4, actual was 30
-
-**Conclusion:** Model over-weighted recent variance (bad recent games) leading to extreme UNDER predictions. Single bad day, not systematic - 30-day high-edge hit rate is still 75.3%.
+Ran comprehensive daily validation, investigated multiple issues from Session 96, and implemented the Phase 4 completion gate to prevent stale feature usage.
 
 ## Fixes Applied
 
-| Issue | Fix | Status |
-|-------|-----|--------|
-| **Syntax error in worker.py** | Fixed malformed JSON blocks for critical_features and features_snapshot | ✅ Fixed |
-| **Feature quality score not saved** | Added `feature_quality_score` as top-level field in prediction record | ✅ Fixed |
-| **low_quality_flag not set** | Added `low_quality_flag` field (True if quality < 70%) | ✅ Fixed |
-| **features_snapshot incomplete** | Fixed JSON structure to include all intended features | ✅ Fixed |
+| Fix | Files Changed | Commit | Deployed |
+|-----|---------------|--------|----------|
+| Phase 4 completion gate | `data_processors/precompute/ml_feature_store/ml_feature_store_processor.py` | 3bda030f | **NO** |
+| Slack alerts module | `shared/utils/slack_alerts.py` | ac8fad51 | **NO** |
+| Feature quality tracking | `predictions/worker/worker.py` | 3bda030f | **NO** |
 
-## Code Changes
+## Root Causes Identified
 
-### predictions/worker/worker.py (Lines 1758-1795)
+### 1. Feb 2 Poor Hit Rate (49.1%) - FIXED
+**Problem**: ML Feature Store ran at 6:00 AM on Feb 2, but Phase 4 didn't complete until Feb 3 at 2:00 AM. Predictions used stale/default feature values.
 
-**Before (broken):**
-```python
-'critical_features': json.dumps({
-    'vegas_points_line': features.get('vegas_points_line'),
-    ...
-    # Missing closing })
+**Fix Applied**: Added `_check_phase4_completion_gate()` in ML Feature Store that:
+- Checks `player_daily_cache` has 50+ records for target date
+- Checks `player_composite_factors` has 50+ records for target date
+- For same-day processing: requires data freshness within 6 hours
+- Skips check in backfill mode
 
-'features_snapshot': json.dumps({
-    ...
-}),
-    'pace_score': features.get('pace_score'),  # Orphaned lines
-    'feature_quality_score': features.get('feature_quality_score'),
-}),
+### 2. Slack Alerts Not Sending - FIXED
+**Problem**: `quality_alerts.py` imported from `shared.utils.slack_alerts` which didn't exist.
+
+**Fix Applied**: Created `shared/utils/slack_alerts.py` with `send_slack_alert()` function.
+
+### 3. Issues That Were NOT Bugs
+- **Vegas line coverage 42.9%**: Misleading metric. Bettable players have 100% coverage.
+- **Model attribution NULL**: Predictions created before fix deployed. Future predictions will have it.
+- **Edge filter leak (1 prediction)**: Pre-existing prediction from before Session 81.
+
+## Deployments Required (CRITICAL)
+
+```bash
+# Deploy Phase 4 completion gate - PREVENTS STALE FEATURE ISSUE
+./bin/deploy-service.sh nba-phase4-precompute-processors
+
+# Deploy Slack alerts fix  
+./bin/deploy-service.sh prediction-coordinator
 ```
 
-**After (fixed):**
-```python
-'critical_features': json.dumps({
-    'vegas_points_line': features.get('vegas_points_line'),
-    ...
-}),  # Properly closed
+## Long-Term Improvements Needed
 
-'features_snapshot': json.dumps({
-    ...
-    'feature_quality_score': features.get('feature_quality_score'),
-}),
+### P0: Pipeline Orchestration Gaps
 
-# Session 97: Feature quality tracking - enables filtering predictions by data quality
-'feature_quality_score': features.get('feature_quality_score'),
-'low_quality_flag': features.get('feature_quality_score', 100) < 70,
+The root cause of Feb 2's issue is that **Phase 4 and ML Feature Store are scheduled independently**, not event-driven. This creates race conditions.
+
+**Current State**:
+```
+Phase 3 Analytics → [scheduled time] → Phase 4 Precompute → [scheduled time] → ML Feature Store
+                    (no dependency)                         (no dependency)
 ```
 
-## Deployment
+**Proposed Fix**: Event-driven orchestration
+```
+Phase 3 Complete → Pub/Sub → Phase 4 → Pub/Sub → ML Feature Store
+```
 
-| Service | Revision | Commit | Status |
-|---------|----------|--------|--------|
-| prediction-worker | 00091-kjt | ac8fad51 | ✅ Deployed |
+**Implementation Options**:
+1. **Add Pub/Sub trigger for ML Feature Store** (recommended)
+   - ML Feature Store listens for "phase4_complete" message
+   - Only runs after Phase 4 signals completion
 
-## Validation
+2. **Add completion tracking to BigQuery**
+   - Track phase completion times in `nba_orchestration.phase_completions`
+   - ML Feature Store checks this table before running
 
-### Feature Store
-- Feb 2: 151 records, avg quality 84.5%, all complete
-- Feb 3: 339 records, avg quality 84.7%, all complete
+3. **Consolidate Phase 4 + ML Feature Store**
+   - Move ML Feature Store into Phase 4 orchestration
+   - Runs as final step of Phase 4
 
-### Model Performance (30-day)
-| Tier | Bets | Hit Rate |
-|------|------|----------|
-| High (5+) | 150 | **75.3%** |
-| Medium (3-5) | 269 | 57.2% |
-| Low (<3) | 1,171 | 51.2% |
+### P1: Monitoring Gaps
 
-### Edge Filter Status
-- Feb 3: ✅ Working (20 predictions with edge ≥3, only 1 with edge <3)
-- Feb 2: ❌ Not applied (52 predictions with edge <3 - created before filter enforcement)
+**Current Gap**: No alert when ML Feature Store uses stale data.
 
-## Known Issues
+**Proposed Fixes**:
+1. Add feature staleness metric to daily health check
+2. Alert if `ml_feature_store_v2.created_at` is >2 hours before predictions
+3. Add "feature_data_age_hours" to prediction records
 
-1. **Model attribution NULL** - All existing predictions have `model_file_name = NULL`. New predictions after this deployment will have it populated.
+### P2: Validation Query Updates
 
-2. **Feb 2 high-edge failures** - Single bad day outlier, not systematic. Monitor next few days.
+The validate-daily skill's Vegas line coverage check is misleading. Update to:
+```sql
+-- Check coverage ONLY for bettable players
+SELECT game_date,
+  COUNTIF(has_prop_line) as bettable_players,
+  COUNTIF(has_prop_line AND features[OFFSET(25)] > 0) as has_vegas_feature,
+  -- Should be ~100% for bettable players
+  ROUND(100.0 * COUNTIF(has_prop_line AND features[OFFSET(25)] > 0) /
+        NULLIF(COUNTIF(has_prop_line), 0), 1) as bettable_coverage_pct
+FROM ...
+```
+
+## Verification Commands
+
+After deployment, verify fixes:
+
+```bash
+# 1. Check Phase 4 gate logs
+gcloud logging read 'resource.labels.service_name="nba-phase4-precompute-processors" AND textPayload=~"SESSION 97 QUALITY_GATE"' --limit=10 --freshness=6h
+
+# 2. Check Slack alerts working
+gcloud logging read 'textPayload=~"Sent Slack alert"' --limit=10 --freshness=6h
+
+# 3. Monitor today's predictions quality
+bq query --use_legacy_sql=false "
+SELECT
+  AVG(feature_quality_score) as avg_quality,
+  COUNTIF(low_quality_flag) as low_quality_count
+FROM nba_predictions.player_prop_predictions
+WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v9'"
+```
+
+## Today's Games
+
+10 games scheduled for Feb 3. After games complete (~11 PM PT), verify:
+
+```sql
+-- Check if Phase 4 completion gate prevented stale features
+SELECT
+  game_date,
+  COUNT(*) as predictions,
+  ROUND(AVG(feature_quality_score), 1) as avg_quality,
+  COUNTIF(low_quality_flag) as low_quality_count
+FROM nba_predictions.player_prop_predictions
+WHERE game_date = '2026-02-03' AND system_id = 'catboost_v9'
+GROUP BY game_date;
+```
+
+## Files Changed This Session
+
+```
+data_processors/precompute/ml_feature_store/ml_feature_store_processor.py
+  - Added PHASE4_MINIMUM_RECORDS, PHASE4_MAX_STALENESS_HOURS constants
+  - Added _check_phase4_completion_gate() method
+  - Added gate check in extract_raw_data()
+
+predictions/worker/worker.py  
+  - Added feature_quality_score and low_quality_flag to prediction records
+
+shared/utils/slack_alerts.py (NEW)
+  - Created send_slack_alert() function for quality alerts
+```
 
 ## Next Session Checklist
 
-1. [ ] Verify new predictions have `feature_quality_score` and `low_quality_flag` populated
-2. [ ] Verify new predictions have `model_file_name` populated
-3. [ ] Monitor Feb 3 high-edge performance
-4. [ ] Run `/validate-daily` for Feb 3 results
-
-## Quick Commands
-
-```bash
-# Check if new fields are populated after next prediction run
-bq query --use_legacy_sql=false "
-SELECT
-  game_date,
-  COUNTIF(feature_quality_score IS NOT NULL) as has_quality,
-  COUNTIF(low_quality_flag IS NOT NULL) as has_low_quality_flag,
-  COUNTIF(model_file_name IS NOT NULL) as has_model_file
-FROM nba_predictions.player_prop_predictions
-WHERE game_date >= CURRENT_DATE()
-  AND system_id = 'catboost_v9'
-  AND created_at >= TIMESTAMP('2026-02-03 17:15:00')  -- After deployment
-GROUP BY game_date"
-
-# Verify edge filter
-bq query --use_legacy_sql=false "
-SELECT game_date, COUNT(*) as total,
-  COUNTIF(line_source != 'NO_PROP_LINE' AND ABS(predicted_points - current_points_line) < 3) as low_edge
-FROM nba_predictions.player_prop_predictions
-WHERE game_date >= CURRENT_DATE() AND system_id = 'catboost_v9' AND is_active = TRUE
-GROUP BY game_date"
-```
-
-## Commits
-
-| Commit | Description |
-|--------|-------------|
-| ac8fad51 | feat: Add missing slack_alerts module for quality alerts (Session 97) |
-| 3bda030f | feat: Add Phase 4 completion gate to ML Feature Store (Session 97) |
-
----
-
-**Session Duration:** ~1.5 hours
-**Primary Focus:** Investigation + bug fixes
-**Co-Authored-By:** Claude Opus 4.5 <noreply@anthropic.com>
+1. [ ] Deploy `nba-phase4-precompute-processors`
+2. [ ] Deploy `prediction-coordinator` 
+3. [ ] Verify Phase 4 gate logs appear
+4. [ ] Verify Slack alerts working
+5. [ ] Consider implementing event-driven orchestration (P0 long-term fix)
+6. [ ] Update validate-daily Vegas line coverage query
+7. [ ] Monitor Feb 3 prediction hit rates after games complete
