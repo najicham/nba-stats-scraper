@@ -327,6 +327,187 @@ def validate_schema_alignment() -> Tuple[bool, List[str]]:
     return is_valid, messages
 
 
+def extract_repeated_fields_from_schema(schema_path: Path) -> Set[str]:
+    """
+    Extract REPEATED (ARRAY) field names from BigQuery schema.
+
+    REPEATED fields cannot be set to NULL - must use empty array [] instead.
+    This prevents Session 85 error: "Only optional fields can be set to NULL"
+
+    Returns:
+        Set of field names that are ARRAY<TYPE> (REPEATED mode)
+    """
+    repeated_fields = set()
+
+    if not schema_path.exists():
+        return repeated_fields
+
+    content = schema_path.read_text()
+
+    # Pattern to match ARRAY<TYPE> field definitions
+    # Matches: field_name ARRAY<STRING>, field_name ARRAY<FLOAT64>, etc.
+    array_pattern = re.compile(
+        r'^\s*(\w+)\s+ARRAY<[^>]+>',
+        re.MULTILINE | re.IGNORECASE
+    )
+
+    for match in array_pattern.finditer(content):
+        field_name = match.group(1).lower()
+        # Skip SQL keywords
+        if field_name not in ('if', 'not', 'exists', 'default', 'options', 'add', 'column'):
+            repeated_fields.add(field_name)
+
+    return repeated_fields
+
+
+def check_repeated_field_nulls(python_files: List[Path], schema_path: Path) -> List[str]:
+    """
+    Check if REPEATED fields might receive NULL values in Python code.
+
+    Scans for patterns like:
+    - 'field_name': None
+    - 'field_name': variable (where variable could be None)
+    - entry['field_name'] = None
+
+    Prevents: Session 85 - BigQuery write failures on REPEATED field NULL
+
+    Returns:
+        List of error messages
+    """
+    issues = []
+
+    # Get REPEATED fields from schema
+    repeated_fields = extract_repeated_fields_from_schema(schema_path)
+
+    if not repeated_fields:
+        return issues
+
+    for py_file in python_files:
+        if not py_file.exists():
+            continue
+
+        content = py_file.read_text()
+        lines = content.split('\n')
+
+        for line_num, line in enumerate(lines, 1):
+            # Skip comments
+            if line.strip().startswith('#'):
+                continue
+
+            for field in repeated_fields:
+                # Pattern 1: 'field_name': None
+                if re.search(rf"['\"]?{field}['\"]?\s*:\s*None\b", line):
+                    issues.append(
+                        f"  {py_file.name}:{line_num} - REPEATED field '{field}' set to None"
+                    )
+
+                # Pattern 2: entry['field_name'] = None
+                if re.search(rf"{field}['\"]?\s*\]\s*=\s*None\b", line):
+                    issues.append(
+                        f"  {py_file.name}:{line_num} - REPEATED field '{field}' assigned None"
+                    )
+
+    return issues
+
+
+def scan_for_insert_rows_json(python_files: List[Path]) -> Tuple[List[str], List[str]]:
+    """
+    Scan for insert_rows_json() calls and extract table/field references.
+
+    Currently the validator only checks load_table_from_json in worker.py.
+    This scans ALL Python files for insert_rows_json() which is also used
+    for BigQuery writes.
+
+    Returns:
+        Tuple of (info_messages, warning_messages)
+    """
+    info = []
+    warnings = []
+
+    for py_file in python_files:
+        if not py_file.exists():
+            continue
+
+        content = py_file.read_text()
+
+        # Find insert_rows_json calls
+        # Pattern: client.insert_rows_json(table_ref, rows)
+        #      or: client.insert_rows_json("table_name", rows)
+        matches = re.findall(
+            r'\.insert_rows_json\s*\(\s*["\']?([^,"\')]+)',
+            content
+        )
+
+        if matches:
+            info.append(f"  Found insert_rows_json() in {py_file.name}: {len(matches)} call(s)")
+
+            # TODO: Future enhancement - validate field names in rows dict
+            # For now, just report presence for visibility
+
+    return info, warnings
+
+
+def validate_repeated_field_safety() -> Tuple[bool, List[str]]:
+    """
+    P0-3 Enhancement: Check for REPEATED field NULL assignments.
+
+    Validates that REPEATED (ARRAY) fields are not set to None in Python code.
+
+    Returns:
+        Tuple of (is_valid, messages)
+    """
+    messages = []
+    project_root = Path(__file__).parent.parent
+
+    # Schema to check
+    schema_path = project_root / "schemas/bigquery/predictions/prediction_worker_runs.sql"
+
+    # Python files to scan (focus on prediction worker and execution logger)
+    python_files = [
+        project_root / "predictions/worker/worker.py",
+        project_root / "predictions/worker/execution_logger.py",
+        project_root / "predictions/shared/batch_staging_writer.py",
+    ]
+
+    messages.append("P0-3: Checking REPEATED field NULL safety...")
+    messages.append(f"Schema: {schema_path.name}")
+    messages.append(f"Scanning {len(python_files)} Python file(s)")
+    messages.append("")
+
+    # Extract REPEATED fields
+    repeated_fields = extract_repeated_fields_from_schema(schema_path)
+    messages.append(f"Found {len(repeated_fields)} REPEATED field(s): {sorted(repeated_fields)}")
+
+    # Check for NULL assignments
+    issues = check_repeated_field_nulls(python_files, schema_path)
+
+    # Scan for insert_rows_json usage
+    info, warnings = scan_for_insert_rows_json(python_files)
+    messages.extend(info)
+    messages.extend(warnings)
+
+    is_valid = True
+
+    if issues:
+        is_valid = False
+        messages.append("")
+        messages.append("=" * 70)
+        messages.append("CRITICAL: REPEATED fields set to None detected")
+        messages.append("=" * 70)
+        messages.append("")
+        messages.append("BigQuery REPEATED fields CANNOT be NULL!")
+        messages.append("Use empty array [] instead of None")
+        messages.append("")
+        messages.extend(issues)
+        messages.append("")
+        messages.append("FIX: Replace 'field': None with 'field': []")
+        messages.append("     Or use: field_value or [] to convert None to []")
+        messages.append("")
+        messages.append("Reference: Session 85 - Perpetual retry loop from REPEATED NULL")
+
+    return is_valid, messages
+
+
 def main():
     """Entry point for pre-commit hook."""
     print("=" * 70)
@@ -340,16 +521,39 @@ def main():
     for msg in messages:
         print(msg)
 
-    if not is_valid:
+    # P0-3: Add REPEATED field NULL check (Session 89)
+    print()
+    print("=" * 70)
+    print("P0-3: REPEATED Field NULL Safety Check (Session 89)")
+    print("=" * 70)
+    print()
+
+    repeated_valid, repeated_messages = validate_repeated_field_safety()
+
+    for msg in repeated_messages:
+        print(msg)
+
+    # Combined validation result
+    all_valid = is_valid and repeated_valid
+
+    if not all_valid:
         print()
         print("=" * 70)
-        print("VALIDATION FAILED - Schema misalignment detected")
+        print("VALIDATION FAILED")
+        print("=" * 70)
+        if not is_valid:
+            print("  - Schema misalignment detected")
+        if not repeated_valid:
+            print("  - REPEATED field NULL assignment detected")
         print("=" * 70)
         sys.exit(1)
     else:
         print()
         print("=" * 70)
-        print("VALIDATION PASSED - Schema is aligned")
+        print("VALIDATION PASSED")
+        print("=" * 70)
+        print("  - Schema alignment: OK")
+        print("  - REPEATED field safety: OK")
         print("=" * 70)
         sys.exit(0)
 

@@ -48,6 +48,15 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.player_prop_predi
   line_source_api STRING,                           -- 'ODDS_API', 'BETTINGPROS', 'ESTIMATED' (v3.3)
   sportsbook STRING,                                -- 'DRAFTKINGS', 'FANDUEL', 'BETMGM', etc. (v3.3)
   was_line_fallback BOOLEAN DEFAULT FALSE,          -- TRUE if line came from fallback source (v3.3)
+
+  -- Model Attribution Tracking (6 fields - v3.6 Session 84/85)
+  -- Tracks which exact model file generated predictions for debugging and A/B testing
+  model_file_name STRING,                           -- Model filename (e.g., "catboost_v9_feb_02_retrain.cbm")
+  model_training_start_date DATE,                   -- Training period start date
+  model_training_end_date DATE,                     -- Training period end date
+  model_expected_mae FLOAT64,                       -- Expected mean absolute error from validation
+  model_expected_hit_rate FLOAT64,                  -- Expected hit rate percentage from validation
+  model_trained_at TIMESTAMP,                       -- When model was trained
   
   -- Multi-System Analysis (3 fields) - Added in migration
   prediction_variance NUMERIC(5,2),                 -- Variance across all active systems
