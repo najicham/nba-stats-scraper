@@ -1426,6 +1426,7 @@ class MLFeatureStoreProcessor(
 
             # Features
             'features': features,  # List of 33 floats (v2_33features)
+            'feature_sources': feature_sources,  # Session 95 fix: Store for FEATURE SOURCE ALERT counting
             'feature_names': FEATURE_NAMES,
             'feature_count': FEATURE_COUNT,
             'feature_version': FEATURE_VERSION,
