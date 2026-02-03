@@ -727,8 +727,12 @@ class MLFeatureStoreProcessor(
         # Verify Phase 4 data exists and is fresh before proceeding
         # This prevents using stale features that caused Feb 2 49.1% hit rate
         # Skip gate in backfill mode - backfill is explicitly for reprocessing with existing data
-        if self.is_backfill_mode:
-            logger.info(f"SESSION 97 QUALITY_GATE SKIPPED: Backfill mode - Phase 4 data assumed present")
+        # Session 95 Amendment: Also skip when skip_dependency_check=True (upcoming games mode)
+        # For upcoming games, Phase 4 won't have today's data - we use fallback queries instead
+        skip_phase4_gate = self.is_backfill_mode or self.opts.get('skip_dependency_check', False)
+        if skip_phase4_gate:
+            skip_reason = "backfill mode" if self.is_backfill_mode else "upcoming games mode (skip_dependency_check=True)"
+            logger.info(f"SESSION 97 QUALITY_GATE SKIPPED: {skip_reason} - using fallback data")
         else:
             phase4_complete, phase4_details = self._check_phase4_completion_gate(analysis_date)
             if not phase4_complete:
