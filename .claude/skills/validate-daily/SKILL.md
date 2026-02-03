@@ -2965,6 +2965,27 @@ gcloud scheduler jobs run same-day-phase5
 python scripts/validate_tonight_data.py --date 2026-01-26
 ```
 
+## Cloud Function Quick Checks (Session 97)
+
+For instant validation without running full scripts:
+
+```bash
+# Check deployment drift (all services healthy?)
+curl -s -X POST "https://us-west2-nba-props-platform.cloudfunctions.net/morning-deployment-check" | jq
+# Expected: {"status": "healthy", "stale_count": 0, "healthy_count": 5}
+
+# Check analytics quality for yesterday
+curl -s "https://us-west2-nba-props-platform.cloudfunctions.net/analytics-quality-check?game_date=$(date -d yesterday +%Y-%m-%d)" | jq
+# Expected: {"status": "OK", "metrics": {"usage_rate_coverage_pct": 95+}}
+
+# Check data quality history (trend tracking)
+bq query --use_legacy_sql=false "SELECT * FROM nba_analytics.data_quality_history ORDER BY check_timestamp DESC LIMIT 5"
+```
+
+**Automated Schedules:**
+- `morning-deployment-check`: 6 AM ET daily (alerts on stale services)
+- `analytics-quality-check-morning`: 7:30 AM ET daily (alerts on low usage_rate)
+
 ## Player Spot Check Skills Reference
 
 For investigating player-level data issues:
