@@ -192,6 +192,15 @@ class ExecutionLogger:
         """
         global _log_buffer
 
+        # Sanitize REPEATED fields BEFORE adding to buffer
+        # BigQuery REPEATED fields cannot be NULL - must be empty list
+        log_entry['line_values_requested'] = log_entry.get('line_values_requested') or []
+        log_entry['systems_attempted'] = log_entry.get('systems_attempted') or []
+        log_entry['systems_succeeded'] = log_entry.get('systems_succeeded') or []
+        log_entry['systems_failed'] = log_entry.get('systems_failed') or []
+        log_entry['missing_features'] = log_entry.get('missing_features') or []
+        log_entry['circuits_opened'] = log_entry.get('circuits_opened') or []
+
         with _buffer_lock:
             _log_buffer.append(log_entry)
             buffer_size = len(_log_buffer)
