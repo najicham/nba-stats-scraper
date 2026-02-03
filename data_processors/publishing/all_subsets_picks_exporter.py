@@ -156,6 +156,11 @@ class AllSubsetsPicksExporter(BaseExporter):
 
         return self.query_to_list(query)
 
+    # Minimum feature quality score for picks to be included in exports
+    # Session 94: Players with missing BDB shot zone data have quality ~82%
+    # and hit at 51.9% vs 56.8% for high quality (85%+)
+    MIN_FEATURE_QUALITY_SCORE = 85.0
+
     def _query_all_predictions(self, target_date: str) -> List[Dict[str, Any]]:
         """
         Query all predictions for a specific date.
@@ -184,24 +189,34 @@ class AllSubsetsPicksExporter(BaseExporter):
           p.recommendation,
           p.confidence_score,
           ABS(p.predicted_points - p.current_points_line) as edge,
-          (ABS(p.predicted_points - p.current_points_line) * 10) + (p.confidence_score * 0.5) as composite_score
+          (ABS(p.predicted_points - p.current_points_line) * 10) + (p.confidence_score * 0.5) as composite_score,
+          -- Session 94: Include feature quality for filtering
+          COALESCE(f.feature_quality_score, 0) as feature_quality_score
         FROM `nba_predictions.player_prop_predictions` p
         LEFT JOIN player_names pn
           ON p.player_lookup = pn.player_lookup
         LEFT JOIN `nba_analytics.player_game_summary` pgs
           ON p.player_lookup = pgs.player_lookup
           AND p.game_date = pgs.game_date
+        -- Session 94: Join feature store to get quality score
+        LEFT JOIN `nba_predictions.ml_feature_store_v2` f
+          ON p.player_lookup = f.player_lookup
+          AND p.game_date = f.game_date
         WHERE p.game_date = @target_date
           AND p.system_id = 'catboost_v9'
           AND p.is_active = TRUE
           AND p.recommendation IN ('OVER', 'UNDER')  -- Exclude PASS (non-bets)
           AND p.current_points_line IS NOT NULL
           AND pgs.team_abbr IS NOT NULL  -- Only include picks with complete context
+          -- Session 94: Filter out low-quality predictions (missing BDB data etc.)
+          -- Players with quality < 85% have 51.9% hit rate vs 56.8% for 85%+
+          AND COALESCE(f.feature_quality_score, 0) >= @min_quality
         ORDER BY composite_score DESC
         """
 
         params = [
-            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date)
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            bigquery.ScalarQueryParameter('min_quality', 'FLOAT64', self.MIN_FEATURE_QUALITY_SCORE)
         ]
 
         return self.query_to_list(query, params)
