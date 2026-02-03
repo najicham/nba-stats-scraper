@@ -346,6 +346,151 @@ class QualityGate:
         return results, summary
 
 
+@dataclass
+class AnalyticsQualityResult:
+    """Result of analytics quality check for a game date."""
+    game_date: date
+    game_count: int
+    active_players: int
+    usage_rate_coverage_pct: float
+    minutes_coverage_pct: float
+    passes_threshold: bool
+    issues: List[str]
+
+
+class AnalyticsQualityGate:
+    """
+    Analytics quality gate for prediction requests (Session 96).
+
+    Checks analytics data quality BEFORE predictions run.
+    Optionally blocks predictions if quality is too low.
+
+    Thresholds:
+    - usage_rate_coverage: >= 50% to proceed (warning at < 80%)
+    - minutes_coverage: >= 80% to proceed
+    """
+
+    # Minimum thresholds to allow predictions
+    MIN_USAGE_RATE_COVERAGE = 50.0
+    MIN_MINUTES_COVERAGE = 80.0
+
+    # Warning thresholds (log but don't block)
+    WARN_USAGE_RATE_COVERAGE = 80.0
+
+    def __init__(self, project_id: str, dataset_prefix: str = ''):
+        self.project_id = project_id
+        self.dataset_prefix = dataset_prefix
+        self._bq_client = None
+
+    @property
+    def bq_client(self):
+        """Lazy-load BigQuery client."""
+        if self._bq_client is None:
+            from shared.clients import get_bigquery_client
+            self._bq_client = get_bigquery_client(self.project_id)
+        return self._bq_client
+
+    def check_analytics_quality(self, game_date: date) -> AnalyticsQualityResult:
+        """
+        Check analytics data quality for a game date.
+
+        Args:
+            game_date: Date to check analytics for (usually yesterday for grading)
+
+        Returns:
+            AnalyticsQualityResult with quality metrics and pass/fail
+        """
+        analytics_dataset = f"{self.dataset_prefix}nba_analytics" if self.dataset_prefix else "nba_analytics"
+
+        query = f"""
+        SELECT
+            COUNT(DISTINCT game_id) as game_count,
+            COUNTIF(is_dnp = FALSE) as active_players,
+            COUNTIF(is_dnp = FALSE AND minutes_played > 0) as has_minutes,
+            COUNTIF(is_dnp = FALSE AND usage_rate > 0) as has_usage_rate
+        FROM `{self.project_id}.{analytics_dataset}.player_game_summary`
+        WHERE game_date = @game_date
+        """
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+            ]
+        )
+
+        try:
+            result = self.bq_client.query(query, job_config=job_config).result()
+            row = next(result)
+
+            game_count = row.game_count or 0
+            active_players = row.active_players or 0
+            has_minutes = row.has_minutes or 0
+            has_usage_rate = row.has_usage_rate or 0
+
+            # Calculate coverage percentages
+            usage_rate_pct = 100.0 * has_usage_rate / active_players if active_players > 0 else 0.0
+            minutes_pct = 100.0 * has_minutes / active_players if active_players > 0 else 0.0
+
+            # Check for issues
+            issues = []
+            passes = True
+
+            if game_count == 0:
+                issues.append("No games found for date")
+                passes = False
+            elif active_players == 0:
+                issues.append("No active players found")
+                passes = False
+            else:
+                if usage_rate_pct < self.MIN_USAGE_RATE_COVERAGE:
+                    issues.append(f"usage_rate coverage {usage_rate_pct:.1f}% below minimum {self.MIN_USAGE_RATE_COVERAGE}%")
+                    passes = False
+                elif usage_rate_pct < self.WARN_USAGE_RATE_COVERAGE:
+                    issues.append(f"WARNING: usage_rate coverage {usage_rate_pct:.1f}% below recommended {self.WARN_USAGE_RATE_COVERAGE}%")
+                    # Don't fail, just warn
+
+                if minutes_pct < self.MIN_MINUTES_COVERAGE:
+                    issues.append(f"minutes coverage {minutes_pct:.1f}% below minimum {self.MIN_MINUTES_COVERAGE}%")
+                    passes = False
+
+            result = AnalyticsQualityResult(
+                game_date=game_date,
+                game_count=game_count,
+                active_players=active_players,
+                usage_rate_coverage_pct=round(usage_rate_pct, 1),
+                minutes_coverage_pct=round(minutes_pct, 1),
+                passes_threshold=passes,
+                issues=issues,
+            )
+
+            # Log result
+            if issues:
+                logger.warning(
+                    f"ANALYTICS_QUALITY_CHECK: date={game_date}, passes={passes}, "
+                    f"usage_rate={usage_rate_pct:.1f}%, minutes={minutes_pct:.1f}%, "
+                    f"issues={issues}"
+                )
+            else:
+                logger.info(
+                    f"ANALYTICS_QUALITY_CHECK: date={game_date}, passes=True, "
+                    f"usage_rate={usage_rate_pct:.1f}%, minutes={minutes_pct:.1f}%"
+                )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error checking analytics quality: {e}")
+            return AnalyticsQualityResult(
+                game_date=game_date,
+                game_count=0,
+                active_players=0,
+                usage_rate_coverage_pct=0.0,
+                minutes_coverage_pct=0.0,
+                passes_threshold=False,
+                issues=[f"Error checking analytics: {str(e)}"],
+            )
+
+
 def parse_prediction_mode(mode_str: str) -> PredictionMode:
     """
     Parse prediction mode string to enum.
