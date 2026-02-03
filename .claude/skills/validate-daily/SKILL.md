@@ -217,6 +217,70 @@ else:
 "
 ```
 
+### Phase 0.3: Deployment Drift Check (Session 87 Addition)
+
+**IMPORTANT**: Check if key services are running the latest code.
+
+**Why this matters**: Code fixes that aren't deployed cause recurring issues. Sessions 58, 64, and 84 all had problems where bug fixes were committed but not deployed, leading to stale code running in production.
+
+**What to check**:
+
+```bash
+# Quick deployment status check
+./bin/whats-deployed.sh
+```
+
+**Expected result**:
+- All key services showing "Up to date" or commits behind = 0
+- If using labels: `commit-sha` label matches recent commit
+- If using env var: `BUILD_COMMIT` env var matches recent commit
+
+**Detailed check for specific service**:
+
+```bash
+# Check a specific service with undeployed commits
+./bin/whats-deployed.sh prediction-worker --diff
+```
+
+**Check if specific feature is deployed**:
+
+```bash
+# Check by commit message search
+./bin/is-feature-deployed.sh prediction-worker "Session 84"
+
+# Check by file change
+./bin/is-feature-deployed.sh prediction-worker --file predictions/worker/worker.py
+```
+
+**Severity levels**:
+
+| Commits Behind | Severity | Action |
+|----------------|----------|--------|
+| 0 | OK | Service up to date |
+| 1-3 (docs only) | P3 | OK if only documentation changes |
+| 1-3 (code) | P2 | Deploy soon: `./bin/deploy-service.sh <service>` |
+| 4+ | P1 | Deploy now - significant drift |
+| Unknown (no label/env) | P2 | Deploy with `./bin/deploy-service.sh` to add tracking |
+
+**If drift detected**:
+
+```bash
+# 1. See what's not deployed
+./bin/whats-deployed.sh <service> --diff
+
+# 2. Deploy the service
+./bin/deploy-service.sh <service>
+
+# 3. Verify after deployment
+./bin/whats-deployed.sh <service>
+```
+
+**Key services to check**:
+- `prediction-worker` - Generates predictions (most critical)
+- `prediction-coordinator` - Orchestrates prediction batches
+- `nba-phase3-analytics-processors` - Game analytics
+- `nba-phase4-precompute-processors` - ML features
+
 ### Phase 0.4: Grading Completeness Check (Session 68 Fix)
 
 **IMPORTANT**: Check if grading pipeline is up-to-date for all active models.
@@ -865,6 +929,56 @@ curl -X POST "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app/scrape" \
   -H "Content-Type: application/json" \
   -d '{"scraper":"kalshi_player_props","date":"TODAY","group":"prod"}'
 ```
+
+### Phase 0.95: Execution Logger Health (Session 85)
+
+**Purpose**: Detect BigQuery write failures in prediction worker execution logging.
+
+**Why this matters**: Session 85 discovered that NULL values in REPEATED fields (like `line_values_requested`) cause BigQuery writes to fail. Failed entries get re-queued and fail forever, creating a perpetual retry loop and log data loss.
+
+**What to check**:
+
+```bash
+# Check for execution logger errors in last 6 hours
+gcloud logging read 'resource.type="cloud_run_revision"
+  AND resource.labels.service_name="prediction-worker"
+  AND textPayload=~"execution_logger.*ERROR"' \
+  --limit=10 --freshness=6h \
+  --format="table(timestamp,textPayload)"
+```
+
+**Expected result**: Zero errors (or only old errors from before the fix)
+
+**Known error patterns**:
+
+| Error Pattern | Cause | Status |
+|---------------|-------|--------|
+| `line_values_requested.*NULL` | NULL in REPEATED field | ✅ Fixed (Session 85) |
+| `JSON table encountered too many errors` | Schema mismatch | Investigate |
+| `Error flushing execution log buffer` | BigQuery write failure | Investigate |
+
+**Alert thresholds**:
+- 0 errors: ✅ OK
+- 1-5 errors: 🟡 WARNING - May be transient or old errors
+- >5 errors: 🔴 CRITICAL - Active issue, logs being lost
+
+**If errors detected**:
+
+1. Check if errors are recent (after latest deployment):
+   ```bash
+   gcloud run services describe prediction-worker --region=us-west2 \
+     --format="value(status.latestReadyRevisionName)"
+   ```
+
+2. Check specific error details:
+   ```bash
+   gcloud logging read 'resource.labels.service_name="prediction-worker"
+     AND textPayload=~"BigQuery errors:"' --limit=3 --freshness=6h
+   ```
+
+3. If NULL field errors persist, verify fix is deployed (Session 85 commit: `409e819e`)
+
+**Root cause reference**: `predictions/worker/execution_logger.py` - REPEATED fields must be empty arrays `[]`, never JSON `null`.
 
 ### Phase 1: Run Baseline Health Check
 

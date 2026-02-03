@@ -86,6 +86,7 @@ This prevents confusion when comparing analyses across sessions.
 | 4 | Model Beats Vegas | Compare to Vegas accuracy |
 | 5 | **Find Best Filter** | Optimize filter for current conditions |
 | 6 | Player Tier Analysis | Performance by player scoring tier |
+| 7 | **Signal Context** | Correlate with RED/GREEN pre-game signals |
 
 ### Query 0: Daily Model Comparison (Quick Check)
 
@@ -440,6 +441,63 @@ ORDER BY
   CASE tier WHEN 'Star' THEN 1 WHEN 'Starter' THEN 2 WHEN 'Rotation' THEN 3 WHEN 'Bench' THEN 4 ELSE 5 END
 ```
 
+### Query 7: Signal Context Analysis (Session 85)
+
+**Purpose**: Correlate hit rates with pre-game signal (RED/GREEN days).
+
+**Why this matters**: Session 70 discovered that RED signal days (heavy UNDER skew, pct_over < 25%) have historically 54% hit rate vs 82% on balanced GREEN days. This query validates and tracks that correlation.
+
+```sql
+-- Performance by pre-game signal type
+SELECT
+  dps.daily_signal,
+  dps.skew_category,
+  COUNT(*) as bets,
+  COUNTIF(pa.prediction_correct) as hits,
+  ROUND(100.0 * COUNTIF(pa.prediction_correct) / NULLIF(COUNT(*), 0), 1) as hit_rate,
+  -- High-edge subset
+  COUNTIF(ABS(pa.predicted_points - pa.line_value) >= 5) as high_edge_bets,
+  ROUND(100.0 * COUNTIF(
+    ABS(pa.predicted_points - pa.line_value) >= 5 AND pa.prediction_correct
+  ) / NULLIF(COUNTIF(
+    ABS(pa.predicted_points - pa.line_value) >= 5 AND pa.prediction_correct IS NOT NULL
+  ), 0), 1) as high_edge_hr
+FROM nba_predictions.prediction_accuracy pa
+JOIN nba_predictions.daily_prediction_signals dps
+  ON pa.game_date = dps.game_date AND pa.system_id = dps.system_id
+WHERE pa.system_id = 'catboost_v9'
+  AND pa.game_date >= @start_date AND pa.game_date <= @end_date
+  AND pa.prediction_correct IS NOT NULL
+GROUP BY dps.daily_signal, dps.skew_category
+ORDER BY
+  CASE dps.daily_signal WHEN 'GREEN' THEN 1 WHEN 'YELLOW' THEN 2 WHEN 'RED' THEN 3 END
+```
+
+**Interpretation**:
+- **GREEN days**: Expected ~82% high-edge hit rate (balanced predictions)
+- **RED days**: Expected ~54% high-edge hit rate (heavy UNDER skew)
+- Use this to validate the signal's predictive power over time
+
+**Daily breakdown with signal**:
+```sql
+-- Daily performance with signal context
+SELECT
+  pa.game_date,
+  dps.daily_signal,
+  ROUND(dps.pct_over, 1) as pct_over,
+  COUNT(*) as bets,
+  ROUND(100.0 * COUNTIF(pa.prediction_correct) / COUNT(*), 1) as hit_rate,
+  COUNTIF(ABS(pa.predicted_points - pa.line_value) >= 5) as high_edge
+FROM nba_predictions.prediction_accuracy pa
+JOIN nba_predictions.daily_prediction_signals dps
+  ON pa.game_date = dps.game_date AND pa.system_id = dps.system_id
+WHERE pa.system_id = 'catboost_v9'
+  AND pa.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+  AND pa.prediction_correct IS NOT NULL
+GROUP BY pa.game_date, dps.daily_signal, dps.pct_over
+ORDER BY pa.game_date DESC
+```
+
 ## Output Format
 
 **Always present results in this format (grouped by model):**
@@ -520,6 +578,27 @@ Show side-by-side comparison of models over time to detect drift and compare per
 **Cause**: Different metrics measuring different things
 **Solution**: Report both, explain the difference
 
+### Issue 4: Unknown Model Version (Session 84/87)
+**Example**: "V9 has 75% hit rate" but which V9 model file?
+**Cause**: Multiple model retrains exist, unclear which generated the predictions
+**Solution**: Use model attribution fields (Session 84) to track:
+
+```sql
+-- Check which model version generated predictions
+SELECT
+  model_file_name,
+  COUNT(*) as predictions,
+  ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 1) as hit_rate
+FROM nba_predictions.prediction_accuracy
+WHERE system_id = 'catboost_v9'
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+  AND recommendation IN ('OVER', 'UNDER')
+GROUP BY model_file_name
+ORDER BY MIN(game_date);
+```
+
+**Note**: If `model_file_name` is NULL, predictions were generated before Session 84 deployment. Check deployment status: `./bin/whats-deployed.sh prediction-worker`
+
 ## Related Skills
 
 - `/model-health` - Performance diagnostics with root cause
@@ -539,3 +618,4 @@ Show side-by-side comparison of models over time to detect drift and compare per
 *Updated: Session 57 - Added standard filters, clarified metrics confusion*
 *Updated: Session 58 - Added "Find Best Filter" query for filter optimization*
 *Updated: Session 69 - Added daily model comparison, support for monthly models (catboost_v9_2026_XX)*
+*Updated: Session 87 - Added Issue 4 for model version tracking via model_file_name field*
