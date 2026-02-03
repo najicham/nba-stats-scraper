@@ -157,6 +157,24 @@ When presenting results, highlight these thresholds:
 | 90%+ conf hit rate | <70% | <60% |
 | OVER vs UNDER gap | >20% difference | >30% difference |
 
+### ⚠️ Session 101 Update: Tier-Specific Bias
+
+**CRITICAL**: The overall bias threshold (±3 pts) may miss tier-specific issues!
+
+Session 101 discovered model had:
+- **Stars (25+ pts)**: -9.3 bias (massive under-prediction)
+- **Bench (<5 pts)**: +5.6 bias (over-prediction)
+- **Overall**: ~0 bias (cancels out!)
+
+**New Tier Thresholds**:
+
+| Tier | WARNING | CRITICAL |
+|------|---------|----------|
+| Star (25+) | < -3 bias | < -5 bias |
+| Bench (<5) | > +3 bias | > +5 bias |
+
+**If cohort analysis shows bias > ±5 for any tier**: Check `/model-health` and see `MODEL-BIAS-INVESTIGATION.md`.
+
 ## Output Format
 
 Use tables for data presentation:

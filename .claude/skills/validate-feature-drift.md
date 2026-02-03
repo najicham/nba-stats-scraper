@@ -14,6 +14,7 @@ Detect when ML feature quality degrades compared to historical baselines. This w
 - When hit rates drop unexpectedly
 - After pipeline changes
 - Start of new season (compare to previous season)
+- **When tier bias detected** (Session 101) - feature quality issues can cause prediction bias
 
 ## Usage
 
