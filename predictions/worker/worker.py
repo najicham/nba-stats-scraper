@@ -348,6 +348,53 @@ logger.info("=== WORKER MODULE IMPORT COMPLETE ===")
 logger.info("Worker initialized successfully (heavy clients will lazy-load on first request)")
 
 
+# Session 103: Tier calibration helper functions
+# These compute metadata WITHOUT modifying the raw prediction
+# Calibration can be applied at query time: predicted_points + tier_adjustment
+
+def _compute_scoring_tier(points_avg_season: float) -> str:
+    """
+    Determine player scoring tier based on season average.
+
+    Tiers match the regression-to-mean bias analysis:
+    - Stars (25+ avg): Model tends to under-predict
+    - Starters (15-24 avg): Model slightly under-predicts
+    - Role (5-14 avg): Model slightly over-predicts
+    - Bench (<5 avg): Model tends to over-predict
+    """
+    if points_avg_season >= 25:
+        return 'star'
+    elif points_avg_season >= 15:
+        return 'starter'
+    elif points_avg_season >= 5:
+        return 'role'
+    else:
+        return 'bench'
+
+
+def _compute_tier_adjustment(points_avg_season: float) -> float:
+    """
+    Compute suggested calibration adjustment for tier bias.
+
+    Based on measured bias from prediction_accuracy (14-day window Feb 2026):
+    - Stars (25+): Model under-predicts by ~9 pts → suggest +9.0
+    - Starters (15-24): Model under-predicts by ~3 pts → suggest +3.0
+    - Role (5-14): Model over-predicts by ~1.5 pts → suggest -1.5
+    - Bench (<5): Model over-predicts by ~5.5 pts → suggest -5.5
+
+    Returns the adjustment to ADD to predicted_points if applying calibration.
+    Raw prediction stays unchanged; this is metadata only.
+    """
+    if points_avg_season >= 25:  # Stars
+        return 9.0
+    elif points_avg_season >= 15:  # Starters
+        return 3.0
+    elif points_avg_season >= 5:  # Role players
+        return -1.5
+    else:  # Bench players
+        return -5.5
+
+
 @app.route('/', methods=['GET'])
 def index():
     """Health check endpoint"""
@@ -1822,6 +1869,13 @@ def format_prediction_for_bigquery(
         # feature_sources_json: Per-feature source tracking for full audit trail
         'matchup_data_status': features.get('matchup_data_status'),
         'feature_sources_json': features.get('feature_sources_json'),
+
+        # Session 103: Tier calibration metadata - raw prediction stays pure, calibration is metadata
+        # scoring_tier: Player category based on season scoring average
+        # tier_adjustment: Suggested calibration (add to predicted_points at query time if desired)
+        # This addresses regression-to-mean bias WITHOUT modifying stored predictions
+        'scoring_tier': _compute_scoring_tier(features.get('points_avg_season', 15.0)),
+        'tier_adjustment': _compute_tier_adjustment(features.get('points_avg_season', 15.0)),
     }
 
     # Add system-specific fields
