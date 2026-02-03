@@ -38,12 +38,32 @@ logger = logging.getLogger(__name__)
 
 # Constants
 PROJECT_ID = os.environ.get('GCP_PROJECT', 'nba-props-platform')
-WARNING_THRESHOLD_HOURS = 6
-CRITICAL_THRESHOLD_HOURS = 24
+
+# BDB Release Timing (Session 94):
+# BigDataBall typically uploads play-by-play files 6+ hours AFTER games end.
+# Games usually end around 10-11 PM PT, so files appear around 4-7 AM PT next day.
+#
+# Thresholds based on hours since game ended:
+# - 0-6 hours: 'pending' - Files not expected yet, normal delay
+# - 6-24 hours: 'warning' - Files should be available soon
+# - 24+ hours: 'critical' - Something is wrong, investigate
+WARNING_THRESHOLD_HOURS = 6   # Don't alert until 6+ hours after game ends
+CRITICAL_THRESHOLD_HOURS = 24  # Only critical after 24+ hours
 
 
 class BDBPBPMonitor:
-    """Monitor BigDataBall Play-by-Play data availability."""
+    """Monitor BigDataBall Play-by-Play data availability.
+
+    IMPORTANT: BDB releases files 6+ hours after games end. This is NORMAL behavior.
+    - Games end: ~10-11 PM PT
+    - Files uploaded: ~4-7 AM PT next day
+    - Our scraper retries automatically until files appear
+
+    When checking recent dates:
+    - Before 6 AM PT: Missing data is EXPECTED (files not uploaded yet)
+    - After 6 AM PT: Missing data should be investigated
+    - After 24 hours: Missing data is CRITICAL
+    """
 
     def __init__(self, project_id: str = PROJECT_ID, dry_run: bool = False):
         self.project_id = project_id

@@ -212,6 +212,44 @@ WHERE game_date = '<date-to-check>'
 
 ---
 
+### BigDataBall (BDB) Release Timing (Session 94)
+
+**Symptom**: Validation shows "BDB 0% coverage - CRITICAL" but files are just not released yet
+
+**Root Cause**: BigDataBall releases play-by-play files 6+ hours AFTER games end. This is normal.
+
+**Timeline**:
+- Games end: ~10-11 PM PT
+- BDB uploads to Google Drive: ~4-7 AM PT the next day
+- Our scraper retries every 4-5 minutes until files appear
+
+**Key Rules**:
+1. **Before 6 AM PT**: 0% BDB coverage is NORMAL (files not uploaded yet)
+2. **After 6 AM PT**: Files SHOULD be available - check scraper logs
+3. **After 12+ hours**: Files MUST be available - investigate if missing
+
+**Validation Timing**:
+| Validation Time (PT) | BDB Expectation | Missing = Severity |
+|----------------------|-----------------|-------------------|
+| Evening (6 PM - 12 AM) | NOT expected | ℹ️ INFO |
+| Night (12 AM - 6 AM) | NOT expected | ℹ️ INFO |
+| Morning (6 AM - 12 PM) | SHOULD exist | ⚠️ WARNING |
+| Afternoon+ (12 PM+) | MUST exist | 🔴 CRITICAL |
+
+**If 0% after 6 AM PT**:
+```bash
+# Check if scraper is finding files
+gcloud logging read 'textPayload=~"bigdataball" AND textPayload=~"Found game file"' \
+  --limit=10 --freshness=6h --project=nba-props-platform
+```
+
+**False Alarm Example (Session 94)**:
+- Validation ran at 9:41 PM PT on Feb 2 for Feb 2 games
+- Flagged as "P0 CRITICAL - BDB scraper Google Drive failures"
+- Reality: Games hadn't even finished yet; files were uploaded ~6 AM PT Feb 3
+
+---
+
 ## Prediction System Issues
 
 ### Prediction Deactivation Bug (Session 78)

@@ -691,7 +691,19 @@ ORDER BY game_date DESC;
 ```
 
 **If games_with_bdb < scheduled_games:**
-→ BigDataBall scraper failed or data not available yet
+→ Check timing first! (Session 94)
+
+**BDB Release Timing**: BigDataBall uploads files 6+ hours AFTER games end.
+- Games end: ~10-11 PM PT
+- Files available: ~4-7 AM PT next day
+
+| Current Time (PT) | Missing BDB = | Action |
+|-------------------|---------------|--------|
+| Before 6 AM | EXPECTED | Wait, files not uploaded yet |
+| 6 AM - 12 PM | Check logs | Scraper should be retrying |
+| After 12 PM | INVESTIGATE | Files should exist by now |
+
+→ If after 6 AM PT and still missing: Check scraper logs for Google Drive errors
 
 #### Validate Source Consistency
 

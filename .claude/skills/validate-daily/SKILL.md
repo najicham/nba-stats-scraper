@@ -1763,9 +1763,47 @@ WHERE cache_date = DATE('${GAME_DATE}')"
 
 **Expected**: `last_update` should be within last 12 hours
 
-### Priority 2D: BigDataBall Coverage Monitoring (NEW - Session 53)
+### Priority 2D: BigDataBall Coverage Monitoring (NEW - Session 53, Updated Session 94)
 
-Check BDB play-by-play data coverage for shot zone analytics:
+Check BDB play-by-play data coverage for shot zone analytics.
+
+**⚠️ IMPORTANT - BDB Release Timing (Session 94)**:
+BigDataBall releases play-by-play files **6+ hours AFTER games end**, typically the next morning:
+- Games end: ~10-11 PM PT
+- BDB uploads: ~4-7 AM PT the next day
+- Our scraper retries every 4-5 minutes until files appear
+
+**Timing-Aware Validation**:
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ When Validating             │ BDB Expectation          │ Missing = ?        │
+├─────────────────────────────┼──────────────────────────┼────────────────────┤
+│ Evening/Night (6 PM-5 AM)   │ NOT expected yet         │ ℹ️ INFO (awaiting) │
+│ Morning (6 AM-12 PM)        │ SHOULD be available      │ ⚠️ WARNING         │
+│ Afternoon+ (after 12 PM)    │ MUST be available        │ 🔴 CRITICAL        │
+└─────────────────────────────┴──────────────────────────┴────────────────────┘
+```
+
+**Check current time before flagging issues**:
+```bash
+# Get current hour (PT timezone for game context)
+CURRENT_HOUR=$(TZ='America/Los_Angeles' date +%H)
+GAME_DATE=$(date -d "yesterday" +%Y-%m-%d)
+
+if [ "$CURRENT_HOUR" -lt 6 ]; then
+  echo "ℹ️ BDB CHECK SKIPPED: It's before 6 AM PT"
+  echo "   BDB files for yesterday's games are NOT expected until ~6 AM PT"
+  echo "   Run validation again after 6 AM for BDB coverage check"
+elif [ "$CURRENT_HOUR" -lt 12 ]; then
+  echo "⚠️ BDB CHECK: Morning window - files SHOULD be available"
+  echo "   If missing, check scraper logs for retry status"
+else
+  echo "🔴 BDB CHECK: Afternoon - files MUST be available"
+  echo "   If missing, this is a critical issue"
+fi
+```
+
+**Standard BDB Coverage Query** (run after timing check):
 
 ```bash
 GAME_DATE=$(date -d "yesterday" +%Y-%m-%d)
@@ -1797,18 +1835,34 @@ LEFT JOIN bdb_games b ON s.game_date = b.game_date AND s.game_id = b.bdb_game_id
 GROUP BY s.game_date"
 ```
 
-**Expected**: Coverage ≥90%
+**Expected**: Coverage ≥90% (when checking in morning or later)
 
-**Thresholds**:
-- **≥90%**: OK - Normal BDB coverage
-- **50-89%**: WARNING - Partial BDB data, shot zones may be incomplete
-- **<50%**: CRITICAL - BDB outage, investigate immediately
+**Thresholds (TIME-DEPENDENT - Session 94)**:
 
-**If coverage is low**:
-1. Check pending_bdb_games table: `bq query "SELECT COUNT(*) FROM nba_orchestration.pending_bdb_games WHERE status = 'pending_bdb'"`
-2. Check BDB scraper status in scraper service logs
-3. Run BDB retry processor: `PYTHONPATH="$PWD" .venv/bin/python bin/monitoring/bdb_retry_processor.py`
-4. Reference: Session 53 BDB investigation found Jan 17-24 outage
+| Coverage | Before 6 AM PT | 6 AM - 12 PM PT | After 12 PM PT |
+|----------|----------------|-----------------|----------------|
+| ≥90% | ✅ Great | ✅ OK | ✅ OK |
+| 50-89% | ℹ️ Awaiting | ⚠️ WARNING | ⚠️ WARNING |
+| <50% | ℹ️ Awaiting | ⚠️ WARNING | 🔴 CRITICAL |
+| 0% | ℹ️ Expected | ⚠️ Check scraper | 🔴 CRITICAL |
+
+**Key Insight**: BDB releases files 6+ hours after games end. If validating before 6 AM PT for yesterday's games, 0% coverage is NORMAL and NOT an error.
+
+**If coverage is low AND it's after 6 AM PT**:
+1. First check scraper retry logs: Games should be retrying automatically
+   ```bash
+   gcloud logging read 'textPayload=~"bigdataball" AND textPayload=~"Found game file"' \
+     --limit=10 --freshness=6h --project=nba-props-platform
+   ```
+2. Check pending_bdb_games table: `bq query "SELECT COUNT(*) FROM nba_orchestration.pending_bdb_games WHERE status = 'pending_bdb'"`
+3. If files still not on Google Drive after 12+ hours, contact BigDataBall support
+4. Run BDB retry processor: `PYTHONPATH="$PWD" .venv/bin/python bin/monitoring/bdb_retry_processor.py`
+5. Reference: Session 53 BDB investigation found Jan 17-24 outage
+
+**If coverage is 0% AND it's before 6 AM PT**:
+- This is NORMAL - BDB hasn't uploaded files yet
+- Do NOT flag as critical
+- Re-run validation after 6 AM PT to verify files arrived
 
 **BDB Retry System Status**:
 ```bash
