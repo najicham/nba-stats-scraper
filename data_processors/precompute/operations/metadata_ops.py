@@ -63,6 +63,15 @@ class PrecomputeMetadataOpsMixin:
 
         fields = {}
 
+        # Debug: Check if source_metadata exists and has data
+        if not hasattr(self, 'source_metadata'):
+            logger.warning("PROVENANCE_DEBUG: source_metadata attribute does not exist!")
+            self.source_metadata = {}
+        elif not self.source_metadata:
+            logger.debug("PROVENANCE_DEBUG: source_metadata is empty")
+        else:
+            logger.debug(f"PROVENANCE_DEBUG: source_metadata keys = {list(self.source_metadata.keys())}")
+
         # Per-source fields (populated by track_source_usage)
         for table_name, config in self.get_dependencies().items():
             prefix = config['field_prefix']
