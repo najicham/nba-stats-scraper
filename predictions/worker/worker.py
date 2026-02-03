@@ -348,61 +348,6 @@ logger.info("=== WORKER MODULE IMPORT COMPLETE ===")
 logger.info("Worker initialized successfully (heavy clients will lazy-load on first request)")
 
 
-# Session 103: CatBoost V9 Recalibration
-# The model has severe regression-to-mean bias that causes systematic prediction errors.
-# Measured bias (14-day window ending 2026-02-03):
-#   - Stars (25+ avg): -9.3 pts (under-predicts)
-#   - Starters (15-24 avg): -2.8 pts (under-predicts)
-#   - Role (5-14 avg): +1.5 pts (over-predicts)
-#   - Bench (<5 avg): +5.6 pts (over-predicts)
-# This caused Feb 2 high-edge picks to go 0/7 (all UNDER bets on stars who exceeded lines).
-
-def recalibrate_catboost_prediction(
-    predicted_points: float,
-    features: Dict,
-    line_value: float
-) -> Tuple[float, str, float]:
-    """
-    Recalibrate CatBoost V9 predictions to fix tier bias.
-
-    The model has severe regression-to-mean bias - it pulls predictions toward
-    the league average (~12 pts), under-predicting stars and over-predicting
-    bench players. This adjustment corrects for that bias.
-
-    Args:
-        predicted_points: Raw model prediction
-        features: Player features dict (needs 'points_avg_season')
-        line_value: Current betting line
-
-    Returns:
-        Tuple of (recalibrated_points, recommendation, adjustment_applied)
-    """
-    season_avg = features.get('points_avg_season', 15.0)
-
-    # Determine adjustment based on player tier
-    # Values based on measured bias from prediction_accuracy table
-    if season_avg >= 25:  # Stars - model under-predicts by ~9 pts
-        adjustment = 9.0
-    elif season_avg >= 15:  # Starters - model under-predicts by ~3 pts
-        adjustment = 3.0
-    elif season_avg >= 5:  # Role players - model over-predicts by ~1.5 pts
-        adjustment = -1.5
-    else:  # Bench players - model over-predicts by ~5.5 pts
-        adjustment = -5.5
-
-    recalibrated = predicted_points + adjustment
-
-    # Recalculate recommendation based on recalibrated prediction
-    if recalibrated > line_value:
-        recommendation = 'OVER'
-    elif recalibrated < line_value:
-        recommendation = 'UNDER'
-    else:
-        recommendation = 'PASS'
-
-    return recalibrated, recommendation, adjustment
-
-
 @app.route('/', methods=['GET'])
 def index():
     """Health check endpoint"""
@@ -1437,38 +1382,12 @@ def process_player_predictions(
                     circuit_breaker.record_success(system_id)
                     metadata['systems_succeeded'].append(system_id)
 
-                    # Session 103: Apply recalibration for CatBoost V9 to fix tier bias
-                    # Raw model has regression-to-mean bias: under-predicts stars, over-predicts bench
-                    final_prediction = result['predicted_points']
-                    final_recommendation = result['recommendation']
-                    recalibration_adjustment = None
-
-                    if CATBOOST_VERSION == 'v9' and line_value is not None:
-                        recalibrated, new_rec, adjustment = recalibrate_catboost_prediction(
-                            predicted_points=result['predicted_points'],
-                            features=features,
-                            line_value=line_value
-                        )
-                        # Only apply if adjustment is significant
-                        if abs(adjustment) > 0:
-                            season_avg = features.get('points_avg_season', 0)
-                            logger.info(
-                                f"Recalibrated {player_lookup}: {result['predicted_points']:.1f} -> {recalibrated:.1f} "
-                                f"(adjustment={adjustment:+.1f}, season_avg={season_avg:.1f}, "
-                                f"rec: {result['recommendation']} -> {new_rec})"
-                            )
-                            final_prediction = recalibrated
-                            final_recommendation = new_rec
-                            recalibration_adjustment = adjustment
-
                     system_predictions[CATBOOST_SYSTEM_ID] = {
-                        'predicted_points': final_prediction,
+                        'predicted_points': result['predicted_points'],
                         'confidence': result['confidence_score'],
-                        'recommendation': final_recommendation,
+                        'recommendation': result['recommendation'],
                         'system_type': 'dict',
-                        'metadata': result,
-                        'recalibration_adjustment': recalibration_adjustment,
-                        'raw_prediction': result['predicted_points'] if recalibration_adjustment else None
+                        'metadata': result
                     }
                 else:
                     logger.warning(f"CatBoost {CATBOOST_VERSION} returned None for {player_lookup}")
