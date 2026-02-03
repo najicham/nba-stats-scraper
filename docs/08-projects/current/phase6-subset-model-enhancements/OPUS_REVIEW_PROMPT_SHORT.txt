@@ -1,0 +1,79 @@
+# Phase 6 Subset Exporters - Code Review Request
+
+I need you to review a Phase 6 implementation for the NBA Stats Scraper system. This adds 4 new exporters that expose prediction subsets via clean API (hiding technical details).
+
+## Context
+
+**System:** NBA prediction pipeline (6 phases: scraping → processing → analytics → features → predictions → publishing)
+**This PR:** Phase 6 exporters to expose 9 dynamic subsets (Top Pick, Top 5, Top 10, etc.) without revealing ML internals
+
+**Business Goal:** Public API for testing that doesn't expose competitive strategy (algorithms, thresholds, technical metrics)
+
+## What We Implemented
+
+### 4 Exporters
+
+1. **AllSubsetsPicksExporter** → `/picks/{date}.json` (all 9 groups in one file)
+2. **DailySignalsExporter** → `/signals/{date}.json` (market signal: favorable/neutral/challenging)
+3. **SubsetPerformanceExporter** → `/subsets/performance.json` (3 time windows)
+4. **SubsetDefinitionsExporter** → `/systems/subsets.json` (group metadata)
+
+### Security - What's Hidden
+
+❌ Hidden: system_id, subset_id, confidence_score, edge, composite_score, algorithm names, thresholds
+✅ Shown: player, team, prediction, line, direction, generic group names, model codename ("926A")
+
+### Push Strategy
+
+| Exporter | Pattern | Frequency |
+|----------|---------|-----------|
+| Picks/Signals | Event-driven | After predictions (2-3x/day) |
+| Performance | Hourly scheduled | 6 AM - 11 PM |
+| Definitions | Daily scheduled | 6 AM |
+
+**Rejected:** Live feed (every 3 min) - picks don't change during games, would be overkill
+
+## Testing Results
+
+✅ All 4 exporters pass unit tests
+✅ Integration test successful (local GCS export)
+✅ Security check passed (no technical details leaked)
+✅ Valid JSON structure verified
+
+## Questions for Review
+
+### Critical
+
+1. **Single file vs separate:** All 9 groups in one JSON - good trade-off?
+2. **Security:** Is exposing model codename "926A" safe? Should we hide more/less?
+3. **Push frequency:** Hourly for performance - too frequent/infrequent?
+4. **Error handling:** Continue-on-error (partial success) vs fail-fast?
+
+### Edge Cases
+
+5. **Empty groups:** Should we hide empty groups or show them with 0 picks?
+6. **Missing data:** Player not in registry → fallback to player_lookup - sufficient?
+7. **Team/opponent NULL:** If player DNP, no player_game_summary row - need schedule join?
+8. **Signal changes:** Predictions at 2:30 AM, re-run at 7 AM with different signal - re-export?
+
+### Architecture
+
+9. **Caching:** 5 min (picks), 1 hour (performance), 24 hours (definitions) - appropriate?
+10. **Extensibility:** Easy to add new subsets or modify definitions?
+11. **Scalability:** 3-table join per export - performance concerns?
+
+## Expected Output
+
+Please provide:
+
+1. ✅/❌ **Safe to deploy?**
+2. 🐛 **Critical issues** (bugs, security, architecture)
+3. 💡 **Recommendations** (improvements, alternatives)
+4. ⚠️ **Edge cases** not considered
+5. 🧪 **Testing suggestions** before production
+6. 📊 **Monitoring recommendations**
+
+---
+
+**Full details:** Read `OPUS_REVIEW_SESSION_90.md` for complete implementation
+**Stats:** 900 LOC, 9 files created, 2 modified, all tests passing

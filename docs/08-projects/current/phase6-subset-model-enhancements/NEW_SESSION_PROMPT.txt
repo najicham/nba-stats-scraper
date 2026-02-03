@@ -1,0 +1,72 @@
+# Phase 6 Subset Exporters - New Session Takeover
+
+I need you to take over Phase 6 subset exporter implementation and deploy it to production.
+
+## Context
+
+Session 90 implemented 4 new exporters to expose prediction subsets via clean public API (hiding ML internals). The code was reviewed by Opus, critical bugs were fixed, and everything is tested and ready to deploy.
+
+**Current Status:** ✅ Implementation complete, ✅ Opus review complete, ✅ Fixes applied, ⏳ Ready to deploy
+
+## Your First Task: REVIEW EVERYTHING
+
+Before deploying, I need you to:
+
+1. **Read the comprehensive handoff:**
+   docs/09-handoff/2026-02-03-SESSION-90-FINAL-HANDOFF.md
+
+2. **Review the critical ROI bug fix:**
+   The original implementation had a CRITICAL bug that inflated ROI by 30-50 percentage points.
+
+   Verify the fix is correct in these files:
+   - data_processors/publishing/all_subsets_picks_exporter.py (line ~318)
+   - data_processors/publishing/subset_performance_exporter.py (line ~162)
+
+   Should see: wins * 0.909 - (graded_picks - wins)
+   Should NOT see: CASE WHEN wins > 0 THEN wins * 0.909 ELSE...
+
+3. **Review Opus's findings:**
+   docs/08-projects/current/phase6-subset-model-enhancements/SESSION_90_OPUS_REVIEW_FOR_SONNET.md
+
+4. **Run tests to confirm everything works:**
+   - Unit tests: PYTHONPATH=. python bin/test-phase6-exporters.py
+   - Integration test: Test all 4 exporters with daily_export.py
+   - ROI verification: Check BigQuery values are reasonable
+   - Security audit: Verify no technical details leaked
+
+## After Review: Deploy to Production
+
+If review confirms everything is correct, follow deployment steps in handoff doc.
+
+## Critical Issues to Watch For
+
+**THE ROI BUG (Most Important):**
+- Original: inflated ROI by 30-50 percentage points
+- Example: v9_high_edge_any showed +48.1% (buggy) → actual +1.1% (correct)
+- **Verify the fix is applied before deploying!**
+
+**Security:**
+- Should NOT expose: system_id, subset_id, confidence_score, edge
+- Should ONLY show: player, team, opponent, prediction, line, direction
+
+## Questions to Answer After Review
+
+1. Is the ROI fix correctly applied in both files? (Critical)
+2. Do all 4 unit tests pass? (Required)
+3. Does the security audit show clean API? (Required)
+4. Are ROI values reasonable? (Required)
+5. Any concerns I should know about? (Your judgment)
+
+## Expected Output
+
+After review:
+1. ✅/❌ Safe to deploy?
+2. Verification results
+3. Any concerns found
+4. Recommendation
+
+If everything checks out, proceed with deployment.
+
+---
+
+Read the handoff doc first, then verify the ROI bug fix. Take your time - this is production code.

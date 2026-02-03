@@ -69,6 +69,11 @@ from data_processors.publishing.tonight_trend_plays_exporter import TonightTrend
 # Live scoring for Challenge System
 from data_processors.publishing.live_scores_exporter import LiveScoresExporter
 from data_processors.publishing.live_grading_exporter import LiveGradingExporter
+# Phase 6 Subset Exports (Session 90)
+from data_processors.publishing.subset_definitions_exporter import SubsetDefinitionsExporter
+from data_processors.publishing.daily_signals_exporter import DailySignalsExporter
+from data_processors.publishing.subset_performance_exporter import SubsetPerformanceExporter
+from data_processors.publishing.all_subsets_picks_exporter import AllSubsetsPicksExporter
 
 # Configure logging
 logging.basicConfig(
@@ -90,6 +95,8 @@ EXPORT_TYPES = [
     'tonight-trend-plays',
     # Live scoring for Challenge System
     'live', 'live-grading',
+    # Phase 6 Subset Exports (Session 90)
+    'subset-picks', 'daily-signals', 'subset-performance', 'subset-definitions',
     # Shorthand groups
     'trends-daily', 'trends-weekly', 'trends-all'
 ]
@@ -325,6 +332,52 @@ def export_date(
         except Exception as e:
             result['errors'].append(f"live-grading: {e}")
             logger.error(f"  Live Grading error: {e}")
+
+    # === PHASE 6 SUBSET EXPORTS (Session 90) ===
+
+    # Subset picks exporter (all 9 groups in one file)
+    if 'subset-picks' in export_types:
+        try:
+            exporter = AllSubsetsPicksExporter()
+            path = exporter.export(target_date)
+            result['paths']['subset_picks'] = path
+            logger.info(f"  Subset Picks: {path}")
+        except Exception as e:
+            result['errors'].append(f"subset-picks: {e}")
+            logger.error(f"  Subset Picks error: {e}")
+
+    # Daily signals exporter
+    if 'daily-signals' in export_types:
+        try:
+            exporter = DailySignalsExporter()
+            path = exporter.export(target_date)
+            result['paths']['daily_signals'] = path
+            logger.info(f"  Daily Signals: {path}")
+        except Exception as e:
+            result['errors'].append(f"daily-signals: {e}")
+            logger.error(f"  Daily Signals error: {e}")
+
+    # Subset performance exporter
+    if 'subset-performance' in export_types:
+        try:
+            exporter = SubsetPerformanceExporter()
+            path = exporter.export()
+            result['paths']['subset_performance'] = path
+            logger.info(f"  Subset Performance: {path}")
+        except Exception as e:
+            result['errors'].append(f"subset-performance: {e}")
+            logger.error(f"  Subset Performance error: {e}")
+
+    # Subset definitions exporter
+    if 'subset-definitions' in export_types:
+        try:
+            exporter = SubsetDefinitionsExporter()
+            path = exporter.export()
+            result['paths']['subset_definitions'] = path
+            logger.info(f"  Subset Definitions: {path}")
+        except Exception as e:
+            result['errors'].append(f"subset-definitions: {e}")
+            logger.error(f"  Subset Definitions error: {e}")
 
     if result['errors']:
         result['status'] = 'partial' if result['paths'] else 'failed'

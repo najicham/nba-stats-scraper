@@ -1,0 +1,357 @@
+"""
+All Subsets Picks Exporter for Phase 6 Publishing
+
+Exports all 9 subset groups' picks in a single file with clean API.
+Main endpoint for fetching daily picks without exposing technical details.
+"""
+
+import logging
+from typing import Dict, List, Any, Optional
+from datetime import date
+
+from google.cloud import bigquery
+
+from .base_exporter import BaseExporter
+from shared.config.model_codenames import get_model_codename
+from shared.config.subset_public_names import get_public_name
+
+logger = logging.getLogger(__name__)
+
+
+class AllSubsetsPicksExporter(BaseExporter):
+    """
+    Export all subset picks in one combined file.
+
+    Output file:
+    - picks/{date}.json - All 9 groups in one file
+
+    JSON structure (CLEAN - no technical details):
+    {
+        "date": "2026-02-03",
+        "generated_at": "2026-02-03T...",
+        "model": "926A",
+        "groups": [
+            {
+                "id": "1",
+                "name": "Top Pick",
+                "stats": {
+                    "hit_rate": 81.8,
+                    "roi": 15.2,
+                    "days": 30
+                },
+                "picks": [
+                    {
+                        "player": "LeBron James",
+                        "team": "LAL",
+                        "opponent": "BOS",
+                        "prediction": 26.1,
+                        "line": 24.5,
+                        "direction": "OVER"
+                    },
+                    ...
+                ]
+            },
+            ...
+        ]
+    }
+    """
+
+    def generate_json(self, target_date: str) -> Dict[str, Any]:
+        """
+        Generate combined picks JSON for all subsets.
+
+        Args:
+            target_date: Date string in YYYY-MM-DD format
+
+        Returns:
+            Dictionary ready for JSON serialization with clean structure
+        """
+        # Get all active subset definitions
+        subsets = self._query_subset_definitions()
+
+        # Get all predictions for this date
+        predictions = self._query_all_predictions(target_date)
+
+        # Get daily signal for filtering
+        daily_signal = self._query_daily_signal(target_date)
+
+        # Get all subset performance in one query (optimization)
+        all_performance = self._get_all_subset_performance()
+
+        # Build clean groups
+        clean_groups = []
+        for subset in subsets:
+            # Filter predictions for this subset
+            subset_picks = self._filter_picks_for_subset(
+                predictions,
+                subset,
+                daily_signal
+            )
+
+            # Get public name
+            public = get_public_name(subset['subset_id'])
+
+            # Get historical performance stats from cache
+            stats = all_performance.get(subset['subset_id'], {'hit_rate': 0.0, 'roi': 0.0})
+
+            # Build clean pick structure
+            clean_picks = []
+            for pick in subset_picks:
+                clean_picks.append({
+                    'player': pick['player_name'],
+                    'team': pick['team'],
+                    'opponent': pick['opponent'],
+                    'prediction': round(pick['predicted_points'], 1),
+                    'line': round(pick['current_points_line'], 1),
+                    'direction': pick['recommendation']
+                })
+
+            clean_groups.append({
+                'id': public['id'],
+                'name': public['name'],
+                'stats': {
+                    'hit_rate': round(stats.get('hit_rate', 0.0), 1),
+                    'roi': round(stats.get('roi', 0.0), 1),
+                    'days': 30
+                },
+                'picks': clean_picks
+            })
+
+        # Sort by ID
+        clean_groups.sort(key=lambda x: int(x['id']))
+
+        return {
+            'date': target_date,
+            'generated_at': self.get_generated_at(),
+            'model': get_model_codename('catboost_v9'),
+            'groups': clean_groups
+        }
+
+    def _query_subset_definitions(self) -> List[Dict[str, Any]]:
+        """
+        Query all active subset definitions.
+
+        Returns:
+            List of subset definition dictionaries
+        """
+        query = """
+        SELECT
+          subset_id,
+          subset_name,
+          subset_description,
+          system_id,
+          use_ranking,
+          top_n,
+          min_edge,
+          min_confidence,
+          signal_condition,
+          pct_over_min,
+          pct_over_max,
+          is_active
+        FROM `nba_predictions.dynamic_subset_definitions`
+        WHERE is_active = TRUE
+          AND system_id = 'catboost_v9'
+        ORDER BY subset_id
+        """
+
+        return self.query_to_list(query)
+
+    def _query_all_predictions(self, target_date: str) -> List[Dict[str, Any]]:
+        """
+        Query all predictions for a specific date.
+
+        Args:
+            target_date: Date string in YYYY-MM-DD format
+
+        Returns:
+            List of prediction dictionaries
+        """
+        query = """
+        WITH player_names AS (
+          -- Get player full names from registry
+          SELECT player_lookup, player_name
+          FROM `nba_reference.nba_players_registry`
+          QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY season DESC) = 1
+        )
+        SELECT
+          p.prediction_id,
+          p.player_lookup,
+          COALESCE(pn.player_name, p.player_lookup) as player_name,
+          pgs.team_abbr as team,
+          pgs.opponent_team_abbr as opponent,
+          p.predicted_points,
+          p.current_points_line,
+          p.recommendation,
+          p.confidence_score,
+          ABS(p.predicted_points - p.current_points_line) as edge,
+          (ABS(p.predicted_points - p.current_points_line) * 10) + (p.confidence_score * 0.5) as composite_score
+        FROM `nba_predictions.player_prop_predictions` p
+        LEFT JOIN player_names pn
+          ON p.player_lookup = pn.player_lookup
+        LEFT JOIN `nba_analytics.player_game_summary` pgs
+          ON p.player_lookup = pgs.player_lookup
+          AND p.game_date = pgs.game_date
+        WHERE p.game_date = @target_date
+          AND p.system_id = 'catboost_v9'
+          AND p.is_active = TRUE
+          AND p.recommendation IN ('OVER', 'UNDER')  -- Exclude PASS (non-bets)
+          AND p.current_points_line IS NOT NULL
+          AND pgs.team_abbr IS NOT NULL  -- Only include picks with complete context
+        ORDER BY composite_score DESC
+        """
+
+        params = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date)
+        ]
+
+        return self.query_to_list(query, params)
+
+    def _query_daily_signal(self, target_date: str) -> Optional[Dict[str, Any]]:
+        """
+        Query daily signal for filtering.
+
+        Args:
+            target_date: Date string in YYYY-MM-DD format
+
+        Returns:
+            Signal dictionary or None
+        """
+        query = """
+        SELECT
+          game_date,
+          daily_signal,
+          pct_over
+        FROM `nba_predictions.daily_prediction_signals`
+        WHERE game_date = @target_date
+          AND system_id = 'catboost_v9'
+        LIMIT 1
+        """
+
+        params = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date)
+        ]
+
+        results = self.query_to_list(query, params)
+        return results[0] if results else None
+
+    def _filter_picks_for_subset(
+        self,
+        predictions: List[Dict[str, Any]],
+        subset: Dict[str, Any],
+        daily_signal: Optional[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        Filter predictions based on subset criteria.
+
+        Args:
+            predictions: List of all predictions
+            subset: Subset definition dictionary
+            daily_signal: Daily signal dictionary
+
+        Returns:
+            Filtered list of picks matching subset criteria
+        """
+        filtered = []
+
+        # Get signal info
+        signal = daily_signal.get('daily_signal') if daily_signal else None
+        pct_over = daily_signal.get('pct_over') if daily_signal else None
+
+        for pred in predictions:
+            # Apply edge filter
+            if subset.get('min_edge'):
+                if pred['edge'] < float(subset['min_edge']):
+                    continue
+
+            # Apply confidence filter
+            if subset.get('min_confidence'):
+                if pred['confidence_score'] < float(subset['min_confidence']):
+                    continue
+
+            # Apply signal condition filter
+            signal_condition = subset.get('signal_condition')
+            if signal_condition and signal:
+                if signal != signal_condition:
+                    continue
+
+            # Apply pct_over range filter
+            if pct_over is not None:
+                pct_over_min = subset.get('pct_over_min')
+                pct_over_max = subset.get('pct_over_max')
+
+                if pct_over_min is not None and pct_over < float(pct_over_min):
+                    continue
+                if pct_over_max is not None and pct_over > float(pct_over_max):
+                    continue
+
+            filtered.append(pred)
+
+        # Apply ranking and limit if specified
+        if subset.get('use_ranking'):
+            # Already sorted by composite_score DESC in query
+            pass
+
+        # Apply top_n limit
+        if subset.get('top_n'):
+            top_n = int(subset['top_n'])
+            filtered = filtered[:top_n]
+
+        return filtered
+
+    def _get_all_subset_performance(self) -> Dict[str, Dict[str, float]]:
+        """
+        Get 30-day performance stats for ALL subsets in one query.
+
+        This replaces the N+1 query pattern with a single batch query.
+
+        Returns:
+            Dictionary mapping subset_id to {hit_rate, roi}
+        """
+        query = """
+        SELECT
+          subset_id,
+          ROUND(100.0 * SUM(wins) / NULLIF(SUM(graded_picks), 0), 1) as hit_rate,
+          ROUND(
+            100.0 * SUM(wins * 0.909 - (graded_picks - wins)) / NULLIF(SUM(graded_picks), 0),
+            1
+          ) as roi
+        FROM `nba_predictions.v_dynamic_subset_performance`
+        WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+        GROUP BY subset_id
+        """
+
+        results = self.query_to_list(query)
+        return {
+            r['subset_id']: {
+                'hit_rate': r.get('hit_rate') or 0.0,
+                'roi': r.get('roi') or 0.0
+            }
+            for r in results
+        }
+
+    def export(self, target_date: str) -> str:
+        """
+        Generate and upload all subsets picks to GCS.
+
+        Args:
+            target_date: Date string in YYYY-MM-DD format
+
+        Returns:
+            GCS path where file was uploaded
+        """
+        json_data = self.generate_json(target_date)
+
+        # Upload to GCS (5 minute cache for fresh data)
+        gcs_path = self.upload_to_gcs(
+            json_data=json_data,
+            path=f'picks/{target_date}.json',
+            cache_control='public, max-age=300'  # 5 minutes
+        )
+
+        total_picks = sum(len(g['picks']) for g in json_data.get('groups', []))
+        logger.info(
+            f"Exported {len(json_data.get('groups', []))} groups "
+            f"with {total_picks} total picks for {target_date} to {gcs_path}"
+        )
+
+        return gcs_path
