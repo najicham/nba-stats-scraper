@@ -2299,6 +2299,10 @@ def publish_prediction_requests(
             if publish_with_retry(publisher, topic_path, message_bytes, player_lookup):
                 published_count += 1
 
+                # Rate limit: ~10 messages/second to avoid overwhelming workers
+                # Session 101: Added to prevent cold start auth failures
+                time.sleep(0.1)
+
                 # Log every 50 players (more frequent than heartbeat for progress visibility)
                 if published_count % 50 == 0:
                     logger.info(f"Published {published_count}/{len(requests)} requests")
