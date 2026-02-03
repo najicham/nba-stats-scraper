@@ -200,6 +200,7 @@ gcloud run deploy "$SERVICE" \
     --region="$REGION" \
     --project="$PROJECT" \
     --update-env-vars="$ENV_VARS" \
+    --update-labels="commit-sha=$BUILD_COMMIT,deployed-at=$(date -u +%Y%m%d-%H%M%S)" \
     --quiet
 
 echo ""
