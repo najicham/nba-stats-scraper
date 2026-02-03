@@ -339,7 +339,14 @@ class FeatureExtractor:
         self._total_games_available_lookup = {}
 
     def _batch_extract_daily_cache(self, game_date: date) -> None:
-        """Batch extract player_daily_cache for all players."""
+        """
+        Batch extract player_daily_cache for all players.
+
+        Session 95 Fix: For upcoming games (today), use the most recent cache_date
+        available for each player (their stats after their last game) rather than
+        requiring cache_date = game_date which won't exist for upcoming games.
+        """
+        # First try exact date match (for completed games or backfill)
         query = f"""
         SELECT
             player_lookup,
@@ -358,7 +365,37 @@ class FeatureExtractor:
         FROM `{self.project_id}.nba_precompute.player_daily_cache`
         WHERE cache_date = '{game_date}'
         """
-        result = self._safe_query(query, "batch_extract")
+        result = self._safe_query(query, "batch_extract_exact_date")
+
+        # If no results, use most recent cache for each player (Session 95)
+        # This handles upcoming games where cache_date won't match game_date
+        if result.empty:
+            logger.info(f"No daily_cache for exact date {game_date}, using most recent per player")
+            query = f"""
+            WITH ranked AS (
+                SELECT
+                    player_lookup,
+                    points_avg_last_5,
+                    points_avg_last_10,
+                    points_avg_season,
+                    points_std_last_10,
+                    games_in_last_7_days,
+                    paint_rate_last_10,
+                    three_pt_rate_last_10,
+                    assisted_rate_last_10,
+                    team_pace_last_10,
+                    team_off_rating_last_10,
+                    minutes_avg_last_10,
+                    player_age,
+                    ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY cache_date DESC) as rn
+                FROM `{self.project_id}.nba_precompute.player_daily_cache`
+                WHERE cache_date <= '{game_date}'
+                  AND cache_date >= DATE_SUB('{game_date}', INTERVAL 14 DAY)
+            )
+            SELECT * EXCEPT(rn) FROM ranked WHERE rn = 1
+            """
+            result = self._safe_query(query, "batch_extract_most_recent")
+
         # Use efficient to_dict instead of iterrows (3x faster)
         if not result.empty:
             for record in result.to_dict('records'):
@@ -366,7 +403,14 @@ class FeatureExtractor:
         logger.debug(f"Batch daily_cache: {len(self._daily_cache_lookup)} rows")
 
     def _batch_extract_composite_factors(self, game_date: date) -> None:
-        """Batch extract player_composite_factors for all players."""
+        """
+        Batch extract player_composite_factors for all players.
+
+        Session 95 Note: composite_factors are matchup-specific, so we prefer
+        exact date match. If not available (PlayerCompositeFactorsProcessor didn't
+        run for upcoming games), we fall back to Phase 3 data via the feature
+        calculator rather than using stale composite factors.
+        """
         query = f"""
         SELECT
             player_lookup,
