@@ -1066,6 +1066,11 @@ class FeatureExtractor:
             if opponent_team_abbr:
                 team_defense_data = self._team_defense_lookup.get(opponent_team_abbr, {})
                 phase4_data.update(team_defense_data)
+
+            # Debug: Check what's in phase4_data AFTER all updates
+            if self._debug_composite_logged_count <= 5:
+                fatigue_in_final = phase4_data.get('fatigue_score')
+                logger.warning(f"DEBUG_PHASE4_FINAL: player={player_lookup}, fatigue_in_phase4_data={fatigue_in_final}")
         else:
             # Fall back to per-player queries (slow but works without batch)
             logger.debug(f"Extracting Phase 4 data for {player_lookup} on {game_date} (no batch cache)")
