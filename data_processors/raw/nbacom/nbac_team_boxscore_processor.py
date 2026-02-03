@@ -184,19 +184,20 @@ class NbacTeamBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
     def determine_home_away(self, teams: List[Dict]) -> Tuple[Dict, Dict]:
         """
         Determine which team is home and which is away.
-        
-        NBA.com API typically provides this in one of two ways:
-        1. Explicit field: team['homeAway'] = "HOME" or "AWAY"
-        2. Array order: teams[0] = away, teams[1] = home
-        
+
+        Detection priority:
+        1. isHome boolean field (from nbac_team_boxscore scraper V3 format)
+        2. homeAway string field ("HOME"/"AWAY" - legacy format)
+        3. Array order fallback (logs warning - unreliable)
+
         Args:
             teams: List of exactly 2 team dictionaries from NBA.com API
-            
+
         Returns:
             Tuple of (away_team_dict, home_team_dict)
-            
+
         Raises:
-            ValueError: If home/away cannot be determined
+            ValueError: If teams list doesn't contain exactly 2 teams
         """
         if len(teams) != 2:
             raise ValueError(f"Expected exactly 2 teams, got {len(teams)}")
@@ -206,26 +207,37 @@ class NbacTeamBoxscoreProcessor(SmartIdempotencyMixin, ProcessorBase):
             if not isinstance(team, dict):
                 raise ValueError(f"Team {i} must be a dictionary, got {type(team).__name__}")
         
-        # Method 1: Check for explicit homeAway field
+        # Method 1: Check for isHome boolean field (from nbac_team_boxscore scraper)
+        home_team = None
+        away_team = None
+        for team in teams:
+            if 'isHome' in team:
+                if team['isHome']:
+                    home_team = team
+                else:
+                    away_team = team
+
+        if home_team is not None and away_team is not None:
+            logger.debug("Home/away determined from isHome field")
+            return (away_team, home_team)
+
+        # Method 2: Check for explicit homeAway string field (legacy format)
         home_away_fields = []
         for team in teams:
             home_away = team.get('homeAway', '').upper()
             if home_away:
                 home_away_fields.append(home_away)
-        
-        # If we have explicit indicators, use them
+
         if len(home_away_fields) == 2:
             if 'HOME' in home_away_fields and 'AWAY' in home_away_fields:
                 away_team = next((t for t in teams if t.get('homeAway', '').upper() == 'AWAY'), None)
                 home_team = next((t for t in teams if t.get('homeAway', '').upper() == 'HOME'), None)
-                if away_team is None or home_team is None:
-                    logger.warning("HOME/AWAY indicators present but team(s) not found, falling back to array order")
-                else:
+                if away_team is not None and home_team is not None:
                     logger.debug("Home/away determined from explicit homeAway field")
                     return (away_team, home_team)
-        
-        # Method 2: Use array order (NBA.com standard: teams[0] = away, teams[1] = home)
-        logger.debug("Home/away determined from array order (teams[0]=away, teams[1]=home)")
+
+        # Method 3: Fallback to array order (last resort - log warning)
+        logger.warning("No isHome or homeAway field found, falling back to array order (teams[0]=away, teams[1]=home)")
         return (teams[0], teams[1])
     
     def generate_game_id(self, game_date: str, away_abbr: str, home_abbr: str) -> str:
