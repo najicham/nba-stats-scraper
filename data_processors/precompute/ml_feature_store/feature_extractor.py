@@ -1051,6 +1051,13 @@ class FeatureExtractor:
             phase4_data.update(cache_data)
 
             composite_data = self._composite_factors_lookup.get(player_lookup, {})
+            # Debug: Check if composite_data has the expected fields
+            if not hasattr(self, '_debug_composite_logged_count'):
+                self._debug_composite_logged_count = 0
+            if self._debug_composite_logged_count < 5:
+                self._debug_composite_logged_count += 1
+                has_fatigue = 'fatigue_score' in composite_data
+                logger.warning(f"DEBUG_COMPOSITE: player={player_lookup}, found={player_lookup in self._composite_factors_lookup}, has_fatigue={has_fatigue}, keys={list(composite_data.keys())[:5] if composite_data else []}")
             phase4_data.update(composite_data)
 
             shot_zone_data = self._shot_zone_lookup.get(player_lookup, {})
