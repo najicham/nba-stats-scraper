@@ -196,7 +196,11 @@ class CatBoostV9(CatBoostV8):
         )
 
         # Override metadata with V9-specific info + model attribution (Session 84)
-        if result and 'metadata' in result:
+        # Create metadata dict if it doesn't exist (V8 doesn't return one)
+        if result:
+            if 'metadata' not in result:
+                result['metadata'] = {}
+
             result['metadata']['model_version'] = self.MODEL_VERSION
             result['metadata']['system_id'] = self.SYSTEM_ID
             result['metadata']['training_approach'] = self.TRAINING_INFO['approach']
