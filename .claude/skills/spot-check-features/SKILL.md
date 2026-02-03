@@ -120,24 +120,108 @@ GROUP BY 1
 ORDER BY 1 DESC
 ```
 
+### 6. Vegas Line Coverage by Player Tier (Session 103)
+
+**Critical for training data quality.** Sportsbooks don't offer props for most bench players.
+Training data should have balanced coverage or tier-aware model features.
+
+```sql
+-- Check Vegas line coverage by tier
+SELECT
+  CASE
+    WHEN pgs.points >= 25 THEN 'star'
+    WHEN pgs.points >= 15 THEN 'starter'
+    WHEN pgs.points >= 5 THEN 'role'
+    ELSE 'bench'
+  END as tier,
+  COUNT(*) as n,
+  ROUND(AVG(CASE WHEN f.features[OFFSET(25)] > 0 THEN 1 ELSE 0 END) * 100, 1) as pct_has_vegas,
+  ROUND(AVG(CASE WHEN f.features[OFFSET(29)] > 0 THEN 1 ELSE 0 END) * 100, 1) as pct_has_matchup
+FROM nba_predictions.ml_feature_store_v2 f
+JOIN nba_analytics.player_game_summary pgs
+  ON f.player_lookup = pgs.player_lookup AND f.game_date = pgs.game_date
+WHERE f.game_date BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY) AND DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  AND f.feature_count >= 33
+GROUP BY 1
+ORDER BY 1
+```
+
+**Expected (based on sportsbook behavior):**
+| Tier | Vegas Coverage | Matchup Coverage |
+|------|----------------|------------------|
+| Star | ~95% | ~85% |
+| Starter | ~90% | ~80% |
+| Role | ~40% | ~30% |
+| Bench | ~15% | ~10% |
+
+**Why this matters:** If model trains mostly on players WITH vegas lines (stars), it learns
+"vegas line → scoring" but can't generalize to players without lines. This causes
+regression-to-mean bias.
+
+### 7. Vegas Line Bias Check (Session 103)
+
+**Vegas lines themselves are biased.** Sportsbooks set conservative lines.
+
+```sql
+-- Check if Vegas lines match actual scoring by tier
+SELECT
+  CASE
+    WHEN pgs.points >= 25 THEN 'star'
+    WHEN pgs.points >= 15 THEN 'starter'
+    WHEN pgs.points >= 5 THEN 'role'
+    ELSE 'bench'
+  END as tier,
+  COUNT(*) as n,
+  ROUND(AVG(f.features[OFFSET(25)]), 1) as avg_vegas_line,
+  ROUND(AVG(pgs.points), 1) as avg_actual,
+  ROUND(AVG(f.features[OFFSET(25)]) - AVG(pgs.points), 1) as vegas_bias
+FROM nba_predictions.ml_feature_store_v2 f
+JOIN nba_analytics.player_game_summary pgs
+  ON f.player_lookup = pgs.player_lookup AND f.game_date = pgs.game_date
+WHERE f.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+  AND f.features[OFFSET(25)] > 0
+GROUP BY 1
+ORDER BY 1
+```
+
+**Expected:** Vegas under-predicts stars by ~8 pts, over-predicts bench by ~5 pts.
+This is intentional by sportsbooks but causes model bias if not accounted for.
+
 ## Quality Thresholds
 
 | Metric | Good | Warning | Critical |
 |--------|------|---------|----------|
 | Avg Quality Score | >= 80 | 70-79 | < 70 |
 | High Quality % | >= 70% | 50-69% | < 50% |
-| Vegas Coverage | >= 90% | 80-89% | < 80% |
+| Vegas Coverage | >= 40% | 30-39% | < 30% |
 | Partial Data % | < 5% | 5-10% | > 10% |
 | Early Season % | < 10% | 10-20% | > 20% |
+
+**Note on Vegas Coverage (Session 103):** 40% is realistic because sportsbooks don't
+offer props for bench players. The key is ensuring BALANCED coverage by tier, not
+forcing 90%+ overall coverage.
+
+## Training Data Recommendations
+
+Based on Session 103 investigation, model bias occurs when:
+1. **Tier imbalance:** Stars have high Vegas coverage, bench has low → model learns "Vegas = high scorer"
+2. **Vegas line following:** Model follows Vegas too closely instead of learning to diverge
+3. **Missing data pattern:** Model can't distinguish "missing because bench player" vs "missing because data issue"
+
+**Solutions:**
+- Add `scoring_tier` as categorical training feature
+- Filter training data to quality_score >= 70
+- Consider separate models per tier or tier-aware weighting
 
 ## Pre-Training Checklist
 
 Before running `/model-experiment`:
 
-1. Run quality distribution check
-2. Verify Vegas line coverage > 90%
-3. Check for unusual data source distribution
-4. Confirm no critical quality issues
+1. Run quality distribution check (target: >80% quality >= 70)
+2. Check Vegas line coverage by tier (not overall - expect 40% for bench, 95% for stars)
+3. Verify Vegas bias by tier (expect stars under-predicted ~8pts)
+4. Check for unusual data source distribution (<5% partial)
+5. Confirm model experiment includes tier bias analysis (built-in since Session 104)
 
 ## Example Output
 
