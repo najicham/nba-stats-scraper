@@ -205,4 +205,148 @@ GROUP BY 1"
 
 ---
 
+## Session 101 Part 2: Model Bias Investigation (Added ~2:30 PM PT)
+
+### Critical Finding
+
+CatBoost V9 has **systematic regression-to-mean bias**:
+- Stars (25+ pts): under-predicted by **9.3 points**
+- Bench (<5 pts): over-predicted by **5.6 points**
+
+This explains:
+- 78% UNDER skew (RED daily signal)
+- Feb 2 high-edge picks going 0/7
+- High-edge picks consistently losing on star players
+
+### Full Investigation Document
+
+**`docs/08-projects/current/feature-mismatch-investigation/MODEL-BIAS-INVESTIGATION.md`**
+
+Contains:
+- Bias analysis by player tier with queries
+- Feb 2 failure breakdown
+- Austin Reaves anomaly investigation
+- Three fix options (recalibration, retrain, quantile regression)
+- Validation queries to verify fixes
+
+### Recommended Next Steps
+
+1. **Review MODEL-BIAS-INVESTIGATION.md** for full context
+2. **Decide on fix approach** (quick recalibration vs proper retrain)
+3. **Implement fix** before Feb 4 predictions
+4. **Monitor Feb 3 results** to confirm pattern
+
+### Quick Validation Query
+
+```sql
+-- Check model bias by tier (should see -9 for stars)
+SELECT
+  CASE WHEN actual_points >= 25 THEN 'Stars' ELSE 'Other' END as tier,
+  ROUND(AVG(predicted_points - actual_points), 1) as bias
+FROM nba_predictions.prediction_accuracy
+WHERE system_id = 'catboost_v9' AND game_date >= '2026-01-20'
+GROUP BY 1
+```
+
+---
+
+## Session 101 Part 3: Validation & Uptime Fix (~12:30 PM PT)
+
+### Daily Validation Results
+
+**Date:** Feb 3, 2026 (Pre-Game Check)
+**Time:** 12:23 PM PT
+
+#### Infrastructure Status
+
+| Check | Status | Details |
+|-------|--------|---------|
+| Deployment drift | ✅ OK | All 5 services up to date |
+| Worker minScale | ✅ OK | minScale=1 |
+| Pub/Sub retry policy | ✅ OK | 15 attempts, 10s-600s backoff |
+| DLQ | ✅ OK | Only old test messages from Jan 28 |
+| /predict errors | ✅ OK | No 403 errors on /predict endpoint |
+
+#### Data Pipeline Status
+
+| Phase | Status | Details |
+|-------|--------|---------|
+| Phase 3 (today) | ✅ OK | 1/5 expected (only upcoming_* runs pre-game) |
+| Phase 4 | ✅ OK | 285 records in player_daily_cache |
+| Phase 5 | ✅ OK | 155 predictions for 10 games |
+| ML Features | ✅ OK | 339 feature records, avg quality 85.1 |
+
+#### Prediction Quality
+
+| Metric | Value | Status |
+|--------|-------|--------|
+| Daily Signal | 🔴 RED | UNDER_HEAVY (21.9% pct_over) |
+| High-edge picks | 4 (9 total) | Low volume |
+| Total predictions | 155 | Normal |
+
+**Signal Warning:** Heavy UNDER skew detected. Historical data shows 54% hit rate vs 82% on balanced days.
+
+#### Edge Filter Status
+
+| Check | Result | Notes |
+|-------|--------|-------|
+| Low-edge predictions | 105 found | But these have PASS recommendation |
+| PASS recommendations | 45 | Correct: low-edge → PASS |
+| OVER/UNDER with edge<3 | 60 | ⚠️ These get recommendations despite low edge |
+
+The edge filter is working for PASS recommendations, but OVER/UNDER are still recommended for some low-edge predictions. This may be by design.
+
+#### Orphan Predictions Check
+
+| Date | Players with Active | Orphan Superseded |
+|------|---------------------|-------------------|
+| 2026-02-03 | 154 | 1 (paulgeorge) |
+| 2026-02-02 | 69 | 0 |
+| 2026-01-31 | 209 | 0 |
+
+**Note:** Paul George has one orphan superseded prediction (NO_PROP_LINE). Not critical.
+
+### Uptime Check Fix
+
+Created service account and granted invoker permissions:
+
+```bash
+# Service account created
+gcloud iam service-accounts create uptime-checker --display-name="Uptime Check Service Account"
+
+# Granted invoker permission
+gcloud run services add-iam-policy-binding prediction-worker \
+  --member="serviceAccount:uptime-checker@nba-props-platform.iam.gserviceaccount.com" \
+  --role="roles/run.invoker"
+```
+
+**Manual Step Required:** Update uptime checks in Cloud Console to use OIDC auth:
+1. Go to Cloud Console > Monitoring > Uptime Checks
+2. Edit `nba-prediction-worker-deep-health-prod`
+3. Under "Authentication", select "Service Account Token"
+4. Select `uptime-checker@nba-props-platform.iam.gserviceaccount.com`
+5. Enter audience: `https://prediction-worker-f7p3g7f6ya-wl.a.run.app`
+
+### Weekly Hit Rate Trend
+
+| Week | Predictions | Hit Rate | Status |
+|------|-------------|----------|--------|
+| 2026-02-01 | 142 | 59.2% | ✅ OK |
+| 2026-01-25 | 457 | 51.6% | 🟡 LOW |
+| 2026-01-18 | 394 | 56.4% | ✅ OK |
+| 2026-01-11 | 453 | 55.6% | ✅ OK |
+
+### High-Edge Performance (Most Recent Week)
+
+| Week | Tier | Bets | Hit Rate |
+|------|------|------|----------|
+| 2026-02-01 | High (5+) | 10 | 20.0% ⚠️ |
+| 2026-02-01 | Medium (3-5) | 17 | 64.7% ✅ |
+| 2026-01-25 | High (5+) | 26 | 65.4% ✅ |
+| 2026-01-18 | High (5+) | 27 | 85.2% ✅ |
+
+**Concern:** High-edge picks for week of Feb 1 showing 20% hit rate (only 10 bets, small sample).
+
+---
+
 **End of Session 101 Continued**

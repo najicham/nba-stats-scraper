@@ -468,6 +468,61 @@ ORDER BY
   CASE tier WHEN 'Star' THEN 1 WHEN 'Starter' THEN 2 WHEN 'Rotation' THEN 3 WHEN 'Bench' THEN 4 ELSE 5 END
 ```
 
+### Query 6B: Model Bias by Tier (Session 101 - NEW)
+
+**Purpose**: Detect regression-to-mean bias that causes systematic under/over-prediction.
+
+**Why this matters**: Session 101 discovered that V9 was under-predicting stars by -9 points and over-predicting bench by +6 points. This caused 78% UNDER recommendations and 0/7 high-edge pick failures. Detecting this early prevents prolonged losses.
+
+**When to use**:
+- After RED signal detected (heavy UNDER skew)
+- After high-edge picks lose consistently
+- Weekly as part of model health check
+
+```sql
+-- Model Bias by Scoring Tier (Session 101)
+-- Expected: Bias < ±3 for all tiers
+SELECT
+  system_id,
+  CASE
+    WHEN actual_points >= 25 THEN '1_Stars (25+)'
+    WHEN actual_points >= 15 THEN '2_Starters (15-24)'
+    WHEN actual_points >= 5 THEN '3_Role (5-14)'
+    ELSE '4_Bench (<5)'
+  END as tier,
+  COUNT(*) as predictions,
+  ROUND(AVG(predicted_points), 1) as avg_predicted,
+  ROUND(AVG(actual_points), 1) as avg_actual,
+  ROUND(AVG(predicted_points - actual_points), 1) as bias,
+  CASE
+    WHEN ABS(AVG(predicted_points - actual_points)) > 5 THEN '🔴 CRITICAL'
+    WHEN ABS(AVG(predicted_points - actual_points)) > 3 THEN '🟡 WARNING'
+    ELSE '✅ OK'
+  END as status
+FROM nba_predictions.prediction_accuracy
+WHERE system_id = 'catboost_v9'
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+  AND actual_points IS NOT NULL
+  AND recommendation IN ('OVER', 'UNDER')  -- Exclude PASS
+GROUP BY 1, 2
+ORDER BY 1, 2
+```
+
+**Interpretation**:
+
+| Tier | Expected Bias | Session 101 Finding |
+|------|---------------|---------------------|
+| Stars (25+) | ~0 | **-9.3** (massive under-prediction) |
+| Starters (15-24) | ~0 | **-2.8** (moderate under-prediction) |
+| Role (5-14) | ~0 | +1.5 (slight over-prediction) |
+| Bench (<5) | ~0 | **+5.6** (large over-prediction) |
+
+**Root Cause**: Model learns to shrink predictions toward training mean (~13 pts), regardless of actual player scoring tier.
+
+**If CRITICAL bias detected**:
+1. Check `docs/08-projects/current/feature-mismatch-investigation/MODEL-BIAS-INVESTIGATION.md`
+2. Options: Recalibrate predictions by tier, retrain with tier features, or switch to quantile regression
+
 ### Query 7: Signal Context Analysis (Session 85)
 
 **Purpose**: Correlate hit rates with pre-game signal (RED/GREEN days).

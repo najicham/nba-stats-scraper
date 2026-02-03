@@ -983,6 +983,100 @@ Signal: Heavy UNDER skew - historically 54% hit rate vs 82% on balanced days
 - System design: `docs/08-projects/current/pre-game-signals-strategy/DYNAMIC-SUBSET-DESIGN.md`
 - Statistical validation: Session 70 findings (23 days, p=0.0065)
 
+### Phase 0.55: Model Bias Check (Session 101 - NEW)
+
+**IMPORTANT**: If RED signal detected, check for underlying model bias.
+
+**Why this matters**: Session 101 discovered that RED signals (heavy UNDER skew) can indicate **regression-to-mean bias** in the model. The model was under-predicting star players by ~9 points and over-predicting bench players by ~6 points, causing all high-edge picks to be UNDERs on stars.
+
+**When to run**: Only if RED signal detected in Phase 0.5, OR if high-edge picks have been losing consistently.
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Check model bias by player scoring tier (last 14 days)
+SELECT
+  CASE
+    WHEN actual_points >= 25 THEN '1_Stars (25+)'
+    WHEN actual_points >= 15 THEN '2_Starters (15-24)'
+    WHEN actual_points >= 5 THEN '3_Role (5-14)'
+    ELSE '4_Bench (<5)'
+  END as tier,
+  COUNT(*) as predictions,
+  ROUND(AVG(predicted_points), 1) as avg_predicted,
+  ROUND(AVG(actual_points), 1) as avg_actual,
+  ROUND(AVG(predicted_points - actual_points), 1) as bias,
+  CASE
+    WHEN ABS(AVG(predicted_points - actual_points)) > 5 THEN '🔴 CRITICAL'
+    WHEN ABS(AVG(predicted_points - actual_points)) > 3 THEN '🟡 WARNING'
+    ELSE '✅ OK'
+  END as status
+FROM nba_predictions.prediction_accuracy
+WHERE system_id = 'catboost_v9'
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+  AND actual_points IS NOT NULL
+GROUP BY 1
+ORDER BY 1"
+```
+
+**Expected**: Bias < ±3 points for all tiers
+
+**Alert Thresholds**:
+
+| Tier | Acceptable Bias | Warning | Critical |
+|------|-----------------|---------|----------|
+| Stars (25+) | ±3 pts | ±3-5 pts | >±5 pts |
+| Starters | ±2 pts | ±2-4 pts | >±4 pts |
+| Role/Bench | ±3 pts | ±3-5 pts | >±5 pts |
+
+**If CRITICAL bias detected (Session 101 pattern)**:
+
+| Finding | Root Cause | Action |
+|---------|------------|--------|
+| Stars bias < -5 | Model regression-to-mean | Consider recalibration or retrain |
+| Bench bias > +5 | Model over-predicting low scorers | Add tier features to model |
+| All tiers biased same direction | Global model drift | Retrain immediately |
+
+**Investigation if bias found**:
+
+1. Check recent high-edge pick performance:
+```bash
+bq query --use_legacy_sql=false "
+SELECT
+  game_date,
+  COUNT(*) as high_edge_picks,
+  COUNTIF(prediction_correct) as wins,
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate
+FROM nba_predictions.prediction_accuracy
+WHERE system_id = 'catboost_v9'
+  AND ABS(predicted_points - line_value) >= 5
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+GROUP BY 1
+ORDER BY 1 DESC"
+```
+
+2. Check if bias is getting worse over time:
+```bash
+bq query --use_legacy_sql=false "
+SELECT
+  DATE_TRUNC(game_date, WEEK) as week,
+  ROUND(AVG(CASE WHEN actual_points >= 25 THEN predicted_points - actual_points END), 1) as star_bias,
+  ROUND(AVG(CASE WHEN actual_points < 5 THEN predicted_points - actual_points END), 1) as bench_bias
+FROM nba_predictions.prediction_accuracy
+WHERE system_id = 'catboost_v9'
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
+GROUP BY 1
+ORDER BY 1 DESC"
+```
+
+**Recommended Fixes** (reference `docs/08-projects/current/feature-mismatch-investigation/MODEL-BIAS-INVESTIGATION.md`):
+- **Quick**: Post-prediction recalibration by tier
+- **Proper**: Retrain with tier features
+- **Best**: Switch to quantile regression
+
+**Reference**: Session 101 handoff - discovered -9.3 bias on stars causing 0/7 high-edge picks on Feb 2.
+
 ### Phase 0.6: Orchestrator Health (CRITICAL)
 
 **IMPORTANT**: Check orchestrator health BEFORE other validations. If ANY Phase 0.6 check fails, this is a P1 CRITICAL issue - STOP and report immediately.
