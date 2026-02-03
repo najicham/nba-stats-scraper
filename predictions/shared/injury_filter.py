@@ -568,8 +568,8 @@ class InjuryFilter:
 
                 games_checked = len(rows)
                 # Session 104: Use explicit 'is True' to handle NULL values safely
-            # Previously NULL was silently treated as False, masking data quality issues
-            dnp_games = [r for r in rows if r.is_dnp is True]
+                # Previously NULL was silently treated as False, masking data quality issues
+                dnp_games = [r for r in rows if r.is_dnp is True]
                 dnp_count = len(dnp_games)
                 dnp_rate = dnp_count / games_checked if games_checked > 0 else 0.0
 
