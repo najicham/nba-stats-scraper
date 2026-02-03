@@ -1760,6 +1760,9 @@ class MLFeatureStoreProcessor(
 
         if field_name in phase4_data and phase4_data[field_name] is not None:
             feature_sources[index] = 'phase4'
+            # Debug: Confirm we're returning phase4 value (first 5 times for fatigue_score)
+            if field_name == 'fatigue_score' and hasattr(self, '_debug_phase4_only_count') and self._debug_phase4_only_count <= 5:
+                logger.warning(f"DEBUG_PHASE4_RETURN: Returning phase4 value {phase4_data[field_name]} for {field_name}")
             return float(phase4_data[field_name])
 
         # No Phase 3 fallback - use default
