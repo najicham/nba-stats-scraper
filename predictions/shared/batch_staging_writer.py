@@ -98,6 +98,13 @@ logger = logging.getLogger(__name__)
 STAGING_DATASET = "nba_predictions"
 MAIN_PREDICTIONS_TABLE = "player_prop_predictions"
 
+# Session 81: Edge-based filtering to exclude low-quality predictions
+# Predictions with edge < MIN_EDGE_THRESHOLD lose money and should be filtered out
+# Default: 3.0 (based on analysis showing edge >= 3 has 65% hit rate, +24% ROI)
+# Set to 0 to disable filtering (include all predictions)
+import os
+MIN_EDGE_THRESHOLD = float(os.environ.get('MIN_EDGE_THRESHOLD', '3.0'))
+
 
 @dataclass
 class StagingWriteResult:
@@ -451,6 +458,15 @@ class BatchConsolidator:
         insert_columns = ", ".join(staging_columns)
         insert_values = ", ".join([f"S.{col}" for col in staging_columns])
 
+        # Session 81: Add edge-based filtering clause
+        # Only include predictions with edge >= MIN_EDGE_THRESHOLD
+        # Edge < 3 predictions have 50% hit rate and -2.5% ROI (lose money)
+        # Edge >= 3 predictions have 65% hit rate and +24% ROI (profitable)
+        edge_filter = ""
+        if MIN_EDGE_THRESHOLD > 0:
+            edge_filter = f"""
+            AND ABS(predicted_points - COALESCE(current_points_line, 0)) >= {MIN_EDGE_THRESHOLD}"""
+
         # The MERGE query with ROW_NUMBER deduplication
         # Keeps the most recent prediction per unique key
         # P1-DATA-1: Use game_id (not game_date) and COALESCE for NULL-safe comparison
@@ -467,7 +483,7 @@ class BatchConsolidator:
                     ) AS row_num
                 FROM ({union_query})
             )
-            WHERE row_num = 1
+            WHERE row_num = 1{edge_filter}
         ) S
         ON T.game_id = S.game_id
            AND T.player_lookup = S.player_lookup
@@ -860,6 +876,15 @@ class BatchConsolidator:
             )
 
         try:
+            # Session 81: Log edge filtering configuration
+            if MIN_EDGE_THRESHOLD > 0:
+                logger.info(
+                    f"Session 81: Edge filtering ENABLED - MIN_EDGE_THRESHOLD={MIN_EDGE_THRESHOLD} "
+                    f"(predictions with edge < {MIN_EDGE_THRESHOLD} will be excluded)"
+                )
+            else:
+                logger.info("Session 81: Edge filtering DISABLED - all predictions will be included")
+
             # Build and execute the MERGE query
             merge_query = self._build_merge_query(staging_tables, game_date)
 
