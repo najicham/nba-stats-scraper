@@ -105,6 +105,50 @@ GROUP BY system_id
 ORDER BY system_id
 ```
 
+## ⚠️ Star Player UNDER Warning (Session 101)
+
+**CRITICAL CHECK**: Before trusting high-edge UNDER picks on star players, verify model doesn't have regression-to-mean bias.
+
+**Background**: Session 101 discovered that high-edge UNDER picks on stars (25+ pt scorers) were losing consistently because the model was under-predicting stars by ~9 points.
+
+**Quick Bias Check**:
+```sql
+-- Check if star UNDERs are reliable today
+SELECT
+  p.player_lookup,
+  p.predicted_points,
+  p.current_points_line as vegas_line,
+  p.recommendation,
+  ROUND(h.avg_points, 1) as player_season_avg,
+  CASE
+    WHEN h.avg_points >= 25 AND p.recommendation = 'UNDER'
+         AND p.predicted_points < h.avg_points - 5
+    THEN '⚠️ CAUTION: Star player, model predicts well below avg'
+    ELSE '✅'
+  END as warning
+FROM nba_predictions.player_prop_predictions p
+LEFT JOIN (
+  SELECT player_lookup, AVG(points) as avg_points
+  FROM nba_analytics.player_game_summary
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+    AND points > 0
+  GROUP BY 1
+) h ON p.player_lookup = h.player_lookup
+WHERE p.game_date = CURRENT_DATE()
+  AND p.system_id = 'catboost_v9'
+  AND p.is_active = TRUE
+  AND ABS(p.predicted_points - p.current_points_line) >= 5  -- High edge only
+ORDER BY h.avg_points DESC NULLS LAST
+LIMIT 20
+```
+
+**Red Flags**:
+- Model predicts star at 15-20 pts when their season avg is 28+
+- UNDER recommendation on high-usage player with >5 pt edge
+- Heavy UNDER skew (>70% of picks are UNDER)
+
+**If warnings appear**: Check `/model-health` tier bias before placing bets.
+
 ## Output Format
 
 ### Summary

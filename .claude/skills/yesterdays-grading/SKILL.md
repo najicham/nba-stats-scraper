@@ -110,6 +110,21 @@ GROUP BY system_id, tier
 ORDER BY system_id, tier
 ```
 
+**⚠️ Tier Bias Interpretation (Session 101)**:
+
+Look for these red flags in the tier breakdown:
+
+| Tier | Healthy Bias | Warning Sign | Action |
+|------|--------------|--------------|--------|
+| Star | ±2 | < -5 (under-predicting) | Check `/model-health` |
+| Starter | ±2 | < -3 (under-predicting) | Monitor |
+| Bench | ±3 | > +5 (over-predicting) | Check model |
+
+**If Star bias < -5**: Model has regression-to-mean issue, UNDERs on stars will lose.
+**If Bench bias > +5**: Model over-predicting low scorers, OVERs on bench unreliable.
+
+See `docs/08-projects/current/feature-mismatch-investigation/MODEL-BIAS-INVESTIGATION.md` for fix options.
+
 ## Trading Filter Query (90+ conf, 3+ edge)
 
 **IMPORTANT**: Shows trading picks for ALL active models to compare.

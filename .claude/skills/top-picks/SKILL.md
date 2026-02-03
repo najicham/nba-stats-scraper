@@ -48,6 +48,36 @@ ORDER BY
 - Use `catboost_v8` for historical analysis (Jan 18-28, 2026)
 - Can add `OR system_id = 'ensemble_v1_1'` to compare models
 
+## ⚠️ Session 101 Warning: Star Player UNDERs
+
+**CRITICAL**: Before trusting high-edge UNDER picks on star players (25+ pt scorers), verify the model doesn't have tier bias.
+
+**Background**: Session 101 discovered V9 was under-predicting stars by ~9 points, causing ALL high-edge picks to be UNDERs on stars. Feb 2 went 0/7 on high-edge picks because of this bias.
+
+**Quick Check Before Betting**:
+```sql
+-- Flag suspicious star player UNDERs
+SELECT
+  player_lookup,
+  predicted_points,
+  current_points_line,
+  recommendation,
+  CASE
+    WHEN current_points_line >= 25 AND recommendation = 'UNDER'
+         AND ABS(predicted_points - current_points_line) >= 5
+    THEN '⚠️ HIGH RISK: Star player UNDER with large edge - check model bias'
+    ELSE '✅'
+  END as risk_flag
+FROM nba_predictions.player_prop_predictions
+WHERE game_date = CURRENT_DATE()
+  AND system_id = 'catboost_v9'
+  AND is_active = TRUE
+  AND ABS(predicted_points - current_points_line) >= 5
+ORDER BY current_points_line DESC
+```
+
+**If you see many flagged picks**: Run `/model-health` to check tier bias before placing bets.
+
 ## With Recent Player Performance
 
 **IMPORTANT**: Uses CURRENT production model (catboost_v9) for both today's picks and historical performance.

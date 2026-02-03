@@ -102,6 +102,49 @@ GROUP BY system_id, month
 ORDER BY system_id, month DESC
 ```
 
+## Tier Bias Check (Session 101 - CRITICAL)
+
+**IMPORTANT**: Check for regression-to-mean bias that causes systematic under/over-prediction by player scoring tier.
+
+**Why this matters**: Session 101 discovered V9 was under-predicting stars by -9 points and over-predicting bench by +6 points. This caused 78% UNDER recommendations and consistent high-edge losses.
+
+```sql
+-- Tier Bias Check (Session 101)
+-- Expected: Bias < ±3 for all tiers
+SELECT
+  system_id,
+  CASE
+    WHEN actual_points >= 25 THEN '1_Stars (25+)'
+    WHEN actual_points >= 15 THEN '2_Starters (15-24)'
+    WHEN actual_points >= 5 THEN '3_Role (5-14)'
+    ELSE '4_Bench (<5)'
+  END as tier,
+  COUNT(*) as predictions,
+  ROUND(AVG(predicted_points), 1) as avg_predicted,
+  ROUND(AVG(actual_points), 1) as avg_actual,
+  ROUND(AVG(predicted_points - actual_points), 1) as bias,
+  CASE
+    WHEN ABS(AVG(predicted_points - actual_points)) > 5 THEN '🔴 CRITICAL'
+    WHEN ABS(AVG(predicted_points - actual_points)) > 3 THEN '🟡 WARNING'
+    ELSE '✅ OK'
+  END as status
+FROM nba_predictions.prediction_accuracy
+WHERE system_id = 'catboost_v9'
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+  AND actual_points IS NOT NULL
+  AND recommendation IN ('OVER', 'UNDER')
+GROUP BY 1, 2
+ORDER BY 1, 2
+```
+
+**Alert Thresholds**:
+| Tier | Healthy | Warning | Critical |
+|------|---------|---------|----------|
+| Stars (25+) | ±3 | ±3-5 | >±5 |
+| All others | ±3 | ±3-5 | >±5 |
+
+**If CRITICAL bias detected**: See `docs/08-projects/current/feature-mismatch-investigation/MODEL-BIAS-INVESTIGATION.md`
+
 ## Weekly Trend Query
 
 **IMPORTANT**: Show weekly trends for ALL active models to compare drift patterns.
