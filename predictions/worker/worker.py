@@ -1673,6 +1673,29 @@ def format_prediction_for_bigquery(
         current_points_line = None
         line_margin = None
 
+    # Session 102: Additional filters for edge and model bias
+    # These mark predictions as not actionable but still store them for analysis
+    predicted_points = prediction['predicted_points']
+
+    if is_actionable and current_points_line is not None:
+        edge = abs(predicted_points - current_points_line)
+
+        # Low edge filter: edge < 3 has ~50% hit rate (no better than chance)
+        if edge < 3.0:
+            is_actionable = False
+            filter_reason = 'low_edge'
+
+        # Star UNDER bias filter: Model under-predicts stars by ~9 pts
+        # High-edge UNDERs on stars are systematically wrong (Feb 2: 0/7)
+        season_avg = features.get('points_avg_season', 0)
+        if season_avg >= 25 and recommendation == 'UNDER' and edge >= 5:
+            is_actionable = False
+            filter_reason = 'star_under_bias_suspect'
+            logger.info(
+                f"Filtered star UNDER for {player_lookup}: season_avg={season_avg:.1f}, "
+                f"predicted={predicted_points:.1f}, line={current_points_line}, edge={edge:.1f}"
+            )
+
     # Base record
     record = {
         'prediction_id': str(uuid.uuid4()),
