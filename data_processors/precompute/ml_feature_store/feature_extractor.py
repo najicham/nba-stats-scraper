@@ -406,11 +406,11 @@ class FeatureExtractor:
         """
         Batch extract player_composite_factors for all players.
 
-        Session 95 Note: composite_factors are matchup-specific, so we prefer
-        exact date match. If not available (PlayerCompositeFactorsProcessor didn't
-        run for upcoming games), we fall back to Phase 3 data via the feature
-        calculator rather than using stale composite factors.
+        Session 95 Fix: For upcoming games, use the most recent composite factors
+        available for each player. While matchup-specific, recent fatigue/pace/usage
+        scores are much better than defaults (50.0/0.0/0.0/0.0).
         """
+        # First try exact date match (for completed games or backfill)
         query = f"""
         SELECT
             player_lookup,
@@ -421,7 +421,29 @@ class FeatureExtractor:
         FROM `{self.project_id}.nba_precompute.player_composite_factors`
         WHERE game_date = '{game_date}'
         """
-        result = self._safe_query(query, "batch_extract")
+        result = self._safe_query(query, "batch_extract_exact_date")
+
+        # If no results, use most recent composite factors per player (Session 95)
+        # This handles upcoming games where composite factors aren't calculated yet
+        if result.empty:
+            logger.info(f"No composite_factors for exact date {game_date}, using most recent per player")
+            query = f"""
+            WITH ranked AS (
+                SELECT
+                    player_lookup,
+                    fatigue_score,
+                    shot_zone_mismatch_score,
+                    pace_score,
+                    usage_spike_score,
+                    ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as rn
+                FROM `{self.project_id}.nba_precompute.player_composite_factors`
+                WHERE game_date <= '{game_date}'
+                  AND game_date >= DATE_SUB('{game_date}', INTERVAL 7 DAY)
+            )
+            SELECT * EXCEPT(rn) FROM ranked WHERE rn = 1
+            """
+            result = self._safe_query(query, "batch_extract_most_recent")
+
         # Use efficient to_dict instead of iterrows (3x faster)
         if not result.empty:
             for record in result.to_dict('records'):
@@ -429,7 +451,13 @@ class FeatureExtractor:
         logger.debug(f"Batch composite_factors: {len(self._composite_factors_lookup)} rows")
 
     def _batch_extract_shot_zone(self, game_date: date) -> None:
-        """Batch extract player_shot_zone_analysis for all players."""
+        """
+        Batch extract player_shot_zone_analysis for all players.
+
+        Session 95 Fix: For upcoming games, use the most recent shot zone analysis
+        available for each player.
+        """
+        # First try exact date match (for completed games or backfill)
         query = f"""
         SELECT
             player_lookup,
@@ -439,7 +467,27 @@ class FeatureExtractor:
         FROM `{self.project_id}.nba_precompute.player_shot_zone_analysis`
         WHERE analysis_date = '{game_date}'
         """
-        result = self._safe_query(query, "batch_extract")
+        result = self._safe_query(query, "batch_extract_exact_date")
+
+        # If no results, use most recent analysis per player (Session 95)
+        if result.empty:
+            logger.info(f"No shot_zone for exact date {game_date}, using most recent per player")
+            query = f"""
+            WITH ranked AS (
+                SELECT
+                    player_lookup,
+                    paint_rate_last_10,
+                    mid_range_rate_last_10,
+                    three_pt_rate_last_10,
+                    ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY analysis_date DESC) as rn
+                FROM `{self.project_id}.nba_precompute.player_shot_zone_analysis`
+                WHERE analysis_date <= '{game_date}'
+                  AND analysis_date >= DATE_SUB('{game_date}', INTERVAL 14 DAY)
+            )
+            SELECT * EXCEPT(rn) FROM ranked WHERE rn = 1
+            """
+            result = self._safe_query(query, "batch_extract_most_recent")
+
         # Use efficient to_dict instead of iterrows (3x faster)
         if not result.empty:
             for record in result.to_dict('records'):
@@ -447,9 +495,16 @@ class FeatureExtractor:
         logger.debug(f"Batch shot_zone: {len(self._shot_zone_lookup)} rows")
 
     def _batch_extract_team_defense(self, game_date: date, team_abbrs: List[str]) -> None:
-        """Batch extract team_defense_zone_analysis for all opponent teams."""
+        """
+        Batch extract team_defense_zone_analysis for all opponent teams.
+
+        Session 95 Fix: For upcoming games, use the most recent defense analysis
+        available for each team.
+        """
         if not team_abbrs:
             return
+
+        # First try exact date match (for completed games or backfill)
         query = f"""
         SELECT
             team_abbr,
@@ -458,7 +513,26 @@ class FeatureExtractor:
         FROM `{self.project_id}.nba_precompute.team_defense_zone_analysis`
         WHERE analysis_date = '{game_date}'
         """
-        result = self._safe_query(query, "batch_extract")
+        result = self._safe_query(query, "batch_extract_exact_date")
+
+        # If no results, use most recent analysis per team (Session 95)
+        if result.empty:
+            logger.info(f"No team_defense for exact date {game_date}, using most recent per team")
+            query = f"""
+            WITH ranked AS (
+                SELECT
+                    team_abbr,
+                    defensive_rating_last_15 AS opponent_def_rating,
+                    opponent_pace,
+                    ROW_NUMBER() OVER (PARTITION BY team_abbr ORDER BY analysis_date DESC) as rn
+                FROM `{self.project_id}.nba_precompute.team_defense_zone_analysis`
+                WHERE analysis_date <= '{game_date}'
+                  AND analysis_date >= DATE_SUB('{game_date}', INTERVAL 7 DAY)
+            )
+            SELECT * EXCEPT(rn) FROM ranked WHERE rn = 1
+            """
+            result = self._safe_query(query, "batch_extract_most_recent")
+
         # Use efficient to_dict instead of iterrows (3x faster)
         if not result.empty:
             for record in result.to_dict('records'):
