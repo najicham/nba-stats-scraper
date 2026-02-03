@@ -1136,6 +1136,117 @@ gcloud logging read 'resource.type="cloud_run_revision"
 
 **Root cause reference**: `predictions/worker/execution_logger.py` - REPEATED fields must be empty arrays `[]`, never JSON `null`.
 
+### Phase 0.96: Model Attribution Check (Session 91)
+
+**Purpose**: Verify model attribution fields (model_file_name, model_training_start_date, etc.) are populated for predictions.
+
+**Why this matters**: NULL model attribution makes it impossible to track which model version generated predictions, preventing proper model performance analysis and debugging.
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Check model attribution for recent predictions
+SELECT
+  DATE(created_at) as created_date,
+  model_file_name,
+  COUNT(*) as predictions,
+  CASE
+    WHEN model_file_name IS NULL THEN '🔴 NULL'
+    ELSE '✅ OK'
+  END as status
+FROM nba_predictions.player_prop_predictions
+WHERE system_id = 'catboost_v9'
+  AND created_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+GROUP BY 1, 2
+ORDER BY 1 DESC"
+```
+
+**Expected result**:
+- `model_file_name` should be populated (e.g., `catboost_v9_feb_02_retrain.cbm`)
+- No NULL values for predictions created after Session 88 fix (2026-02-03 03:08 UTC)
+
+**Alert thresholds**:
+- All populated: ✅ OK - Model attribution working correctly
+- Some NULL (before fix): 🟡 INFO - Expected for pre-deployment predictions
+- All NULL (after fix): 🔴 CRITICAL - Model attribution broken
+
+**If CRITICAL (all NULL after fix deployment)**:
+
+1. Check if fix is deployed:
+   ```bash
+   gcloud run services describe prediction-worker --region=us-west2 \
+     --format="value(metadata.labels.commit-sha)"
+   # Expected: 4ada201f or later
+   ```
+
+2. Check metadata structure in worker logs:
+   ```bash
+   gcloud logging read 'resource.labels.service_name="prediction-worker"
+     AND textPayload=~"catboost_meta"' --limit=5 --freshness=6h
+   ```
+
+3. If fix is deployed but still NULL, investigate:
+   - Check if CatBoostV9.predict() is returning metadata correctly
+   - Check if worker.py is extracting nested metadata correctly
+   - Reference: `predictions/worker/worker.py:1815-1834`
+
+**Fix reference**: Commit `4ada201f` - Access nested `catboost_result.get('metadata', {})` for model attribution fields.
+
+### Phase 0.97: Phase 6 Export Health (Session 91)
+
+**Purpose**: Verify Phase 6 subset exporters are running and producing valid outputs.
+
+**Why this matters**: Phase 6 exports power the public API. Missing or stale exports mean users see outdated predictions.
+
+**What to check**:
+
+```bash
+# Check if today's exports exist
+GAME_DATE=$(date +%Y-%m-%d)
+YESTERDAY=$(date -d "yesterday" +%Y-%m-%d)
+
+echo "=== Phase 6 Export Health ==="
+
+# Check picks files
+gsutil ls -lh gs://nba-props-platform-api/v1/picks/${YESTERDAY}.json 2>/dev/null && \
+  echo "✅ Yesterday picks exist" || echo "🔴 Yesterday picks MISSING"
+
+gsutil ls -lh gs://nba-props-platform-api/v1/signals/${YESTERDAY}.json 2>/dev/null && \
+  echo "✅ Yesterday signals exist" || echo "🔴 Yesterday signals MISSING"
+
+# Check performance file freshness
+PERF_TIME=$(gsutil stat gs://nba-props-platform-api/v1/subsets/performance.json 2>/dev/null | grep "Update time" | cut -d: -f2-)
+echo "Performance file updated: ${PERF_TIME:-NOT FOUND}"
+
+# Check definitions file exists
+gsutil ls gs://nba-props-platform-api/v1/systems/subsets.json 2>/dev/null && \
+  echo "✅ Subset definitions exist" || echo "🔴 Subset definitions MISSING"
+```
+
+**Expected result**:
+- Yesterday's picks and signals files exist
+- Performance file updated within last 2 hours (during active hours)
+- Subset definitions file exists
+
+**Alert thresholds**:
+- All files present and fresh: ✅ OK
+- Missing files: 🔴 CRITICAL
+- Stale performance (>3 hours during 6 AM - 11 PM): 🟡 WARNING
+
+**If files missing**:
+1. Check phase5-to-phase6 orchestrator logs:
+   ```bash
+   gcloud functions logs read phase5-to-phase6 --region=us-west2 --limit=20
+   ```
+
+2. Check if exports can run manually:
+   ```bash
+   PYTHONPATH=. python backfill_jobs/publishing/daily_export.py \
+     --date $(date -d "yesterday" +%Y-%m-%d) \
+     --only subset-picks,daily-signals
+   ```
+
 ### Phase 1: Run Baseline Health Check
 
 ```bash
