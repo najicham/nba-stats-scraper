@@ -422,100 +422,124 @@ ORDER BY coverage_pct ASC"
    GROUP BY 1, 2
    ```
 
-### Phase 0.45: Edge Filter Verification (Session 81 - CRITICAL)
+### Phase 0.45: Edge Filter Verification (Session 102 - Updated Architecture)
 
-**IMPORTANT**: Verify edge >= 3 filter is working correctly in production.
+**IMPORTANT**: Verify edge filtering via `is_actionable` field is working correctly.
 
-**Why this matters**: Session 81 implemented edge-based filtering to exclude low-quality predictions (edge < 3 have 50% hit rate and lose money). This filter runs during prediction consolidation and is critical for profitability.
+**Architecture Change (Session 102)**: Edge filtering moved from write-time (MERGE exclusion) to query-time (is_actionable field). All predictions are now stored, but low-edge ones are marked `is_actionable = FALSE`.
 
-**Expected Impact**: Predictions with edge < 3 should NOT appear in `player_prop_predictions` table after consolidation.
+**Why this matters**: Low-edge predictions (edge < 3) have ~50% hit rate and lose money after vig. The `is_actionable` field marks which predictions are safe to bet on.
 
 **What to check**:
 
 ```bash
 bq query --use_legacy_sql=false "
--- Verify edge filter is working (Session 81)
--- Expected: All predictions have edge >= 3.0 (or NO_PROP_LINE)
+-- Verify edge filter via is_actionable (Session 102 architecture)
+-- Expected: Low-edge predictions have is_actionable = FALSE
 SELECT
-  game_date,
-  COUNT(*) as total_predictions,
-  COUNTIF(line_source = 'NO_PROP_LINE') as no_line,
-  COUNTIF(line_source != 'NO_PROP_LINE' AND ABS(predicted_points - current_points_line) >= 3) as edge_3_plus,
-  COUNTIF(line_source != 'NO_PROP_LINE' AND ABS(predicted_points - current_points_line) < 3) as edge_below_3,
-  ROUND(MIN(CASE WHEN line_source != 'NO_PROP_LINE'
-    THEN ABS(predicted_points - current_points_line) END), 2) as min_edge,
   CASE
-    WHEN COUNTIF(line_source != 'NO_PROP_LINE' AND ABS(predicted_points - current_points_line) < 3) = 0
-      THEN '✅ PASS'
-    ELSE '❌ FAIL - Low-edge predictions found!'
+    WHEN line_source = 'NO_PROP_LINE' THEN 'NO_LINE'
+    WHEN ABS(predicted_points - current_points_line) >= 5 THEN 'HIGH (5+)'
+    WHEN ABS(predicted_points - current_points_line) >= 3 THEN 'MEDIUM (3-5)'
+    ELSE 'LOW (<3)'
+  END as edge_tier,
+  is_actionable,
+  COUNT(*) as count,
+  CASE
+    WHEN is_actionable = TRUE
+      AND line_source != 'NO_PROP_LINE'
+      AND ABS(predicted_points - current_points_line) < 3
+    THEN '❌ FAIL'
+    ELSE '✅ OK'
   END as status
 FROM nba_predictions.player_prop_predictions
 WHERE game_date >= CURRENT_DATE()
   AND system_id = 'catboost_v9'
-  AND created_at >= TIMESTAMP('2026-02-03 00:00:00')  -- After Session 81 deployment
-GROUP BY game_date
-ORDER BY game_date DESC
+  AND is_active = TRUE
+GROUP BY 1, 2
+HAVING edge_tier = 'LOW (<3)' AND is_actionable = TRUE
+ORDER BY 1, 2
 "
 ```
 
 **Expected Result**:
-- `edge_below_3 = 0` (no predictions with edge < 3)
-- `min_edge >= 3.0` (minimum edge is at least 3.0)
-- `status = ✅ PASS`
+- Zero rows returned (no actionable low-edge predictions)
+- All `LOW (<3)` predictions should have `is_actionable = FALSE`
 
-**If FAIL (edge_below_3 > 0)**:
+**Check filter_reason distribution**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Check filter reasons are being applied
+SELECT
+  filter_reason,
+  COUNT(*) as count
+FROM nba_predictions.player_prop_predictions
+WHERE game_date >= CURRENT_DATE()
+  AND system_id = 'catboost_v9'
+  AND is_actionable = FALSE
+GROUP BY filter_reason
+ORDER BY count DESC
+"
+```
+
+**Expected filter_reasons**:
+- `low_edge`: Edge < 3 predictions
+- `confidence_tier_88_90`: 88-90% confidence tier (lower hit rate)
+- `star_under_bias_suspect`: High-edge UNDERs on star players
+
+**If FAIL (actionable low-edge predictions found)**:
 
 | Issue | Severity | Action |
 |-------|----------|--------|
-| Low-edge predictions found | P0 CRITICAL | Filter not working, investigate immediately |
+| Actionable low-edge found | P1 CRITICAL | Check if predictions created before deployment |
 
 **Investigation steps**:
 
-1. **Check filter configuration**:
+1. **Check when predictions were created vs deployment**:
    ```bash
-   # Check MIN_EDGE_THRESHOLD environment variable
-   gcloud run services describe prediction-coordinator \
-     --region=us-west2 \
-     --format="value(spec.template.spec.containers[0].env[?(@.name=='MIN_EDGE_THRESHOLD')].value)"
+   # Get worker deployment time
+   gcloud run revisions list --service=prediction-worker --region=us-west2 --limit=3
 
-   # Expected: 3.0 (or 3)
-   ```
-
-2. **Check consolidation logs**:
-   ```bash
-   gcloud logging read 'resource.type="cloud_run_revision"
-     AND resource.labels.service_name="prediction-coordinator"
-     AND textPayload=~"Session 81: Edge filtering"' \
-     --limit=10 --format="table(timestamp,textPayload)"
-
-   # Expected: "Session 81: Edge filtering ENABLED - MIN_EDGE_THRESHOLD=3.0"
-   ```
-
-3. **Sample low-edge predictions** (if found):
-   ```bash
+   # Check prediction creation times
    bq query --use_legacy_sql=false "
-   SELECT
-     player_lookup,
-     predicted_points,
-     current_points_line,
-     ABS(predicted_points - current_points_line) as edge,
-     created_at
+   SELECT FORMAT_TIMESTAMP('%Y-%m-%d %H:%M', created_at) as created,
+     COUNTIF(is_actionable AND line_source != 'NO_PROP_LINE' AND ABS(predicted_points - current_points_line) < 3) as bad
    FROM nba_predictions.player_prop_predictions
-   WHERE game_date >= CURRENT_DATE()
+   WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v9'
+   GROUP BY 1 ORDER BY 1"
+   ```
+
+2. **If predictions created before deployment** (common cause):
+   ```sql
+   -- Fix: Mark low-edge predictions as non-actionable
+   UPDATE nba_predictions.player_prop_predictions
+   SET is_actionable = FALSE, filter_reason = 'low_edge_backfill'
+   WHERE game_date = 'YYYY-MM-DD'
      AND system_id = 'catboost_v9'
      AND line_source != 'NO_PROP_LINE'
      AND ABS(predicted_points - current_points_line) < 3
-   ORDER BY created_at DESC
-   LIMIT 10
-   "
+     AND is_actionable = TRUE
    ```
 
-**Resolution**:
-- If `MIN_EDGE_THRESHOLD` is not set or is 0: Update environment variable
-- If filter is disabled in code: Redeploy coordinator with filter enabled
-- If predictions created before deployment: Wait for next prediction run (filter only applies to new predictions)
+3. **Verify filter code is deployed**:
+   ```bash
+   # Check if Session 102 commit is in deployed version
+   DEPLOYED_SHA=$(gcloud run services describe prediction-worker --region=us-west2 \
+     --format="value(metadata.labels.commit-sha)")
+   git merge-base --is-ancestor c04be05a $DEPLOYED_SHA && echo "Edge filter deployed" || echo "NOT deployed"
+   ```
 
-**Reference**: `docs/08-projects/current/prediction-quality-analysis/SESSION-81-DEEP-DIVE.md`
+**Correct Query for Betting** (filters properly):
+```sql
+SELECT * FROM nba_predictions.player_prop_predictions
+WHERE game_date = CURRENT_DATE()
+  AND system_id = 'catboost_v9'
+  AND is_active = TRUE
+  AND is_actionable = TRUE  -- Session 102: Use this field!
+```
+
+**Reference**: `docs/08-projects/current/edge-filter-investigation/SESSION-106-INVESTIGATION.md`
 
 ### Phase 0.46: Prediction Deactivation Logic Validation (Session 81 - CRITICAL)
 
