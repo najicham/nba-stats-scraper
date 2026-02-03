@@ -426,7 +426,7 @@ class FeatureExtractor:
         # If no results, use most recent composite factors per player (Session 95)
         # This handles upcoming games where composite factors aren't calculated yet
         if result.empty:
-            logger.info(f"No composite_factors for exact date {game_date}, using most recent per player")
+            logger.warning(f"FALLBACK: No composite_factors for exact date {game_date}, using most recent per player")
             query = f"""
             WITH ranked AS (
                 SELECT
@@ -448,7 +448,9 @@ class FeatureExtractor:
         if not result.empty:
             for record in result.to_dict('records'):
                 self._composite_factors_lookup[record['player_lookup']] = record
-        logger.debug(f"Batch composite_factors: {len(self._composite_factors_lookup)} rows")
+            logger.warning(f"FALLBACK_RESULT: Loaded {len(self._composite_factors_lookup)} composite_factors from fallback query")
+        else:
+            logger.warning(f"FALLBACK_EMPTY: No composite_factors found even with fallback query")
 
     def _batch_extract_shot_zone(self, game_date: date) -> None:
         """
@@ -471,7 +473,7 @@ class FeatureExtractor:
 
         # If no results, use most recent analysis per player (Session 95)
         if result.empty:
-            logger.info(f"No shot_zone for exact date {game_date}, using most recent per player")
+            logger.warning(f"FALLBACK: No shot_zone for exact date {game_date}, using most recent per player")
             query = f"""
             WITH ranked AS (
                 SELECT
@@ -517,7 +519,7 @@ class FeatureExtractor:
 
         # If no results, use most recent analysis per team (Session 95)
         if result.empty:
-            logger.info(f"No team_defense for exact date {game_date}, using most recent per team")
+            logger.warning(f"FALLBACK: No team_defense for exact date {game_date}, using most recent per team")
             query = f"""
             WITH ranked AS (
                 SELECT
