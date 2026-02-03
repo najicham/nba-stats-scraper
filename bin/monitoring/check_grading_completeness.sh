@@ -60,19 +60,27 @@ echo ""
 
 # Run improved BigQuery check
 RESULT=$(bq query --use_legacy_sql=false --format=csv "
-WITH prediction_breakdown AS (
-  -- Count ALL predictions (active and inactive) for accurate coverage calculation
-  -- We grade based on what was predicted, not just what's currently active
-  SELECT
-    system_id,
-    COUNT(*) as total_predictions,
-    COUNTIF(line_source = 'ACTUAL_PROP') as actual_prop_count,
-    COUNTIF(line_source = 'ESTIMATED_AVG') as estimated_avg_count,
-    COUNTIF(line_source = 'NO_PROP_LINE') as no_prop_line_count,
-    COUNTIF(line_source IN ('ACTUAL_PROP', 'ESTIMATED_AVG')) as gradable_count
-  FROM nba_predictions.player_prop_predictions
+WITH fully_completed_dates AS (
+  -- Only consider dates where ALL games are finished
+  -- This prevents counting predictions for dates with mixed status (some final, some scheduled)
+  SELECT game_date
+  FROM nba_reference.nba_schedule
   WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL $DAYS_LOOKBACK DAY)
-  GROUP BY system_id
+  GROUP BY game_date
+  HAVING COUNTIF(game_status != 3) = 0  -- No non-final games on this date
+),
+prediction_breakdown AS (
+  -- Count predictions only for dates where ALL games finished (can be fully graded)
+  SELECT
+    p.system_id,
+    COUNT(*) as total_predictions,
+    COUNTIF(p.line_source = 'ACTUAL_PROP') as actual_prop_count,
+    COUNTIF(p.line_source = 'ESTIMATED_AVG') as estimated_avg_count,
+    COUNTIF(p.line_source = 'NO_PROP_LINE') as no_prop_line_count,
+    COUNTIF(p.line_source IN ('ACTUAL_PROP', 'ESTIMATED_AVG')) as gradable_count
+  FROM nba_predictions.player_prop_predictions p
+  INNER JOIN fully_completed_dates fcd ON p.game_date = fcd.game_date
+  GROUP BY p.system_id
 ),
 graded_counts AS (
   SELECT
