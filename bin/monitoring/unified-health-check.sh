@@ -136,17 +136,20 @@ else
 fi
 TOTAL_CHECKS=$((TOTAL_CHECKS + 1))
 
-# Check 5: BDB Coverage (yesterday)
+# Check 5: BDB Coverage (yesterday in ET - NBA games are in Eastern Time)
 echo "[5/6] BDB Play-by-Play Coverage..."
 BDB_COV=$(bq query --use_legacy_sql=false --format=csv --quiet \
-  "WITH schedule AS (
-     SELECT COUNT(*) as total FROM nba_reference.nba_schedule
-     WHERE game_date = CURRENT_DATE() - 1 AND game_status = 3
+  "WITH yesterday_et AS (
+     SELECT DATE_SUB(CURRENT_DATE('America/New_York'), INTERVAL 1 DAY) as check_date
+   ),
+   schedule AS (
+     SELECT COUNT(*) as total FROM nba_reference.nba_schedule, yesterday_et
+     WHERE game_date = check_date AND game_status = 3
    ),
    bdb AS (
      SELECT COUNT(DISTINCT LPAD(CAST(bdb_game_id AS STRING), 10, '0')) as has_bdb
-     FROM nba_raw.bigdataball_play_by_play
-     WHERE game_date = CURRENT_DATE() - 1
+     FROM nba_raw.bigdataball_play_by_play, yesterday_et
+     WHERE game_date = check_date
    )
    SELECT CAST(ROUND(100.0 * COALESCE(has_bdb, 0) / NULLIF(total, 0), 0) AS INT64) FROM schedule, bdb" 2>/dev/null | tail -1 || echo "0")
 
