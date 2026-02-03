@@ -136,6 +136,13 @@ class SubsetPicksNotifier:
             p.recommendation,
             ROUND(p.confidence_score, 2) as confidence,
             ROUND((ABS(p.predicted_points - p.current_points_line) * 10) + (p.confidence_score * 0.5), 1) as composite_score,
+            -- Model attribution fields (Session 84)
+            p.model_file_name,
+            p.model_training_start_date,
+            p.model_training_end_date,
+            p.model_expected_mae,
+            p.model_expected_hit_rate,
+            p.model_trained_at,
             ROW_NUMBER() OVER (
               ORDER BY (ABS(p.predicted_points - p.current_points_line) * 10) + (p.confidence_score * 0.5) DESC
             ) as pick_rank
@@ -230,7 +237,14 @@ class SubsetPicksNotifier:
               r.edge,
               r.recommendation,
               r.confidence,
-              r.composite_score
+              r.composite_score,
+              -- Model attribution (Session 84)
+              r.model_file_name,
+              r.model_training_start_date,
+              r.model_training_end_date,
+              r.model_expected_mae,
+              r.model_expected_hit_rate,
+              r.model_trained_at
             )
             ORDER BY r.pick_rank
           ) as picks
@@ -282,7 +296,13 @@ class SubsetPicksNotifier:
                         'edge': pick['edge'],
                         'recommendation': pick['recommendation'],
                         'confidence': pick['confidence'],
-                        'composite_score': pick['composite_score']
+                        'composite_score': pick['composite_score'],
+                        # Model attribution (Session 84)
+                        'model_file_name': pick.get('model_file_name'),
+                        'model_expected_mae': pick.get('model_expected_mae'),
+                        'model_expected_hit_rate': pick.get('model_expected_hit_rate'),
+                        'model_training_start': pick.get('model_training_start_date'),
+                        'model_training_end': pick.get('model_training_end_date')
                     })
                 else:
                     picks_data['picks'].append({
@@ -293,7 +313,13 @@ class SubsetPicksNotifier:
                         'edge': pick.edge,
                         'recommendation': pick.recommendation,
                         'confidence': pick.confidence,
-                        'composite_score': pick.composite_score
+                        'composite_score': pick.composite_score,
+                        # Model attribution (Session 84)
+                        'model_file_name': getattr(pick, 'model_file_name', None),
+                        'model_expected_mae': getattr(pick, 'model_expected_mae', None),
+                        'model_expected_hit_rate': getattr(pick, 'model_expected_hit_rate', None),
+                        'model_training_start': getattr(pick, 'model_training_start_date', None),
+                        'model_training_end': getattr(pick, 'model_training_end_date', None)
                     })
 
             logger.info(f"Found {len(picks_data['picks'])} picks for {subset_id}")
@@ -324,6 +350,21 @@ class SubsetPicksNotifier:
             signal_emoji = ':large_green_circle:'
             signal_text = f"{signal_emoji} **GREEN SIGNAL** ({pct_over}% OVER)\n✅ *Normal confidence - bet as usual*"
 
+        # Model metadata (Session 84 - Model Attribution)
+        model_info = ""
+        if picks and picks[0].get('model_file_name'):
+            model_name = picks[0]['model_file_name']
+            expected_mae = picks[0].get('model_expected_mae')
+            expected_hr = picks[0].get('model_expected_hit_rate')
+
+            # Format model name (e.g., "catboost_v9_feb_02_retrain.cbm" -> "V9 Feb 02 Retrain")
+            model_display = model_name.replace('catboost_v', 'V').replace('_', ' ').replace('.cbm', '').title()
+
+            model_info = f"\n*🤖 Model:* {model_display}"
+            if expected_mae and expected_hr:
+                model_info += f" (MAE: {expected_mae:.2f}, HR: {expected_hr:.1f}%)"
+            model_info += "\n"
+
         # Format picks
         picks_text = ""
         for pick in picks:
@@ -335,7 +376,7 @@ class SubsetPicksNotifier:
         text = f"""🏀 *Today's Top Picks - {game_date}*
 
 {signal_text}
-
+{model_info}
 *{picks_data['subset_name']}:*
 {picks_text}
 *Historical Performance:*
@@ -405,6 +446,38 @@ _View all subsets: /subset-picks_"""
             </div>
             """
 
+        # Model metadata (Session 84 - Model Attribution)
+        model_section = ""
+        if picks and picks[0].get('model_file_name'):
+            model_name = picks[0]['model_file_name']
+            expected_mae = picks[0].get('model_expected_mae')
+            expected_hr = picks[0].get('model_expected_hit_rate')
+            training_start = picks[0].get('model_training_start')
+            training_end = picks[0].get('model_training_end')
+
+            # Format model name
+            model_display = model_name.replace('catboost_v', 'V').replace('_', ' ').replace('.cbm', '').title()
+
+            # Format training dates
+            training_period = ""
+            if training_start and training_end:
+                from datetime import datetime
+                start_str = training_start.strftime('%b %d, %Y') if isinstance(training_start, datetime) else str(training_start)
+                end_str = training_end.strftime('%b %d, %Y') if isinstance(training_end, datetime) else str(training_end)
+                training_period = f"<br><strong>Training Period:</strong> {start_str} - {end_str}"
+
+            model_section = f"""
+            <div style="background-color: #e3f2fd; border-left: 4px solid #2196f3; padding: 12px; margin: 16px 0;">
+                <h4 style="margin-top: 0;">🤖 Model Information</h4>
+                <p style="margin: 4px 0;">
+                    <strong>Model:</strong> {model_display}<br>
+                    <strong>Expected MAE:</strong> {expected_mae:.2f if expected_mae else 'N/A'}<br>
+                    <strong>Expected Hit Rate:</strong> {expected_hr:.1f if expected_hr else 'N/A'}%
+                    {training_period}
+                </p>
+            </div>
+            """
+
         # Format picks table
         picks_rows = ""
         for pick in picks:
@@ -440,6 +513,8 @@ _View all subsets: /subset-picks_"""
 
             <h3 style="color: {signal_color};">{signal_emoji} {signal} Signal ({pct_over}% OVER)</h3>
             {signal_warning}
+
+            {model_section}
 
             <h3>{picks_data['subset_name']}</h3>
 
