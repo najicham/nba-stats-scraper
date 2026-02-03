@@ -1809,24 +1809,28 @@ def format_prediction_for_bigquery(
         })
 
     elif system_id.startswith('catboost_') and 'metadata' in prediction:
-        metadata = prediction['metadata']
+        # prediction['metadata'] is the full catboost result dict
+        # The actual metadata fields are NESTED in result['metadata']
+        # Session 88 FIX: Access nested metadata correctly
+        catboost_result = prediction['metadata']
+        catboost_meta = catboost_result.get('metadata', {})
         record.update({
-            'model_version': metadata.get('model_version', system_id),
+            'model_version': catboost_meta.get('model_version', system_id),
             'feature_importance': json.dumps({
-                'model_type': metadata.get('model_type'),
-                'feature_count': metadata.get('feature_count', 33),
-                'training_approach': metadata.get('training_approach'),  # V9: 'current_season_only'
-                'training_period': metadata.get('training_period'),  # V9: date range
-            }) if metadata.get('model_type') or metadata.get('training_approach') else None,
+                'model_type': catboost_meta.get('model_type'),
+                'feature_count': catboost_meta.get('feature_count', 33),
+                'training_approach': catboost_meta.get('training_approach'),  # V9: 'current_season_only'
+                'training_period': catboost_meta.get('training_period'),  # V9: date range
+            }) if catboost_meta.get('model_type') or catboost_meta.get('training_approach') else None,
             # Note: features_snapshot now set in base record for ALL systems (Session 67)
 
             # Session 84: Model attribution tracking
-            'model_file_name': metadata.get('model_file_name'),
-            'model_training_start_date': metadata.get('model_training_start_date'),
-            'model_training_end_date': metadata.get('model_training_end_date'),
-            'model_expected_mae': metadata.get('model_expected_mae'),
-            'model_expected_hit_rate': metadata.get('model_expected_hit_rate'),
-            'model_trained_at': metadata.get('model_trained_at'),
+            'model_file_name': catboost_meta.get('model_file_name'),
+            'model_training_start_date': catboost_meta.get('model_training_start_date'),
+            'model_training_end_date': catboost_meta.get('model_training_end_date'),
+            'model_expected_mae': catboost_meta.get('model_expected_mae'),
+            'model_expected_hit_rate': catboost_meta.get('model_expected_hit_rate'),
+            'model_trained_at': catboost_meta.get('model_trained_at'),
         })
     
     elif system_id == 'ensemble_v1' and 'metadata' in prediction:
