@@ -620,6 +620,112 @@ WHERE game_date >= DATE('YYYY-MM-DD')
 
 **Reference**: Session 78 handoff, Session 80 data repair
 
+### Phase 0.465: Orphan Superseded Predictions Check (Session 102 - CRITICAL)
+
+**IMPORTANT**: Verify there are no orphan superseded predictions (superseded with no active replacement).
+
+**Why this matters**: Session 102 discovered that regeneration batches with edge filtering can cause "orphan" superseded predictions. When corrected features produce predictions with edge < 3, they get filtered during MERGE, leaving old superseded predictions with no active replacement. This leaves players without usable predictions.
+
+**Root Cause**:
+1. Old predictions marked `superseded=TRUE` during overnight batch
+2. Regeneration creates new predictions with corrected features
+3. Corrected features → different predictions → some have edge < 3.0
+4. Edge filter blocks new predictions during MERGE
+5. Old superseded predictions remain unchanged → orphan
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Check for orphan superseded predictions (superseded with no active replacement)
+WITH orphan_check AS (
+  SELECT
+    game_date,
+    player_lookup,
+    system_id,
+    MAX(CASE WHEN superseded IS NOT TRUE THEN 1 ELSE 0 END) as has_active,
+    MAX(CASE WHEN superseded IS TRUE THEN 1 ELSE 0 END) as has_superseded
+  FROM nba_predictions.player_prop_predictions
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
+    AND system_id = 'catboost_v9'
+  GROUP BY 1, 2, 3
+)
+SELECT
+  game_date,
+  COUNTIF(has_active = 1) as players_with_active,
+  COUNTIF(has_active = 0 AND has_superseded = 1) as orphan_superseded,
+  CASE
+    WHEN COUNTIF(has_active = 0 AND has_superseded = 1) = 0 THEN '✅ PASS'
+    ELSE '❌ FAIL - Orphan superseded predictions found!'
+  END as status
+FROM orphan_check
+GROUP BY game_date
+ORDER BY game_date DESC"
+```
+
+**Expected Result**:
+- `orphan_superseded = 0` for all dates
+- `status = ✅ PASS`
+
+**If FAIL (orphan_superseded > 0)**:
+
+| Issue | Severity | Action |
+|-------|----------|--------|
+| Orphan superseded predictions | P0 CRITICAL | Players missing usable predictions |
+
+**Investigation steps**:
+
+1. **Identify affected players**:
+   ```bash
+   bq query --use_legacy_sql=false "
+   WITH orphan_check AS (
+     SELECT
+       game_date, player_lookup, system_id,
+       MAX(CASE WHEN superseded IS NOT TRUE THEN 1 ELSE 0 END) as has_active
+     FROM nba_predictions.player_prop_predictions
+     WHERE game_date = 'YYYY-MM-DD' AND system_id = 'catboost_v9'
+     GROUP BY 1, 2, 3
+   )
+   SELECT player_lookup
+   FROM orphan_check
+   WHERE has_active = 0
+   ORDER BY player_lookup"
+   ```
+
+2. **Check if recent regeneration ran**:
+   ```bash
+   gcloud logging read 'resource.type="cloud_run_revision"
+     AND resource.labels.service_name="prediction-coordinator"
+     AND textPayload=~"regenerat"
+     AND timestamp>="2026-02-03T00:00:00Z"' \
+     --limit=10 --format="table(timestamp,textPayload)"
+   ```
+
+3. **Verify Session 102 fix is deployed** (edge filter skip for regen batches):
+   ```bash
+   gcloud logging read 'resource.type="cloud_run_revision"
+     AND resource.labels.service_name="prediction-coordinator"
+     AND textPayload=~"Session 102: Edge filtering DISABLED"' \
+     --limit=5 --format="table(timestamp,textPayload)"
+   # Expected: Recent log showing edge filter disabled for regen batch
+   ```
+
+**Resolution**:
+
+If orphan superseded predictions found:
+```bash
+# Trigger regeneration with Session 102 fix (skips edge filter)
+COORDINATOR_URL="https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app"
+TOKEN=$(gcloud auth print-identity-token)
+
+curl -X POST "${COORDINATOR_URL}/regenerate-with-supersede" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"game_date": "YYYY-MM-DD", "reason": "orphan_superseded_fix"}'
+```
+
+**Reference**: Session 102 handoff, `docs/09-handoff/2026-02-03-SESSION-102-HANDOFF.md`
+
 ### Phase 0.47: Session 97 Quality Gate Check (CRITICAL)
 
 **IMPORTANT**: Verify the ML Feature Store quality gate is functioning correctly.

@@ -204,6 +204,8 @@ WHERE game_date = CURRENT_DATE()
 | game_id mismatch | JOIN failures between tables | Use game_id_reversed for reversed format tables |
 | REPEATED field NULL | JSON parsing error | Use `field or []` instead of allowing None |
 | Cloud Function imports | ModuleNotFoundError | Run symlink validation, fix shared/ paths |
+| Orphan superseded predictions | Players missing active predictions after regen | Re-run regeneration (Session 102 auto-skips edge filter) |
+| Feature cache stale | Wrong predicted values, low hit rate | Regenerate predictions for affected dates |
 
 **Full troubleshooting:** See `docs/02-operations/session-learnings.md`
 
