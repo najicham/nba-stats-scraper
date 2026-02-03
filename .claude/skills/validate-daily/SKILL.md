@@ -131,6 +131,59 @@ gcloud logging read "resource.type=bigquery_resource AND protoPayload.status.mes
 
 **Common cause**: `pipeline_logger` writing too many events to partitioned `run_history` table
 
+### Phase 0.1: Deployment Drift Check (Session 81 - CRITICAL)
+
+**IMPORTANT**: Verify all critical services are deployed with latest code.
+
+**Why this matters**: Bug fixes committed but not deployed cause issues to persist. Sessions 82, 81, and 64 had critical bugs that were fixed in code but not deployed for hours/days.
+
+**Real Examples:**
+- Session 82: Coordinator fix committed but not deployed
+- Session 81: Worker env vars fix committed but not deployed
+- Session 64: Backfill ran with OLD code 12 hours after fix was committed (50.4% hit rate vs 58%+)
+
+**What to check**:
+
+```bash
+# Run deployment drift check
+./bin/check-deployment-drift.sh --verbose
+```
+
+**Expected Result:**
+- All services show `✓ Up to date` or have acceptable drift (<24 hours)
+- No services showing STALE DEPLOYMENT
+
+**If STALE DEPLOYMENT detected**:
+
+| Commits Behind | Severity | Action |
+|----------------|----------|--------|
+| 1-2 commits | P2 | Deploy when convenient |
+| 3-5 commits | P1 | Deploy today |
+| 6+ commits | P0 CRITICAL | Deploy immediately |
+
+**Critical Services (must be up-to-date):**
+- `prediction-worker` - Generates predictions
+- `prediction-coordinator` - Orchestrates predictions
+- `nba-grading-service` - Grades predictions
+- `nba-phase3-analytics-processors` - Analytics processing
+- `nba-scrapers` - Data collection
+
+**Investigation if drift detected**:
+
+```bash
+# See what changed since deployment
+SERVICE="prediction-worker"
+DEPLOYED_SHA=$(gcloud run services describe $SERVICE --region=us-west2 \
+  --format="value(metadata.labels.commit-sha)")
+
+git log --oneline $DEPLOYED_SHA..HEAD -- predictions/worker/
+
+# If critical fixes found, deploy immediately
+./bin/deploy-service.sh $SERVICE
+```
+
+**Reference**: Sessions 82, 81, 64 handoffs
+
 ### Phase 0.2: Heartbeat System Health (NEW)
 
 **IMPORTANT**: Check Firestore heartbeat collection for document proliferation.
@@ -463,6 +516,109 @@ ORDER BY game_date DESC
 - If predictions created before deployment: Wait for next prediction run (filter only applies to new predictions)
 
 **Reference**: `docs/08-projects/current/prediction-quality-analysis/SESSION-81-DEEP-DIVE.md`
+
+### Phase 0.46: Prediction Deactivation Logic Validation (Session 81 - CRITICAL)
+
+**IMPORTANT**: Verify `is_active` deactivation logic is working correctly.
+
+**Why this matters**: Session 78 bug caused 85% of predictions to be marked `is_active=FALSE`, excluding them from grading. This led to false "low hit rate" conclusions and required data repair.
+
+**Root Cause (Session 78)**: Deactivation query missing `system_id` in PARTITION BY, causing all but ONE prediction per player/game to be deactivated (regardless of system_id).
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Verify is_active distribution is correct (Session 81)
+-- Expected: ACTUAL_PROP predictions should be mostly TRUE
+--          NO_PROP_LINE predictions should be mostly FALSE
+SELECT
+  game_date,
+  line_source,
+  is_active,
+  COUNT(*) as cnt,
+  ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER(PARTITION BY game_date, line_source), 1) as pct,
+  CASE
+    WHEN line_source = 'ACTUAL_PROP' AND is_active = FALSE AND
+         100.0 * COUNT(*) / SUM(COUNT(*)) OVER(PARTITION BY game_date, line_source) > 20
+      THEN '🚨 BUG DETECTED - Too many ACTUAL_PROP deactivated'
+    WHEN line_source = 'NO_PROP_LINE' AND is_active = TRUE AND
+         100.0 * COUNT(*) / SUM(COUNT(*)) OVER(PARTITION BY game_date, line_source) > 20
+      THEN '⚠️ UNEXPECTED - Too many NO_PROP_LINE active'
+    ELSE '✅ OK'
+  END as status
+FROM nba_predictions.player_prop_predictions
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 2 DAY)
+  AND system_id = 'catboost_v9'
+GROUP BY 1, 2, 3
+HAVING status != '✅ OK'
+ORDER BY 1, 2, 3
+"
+```
+
+**Expected Result:**
+- No rows returned (all status = ✅ OK)
+- ACTUAL_PROP: >80% should be `is_active=TRUE`
+- NO_PROP_LINE: >80% should be `is_active=FALSE`
+
+**If BUG DETECTED**:
+
+| Issue | Severity | Action |
+|-------|----------|--------|
+| >20% ACTUAL_PROP have is_active=FALSE | P0 CRITICAL | Deactivation logic broken, needs immediate fix + data repair |
+| >20% NO_PROP_LINE have is_active=TRUE | P2 | Unexpected but not blocking |
+
+**Investigation steps**:
+
+1. **Check deactivation query code**:
+   ```bash
+   # Verify system_id is in PARTITION BY clause
+   grep -A10 "ROW_NUMBER.*PARTITION BY" predictions/shared/batch_staging_writer.py | grep -i system_id
+
+   # Expected: PARTITION BY game_id, player_lookup, system_id
+   ```
+
+2. **Sample affected predictions**:
+   ```bash
+   bq query --use_legacy_sql=false "
+   SELECT
+     player_lookup,
+     system_id,
+     line_source,
+     is_active,
+     created_at
+   FROM nba_predictions.player_prop_predictions
+   WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+     AND line_source = 'ACTUAL_PROP'
+     AND is_active = FALSE
+   ORDER BY player_lookup, created_at DESC
+   LIMIT 20
+   "
+   ```
+
+**Data Repair** (if bug recurs):
+
+```sql
+-- Re-activate predictions that should be active
+UPDATE `nba_predictions.player_prop_predictions` T
+SET is_active = TRUE, updated_at = CURRENT_TIMESTAMP()
+WHERE game_date >= DATE('YYYY-MM-DD')
+  AND is_active = FALSE
+  AND line_source IN ('ACTUAL_PROP', 'ESTIMATED_AVG')
+  AND prediction_id IN (
+    SELECT prediction_id FROM (
+      SELECT prediction_id,
+        ROW_NUMBER() OVER (
+          PARTITION BY game_id, player_lookup, system_id
+          ORDER BY created_at DESC
+        ) as rn
+      FROM `nba_predictions.player_prop_predictions`
+      WHERE game_date >= DATE('YYYY-MM-DD')
+    ) WHERE rn = 1
+  )
+```
+
+**Reference**: Session 78 handoff, Session 80 data repair
 
 ### Phase 0.5: Pre-Game Signal Check (NEW - Session 70)
 
