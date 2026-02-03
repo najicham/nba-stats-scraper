@@ -1809,9 +1809,16 @@ class MLFeatureStoreProcessor(
             )
             self.stats['variance_warnings'] = len(variance_result['warnings'])
 
+        # Session 95: Strip feature_sources from records before writing (not in BQ schema)
+        # feature_sources is kept in transformed_data for FEATURE SOURCE ALERT counting
+        rows_to_write = [
+            {k: v for k, v in row.items() if k != 'feature_sources'}
+            for row in self.transformed_data
+        ]
+
         # Write using BatchWriter (handles DELETE + batch INSERT with retries)
         write_stats = self.batch_writer.write_batch(
-            rows=self.transformed_data,
+            rows=rows_to_write,
             dataset_id=self.dataset_id,  # nba_predictions
             table_name=self.table_name,   # ml_feature_store_v2
             game_date=analysis_date
