@@ -1037,6 +1037,14 @@ class FeatureExtractor:
         # Check if batch cache is available for this date
         use_batch = (self._batch_cache_date == game_date)
 
+        # Debug: Show cache status for first few players
+        if not hasattr(self, '_debug_cache_logged'):
+            self._debug_cache_logged = True
+            logger.warning(f"DEBUG_CACHE: batch_cache_date={self._batch_cache_date} (type={type(self._batch_cache_date)})")
+            logger.warning(f"DEBUG_CACHE: game_date={game_date} (type={type(game_date)})")
+            logger.warning(f"DEBUG_CACHE: use_batch={use_batch}")
+            logger.warning(f"DEBUG_CACHE: composite_factors_lookup has {len(self._composite_factors_lookup)} entries")
+
         if use_batch:
             # Use batch cache (O(1) lookups - no BQ queries!)
             cache_data = self._daily_cache_lookup.get(player_lookup, {})
