@@ -169,7 +169,21 @@ WHERE is_dnp IS NULL AND is_active = true AND game_date >= '2025-11-01'
 
 | Service | Commit | Status |
 |---------|--------|--------|
-| prediction-worker | cc3bd5bf | ✅ Deploying |
+| prediction-worker | 9be69c6b | ⚠️ **NEEDS DEPLOY** |
+
+### CRITICAL: Deploy prediction-worker First Thing
+
+The fix for skipping OUT player predictions is committed but NOT deployed:
+
+```bash
+# Deploy the fix
+./bin/deploy-service.sh prediction-worker
+
+# Verify deployment
+gcloud run services describe prediction-worker --region=us-west2 \
+  --format="value(metadata.labels.commit-sha)"
+# Should show: 9be69c6b (or later)
+```
 
 ---
 
@@ -222,10 +236,11 @@ Returns:
 
 ## Next Session Checklist
 
-1. [ ] Verify prediction-worker deployment completed successfully
-2. [ ] Run `/validate-daily` to check pipeline health
-3. [ ] Monitor next prediction run for reduced DNP predictions
-4. [ ] Run `/bdl-quality` for recent dates to verify monitoring works
+1. [ ] **FIRST: Deploy prediction-worker** - `./bin/deploy-service.sh prediction-worker`
+2. [ ] Verify deployment: commit should be `9be69c6b` or later
+3. [ ] Run `/validate-daily` to check pipeline health
+4. [ ] Monitor next prediction run for reduced DNP predictions (~40% fewer)
+5. [ ] Run `/bdl-quality` for recent dates to verify monitoring works
 
 ---
 
