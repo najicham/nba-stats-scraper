@@ -231,12 +231,79 @@ Phase 4 tables contain **completed game data only**. For upcoming games, fallbac
 
 ---
 
+## Session 99 Part 2 - Phase 2 → Phase 3 Trigger Investigation
+
+**Time:** 6:30 PM ET
+
+### Issue Investigated
+
+Session 98 reported Phase 2 → Phase 3 Pub/Sub trigger was broken. Investigation found:
+
+**Finding:** The trigger IS working correctly. The issue is **timing/sequencing**.
+
+### Timeline Analysis
+
+1. **3:20 AM UTC**: `NbacGamebookProcessor` completed and published completion event
+2. **Phase 3 received the message** and tried to process, but:
+   - `nbac_team_boxscore`: Only 2 rows (needed 4+)
+   - `nbac_play_by_play`: Missing
+3. **6:45-7:00 AM UTC**: Team boxscore data finally populated
+4. Phase 3 processors ran but had incomplete data at 3:20 AM
+
+**Evidence:**
+```
+03:20:48Z: ✅ Published Phase 2 completion: nba_raw.nbac_gamebook_player_stats
+03:20:49Z: nba_raw.nbac_team_boxscore: Data exists (2 rows) but below expected minimum (4)
+03:21:29Z: TeamOffenseGameSummaryProcessor: No team offensive data extracted
+```
+
+### Bug Fix - Prediction Worker NoneType Error
+
+**Bug:** `AttributeError: 'NoneType' object has no attribute 'get'`
+
+**Location:** `predictions/worker/worker.py:1735-1736`
+
+```python
+# BEFORE (broken)
+features.get('teammate_injury_impact', {}).get('out_starters')
+# When key exists but value is None, this returns None, not {}
+
+# AFTER (fixed)
+(features.get('teammate_injury_impact') or {}).get('out_starters')
+# Uses `or {}` to handle None values
+```
+
+**Impact:** Predictions were failing silently, causing batches to get stuck at 18/154.
+
+### Deployments (Part 2)
+
+| Service | Revision | Commit | Status |
+|---------|----------|--------|--------|
+| prediction-worker | prediction-worker-00093-dnb | c2852d86 | ✅ Deployed |
+
+### Results After Fix
+
+| Metric | Before | After |
+|--------|--------|-------|
+| Unique players with predictions | 136 | 137+ |
+| Last prediction time | 2026-02-02 23:13:13 | 2026-02-03 19:10:27 |
+
+### Known Issues Still to Address
+
+1. **Phase timing dependency**: Phase 3 can be triggered by gamebook before team_boxscore is ready
+2. **Stalled batches**: 123+ incomplete batches need cleanup via `/check-stalled`
+3. **Uptime check 403s**: `/health/deep` called without auth creates noise in logs
+
+---
+
 ## Next Session Checklist
 
 - [ ] Verify Feb 4 7 AM feature store refresh worked automatically
 - [ ] Check Feb 4 predictions have high feature quality (85%+)
 - [ ] Consider adding monitoring alert for feature quality < 80%
 - [ ] Review hit rate for tonight's games (Feb 3)
+- [ ] Monitor Phase 3 timing - consider dependency improvements
+- [ ] Clean up stalled batches
 
 ---
 
