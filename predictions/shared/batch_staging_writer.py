@@ -98,11 +98,12 @@ logger = logging.getLogger(__name__)
 STAGING_DATASET = "nba_predictions"
 MAIN_PREDICTIONS_TABLE = "player_prop_predictions"
 
-# Session 81: Edge-based filtering to exclude low-quality predictions
-# Predictions with edge < MIN_EDGE_THRESHOLD lose money and should be filtered out
-# Default: 3.0 (based on analysis showing edge >= 3 has 65% hit rate, +24% ROI)
-# Set to 0 to disable filtering (include all predictions)
+# Session 81: Edge-based filtering WAS here but REMOVED in Session 102
+# Edge filtering now happens at QUERY TIME, not write time
+# All predictions are stored; use edge >= 3 filter in queries for betting decisions
+# Analysis shows: edge >= 3 has 65% hit rate, +24% ROI; edge < 3 has ~50% hit rate
 import os
+# Legacy constant kept for reference but no longer used in MERGE
 MIN_EDGE_THRESHOLD = float(os.environ.get('MIN_EDGE_THRESHOLD', '3.0'))
 
 
@@ -396,8 +397,7 @@ class BatchConsolidator:
         self,
         staging_tables: List[str],
         game_date: str,
-        staging_columns: Optional[List[str]] = None,
-        skip_edge_filter: bool = False
+        staging_columns: Optional[List[str]] = None
     ) -> str:
         """
         Build the MERGE query with ROW_NUMBER deduplication.
@@ -459,15 +459,10 @@ class BatchConsolidator:
         insert_columns = ", ".join(staging_columns)
         insert_values = ", ".join([f"S.{col}" for col in staging_columns])
 
-        # Session 81: Add edge-based filtering clause
-        # Only include predictions with edge >= MIN_EDGE_THRESHOLD
-        # Edge < 3 predictions have 50% hit rate and -2.5% ROI (lose money)
-        # Edge >= 3 predictions have 65% hit rate and +24% ROI (profitable)
-        # Session 102: Skip edge filter for regeneration batches to avoid orphan superseded predictions
-        edge_filter = ""
-        if MIN_EDGE_THRESHOLD > 0 and not skip_edge_filter:
-            edge_filter = f"""
-            AND ABS(predicted_points - COALESCE(current_points_line, 0)) >= {MIN_EDGE_THRESHOLD}"""
+        # Session 81: Edge-based filtering was here but REMOVED in Session 102
+        # Rationale: Store ALL predictions, filter at query time for betting decisions
+        # The is_actionable field can be used to mark low-edge predictions if needed
+        # Edge analysis (High 5+, Medium 3-5, Low <3) happens at query time, not write time
 
         # The MERGE query with ROW_NUMBER deduplication
         # Keeps the most recent prediction per unique key
@@ -485,7 +480,7 @@ class BatchConsolidator:
                     ) AS row_num
                 FROM ({union_query})
             )
-            WHERE row_num = 1{edge_filter}
+            WHERE row_num = 1
         ) S
         ON T.game_id = S.game_id
            AND T.player_lookup = S.player_lookup
@@ -878,28 +873,16 @@ class BatchConsolidator:
             )
 
         try:
-            # Session 102: Auto-detect regeneration batches and skip edge filter
-            # Regeneration batches have prefix "regen_" - edge filtering on these
-            # causes orphan superseded predictions (new prediction filtered, old stays superseded)
-            is_regeneration = batch_id.startswith("regen_")
-            skip_edge_filter = is_regeneration
-
-            # Session 81: Log edge filtering configuration
-            if skip_edge_filter:
-                logger.info(
-                    f"Session 102: Edge filtering DISABLED for regeneration batch={batch_id} "
-                    f"(all predictions will be included to prevent orphan superseded predictions)"
-                )
-            elif MIN_EDGE_THRESHOLD > 0:
-                logger.info(
-                    f"Session 81: Edge filtering ENABLED - MIN_EDGE_THRESHOLD={MIN_EDGE_THRESHOLD} "
-                    f"(predictions with edge < {MIN_EDGE_THRESHOLD} will be excluded)"
-                )
-            else:
-                logger.info("Session 81: Edge filtering DISABLED - all predictions will be included")
+            # Session 102: Edge filtering REMOVED - store all predictions, filter at query time
+            # Previously Session 81 filtered edge < 3 at write time, but this caused orphan
+            # superseded predictions during regeneration. Now all predictions are stored
+            # and edge filtering happens at query time for betting decisions.
+            logger.info(
+                f"Session 102: All predictions will be stored (edge filtering at query time, not write time)"
+            )
 
             # Build and execute the MERGE query
-            merge_query = self._build_merge_query(staging_tables, game_date, skip_edge_filter=skip_edge_filter)
+            merge_query = self._build_merge_query(staging_tables, game_date)
 
             logger.info(
                 f"Executing consolidation MERGE for batch={batch_id} with {len(staging_tables)} staging tables"
