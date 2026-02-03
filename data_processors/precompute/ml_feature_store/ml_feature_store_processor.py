@@ -1499,6 +1499,23 @@ class MLFeatureStoreProcessor(
         record['source_shot_zones_hash'] = self.source_shot_zones_hash
         record['source_team_defense_hash'] = self.source_team_defense_hash
 
+        # ============================================================
+        # DATA PROVENANCE (Session 99 - Feb 2026)
+        # Track what data sources were used and whether matchup data was valid
+        # ============================================================
+        provenance = self.feature_extractor.get_data_provenance()
+        player_provenance = self.feature_extractor.get_player_data_provenance(player_lookup)
+
+        record['matchup_data_status'] = provenance['matchup_data_status']
+        record['fallback_reasons'] = provenance['fallback_reasons'] or None
+
+        # Per-player provenance
+        if not player_provenance['matchup_valid']:
+            # Add to data_quality_issues if matchup data was not valid
+            if record.get('data_quality_issues') is None:
+                record['data_quality_issues'] = []
+            record['data_quality_issues'].append('matchup_factors_used_defaults')
+
         # Add early season fields (required for hash calculation)
         record['early_season_flag'] = False  # Normal processing, not early season
         record['insufficient_data_reason'] = None
@@ -1795,12 +1812,17 @@ class MLFeatureStoreProcessor(
             )
             self.stats['variance_warnings'] = len(variance_result['warnings'])
 
-        # Session 95: Strip feature_sources from records before writing (not in BQ schema)
-        # feature_sources is kept in transformed_data for FEATURE SOURCE ALERT counting
-        rows_to_write = [
-            {k: v for k, v in row.items() if k != 'feature_sources'}
-            for row in self.transformed_data
-        ]
+        # Session 99: Convert feature_sources dict to JSON string for BigQuery storage
+        # This provides complete per-feature audit trail
+        import json
+        rows_to_write = []
+        for row in self.transformed_data:
+            row_copy = row.copy()
+            # Convert feature_sources dict to JSON string
+            if 'feature_sources' in row_copy and isinstance(row_copy['feature_sources'], dict):
+                row_copy['feature_sources_json'] = json.dumps(row_copy['feature_sources'])
+            del row_copy['feature_sources']  # Remove original dict (not valid BQ type)
+            rows_to_write.append(row_copy)
 
         # Write using BatchWriter (handles DELETE + batch INSERT with retries)
         write_stats = self.batch_writer.write_batch(

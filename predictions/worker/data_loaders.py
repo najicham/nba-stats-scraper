@@ -852,7 +852,10 @@ class PredictionDataLoader:
             is_production_ready,
             data_quality_issues,
             backfill_bootstrap_mode,
-            processing_decision_reason
+            processing_decision_reason,
+            -- Session 99: Data provenance fields for audit trail
+            matchup_data_status,
+            feature_sources_json
         FROM `{project}.{predictions_dataset}.ml_feature_store_v2`
         WHERE player_lookup IN UNNEST(@player_lookups)
           AND game_date = @game_date
@@ -946,6 +949,10 @@ class PredictionDataLoader:
                     'backfill_bootstrap_mode': row.backfill_bootstrap_mode or False,
                     'processing_decision_reason': row.processing_decision_reason
                 }
+
+                # Session 99: Data provenance tracking for audit trail
+                features['matchup_data_status'] = getattr(row, 'matchup_data_status', None)
+                features['feature_sources_json'] = getattr(row, 'feature_sources_json', None)
 
                 player_features[row.player_lookup] = features
 

@@ -124,7 +124,11 @@ ranked_picks AS (
     ROUND((ABS(p.predicted_points - p.current_points_line) * 10) + (p.confidence_score * 0.5), 1) as composite_score,
     ROW_NUMBER() OVER (
       ORDER BY (ABS(p.predicted_points - p.current_points_line) * 10) + (p.confidence_score * 0.5) DESC
-    ) as pick_rank
+    ) as pick_rank,
+    -- Session 99: Data quality tracking
+    p.feature_quality_score,
+    p.matchup_data_status,
+    p.low_quality_flag
   FROM `nba-props-platform.nba_predictions.player_prop_predictions` p
   CROSS JOIN subset_def d
   WHERE p.game_date = CURRENT_DATE()
@@ -149,7 +153,16 @@ SELECT
     WHEN d.signal_condition = 'GREEN' AND s.daily_signal = 'GREEN' THEN '✅'
     WHEN d.signal_condition = 'GREEN_OR_YELLOW' AND s.daily_signal IN ('GREEN', 'YELLOW') THEN '✅'
     ELSE '⚠️ Signal mismatch'
-  END as signal_ok
+  END as signal_ok,
+  -- Session 99: Data quality visibility
+  ROUND(r.feature_quality_score, 0) as quality,
+  CASE
+    WHEN r.matchup_data_status = 'COMPLETE' THEN '✅'
+    WHEN r.matchup_data_status = 'PARTIAL_FALLBACK' THEN '⚠️'
+    WHEN r.matchup_data_status = 'MATCHUP_UNAVAILABLE' THEN '❌'
+    WHEN r.low_quality_flag THEN '⚠️'
+    ELSE '✅'
+  END as data_status
 FROM ranked_picks r
 CROSS JOIN daily_signal s
 CROSS JOIN subset_def d
@@ -175,10 +188,21 @@ This subset requires {signal_condition} signal, but today is {daily_signal}.
 No picks recommended today based on historical performance.
 
 ### Today's Picks
-| Rank | Player | Line | Predicted | Edge | Direction | Confidence | Composite Score |
-|------|--------|------|-----------|------|-----------|------------|-----------------|
-| 1 | Player A | 22.5 | 28.1 | +5.6 | OVER | 0.89 | 100.5 |
+| Rank | Player | Line | Pred | Edge | Dir | Conf | Score | Data |
+|------|--------|------|------|------|-----|------|-------|------|
+| 1 | Player A | 22.5 | 28.1 | +5.6 | OVER | 0.89 | 100.5 | ✅ |
+| 2 | Player B | 18.5 | 24.2 | +5.7 | OVER | 0.82 | 98.1 | ⚠️ |
 ...
+
+### Data Quality Legend
+- ✅ Complete: All matchup data available
+- ⚠️ Partial: Some fallback data used
+- ❌ Degraded: Matchup-specific factors unavailable (defaulted)
+
+{If any picks have ⚠️ or ❌ data status:}
+⚠️ DATA QUALITY NOTE
+{N} pick(s) have degraded data quality. Consider reviewing before betting:
+- Player B: Matchup factors used defaults (opponent defense data unavailable)
 ```
 
 ### If --history flag specified: Show Historical Performance

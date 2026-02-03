@@ -1732,8 +1732,8 @@ def format_prediction_for_bigquery(
             if features.get('teammate_injury_impact') else None
         ),
         'teammate_out_starters': (
-            json.dumps(features.get('teammate_injury_impact', {}).get('out_starters'))
-            if features.get('teammate_injury_impact', {}).get('out_starters') else None
+            json.dumps((features.get('teammate_injury_impact') or {}).get('out_starters'))
+            if (features.get('teammate_injury_impact') or {}).get('out_starters') else None
         ),
         'injury_checked_at': features.get('injury_checked_at'),
 
@@ -1793,6 +1793,12 @@ def format_prediction_for_bigquery(
         # low_quality_flag: True if quality < 70% (predictions made with incomplete data)
         'feature_quality_score': features.get('feature_quality_score'),
         'low_quality_flag': features.get('feature_quality_score', 100) < 70,  # True if quality < 70%
+
+        # Session 99: Data provenance tracking - enables audit trail and quality filtering
+        # matchup_data_status: COMPLETE, PARTIAL_FALLBACK, or MATCHUP_UNAVAILABLE
+        # feature_sources_json: Per-feature source tracking for full audit trail
+        'matchup_data_status': features.get('matchup_data_status'),
+        'feature_sources_json': features.get('feature_sources_json'),
     }
 
     # Add system-specific fields
