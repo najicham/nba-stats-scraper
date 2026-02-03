@@ -937,6 +937,94 @@ GROUP BY status"
 
 **Reference**: Session 99 handoff, docs/08-projects/current/feature-store-upcoming-games/
 
+### Phase 0.49: Duplicate Team Record Detection (Session 103 - CRITICAL)
+
+**IMPORTANT**: Check for duplicate team_offense_game_summary records with conflicting stats.
+
+**Why this matters**: Session 103 discovered that duplicate team records with different game_id formats cause usage_rate calculation errors. When evening processing (partial data) and morning processing (full data) create records with different game_ids, the MERGE creates duplicates instead of updating. This caused 51% of duplicate cases to have different stats, with some FGA differences as high as 82.
+
+**Root Cause**:
+- PRIMARY_KEY_FIELDS = ['game_id', 'team_abbr']
+- Different processing runs use different game_id formats (AWAY_HOME vs HOME_AWAY)
+- MERGE sees different keys → creates new records instead of updating
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Check for duplicate team records with different stats (Session 103)
+WITH duplicates AS (
+  SELECT
+    game_date,
+    team_abbr,
+    COUNT(*) as record_count,
+    COUNT(DISTINCT fg_attempts) as unique_fga_values,
+    MAX(fg_attempts) - MIN(fg_attempts) as fga_spread,
+    STRING_AGG(DISTINCT game_id ORDER BY game_id) as game_ids
+  FROM nba_analytics.team_offense_game_summary
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 3 DAY)
+  GROUP BY game_date, team_abbr
+  HAVING COUNT(*) > 1
+)
+SELECT
+  game_date,
+  team_abbr,
+  record_count,
+  fga_spread,
+  game_ids,
+  CASE
+    WHEN fga_spread > 20 THEN '🔴 CRITICAL'
+    WHEN fga_spread > 5 THEN '🟡 WARNING'
+    WHEN fga_spread > 0 THEN '⚠️ MINOR'
+    ELSE '✅ OK (identical)'
+  END as status
+FROM duplicates
+WHERE fga_spread > 0
+ORDER BY fga_spread DESC"
+```
+
+**Expected Result**:
+- No rows returned (no duplicates with different stats)
+- Or only rows with `status = ✅ OK (identical)`
+
+**Alert Thresholds**:
+
+| FGA Spread | Severity | Impact |
+|------------|----------|--------|
+| 0 | OK | Duplicates exist but have same stats |
+| 1-5 | MINOR | Small rounding differences |
+| 6-20 | WARNING | Partial vs full game data |
+| >20 | CRITICAL | Major data quality issue, usage_rate will be wrong |
+
+**If CRITICAL or WARNING detected**:
+
+1. **Immediate**: The usage_rate values for affected teams' players may be incorrect
+2. **Check player_game_summary**: See if players on those teams have wrong usage_rate
+   ```bash
+   bq query --use_legacy_sql=false "
+   SELECT player_lookup, usage_rate, minutes_played
+   FROM nba_analytics.player_game_summary
+   WHERE game_date = 'YYYY-MM-DD'
+     AND team_abbr = 'AFFECTED_TEAM'
+     AND usage_rate > 50  -- Suspiciously high values indicate wrong team stats used
+   ORDER BY usage_rate DESC"
+   ```
+3. **Root cause**: Check which processing run created partial data
+4. **Fix**: Run cleanup script to remove duplicates (keep highest possessions)
+
+**Cleanup Command** (if needed):
+```bash
+# Preview duplicates to remove
+PYTHONPATH=. python bin/maintenance/cleanup_team_duplicates.py --dry-run
+
+# Execute cleanup
+PYTHONPATH=. python bin/maintenance/cleanup_team_duplicates.py --execute
+```
+
+**Prevention**: Session 103 changed PRIMARY_KEY_FIELDS to ['game_date', 'team_abbr'] to prevent future duplicates.
+
+**Reference**: Session 103 handoff, investigation of usage_rate spot check failures
+
 ### Phase 0.5: Pre-Game Signal Check (NEW - Session 70)
 
 **IMPORTANT**: Check daily prediction signals for model performance indicators.

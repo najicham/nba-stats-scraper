@@ -140,7 +140,9 @@ class TeamDefenseGameSummaryProcessor(
     #           all source_* fields, data_hash itself, processed_at, created_at
 
     # Primary key fields for duplicate detection and MERGE operations
-    PRIMARY_KEY_FIELDS = ['game_id', 'defending_team_abbr']
+    # Session 103: Changed from ['game_id', 'defending_team_abbr'] to ['game_date', 'defending_team_abbr']
+    # This prevents duplicates caused by different game_id formats (AWAY_HOME vs HOME_AWAY)
+    PRIMARY_KEY_FIELDS = ['game_date', 'defending_team_abbr']
 
     def __init__(self):
         super().__init__()

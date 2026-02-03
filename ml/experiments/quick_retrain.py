@@ -51,12 +51,18 @@ import catboost as cb
 PROJECT_ID = "nba-props-platform"
 MODEL_OUTPUT_DIR = Path("models")
 
-# V8 baseline (updated from production prediction_accuracy Jan 2026)
-V8_BASELINE = {
-    "mae": 5.36,
-    "hit_rate_all": 50.24,
-    "hit_rate_premium": 78.5,  # 92+ conf, 3+ edge
-    "hit_rate_high_edge": 62.8,  # 5+ edge
+# V9 baseline (computed from production prediction_accuracy Feb 2026)
+# Based on catboost_v9 graded predictions since 2025-11-02
+V9_BASELINE = {
+    "mae": 5.14,
+    "hit_rate_all": 54.53,
+    "hit_rate_edge_3plus": 63.72,  # 3+ edge (medium quality)
+    "hit_rate_edge_5plus": 75.33,  # 5+ edge (high quality)
+    # Tier bias baselines (target: 0 for all tiers)
+    "bias_stars": 0.0,      # 25+ points
+    "bias_starters": 0.0,   # 15-24 points
+    "bias_role": 0.0,       # 5-14 points
+    "bias_bench": 0.0,      # <5 points
 }
 
 FEATURES = [
@@ -123,8 +129,70 @@ def get_dates(args):
     }
 
 
-def load_train_data(client, start, end):
-    """Load training data from feature store."""
+def check_training_data_quality(client, start, end):
+    """
+    Report on training data quality before training.
+
+    Outputs a quality summary and returns True if data quality is acceptable.
+    Session 104: Prevent training on low-quality data.
+    """
+    query = f"""
+    SELECT
+      COUNT(*) as total_records,
+      COUNTIF(feature_quality_score >= 85) as high_quality,
+      COUNTIF(feature_quality_score >= 70 AND feature_quality_score < 85) as medium_quality,
+      COUNTIF(feature_quality_score < 70) as low_quality,
+      COUNTIF(data_source = 'phase4_partial') as partial_data,
+      COUNTIF(data_source = 'early_season') as early_season_data,
+      ROUND(AVG(feature_quality_score), 1) as avg_quality
+    FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
+    WHERE game_date BETWEEN '{start}' AND '{end}'
+      AND feature_count >= 33
+    """
+    result = client.query(query).to_dataframe()
+
+    total = result['total_records'].iloc[0]
+    high_q = result['high_quality'].iloc[0]
+    low_q = result['low_quality'].iloc[0]
+    partial = result['partial_data'].iloc[0]
+    early = result['early_season_data'].iloc[0]
+    avg_q = result['avg_quality'].iloc[0]
+
+    print("\n=== Training Data Quality ===")
+    print(f"Total records: {total:,}")
+    print(f"High quality (85+): {high_q:,} ({100*high_q/total:.1f}%)")
+    print(f"Medium quality (70-84): {result['medium_quality'].iloc[0]:,}")
+    print(f"Low quality (<70): {low_q:,} ({100*low_q/total:.1f}%)")
+    print(f"Partial data: {partial:,}")
+    print(f"Early season data: {early:,}")
+    print(f"Avg quality score: {avg_q:.1f}")
+
+    # Warn if quality is poor
+    if low_q > total * 0.1:
+        print("⚠️  WARNING: >10% low quality data in training set")
+    if partial > total * 0.05:
+        print("⚠️  WARNING: >5% partial data in training set")
+    if early > total * 0.2:
+        print("⚠️  WARNING: >20% early season data in training set")
+
+    return {'total': total, 'low_quality_pct': 100*low_q/total if total > 0 else 0, 'avg_quality': avg_q}
+
+
+def load_train_data(client, start, end, min_quality_score=70):
+    """
+    Load training data from feature store with quality filters.
+
+    Args:
+        client: BigQuery client
+        start: Start date (YYYY-MM-DD)
+        end: End date (YYYY-MM-DD)
+        min_quality_score: Minimum feature_quality_score (default 70)
+            Set to 0 to disable quality filtering.
+
+    Session 104: Added quality filter to prevent training on bad data.
+    """
+    quality_filter = f"AND mf.feature_quality_score >= {min_quality_score}" if min_quality_score > 0 else ""
+
     query = f"""
     SELECT mf.features, pgs.points as actual_points
     FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
@@ -133,6 +201,8 @@ def load_train_data(client, start, end):
     WHERE mf.game_date BETWEEN '{start}' AND '{end}'
       AND mf.feature_count >= 33
       AND pgs.points IS NOT NULL AND pgs.minutes_played > 0
+      AND mf.data_source NOT IN ('phase4_partial', 'early_season')
+      {quality_filter}
     """
     return client.query(query).to_dataframe()
 
@@ -206,6 +276,47 @@ def compute_hit_rate(preds, actuals, lines, min_edge=1.0):
     return round(wins.sum() / graded * 100, 2) if graded > 0 else None, int(graded)
 
 
+def compute_tier_bias(preds, actuals):
+    """
+    Compute prediction bias by player tier (based on actual points scored).
+
+    Tier definitions match production analysis:
+    - Stars: 25+ points
+    - Starters: 15-24 points
+    - Role: 5-14 points
+    - Bench: <5 points
+
+    Returns dict with bias for each tier and warning flag if any tier > ±5.
+    """
+    tiers = {
+        'Stars (25+)': actuals >= 25,
+        'Starters (15-24)': (actuals >= 15) & (actuals < 25),
+        'Role (5-14)': (actuals >= 5) & (actuals < 15),
+        'Bench (<5)': actuals < 5
+    }
+
+    results = {}
+    has_critical_bias = False
+
+    for tier_name, mask in tiers.items():
+        if mask.sum() > 0:
+            tier_preds = preds[mask]
+            tier_actuals = actuals[mask]
+            bias = np.mean(tier_preds - tier_actuals)
+            results[tier_name] = {
+                'bias': round(bias, 2),
+                'count': int(mask.sum()),
+                'critical': abs(bias) > 5
+            }
+            if abs(bias) > 5:
+                has_critical_bias = True
+        else:
+            results[tier_name] = {'bias': None, 'count': 0, 'critical': False}
+
+    results['has_critical_bias'] = has_critical_bias
+    return results
+
+
 def main():
     args = parse_args()
     dates = get_dates(args)
@@ -233,8 +344,14 @@ def main():
 
     client = bigquery.Client(project=PROJECT_ID)
 
+    # Check training data quality BEFORE loading (Session 104)
+    quality_stats = check_training_data_quality(client, dates['train_start'], dates['train_end'])
+    if quality_stats['avg_quality'] < 60:
+        print("\n❌ ERROR: Average quality score too low (<60). Check data sources.")
+        return
+
     # Load data
-    print("Loading training data...")
+    print("\nLoading training data (with quality filter >= 70)...")
     df_train = load_train_data(client, dates['train_start'], dates['train_end'])
     print(f"  {len(df_train):,} samples")
 
@@ -267,18 +384,11 @@ def main():
     mae = mean_absolute_error(y_eval, preds)
 
     hr_all, bets_all = compute_hit_rate(preds, y_eval.values, lines, min_edge=1.0)
-    hr_high, bets_high = compute_hit_rate(preds, y_eval.values, lines, min_edge=5.0)
+    hr_edge3, bets_edge3 = compute_hit_rate(preds, y_eval.values, lines, min_edge=3.0)
+    hr_edge5, bets_edge5 = compute_hit_rate(preds, y_eval.values, lines, min_edge=5.0)
 
-    # Approximate premium (using std for high consistency)
-    std = X_eval['points_std_last_10'].values
-    edges = np.abs(preds - lines)
-    premium_mask = (std < 6) & (edges >= 3)
-    if premium_mask.sum() > 0:
-        hr_prem, bets_prem = compute_hit_rate(
-            preds[premium_mask], y_eval.values[premium_mask], lines[premium_mask], min_edge=0
-        )
-    else:
-        hr_prem, bets_prem = None, 0
+    # Compute tier bias (NEW: Session 104 - catch regression-to-mean bias)
+    tier_bias = compute_tier_bias(preds, y_eval.values)
 
     # Save model
     MODEL_OUTPUT_DIR.mkdir(exist_ok=True)
@@ -288,7 +398,7 @@ def main():
 
     # Results
     print("\n" + "=" * 70)
-    print(" RESULTS vs V8 BASELINE")
+    print(" RESULTS vs V9 BASELINE")
     print("=" * 70)
 
     MIN_BETS_RELIABLE = 50  # Minimum bets for statistically reliable hit rate
@@ -306,47 +416,67 @@ def main():
         emoji = "✅" if better else "❌" if abs(diff) > 2 else "⚠️"
         return f"{name}: {new_val:.2f}% vs {baseline:.2f}% ({symbol}{diff:.2f}%) {emoji}{size_warn}", better
 
-    mae_diff = mae - V8_BASELINE['mae']
+    mae_diff = mae - V9_BASELINE['mae']
     mae_emoji = "✅" if mae_diff < 0 else "❌" if mae_diff > 0.2 else "⚠️"
-    print(f"MAE: {mae:.4f} vs {V8_BASELINE['mae']:.4f} ({mae_diff:+.4f}) {mae_emoji}")
+    print(f"MAE: {mae:.4f} vs {V9_BASELINE['mae']:.4f} ({mae_diff:+.4f}) {mae_emoji}")
     print()
 
-    hr_all_str, hr_all_better = compare("Hit Rate (all)", hr_all, V8_BASELINE['hit_rate_all'], bets_all)
-    hr_high_str, hr_high_better = compare("Hit Rate (high edge 5+)", hr_high, V8_BASELINE['hit_rate_high_edge'], bets_high)
-    hr_prem_str, hr_prem_better = compare("Hit Rate (premium ~92+/3+)", hr_prem, V8_BASELINE['hit_rate_premium'], bets_prem)
+    hr_all_str, hr_all_better = compare("Hit Rate (all)", hr_all, V9_BASELINE['hit_rate_all'], bets_all)
+    hr_edge3_str, hr_edge3_better = compare("Hit Rate (edge 3+)", hr_edge3, V9_BASELINE['hit_rate_edge_3plus'], bets_edge3)
+    hr_edge5_str, hr_edge5_better = compare("Hit Rate (edge 5+)", hr_edge5, V9_BASELINE['hit_rate_edge_5plus'], bets_edge5)
 
     print(hr_all_str)
-    print(hr_high_str)
-    print(hr_prem_str)
+    print(hr_edge3_str)
+    print(hr_edge5_str)
 
-    # Recommendation with sample size awareness
+    # Tier Bias Analysis (NEW: Session 104)
     print("\n" + "-" * 40)
-    mae_better = mae < V8_BASELINE['mae']
+    print("TIER BIAS ANALYSIS (target: 0 for all)")
+    print("-" * 40)
+    for tier_name, data in tier_bias.items():
+        if tier_name == 'has_critical_bias':
+            continue
+        if data['count'] > 0:
+            emoji = "🔴" if data['critical'] else "✅"
+            print(f"  {tier_name}: {data['bias']:+.2f} pts (n={data['count']}) {emoji}")
+        else:
+            print(f"  {tier_name}: N/A (no samples)")
+
+    if tier_bias['has_critical_bias']:
+        print("\n🔴 CRITICAL: Tier bias > ±5 detected! Model has regression-to-mean issue.")
+
+    # Recommendation with sample size and bias awareness
+    print("\n" + "-" * 40)
+    mae_better = mae < V9_BASELINE['mae']
 
     # Check filtered metrics only if sample size is reliable
-    high_edge_reliable = bets_high >= MIN_BETS_RELIABLE
-    premium_reliable = bets_prem >= MIN_BETS_RELIABLE
+    edge3_reliable = bets_edge3 >= MIN_BETS_RELIABLE
+    edge5_reliable = bets_edge5 >= MIN_BETS_RELIABLE
 
     # Warnings for low sample sizes
-    if not high_edge_reliable or not premium_reliable:
-        print(f"⚠️  LOW SAMPLE SIZE: high_edge={bets_high}, premium={bets_prem} (need {MIN_BETS_RELIABLE}+)")
+    if not edge3_reliable or not edge5_reliable:
+        print(f"⚠️  LOW SAMPLE SIZE: edge3={bets_edge3}, edge5={bets_edge5} (need {MIN_BETS_RELIABLE}+)")
         print("    Filtered hit rates are NOT statistically reliable.")
         print()
 
+    # Critical bias blocks deployment
+    if tier_bias['has_critical_bias']:
+        print("❌ BLOCKED: Critical tier bias detected - do not deploy")
+        print("   Model has regression-to-mean problem (underestimates stars, overestimates bench)")
     # Core decision: MAE + overall hit rate (always reliable with enough eval data)
-    if mae_better and hr_all_better:
-        if high_edge_reliable and hr_high_better is False:
-            print("⚠️ MIXED: Better MAE/overall but worse on high-edge filter")
-        elif premium_reliable and hr_prem_better is False:
-            print("⚠️ MIXED: Better MAE/overall but worse on premium filter")
+    elif mae_better and hr_all_better:
+        if edge3_reliable and hr_edge3_better is False:
+            print("⚠️ MIXED: Better MAE/overall but worse on edge 3+ filter")
+        elif edge5_reliable and hr_edge5_better is False:
+            print("⚠️ MIXED: Better MAE/overall but worse on edge 5+ filter")
         else:
-            print("✅ RECOMMEND: Beats V8 on MAE and hit rate - consider shadow mode")
+            print("✅ RECOMMEND: Beats V9 on MAE and hit rate - consider shadow mode")
     elif mae_better:
         print("⚠️ MIXED: Better MAE but similar/lower hit rate")
     elif hr_all_better:
         print("⚠️ MIXED: Better hit rate but worse MAE")
     else:
-        print("❌ V8 still better - try different training window")
+        print("❌ V9 still better - try different training window")
 
     print(f"\nModel saved: {model_path}")
 
@@ -364,8 +494,10 @@ def main():
                 'results_json': json.dumps({
                     'mae': round(mae, 4),
                     'hit_rate_all': hr_all, 'bets_all': bets_all,
-                    'hit_rate_high_edge': hr_high, 'bets_high_edge': bets_high,
-                    'hit_rate_premium': hr_prem, 'bets_premium': bets_prem,
+                    'hit_rate_edge_3plus': hr_edge3, 'bets_edge_3plus': bets_edge3,
+                    'hit_rate_edge_5plus': hr_edge5, 'bets_edge_5plus': bets_edge5,
+                    'tier_bias': {k: v for k, v in tier_bias.items() if k != 'has_critical_bias'},
+                    'has_critical_bias': tier_bias['has_critical_bias'],
                 }),
                 'model_path': str(model_path),
                 'status': 'completed',

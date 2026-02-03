@@ -5,7 +5,8 @@ description: Train and evaluate challenger models with simple commands
 
 # Model Experiment Skill
 
-Train a CatBoost challenger model on recent data and compare to V8 baseline.
+Train a CatBoost challenger model on recent data and compare to V9 baseline.
+Includes tier bias evaluation to catch regression-to-mean issues.
 
 ## Trigger
 - User wants to train a new model
@@ -57,46 +58,59 @@ PYTHONPATH=. python ml/experiments/quick_retrain.py --name "TEST" --dry-run
 ## Output Format
 
 ```
+=== Training Data Quality ===
+Total records: 15,432
+High quality (85+): 12,450 (80.7%)
+Low quality (<70): 590 (3.8%)
+Avg quality score: 82.3
+
 ======================================================================
  QUICK RETRAIN: FEB_MONTHLY
 ======================================================================
 Training:   2025-12-01 to 2026-01-22 (60 days)
 Evaluation: 2026-01-23 to 2026-01-30 (7 days)
 
-Loading training data...
-  15,432 samples
+Loading training data (with quality filter >= 70)...
+  14,842 samples
 Loading evaluation data...
   1,245 samples
 
 Training CatBoost...
 [training output]
 
-Evaluating...
-
 ======================================================================
- RESULTS vs V8 BASELINE
+ RESULTS vs V9 BASELINE
 ======================================================================
-MAE: 5.12 vs 5.36 (-0.24)
+MAE: 5.10 vs 5.14 (-0.04)
 
-Hit Rate (all): 52.1% vs 50.2% (+1.9%) ✅
-Hit Rate (high edge 5+): 61.5% vs 62.8% (-1.3%) ⚠️
-Hit Rate (premium ~92+/3+): 72.3% vs 78.5% (-6.2%) ❌
+Hit Rate (all): 55.1% vs 54.53% (+0.57%) ✅
+Hit Rate (edge 3+): 64.2% vs 63.72% (+0.48%) ✅
+Hit Rate (edge 5+): 76.1% vs 75.33% (+0.77%) ✅
 
 ----------------------------------------
-⚠️ MIXED: Better hit rate but similar premium
+TIER BIAS ANALYSIS (target: 0 for all)
+----------------------------------------
+  Stars (25+): -1.2 pts (n=45) ✅
+  Starters (15-24): +0.8 pts (n=120) ✅
+  Role (5-14): +0.3 pts (n=85) ✅
+  Bench (<5): -0.5 pts (n=32) ✅
+
+----------------------------------------
+✅ RECOMMEND: Beats V9 on MAE and hit rate - consider shadow mode
 
 Model saved: models/catboost_retrain_FEB_MONTHLY_20260201_143022.cbm
 Registered in ml_experiments (ID: abc12345)
 ```
 
-## V8 Baseline (January 2026)
+## V9 Baseline (February 2026)
 
-| Metric | V8 Baseline |
+| Metric | V9 Baseline |
 |--------|-------------|
-| MAE | 5.36 |
-| Hit Rate (all) | 50.24% |
-| Hit Rate (high edge 5+) | 62.8% |
-| Hit Rate (premium 92+/3+) | 78.5% |
+| MAE | 5.14 |
+| Hit Rate (all) | 54.53% |
+| Hit Rate (edge 3+) | 63.72% |
+| Hit Rate (edge 5+) | 75.33% |
+| Tier Bias (all) | 0 (target) |
 
 ## Recommendations
 
@@ -137,6 +151,7 @@ ORDER BY created_at DESC LIMIT 5"
 
 ## Related Skills
 
+- `/spot-check-features` - Validate feature store quality before training
 - `/experiment-tracker` - View all experiments
 - `/hit-rate-analysis` - Analyze production performance
 - `/model-health` - Check current model health

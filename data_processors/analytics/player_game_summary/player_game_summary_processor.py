@@ -183,7 +183,10 @@ class PlayerGameSummaryProcessor(
     ]
 
     # Primary key fields for duplicate detection and MERGE operations
-    PRIMARY_KEY_FIELDS = ['game_id', 'player_lookup']
+    # Session 103: Changed from ['game_id', 'player_lookup'] to ['game_date', 'player_lookup']
+    # This prevents duplicates caused by different game_id formats (AWAY_HOME vs HOME_AWAY)
+    # Business logic: A player plays at most one game per day
+    PRIMARY_KEY_FIELDS = ['game_date', 'player_lookup']
 
     def __init__(self):
         super().__init__()
@@ -2316,7 +2319,9 @@ class PlayerGameSummaryProcessor(
         ),
 
         -- Team stats - check both game_id and reversed format (handles Away_Home vs Home_Away mismatch)
-        team_stats AS (
+        -- Session 103: Added deduplication to handle duplicate team records with different stats
+        -- Keeps the record with highest possessions (most complete data)
+        team_stats_raw AS (
             SELECT
                 game_id,
                 CASE
@@ -2332,7 +2337,12 @@ class PlayerGameSummaryProcessor(
                 fg_attempts as team_fg_attempts,
                 ft_attempts as team_ft_attempts,
                 turnovers as team_turnovers,
-                possessions as team_possessions
+                possessions as team_possessions,
+                -- Deduplicate: prefer record with highest possessions (most complete data)
+                ROW_NUMBER() OVER (
+                    PARTITION BY team_abbr
+                    ORDER BY possessions DESC
+                ) as quality_rank
             FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
             WHERE game_date = @game_date
               AND (game_id = @game_id OR game_id = CONCAT(
@@ -2340,6 +2350,12 @@ class PlayerGameSummaryProcessor(
                     SPLIT(@game_id, '_')[OFFSET(2)], '_',
                     SPLIT(@game_id, '_')[OFFSET(1)]
                 ))
+        ),
+        -- Only keep best quality record per team (Session 103 fix)
+        team_stats AS (
+            SELECT game_id, game_id_reversed, team_abbr, team_fg_attempts, team_ft_attempts, team_turnovers, team_possessions
+            FROM team_stats_raw
+            WHERE quality_rank = 1
         )
 
         SELECT

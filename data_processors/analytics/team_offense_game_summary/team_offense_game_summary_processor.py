@@ -153,7 +153,10 @@ class TeamOffenseGameSummaryProcessor(
     ]
 
     # Primary key fields for duplicate detection and MERGE operations
-    PRIMARY_KEY_FIELDS = ['game_id', 'team_abbr']
+    # Session 103: Changed from ['game_id', 'team_abbr'] to ['game_date', 'team_abbr']
+    # This prevents duplicates caused by different game_id formats (AWAY_HOME vs HOME_AWAY)
+    # Business logic: One team plays at most one game per day (doubleheaders are extremely rare in NBA)
+    PRIMARY_KEY_FIELDS = ['game_date', 'team_abbr']
 
     def __init__(self):
         super().__init__()
