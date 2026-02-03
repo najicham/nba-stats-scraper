@@ -220,4 +220,81 @@ Co-Authored-By: Claude Sonnet 4.5 <noreply@anthropic.com>"
 
 ---
 
-**Session 85 - Part 1 Complete, Part 2 In Progress**
+## Session 85 (Part 3) - Full Investigation & Skill Improvements
+
+**Time**: ~8:00 PM PST
+**Focus**: Complete investigation, skill improvements, scheduler deployment
+
+### Additional Fixes Applied
+
+#### 1. Skills Enhanced
+
+**validate-daily - Phase 0.95: Execution Logger Health**
+- Checks for BigQuery write failures
+- Detects NULL field errors, schema mismatches, perpetual retry loops
+- Commit: `05ec144a`
+
+**hit-rate-analysis - Query 7: Signal Context Analysis**
+- Correlates hit rates with RED/GREEN pre-game signals
+- Validates Session 70 finding
+
+#### 2. Schedulers Deployed
+
+| Scheduler | Schedule | Purpose |
+|-----------|----------|---------|
+| `nba-signal-anomaly-check` | 8 AM ET daily | Check for RED signals |
+| `nba-staging-cleanup` | 3 AM ET daily | Clean up staging tables |
+
+#### 3. Orphaned Scheduler Disabled
+
+- `bdl-injuries-hourly` was running for 107 days pointing to non-existent scraper
+- Status: PAUSED (NBA injuries covered by `nbac_injury_report`)
+
+### Investigation Results
+
+#### V9 Grading: ✅ Healthy
+
+| Date | Predictions | Graded | % |
+|------|-------------|--------|---|
+| Feb 2 | 61 | 0 | 0% (games not played) |
+| Jan 31 | 102 | 94 | 92.2% |
+| Jan 30 | 130 | 123 | 94.6% |
+
+The "73%" included unplayed games in denominator - actual is 92-95%.
+
+#### RED Signal Validation: ✅ Confirmed (30 days)
+
+| Signal | Days | High-Edge HR |
+|--------|------|--------------|
+| GREEN | 10 | **79.2%** |
+| YELLOW | 5 | **88.3%** |
+| RED | 9 | **62.9%** |
+
+**Finding**: GREEN days are 16+ points better on high-edge picks.
+
+#### Scraper Health: ✅ Mostly Healthy
+
+| Scraper | Status |
+|---------|--------|
+| nbac_player_movement | ✅ HEALTHY (2 days) |
+| nbac_injury_report | ✅ HEALTHY (1 day) |
+| bettingpros_props | ✅ HEALTHY (1 day) |
+| bdl_injuries | ⏸️ PAUSED (orphaned) |
+
+### All Commits (Session 85)
+
+| SHA | Description |
+|-----|-------------|
+| `409e819e` | fix: Prevent NULL REPEATED fields in execution logger |
+| `8143cc19` | docs: Add Session 85 handoff |
+| `05ec144a` | feat: Add execution logger check and signal analysis to skills |
+
+### Key Learnings Added
+
+1. **BigQuery REPEATED Fields Cannot Be NULL** - Use `value or []` pattern
+2. **Failed Entries Can Re-fail Forever** - Sanitize before re-queuing
+3. **Orphaned Schedulers Waste Resources** - Audit scheduler targets periodically
+
+---
+
+**Session 85 - Complete** ✅

@@ -937,6 +937,46 @@ git log -1 --format="%h"
 
 **References**: Session 64 handoff, `docs/08-projects/current/feature-quality-monitoring/V8-INVESTIGATION-LEARNINGS.md`
 
+### BigQuery REPEATED Field NULL Error (Session 85)
+**Symptom**: `JSON parsing error: Only optional fields can be set to NULL. Field: line_values_requested`
+**Cause**: Python `None` converts to JSON `null`, but BigQuery REPEATED fields cannot be NULL
+**Impact**: BigQuery writes fail, failed entries re-queue forever (perpetual retry loop)
+**Fix Pattern**:
+```python
+# WRONG - can be None
+'line_values_requested': line_values,
+
+# CORRECT - always use empty list for falsy values
+'line_values_requested': line_values or [],
+
+# BEST - explicit conversion
+'line_values_requested': [float(v) for v in line_values] if line_values else [],
+```
+**When re-queuing failed entries**, sanitize REPEATED fields:
+```python
+entry['line_values_requested'] = entry.get('line_values_requested') or []
+entry['systems_attempted'] = entry.get('systems_attempted') or []
+```
+**References**: Session 85 handoff, `predictions/worker/execution_logger.py`
+
+### RED Signal Days Performance (Session 85 Validation)
+**Finding**: Pre-game signal (pct_over) correlates strongly with hit rate:
+- GREEN days (balanced): **79% high-edge hit rate**
+- RED days (heavy UNDER): **63% high-edge hit rate**
+
+**When RED signal detected** (pct_over < 25%):
+1. Model is heavily skewed UNDER
+2. Historical performance 16+ points worse
+3. Consider reducing bet sizing by 50%
+
+**Check today's signal**:
+```sql
+SELECT daily_signal, pct_over, high_edge_picks
+FROM nba_predictions.daily_prediction_signals
+WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v9'
+```
+**References**: Session 70, Session 85 validation, `hit-rate-analysis` skill Query 7
+
 ## Prevention Mechanisms
 
 ### Pre-commit Hooks
