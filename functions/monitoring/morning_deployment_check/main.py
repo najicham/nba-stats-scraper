@@ -141,27 +141,59 @@ def is_commit_ancestor(ancestor_sha: str, descendant_sha: str) -> bool:
         return False
 
 
+def get_deployment_timestamp(service_name: str) -> Optional[datetime]:
+    """Get the deployment timestamp from Cloud Run service revision."""
+    try:
+        client = run_v2.ServicesClient()
+        name = f"projects/{PROJECT_ID}/locations/{REGION}/services/{service_name}"
+
+        service = client.get_service(name=name)
+        # Get the latest revision's creation timestamp
+        if service.latest_ready_revision:
+            # Get revision details
+            revisions_client = run_v2.RevisionsClient()
+            revision = revisions_client.get_revision(name=service.latest_ready_revision)
+            if revision.create_time:
+                return revision.create_time
+        return None
+    except Exception as e:
+        print(f"Error getting deployment timestamp for {service_name}: {e}")
+        return None
+
+
 def check_service_drift(service_name: str, config: Dict) -> Dict:
-    """Check if a service has deployment drift."""
+    """Check if a service has deployment drift using TIMESTAMP comparison.
+
+    A service is stale if: latest_commit_time > deployment_time
+    (i.e., code was changed AFTER the service was deployed)
+
+    Session 97 fix: Changed from SHA comparison to timestamp comparison
+    to avoid false positives when services are deployed after code changes.
+    """
     result = {
         'service': service_name,
         'priority': config['priority'],
         'description': config['description'],
         'is_stale': False,
         'deployed_sha': None,
+        'deployed_at': None,
         'latest_sha': None,
         'latest_commit_msg': None,
         'error': None
     }
 
-    # Get deployed commit info
+    # Get deployed commit info (for display purposes)
     deployed = get_deployed_commit(service_name)
-    if not deployed or not deployed.get('commit_sha'):
-        result['error'] = 'Could not get deployed commit SHA'
+    if deployed:
+        result['deployed_sha'] = deployed.get('commit_sha')
+
+    # Get deployment timestamp (the key metric for comparison)
+    deploy_time = get_deployment_timestamp(service_name)
+    if not deploy_time:
+        result['error'] = 'Could not get deployment timestamp'
         return result
 
-    result['deployed_sha'] = deployed['commit_sha']
-    result['deployed_at'] = deployed.get('deployed_at')
+    result['deployed_at'] = deploy_time.isoformat()
 
     # Get latest commit for service paths
     latest = get_latest_commit_for_paths(config['source_dirs'])
@@ -174,14 +206,22 @@ def check_service_drift(service_name: str, config: Dict) -> Dict:
     result['latest_commit_date'] = latest['date'].isoformat()
     result['changed_path'] = latest['path']
 
-    # Check if deployed commit is an ancestor of latest
-    # If they're different and deployed is not ancestor, we have drift
-    if deployed['commit_sha'] != latest['sha']:
-        # Full SHA comparison (deployed has short, latest has full)
-        if not latest['full_sha'].startswith(deployed['commit_sha']):
-            # Check if deployed is an ancestor of latest
-            if not is_commit_ancestor(deployed['commit_sha'], latest['full_sha']):
-                result['is_stale'] = True
+    # Session 97 fix: Use TIMESTAMP comparison instead of SHA comparison
+    # Service is stale if: latest commit time > deployment time
+    # This correctly handles the case where service was deployed AFTER code changes
+    latest_commit_time = latest['date']
+
+    # Make both timezone-aware for comparison
+    if deploy_time.tzinfo is None:
+        deploy_time = deploy_time.replace(tzinfo=timezone.utc)
+    if latest_commit_time.tzinfo is None:
+        latest_commit_time = latest_commit_time.replace(tzinfo=timezone.utc)
+
+    if latest_commit_time > deploy_time:
+        result['is_stale'] = True
+        print(f"  Stale: code changed at {latest_commit_time.isoformat()}, deployed at {deploy_time.isoformat()}")
+    else:
+        print(f"  Up to date: deployed at {deploy_time.isoformat()}, code last changed at {latest_commit_time.isoformat()}")
 
     return result
 

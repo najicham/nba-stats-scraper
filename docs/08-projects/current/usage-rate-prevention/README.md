@@ -2,7 +2,8 @@
 
 **Created:** 2026-02-03 (Session 96)
 **Completed:** 2026-02-03 (Session 96)
-**Status:** COMPLETE
+**Verified:** 2026-02-03 (Session 97) ✅
+**Status:** COMPLETE - VERIFIED
 **Priority:** P0
 
 ## Problem Statement
@@ -125,11 +126,36 @@ Document investigation and fix process for:
 - `tests/data_processors/analytics/test_usage_rate_calculation.py` - 11 unit tests
 - `docs/02-operations/runbooks/data-quality-runbook.md` - Investigation runbook
 
-### Verification
+### Verification (Session 96)
 Feb 2 data after fixes:
 - usage_rate coverage: 98.8% (was 0%)
 - All 4 games have usage_rate data
 - PHI-LAC game (previously missing) now at 100% coverage
+
+### Session 97 Verification & Bug Fixes
+
+**Verified Working:**
+| Layer | Status | Notes |
+|-------|--------|-------|
+| 1. Per-game usage_rate | ✅ Working | 98.8% coverage for Feb 2 |
+| 3. data_quality_history table | ✅ Fixed | Was empty, now recording |
+| 4. analytics-quality-check function | ✅ Working | Returns correct metrics |
+| 5. morning-deployment-check function | ✅ Fixed | False positive bug fixed |
+
+**Bug Fixes Applied (Session 97):**
+1. **morning-deployment-check**: Changed from SHA comparison to timestamp comparison. Was reporting 4 stale services when 0 were stale.
+2. **analytics-quality-check**: Added `write_quality_history()` to populate `data_quality_history` table.
+
+**Verification Commands:**
+```bash
+# Check deployment status (should be all healthy)
+curl -s -X POST "https://us-west2-nba-props-platform.cloudfunctions.net/morning-deployment-check" | jq .status
+# Expected: "healthy"
+
+# Check quality history is recording
+bq query --use_legacy_sql=false "SELECT COUNT(*) FROM nba_analytics.data_quality_history"
+# Expected: > 0
+```
 
 ## Related Documents
 

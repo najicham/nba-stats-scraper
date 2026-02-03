@@ -228,6 +228,38 @@ def send_slack_alert(message: Dict) -> bool:
         return False
 
 
+def write_quality_history(metrics: Dict) -> bool:
+    """Write quality metrics to data_quality_history table for trend tracking.
+
+    Session 97: Added this function to enable historical quality tracking.
+    """
+    client = bigquery.Client(project=PROJECT_ID)
+    table_id = f"{PROJECT_ID}.nba_analytics.data_quality_history"
+
+    record = {
+        'check_timestamp': datetime.now(timezone.utc).isoformat(),
+        'check_date': metrics['game_date'],
+        'processor': 'analytics_quality_check',
+        'game_count': metrics['game_count'],
+        'total_active_players': metrics['total_active'],
+        'usage_rate_coverage_pct': metrics['usage_rate_coverage_pct'],
+        'minutes_coverage_pct': metrics['minutes_coverage_pct'],
+        'records_processed': metrics['total_active'],
+        'run_id': f"quality_check_{metrics['game_date']}_{datetime.now(timezone.utc).strftime('%H%M%S')}",
+    }
+
+    try:
+        errors = client.insert_rows_json(table_id, [record])
+        if errors:
+            print(f"Error writing to data_quality_history: {errors}")
+            return False
+        print(f"Wrote quality metrics to data_quality_history for {metrics['game_date']}")
+        return True
+    except Exception as e:
+        print(f"Exception writing to data_quality_history: {e}")
+        return False
+
+
 @functions_framework.http
 def run_check(request):
     """HTTP Cloud Function entrypoint."""
@@ -269,6 +301,9 @@ def run_check(request):
         message = format_slack_message(metrics, issues, severity)
         sent = send_slack_alert(message)
         print(f"Slack alert sent: {sent}")
+
+    # Session 97: Write metrics to data_quality_history for trend tracking
+    write_quality_history(metrics)
 
     # Return response
     response_data = {
