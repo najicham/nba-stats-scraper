@@ -719,6 +719,72 @@ gcloud scheduler jobs run same-day-phase5 --location=us-west2
 
 **Reference**: Session 97 handoff, Session 98 validation findings
 
+### Phase 0.48: Data Provenance Check (Session 99)
+
+**IMPORTANT**: Verify feature data quality and matchup data availability for predictions.
+
+**Why this matters**: Predictions made with degraded data (wrong matchup factors, defaults) may be less reliable. Session 99 added tracking to identify these cases.
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Check matchup data status distribution for today's features
+SELECT
+  matchup_data_status,
+  COUNT(*) as players,
+  ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER(), 1) as pct,
+  ROUND(AVG(feature_quality_score), 1) as avg_quality
+FROM \`nba-props-platform.nba_predictions.ml_feature_store_v2\`
+WHERE game_date = CURRENT_DATE()
+GROUP BY matchup_data_status
+ORDER BY players DESC"
+```
+
+**Expected Results**:
+
+| Status | Meaning | Action |
+|--------|---------|--------|
+| `COMPLETE` | All matchup data available | ✅ Good |
+| `PARTIAL_FALLBACK` | Some player-specific fallbacks used | ⚠️ Acceptable |
+| `MATCHUP_UNAVAILABLE` | Matchup factors defaulted to 0 | 🔴 Investigate |
+| `NULL` | Legacy data before Session 99 | ℹ️ Expected for older data |
+
+**If MATCHUP_UNAVAILABLE > 10%**:
+1. 🔴 P1 CRITICAL: Matchup data missing for significant portion of players
+2. Check if `player-composite-factors-upcoming` job ran at 5 AM ET
+3. Manually trigger composite factors processor:
+   ```bash
+   curl -X POST "https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app/process-date" \
+     -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+     -H "Content-Type: application/json" \
+     -d '{"processors": ["PlayerCompositeFactorsProcessor"], "analysis_date": "TODAY", "strict_mode": false, "skip_dependency_check": true}'
+   ```
+4. Then refresh ML Feature Store:
+   ```bash
+   curl -X POST "https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app/process-date" \
+     -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+     -H "Content-Type: application/json" \
+     -d '{"processors": ["MLFeatureStoreProcessor"], "analysis_date": "TODAY", "strict_mode": false, "skip_dependency_check": true}'
+   ```
+
+**Check predictions have provenance stored**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Verify predictions store matchup data status
+SELECT
+  COALESCE(matchup_data_status, 'NULL') as status,
+  COUNT(*) as predictions,
+  ROUND(AVG(feature_quality_score), 1) as avg_quality
+FROM \`nba-props-platform.nba_predictions.player_prop_predictions\`
+WHERE game_date = CURRENT_DATE()
+  AND system_id = 'catboost_v9'
+GROUP BY status"
+```
+
+**Reference**: Session 99 handoff, docs/08-projects/current/feature-store-upcoming-games/
+
 ### Phase 0.5: Pre-Game Signal Check (NEW - Session 70)
 
 **IMPORTANT**: Check daily prediction signals for model performance indicators.

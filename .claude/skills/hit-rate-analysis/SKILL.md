@@ -75,6 +75,33 @@ This prevents confusion when comparing analyses across sessions.
 | Medium Edge | 3-5 | Moderate disagreement |
 | Low Edge | <3 | Close to Vegas line |
 
+### Data Quality Filters (Session 99)
+
+| Filter | Definition | Purpose |
+|--------|------------|---------|
+| **Complete Data** | `matchup_data_status = 'COMPLETE'` | Only predictions with full matchup data |
+| **Exclude Degraded** | `matchup_data_status != 'MATCHUP_UNAVAILABLE'` | Exclude defaulted matchup factors |
+| **High Quality** | `feature_quality_score >= 85` | Above threshold quality score |
+
+**Why filter by data quality?**
+- Predictions with `MATCHUP_UNAVAILABLE` used neutral defaults (0.0) for matchup-specific factors
+- These predictions may be less accurate since shot_zone_mismatch and pace_score are missing
+- Use these filters to analyze whether data quality affects hit rate
+
+**Example: Compare hit rate by data quality:**
+```sql
+SELECT
+  COALESCE(matchup_data_status, 'LEGACY') as data_status,
+  COUNT(*) as predictions,
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate
+FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+  AND system_id = 'catboost_v9'
+  AND recommendation IN ('OVER', 'UNDER')
+GROUP BY data_status
+ORDER BY predictions DESC;
+```
+
 ## Standard Queries
 
 | Query # | Name | Purpose |
