@@ -167,8 +167,20 @@ class ExecutionLogger:
                            f"player={sample_entry.get('player_lookup')}")
 
             # Re-add entries to buffer on failure (best effort)
+            # Sanitize REPEATED fields to prevent perpetual failures
+            sanitized_entries = []
+            for entry in entries_to_flush:
+                # Ensure REPEATED fields are never null (BigQuery requirement)
+                entry['line_values_requested'] = entry.get('line_values_requested') or []
+                entry['systems_attempted'] = entry.get('systems_attempted') or []
+                entry['systems_succeeded'] = entry.get('systems_succeeded') or []
+                entry['systems_failed'] = entry.get('systems_failed') or []
+                entry['missing_features'] = entry.get('missing_features') or []
+                entry['circuits_opened'] = entry.get('circuits_opened') or []
+                sanitized_entries.append(entry)
+
             with _buffer_lock:
-                _log_buffer = entries_to_flush + _log_buffer
+                _log_buffer = sanitized_entries + _log_buffer
             return 0
 
     def _add_to_buffer(self, log_entry: Dict) -> None:
@@ -264,7 +276,9 @@ class ExecutionLogger:
                 'universal_player_id': universal_player_id,
                 'game_date': game_date,
                 'game_id': game_id,
-                'line_values_requested': [] if line_values_requested is None else list(line_values_requested),  # REQUIRED: REPEATED field cannot be NULL
+                # REQUIRED: REPEATED fields cannot be NULL in BigQuery
+                # Convert any falsy value (None, [], "") to empty list
+                'line_values_requested': [float(v) for v in line_values_requested] if line_values_requested else [],
 
                 # Execution results
                 'success': success,
