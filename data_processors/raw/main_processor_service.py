@@ -508,7 +508,8 @@ def process_pubsub():
 
 
 # Create global registry instance
-from .path_extractors import create_registry
+# Use direct import (not relative) for compatibility with gunicorn in Docker
+from path_extractors import create_registry
 _path_extractor_registry = create_registry()
 
 
