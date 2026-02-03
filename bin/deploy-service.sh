@@ -340,6 +340,43 @@ fi
 echo ""
 echo "[7/7] Service-specific validation..."
 
+# Run BigQuery write verification for applicable services (Session 88 P0-1)
+echo ""
+echo "Verifying BigQuery writes..."
+if [ -f "bin/monitoring/verify-bigquery-writes.sh" ]; then
+  # Give service 2 minutes to process and write data
+  echo "Waiting 120 seconds for service to process and write data..."
+  sleep 120
+
+  if ./bin/monitoring/verify-bigquery-writes.sh "$SERVICE" 180; then
+    echo "✅ BigQuery write verification passed"
+  else
+    EXIT_CODE=$?
+    if [ "$EXIT_CODE" -eq 1 ]; then
+      echo ""
+      echo "=============================================="
+      echo "🚨 CRITICAL: BigQuery write verification FAILED"
+      echo "=============================================="
+      echo "Service deployed successfully but is NOT writing data to BigQuery!"
+      echo ""
+      echo "This is a P0 CRITICAL issue (Session 88 P0-1)"
+      echo ""
+      echo "Next steps:"
+      echo "1. Check service logs for BigQuery errors"
+      echo "2. Verify table references include dataset name"
+      echo "3. Check service account permissions"
+      echo "4. Consider rolling back deployment"
+      echo "=============================================="
+      # Don't exit - let deployment complete but warn loudly
+    elif [ "$EXIT_CODE" -eq 2 ]; then
+      echo "ℹ️  Service does not write to BigQuery (skipped)"
+    fi
+  fi
+else
+  echo "⚠️  WARNING: BigQuery write verification script not found"
+  echo "   Expected: bin/monitoring/verify-bigquery-writes.sh"
+fi
+
 case $SERVICE in
   prediction-worker)
     echo ""
