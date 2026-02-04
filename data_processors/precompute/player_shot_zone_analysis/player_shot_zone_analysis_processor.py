@@ -448,9 +448,13 @@ class PlayerShotZoneAnalysisProcessor(
         self.entity_field = 'player_lookup'
 
         # Processing requirements
-        self.min_games_required = 10  # Minimum games for quality analysis
+        self.min_games_required = 10  # Minimum games for quality analysis (full season)
         self.sample_window = 10       # Primary analysis window
         self.trend_window = 20        # Broader trend window
+
+        # Early season dynamic threshold (Session 113+)
+        # During first 3 weeks, use fewer games with quality flags
+        self.early_season_days_threshold = 21  # First 21 days use dynamic threshold
 
         # BigQuery client already initialized by PrecomputeProcessorBase with pooling
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
@@ -988,17 +992,35 @@ class PlayerShotZoneAnalysisProcessor(
         # ============================================================
 
         # ============================================================
+        # SESSION 113+: Dynamic minimum games threshold for early season
+        # ============================================================
+        # Calculate dynamic threshold based on days into season
+        dynamic_min_games = self._get_dynamic_min_games(analysis_date, self.season_start_date)
+
+        # Store as instance variable so both parallel and serial methods can access it
+        self.effective_min_games = dynamic_min_games
+
+        if dynamic_min_games < self.min_games_required:
+            logger.info(
+                f"🌅 Early season mode: Using dynamic threshold of {dynamic_min_games} games "
+                f"(full requirement: {self.min_games_required} games after day {self.early_season_days_threshold})"
+            )
+
+        # ============================================================
         # PARALLELIZATION: Choose between parallel and serial processing
         # ============================================================
         ENABLE_PARALLELIZATION = os.environ.get('ENABLE_PLAYER_PARALLELIZATION', 'true').lower() == 'true'
 
         if ENABLE_PARALLELIZATION:
             successful, failed = self._process_players_parallel(
-                all_players, completeness_results, is_bootstrap, is_season_boundary, analysis_date
+                all_players, completeness_results, is_bootstrap, is_season_boundary,
+                analysis_date, dynamic_min_games
             )
         else:
+            # Serial method uses self.effective_min_games instance variable
             successful, failed = self._process_players_serial(
-                all_players, completeness_results, is_bootstrap, is_season_boundary, analysis_date
+                all_players, completeness_results, is_bootstrap, is_season_boundary,
+                analysis_date
             )
 
         self.transformed_data = successful
@@ -1045,7 +1067,8 @@ class PlayerShotZoneAnalysisProcessor(
         self.stats['errors_to_investigate'] = category_counts.get('PROCESSING_ERROR', 0) + category_counts.get('UNKNOWN', 0)
 
     def _process_players_parallel(self, all_players, completeness_results,
-                                   is_bootstrap, is_season_boundary, analysis_date):
+                                   is_bootstrap, is_season_boundary, analysis_date,
+                                   dynamic_min_games):
         """Process all players using ProcessPoolExecutor for 4-5x speedup."""
         # Determine worker count - ProcessPool can handle more than ThreadPool
         DEFAULT_WORKERS = min(32, os.cpu_count() or 10)
@@ -1110,7 +1133,7 @@ class PlayerShotZoneAnalysisProcessor(
                     self.raw_data[self.raw_data['player_lookup'] == player_lookup].to_dict('records'),
                     self.sample_window,
                     self.trend_window,
-                    self.min_games_required,
+                    dynamic_min_games,  # Session 113+: Use dynamic threshold
                     self.source_hash,
                     self.opts,
                     self.HASH_FIELDS
@@ -1239,22 +1262,23 @@ class PlayerShotZoneAnalysisProcessor(
             games_10 = player_data[player_data['game_rank'] <= self.sample_window]
             games_20 = player_data[player_data['game_rank'] <= self.trend_window]
 
-            # Check sufficient games for 10-game analysis
-            if len(games_10) < self.min_games_required:
+            # Check sufficient games for analysis (Session 113+: uses dynamic threshold)
+            effective_min = getattr(self, 'effective_min_games', self.min_games_required)
+            if len(games_10) < effective_min:
                 # Determine failure category based on expected vs actual game counts
                 actual_games = len(games_10)
                 expected_games = completeness.get('expected_count', 0)
 
                 # Classification logic:
-                # - EXPECTED_INCOMPLETE: Both actual and expected < 10 (early season/bootstrap)
-                # - INCOMPLETE_UPSTREAM: Actual < 10 but expected >= 10 (missing upstream data)
-                if actual_games < self.min_games_required and expected_games < self.min_games_required:
+                # - EXPECTED_INCOMPLETE: Both actual and expected < threshold (early season/bootstrap)
+                # - INCOMPLETE_UPSTREAM: Actual < threshold but expected >= threshold (missing upstream data)
+                if actual_games < effective_min and expected_games < effective_min:
                     # Early season - not enough games played yet
                     category = 'EXPECTED_INCOMPLETE'
                     can_retry = False
                     reason = (
                         f"Season bootstrap: {actual_games}/{expected_games} games "
-                        f"(need {self.min_games_required})"
+                        f"(need {effective_min})"
                     )
                     logger.debug(f"{player_lookup}: {reason}")
                 else:
@@ -1263,7 +1287,7 @@ class PlayerShotZoneAnalysisProcessor(
                     can_retry = True
                     reason = (
                         f"Missing upstream data: {actual_games}/{expected_games} games "
-                        f"(need {self.min_games_required})"
+                        f"(need {effective_min})"
                     )
                     logger.warning(f"{player_lookup}: {reason}")
 
@@ -1718,13 +1742,51 @@ class PlayerShotZoneAnalysisProcessor(
         else:
             return 'balanced'
     
+    def _get_dynamic_min_games(self, analysis_date: date, season_start_date: date) -> int:
+        """
+        Calculate minimum games required based on days into season.
+
+        Session 113+ Enhancement: During early season (first 21 days), use a lower
+        threshold that gradually increases. This allows shot zone analysis when
+        players have 3-9 games, while maintaining full 10-game requirement after
+        the bootstrap period.
+
+        Args:
+            analysis_date: Date being analyzed
+            season_start_date: Season start date
+
+        Returns:
+            int: Minimum games required (3-10 based on season progress)
+
+        Examples:
+            Day 3: min 3 games
+            Day 6: min 4 games
+            Day 9: min 5 games
+            Day 12: min 6 games
+            Day 15: min 7 games
+            Day 18: min 8 games
+            Day 21: min 9 games
+            Day 22+: min 10 games (full requirement)
+        """
+        days_into_season = (analysis_date - season_start_date).days
+
+        if days_into_season <= self.early_season_days_threshold:
+            # Gradual increase: 3 games at start, approaching 10 by day 21
+            # Formula: 3 + (days / 3) capped at 9
+            dynamic_min = min(3 + (days_into_season // 3), 9)
+            logger.debug(f"Early season (day {days_into_season}): dynamic min_games = {dynamic_min}")
+            return dynamic_min
+        else:
+            # After day 21, require full 10 games
+            return self.min_games_required
+
     def _determine_quality_tier(self, games_count: int) -> str:
         """
         Assess data quality based on sample size.
-        
+
         Args:
             games_count: Number of games in sample
-            
+
         Returns:
             str: 'high', 'medium', or 'low'
         """
