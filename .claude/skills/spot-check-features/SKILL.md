@@ -395,6 +395,86 @@ ORDER BY diff DESC;
 **Expected:** All diff < 1.0
 **If diff > 3:** Bug in player_daily_cache StatsAggregator - investigate Phase 4 processor.
 
+### 12. Phase 4 DNP Pollution Check (Session 113+)
+
+**CRITICAL:** Verify player_daily_cache excludes DNP games correctly.
+Session 113+ audit found Nov 1 - Dec 2, 2025 had 100% DNP pollution in cached L5/L10 values.
+
+```sql
+-- Verify player_daily_cache excludes DNP games
+SELECT
+  cache_date,
+  COUNT(*) as total_cached,
+  COUNTIF(is_dnp_in_source) as dnp_players_cached,
+  ROUND(100.0 * COUNTIF(is_dnp_in_source) / COUNT(*), 1) as dnp_pct
+FROM (
+  SELECT
+    pdc.cache_date,
+    pdc.player_lookup,
+    BOOL_OR(pgs.is_dnp = TRUE) as is_dnp_in_source
+  FROM nba_precompute.player_daily_cache pdc
+  JOIN nba_analytics.player_game_summary pgs
+    ON pdc.player_lookup = pgs.player_lookup
+    AND pgs.game_date = pdc.cache_date
+  WHERE pdc.cache_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  GROUP BY pdc.cache_date, pdc.player_lookup
+)
+GROUP BY cache_date
+ORDER BY cache_date DESC
+```
+
+**Expected:** dnp_pct = 0% (no DNP players should be in cache)
+**If > 0%:** CRITICAL - Phase 4 DNP filter broken, investigate player_daily_cache processor
+
+### 13. Team Pace Outlier Detection (Session 113+)
+
+**CRITICAL:** Detect team pace corruption in Phase 4 cache.
+Session 113+ audit found Dec 30, 2025 had team_pace values of 200+ (normal is 95-110).
+
+```sql
+-- Detect team pace outliers in player_daily_cache
+SELECT
+  cache_date,
+  COUNT(*) as records,
+  MIN(team_pace_last_10) as min_pace,
+  MAX(team_pace_last_10) as max_pace,
+  COUNTIF(team_pace_last_10 < 80 OR team_pace_last_10 > 120) as outliers,
+  ROUND(100.0 * COUNTIF(team_pace_last_10 < 80 OR team_pace_last_10 > 120) / COUNT(*), 1) as outlier_pct
+FROM nba_precompute.player_daily_cache
+WHERE cache_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+GROUP BY cache_date
+HAVING outliers > 0
+ORDER BY cache_date DESC
+```
+
+**Expected:** 0 outliers (all team_pace 80-120 range)
+**If outliers found:** CRITICAL - Source data corruption or Phase 3 calculation bug
+
+### 14. DNP Players in Cache (Session 113+)
+
+**HIGH:** Find DNP players incorrectly cached in Phase 4.
+After DNP filter added Feb 3, 2026, historical dates (Dec 18 - Feb 2) still had DNP players cached.
+
+```sql
+-- Find DNP players incorrectly cached
+SELECT
+  pdc.cache_date,
+  COUNT(*) as dnp_players_cached,
+  ARRAY_AGG(STRUCT(pdc.player_lookup, pgs.dnp_reason) LIMIT 5) as examples
+FROM nba_precompute.player_daily_cache pdc
+JOIN nba_analytics.player_game_summary pgs
+  ON pdc.player_lookup = pgs.player_lookup
+  AND pdc.cache_date = pgs.game_date
+WHERE pdc.cache_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+  AND pgs.is_dnp = TRUE
+GROUP BY pdc.cache_date
+HAVING COUNT(*) > 0
+ORDER BY pdc.cache_date DESC
+```
+
+**Expected:** 0 DNP players cached
+**If > 0:** HIGH - Cache includes DNP players, needs regeneration or filter fix
+
 ## Pre-Training Checklist
 
 Before running `/model-experiment`:
@@ -404,8 +484,11 @@ Before running `/model-experiment`:
 3. Verify Vegas bias by tier (expect stars under-predicted ~8pts)
 4. Check for unusual data source distribution (<5% partial)
 5. Confirm model experiment includes tier bias analysis (built-in since Session 104)
-6. **NEW (Session 113):** Validate L5/L10 calculations match manual (DNP handling check)
-7. **NEW (Session 113):** Check for unmarked DNPs in source data
+6. **NEW (Session 113):** Validate L5/L10 calculations match manual (DNP handling check #9)
+7. **NEW (Session 113):** Check for unmarked DNPs in source data (check #10)
+8. **CRITICAL (Session 113+):** Verify no DNP pollution in Phase 4 cache (check #12)
+9. **CRITICAL (Session 113+):** Check team pace outliers (check #13)
+10. **HIGH (Session 113+):** Verify no DNP players in cache (check #14)
 
 ## Example Output
 

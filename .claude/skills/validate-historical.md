@@ -219,14 +219,78 @@ GROUP BY p.game_date;
 | `/spot-check-cascade` | Trace downstream impact |
 | `/validate-lineage` | Verify cascade remediation |
 
+### Step 5: Validate Phase 4 Coverage (Session 113+)
+
+**NEW:** Check Phase 4 precompute tables have complete date coverage.
+
+```sql
+-- Verify Phase 4 tables exist for all game dates
+WITH game_dates AS (
+  SELECT DISTINCT game_date
+  FROM nba_analytics.player_game_summary
+  WHERE game_date BETWEEN @start_date AND @end_date
+    AND game_status = 3  -- Final games only
+),
+cache_dates AS (
+  SELECT DISTINCT cache_date as game_date
+  FROM nba_precompute.player_daily_cache
+  WHERE cache_date BETWEEN @start_date AND @end_date
+),
+shot_zone_dates AS (
+  SELECT DISTINCT analysis_date as game_date
+  FROM nba_precompute.player_shot_zone_analysis
+  WHERE analysis_date BETWEEN @start_date AND @end_date
+)
+SELECT
+  g.game_date,
+  CASE WHEN c.game_date IS NOT NULL THEN 'YES' ELSE 'MISSING' END as has_cache,
+  CASE WHEN s.game_date IS NOT NULL THEN 'YES' ELSE 'MISSING' END as has_shot_zone
+FROM game_dates g
+LEFT JOIN cache_dates c USING (game_date)
+LEFT JOIN shot_zone_dates s USING (game_date)
+WHERE c.game_date IS NULL OR s.game_date IS NULL
+ORDER BY g.game_date DESC
+```
+
+**Expected:** All dates have cache AND shot_zone
+**If MISSING:** HIGH - Phase 4 incomplete, affects ML feature quality
+
+### Step 6: Cross-Reference Phase 3 vs Phase 4 (Session 113+)
+
+**NEW:** Verify Phase 4 cache matches Phase 3 active players.
+
+```sql
+-- Check player coverage discrepancies
+SELECT
+  g.game_date,
+  COUNT(DISTINCT g.player_lookup) as phase3_active_players,
+  COALESCE(COUNT(DISTINCT c.player_lookup), 0) as phase4_cached_players,
+  COUNT(DISTINCT g.player_lookup) - COALESCE(COUNT(DISTINCT c.player_lookup), 0) as missing_from_cache,
+  COALESCE(COUNT(DISTINCT c.player_lookup), 0) - COUNT(DISTINCT g.player_lookup) as extra_in_cache
+FROM nba_analytics.player_game_summary g
+LEFT JOIN nba_precompute.player_daily_cache c
+  ON g.player_lookup = c.player_lookup
+  AND g.game_date = c.cache_date
+WHERE g.game_date BETWEEN @start_date AND @end_date
+  AND g.is_dnp = FALSE
+  AND g.minutes_played > 0
+GROUP BY g.game_date
+HAVING missing_from_cache > 10 OR extra_in_cache > 10
+ORDER BY g.game_date DESC
+```
+
+**Expected:** 0-5 discrepancy per date (minor edge cases)
+**If > 10 missing:** HIGH - Major Phase 4 processing gap
+**If > 10 extra:** MEDIUM - DNP players incorrectly cached
+
 ## Workflow: After Finding Issues
 
 ```
 1. Run /validate-historical       → Identify problem dates
-2. Investigate root cause         → Check raw data, processor SQL
+2. Investigate root cause         → Check raw data, processor SQL, Phase 4 coverage
 3. Fix processor if needed        → Update extraction/calculation logic
 4. Backfill affected dates        → Re-run processor for problem dates
-5. Re-run /validate-historical    → Verify fixes worked
+5. Re-run /validate-historical    → Verify fixes worked (including Phase 4 checks)
 6. Check downstream impact        → Run /spot-check-cascade
 7. Reprocess downstream tables    → If cascade contamination found
 8. Final verification            → Run /validate-lineage
