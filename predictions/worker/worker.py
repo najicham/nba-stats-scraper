@@ -395,6 +395,95 @@ def _compute_tier_adjustment(points_avg_season: float) -> float:
         return -5.5
 
 
+# Session 112: Player blacklist for UNDER bets (verified hit rates < 50%)
+UNDER_BLACKLIST_PLAYERS = {
+    'lukadoncic',      # 45.5% UNDER hit rate
+    'juliusrandle',    # 42.9% UNDER hit rate
+    'jarenjacksonjr',  # 28.6% UNDER hit rate
+    'lamellobald',     # 44.4% UNDER hit rate (note: might be lameloBall in registry)
+    'dillonbrooks',    # 40.0% UNDER hit rate
+    'michaelporterjr', # 40.0% UNDER hit rate
+}
+
+# Session 112: Risky opponents for UNDER bets (hit rates < 40%)
+UNDER_RISK_OPPONENTS = {'PHI', 'MIN', 'DET', 'MIA', 'DEN'}
+
+
+def _classify_scenario(
+    recommendation: str,
+    line_value: float,
+    predicted_points: float,
+    player_lookup: str = None,
+    opponent_tricode: str = None
+) -> tuple:
+    """
+    Classify a prediction into a betting scenario.
+
+    Session 112 validated scenarios:
+    - optimal_over: OVER + line < 12 + edge >= 5 (87.3% HR)
+    - optimal_under: UNDER + line >= 25 + edge >= 3 (70.7% HR)
+    - ultra_high_edge_over: OVER + edge >= 7 (88.5% HR)
+    - under_safe: UNDER + line >= 20 + edge >= 3 + not blacklisted (65% HR)
+    - anti_under_low_line: UNDER + line < 15 + edge >= 3 (53.8% HR - AVOID)
+    - standard: Everything else with edge >= 3
+    - low_edge: Edge < 3 (51.5% HR - SKIP)
+
+    Returns:
+        tuple: (scenario_category, scenario_flags_dict)
+    """
+    if line_value is None or predicted_points is None:
+        return ('unknown', {'reason': 'missing_line_or_prediction'})
+
+    edge = abs(predicted_points - line_value)
+    flags = {
+        'edge': round(edge, 1),
+        'line_value': round(line_value, 1),
+    }
+
+    # Check blacklist and opponent risk for UNDER bets
+    is_blacklisted = False
+    is_risky_opponent = False
+
+    if recommendation == 'UNDER':
+        if player_lookup and player_lookup.lower().replace(' ', '').replace("'", "") in UNDER_BLACKLIST_PLAYERS:
+            is_blacklisted = True
+            flags['blacklisted_player'] = True
+
+        if opponent_tricode and opponent_tricode.upper() in UNDER_RISK_OPPONENTS:
+            is_risky_opponent = True
+            flags['risky_opponent'] = True
+
+    # Classify into scenario
+    if edge < 3:
+        return ('low_edge', flags)
+
+    if recommendation == 'OVER':
+        if line_value < 12 and edge >= 5:
+            return ('optimal_over', flags)
+        elif edge >= 7:
+            return ('ultra_high_edge_over', flags)
+        elif edge >= 5:
+            return ('high_edge_over', flags)
+        else:
+            return ('standard_over', flags)
+
+    elif recommendation == 'UNDER':
+        if line_value < 15:
+            flags['anti_pattern'] = 'low_line_under'
+            return ('anti_under_low_line', flags)
+        elif line_value >= 25 and edge >= 3 and not is_blacklisted:
+            return ('optimal_under', flags)
+        elif line_value >= 20 and not is_blacklisted and not is_risky_opponent:
+            return ('under_safe', flags)
+        elif is_blacklisted or is_risky_opponent:
+            return ('under_risky', flags)
+        else:
+            return ('standard_under', flags)
+
+    else:  # PASS, NO_LINE, etc.
+        return ('non_actionable', flags)
+
+
 @app.route('/', methods=['GET'])
 def index():
     """Health check endpoint"""
@@ -1889,7 +1978,23 @@ def format_prediction_for_bigquery(
         # This addresses regression-to-mean bias WITHOUT modifying stored predictions
         'scoring_tier': _compute_scoring_tier(features.get('points_avg_season', 15.0)),
         'tier_adjustment': _compute_tier_adjustment(features.get('points_avg_season', 15.0)),
+
+        # Session 112: Scenario classification for optimal betting strategies
+        # scenario_category: optimal_over, optimal_under, ultra_high_edge_over, anti_under_low_line, etc.
+        # scenario_flags: JSON with edge, line_value, blacklisted_player, risky_opponent, etc.
+        # See: docs/08-projects/current/scenario-filtering-system/README.md
     }
+
+    # Session 112: Classify scenario AFTER record creation (needs recommendation and line values)
+    scenario_category, scenario_flags = _classify_scenario(
+        recommendation=recommendation,
+        line_value=current_points_line,
+        predicted_points=predicted_points,
+        player_lookup=player_lookup,
+        opponent_tricode=features.get('opponent_tricode')
+    )
+    record['scenario_category'] = scenario_category
+    record['scenario_flags'] = json.dumps(scenario_flags)
 
     # Add system-specific fields
     if system_id == 'similarity_balanced_v1' and 'metadata' in prediction:

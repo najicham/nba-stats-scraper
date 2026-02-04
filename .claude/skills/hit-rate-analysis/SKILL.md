@@ -696,8 +696,232 @@ ORDER BY MIN(game_date);
 
 ---
 
+## Session 112: Scenario-Based Analysis (NEW)
+
+Session 112 validated optimal betting scenarios. Use these queries to track performance.
+
+### Query 8: Scenario Subset Performance
+
+**Purpose**: Compare all defined scenario subsets against their expected hit rates.
+
+```sql
+-- Scenario subset performance (Session 112)
+WITH scenario_picks AS (
+  SELECT
+    pa.game_date,
+    pa.player_lookup,
+    pa.recommendation,
+    pa.line_value,
+    ABS(pa.predicted_points - pa.line_value) as edge,
+    pa.prediction_correct,
+    pa.opponent_tricode,
+    CASE
+      WHEN pa.recommendation = 'OVER' AND pa.line_value < 12
+           AND ABS(pa.predicted_points - pa.line_value) >= 5 THEN 'optimal_over'
+      WHEN pa.recommendation = 'UNDER' AND pa.line_value >= 25
+           AND ABS(pa.predicted_points - pa.line_value) >= 3 THEN 'optimal_under'
+      WHEN pa.recommendation = 'OVER'
+           AND ABS(pa.predicted_points - pa.line_value) >= 7 THEN 'ultra_high_edge_over'
+      WHEN pa.recommendation = 'UNDER' AND pa.line_value < 15
+           AND ABS(pa.predicted_points - pa.line_value) >= 3 THEN 'anti_under_low_line'
+      WHEN ABS(pa.predicted_points - pa.line_value) >= 3 THEN 'standard_edge3'
+      ELSE 'low_edge'
+    END as scenario
+  FROM nba_predictions.prediction_accuracy pa
+  WHERE pa.system_id = 'catboost_v9'
+    AND pa.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+    AND pa.game_date < CURRENT_DATE()
+    AND pa.prediction_correct IS NOT NULL
+    AND pa.line_value IS NOT NULL
+)
+SELECT
+  scenario,
+  COUNT(*) as bets,
+  SUM(CASE WHEN prediction_correct THEN 1 ELSE 0 END) as wins,
+  ROUND(100.0 * SUM(CASE WHEN prediction_correct THEN 1 ELSE 0 END) / COUNT(*), 1) as hit_rate,
+  CASE
+    WHEN scenario = 'optimal_over' THEN 87.3
+    WHEN scenario = 'optimal_under' THEN 70.7
+    WHEN scenario = 'ultra_high_edge_over' THEN 88.5
+    WHEN scenario = 'anti_under_low_line' THEN 53.8
+    ELSE 55.0
+  END as expected_hr,
+  CASE
+    WHEN ROUND(100.0 * SUM(CASE WHEN prediction_correct THEN 1 ELSE 0 END) / COUNT(*), 1) >=
+         CASE WHEN scenario LIKE 'optimal%' THEN 70 WHEN scenario LIKE 'anti%' THEN 52.4 ELSE 55 END
+    THEN '✅' ELSE '⚠️'
+  END as status
+FROM scenario_picks
+GROUP BY scenario
+ORDER BY
+  CASE scenario
+    WHEN 'optimal_over' THEN 1
+    WHEN 'ultra_high_edge_over' THEN 2
+    WHEN 'optimal_under' THEN 3
+    WHEN 'standard_edge3' THEN 4
+    WHEN 'anti_under_low_line' THEN 5
+    ELSE 6
+  END;
+```
+
+**Interpretation**:
+- **optimal_over** should hit ~87% (OVER, line <12, edge ≥5)
+- **optimal_under** should hit ~71% (UNDER, line ≥25, edge ≥3)
+- **ultra_high_edge_over** should hit ~88% (OVER, edge ≥7)
+- **anti_under_low_line** performs at ~54% - AVOID these bets
+
+### Query 9: Player Blacklist Check
+
+**Purpose**: Verify that blacklisted players still underperform on UNDER bets.
+
+```sql
+-- Player blacklist validation (Session 112)
+WITH blacklist AS (
+  SELECT player_lookup, player_name, under_hit_rate as expected_hr
+  FROM nba_predictions.player_betting_risk
+  WHERE risk_type = 'under_blacklist' AND is_active = TRUE
+)
+SELECT
+  b.player_name,
+  COUNT(*) as under_bets,
+  SUM(CASE WHEN pa.prediction_correct THEN 1 ELSE 0 END) as wins,
+  ROUND(100.0 * SUM(CASE WHEN pa.prediction_correct THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) as actual_hr,
+  ROUND(b.expected_hr, 1) as expected_hr,
+  CASE
+    WHEN ROUND(100.0 * SUM(CASE WHEN pa.prediction_correct THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) < 50
+    THEN '⚠️ Still bad'
+    ELSE '✅ Improved?'
+  END as status
+FROM nba_predictions.prediction_accuracy pa
+JOIN blacklist b ON pa.player_lookup = b.player_lookup
+WHERE pa.system_id = 'catboost_v9'
+  AND pa.recommendation = 'UNDER'
+  AND pa.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+  AND pa.game_date < CURRENT_DATE()
+  AND pa.prediction_correct IS NOT NULL
+GROUP BY b.player_name, b.expected_hr
+ORDER BY actual_hr;
+```
+
+**If a player shows >55% UNDER hit rate**: Consider removing from blacklist.
+
+### Query 10: Opponent Risk Check
+
+**Purpose**: Verify that risky opponents still cause UNDER bet failures.
+
+```sql
+-- Opponent risk validation (Session 112)
+WITH risk_opponents AS (
+  SELECT team_tricode, team_name, under_hit_rate as expected_hr
+  FROM nba_predictions.opponent_betting_risk
+  WHERE risk_type = 'under_risk' AND is_active = TRUE
+)
+SELECT
+  r.team_name,
+  r.team_tricode,
+  COUNT(*) as under_bets,
+  SUM(CASE WHEN pa.prediction_correct THEN 1 ELSE 0 END) as wins,
+  ROUND(100.0 * SUM(CASE WHEN pa.prediction_correct THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) as actual_hr,
+  ROUND(r.expected_hr, 1) as expected_hr,
+  CASE
+    WHEN ROUND(100.0 * SUM(CASE WHEN pa.prediction_correct THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0), 1) < 45
+    THEN '⚠️ Still risky'
+    ELSE '✅ Improved?'
+  END as status
+FROM nba_predictions.prediction_accuracy pa
+JOIN risk_opponents r ON pa.opponent_tricode = r.team_tricode
+WHERE pa.system_id = 'catboost_v9'
+  AND pa.recommendation = 'UNDER'
+  AND pa.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+  AND pa.game_date < CURRENT_DATE()
+  AND pa.prediction_correct IS NOT NULL
+GROUP BY r.team_name, r.team_tricode, r.expected_hr
+ORDER BY actual_hr;
+```
+
+### Query 11: Today's Picks by Scenario
+
+**Purpose**: Classify today's predictions into scenarios for betting decisions.
+
+```sql
+-- Today's picks by scenario (Session 112)
+SELECT
+  player_lookup,
+  ROUND(predicted_points, 1) as predicted,
+  current_points_line as line,
+  ROUND(ABS(predicted_points - current_points_line), 1) as edge,
+  recommendation,
+  CASE
+    WHEN recommendation = 'OVER' AND current_points_line < 12
+         AND ABS(predicted_points - current_points_line) >= 5 THEN '🟢 OPTIMAL_OVER (87%)'
+    WHEN recommendation = 'UNDER' AND current_points_line >= 25
+         AND ABS(predicted_points - current_points_line) >= 3 THEN '🟢 OPTIMAL_UNDER (71%)'
+    WHEN recommendation = 'OVER'
+         AND ABS(predicted_points - current_points_line) >= 7 THEN '🟢 ULTRA_HIGH_EDGE (88%)'
+    WHEN recommendation = 'UNDER' AND current_points_line < 15
+         AND ABS(predicted_points - current_points_line) >= 3 THEN '🔴 ANTI_PATTERN (54%)'
+    WHEN ABS(predicted_points - current_points_line) < 3 THEN '🔴 LOW_EDGE (52%)'
+    WHEN ABS(predicted_points - current_points_line) >= 5 THEN '🟡 HIGH_EDGE (75%)'
+    ELSE '🟡 STANDARD (58%)'
+  END as scenario,
+  -- Check player blacklist
+  CASE
+    WHEN recommendation = 'UNDER' AND player_lookup IN (
+      'lukadoncic', 'juliusrandle', 'jarenjacksonjr', 'lamellobald', 'dillonbrooks', 'michaelporterjr'
+    ) THEN '⚠️ BLACKLISTED'
+    ELSE ''
+  END as player_warning
+FROM nba_predictions.player_prop_predictions
+WHERE game_date = CURRENT_DATE()
+  AND system_id = 'catboost_v9'
+  AND is_active = TRUE
+  AND recommendation IN ('OVER', 'UNDER')
+ORDER BY
+  CASE
+    WHEN recommendation = 'OVER' AND current_points_line < 12 AND ABS(predicted_points - current_points_line) >= 5 THEN 1
+    WHEN recommendation = 'OVER' AND ABS(predicted_points - current_points_line) >= 7 THEN 2
+    WHEN recommendation = 'UNDER' AND current_points_line >= 25 THEN 3
+    ELSE 10
+  END,
+  ABS(predicted_points - current_points_line) DESC;
+```
+
+### Quick Scenario Summary
+
+| Scenario | Filters | Expected HR | Status |
+|----------|---------|-------------|--------|
+| **OPTIMAL_OVER** | OVER + Line <12 + Edge ≥5 | 87.3% | 🟢 Bet |
+| **ULTRA_HIGH_EDGE_OVER** | OVER + Edge ≥7 | 88.5% | 🟢 Bet |
+| **OPTIMAL_UNDER** | UNDER + Line ≥25 + Edge ≥3 | 70.7% | 🟢 Bet |
+| **HIGH_EDGE** | Edge ≥5 (any) | 75.3% | 🟡 Caution |
+| **STANDARD** | Edge 3-5 | 58.1% | 🟡 Selective |
+| **ANTI_UNDER_LOW** | UNDER + Line <15 | 53.8% | 🔴 Avoid |
+| **LOW_EDGE** | Edge <3 | 51.5% | 🔴 Skip |
+
+### Player Blacklist (Session 112)
+
+Do NOT bet UNDER on these players:
+- Luka Doncic (45.5% HR)
+- Julius Randle (42.9% HR)
+- Jaren Jackson Jr (28.6% HR)
+- LaMelo Ball (44.4% HR)
+- Dillon Brooks (40.0% HR)
+- Michael Porter Jr (40.0% HR)
+
+### Opponent Risk List (Session 112)
+
+Be cautious betting UNDER vs these teams:
+- Philadelphia 76ers (36.4% UNDER HR)
+- Minnesota Timberwolves (37.5% UNDER HR)
+- Detroit Pistons (37.5% UNDER HR)
+- Miami Heat (38.5% UNDER HR)
+- Denver Nuggets (40.0% UNDER HR)
+
+---
+
 *Skill created: Session 55*
 *Updated: Session 57 - Added standard filters, clarified metrics confusion*
 *Updated: Session 58 - Added "Find Best Filter" query for filter optimization*
 *Updated: Session 69 - Added daily model comparison, support for monthly models (catboost_v9_2026_XX)*
 *Updated: Session 87 - Added Issue 4 for model version tracking via model_file_name field*
+*Updated: Session 112 - Added scenario-based analysis, player blacklist, opponent risk (Queries 8-11)*

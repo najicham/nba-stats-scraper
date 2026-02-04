@@ -73,6 +73,12 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
           COUNTIF(ABS(predicted_points - current_points_line) >= 5) as high_edge_picks,
           COUNTIF(confidence_score >= 0.92 AND ABS(predicted_points - current_points_line) >= 3) as premium_picks,
 
+          -- Session 112: Scenario counts for optimal betting strategies
+          COUNTIF(recommendation = 'OVER' AND current_points_line < 12 AND ABS(predicted_points - current_points_line) >= 5) as optimal_over_count,
+          COUNTIF(recommendation = 'UNDER' AND current_points_line >= 25 AND ABS(predicted_points - current_points_line) >= 3) as optimal_under_count,
+          COUNTIF(recommendation = 'OVER' AND ABS(predicted_points - current_points_line) >= 7) as ultra_high_edge_count,
+          COUNTIF(recommendation = 'UNDER' AND current_points_line < 15 AND ABS(predicted_points - current_points_line) >= 3) as anti_pattern_count,
+
           ROUND(100.0 * COUNTIF(recommendation = 'OVER') / COUNT(*), 1) as pct_over,
           ROUND(100.0 * COUNTIF(recommendation = 'UNDER') / COUNT(*), 1) as pct_under,
 
@@ -126,7 +132,8 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
         # Log signal summary for monitoring and send Slack alert
         if rows_affected > 0:
             summary_query = f"""
-            SELECT system_id, total_picks, high_edge_picks, pct_over, daily_signal, signal_explanation
+            SELECT system_id, total_picks, high_edge_picks, pct_over, daily_signal, signal_explanation,
+                   optimal_over_count, optimal_under_count, ultra_high_edge_count, anti_pattern_count
             FROM `{SIGNALS_TABLE}`
             WHERE game_date = @game_date
             ORDER BY system_id
@@ -135,9 +142,12 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
 
             primary_signal_data = None
             for row in summary_result:
+                # Session 112: Include scenario counts in logging
+                optimal_total = (row.optimal_over_count or 0) + (row.optimal_under_count or 0) + (row.ultra_high_edge_count or 0)
                 logger.info(
                     f"  {row.system_id}: {row.total_picks} picks, "
-                    f"pct_over={row.pct_over}%, signal={row.daily_signal}"
+                    f"pct_over={row.pct_over}%, signal={row.daily_signal}, "
+                    f"optimal={optimal_total} (over={row.optimal_over_count or 0}, under={row.optimal_under_count or 0}, ultra={row.ultra_high_edge_count or 0})"
                 )
                 # Capture primary model for Slack alert
                 if row.system_id == PRIMARY_ALERT_MODEL:
@@ -148,7 +158,12 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
                         'high_edge_picks': row.high_edge_picks,
                         'pct_over': row.pct_over,
                         'daily_signal': row.daily_signal,
-                        'signal_explanation': row.signal_explanation
+                        'signal_explanation': row.signal_explanation,
+                        # Session 112: Scenario counts
+                        'optimal_over_count': row.optimal_over_count or 0,
+                        'optimal_under_count': row.optimal_under_count or 0,
+                        'ultra_high_edge_count': row.ultra_high_edge_count or 0,
+                        'anti_pattern_count': row.anti_pattern_count or 0,
                     }
 
             # Send Slack alert for primary model
