@@ -475,6 +475,73 @@ ORDER BY pdc.cache_date DESC
 **Expected:** 0 DNP players cached
 **If > 0:** HIGH - Cache includes DNP players, needs regeneration or filter fix
 
+### 15. Early Season Bootstrap Coverage (Session 113+)
+
+**MEDIUM:** Validate upstream dependency coverage during bootstrap period.
+Shot_zone analysis requires 10 games of history, causing incomplete coverage in first 2-3 weeks of season.
+
+```sql
+-- Check shot_zone coverage and identify bootstrap period
+WITH season_start AS (
+  SELECT MIN(game_date) as start_date
+  FROM nba_analytics.player_game_summary
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 120 DAY)
+),
+coverage AS (
+  SELECT
+    pdc.cache_date,
+    COUNT(*) as total_cache_records,
+    COUNT(DISTINCT psz.player_lookup) as players_with_shot_zone,
+    ROUND(100.0 * COUNT(DISTINCT psz.player_lookup) / COUNT(*), 1) as shot_zone_pct,
+    DATE_DIFF(pdc.cache_date, s.start_date, DAY) as days_into_season,
+    CASE
+      WHEN DATE_DIFF(pdc.cache_date, s.start_date, DAY) <= 21 THEN 'BOOTSTRAP'
+      ELSE 'NORMAL'
+    END as period_type
+  FROM nba_precompute.player_daily_cache pdc
+  CROSS JOIN season_start s
+  LEFT JOIN nba_precompute.player_shot_zone_analysis psz
+    ON pdc.player_lookup = psz.player_lookup
+    AND pdc.cache_date = psz.analysis_date
+  WHERE pdc.cache_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  GROUP BY pdc.cache_date, s.start_date
+)
+SELECT
+  cache_date,
+  total_cache_records,
+  players_with_shot_zone,
+  shot_zone_pct,
+  days_into_season,
+  period_type,
+  CASE
+    WHEN period_type = 'BOOTSTRAP' AND shot_zone_pct < 50 THEN 'OK (early season)'
+    WHEN period_type = 'NORMAL' AND shot_zone_pct < 90 THEN 'WARNING (should be >90%)'
+    ELSE 'OK'
+  END as status
+FROM coverage
+ORDER BY cache_date DESC
+```
+
+**Expected Coverage by Season Day (Session 113+ Fix Applied):**
+
+After implementing dynamic threshold (commit e06043b9), expected coverage:
+
+| Days Into Season | Min Games Required | Expected Coverage |
+|------------------|--------------------|-------------------|
+| Days 1-6 | 3-4 games | 0-30% (very early) |
+| Days 7-14 | 4-6 games | 30-60% (building) |
+| Days 15-21 | 7-9 games | 60-85% (approaching full) |
+| Days 22+ | 10 games | >90% (full coverage) |
+
+**Interpretation:**
+- Bootstrap period (days 0-21): Coverage gradually increases - THIS IS EXPECTED
+- Normal period (days 22+): >90% coverage required
+- If actual coverage significantly below expected for day range: WARNING
+
+**If low coverage after day 21:** WARNING - player_shot_zone_analysis may not be running or has data quality issues
+
+**Context:** Session 113+ investigation found ML feature store failures on Nov 4-6 due to missing shot_zone data. Root cause: Hard 10-game requirement when players had only 4-7 games. Fixed with dynamic threshold that adapts to days into season while maintaining quality flags.
+
 ## Pre-Training Checklist
 
 Before running `/model-experiment`:
@@ -489,6 +556,7 @@ Before running `/model-experiment`:
 8. **CRITICAL (Session 113+):** Verify no DNP pollution in Phase 4 cache (check #12)
 9. **CRITICAL (Session 113+):** Check team pace outliers (check #13)
 10. **HIGH (Session 113+):** Verify no DNP players in cache (check #14)
+11. **MEDIUM (Session 113+):** Check early season bootstrap coverage (check #15)
 
 ## Example Output
 
