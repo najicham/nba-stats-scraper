@@ -2237,3 +2237,67 @@ class MLFeatureStoreProcessor(
                 )
 
         return stats
+
+
+def main():
+    """Main entry point for command-line execution."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description='ML Feature Store V2 Processor')
+    parser.add_argument('--start-date', required=True, help='Start date (YYYY-MM-DD)')
+    parser.add_argument('--end-date', required=True, help='End date (YYYY-MM-DD)')
+    parser.add_argument('--force', action='store_true', help='Force reprocessing')
+    parser.add_argument('--backfill', action='store_true', help='Backfill mode')
+
+    args = parser.parse_args()
+
+    # Parse dates
+    start_date = datetime.strptime(args.start_date, '%Y-%m-%d').date()
+    end_date = datetime.strptime(args.end_date, '%Y-%m-%d').date()
+
+    # Process date range
+    current_date = start_date
+    while current_date <= end_date:
+        logger.info(f"Processing {current_date}...")
+
+        # Initialize processor
+        processor = MLFeatureStoreProcessor()
+
+        # Set options
+        processor.opts = {
+            'analysis_date': current_date,
+            'force': args.force,
+            'backfill': args.backfill
+        }
+
+        try:
+            # Extract data
+            logger.info("Starting data extraction...")
+            processor.extract_raw_data()
+
+            # Calculate features
+            logger.info("Starting feature calculation...")
+            processor.calculate_precompute()
+
+            # Save results
+            logger.info("Saving features to BigQuery...")
+            success = processor.save_precompute()
+
+            if success:
+                logger.info(f"✓ ML feature store processing complete for {current_date}!")
+                logger.info(f"  - Processed: {len(processor.transformed_data)} players")
+                logger.info(f"  - Failed: {len(processor.failed_entities)} players")
+            else:
+                logger.error(f"✗ Failed to save ML feature store for {current_date}")
+
+        except Exception as e:
+            logger.error(f"✗ Fatal error for {current_date}: {e}", exc_info=True)
+
+        # Move to next date
+        current_date += timedelta(days=1)
+
+    return 0
+
+
+if __name__ == '__main__':
+    exit(main())
