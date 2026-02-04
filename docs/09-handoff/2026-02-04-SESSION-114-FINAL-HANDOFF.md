@@ -444,13 +444,17 @@ LIMIT 5"
 
 ## My Recommendation for Next Session
 
-### Plan: Deploy & Validate (Don't Do Another Scan)
+### ⚠️ UPDATED: Do Final Comprehensive Scan, Then Deploy
 
-**Why:**
-1. Already did exhaustive audit (275 files checked)
-2. Found ALL DNP bugs (comprehensive search)
-3. Every day waiting = 28-point errors in production
-4. Can validate effectiveness post-deployment
+**User decision:** Run one more comprehensive scan (ALL issues, not just DNP) before deploying.
+
+**Next session prompt:** `docs/09-handoff/NEXT-SESSION-PROMPT.md`
+
+**Why scan again:**
+1. Extra safety before deploying critical fixes
+2. Check for ANY data quality issues (not just DNP)
+3. Session 114 found bugs Session 113 missed - can't be too careful
+4. Better to find issues now than in production
 
 **Steps:**
 1. Deploy both services (~10 min)
