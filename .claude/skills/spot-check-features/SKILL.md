@@ -753,6 +753,202 @@ ORDER BY month DESC
 - Verify deployment status (check #19)
 - Run full diagnostic suite (checks #9-15)
 
+### 21. DNP Players in Cache Rate (Session 115)
+
+**LOW:** Verify DNP player caching is within expected range.
+Session 115 investigation confirmed DNP caching is INTENTIONAL DESIGN, not a bug.
+
+**Context:** Phase 4's `player_daily_cache` caches ALL scheduled players (including DNPs). DNP filtering happens during L5/L10 calculation, not at the row-writing level. This is correct behavior.
+
+```sql
+-- Check percentage of cache records for DNP games
+SELECT
+  pdc.cache_date,
+  COUNT(*) as total_cached,
+  COUNT(DISTINCT CASE WHEN pgs.is_dnp = TRUE OR (pgs.points IS NULL AND pgs.minutes_played IS NULL) THEN pdc.player_lookup END) as dnp_players_cached,
+  ROUND(100.0 * COUNT(DISTINCT CASE WHEN pgs.is_dnp = TRUE OR (pgs.points IS NULL AND pgs.minutes_played IS NULL) THEN pdc.player_lookup END) / COUNT(DISTINCT pdc.player_lookup), 1) as dnp_pct
+FROM nba_precompute.player_daily_cache pdc
+LEFT JOIN nba_analytics.player_game_summary pgs
+  ON pdc.player_lookup = pgs.player_lookup
+  AND pdc.cache_date = pgs.game_date
+WHERE pdc.cache_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+GROUP BY pdc.cache_date
+ORDER BY pdc.cache_date DESC
+```
+
+**Expected (Session 115 Baseline):**
+- DNP players cached: 70-160 per day
+- DNP percentage: 15-30% of total players
+- This is NORMAL and CORRECT behavior
+
+**Interpretation:**
+- **10-30% DNP rate:** NORMAL - Expected mix of injuries, rest, roster decisions
+- **> 40% DNP rate:** WARNING - Unusually high injuries or schedule data issue
+- **> 60% DNP rate:** CRITICAL - Likely data quality problem
+
+**Why this is acceptable:**
+- Cache is for "players scheduled to play" not "players who actually played"
+- DNP status often determined after cache generation (injury reports)
+- L5/L10 calculations correctly exclude DNP games from historical data
+- Allows predictions for all scheduled players
+
+**If DNP rate is abnormally high (>40%):**
+- Check if there's a major injury outbreak affecting multiple teams
+- Verify roster/schedule data is accurate
+- Confirm DNP filtering in stats_aggregator.py is working (should see 99%+ match rate in check #16)
+
+### 22. Phase 3 vs Phase 4 Consistency (Session 115)
+
+**MEDIUM:** Verify Phase 3 analytics and Phase 4 cache agree on L5/L10 values.
+Session 115 found Phase 3/4 discrepancies due to stale Phase 3 data after deploying DNP fixes.
+
+**Context:** Both Phase 3 (`upcoming_player_game_context`) and Phase 4 (`player_daily_cache`) calculate L5/L10 averages. They should agree when both use current code with DNP fixes.
+
+```sql
+-- Compare Phase 3 analytics vs Phase 4 cache L5/L10 values
+SELECT
+  p3.game_date,
+  COUNT(*) as total_players,
+  -- Exact matches (within 0.1 points)
+  COUNTIF(ABS(p3.points_avg_last_5 - p4.points_avg_last_5) < 0.1) as exact_matches,
+  ROUND(100.0 * COUNTIF(ABS(p3.points_avg_last_5 - p4.points_avg_last_5) < 0.1) / COUNT(*), 1) as match_pct,
+  -- Small mismatches (0.1-3 points)
+  COUNTIF(ABS(p3.points_avg_last_5 - p4.points_avg_last_5) BETWEEN 0.1 AND 3.0) as small_mismatch,
+  -- Large mismatches (>5 points = likely stale data)
+  COUNTIF(ABS(p3.points_avg_last_5 - p4.points_avg_last_5) > 5.0) as large_mismatch
+FROM nba_analytics.upcoming_player_game_context p3
+JOIN nba_precompute.player_daily_cache p4
+  ON p3.player_lookup = p4.player_lookup
+  AND p3.game_date = p4.cache_date
+WHERE p3.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+GROUP BY p3.game_date
+ORDER BY p3.game_date DESC
+```
+
+**Expected (Post Session 115 Regeneration):**
+- Match rate: **>95%** (both using same DNP filtering logic)
+- Small mismatches: <5% (rounding or timing differences)
+- Large mismatches: <1% (rare edge cases)
+
+**Interpretation:**
+- **>95% match:** EXCELLENT - Both phases synchronized
+- **90-95% match:** GOOD - Minor discrepancies, acceptable
+- **<90% match:** WARNING - Possible stale data or code drift
+- **Large mismatches >5%:** CRITICAL - Stale data or algorithm mismatch
+
+**Root Causes of Mismatches:**
+1. **Stale Phase 3 data:** Generated before DNP fix deployment (Session 115)
+2. **Code drift:** Phase 3 and Phase 4 have different DNP filtering logic (should not happen)
+3. **Timing:** Phase 3 generated at different time than Phase 4 for same date
+
+**If large mismatches found:**
+```sql
+-- Get specific examples to investigate
+SELECT
+  p3.player_lookup,
+  p3.game_date,
+  ROUND(p3.points_avg_last_5, 1) as phase3_l5,
+  ROUND(p4.points_avg_last_5, 1) as phase4_l5,
+  ROUND(ABS(p3.points_avg_last_5 - p4.points_avg_last_5), 1) as diff
+FROM nba_analytics.upcoming_player_game_context p3
+JOIN nba_precompute.player_daily_cache p4
+  ON p3.player_lookup = p4.player_lookup
+  AND p3.game_date = p4.cache_date
+WHERE p3.game_date = CURRENT_DATE() - 1
+  AND ABS(p3.points_avg_last_5 - p4.points_avg_last_5) > 5.0
+ORDER BY diff DESC
+LIMIT 10
+```
+
+**Resolution:**
+- If stale data: Regenerate Phase 3 `upcoming_player_game_context` for affected dates
+- If code drift: Verify both phases have commit 981ff460 (Session 114 DNP fix)
+- If timing: Check if Phase 3 processes triggered for today's games
+
+### 23. DNP Filtering Validation (Session 115)
+
+**MEDIUM:** Verify L5/L10 calculations properly exclude DNP games.
+Session 114 fixed critical bug where DNP games polluted averages (e.g., Jokic: 6.2 → 34.0).
+
+**Context:** For players with recent DNPs, verify the L5/L10 averages only include games where they actually played.
+
+```sql
+-- For star players with recent DNPs, validate L5 calculation
+WITH player_dnp_history AS (
+  SELECT
+    player_lookup,
+    game_date,
+    points,
+    minutes_played,
+    CASE
+      WHEN points IS NULL OR (points = 0 AND minutes_played IS NULL) THEN 1
+      ELSE 0
+    END as is_dnp,
+    ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as game_num
+  FROM nba_analytics.player_game_summary
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 15 DAY)
+),
+players_with_dnp AS (
+  SELECT DISTINCT player_lookup
+  FROM player_dnp_history
+  WHERE game_num <= 10  -- DNP in last 10 games
+    AND is_dnp = 1
+),
+manual_l5 AS (
+  SELECT
+    pdh.player_lookup,
+    ROUND(AVG(CASE WHEN is_dnp = 0 THEN points END), 1) as expected_l5,
+    COUNT(CASE WHEN is_dnp = 0 THEN 1 END) as games_played_in_l5
+  FROM player_dnp_history pdh
+  WHERE pdh.game_num BETWEEN 2 AND 6  -- Last 5 games (excluding current)
+  GROUP BY pdh.player_lookup
+  HAVING COUNT(CASE WHEN is_dnp = 1 THEN 1 END) > 0  -- Only players with DNPs
+)
+SELECT
+  pdc.player_lookup,
+  pdc.cache_date,
+  ROUND(pdc.points_avg_last_5, 1) as cache_l5,
+  m.expected_l5,
+  m.games_played_in_l5,
+  ROUND(ABS(pdc.points_avg_last_5 - m.expected_l5), 1) as diff
+FROM nba_precompute.player_daily_cache pdc
+JOIN manual_l5 m ON pdc.player_lookup = m.player_lookup
+WHERE pdc.cache_date = CURRENT_DATE() - 1
+  AND m.games_played_in_l5 BETWEEN 3 AND 5  -- Valid sample size
+ORDER BY diff DESC
+LIMIT 20
+```
+
+**Expected (Post Session 114 Fix):**
+- All diff < 1.0 (rounding tolerance)
+- No systematic bias for DNP players
+- Games counted matches actual games played (not including DNPs)
+
+**Interpretation:**
+- **diff < 1.0:** EXCELLENT - DNP filtering working correctly
+- **diff 1.0-3.0:** ACCEPTABLE - May be rounding or window edge cases
+- **diff > 3.0:** WARNING - Investigate specific player
+- **diff > 10.0:** CRITICAL - DNP bug may have recurred
+
+**Example of correct DNP filtering (Session 114):**
+```
+Nikola Jokic last 5 games:
+- Game 1: 35 points (played) ✅
+- Game 2: DNP (excluded) ❌
+- Game 3: 33 points (played) ✅
+- Game 4: DNP (excluded) ❌
+- Game 5: 34 points (played) ✅
+
+L5 average = (35 + 33 + 34) / 3 = 34.0 ✅ CORRECT
+NOT (35 + 0 + 33 + 0 + 34) / 5 = 20.4 ❌ WRONG (old bug)
+```
+
+**If DNP filtering errors found:**
+- Verify stats_aggregator.py has lines 27-36 DNP filter (commit 981ff460)
+- Check if deployment drift occurred (use check #19)
+- Verify player_stats.py has lines 163-172 DNP filter
+- Regenerate affected dates with correct code
+
 ## Pre-Training Checklist
 
 Before running `/model-experiment`:
@@ -771,24 +967,27 @@ Before running `/model-experiment`:
 7. **CRITICAL (Session 113+):** Verify no DNP pollution in Phase 4 cache (check #12)
 8. **CRITICAL (Session 113+):** ML feature store vs cache match rate >95% (check #16)
 9. **CRITICAL (Session 113+):** Check team pace outliers (check #13)
-10. **HIGH (Session 113+):** Verify no DNP players in cache (check #14)
-11. **NEW (Session 113):** Validate L5/L10 calculations match manual (DNP handling check #9)
-12. **NEW (Session 113):** Check for unmarked DNPs in source data (check #10)
+10. **MEDIUM (Session 115):** DNP players in cache rate 15-30% expected (check #21) - caching DNPs is intentional
+11. **MEDIUM (Session 115):** Phase 3 vs Phase 4 consistency >95% match (check #22)
+12. **MEDIUM (Session 115):** DNP filtering validation - verify L5/L10 exclude DNPs (check #23)
+13. **NEW (Session 113):** Validate L5/L10 calculations match manual (DNP handling check #9)
+14. **NEW (Session 113):** Check for unmarked DNPs in source data (check #10)
 
 **Data Quality - Early Season & Coverage:**
-13. **MEDIUM (Session 113+):** Check early season bootstrap coverage (check #15)
-14. **MEDIUM (Session 113+):** Shot zone dynamic threshold effectiveness (check #17)
+15. **MEDIUM (Session 113+):** Check early season bootstrap coverage (check #15)
+16. **MEDIUM (Session 113+):** Shot zone dynamic threshold effectiveness (check #17)
 
 **Model Training:**
-15. Confirm model experiment includes tier bias analysis (built-in since Session 104)
-16. **MEDIUM (Session 113+):** Review monthly data quality trend (check #20) - ensure no regressions
+17. Confirm model experiment includes tier bias analysis (built-in since Session 104)
+18. **MEDIUM (Session 113+):** Review monthly data quality trend (check #20) - ensure no regressions
 
 **Recommended Order:**
 1. Run deployment check (#19) FIRST - fix drift before validation
 2. Run CRITICAL checks (#12, #16, #13, #7) - these catch major data issues
-3. Run HIGH checks (#14, #9, #10) - catch moderate issues
-4. Run MEDIUM checks (#15, #17, #20) - nice-to-have context
-5. Run standard quality checks (#3-6) - normal model prep
+3. Run MEDIUM checks (#21, #22, #23) - Session 115 new DNP architecture validation
+4. Run HIGH checks (#9, #10) - catch moderate issues
+5. Run MEDIUM checks (#15, #17, #20) - nice-to-have context
+6. Run standard quality checks (#3-6) - normal model prep
 
 ## Example Output
 
@@ -823,10 +1022,12 @@ Status: GOOD - Ready for model training
 
 ---
 *Created: Session 104*
-*Updated: Session 113+ (Added 11 new validation checks: #10-20)*
+*Updated: Session 115 (Added 3 new validation checks: #21-23)*
 *Major Updates:*
 - Session 113: DNP pollution detection (#10, #12, #14)
 - Session 113+: Early season bootstrap (#15), shot zone dynamic threshold (#17)
 - Session 113+: ML feature vs cache match rate (#16), silent write failures (#18)
 - Session 113+: Deployment drift pre-check (#19), monthly quality trends (#20)
+- **Session 115: DNP caching architecture validation (#21), Phase 3/4 consistency (#22), DNP filtering validation (#23)**
+- **Session 115 Key Finding:** DNP players in cache is INTENTIONAL design (not a bug) - filtering happens during aggregation
 *Part of: Data Quality & Model Experiment Infrastructure*
