@@ -170,6 +170,9 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
             if primary_signal_data:
                 _send_signal_slack_alert(primary_signal_data)
 
+                # Session 113: Send daily optimal picks notifications (Slack, Email, SMS)
+                _send_optimal_picks_notification(game_date)
+
         return {
             'success': True,
             'systems_processed': rows_affected,
@@ -220,6 +223,48 @@ def _send_signal_slack_alert(signal_data: dict) -> bool:
     except Exception as e:
         logger.warning(f"Failed to send Slack signal alert (non-fatal): {e}")
         return False
+
+
+def _send_optimal_picks_notification(game_date: str) -> dict:
+    """
+    Send daily optimal picks via Slack, Email, and SMS.
+
+    Session 113: Integrated with signal calculation for automated daily picks.
+
+    Sends picks for optimal scenarios:
+    - optimal_over (87.3% HR)
+    - optimal_under (70.7% HR)
+    - ultra_high_edge_over (88.5% HR)
+
+    Args:
+        game_date: Date to send picks for (YYYY-MM-DD)
+
+    Returns:
+        dict with success status: {'slack': bool, 'email': bool, 'sms': bool}
+    """
+    try:
+        from shared.notifications.subset_picks_notifier import SubsetPicksNotifier
+
+        notifier = SubsetPicksNotifier()
+
+        # Send notifications for optimal scenarios
+        results = notifier.send_daily_notifications(
+            subset_id='v9_high_edge_top5',  # Default subset
+            game_date=game_date,
+            send_slack=True,
+            send_email=True,
+            send_sms=True
+        )
+
+        logger.info(f"Optimal picks notification sent for {game_date}: {results}")
+        return results
+
+    except ImportError as e:
+        logger.debug(f"Subset picks notifier not available: {e}")
+        return {'slack': False, 'email': False, 'sms': False}
+    except Exception as e:
+        logger.warning(f"Failed to send optimal picks notification (non-fatal): {e}")
+        return {'slack': False, 'email': False, 'sms': False}
 
 
 def get_daily_signal(game_date: str, system_id: str = 'catboost_v9') -> Optional[dict]:
