@@ -190,8 +190,13 @@ def load_train_data(client, start, end, min_quality_score=70):
 
     Session 104: Added quality filter to prevent training on bad data.
     Session 107: Now loads feature_names for safe name-based extraction.
+    Session 107: Added filter to exclude bad default records (L5=10.0 when L10>15).
     """
     quality_filter = f"AND mf.feature_quality_score >= {min_quality_score}" if min_quality_score > 0 else ""
+
+    # Session 107: Exclude records where pts_avg_last_5 is default 10.0 but pts_avg_last_10
+    # shows the player should be higher. These are cold start errors (only 15 records total).
+    bad_default_filter = "AND NOT (mf.features[OFFSET(0)] = 10.0 AND mf.features[OFFSET(1)] > 15)"
 
     query = f"""
     SELECT mf.features, mf.feature_names, pgs.points as actual_points
@@ -203,6 +208,7 @@ def load_train_data(client, start, end, min_quality_score=70):
       AND pgs.points IS NOT NULL AND pgs.minutes_played > 0
       AND mf.data_source NOT IN ('phase4_partial', 'early_season')
       {quality_filter}
+      {bad_default_filter}
     """
     return client.query(query).to_dataframe()
 

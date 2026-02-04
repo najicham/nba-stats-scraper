@@ -213,6 +213,66 @@ Based on Session 103 investigation, model bias occurs when:
 - Filter training data to quality_score >= 70
 - Consider separate models per tier or tier-aware weighting
 
+### 8. Full Season Audit (Session 107)
+
+**Run this to find ALL bad records in the entire season:**
+
+```sql
+-- FULL SEASON AUDIT: Find all potentially bad records
+SELECT
+  'Bad Default (L5=10, L10>15)' as issue_type,
+  COUNT(*) as records,
+  MIN(game_date) as first_date,
+  MAX(game_date) as last_date
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= '2025-11-01'
+  AND features[OFFSET(0)] = 10.0
+  AND features[OFFSET(1)] > 15
+
+UNION ALL
+
+SELECT
+  'Zero fatigue_score' as issue_type,
+  COUNT(*) as records,
+  MIN(game_date) as first_date,
+  MAX(game_date) as last_date
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= '2025-11-01'
+  AND features[OFFSET(5)] = 0.0
+
+UNION ALL
+
+SELECT
+  'L5 much higher than L10 (>10 diff)' as issue_type,
+  COUNT(*) as records,
+  MIN(game_date) as first_date,
+  MAX(game_date) as last_date
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= '2025-11-01'
+  AND (features[OFFSET(0)] - features[OFFSET(1)]) > 10
+
+ORDER BY records DESC
+```
+
+**Expected results (as of Session 107 audit):**
+- Bad Default: ~15 records (Nov 4-9 cold start + rare late season)
+- Zero fatigue: 0 (would indicate bug)
+- L5 > L10: ~5 (usually legitimate hot streaks)
+
+**If Bad Default > 20 or Zero fatigue > 0, investigate immediately!**
+
+**Get details on bad records:**
+```sql
+SELECT game_date, player_lookup,
+  ROUND(features[OFFSET(0)], 1) as pts_avg_l5,
+  ROUND(features[OFFSET(1)], 1) as pts_avg_l10,
+  ROUND(features[OFFSET(2)], 1) as pts_avg_season
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= '2025-11-01'
+  AND features[OFFSET(0)] = 10.0 AND features[OFFSET(1)] > 15
+ORDER BY game_date
+```
+
 ## Pre-Training Checklist
 
 Before running `/model-experiment`:
