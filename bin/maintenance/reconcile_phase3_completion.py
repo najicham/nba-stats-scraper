@@ -22,7 +22,7 @@ Usage:
 
 import argparse
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict
 from google.cloud import firestore
 
@@ -119,7 +119,7 @@ def reconcile_completion(days_back: int = 7, fix: bool = False, verbose: bool = 
                     update_data = {
                         '_completed_count': actual,
                         '_last_update': firestore.SERVER_TIMESTAMP,
-                        '_reconciliation_fix': datetime.now(tz=firestore.SERVER_TIMESTAMP.tzinfo).isoformat()
+                        '_reconciliation_fix': datetime.now(tz=timezone.utc).isoformat()
                     }
 
                     # Trigger if complete but not triggered

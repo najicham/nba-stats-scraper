@@ -32,6 +32,7 @@ CLOUD_FUNCTIONS = [
 # (based on what __init__.py imports)
 REQUIRED_VALIDATION_SYMLINKS = [
     'phase3_data_quality_check.py',
+    'scraper_config_validator.py',  # Added Session 117 - required by __init__.py
     # Add more as needed when new files are added to shared/validation/
 ]
 
