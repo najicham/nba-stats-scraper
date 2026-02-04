@@ -1839,7 +1839,9 @@ class PlayerGameSummaryProcessor(
             # Parse minutes
             # Use 'is not None' to handle 0.0 correctly (0 minutes is valid, not missing)
             minutes_decimal = self._parse_minutes_to_decimal(row['minutes'])
-            minutes_int = int(round(minutes_decimal)) if minutes_decimal is not None else None
+            # Session 109: Preserve decimal precision (schema is NUMERIC(5,1))
+            # Round to 1 decimal place instead of rounding to integer
+            minutes_int = round(minutes_decimal, 1) if minutes_decimal is not None else None
 
             # Parse plus/minus
             plus_minus_int = self._parse_plus_minus(row['plus_minus'])
@@ -2465,7 +2467,8 @@ class PlayerGameSummaryProcessor(
 
                 # Parse minutes
                 minutes_decimal = self._parse_minutes_to_decimal(row['minutes'])
-                minutes_int = int(round(minutes_decimal)) if minutes_decimal else None
+                # Session 109: Preserve decimal precision (schema is NUMERIC(5,1))
+                minutes_int = round(minutes_decimal, 1) if minutes_decimal else None
 
                 # Parse plus/minus
                 plus_minus_int = self._parse_plus_minus(row['plus_minus'])
