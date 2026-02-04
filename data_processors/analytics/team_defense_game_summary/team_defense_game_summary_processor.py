@@ -507,7 +507,27 @@ class TeamDefenseGameSummaryProcessor(
         
         try:
             df = self.bq_client.query(query).to_dataframe()
-            logger.info(f"Extracted {len(df)} opponent offense records from nbac_team_boxscore")
+
+            # ===== Quality validation (Session 118) =====
+            if df is None or df.empty:
+                logger.info("No opponent offense data returned from nbac_team_boxscore")
+                return pd.DataFrame()
+
+            # Filter out invalid rows (0 values = placeholder/incomplete data)
+            valid_mask = (df['points_allowed'] > 0) & (df['opp_fg_attempts'] > 0)
+            invalid_rows = df[~valid_mask]
+
+            if len(invalid_rows) > 0:
+                invalid_teams = invalid_rows['defending_team_abbr'].tolist()
+                logger.warning(
+                    f"⚠️  QUALITY CHECK (DEFENSE): Found {len(invalid_rows)} teams with invalid opponent data "
+                    f"(0 points allowed or 0 opponent FGA): {invalid_teams}. Triggering fallback to reconstruction."
+                )
+                # Return empty to trigger fallback - ensures ALL teams come from same source
+                return pd.DataFrame()
+            # ===== END quality validation =====
+
+            logger.info(f"✅ Extracted {len(df)} valid opponent offense records from nbac_team_boxscore")
             return df
         except Exception as e:
             logger.error(f"Failed to extract opponent offense: {e}")
