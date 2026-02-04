@@ -1,5 +1,34 @@
 # Session 109 Handoff - 2026-02-03
 
+## 🚨 START HERE - Next Session Action Items
+
+**CRITICAL: Complete these after V10 retraining finishes**
+
+- [ ] **Deploy 4 stale services** (~20-30 min)
+  ```bash
+  ./bin/deploy-service.sh nba-phase4-precompute-processors
+  ./bin/deploy-service.sh prediction-worker
+  ./bin/deploy-service.sh prediction-coordinator
+  ./bin/deploy-service.sh nba-phase3-analytics-processors
+  ./bin/whats-deployed.sh  # Verify
+  ```
+
+- [ ] **Verify deployment drift resolved**
+  ```bash
+  ./bin/check-deployment-drift.sh --verbose
+  # Should show: 0 services with drift
+  ```
+
+- [ ] **Compare V9 vs V10 model performance**
+  - V9 baseline: 65.0% hit rate @ 3+ edge
+  - V10 target: 66-67% hit rate @ 3+ edge
+
+- [ ] **Optional: Integrate monitoring into /validate-daily**
+  - Add `bin/queries/daily_feature_completeness.sql` to daily checks
+  - Alert if pct_37_features < 95% or alert_status != 'OK'
+
+---
+
 ## Session Summary
 
 Achieved 100% ML feature store data completeness (37 features) for the entire training period (Nov 2, 2025 - Jan 31, 2026).
