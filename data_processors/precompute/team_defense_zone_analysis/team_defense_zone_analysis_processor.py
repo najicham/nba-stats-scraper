@@ -946,11 +946,21 @@ class TeamDefenseZoneAnalysisProcessor(
 
             games_count = len(team_data)
 
-            # Validate sufficient games
-            if games_count < self.min_games_required:
+            # Validate sufficient games (dynamic threshold for early season)
+            min_games = self._calculate_minimum_games_required(
+                self.opts['analysis_date'],
+                self.season_start_date
+            )
+
+            if games_count < min_games:
+                days_into_season = (self.opts['analysis_date'] - self.season_start_date).days
+                logger.info(
+                    f"Team {team_abbr}: {games_count} games < {min_games} required "
+                    f"(day {days_into_season} of season)"
+                )
                 return (False, {
                     'entity_id': team_abbr,
-                    'reason': f"Only {games_count} games, need {self.min_games_required}",
+                    'reason': f"Only {games_count} games, need {min_games}",
                     'category': 'INSUFFICIENT_DATA',
                     'can_retry': True
                 })
@@ -1241,7 +1251,48 @@ class TeamDefenseZoneAnalysisProcessor(
             return 'medium'
         else:
             return 'low'
-    
+
+    def _calculate_minimum_games_required(self, analysis_date: date, season_start_date: date) -> int:
+        """
+        Calculate minimum games required based on days into season.
+
+        Session 114 Enhancement: During early season (first 21 days), use a lower
+        threshold that gradually increases. This allows team defense analysis when
+        teams have 5-14 games, while maintaining full 15-game requirement after
+        the bootstrap period.
+
+        This fixes the same blocking pattern discovered in shot_zone (Session 113),
+        where hard game requirements prevented all early season processing.
+
+        Args:
+            analysis_date: Date being analyzed
+            season_start_date: Season start date
+
+        Returns:
+            int: Minimum games required (5-15 based on season progress)
+
+        Examples:
+            Day 3: min 5 games
+            Day 6: min 7 games
+            Day 9: min 8 games
+            Day 12: min 9 games
+            Day 15: min 10 games
+            Day 18: min 11 games
+            Day 21: min 14 games
+            Day 22+: min 15 games (full requirement)
+        """
+        days_into_season = (analysis_date - season_start_date).days
+
+        if days_into_season <= 21:  # Early season window
+            # Gradual increase: 5 games at start, approaching 15 by day 21
+            # Formula: 5 + (days / 3) capped at 14
+            dynamic_min = min(5 + (days_into_season // 3), 14)
+            logger.debug(f"Early season (day {days_into_season}): dynamic min_games = {dynamic_min}")
+            return dynamic_min
+        else:
+            # After day 21, require full 15 games
+            return self.min_games_required
+
     def _write_placeholder_rows(self, dep_check: dict) -> None:
         """
         Write placeholder rows for early season.

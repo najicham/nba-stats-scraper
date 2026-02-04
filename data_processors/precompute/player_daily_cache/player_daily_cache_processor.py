@@ -143,7 +143,7 @@ class PlayerDailyCacheProcessor(
         
         # Data requirements
         self.min_games_required = 10  # Preferred minimum
-        self.absolute_min_games = 5   # Absolute minimum to write record
+        self.absolute_min_games = 3   # Absolute minimum to write record (Session 114: lowered from 5 to match shot_zone)
 
         # BigQuery client already initialized by PrecomputeProcessorBase with pooling
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
