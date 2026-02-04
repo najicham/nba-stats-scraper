@@ -71,6 +71,10 @@ FEATURE_SPECS = [
     (30, "games_vs_opponent", 0, 50, False, False, None),
     (31, "minutes_avg_last_10", 0, 48, False, True, 0.8),
     (32, "ppm_avg_last_10", 0, 2, False, True, 0.8),
+    (33, "dnp_rate", 0, 1, False, False, None),
+    (34, "pts_slope_10g", -5, 5, False, False, None),
+    (35, "pts_vs_season_zscore", -4, 4, False, False, None),
+    (36, "breakout_flag", 0, 1, False, False, None),
 ]
 
 # Known default values to check for

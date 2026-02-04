@@ -199,8 +199,8 @@ class MLFeatureStoreValidator(BaseValidator):
           AND game_date <= '{end_date}'
           AND (
             features IS NULL OR
-            ARRAY_LENGTH(features) != 33 OR
-            feature_count != 33
+            ARRAY_LENGTH(features) != 37 OR
+            feature_count != 37
           )
         ORDER BY game_date DESC
         LIMIT 50
@@ -219,7 +219,7 @@ class MLFeatureStoreValidator(BaseValidator):
                 layer="bigquery",
                 passed=passed,
                 severity="critical" if not passed else "info",
-                message=f"Found {len(invalid)} records with incorrect feature count (expected 33)" if not passed else "All feature arrays have 33 elements",
+                message=f"Found {len(invalid)} records with incorrect feature count (expected 37)" if not passed else "All feature arrays have 37 elements",
                 affected_count=len(invalid),
                 affected_items=invalid[:10],
                 execution_duration=duration
@@ -251,8 +251,8 @@ class MLFeatureStoreValidator(BaseValidator):
             result = list(self._execute_query(query, start_date, end_date))
             versions = [(row.feature_version, row.record_count) for row in result]
 
-            # Should primarily be v2_33features
-            expected_version = 'v2_33features'
+            # Should primarily be v2_37features
+            expected_version = 'v2_37features'
             has_expected = any(v[0] == expected_version for v in versions)
             passed = has_expected and len(versions) <= 2
 

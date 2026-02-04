@@ -49,8 +49,8 @@ CACHE_TABLE = "nba_precompute.player_daily_cache"
 PREDICTIONS_TABLE = "nba_predictions.player_prop_predictions"
 
 # Expected feature array length
-# Note: Changed from 33 to 34 on 2026-01-29 after new feature was added
-EXPECTED_FEATURE_COUNT = 34
+# Note: Changed from 33 to 34 on 2026-01-29, then to 37 on 2026-02-03 after trajectory features added
+EXPECTED_FEATURE_COUNT = 37
 
 # Thresholds
 L5_L10_MATCH_THRESHOLD = 95.0  # Minimum % of records that should match cache
@@ -71,6 +71,10 @@ FEATURE_BOUNDS = {
     17: (0, 1, "is_home"),            # Binary
     21: (0, 100, "season_games"),     # Season games played
     31: (0, 60, "line_value"),        # Prop line value
+    33: (0, 1, "dnp_rate"),           # DNP rate (0-1)
+    34: (-5, 5, "pts_slope_10g"),     # Points slope over 10 games
+    35: (-4, 4, "pts_vs_season_zscore"),  # Z-score vs season avg
+    36: (0, 1, "breakout_flag"),      # Breakout flag (binary)
 }
 
 # Prop line thresholds

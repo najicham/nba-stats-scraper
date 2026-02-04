@@ -29,7 +29,7 @@ SELECT
   COUNTIF(features[OFFSET(25)] > 0) as has_vegas_line
 FROM nba_predictions.ml_feature_store_v2
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-  AND feature_count >= 33
+  AND feature_count >= 37
 GROUP BY game_date, data_source
 ORDER BY game_date DESC"
 ```
@@ -51,7 +51,7 @@ SELECT
   ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER(), 1) as pct
 FROM nba_predictions.ml_feature_store_v2
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
-  AND feature_count >= 33
+  AND feature_count >= 37
 GROUP BY 1
 ORDER BY 1
 ```
@@ -68,7 +68,7 @@ SELECT
   ROUND(100.0 * COUNTIF(features[OFFSET(25)] > 0) / COUNT(*), 1) as vegas_pct
 FROM nba_predictions.ml_feature_store_v2
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-  AND feature_count >= 33
+  AND feature_count >= 37
 GROUP BY 1
 ORDER BY 1 DESC
 ```
@@ -84,7 +84,7 @@ SELECT
   ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER(), 1) as pct
 FROM nba_predictions.ml_feature_store_v2
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
-  AND feature_count >= 33
+  AND feature_count >= 37
 GROUP BY 1
 ORDER BY records DESC
 ```
@@ -115,7 +115,7 @@ SELECT
   COUNT(*) as total
 FROM nba_predictions.ml_feature_store_v2
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
-  AND feature_count >= 33
+  AND feature_count >= 37
 GROUP BY 1
 ORDER BY 1 DESC
 ```
