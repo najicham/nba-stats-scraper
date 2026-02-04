@@ -273,6 +273,128 @@ WHERE game_date >= '2025-11-01'
 ORDER BY game_date
 ```
 
+### 9. DNP Handling Validation (Session 113)
+
+**CRITICAL:** Verify L5/L10 calculations exclude DNP games correctly.
+Session 113 discovered Phase 3 fallback was converting NULL points to 0, causing
+10-25 point errors for stars with frequent DNPs (Kawhi, Jokic, Curry).
+
+```sql
+-- Validate L5 calculation matches manual for star players
+WITH manual_calc AS (
+  SELECT
+    player_lookup,
+    game_date,
+    ROUND(AVG(points) OVER (
+      PARTITION BY player_lookup
+      ORDER BY game_date
+      ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+    ), 1) as manual_l5
+  FROM nba_analytics.player_game_summary
+  WHERE game_date >= CURRENT_DATE() - 30
+    AND points IS NOT NULL  -- Exclude DNPs
+),
+feature_values AS (
+  SELECT
+    player_lookup,
+    game_date,
+    ROUND(features[OFFSET(0)], 1) as ml_l5,
+    data_source
+  FROM nba_predictions.ml_feature_store_v2
+  WHERE game_date >= CURRENT_DATE() - 7
+)
+SELECT
+  f.player_lookup,
+  f.game_date,
+  f.ml_l5,
+  m.manual_l5,
+  ROUND(ABS(f.ml_l5 - m.manual_l5), 1) as diff,
+  f.data_source
+FROM feature_values f
+JOIN manual_calc m
+  ON f.player_lookup = m.player_lookup
+  AND f.game_date = m.game_date
+WHERE ABS(f.ml_l5 - m.manual_l5) > 3  -- Flag >3pt errors
+ORDER BY diff DESC
+LIMIT 20;
+```
+
+**Expected:** All diff < 1.0 after Session 113 fix.
+**If diff > 3:** DNP bug may have recurred - check feature_extractor.py Phase 3 fallback.
+
+### 10. Unmarked DNP Detection (Session 113)
+
+**Data quality issue:** Some games have NULL points but is_dnp = NULL (should be TRUE).
+These pollute L5/L10 calculations if not properly filtered.
+
+```sql
+-- Find games that look like DNPs but aren't marked
+SELECT
+  game_date,
+  player_lookup,
+  points,
+  minutes_played,
+  is_dnp,
+  dnp_reason,
+  team_abbr
+FROM nba_analytics.player_game_summary
+WHERE game_date >= CURRENT_DATE() - 30
+  AND (
+    (points = 0 AND minutes_played IS NULL AND is_dnp IS NULL)
+    OR (points IS NULL AND minutes_played IS NULL AND is_dnp IS NULL)
+  )
+ORDER BY game_date DESC
+LIMIT 50;
+```
+
+**Expected:** 0 records (all DNPs properly marked).
+**If found:** Upstream data issue - notify scraper team to fix is_dnp marking.
+
+### 11. Player Daily Cache Reconciliation (Session 113)
+
+**Validate that player_daily_cache matches manual calculations.**
+
+```sql
+-- Spot check 10 random star players
+WITH star_sample AS (
+  SELECT DISTINCT player_lookup
+  FROM nba_precompute.player_daily_cache
+  WHERE cache_date = CURRENT_DATE() - 1
+    AND points_avg_last_5 > 20
+  ORDER BY RAND()
+  LIMIT 10
+),
+manual_calc AS (
+  SELECT
+    player_lookup,
+    ROUND(AVG(points), 1) as manual_l5
+  FROM (
+    SELECT
+      player_lookup,
+      points,
+      ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as rn
+    FROM nba_analytics.player_game_summary
+    WHERE game_date < CURRENT_DATE() - 1
+      AND points IS NOT NULL
+  )
+  WHERE rn <= 5
+  GROUP BY player_lookup
+)
+SELECT
+  c.player_lookup,
+  ROUND(c.points_avg_last_5, 1) as cache_l5,
+  m.manual_l5,
+  ROUND(ABS(c.points_avg_last_5 - m.manual_l5), 1) as diff
+FROM nba_precompute.player_daily_cache c
+JOIN manual_calc m ON c.player_lookup = m.player_lookup
+WHERE c.cache_date = CURRENT_DATE() - 1
+  AND c.player_lookup IN (SELECT player_lookup FROM star_sample)
+ORDER BY diff DESC;
+```
+
+**Expected:** All diff < 1.0
+**If diff > 3:** Bug in player_daily_cache StatsAggregator - investigate Phase 4 processor.
+
 ## Pre-Training Checklist
 
 Before running `/model-experiment`:
@@ -282,6 +404,8 @@ Before running `/model-experiment`:
 3. Verify Vegas bias by tier (expect stars under-predicted ~8pts)
 4. Check for unusual data source distribution (<5% partial)
 5. Confirm model experiment includes tier bias analysis (built-in since Session 104)
+6. **NEW (Session 113):** Validate L5/L10 calculations match manual (DNP handling check)
+7. **NEW (Session 113):** Check for unmarked DNPs in source data
 
 ## Example Output
 
@@ -316,4 +440,5 @@ Status: GOOD - Ready for model training
 
 ---
 *Created: Session 104*
+*Updated: Session 113 (Added DNP validation checks)*
 *Part of: Data Quality & Model Experiment Infrastructure*
