@@ -1281,12 +1281,25 @@ class FeatureExtractor:
             phase3_data['last_10_games'] = last_10_games
 
             # Calculate aggregations from games
+            # FIX (Session 113): Filter out DNPs (NULL points) BEFORE taking windows
+            # Bug was: (g.get('points') or 0) converted NULL to 0, polluting averages
+            # For star players with DNPs (Kawhi, Jokic), this caused 10-20 pt errors
             if last_10_games:
-                points_list = [(g.get('points') or 0) for g in last_10_games]
-                phase3_data['points_avg_last_10'] = sum(points_list) / len(points_list)
+                # Filter to only games where player actually played (points > 0)
+                played_games = [g for g in last_10_games if g.get('points') is not None and g.get('points') > 0]
 
-                if len(last_10_games) >= 5:
-                    phase3_data['points_avg_last_5'] = sum(points_list[:5]) / 5
+                if played_games:
+                    points_list = [g.get('points') for g in played_games]
+
+                    # L10: Use up to 10 actual games
+                    if len(played_games) >= 10:
+                        phase3_data['points_avg_last_10'] = sum(points_list[:10]) / 10
+                    elif len(played_games) > 0:
+                        phase3_data['points_avg_last_10'] = sum(points_list) / len(played_games)
+
+                    # L5: Use up to 5 actual games
+                    if len(played_games) >= 5:
+                        phase3_data['points_avg_last_5'] = sum(points_list[:5]) / 5
 
             season_stats = self._season_stats_lookup.get(player_lookup, {})
             phase3_data.update(season_stats)
@@ -1306,12 +1319,21 @@ class FeatureExtractor:
             phase3_data['last_10_games'] = last_10_games
 
             # Calculate aggregations from games
+            # FIX (Session 113): Filter out DNPs (NULL points) BEFORE taking windows
             if last_10_games:
-                phase3_data['points_avg_last_10'] = sum(g['points'] for g in last_10_games) / len(last_10_games)
+                # Filter to only games where player actually played (points > 0)
+                played_games = [g for g in last_10_games if g.get('points') is not None and g.get('points') > 0]
 
-                if len(last_10_games) >= 5:
-                    last_5 = last_10_games[:5]
-                    phase3_data['points_avg_last_5'] = sum(g['points'] for g in last_5) / 5
+                if played_games:
+                    # L10: Use up to 10 actual games
+                    if len(played_games) >= 10:
+                        phase3_data['points_avg_last_10'] = sum(g['points'] for g in played_games[:10]) / 10
+                    elif len(played_games) > 0:
+                        phase3_data['points_avg_last_10'] = sum(g['points'] for g in played_games) / len(played_games)
+
+                    # L5: Use up to 5 actual games
+                    if len(played_games) >= 5:
+                        phase3_data['points_avg_last_5'] = sum(g['points'] for g in played_games[:5]) / 5
 
             season_stats = self._query_season_stats(player_lookup, game_date)
             phase3_data.update(season_stats)
