@@ -210,13 +210,13 @@ class GameDataLoader:
             pgs.points,
             pgs.minutes_played as minutes,
             pgs.assists,
-            pgs.rebounds,
-            pgs.field_goals_made,
-            pgs.field_goals_attempted,
-            pgs.three_pointers_made,
-            pgs.three_pointers_attempted,
-            pgs.free_throws_made,
-            pgs.free_throws_attempted,
+            (pgs.offensive_rebounds + pgs.defensive_rebounds) as rebounds,
+            pgs.fg_makes as field_goals_made,
+            pgs.fg_attempts as field_goals_attempted,
+            pgs.three_pt_makes as three_pointers_made,
+            pgs.three_pt_attempts as three_pointers_attempted,
+            pgs.ft_makes as free_throws_made,
+            pgs.ft_attempts as free_throws_attempted,
             pgs.usage_rate
         FROM `{self.project_id}.nba_analytics.player_game_summary` pgs
         WHERE pgs.player_lookup IN UNNEST(@player_lookups)
