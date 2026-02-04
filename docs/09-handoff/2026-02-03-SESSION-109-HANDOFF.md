@@ -125,16 +125,47 @@ Now correctly validates all 37 features with proper bounds.
 
 ---
 
+## Deployment Drift ⚠️
+
+**4 services need redeployment** due to `shared/validation/` changes:
+
+| Service | Status | Impact |
+|---------|--------|--------|
+| nba-phase3-analytics-processors | STALE | Low - validation warnings only |
+| nba-phase4-precompute-processors | STALE | Low - validation warnings only |
+| prediction-coordinator | STALE | Low - validation warnings only |
+| prediction-worker | STALE | Low - validation warnings only |
+
+**Why not deployed now:** Another session working on model retraining (higher priority).
+
+**When to deploy:** After V10 retraining completes or next session.
+
+**Deploy commands:**
+```bash
+./bin/deploy-service.sh nba-phase4-precompute-processors
+./bin/deploy-service.sh prediction-worker
+./bin/deploy-service.sh prediction-coordinator
+./bin/deploy-service.sh nba-phase3-analytics-processors
+```
+
+**Risk:** Low - validators are defensive checks. Services already write 37-feature records correctly.
+
+---
+
 ## Next Steps
 
 ### Immediate (Next Session)
 
-1. **Retrain CatBoost V10** using complete 37-feature dataset
+1. **DEPLOY stale services** (20-30 min total)
+   - Run commands above after V10 retraining completes
+   - Verify with `./bin/whats-deployed.sh`
+
+2. **Retrain CatBoost V10** using complete 37-feature dataset (in progress in parallel session)
    - Use `ml/experiments/quick_retrain.py`
    - Training period: Nov 2, 2025 - Jan 31, 2026
    - Expect improved performance with trajectory features
 
-2. **Compare V9 vs V10 performance**
+3. **Compare V9 vs V10 performance**
    - V9: 33 features, 65.0% hit rate @ 3+ edge
    - V10: 37 features, expect 66-67% hit rate @ 3+ edge
 
