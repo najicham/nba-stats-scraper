@@ -48,6 +48,15 @@ from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import train_test_split
 import catboost as cb
 
+# Import canonical feature contract - SINGLE SOURCE OF TRUTH
+from shared.ml.feature_contract import (
+    V9_CONTRACT,
+    V9_FEATURE_NAMES,
+    FEATURE_DEFAULTS,
+    get_contract,
+    validate_all_contracts,
+)
+
 PROJECT_ID = "nba-props-platform"
 MODEL_OUTPUT_DIR = Path("models")
 
@@ -65,18 +74,8 @@ V9_BASELINE = {
     "bias_bench": 0.0,      # <5 points
 }
 
-FEATURES = [
-    "points_avg_last_5", "points_avg_last_10", "points_avg_season",
-    "points_std_last_10", "games_in_last_7_days",
-    "fatigue_score", "shot_zone_mismatch_score", "pace_score", "usage_spike_score",
-    "rest_advantage", "injury_risk", "recent_trend", "minutes_change",
-    "opponent_def_rating", "opponent_pace", "home_away", "back_to_back", "playoff_game",
-    "pct_paint", "pct_mid_range", "pct_three", "pct_free_throw",
-    "team_pace", "team_off_rating", "team_win_pct",
-    "vegas_points_line", "vegas_opening_line", "vegas_line_move", "has_vegas_line",
-    "avg_points_vs_opponent", "games_vs_opponent",
-    "minutes_avg_last_10", "ppm_avg_last_10",
-]
+# Use canonical feature names from contract - DO NOT DUPLICATE
+FEATURES = V9_FEATURE_NAMES
 
 
 def parse_args():
@@ -190,11 +189,12 @@ def load_train_data(client, start, end, min_quality_score=70):
             Set to 0 to disable quality filtering.
 
     Session 104: Added quality filter to prevent training on bad data.
+    Session 107: Now loads feature_names for safe name-based extraction.
     """
     quality_filter = f"AND mf.feature_quality_score >= {min_quality_score}" if min_quality_score > 0 else ""
 
     query = f"""
-    SELECT mf.features, pgs.points as actual_points
+    SELECT mf.features, mf.feature_names, pgs.points as actual_points
     FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
     JOIN `{PROJECT_ID}.nba_analytics.player_game_summary` pgs
       ON mf.player_lookup = pgs.player_lookup AND mf.game_date = pgs.game_date
@@ -230,6 +230,7 @@ def load_eval_data(client, start, end, line_source='draftkings'):
         bookmaker_filter = "bookmaker = 'BettingPros Consensus' AND bet_side = 'over'"
         line_col = "points_line"
 
+    # Session 107: Added feature_names for safe name-based extraction
     query = f"""
     WITH lines AS (
       SELECT game_date, player_lookup, {line_col} as line
@@ -238,7 +239,7 @@ def load_eval_data(client, start, end, line_source='draftkings'):
         AND game_date BETWEEN '{start}' AND '{end}'
       QUALIFY ROW_NUMBER() OVER (PARTITION BY game_date, player_lookup ORDER BY processed_at DESC) = 1
     )
-    SELECT mf.features, pgs.points as actual_points, l.line as vegas_line
+    SELECT mf.features, mf.feature_names, pgs.points as actual_points, l.line as vegas_line
     FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
     JOIN `{PROJECT_ID}.nba_analytics.player_game_summary` pgs
       ON mf.player_lookup = pgs.player_lookup AND mf.game_date = pgs.game_date
@@ -250,9 +251,47 @@ def load_eval_data(client, start, end, line_source='draftkings'):
     return client.query(query).to_dataframe()
 
 
-def prepare_features(df):
-    """Prepare feature matrix."""
-    X = pd.DataFrame([row[:33] for row in df['features'].tolist()], columns=FEATURES)
+def prepare_features(df, contract=V9_CONTRACT):
+    """
+    Prepare feature matrix using NAME-BASED extraction (not position-based).
+
+    Session 107: Changed from position slicing (row[:33]) to name-based extraction.
+    This is SAFE even if feature store column order changes.
+
+    Args:
+        df: DataFrame with 'features' and 'feature_names' columns
+        contract: ModelFeatureContract defining expected features (default V9)
+
+    Returns:
+        X: Feature DataFrame with columns in contract order
+        y: Target Series (actual_points)
+    """
+    rows = []
+    for _, row in df.iterrows():
+        feature_values = row['features']
+        feature_names = row['feature_names']
+
+        # Convert parallel arrays to dictionary
+        if len(feature_values) != len(feature_names):
+            min_len = min(len(feature_values), len(feature_names))
+            feature_values = feature_values[:min_len]
+            feature_names = feature_names[:min_len]
+
+        features_dict = dict(zip(feature_names, feature_values))
+
+        # Extract features BY NAME in contract order
+        row_data = {}
+        for name in contract.feature_names:
+            if name in features_dict and features_dict[name] is not None:
+                row_data[name] = float(features_dict[name])
+            elif name in FEATURE_DEFAULTS and FEATURE_DEFAULTS[name] is not None:
+                row_data[name] = float(FEATURE_DEFAULTS[name])
+            else:
+                row_data[name] = np.nan  # Will be filled by median
+
+        rows.append(row_data)
+
+    X = pd.DataFrame(rows, columns=contract.feature_names)
     X = X.fillna(X.median())
     y = df['actual_points'].astype(float)
     return X, y
@@ -321,6 +360,16 @@ def main():
     args = parse_args()
     dates = get_dates(args)
     exp_id = str(uuid.uuid4())[:8]
+
+    # Validate feature contract BEFORE doing anything (Session 107)
+    print("Validating feature contracts...")
+    try:
+        validate_all_contracts()
+        print(f"  Using {V9_CONTRACT.model_version} contract: {V9_CONTRACT.feature_count} features")
+    except Exception as e:
+        print(f"❌ Feature contract validation FAILED: {e}")
+        print("   Fix shared/ml/feature_contract.py before training!")
+        return
 
     # Compute actual day counts from dates
     train_start_dt = datetime.strptime(dates['train_start'], '%Y-%m-%d').date()
