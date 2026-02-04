@@ -148,6 +148,29 @@ git log -1 --format="%h"
 
 **Game Status:** 1=Scheduled, 2=In Progress, 3=Final
 
+## Phase 3 Orchestration Health
+
+### Daily Health Check
+```bash
+./bin/monitoring/phase3_health_check.sh
+```
+
+Validates:
+- Firestore completion accuracy (actual vs stored count)
+- Duplicate record detection (player_game_summary)
+- Scraper timing verification (>4 hours late)
+
+### Fix Completion Tracking Issues
+```bash
+# Report only (default)
+python bin/maintenance/reconcile_phase3_completion.py --days 7
+
+# Apply fixes
+python bin/maintenance/reconcile_phase3_completion.py --days 7 --fix
+```
+
+Use when Firestore completion tracking is out of sync with actual data.
+
 ## Essential Queries
 
 ### Check Predictions
