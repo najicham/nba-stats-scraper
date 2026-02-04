@@ -289,6 +289,14 @@ KeyError: 'GCP_PROJECT_ID'
 Environment variable X not found
 ```
 
+**CRITICAL WARNING:**
+
+**NEVER use `--set-env-vars` - it REPLACES all env vars (destructive)**
+
+**ALWAYS use `--update-env-vars` - it MERGES with existing vars (safe)**
+
+Session 106/107 incident: Using `--set-env-vars` to fix one env var wiped out all other env vars (GCP_PROJECT_ID, CATBOOST_V9_MODEL_PATH, PUBSUB_READY_TOPIC), causing worker crashes.
+
 **Solution:**
 ```bash
 # Check current env vars
@@ -296,9 +304,14 @@ gcloud run services describe SERVICE_NAME \
   --region=us-west2 \
   --format="yaml(spec.template.spec.containers[0].env)"
 
-# Set missing variables
+# Add or update variables (SAFE - preserves existing vars)
 gcloud run services update SERVICE_NAME \
-  --set-env-vars="GCP_PROJECT_ID=nba-props-platform,OTHER_VAR=value" \
+  --update-env-vars="GCP_PROJECT_ID=nba-props-platform,OTHER_VAR=value" \
+  --region=us-west2
+
+# Remove specific variables (if needed)
+gcloud run services update SERVICE_NAME \
+  --remove-env-vars="OBSOLETE_VAR" \
   --region=us-west2
 
 # Set secrets
@@ -306,6 +319,14 @@ gcloud run services update SERVICE_NAME \
   --set-secrets="SECRET_NAME=secret-manager-name:latest" \
   --region=us-west2
 ```
+
+**Flag Comparison:**
+
+| Flag | Behavior | Use Case | Risk |
+|------|----------|----------|------|
+| `--update-env-vars` | Merges with existing vars | Adding/updating vars ✅ | **Safe** |
+| `--remove-env-vars` | Removes specific vars | Cleaning up old vars | Medium |
+| `--set-env-vars` | **REPLACES all vars** | Starting from scratch | **HIGH - Never use!** |
 
 ---
 

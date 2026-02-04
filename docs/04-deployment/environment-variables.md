@@ -170,14 +170,21 @@ PCF_WORKERS=12 python scripts/run_processor.py --processor PCF --start-date 2024
 
 You can configure worker counts at deployment time using the `gcloud` CLI or Cloud Console.
 
+**CRITICAL: Always use `--update-env-vars` instead of `--set-env-vars`**
+
+- `--update-env-vars` = **SAFE** - Merges with existing variables
+- `--set-env-vars` = **DANGEROUS** - Replaces ALL variables (can wipe out critical vars like GCP_PROJECT_ID)
+
+See Session 106/107 incident where `--set-env-vars` caused production outage by wiping environment variables.
+
 #### Option 1: Command Line (gcloud)
 
 ```bash
-# Deploy with environment variables
+# Update environment variables (SAFE - preserves existing vars)
 gcloud run deploy nba-stats-scraper \
   --image gcr.io/YOUR_PROJECT/nba-stats-scraper:latest \
   --region us-central1 \
-  --set-env-vars="PARALLELIZATION_WORKERS=4,MLFS_WORKERS=2,PDC_WORKERS=3"
+  --update-env-vars="PARALLELIZATION_WORKERS=4,MLFS_WORKERS=2,PDC_WORKERS=3"
 ```
 
 #### Option 2: YAML Configuration

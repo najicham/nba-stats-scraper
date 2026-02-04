@@ -196,6 +196,7 @@ WHERE game_date = CURRENT_DATE()
 | Issue | Symptom | Fix |
 |-------|---------|-----|
 | Deployment drift | Old bugs recurring | `./bin/deploy-service.sh SERVICE` |
+| **Env var drift** | **Missing env vars, service crashes** | **NEVER use `--set-env-vars` (wipes all vars), ALWAYS use `--update-env-vars`** |
 | Schema mismatch | "Invalid field" error | `python .pre-commit-hooks/validate_schema_fields.py` |
 | Partition filter | 400 error on query | Add `WHERE game_date >= ...` |
 | Silent BQ write fail | 0 records written | Use `{project}.{dataset}.{table}` pattern |
