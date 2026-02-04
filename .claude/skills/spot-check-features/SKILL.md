@@ -542,21 +542,253 @@ After implementing dynamic threshold (commit e06043b9), expected coverage:
 
 **Context:** Session 113+ investigation found ML feature store failures on Nov 4-6 due to missing shot_zone data. Root cause: Hard 10-game requirement when players had only 4-7 games. Fixed with dynamic threshold that adapts to days into season while maintaining quality flags.
 
+### 16. ML Feature Store vs Cache Match Rate (Session 113+)
+
+**CRITICAL:** Verify L5 values in ml_feature_store_v2 match player_daily_cache.
+Session 113+ discovered massive mismatch (44% in November) due to DNP pollution in cache.
+
+```sql
+-- Check match rate between ML feature store and Phase 4 cache
+SELECT
+  DATE_TRUNC(c.cache_date, MONTH) as month,
+  COUNT(*) as total_records,
+  COUNTIF(ABS(c.points_avg_last_5 - m.features[OFFSET(0)]) < 0.1) as matches,
+  ROUND(100.0 * COUNTIF(ABS(c.points_avg_last_5 - m.features[OFFSET(0)]) < 0.1) / COUNT(*), 1) as match_pct,
+  -- Show mismatches by magnitude
+  COUNTIF(ABS(c.points_avg_last_5 - m.features[OFFSET(0)]) BETWEEN 0.1 AND 3.0) as small_mismatch,
+  COUNTIF(ABS(c.points_avg_last_5 - m.features[OFFSET(0)]) BETWEEN 3.0 AND 10.0) as medium_mismatch,
+  COUNTIF(ABS(c.points_avg_last_5 - m.features[OFFSET(0)]) > 10.0) as large_mismatch
+FROM nba_precompute.player_daily_cache c
+JOIN nba_predictions.ml_feature_store_v2 m
+  ON c.cache_date = m.game_date
+  AND c.player_lookup = m.player_lookup
+WHERE c.cache_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+GROUP BY month
+ORDER BY month DESC
+```
+
+**Expected (Post Session 113+ Fixes):**
+- December - February: 97-99% match rate
+- November: 95%+ (after shot_zone regeneration)
+- Large mismatches (>10 pts): < 0.1%
+
+**If match rate < 95% for recent months:**
+- CRITICAL - DNP pollution may have recurred
+- Check Phase 4 cache DNP filter (check #12)
+- Verify no unmarked DNPs in Phase 3 (check #10)
+
+**If large mismatches > 1%:**
+- CRITICAL - Severe data quality issue
+- Run smoking gun query with specific player examples
+- Investigate Phase 3 → Phase 4 data flow
+
+### 17. Shot Zone Dynamic Threshold Effectiveness (Session 113+)
+
+**MEDIUM:** Verify shot_zone processor handles early season correctly.
+After commit e06043b9 (dynamic 3-10 game threshold), coverage should improve.
+
+```sql
+-- Compare shot_zone coverage before/after dynamic threshold fix
+WITH season_start AS (
+  SELECT MIN(game_date) as start_date
+  FROM nba_analytics.player_game_summary
+  WHERE EXTRACT(YEAR FROM game_date) = 2025
+    AND EXTRACT(MONTH FROM game_date) >= 10
+),
+daily_coverage AS (
+  SELECT
+    psz.analysis_date,
+    DATE_DIFF(psz.analysis_date, s.start_date, DAY) as days_into_season,
+    COUNT(DISTINCT psz.player_lookup) as players_with_shot_zone,
+    COUNT(DISTINCT pgs.player_lookup) as total_active_players,
+    ROUND(100.0 * COUNT(DISTINCT psz.player_lookup) / COUNT(DISTINCT pgs.player_lookup), 1) as coverage_pct
+  FROM nba_precompute.player_shot_zone_analysis psz
+  CROSS JOIN season_start s
+  JOIN nba_analytics.player_game_summary pgs
+    ON psz.analysis_date = pgs.game_date
+    AND pgs.points IS NOT NULL  -- Active players only
+  WHERE psz.analysis_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+  GROUP BY psz.analysis_date, s.start_date
+)
+SELECT
+  analysis_date,
+  days_into_season,
+  players_with_shot_zone,
+  total_active_players,
+  coverage_pct,
+  CASE
+    WHEN days_into_season <= 6 AND coverage_pct < 20 THEN 'OK (very early)'
+    WHEN days_into_season BETWEEN 7 AND 14 AND coverage_pct < 40 THEN 'WARNING (expected 30-60%)'
+    WHEN days_into_season BETWEEN 15 AND 21 AND coverage_pct < 70 THEN 'WARNING (expected 60-85%)'
+    WHEN days_into_season > 21 AND coverage_pct < 90 THEN 'CRITICAL (expected >90%)'
+    ELSE 'OK'
+  END as status
+FROM daily_coverage
+ORDER BY analysis_date DESC
+```
+
+**Expected After Fix (commit e06043b9):**
+- Days 1-6: 0-30% (very limited data)
+- Days 7-14: 30-60% (building up)
+- Days 15-21: 60-85% (approaching full)
+- Days 22+: >90% (full coverage)
+
+**If coverage significantly below expected:**
+- Check if dynamic threshold code deployed (commit e06043b9)
+- Verify _get_dynamic_min_games() method exists in deployed image
+- May need to regenerate historical dates with new code
+
+### 18. Silent Write Failure Detection (Session 113+)
+
+**HIGH:** Catch save_precompute() bug pattern where logs say "FAILED" but writes succeeded.
+Session 113+ found save_precompute() returned None instead of bool, causing misleading errors.
+
+```sql
+-- Check for date ranges with suspicious write patterns
+WITH daily_writes AS (
+  SELECT
+    game_date,
+    COUNT(*) as records_written
+  FROM nba_predictions.ml_feature_store_v2
+  WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+  GROUP BY game_date
+)
+SELECT
+  game_date,
+  records_written,
+  LAG(records_written) OVER (ORDER BY game_date) as prev_day_records,
+  CASE
+    WHEN records_written = 0 THEN 'CRITICAL - No writes'
+    WHEN records_written < 50 THEN 'WARNING - Very low writes'
+    WHEN ABS(records_written - LAG(records_written) OVER (ORDER BY game_date)) > 200
+      THEN 'WARNING - Large change from previous day'
+    ELSE 'OK'
+  END as status
+FROM daily_writes
+ORDER BY game_date DESC
+LIMIT 14
+```
+
+**Expected:**
+- Each day: 200-400 records (varies by game schedule)
+- No days with 0 records (unless no games scheduled)
+- Gradual changes day-to-day (±50 records typical)
+
+**If suspicious pattern found:**
+- Check BigQuery streaming inserts vs batch writes
+- Verify service logs don't report false failures
+- Check if return type bug recurred (operations/bigquery_save_ops.py)
+
+### 19. Deployment Drift Pre-Check (Session 113+)
+
+**CRITICAL:** Before validating data, verify services are up-to-date.
+Sessions 64, 81, 82, 97, 113+ had fixes committed but not deployed, causing recurring issues.
+
+```bash
+# Check deployment status before running validation
+./bin/whats-deployed.sh
+
+# Look for services that are behind:
+# ✗ nba-phase4-precompute-processors - 5 commits behind
+# ✗ prediction-worker - 13 commits behind
+
+# If any data processing services are behind, deploy first:
+./bin/deploy-service.sh nba-phase4-precompute-processors
+```
+
+**Services to Check:**
+- `nba-phase4-precompute-processors` (Phase 4 cache, ML features)
+- `nba-phase3-analytics-processors` (player_game_summary)
+- `prediction-worker` (Predictions)
+- `prediction-coordinator` (Orchestration)
+
+**Why this matters:** Validation against stale code will show issues that are already fixed in repo but not deployed. Deploy first, then validate.
+
+### 20. Monthly Data Quality Trend (Session 113+)
+
+**MEDIUM:** Track data quality improvements/regressions over time.
+Session 113+ improved Dec-Feb from ~44% to 97-99% match rate.
+
+```sql
+-- Monthly data quality trend (3-month view)
+WITH monthly_quality AS (
+  SELECT
+    DATE_TRUNC(c.cache_date, MONTH) as month,
+    -- Match rate (primary metric)
+    ROUND(100.0 * COUNTIF(ABS(c.points_avg_last_5 - m.features[OFFSET(0)]) < 0.1) / COUNT(*), 1) as match_pct,
+    -- DNP pollution (should be 0%)
+    ROUND(100.0 * COUNTIF(c.points_avg_last_5 = 0 AND m.features[OFFSET(0)] > 0) / COUNT(*), 1) as dnp_pollution_pct,
+    -- Coverage
+    COUNT(*) as total_records,
+    COUNT(DISTINCT c.player_lookup) as unique_players
+  FROM nba_precompute.player_daily_cache c
+  JOIN nba_predictions.ml_feature_store_v2 m
+    ON c.cache_date = m.game_date
+    AND c.player_lookup = m.player_lookup
+  WHERE c.cache_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 90 DAY)
+  GROUP BY month
+)
+SELECT
+  month,
+  match_pct,
+  dnp_pollution_pct,
+  total_records,
+  unique_players,
+  CASE
+    WHEN match_pct >= 95 AND dnp_pollution_pct < 1 THEN 'EXCELLENT'
+    WHEN match_pct >= 90 AND dnp_pollution_pct < 3 THEN 'GOOD'
+    WHEN match_pct >= 80 AND dnp_pollution_pct < 5 THEN 'WARNING'
+    ELSE 'CRITICAL'
+  END as quality_grade
+FROM monthly_quality
+ORDER BY month DESC
+```
+
+**Expected (Post Session 113+):**
+- December 2025 onwards: EXCELLENT (97-99% match, <1% pollution)
+- November 2025: GOOD (95%+, after shot_zone fix)
+
+**If quality degrades:**
+- Check if recent code changes broke DNP filtering
+- Verify deployment status (check #19)
+- Run full diagnostic suite (checks #9-15)
+
 ## Pre-Training Checklist
 
 Before running `/model-experiment`:
 
-1. Run quality distribution check (target: >80% quality >= 70)
-2. Check Vegas line coverage by tier (not overall - expect 40% for bench, 95% for stars)
-3. Verify Vegas bias by tier (expect stars under-predicted ~8pts)
-4. Check for unusual data source distribution (<5% partial)
-5. Confirm model experiment includes tier bias analysis (built-in since Session 104)
-6. **NEW (Session 113):** Validate L5/L10 calculations match manual (DNP handling check #9)
-7. **NEW (Session 113):** Check for unmarked DNPs in source data (check #10)
-8. **CRITICAL (Session 113+):** Verify no DNP pollution in Phase 4 cache (check #12)
+**Deployment & System Health:**
+1. **CRITICAL (Session 113+):** Check deployment drift first (check #19) - deploy stale services before validation
+2. **HIGH (Session 113+):** Check for silent write failures (check #18) - verify writes succeeded
+
+**Data Quality - Core Metrics:**
+3. Run quality distribution check (target: >80% quality >= 70)
+4. Check Vegas line coverage by tier (not overall - expect 40% for bench, 95% for stars)
+5. Verify Vegas bias by tier (expect stars under-predicted ~8pts)
+6. Check for unusual data source distribution (<5% partial)
+
+**Data Quality - DNP & Phase 4:**
+7. **CRITICAL (Session 113+):** Verify no DNP pollution in Phase 4 cache (check #12)
+8. **CRITICAL (Session 113+):** ML feature store vs cache match rate >95% (check #16)
 9. **CRITICAL (Session 113+):** Check team pace outliers (check #13)
 10. **HIGH (Session 113+):** Verify no DNP players in cache (check #14)
-11. **MEDIUM (Session 113+):** Check early season bootstrap coverage (check #15)
+11. **NEW (Session 113):** Validate L5/L10 calculations match manual (DNP handling check #9)
+12. **NEW (Session 113):** Check for unmarked DNPs in source data (check #10)
+
+**Data Quality - Early Season & Coverage:**
+13. **MEDIUM (Session 113+):** Check early season bootstrap coverage (check #15)
+14. **MEDIUM (Session 113+):** Shot zone dynamic threshold effectiveness (check #17)
+
+**Model Training:**
+15. Confirm model experiment includes tier bias analysis (built-in since Session 104)
+16. **MEDIUM (Session 113+):** Review monthly data quality trend (check #20) - ensure no regressions
+
+**Recommended Order:**
+1. Run deployment check (#19) FIRST - fix drift before validation
+2. Run CRITICAL checks (#12, #16, #13, #7) - these catch major data issues
+3. Run HIGH checks (#14, #9, #10) - catch moderate issues
+4. Run MEDIUM checks (#15, #17, #20) - nice-to-have context
+5. Run standard quality checks (#3-6) - normal model prep
 
 ## Example Output
 
@@ -591,5 +823,10 @@ Status: GOOD - Ready for model training
 
 ---
 *Created: Session 104*
-*Updated: Session 113 (Added DNP validation checks)*
+*Updated: Session 113+ (Added 11 new validation checks: #10-20)*
+*Major Updates:*
+- Session 113: DNP pollution detection (#10, #12, #14)
+- Session 113+: Early season bootstrap (#15), shot zone dynamic threshold (#17)
+- Session 113+: ML feature vs cache match rate (#16), silent write failures (#18)
+- Session 113+: Deployment drift pre-check (#19), monthly quality trends (#20)
 *Part of: Data Quality & Model Experiment Infrastructure*

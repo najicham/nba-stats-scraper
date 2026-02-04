@@ -2865,6 +2865,149 @@ gcloud logging read 'resource.type="cloud_scheduler_job"
 
 **For updates**: See scraper health audit document for latest status.
 
+### Priority 2I: Session 113+ Data Quality Checks (NEW - Session 113+)
+
+**CRITICAL**: Catch DNP pollution and Phase 4 cache issues before they impact predictions.
+Session 113+ discovered massive data quality issues affecting 67% of Nov-Jan training data.
+
+#### 2I.1: Deployment Drift Check
+
+**Run FIRST** - Validate services before checking data:
+
+```bash
+./bin/whats-deployed.sh
+```
+
+**Expected**: All data processing services up-to-date
+**If drift found**: Deploy stale services immediately
+
+**Critical services**:
+- `nba-phase4-precompute-processors` - Phase 4 cache & ML features
+- `nba-phase3-analytics-processors` - player_game_summary
+- `prediction-worker` - Predictions
+
+**Why this matters**: Sessions 64, 81, 82, 97, 113+ had fixes committed but not deployed. Always deploy before validating data.
+
+#### 2I.2: DNP Pollution in Phase 4 Cache
+
+**Check if player_daily_cache includes DNP games incorrectly**:
+
+```sql
+-- Quick check: Are DNP players in cache?
+SELECT
+  COUNT(*) as dnp_players_cached,
+  ROUND(100.0 * COUNT(*) / (
+    SELECT COUNT(*)
+    FROM nba_precompute.player_daily_cache
+    WHERE cache_date = CURRENT_DATE() - 1
+  ), 1) as dnp_pct
+FROM nba_precompute.player_daily_cache pdc
+JOIN nba_analytics.player_game_summary pgs
+  ON pdc.player_lookup = pgs.player_lookup
+  AND pdc.cache_date = pgs.game_date
+WHERE pdc.cache_date = CURRENT_DATE() - 1
+  AND pgs.is_dnp = TRUE
+```
+
+**Expected**: 0 DNP players (0%)
+**Warning**: >0% indicates DNP filter broken
+**Critical**: >5% indicates severe pollution
+
+#### 2I.3: ML Feature Store vs Cache Match Rate
+
+**Verify L5 values match between ml_feature_store_v2 and player_daily_cache**:
+
+```sql
+-- Check last 7 days match rate
+SELECT
+  COUNT(*) as total_records,
+  COUNTIF(ABS(c.points_avg_last_5 - m.features[OFFSET(0)]) < 0.1) as matches,
+  ROUND(100.0 * COUNTIF(ABS(c.points_avg_last_5 - m.features[OFFSET(0)]) < 0.1) / COUNT(*), 1) as match_pct,
+  COUNTIF(ABS(c.points_avg_last_5 - m.features[OFFSET(0)]) > 3.0) as large_mismatches
+FROM nba_precompute.player_daily_cache c
+JOIN nba_predictions.ml_feature_store_v2 m
+  ON c.cache_date = m.game_date
+  AND c.player_lookup = m.player_lookup
+WHERE c.cache_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+```
+
+**Expected**: >95% match rate, <1% large mismatches
+**Warning**: 90-95% match rate (investigate top mismatches)
+**Critical**: <90% match rate (DNP pollution likely)
+
+#### 2I.4: Team Pace Outlier Detection
+
+**Check for team_pace corruption**:
+
+```sql
+-- Detect pace outliers (normal range: 80-120)
+SELECT
+  cache_date,
+  COUNT(*) as total_records,
+  COUNTIF(team_pace_last_10 < 80 OR team_pace_last_10 > 120) as outliers,
+  ROUND(100.0 * COUNTIF(team_pace_last_10 < 80 OR team_pace_last_10 > 120) / COUNT(*), 1) as outlier_pct,
+  MIN(team_pace_last_10) as min_pace,
+  MAX(team_pace_last_10) as max_pace
+FROM nba_precompute.player_daily_cache
+WHERE cache_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+GROUP BY cache_date
+HAVING outliers > 0
+ORDER BY cache_date DESC
+```
+
+**Expected**: 0 outliers (all pace 80-120)
+**Critical**: Any outliers found (data corruption or Phase 3 bug)
+
+#### 2I.5: Unmarked DNPs in Phase 3
+
+**Check for games that look like DNPs but aren't marked**:
+
+```sql
+-- Find unmarked DNPs in last 7 days
+SELECT
+  game_date,
+  COUNT(*) as unmarked_dnps,
+  ARRAY_AGG(STRUCT(player_lookup, team_abbr) LIMIT 5) as examples
+FROM nba_analytics.player_game_summary
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  AND (points = 0 AND minutes_played IS NULL AND is_dnp IS NULL)
+GROUP BY game_date
+HAVING COUNT(*) > 0
+ORDER BY game_date DESC
+```
+
+**Expected**: 0 unmarked DNPs
+**Warning**: 1-5 unmarked (upstream data issue)
+**Critical**: >5 unmarked (scraper or Phase 3 bug)
+
+#### 2I.6: Silent Write Failure Pattern
+
+**Check for suspicious write patterns (save_precompute bug pattern)**:
+
+```sql
+-- Check if yesterday had normal write volume
+SELECT
+  COUNT(*) as records_written,
+  COUNT(DISTINCT player_lookup) as unique_players,
+  CASE
+    WHEN COUNT(*) = 0 THEN 'CRITICAL - No writes'
+    WHEN COUNT(*) < 50 THEN 'WARNING - Very low writes'
+    WHEN COUNT(*) > 500 THEN 'WARNING - Unusually high writes'
+    ELSE 'OK'
+  END as status
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date = CURRENT_DATE() - 1
+```
+
+**Expected**: 200-400 records (varies by game schedule)
+**Warning**: <50 or >500 records (unusual day or write issue)
+**Critical**: 0 records (total write failure)
+
+**Action if issues found**:
+1. Check service logs for false "FAILED" messages
+2. Verify BigQuery streaming inserts completed
+3. Check if save_precompute() return bug recurred
+
 ### Priority 3: Quality Verification (Run if issues suspected)
 
 #### 3A. Spot Check Accuracy
@@ -3208,6 +3351,30 @@ Key fields:
    - Fix: Batching writes in pipeline_logger (commit c07d5433)
    - Action: Check quota proactively in Phase 0
 
+8. **DNP Pollution in Phase 4 Cache (Session 113+)** ✅ FIXED 2026-02-04
+   - Symptom: L5/L10 values in player_daily_cache include DNP games
+   - Impact: 44-67% mismatch rate in Nov-Jan 2025, affecting ML training data
+   - Root cause: Phase 4 DNP filter only checked points > 0, not minutes_played
+   - Fix: Updated DNP filter in feature_extractor.py (commit dd225120)
+   - Status: Deployed 2026-02-04, cache regenerated for 73/106 dates
+   - Detection: Run Priority 2I checks (DNP pollution, match rate)
+
+9. **Save Precompute Return Bug (Session 113+)** ✅ FIXED 2026-02-04
+   - Symptom: Logs show "FAILED" but BigQuery writes succeeded
+   - Impact: Misleading errors cause unnecessary re-runs
+   - Root cause: save_precompute() returned None instead of bool
+   - Fix: Fixed return type in bigquery_save_ops.py (commit 241153d3)
+   - Status: Deployed 2026-02-04
+   - Detection: Run Priority 2I.6 (silent write failure check)
+
+10. **Shot Zone Early Season Coverage (Session 113+)** ✅ FIXED 2026-02-04
+    - Symptom: 0% shot_zone coverage in first 3 weeks of season
+    - Impact: ML feature store failures, November 2025 at 68% quality
+    - Root cause: Hard 10-game requirement when players had 4-7 games
+    - Fix: Dynamic 3-10 game threshold based on days into season (commit e06043b9)
+    - Status: Deployed 2026-02-04, needs historical regeneration
+    - Detection: Run Priority 2I checks or /spot-check-features #17
+
 ### Expected Behaviors (Not Errors)
 
 1. **Source-Blocked Games**: NBA.com not publishing data for some games
@@ -3234,6 +3401,10 @@ Key fields:
 | **Prediction Coverage** | ≥90% | 70-89% | <70% |
 | **Game Context Coverage** | 100% | 95-99% | <95% |
 | **Phase 3 Completion** | 5/5 | 3-4/5 | 0-2/5 |
+| **DNP Pollution (Session 113+)** | 0% | 0.1-1% | >1% |
+| **ML Feature Match Rate (Session 113+)** | ≥95% | 90-94% | <90% |
+| **Team Pace Outliers (Session 113+)** | 0 | 1-5 | >5 |
+| **Unmarked DNPs (Session 113+)** | 0 | 1-5 | >5 |
 | **Phase 4 Daily Cache** | ≥50 records | 1-49 records | 0 records |
 | **Phase Trigger Status** | _triggered=True | N/A | _triggered=False when complete |
 | **Phase Execution Logs** | All phases logged | 1-2 missing | No logs found |
