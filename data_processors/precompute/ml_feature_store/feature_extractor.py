@@ -1284,9 +1284,14 @@ class FeatureExtractor:
             # FIX (Session 113): Filter out DNPs (NULL points) BEFORE taking windows
             # Bug was: (g.get('points') or 0) converted NULL to 0, polluting averages
             # For star players with DNPs (Kawhi, Jokic), this caused 10-20 pt errors
+            # IMPROVED FIX (Session 113 follow-up): Match player_daily_cache logic
+            # - Include 0-point games if player actually played (minutes not NULL)
+            # - Exclude unmarked DNPs (points=0, minutes=NULL) found in Oct 23-31 data
             if last_10_games:
-                # Filter to only games where player actually played (points > 0)
-                played_games = [g for g in last_10_games if g.get('points') is not None and g.get('points') > 0]
+                # Filter DNPs: include if points not NULL AND (minutes not NULL OR points > 0)
+                played_games = [g for g in last_10_games
+                                if g.get('points') is not None
+                                and (g.get('minutes_played') is not None or g.get('points') > 0)]
 
                 if played_games:
                     points_list = [g.get('points') for g in played_games]
@@ -1320,9 +1325,14 @@ class FeatureExtractor:
 
             # Calculate aggregations from games
             # FIX (Session 113): Filter out DNPs (NULL points) BEFORE taking windows
+            # IMPROVED FIX (Session 113 follow-up): Match player_daily_cache logic
+            # - Include 0-point games if player actually played (minutes not NULL)
+            # - Exclude unmarked DNPs (points=0, minutes=NULL) found in Oct 23-31 data
             if last_10_games:
-                # Filter to only games where player actually played (points > 0)
-                played_games = [g for g in last_10_games if g.get('points') is not None and g.get('points') > 0]
+                # Filter DNPs: include if points not NULL AND (minutes not NULL OR points > 0)
+                played_games = [g for g in last_10_games
+                                if g.get('points') is not None
+                                and (g.get('minutes_played') is not None or g.get('points') > 0)]
 
                 if played_games:
                     # L10: Use up to 10 actual games
