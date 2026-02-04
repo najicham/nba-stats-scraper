@@ -560,17 +560,9 @@ class TeamOffenseGameSummaryProcessor(
                 invalid_teams = invalid_rows['team_abbr'].tolist()
                 logger.warning(
                     f"⚠️  QUALITY CHECK: Found {len(invalid_rows)} teams with invalid data "
-                    f"(0 points or 0 FGA): {invalid_teams}. Filtering out for reconstruction."
+                    f"(0 points or 0 FGA): {invalid_teams}. Triggering fallback to reconstruction."
                 )
-                df = df[valid_mask]
-
-            # If >50% invalid, treat source as failed
-            expected_teams = (pd.to_datetime(end_date) - pd.to_datetime(start_date)).days * 2 + 2
-            if len(df) < expected_teams * 0.5:
-                logger.error(
-                    f"❌ QUALITY CHECK FAILED: Only {len(df)} valid teams, expected ~{expected_teams}. "
-                    f"Returning empty to trigger fallback."
-                )
+                # Return empty to trigger fallback - ensures ALL teams come from same source
                 return pd.DataFrame()
             # ===== END quality validation =====
 
