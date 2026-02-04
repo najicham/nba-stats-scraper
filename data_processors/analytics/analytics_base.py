@@ -309,6 +309,99 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
         # Completeness checker for DNP classification
         self.completeness_checker = None
 
+        # Distributed locking (Session 116 - prevent concurrent processing)
+        self._processing_lock_id = None
+        self._firestore_client = None
+
+    def _get_firestore_client(self):
+        """Lazy initialize Firestore client for distributed locking."""
+        if self._firestore_client is None:
+            from google.cloud import firestore
+            self._firestore_client = firestore.Client(project=self.project_id)
+        return self._firestore_client
+
+    def acquire_processing_lock(self, game_date: str) -> bool:
+        """
+        Acquire distributed lock for processing a date.
+
+        Session 116: Added to prevent concurrent processing that causes
+        MERGE failures and duplicate records.
+
+        Args:
+            game_date: Date being processed (YYYY-MM-DD format)
+
+        Returns:
+            True if lock acquired, False if another instance holds the lock
+        """
+        from google.cloud import firestore
+
+        db = self._get_firestore_client()
+        lock_id = f"{self.processor_name}_{game_date}"
+        lock_ref = db.collection('processing_locks').document(lock_id)
+
+        @firestore.transactional
+        def try_acquire(transaction):
+            lock_doc = lock_ref.get(transaction=transaction)
+
+            if lock_doc.exists:
+                lock_data = lock_doc.to_dict()
+                acquired_at = lock_data.get('acquired_at')
+
+                # Lock expired (older than 10 minutes)?
+                if acquired_at and acquired_at < datetime.now(timezone.utc) - timedelta(minutes=10):
+                    # Stale lock, acquire it
+                    transaction.update(lock_ref, {
+                        'acquired_at': firestore.SERVER_TIMESTAMP,
+                        'execution_id': self.run_id,
+                        'instance': os.environ.get('K_REVISION', 'local'),
+                        'processor': self.processor_name
+                    })
+                    logging.info(f"Acquired stale lock for {game_date} (expired)")
+                    return True
+                else:
+                    # Active lock held by another instance
+                    logging.warning(
+                        f"Cannot acquire lock for {game_date} - held by "
+                        f"instance {lock_data.get('instance')} execution {lock_data.get('execution_id')}"
+                    )
+                    return False
+            else:
+                # No lock exists, create it
+                transaction.set(lock_ref, {
+                    'acquired_at': firestore.SERVER_TIMESTAMP,
+                    'execution_id': self.run_id,
+                    'instance': os.environ.get('K_REVISION', 'local'),
+                    'processor': self.processor_name
+                })
+                logging.info(f"Acquired new lock for {game_date}")
+                return True
+
+        transaction = db.transaction()
+        acquired = try_acquire(transaction)
+
+        if acquired:
+            self._processing_lock_id = lock_id
+
+        return acquired
+
+    def release_processing_lock(self):
+        """
+        Release distributed lock.
+
+        Session 116: Should be called in finally block to ensure cleanup.
+        """
+        if self._processing_lock_id is None:
+            return
+
+        try:
+            db = self._get_firestore_client()
+            db.collection('processing_locks').document(self._processing_lock_id).delete()
+            logging.info(f"Released lock {self._processing_lock_id}")
+        except Exception as e:
+            logging.warning(f"Failed to release lock {self._processing_lock_id}: {e}")
+        finally:
+            self._processing_lock_id = None
+
     # Note: The following methods are inherited from TransformProcessorBase:
     # - is_backfill_mode (property)
     # - get_prefixed_dataset()

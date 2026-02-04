@@ -1512,15 +1512,25 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
     doc_snapshot = doc_ref.get(transaction=transaction)
     current = doc_snapshot.to_dict() if doc_snapshot.exists else {}
 
-    # Idempotency check: skip if this processor already registered
+    # Count completed processors FIRST (exclude metadata fields starting with _)
+    # Session 116: ALWAYS recalculate from actual state, even for duplicates
+    completed_processor_names = [k for k in current.keys() if not k.startswith('_')]
+    completed_processors = set(completed_processor_names)
+    completed_count = len(completed_processors)
+
+    # Idempotency check: if processor already registered, update metadata but don't re-add
     if processor_name in current:
         logger.debug(f"Processor {processor_name} already registered (duplicate Pub/Sub message)")
+        # Session 116: Still update _completed_count to ensure consistency
+        current['_completed_count'] = completed_count
+        current['_last_update'] = firestore.SERVER_TIMESTAMP
+        transaction.set(doc_ref, current)
         return (False, 'unknown', 'duplicate')
 
     # Add this processor's completion data
     current[processor_name] = completion_data
 
-    # Count completed processors (exclude metadata fields starting with _)
+    # Recalculate after adding new processor
     completed_processor_names = [k for k in current.keys() if not k.startswith('_')]
     completed_processors = set(completed_processor_names)
     completed_count = len(completed_processors)

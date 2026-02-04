@@ -54,6 +54,56 @@ class StreamingBufferActiveError(Exception):
     pass
 
 
+def deduplicate_before_write(records: List[Dict], key_fields: List[str]) -> List[Dict]:
+    """
+    Remove duplicates from records before writing to BigQuery.
+
+    Session 116: Added to prevent duplicate records from concurrent processing.
+    Keeps the first occurrence of each unique key.
+
+    Args:
+        records: List of record dictionaries
+        key_fields: List of field names that form the unique key
+
+    Returns:
+        List of unique records (duplicates removed)
+
+    Example:
+        records = [
+            {'game_id': 'A', 'player': 'X', 'points': 10},
+            {'game_id': 'A', 'player': 'X', 'points': 10},  # duplicate
+            {'game_id': 'A', 'player': 'Y', 'points': 15}
+        ]
+        unique = deduplicate_before_write(records, ['game_id', 'player'])
+        # Returns 2 records (duplicate removed)
+    """
+    seen = set()
+    unique = []
+
+    for record in records:
+        # Build key tuple from key fields
+        try:
+            key = tuple(record.get(f) for f in key_fields)
+        except (KeyError, TypeError):
+            # Skip records missing key fields
+            logger.warning(f"Record missing key fields {key_fields}, including anyway")
+            unique.append(record)
+            continue
+
+        if key not in seen:
+            seen.add(key)
+            unique.append(record)
+
+    duplicates = len(records) - len(unique)
+    if duplicates > 0:
+        logger.warning(
+            f'Session 116 deduplication: Removed {duplicates} duplicate records '
+            f'before write ({len(unique)} unique from {len(records)} total)'
+        )
+
+    return unique
+
+
 class BigQuerySaveOpsMixin:
     """
     Mixin providing BigQuery save operations for analytics processors.
@@ -739,6 +789,30 @@ class BigQuerySaveOpsMixin:
                     return
                 else:
                     raise e
+
+    def _deduplicate_records(self, rows: List[Dict]) -> List[Dict]:
+        """
+        Remove duplicate records before writing to BigQuery.
+
+        Session 116: Wrapper for deduplicate_before_write() using PRIMARY_KEY_FIELDS.
+        Falls back to all records if PRIMARY_KEY_FIELDS not defined.
+
+        Args:
+            rows: List of record dictionaries
+
+        Returns:
+            List of unique records
+        """
+        # Get primary key fields from class attribute
+        key_fields = getattr(self.__class__, 'PRIMARY_KEY_FIELDS', None)
+
+        if not key_fields:
+            # No deduplication if PRIMARY_KEY_FIELDS not defined
+            logger.debug("No PRIMARY_KEY_FIELDS defined, skipping deduplication")
+            return rows
+
+        # Use the deduplicate_before_write function
+        return deduplicate_before_write(rows, key_fields)
 
     def _validate_before_write(self, rows: List[Dict], table_id: str) -> List[Dict]:
         """
