@@ -1,66 +1,87 @@
 # Regression-to-Mean Bias Fix Project
 
 **Created:** 2026-02-03 (Session 107)
-**Status:** Planning
-**Priority:** P0 - Model is losing money on high-edge picks
+**Updated:** 2026-02-03 (Session 111) - Major pivot based on new findings
+**Status:** Ready for Implementation
+**Priority:** P0 - Implement optimal scenario filters
 
 ## Executive Summary
 
-The CatBoost V9 model has a systematic regression-to-mean bias that causes:
-- **Under-prediction of stars** by ~9 points (predicted 21.8, actual 30.9)
-- **Over-prediction of bench** by ~6 points (predicted 8.4, actual 2.2)
-- **High-edge UNDER bets on stars losing** at 69% rate
-- **6 consecutive RED signal days** with heavy UNDER skew
+### Original Understanding (Session 107)
+The CatBoost V9 model has a systematic regression-to-mean bias:
+- Under-prediction of stars by ~9 points
+- Over-prediction of bench by ~6 points
 
-This document outlines three fix options with different time horizons and trade-offs.
+### New Understanding (Session 111) ⚠️ KEY INSIGHT
 
-## Root Causes Identified
+**The star under-prediction bias is NOT hurting hit rate!**
 
-| Root Cause | Impact | Evidence |
-|------------|--------|----------|
-| Training data imbalance | 57% of samples are 0-10 pt scorers | Training mean = 10.7 pts |
-| November cold start | 35% wrong defaults, 8 days missing Vegas | Josh Giddey: 10.0 default vs 23.25 actual L10 |
-| Feature completeness correlation | Stars have 95% Vegas coverage, bench 15% | Model learns "features = higher scorer" |
-| Vegas following + Vegas bias | Model follows Vegas, but Vegas under-predicts stars | Vegas bias: -6 pts for stars |
-| L2 regularization | Shrinks predictions toward mean | `l2_leaf_reg=3.8` |
+Deep analysis revealed:
+- OVER picks on low lines (<12) with edge ≥5: **87.3% hit rate**
+- UNDER picks on high lines (≥25) with edge ≥3: **65.9% hit rate**
+- The model's conservative predictions help find value on OVER bets
 
-## Fix Options Overview
+**The real problem:** Betting UNDER on players who might have breakout games.
 
-| Option | Time to Implement | Risk | Expected Impact |
-|--------|-------------------|------|-----------------|
-| **A: Post-hoc Tier Calibration** | 1-2 hours | Low | +5-10% high-edge hit rate |
-| **B: Retrain Without Nov 2-12** | 2-3 hours | Medium | Fix cold start contamination |
-| **C: V10 with Tier Features** | 1-2 days | Medium | Permanent fix, +15-20% star accuracy |
+**The solution:** Scenario-based filtering, not fixing the model bias.
+
+## Optimal Scenarios (Session 111 Discovery)
+
+| Scenario | Hit Rate | ROI | Volume |
+|----------|----------|-----|--------|
+| **OVER + Line <12 + Edge ≥5** | **87.3%** | +66.8% | 1-2/day |
+| **OVER + Any Line + Edge ≥7** | **90.0%** | +80%+ | 0-1/day |
+| **UNDER + Line ≥25 + Edge ≥3** | **65.9%** | +25.8% | 1-2/day |
+
+## Anti-Patterns to AVOID
+
+| Avoid | Hit Rate | Why |
+|-------|----------|-----|
+| UNDER on lines <20 | 0-52% | Breakout risk |
+| Any pick with edge <3 | 51% | No signal |
+| OVER on high lines (25+) | 48% | Priced correctly |
+| UNDER on: Luka, Maxey, Sharpe, Harden, Randle | 20-45% | High variance |
 
 ## Quick Links
 
+### Session 111 (New - Implement These First)
+- [Optimal Scenarios](./SESSION-111-OPTIMAL-SCENARIOS.md) ⭐ **START HERE**
+- [Feature Contract Architecture](./FEATURE-CONTRACT-ARCHITECTURE.md)
+
+### Session 107 (Original Investigation)
+- [Investigation Findings](./INVESTIGATION-FINDINGS.md)
 - [Option A: Post-hoc Tier Calibration](./OPTION-A-TIER-CALIBRATION.md)
 - [Option B: Retrain Without Cold Start Data](./OPTION-B-RETRAIN-CLEAN.md)
 - [Option C: V10 Model with Tier Features](./OPTION-C-V10-TIER-MODEL.md)
-- [Investigation Findings](./INVESTIGATION-FINDINGS.md)
 
-## Recommendation
+## Updated Recommendation
 
-**Staged approach:**
+### Priority 1: Implement Scenario Filters (High Impact, Low Risk)
+1. Create subset definitions for optimal scenarios
+2. Add player blacklist for UNDER bets
+3. Update Phase 6 to highlight optimal picks
 
-1. **Immediate (Today):** Implement Option A (tier calibration) - stops bleeding
-2. **This Week:** Implement Option B (clean retrain) - fixes training data
-3. **Next Week:** Design and test Option C (V10) - permanent solution
+### Priority 2: Model Improvement (Moderate Impact)
+4. Deploy Quantile 0.53 as V9.1 (gives +1.4% hit rate)
 
-## Decision Matrix
+### Priority 3: Original Options (Lower Priority Now)
+- Option A (Calibration) - Testing showed it hurts hit rate
+- Option B (Clean Retrain) - Only 15 bad records, minimal impact
+- Option C (Tier Features) - Model already handles tiers implicitly
 
-| If you want... | Choose... | Why |
-|----------------|-----------|-----|
-| Fastest fix, minimal risk | Option A | Just post-processing, no model changes |
-| Fix root cause in training data | Option B | Clean data = better model |
-| Permanent architectural fix | Option C | Model explicitly knows about player tiers |
-| Maximum improvement | A + B + C | Layered approach |
+## Success Metrics (Updated)
 
-## Success Metrics
+| Metric | Current | Target | Method |
+|--------|---------|--------|--------|
+| Optimal scenario hit rate | N/A | 80%+ | Scenario filters |
+| High-edge hit rate | 55-65% | 70%+ | Better pick selection |
+| Daily optimal picks | 0 | 3-5 | New subsets |
+| Blacklist compliance | N/A | 100% | Player filters |
 
-| Metric | Current | Target |
-|--------|---------|--------|
-| High-edge hit rate | 41.7% | 65%+ |
-| Star (25+) prediction bias | -9.1 pts | < ±3 pts |
-| Bench (<5) prediction bias | +6.2 pts | < ±3 pts |
-| Consecutive RED days | 6 | < 2 |
+## Key Files
+
+| File | Purpose |
+|------|---------|
+| `shared/ml/feature_contract.py` | Canonical feature definitions |
+| `ml/experiments/bias_fix_experiments.py` | Test different approaches |
+| `ml/experiments/quick_retrain.py` | Training with bad record filter |
