@@ -59,10 +59,13 @@ class BigQuerySaveOpsMixin:
 
     @retry_on_quota_exceeded
     @retry_on_serialization
-    def save_precompute(self) -> None:
+    def save_precompute(self) -> bool:
         """
         Save to precompute BigQuery table using batch INSERT.
         Uses NDJSON load job with schema enforcement.
+
+        Returns:
+            bool: True if save was successful (or no data to save), False on error
         """
         if not self.transformed_data:
             logger.warning("No transformed data to save")
@@ -83,7 +86,7 @@ class BigQuerySaveOpsMixin:
                     )
                 except Exception as notify_ex:
                     logger.warning(f"Failed to send notification: {notify_ex}")
-            return
+            return True  # No data to save is not an error
 
         table_id = f"{self.project_id}.{self.get_output_dataset()}.{self.table_name}"
 
@@ -113,7 +116,7 @@ class BigQuerySaveOpsMixin:
 
         if not rows:
             logger.warning("No rows to insert")
-            return
+            return True  # No rows to insert is not an error
 
         # Get target table schema (needed for both MERGE and INSERT strategies)
         try:
@@ -133,7 +136,7 @@ class BigQuerySaveOpsMixin:
             # Fixed 2026-01-29: Some processors don't have QualityMixin
             if hasattr(self, '_check_for_duplicates_post_save'):
                 self._check_for_duplicates_post_save()
-            return  # MERGE handles everything, we're done
+            return True  # MERGE handles everything, we're done
 
         # For non-MERGE strategies, use batch INSERT via BigQuery load job
         logger.info(f"Inserting {len(rows)} rows to {table_id} using batch INSERT")
@@ -204,6 +207,8 @@ class BigQuerySaveOpsMixin:
                 if hasattr(self, '_check_for_duplicates_post_save'):
                     self._check_for_duplicates_post_save()
 
+                return True  # Success
+
             except Exception as load_e:
                 if "streaming buffer" in str(load_e).lower():
                     logger.warning(f"⚠️ Load blocked by streaming buffer - {len(rows)} rows skipped")
@@ -212,7 +217,7 @@ class BigQuerySaveOpsMixin:
                     self.stats["rows_processed"] = 0
                     # R-004: Mark write as failed to prevent incorrect success completion message
                     self.write_success = False
-                    return
+                    return False  # Streaming buffer block is a failure
                 else:
                     raise load_e
 

@@ -978,9 +978,16 @@ class PlayerDailyCacheProcessor(
             - self.failed_entities: List of failed players with reasons
         """
         analysis_date = self.opts['analysis_date']
-        
+
         successful = []
         failed = []
+
+        # Check if data extraction was skipped (e.g., early season)
+        if self.upcoming_context_data is None:
+            logger.info("No data extracted - skipping cache generation")
+            self.transformed_data = successful
+            self.failed_entities = failed
+            return
 
         if self.upcoming_context_data.empty:
             logger.info("No players scheduled today - skipping cache generation")
@@ -1765,15 +1772,20 @@ def main():
         # Extract data
         logger.info("Starting data extraction...")
         processor.extract_raw_data()
-        
+
+        # Check if processing was skipped (early season)
+        if processor.stats.get('processing_decision') == 'skipped_early_season':
+            logger.info("✓ Processing skipped (early season bootstrap period)")
+            return 0
+
         # Calculate cache
         logger.info("Starting cache calculation...")
         processor.calculate_precompute()
-        
+
         # Save results
         logger.info("Saving cache to BigQuery...")
         success = processor.save_precompute()
-        
+
         if success:
             logger.info("✓ Player daily cache processing complete!")
             logger.info(f"  - Cached: {len(processor.transformed_data)} players")
@@ -1781,9 +1793,9 @@ def main():
         else:
             logger.error("✗ Failed to save player daily cache")
             return 1
-        
+
         return 0
-        
+
     except Exception as e:
         logger.error(f"✗ Fatal error: {e}", exc_info=True)
         return 1
