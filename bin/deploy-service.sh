@@ -290,6 +290,25 @@ if [ "$SERVICE" = "prediction-worker" ]; then
     # Check for required env vars
     REQUIRED_VARS=("CATBOOST_V8_MODEL_PATH" "CATBOOST_V9_MODEL_PATH" "PUBSUB_READY_TOPIC")
     MISSING_VARS=()
+    INVALID_MODEL_PATHS=()
+
+    # Function to validate GCS model path exists
+    validate_model_path() {
+        local var_name=$1
+        local path=$2
+        if [[ "$path" == gs://* ]]; then
+            echo "  Validating $var_name in GCS..."
+            if ! gsutil -q stat "$path" 2>/dev/null; then
+                echo "  ❌ $var_name: File not found in GCS: $path"
+                INVALID_MODEL_PATHS+=("$var_name=$path")
+                return 1
+            else
+                echo "  ✅ $var_name: GCS file exists"
+                return 0
+            fi
+        fi
+        return 0
+    }
 
     for VAR in "${REQUIRED_VARS[@]}"; do
         CURRENT_VAL=$(echo "$CURRENT_ENV" | jq -r ".[] | select(.name==\"$VAR\") | .value // empty")
@@ -308,9 +327,39 @@ if [ "$SERVICE" = "prediction-worker" ]; then
             fi
         else
             echo "  $VAR: Preserving current value"
+            # Validate model paths exist in GCS (Session 106)
+            if [[ "$VAR" == *"MODEL_PATH"* ]]; then
+                validate_model_path "$VAR" "$CURRENT_VAL"
+            fi
             ENV_VARS="$ENV_VARS,$VAR=$CURRENT_VAL"
         fi
     done
+
+    # Check for invalid model paths (Session 106 - prevent non-existent model deployments)
+    if [ ${#INVALID_MODEL_PATHS[@]} -gt 0 ]; then
+        echo ""
+        echo "=============================================="
+        echo "🚨 ERROR: Invalid model paths detected"
+        echo "=============================================="
+        echo "The following model paths point to non-existent GCS files:"
+        for PATH_INFO in "${INVALID_MODEL_PATHS[@]}"; do
+            echo "  - $PATH_INFO"
+        done
+        echo ""
+        echo "This would cause /health/deep to fail!"
+        echo ""
+        echo "To fix:"
+        echo "1. Check the model_registry table for correct paths:"
+        echo "   bq query 'SELECT model_id, gcs_path FROM nba_predictions.model_registry WHERE status=\"active\"'"
+        echo ""
+        echo "2. Update the env var with the correct path:"
+        echo "   gcloud run services update $SERVICE --region=$REGION \\"
+        echo "     --set-env-vars=\"CATBOOST_V8_MODEL_PATH=gs://correct/path.cbm\""
+        echo ""
+        echo "Session 106: This validation prevents Session 81-type issues"
+        echo "=============================================="
+        exit 1
+    fi
 
     if [ ${#MISSING_VARS[@]} -gt 0 ]; then
         echo ""

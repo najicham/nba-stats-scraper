@@ -1,0 +1,146 @@
+[
+  {
+    "name": "model_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Unique model identifier (e.g., catboost_v8_33features_20260108_211817)"
+  },
+  {
+    "name": "model_version",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Model version (e.g., v8, v9)"
+  },
+  {
+    "name": "model_type",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Model architecture (e.g., catboost, xgboost, ensemble)"
+  },
+  {
+    "name": "gcs_path",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Full GCS path to model file"
+  },
+  {
+    "name": "feature_count",
+    "type": "INT64",
+    "mode": "REQUIRED",
+    "description": "Number of features the model expects"
+  },
+  {
+    "name": "features_json",
+    "type": "JSON",
+    "mode": "NULLABLE",
+    "description": "JSON array of feature names in order"
+  },
+  {
+    "name": "training_start_date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "First date of training data"
+  },
+  {
+    "name": "training_end_date",
+    "type": "DATE",
+    "mode": "REQUIRED",
+    "description": "Last date of training data"
+  },
+  {
+    "name": "training_samples",
+    "type": "INT64",
+    "mode": "NULLABLE",
+    "description": "Number of training samples"
+  },
+  {
+    "name": "training_config_json",
+    "type": "JSON",
+    "mode": "NULLABLE",
+    "description": "Hyperparameters and training configuration"
+  },
+  {
+    "name": "evaluation_mae",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Mean Absolute Error on evaluation set"
+  },
+  {
+    "name": "evaluation_hit_rate",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Hit rate on evaluation set (all predictions)"
+  },
+  {
+    "name": "evaluation_hit_rate_edge_3plus",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Hit rate for predictions with edge >= 3"
+  },
+  {
+    "name": "evaluation_hit_rate_edge_5plus",
+    "type": "FLOAT64",
+    "mode": "NULLABLE",
+    "description": "Hit rate for predictions with edge >= 5"
+  },
+  {
+    "name": "parent_model_id",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Model this was derived from (for incremental training)"
+  },
+  {
+    "name": "experiment_id",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Link to ml_experiments table"
+  },
+  {
+    "name": "git_commit",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Git commit hash when model was trained"
+  },
+  {
+    "name": "status",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Model status: active, deprecated, testing, archived"
+  },
+  {
+    "name": "is_production",
+    "type": "BOOL",
+    "mode": "REQUIRED",
+    "description": "Whether this model is currently in production"
+  },
+  {
+    "name": "production_start_date",
+    "type": "DATE",
+    "mode": "NULLABLE",
+    "description": "When this model entered production"
+  },
+  {
+    "name": "production_end_date",
+    "type": "DATE",
+    "mode": "NULLABLE",
+    "description": "When this model was retired from production"
+  },
+  {
+    "name": "notes",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Additional notes about the model"
+  },
+  {
+    "name": "created_at",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When this registry entry was created"
+  },
+  {
+    "name": "created_by",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "Who created this entry"
+  }
+]
