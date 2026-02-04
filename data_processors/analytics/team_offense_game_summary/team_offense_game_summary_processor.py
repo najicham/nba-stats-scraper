@@ -546,7 +546,35 @@ class TeamOffenseGameSummaryProcessor(
 
         try:
             df = self.bq_client.query(query).to_dataframe()
-            logger.info(f"Extracted {len(df)} team-game records from nbac_team_boxscore")
+
+            # ===== Quality validation (Session 117) =====
+            if df is None or df.empty:
+                logger.info("No data returned from nbac_team_boxscore")
+                return pd.DataFrame()
+
+            # Filter out invalid rows (0 values = placeholder/incomplete data)
+            valid_mask = (df['points'] > 0) & (df['fg_attempted'] > 0)
+            invalid_rows = df[~valid_mask]
+
+            if len(invalid_rows) > 0:
+                invalid_teams = invalid_rows['team_abbr'].tolist()
+                logger.warning(
+                    f"⚠️  QUALITY CHECK: Found {len(invalid_rows)} teams with invalid data "
+                    f"(0 points or 0 FGA): {invalid_teams}. Filtering out for reconstruction."
+                )
+                df = df[valid_mask]
+
+            # If >50% invalid, treat source as failed
+            expected_teams = (pd.to_datetime(end_date) - pd.to_datetime(start_date)).days * 2 + 2
+            if len(df) < expected_teams * 0.5:
+                logger.error(
+                    f"❌ QUALITY CHECK FAILED: Only {len(df)} valid teams, expected ~{expected_teams}. "
+                    f"Returning empty to trigger fallback."
+                )
+                return pd.DataFrame()
+            # ===== END quality validation =====
+
+            logger.info(f"✅ Extracted {len(df)} valid team-game records from nbac_team_boxscore")
             return df
         except Exception as e:
             logger.error(f"Failed to extract from nbac_team_boxscore: {e}")

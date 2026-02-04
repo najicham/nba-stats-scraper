@@ -272,6 +272,67 @@ BUSINESS_RULES: Dict[str, List[ValidationRule]] = {
             severity="WARNING"
         ),
     ],
+
+    # -------------------------------------------------------------------------
+    # team_offense_game_summary - Phase 3 Analytics
+    # Session 117: Prevent 0-value bad data from being written
+    # -------------------------------------------------------------------------
+    'team_offense_game_summary': [
+        # ERROR: Block placeholder/incomplete data
+        ValidationRule(
+            name='points_not_zero',
+            condition=lambda r: r.get('points_scored', 0) > 0,
+            error_message="Team scored 0 points - bad source data or placeholder"
+        ),
+        ValidationRule(
+            name='fg_attempts_not_zero',
+            condition=lambda r: r.get('fg_attempts', 0) > 0,
+            error_message="Team has 0 FG attempts - bad source data"
+        ),
+        ValidationRule(
+            name='possessions_required',
+            condition=lambda r: r.get('possessions') is not None,
+            error_message="Possessions NULL - cannot calculate usage_rate"
+        ),
+
+        # WARNING: Unusual but possible scenarios
+        ValidationRule(
+            name='unusually_low_score',
+            condition=lambda r: r.get('points_scored', 0) == 0 or r.get('points_scored', 100) >= 80,
+            error_message="Team scored <80 points - unusual but possible",
+            severity="WARNING"
+        ),
+
+        # Required identity fields
+        ValidationRule(
+            name='required_game_id',
+            condition=lambda r: r.get('game_id') is not None,
+            error_message="game_id is required"
+        ),
+        ValidationRule(
+            name='required_game_date',
+            condition=lambda r: r.get('game_date') is not None,
+            error_message="game_date is required"
+        ),
+        ValidationRule(
+            name='required_team_abbr',
+            condition=lambda r: r.get('team_abbr') is not None,
+            error_message="team_abbr is required"
+        ),
+
+        # Stat sanity checks
+        ValidationRule(
+            name='fg_made_not_exceed_attempts',
+            condition=lambda r: r.get('fg_made', 0) <= r.get('fg_attempts', 999),
+            error_message="FG made cannot exceed FG attempts"
+        ),
+        ValidationRule(
+            name='points_reasonable_range',
+            condition=lambda r: r.get('points_scored') is None or 0 < r.get('points_scored', 100) <= 200,
+            error_message="points_scored must be 1-200",
+            severity="WARNING"
+        ),
+    ],
 }
 
 
