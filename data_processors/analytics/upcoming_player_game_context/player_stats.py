@@ -160,9 +160,20 @@ def calculate_performance_metrics(
             'fourth_quarter_production_last_7': None
         }
 
-    # Points averages
-    last_5 = historical_data.head(5)
-    last_10 = historical_data.head(10)
+    # Filter out DNP games FIRST (Session 114: Critical bug fix)
+    # DNP games have either NULL points or (points=0 AND minutes=NULL)
+    # Keep legitimate 0-point games (played but scored 0)
+    played_games = historical_data[
+        (historical_data['points'].notna()) &
+        (
+            (historical_data['points'] > 0) |  # Non-zero points
+            (historical_data.get('minutes_played', historical_data.get('minutes_decimal', pd.Series([None]))).notna())  # Or has minutes (played)
+        )
+    ]
+
+    # Points averages - take last 5/10 PLAYED games (excluding DNPs)
+    last_5 = played_games.head(5)
+    last_10 = played_games.head(10)
 
     points_avg_5 = last_5['points'].mean() if len(last_5) > 0 else None
     points_avg_10 = last_10['points'].mean() if len(last_10) > 0 else None

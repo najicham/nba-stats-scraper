@@ -24,24 +24,36 @@ class StatsAggregator:
         Returns:
             Dictionary with aggregated stats
         """
-        # Get windows
-        last_5_games = player_games.head(5)
-        last_10_games = player_games.head(10)
+        # Filter out DNP games FIRST (Session 114: Critical bug fix)
+        # DNP games have either NULL points or (points=0 AND minutes=NULL)
+        # Keep legitimate 0-point games (players who played but scored 0)
+        played_games = player_games[
+            (player_games['points'].notna()) &
+            (
+                (player_games['points'] > 0) |  # Non-zero points
+                (player_games['minutes_played'].notna())  # Or has minutes (played)
+            )
+        ]
+
+        # Get windows from PLAYED games only (excluding DNPs)
+        last_5_games = played_games.head(5)
+        last_10_games = played_games.head(10)
 
         # Points averaging (round to 4 decimal places for BigQuery NUMERIC compatibility)
+        # All calculations now use played_games (DNPs excluded)
         points_avg_last_5 = round(float(last_5_games['points'].mean()), 4) if len(last_5_games) > 0 else None
         points_avg_last_10 = round(float(last_10_games['points'].mean()), 4) if len(last_10_games) > 0 else None
-        points_avg_season = round(float(player_games['points'].mean()), 4)
+        points_avg_season = round(float(played_games['points'].mean()), 4) if len(played_games) > 0 else None
         points_std_last_10 = round(float(last_10_games['points'].std()), 4) if len(last_10_games) > 1 else None
 
-        # Last 10 game averages
+        # Last 10 game averages (from played games)
         minutes_avg_last_10 = round(float(last_10_games['minutes_played'].mean()), 4) if len(last_10_games) > 0 else None
         usage_rate_last_10 = round(float(last_10_games['usage_rate'].mean()), 4) if len(last_10_games) > 0 else None
         ts_pct_last_10 = round(float(last_10_games['ts_pct'].mean()), 4) if len(last_10_games) > 0 else None
 
-        # Season totals
-        games_played_season = int(len(player_games))
-        player_usage_rate_season = round(float(player_games['usage_rate'].mean()), 4)
+        # Season totals (from played games - DNPs don't count as games played)
+        games_played_season = int(len(played_games))
+        player_usage_rate_season = round(float(played_games['usage_rate'].mean()), 4) if len(played_games) > 0 else None
 
         # Calculate assisted rate from last 10 games (round to 9 decimal places)
         assisted_rate_last_10 = None
