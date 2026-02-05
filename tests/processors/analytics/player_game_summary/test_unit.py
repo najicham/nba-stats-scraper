@@ -57,11 +57,20 @@ class TestDependencyConfiguration:
             assert table in deps, f"Missing dependency: {table}"
     
     def test_critical_sources_marked_correctly(self, processor):
-        """Test that only NBA.com gamebook is marked as critical."""
+        """Test that critical sources are marked correctly.
+
+        Session 127 fix: Gamebook is non-critical when USE_NBAC_BOXSCORES_FALLBACK=True
+        (default), allowing same-night processing using boxscore fallback.
+        Team offense stats remains critical (required for usage_rate, no fallback).
+        """
         deps = processor.get_dependencies()
 
-        # Critical sources
-        assert deps['nba_raw.nbac_gamebook_player_stats']['critical'] is True
+        # Gamebook is non-critical when fallback enabled (allows same-night processing)
+        # Session 127: Made gamebook non-critical to enable evening analytics
+        assert deps['nba_raw.nbac_gamebook_player_stats']['critical'] is False
+
+        # Team offense is CRITICAL (required for usage_rate calculation, no fallback)
+        assert deps['nba_analytics.team_offense_game_summary']['critical'] is True
 
         # Non-critical sources (BDL is fallback only, others are optional)
         assert deps['nba_raw.bdl_player_boxscores']['critical'] is False
@@ -69,7 +78,6 @@ class TestDependencyConfiguration:
         assert deps['nba_raw.nbac_play_by_play']['critical'] is False
         assert deps['nba_raw.odds_api_player_points_props']['critical'] is False
         assert deps['nba_raw.bettingpros_player_points_props']['critical'] is False
-        assert deps['nba_analytics.team_offense_game_summary']['critical'] is False
     
     def test_field_prefixes_correct(self, processor):
         """Test that field_prefix is correct for each source."""
