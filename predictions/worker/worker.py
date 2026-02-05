@@ -172,6 +172,7 @@ PERMANENT_SKIP_REASONS = {
     'game_not_found',        # Game doesn't exist in schedule
     'player_inactive',       # Player not active/playing
     'no_historical_data',    # No historical games for player
+    'player_injury_out',     # Player listed as OUT - skip prediction, don't retry
 }
 
 # Transient failures - might resolve on retry, return 500 to trigger Pub/Sub retry
