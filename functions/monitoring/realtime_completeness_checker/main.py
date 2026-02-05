@@ -92,12 +92,19 @@ def check_completeness_realtime(cloud_event):
 
 
 def get_expected_processors_for_date(game_date):
-    """Return list of processors that should run for this date."""
-    # Core processors that must complete
+    """Return list of processors that should run for this date.
+
+    Note: NbacGamebookProcessor is for morning recovery (gamebook PDFs),
+    NOT for post-game orchestration. Post-game uses:
+    - NbacPlayerBoxscoreProcessor (from nbac_player_boxscore scraper)
+    - BdlPlayerBoxScoresProcessor (from bdl_box_scores scraper)
+
+    Session 126: Fixed to use correct post-game processors
+    """
+    # Core processors that must complete for post-game flow
     return [
-        'NbacGamebookProcessor',
-        'BdlPlayerBoxScoresProcessor',
-        'BdlLiveBoxscoresProcessor'
+        'NbacPlayerBoxscoreProcessor',  # From nbac_player_boxscore scraper
+        'BdlPlayerBoxScoresProcessor',  # From bdl_box_scores scraper
     ]
 
 

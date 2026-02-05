@@ -389,20 +389,20 @@ workflows:
     priority: "HIGH"
     decision_type: "game_aware_yesterday"
     description: "First box score collection attempt - 10 PM ET (some games may still be in progress)"
-    
+
     schedule:
       game_aware: true
       target_date: "yesterday"
       fixed_time: "22:00"  # 10 PM ET
       tolerance_minutes: 30  # Execute if within ±30 minutes
-    
+
     execution_plan:
       type: "parallel"
       scrapers:
         - bdl_box_scores
         - nbac_team_boxscore
         - nbac_player_boxscore
-    
+
     alerts:
       missing_games: "WARNING"  # Some games may still be in progress
   
@@ -425,7 +425,7 @@ workflows:
         - bdl_box_scores
         - nbac_team_boxscore
         - nbac_player_boxscore
-    
+
     alerts:
       missing_games: "CRITICAL"  # Should have all games by now
   
