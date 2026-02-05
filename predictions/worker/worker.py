@@ -1845,6 +1845,27 @@ def format_prediction_for_bigquery(
                 f"predicted={predicted_points:.1f}, line={current_points_line}, edge={edge:.1f}"
             )
 
+        # Session 125: Role player UNDER danger zone filter
+        # Edge 2.5-4 for role players (8-16 PPG) has 35.2% hit rate vs 55.1% for safe zone
+        if is_actionable and recommendation == 'UNDER':
+            if 8 <= season_avg <= 16 and 2.5 <= edge < 4:
+                is_actionable = False
+                filter_reason = 'role_player_under_danger_zone'
+                logger.info(
+                    f"Filtered role player UNDER for {player_lookup}: season_avg={season_avg:.1f}, "
+                    f"edge={edge:.1f} in danger zone (2.5-4)"
+                )
+
+        # Session 125: Data quality filter
+        # High quality (80+) has 60.6% hit rate vs Medium (70-80) at 39.1%
+        quality_score = features.get('feature_quality_score', 100)
+        if is_actionable and quality_score < 80:
+            is_actionable = False
+            filter_reason = 'low_data_quality'
+            logger.info(
+                f"Filtered low quality for {player_lookup}: quality_score={quality_score:.1f} < 80"
+            )
+
     # Base record
     record = {
         'prediction_id': str(uuid.uuid4()),

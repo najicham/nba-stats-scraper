@@ -277,6 +277,34 @@ class PredictionAccuracyProcessor:
         except (TypeError, ValueError):
             return None
 
+    def _compute_quality_tier(self, quality_score: Optional[float]) -> Optional[str]:
+        """
+        Compute quality tier from feature_quality_score.
+
+        Session 125 analysis shows significant hit rate differences by tier:
+        - High (80+): 60.6% hit rate
+        - Medium (70-80): 39.1% hit rate
+        - Low (<70): Very poor performance
+
+        Args:
+            quality_score: Feature quality score (0-100)
+
+        Returns:
+            Quality tier string: 'HIGH', 'MEDIUM', 'LOW', or None
+        """
+        if quality_score is None:
+            return None
+        try:
+            score = float(quality_score)
+            if score >= 80:
+                return 'HIGH'
+            elif score >= 70:
+                return 'MEDIUM'
+            else:
+                return 'LOW'
+        except (TypeError, ValueError):
+            return None
+
     def load_injury_status_for_date(self, game_date: date) -> Dict[str, Dict]:
         """
         Load injury status for all players on a game date.
@@ -778,6 +806,11 @@ class PredictionAccuracyProcessor:
             # Enables tracking of filtered picks' actual performance
             'is_actionable': bool(prediction.get('is_actionable', True)),
             'filter_reason': self._safe_string(prediction.get('filter_reason')),
+
+            # Data quality tracking (Session 125 - enables hit rate by quality analysis)
+            # High quality (80+) has 60.6% hit rate vs Medium (70-80) at 39.1%
+            'feature_quality_score': round_numeric(self._safe_float(prediction.get('feature_quality_score')), 2),
+            'data_quality_tier': self._compute_quality_tier(prediction.get('feature_quality_score')),
 
             # DNP/Injury Voiding (v4) - Treat DNP like sportsbook voided bets
             'is_voided': voiding_info['is_voided'],
