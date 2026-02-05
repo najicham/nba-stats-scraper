@@ -196,3 +196,45 @@ curl -X POST "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/start" \
 - No v2_39features errors in worker logs
 - Predictions available before 7 PM ET game start
 
+
+---
+
+## UPDATE: Phase 4 Investigation Results
+
+### Discovery (11:10 AM PST)
+
+**Phase 3 data EXISTS for Feb 5:**
+```sql
+SELECT COUNT(*) as players, COUNT(DISTINCT game_id) as games
+FROM nba_analytics.upcoming_player_game_context
+WHERE game_date = '2026-02-05'
+-- Returns: 273 players, 8 games ✓
+```
+
+**Phase 4 timing pattern:**
+- Runs AFTER games finish (~10:30 PM UTC / 5:30 PM ET)
+- Generates features for NEXT day's predictions
+- Feb 4 features: Started 22:30 UTC, completed 16:00 next day
+
+**Workflow Understanding:**
+1. **2:30 AM "Early Predictions":** Use PREVIOUS day's features
+   - Feb 5 predictions should use Feb 4 features (257 records exist ✓)
+2. **Evening Phase 4:** Generates TODAY's features for tomorrow
+   - Feb 5's Phase 4 will run tonight after games (~5:30 PM ET)
+
+### Key Question
+
+**Why didn't early predictions run at 2:30 AM today?**
+
+Check coordinator logs around 2:30 AM ET (7:30 AM UTC):
+```bash
+gcloud logging read 'resource.labels.service_name="prediction-coordinator"
+  AND timestamp>="2026-02-05T07:00:00Z" AND timestamp<="2026-02-05T08:00:00Z"'
+```
+
+If early predictions didn't run, the system CAN generate predictions now using Feb 4's features - this is how pre-game predictions normally work.
+
+### Phase 4 Service URL
+
+Manual trigger endpoint: `https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app`
+
