@@ -34,6 +34,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 from typing import Dict, List, Optional
 from google.api_core.exceptions import NotFound
+from google.cloud import bigquery
 from data_processors.analytics.analytics_base import AnalyticsProcessorBase
 from shared.utils.notification_system import notify_error, notify_warning, notify_info
 
@@ -407,6 +408,103 @@ class PlayerGameSummaryProcessor(
 
         return is_available, count
 
+    def _validate_team_stats_dependency(self, start_date: str, end_date: str) -> tuple[bool, str, dict]:
+        """
+        Validate team stats dependency for usage_rate calculation (BLOCKING CHECK).
+
+        Session 119 Fix: Prevent NULL usage_rate from timing race conditions.
+        This is a QUALITY-FOCUSED check that validates:
+        1. Team stats exist (sufficient coverage for date range)
+        2. Team stats have valid possessions (required for usage_rate formula)
+
+        Unlike _check_team_stats_available() (monitoring only), this method is a
+        PROCESSING GATE that blocks extraction if dependencies aren't ready.
+
+        Root Cause Fixed:
+        - Player processor can run before team stats are written → NULL usage_rate
+        - BigQuery caches stale JOIN results → NULL usage_rate even after correction
+        - No pre-processing validation → silent failures
+
+        Args:
+            start_date: Start date (YYYY-MM-DD)
+            end_date: End date (YYYY-MM-DD)
+
+        Returns:
+            (is_valid, error_message, details) - is_valid=True if dependencies ready,
+                                                  False with error message if not
+        """
+        # Get team stats with quality metrics
+        query = f"""
+        SELECT
+            COUNT(DISTINCT CONCAT(game_id, '_', team_abbr)) as team_count,
+            COUNTIF(possessions IS NULL) as null_possessions_count,
+            COUNTIF(possessions IS NULL AND points_scored > 0) as invalid_quality_count
+        FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
+        WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+        """
+
+        try:
+            result = self.bq_client.query(query).result()
+            row = next(result)
+            team_count = row.team_count
+            null_possessions = row.null_possessions_count
+            invalid_quality = row.invalid_quality_count
+        except Exception as e:
+            return False, f"Failed to query team stats: {e}", {}
+
+        # Get expected count from schedule
+        expected_query = f"""
+        SELECT COALESCE(COUNT(DISTINCT game_id) * 2, 0) as expected_team_count
+        FROM `{self.project_id}.nba_reference.nba_schedule`
+        WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+          AND game_status = 3
+        """
+
+        try:
+            expected_result = self.bq_client.query(expected_query).result()
+            expected_count = next(expected_result).expected_team_count
+        except Exception as e:
+            return False, f"Failed to query schedule: {e}", {}
+
+        details = {
+            'team_count': team_count,
+            'expected_count': expected_count,
+            'null_possessions': null_possessions,
+            'invalid_quality': invalid_quality,
+            'coverage_pct': round(100.0 * team_count / expected_count, 1) if expected_count > 0 else 0.0,
+            'quality_pct': round(100.0 * (team_count - null_possessions) / team_count, 1) if team_count > 0 else 0.0
+        }
+
+        # Validation Rule 1: Minimum team coverage (80% of expected)
+        # Lower threshold than team processor (which aims for 100%) to allow for some missing games
+        min_coverage_threshold = 0.80
+        if expected_count > 0 and team_count < (expected_count * min_coverage_threshold):
+            return False, (
+                f"Team stats insufficient: {team_count}/{expected_count} teams "
+                f"({details['coverage_pct']}% < {min_coverage_threshold*100}% threshold). "
+                f"Run TeamOffenseGameSummaryProcessor first."
+            ), details
+
+        # Validation Rule 2: Quality check - possessions must be non-NULL
+        # Allow up to 20% NULL possessions (edge cases like forfeits, data issues)
+        max_null_threshold = 0.20
+        if team_count > 0:
+            null_pct = null_possessions / team_count
+            if null_pct > max_null_threshold:
+                return False, (
+                    f"Team stats have invalid possessions: {null_possessions}/{team_count} NULL "
+                    f"({round(null_pct*100, 1)}% > {max_null_threshold*100}% threshold). "
+                    f"usage_rate calculation requires valid possessions. "
+                    f"Re-run TeamOffenseGameSummaryProcessor to fix data quality."
+                ), details
+
+        # Validation Rule 3: No games scheduled - allow processing to continue
+        if expected_count == 0:
+            return True, "No games scheduled - validation passed", details
+
+        # All checks passed
+        return True, f"Team stats validated: {team_count} teams with {details['quality_pct']}% valid possessions", details
+
     def _check_source_data_available(self, start_date: str, end_date: str) -> tuple[bool, int]:
         """
         Pre-extraction check for upstream data availability.
@@ -710,22 +808,39 @@ class PlayerGameSummaryProcessor(
         # Base class calls check_dependencies() and track_source_usage()
         # before calling this method, so all source_* attributes are populated.
 
-        # TEAM STATS AVAILABILITY CHECK (Informational only - Session 96)
-        # This check is now for MONITORING purposes, not a gate.
-        # usage_rate is calculated per-game based on whether THAT game has team stats.
-        # A global threshold no longer blocks all calculations.
-        team_stats_available, team_stats_count = self._check_team_stats_available(start_date, end_date)
-        self._team_stats_available = team_stats_available  # Keep for backward compat, but not used as gate
+        # TEAM STATS DEPENDENCY VALIDATION (Session 119 - BLOCKING CHECK)
+        # Validate team stats exist AND have valid possessions before processing.
+        # Prevents NULL usage_rate from timing race conditions.
+        is_valid, validation_msg, validation_details = self._validate_team_stats_dependency(start_date, end_date)
 
-        if not team_stats_available:
-            # Log for monitoring - but processing continues per-game
+        if not is_valid:
+            # FAIL EARLY - block processing until dependencies are ready
+            error_msg = f"DEPENDENCY VALIDATION FAILED: {validation_msg}"
+            logger.error(error_msg)
+            logger.error(f"Validation details: {validation_details}")
+
+            # Track the issue for monitoring
             self.track_source_coverage_event(
                 event_type=SourceCoverageEventType.DEPENDENCY_STALE,
-                severity=SourceCoverageSeverity.WARNING,
+                severity=SourceCoverageSeverity.ERROR,  # Elevated to ERROR (was WARNING)
                 source='team_offense_game_summary',
-                message=f"Team stats below threshold - some games may have NULL usage_rate",
-                details={'team_stats_count': team_stats_count}
+                message=validation_msg,
+                details=validation_details
             )
+
+            # Raise exception to block processing
+            raise ValueError(
+                f"Cannot process player stats without valid team stats. {validation_msg}\n"
+                f"Resolution: Run TeamOffenseGameSummaryProcessor for date range {start_date} to {end_date} first."
+            )
+
+        # Validation passed - log success
+        logger.info(f"✅ DEPENDENCY VALIDATION PASSED: {validation_msg}")
+        logger.info(f"Team stats details: {validation_details}")
+
+        # Keep legacy check for backward compatibility (monitoring only)
+        team_stats_available, team_stats_count = self._check_team_stats_available(start_date, end_date)
+        self._team_stats_available = team_stats_available
 
         # SMART REPROCESSING: Check if we can skip processing
         skip, reason = self.should_skip_processing(start_date)
@@ -1076,11 +1191,18 @@ class PlayerGameSummaryProcessor(
             AND wp.team_abbr = ts.team_abbr
         ORDER BY wp.game_date DESC, wp.game_id, wp.player_lookup
         """
-        
+
         logger.info(f"Extracting data for {start_date} to {end_date}")
-        
+
+        # SESSION 119: Disable BigQuery cache for regenerations
+        # Prevents stale cached JOIN results when team stats are updated
+        job_config = bigquery.QueryJobConfig()
+        if self.opts.get('backfill_mode', False):
+            job_config.use_query_cache = False
+            logger.info("🔄 REGENERATION MODE: BigQuery cache disabled (prevents stale JOIN results)")
+
         try:
-            self.raw_data = self.bq_client.query(query).to_dataframe()
+            self.raw_data = self.bq_client.query(query, job_config=job_config).to_dataframe()
             logger.info(f"✅ Extracted {len(self.raw_data)} player-game records")
             
             if not self.raw_data.empty:
@@ -2394,6 +2516,11 @@ class PlayerGameSummaryProcessor(
                 bigquery.ScalarQueryParameter("game_date", "DATE", game_date)
             ]
         )
+
+        # SESSION 119: Disable BigQuery cache for regenerations
+        if self.opts.get('backfill_mode', False):
+            job_config.use_query_cache = False
+            logger.info("🔄 REGENERATION MODE: BigQuery cache disabled (prevents stale JOIN results)")
 
         try:
             self.raw_data = self.bq_client.query(query, job_config=job_config).to_dataframe()
