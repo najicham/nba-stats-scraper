@@ -35,8 +35,8 @@ COPY data_processors/grading/ ./data_processors/grading/
 # Set working directory to NBA grading service
 WORKDIR /app/data_processors/grading/nba
 
-# Install dependencies
-RUN pip install --no-cache-dir -r requirements.txt
+# Install dependencies (using lock file for deterministic builds)
+RUN pip install --no-cache-dir -r requirements-lock.txt
 
 # Set Python path to include /app for shared module imports
 ENV PYTHONPATH=/app:$PYTHONPATH

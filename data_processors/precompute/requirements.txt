@@ -1,0 +1,37 @@
+# File: analytics_processors/requirements_analytics.txt
+# Analytics processor-specific dependencies (not in shared)
+
+# Data processing
+numpy>=1.26.0
+
+# Database
+sqlalchemy>=2.0.23
+psycopg2-binary>=2.9.10
+
+# Data formats
+pyarrow>=14.0.1
+
+# JSON handling
+orjson>=3.9.10
+
+# Analytics-specific
+scipy>=1.12.0
+scikit-learn>=1.4.0
+
+# Cloud integrations
+google-cloud-bigquery>=3.11.0
+google-cloud-storage>=2.10.0
+google-cloud-pubsub>=2.18.0
+google-cloud-firestore>=2.11.0
+db-dtypes>=1.2.0  # Required for BigQuery pandas integration
+
+# Web framework
+flask>=2.3.0
+gunicorn>=21.2.0
+
+# Monitoring
+sentry-sdk>=1.32.0
+
+# Config loading
+pyyaml>=6.0
+google-cloud-secret-manager>=2.16.0

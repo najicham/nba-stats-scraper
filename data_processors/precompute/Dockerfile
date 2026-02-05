@@ -31,17 +31,14 @@ COPY data_processors/raw/ ./data_processors/raw/
 COPY data_processors/analytics/ ./data_processors/analytics/
 COPY data_processors/precompute/ ./data_processors/precompute/
 
-# Copy analytics requirements (precompute uses same dependencies)
-COPY data_processors/analytics/requirements.txt /tmp/requirements.txt
-
 # Set working directory to precompute for running the service
 WORKDIR /app/data_processors/precompute
 
 # Install shared requirements first (includes boto3 for AWS SES)
 RUN pip install --no-cache-dir -r ../../shared/requirements.txt
 
-# Install service-specific requirements (from analytics)
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+# Install service-specific requirements (using lock file for deterministic builds)
+RUN pip install --no-cache-dir -r requirements-lock.txt
 
 # Set Python path to include /app for shared module imports
 ENV PYTHONPATH=/app:$PYTHONPATH

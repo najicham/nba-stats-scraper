@@ -1,0 +1,115 @@
+{
+  "experiment_id": "25f27aec",
+  "experiment_name": "BREAKOUT_V1_MIDJAN",
+  "timestamp": "2026-02-05T19:25:02.451884+00:00",
+  "config": {
+    "name": "BREAKOUT_V1_MIDJAN",
+    "hypothesis": "Breakout classifier trained until mid-Jan for validation window",
+    "tags": [
+      "breakout",
+      "classifier",
+      "experiment"
+    ],
+    "feature_set": [
+      "cv_ratio",
+      "cold_streak_indicator",
+      "pts_vs_season_zscore",
+      "opponent_def_rating",
+      "explosion_ratio",
+      "days_since_breakout",
+      "minutes_avg_last_10",
+      "points_avg_season"
+    ],
+    "depth": 5,
+    "iterations": 500,
+    "learning_rate": 0.05,
+    "l2_reg": 3.0,
+    "early_stopping_rounds": 30,
+    "min_ppg": 6.0,
+    "max_ppg": 20.0,
+    "breakout_multiplier": 1.75,
+    "train_start": "2025-11-02",
+    "train_end": "2026-01-15",
+    "eval_start": "2026-01-16",
+    "eval_end": "2026-02-04",
+    "train_days": 60,
+    "eval_days": 7,
+    "target_precision": 0.6,
+    "skip_register": false,
+    "dry_run": false
+  },
+  "train_samples": 27586,
+  "eval_samples": 8418,
+  "train_breakout_rate": 0.097,
+  "eval_breakout_rate": 0.1079,
+  "train_period": {
+    "start": "2025-11-02",
+    "end": "2026-01-15"
+  },
+  "eval_period": {
+    "start": "2026-01-16",
+    "end": "2026-02-04"
+  },
+  "auc_roc": 0.6933,
+  "average_precision": 0.2631,
+  "optimal_threshold": 0.78,
+  "precision_at_optimal": 0.6014,
+  "recall_at_optimal": 0.098,
+  "f1_at_optimal": 0.1686,
+  "threshold_analysis": {
+    "thresh_0.3": {
+      "threshold": 0.3,
+      "precision": 0.1674,
+      "recall": 0.6663,
+      "f1": 0.2676,
+      "n_flagged": 3614,
+      "pct_flagged": 42.93
+    },
+    "thresh_0.4": {
+      "threshold": 0.4,
+      "precision": 0.1921,
+      "recall": 0.5264,
+      "f1": 0.2815,
+      "n_flagged": 2488,
+      "pct_flagged": 29.56
+    },
+    "thresh_0.5": {
+      "threshold": 0.5,
+      "precision": 0.222,
+      "recall": 0.3844,
+      "f1": 0.2815,
+      "n_flagged": 1572,
+      "pct_flagged": 18.67
+    },
+    "thresh_0.6": {
+      "threshold": 0.6,
+      "precision": 0.2763,
+      "recall": 0.2577,
+      "f1": 0.2667,
+      "n_flagged": 847,
+      "pct_flagged": 10.06
+    },
+    "thresh_0.7": {
+      "threshold": 0.7,
+      "precision": 0.3455,
+      "recall": 0.1355,
+      "f1": 0.1946,
+      "n_flagged": 356,
+      "pct_flagged": 4.23
+    }
+  },
+  "feature_importance": {
+    "cv_ratio": 18.4327,
+    "cold_streak_indicator": 1.597,
+    "pts_vs_season_zscore": 15.3434,
+    "opponent_def_rating": 17.6098,
+    "explosion_ratio": 0.7537,
+    "days_since_breakout": 13.2675,
+    "minutes_avg_last_10": 13.0057,
+    "points_avg_season": 19.9902
+  },
+  "model_path": "models/breakout_exp_BREAKOUT_V1_MIDJAN_20260205_112502.cbm",
+  "config_path": "models/breakout_exp_BREAKOUT_V1_MIDJAN_20260205_112502_config.json",
+  "recommendation": "READY FOR SHADOW MODE",
+  "ready_for_shadow": true
+}

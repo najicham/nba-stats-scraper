@@ -35,8 +35,8 @@ WORKDIR /app/data_processors/analytics
 # Install shared requirements first (includes boto3 for AWS SES)
 RUN pip install --no-cache-dir -r ../../shared/requirements.txt
 
-# Install service-specific requirements
-RUN pip install --no-cache-dir -r requirements.txt
+# Install service-specific requirements (using lock file for deterministic builds)
+RUN pip install --no-cache-dir -r requirements-lock.txt
 
 # Set Python path to include /app for shared module imports
 ENV PYTHONPATH=/app:$PYTHONPATH
