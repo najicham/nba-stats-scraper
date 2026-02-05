@@ -1966,6 +1966,77 @@ def get_batch_status():
     }), 200
 
 
+def _track_batch_cleanup_event(stalled_count: int, results: list) -> None:
+    """
+    Track batch cleanup events in Firestore and send Slack alert if systemic issue detected.
+
+    Systemic issue = 3+ cleanups within 1 hour (indicates workers are consistently failing).
+
+    Added in Session 132 as part of automated batch cleanup (Option A quick win).
+
+    Args:
+        stalled_count: Number of batches that were auto-completed
+        results: List of cleanup results with batch details
+    """
+    try:
+        from google.cloud import firestore
+        from datetime import datetime, timedelta
+        import os
+
+        db = firestore.Client(project='nba-props-platform')
+
+        # Record this cleanup event
+        cleanup_ref = db.collection('batch_cleanup_events').document()
+        cleanup_ref.set({
+            'timestamp': firestore.SERVER_TIMESTAMP,
+            'stalled_count': stalled_count,
+            'batch_ids': [r['batch_id'] for r in results if r['was_stalled']],
+            'results': results
+        })
+
+        # Check for systemic issue (3+ cleanups in last hour)
+        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+        recent_cleanups = db.collection('batch_cleanup_events') \
+            .where('timestamp', '>=', one_hour_ago) \
+            .stream()
+
+        recent_count = sum(1 for _ in recent_cleanups)
+
+        # Send Slack alert if threshold exceeded
+        if recent_count >= 3:
+            from shared.utils.slack_channels import send_to_slack
+
+            webhook_url = os.environ.get('SLACK_WEBHOOK_URL')  # #daily-orchestration
+            if webhook_url:
+                batch_list = "\n".join([f"• {r['batch_id']}" for r in results if r['was_stalled']][:5])
+
+                text = f"""🚨 *Systemic Batch Stall Issue Detected*
+
+*{recent_count} cleanups* in the last hour (threshold: 3)
+*{stalled_count} batches* auto-completed in this run
+
+*Recently stalled batches:*
+{batch_list}
+
+*Possible causes:*
+• Workers crashing or timing out
+• Dependency service failures
+• Resource constraints (CPU/memory)
+
+_Check worker logs and /health/deep endpoint for issues_"""
+
+                send_to_slack(
+                    webhook_url=webhook_url,
+                    text=text,
+                    icon_emoji=":rotating_light:"
+                )
+                logger.warning(f"Systemic stall issue: {recent_count} cleanups in last hour")
+
+    except Exception as e:
+        # Don't fail the cleanup operation if tracking fails
+        logger.error(f"Error tracking batch cleanup event: {e}", exc_info=True)
+
+
 @app.route('/check-stalled', methods=['POST'])
 @require_api_key
 def check_stalled_batches():
@@ -2032,6 +2103,10 @@ def check_stalled_batches():
                     publish_batch_summary_from_firestore(batch.batch_id)
 
         stalled_count = sum(1 for r in results if r['was_stalled'])
+
+        # Track cleanup events for systemic issue detection (Session 132)
+        if stalled_count > 0:
+            _track_batch_cleanup_event(stalled_count, results)
 
         return jsonify({
             'status': 'success',
