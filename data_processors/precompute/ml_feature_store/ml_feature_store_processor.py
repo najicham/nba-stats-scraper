@@ -1700,11 +1700,21 @@ class MLFeatureStoreProcessor(
         # ============================================================
         # BREAKOUT RISK SCORE (37) - Session 126
         # Composite 0-100 score for role player breakout prediction
+        # Session 127: Added real injured_teammates_ppg calculation
         # ============================================================
+
+        # Get team context with injured teammates PPG
+        team_abbr = phase4_data.get('team_abbr') or phase3_data.get('team_abbr')
+        game_date_obj = datetime.strptime(game_date, '%Y-%m-%d').date() if isinstance(game_date, str) else game_date
+        injured_ppg = self._get_injured_teammates_ppg(team_abbr, game_date_obj) if team_abbr else 0.0
+
+        team_context = {
+            'injured_teammates_ppg': injured_ppg
+        }
 
         # Feature 37: Breakout risk score
         breakout_risk_score, _ = self.breakout_risk_calculator.calculate_breakout_risk_score(
-            phase4_data, phase3_data, team_context=None  # TODO: Add team_context for injury data
+            phase4_data, phase3_data, team_context=team_context
         )
         features.append(breakout_risk_score)
         feature_sources[37] = 'calculated'
@@ -1787,19 +1797,73 @@ class MLFeatureStoreProcessor(
         feature_sources[index] = 'missing'
         return None
     
+    def _get_injured_teammates_ppg(self, team_abbr: str, game_date: date) -> float:
+        """
+        Calculate total PPG of injured teammates (OUT/QUESTIONABLE/DOUBTFUL).
+
+        Session 127: Implements real calculation for breakout opportunity component.
+        Impact: 30+ PPG injured → 24.5% breakout rate vs 16.2% baseline
+
+        Args:
+            team_abbr: Team abbreviation (e.g., 'LAL', 'OKC')
+            game_date: Game date to check injuries for
+
+        Returns:
+            float: Sum of season PPG for injured teammates
+        """
+        try:
+            # Get previous day's feature store data for season PPG lookup
+            prev_date = game_date - timedelta(days=1)
+
+            query = f"""
+            WITH latest_features AS (
+              SELECT
+                player_lookup,
+                features[OFFSET(2)] as season_ppg
+              FROM `nba_predictions.ml_feature_store_v2`
+              WHERE game_date = '{prev_date.isoformat()}'
+                AND features[OFFSET(2)] > 0  -- Only players with PPG
+            ),
+            injured_players AS (
+              SELECT DISTINCT
+                i.player_lookup,
+                COALESCE(f.season_ppg, 0) as season_ppg
+              FROM `nba_raw.bdl_injuries` i
+              LEFT JOIN latest_features f
+                ON i.player_lookup = f.player_lookup
+              WHERE i.scrape_date = '{game_date.isoformat()}'
+                AND i.team_abbr = '{team_abbr}'
+                AND i.injury_status_normalized IN ('out', 'questionable', 'doubtful')
+            )
+            SELECT ROUND(SUM(season_ppg), 1) as total_injured_ppg
+            FROM injured_players
+            """
+
+            result = self.bq_client.query(query).to_dataframe()
+            if result.empty or result['total_injured_ppg'].iloc[0] is None:
+                return 0.0
+
+            injured_ppg = float(result['total_injured_ppg'].iloc[0])
+            logger.debug(f"Team {team_abbr}: {injured_ppg:.1f} PPG injured")
+            return injured_ppg
+
+        except Exception as e:
+            logger.warning(f"Failed to get injured teammates PPG for {team_abbr}: {e}")
+            return 0.0  # Fallback to 0 if query fails
+
     def _get_feature_phase4_only(self, index: int, field_name: str,
                                  phase4_data: Dict, default: float,
                                  feature_sources: Dict) -> float:
         """
         Get feature from Phase 4 ONLY (no Phase 3 fallback).
-        
+
         Args:
             index: Feature index (5-8)
             field_name: Field name in Phase 4 dict
             phase4_data: Phase 4 data dict
             default: Default value if Phase 4 missing
             feature_sources: Dict to track source (mutated)
-            
+
         Returns:
             float: Feature value
         """
