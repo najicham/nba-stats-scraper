@@ -551,7 +551,7 @@ def health_check_deep():
     try:
         # Check 1: Critical imports
         try:
-            from data_loaders import DataLoaderV9
+            from data_loaders import PredictionDataLoader
             import catboost
             checks['imports'] = {
                 'status': 'ok',
@@ -614,19 +614,34 @@ def health_check_deep():
         # Check 4: Model file accessibility
         try:
             import os
-            model_path = os.path.join(os.path.dirname(__file__), '../ml/models/catboost_v9.cbm')
-            if os.path.exists(model_path):
+            from pathlib import Path
+
+            model_path_env = os.environ.get('CATBOOST_V8_MODEL_PATH')
+
+            if model_path_env:
+                # Check env var is set (GCS or local)
                 checks['model'] = {
                     'status': 'ok',
-                    'path': 'catboost_v9.cbm',
-                    'exists': True
+                    'path': model_path_env,
+                    'source': 'environment'
                 }
             else:
-                checks['model'] = {
-                    'status': 'failed',
-                    'error': f'Model file not found at {model_path}'
-                }
-                all_healthy = False
+                # Check local models directory
+                models_dir = Path(__file__).parent.parent.parent / "models"
+                model_files = list(models_dir.glob("catboost_v*_33features_*.cbm")) if models_dir.exists() else []
+                if model_files:
+                    checks['model'] = {
+                        'status': 'ok',
+                        'path': str(model_files[0].name),
+                        'source': 'local_models_dir',
+                        'count': len(model_files)
+                    }
+                else:
+                    checks['model'] = {
+                        'status': 'failed',
+                        'error': 'No model found (CATBOOST_V8_MODEL_PATH not set, no local models)'
+                    }
+                    all_healthy = False
         except Exception as e:
             checks['model'] = {
                 'status': 'failed',
