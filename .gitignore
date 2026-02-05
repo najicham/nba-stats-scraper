@@ -204,5 +204,6 @@ models/
 Dockerfile.backup.*
 failed_games_*.json
 .backups/
-# Experiment model artifacts (large binaries)
-ml/experiments/results/*.cbm
+# Experiment artifacts
+experiments/results/
+ml/experiments/results/
