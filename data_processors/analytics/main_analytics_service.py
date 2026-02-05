@@ -59,6 +59,25 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ============================================================================
+# RACE CONDITION PREVENTION (Session 124 - Tier 1)
+# ============================================================================
+
+class DependencyFailureError(Exception):
+    """Raised when a critical dependency processor fails."""
+    pass
+
+# Feature flag for rollback capability
+SEQUENTIAL_EXECUTION_ENABLED = os.environ.get(
+    'SEQUENTIAL_EXECUTION_ENABLED', 'true'
+).lower() == 'true'
+
+# Group-level timeouts (minutes)
+GROUP_TIMEOUT_MINUTES = {
+    1: 30,  # Level 1 (team processors): 30 minutes
+    2: 20,  # Level 2 (player processors): 20 minutes
+}
+
+# ============================================================================
 # AUTHENTICATION (Issue #9: Add Authentication)
 # ============================================================================
 
@@ -357,29 +376,296 @@ def run_single_analytics_processor(processor_class, opts, prefer_async=None):
             "error": str(e)
         }
 
+def run_processors_sequential(processor_groups, opts):
+    """
+    Execute processor groups in dependency order (Session 124 Tier 1).
+
+    Within each group: parallel execution (performance)
+    Between groups: sequential execution (correctness)
+
+    Args:
+        processor_groups: List of group dicts with keys:
+            - level: int (execution order)
+            - processors: list of processor classes
+            - parallel: bool (run processors in parallel within group)
+            - dependencies: list of processor names (specific dependencies)
+            - description: str (human-readable description)
+        opts: Options dict for processor.run()
+
+    Returns:
+        List of result dicts from all processors
+
+    Raises:
+        DependencyFailureError: If a critical dependency processor fails
+    """
+    all_results = []
+    completed_processors = set()  # Track which processors completed successfully
+
+    # Sort groups by level to ensure correct execution order
+    sorted_groups = sorted(processor_groups, key=lambda g: g.get('level', 1))
+
+    for group in sorted_groups:
+        level = group.get('level', 1)
+        processors = group.get('processors', [])
+        parallel = group.get('parallel', True)
+        dependencies = group.get('dependencies', [])
+        description = group.get('description', f'Level {level} processors')
+
+        logger.info(
+            f"📋 Level {level}: Running {len(processors)} processors - {description}"
+        )
+
+        # Check if dependencies are satisfied
+        missing_deps = [dep for dep in dependencies if dep not in completed_processors]
+        if missing_deps:
+            logger.error(
+                f"❌ Cannot run Level {level}: missing dependencies {missing_deps}"
+            )
+            raise DependencyFailureError(
+                f"Level {level} blocked by missing dependencies: {missing_deps}"
+            )
+
+        # Get timeout for this level (default to 20 minutes)
+        timeout_seconds = GROUP_TIMEOUT_MINUTES.get(level, 20) * 60
+
+        # Execute processors in this group
+        if parallel and len(processors) > 1:
+            # Parallel execution within group
+            logger.info(f"🚀 Level {level}: Parallel execution of {len(processors)} processors")
+            with ThreadPoolExecutor(max_workers=len(processors)) as executor:
+                futures = {
+                    executor.submit(run_single_analytics_processor, proc, opts): proc
+                    for proc in processors
+                }
+
+                # Collect results with timeout
+                group_results = []
+                group_failures = []
+                for future in as_completed(futures, timeout=timeout_seconds):
+                    proc_class = futures[future]
+                    try:
+                        result = future.result(timeout=600)  # 10 min per processor
+                        group_results.append(result)
+                        if result.get('status') == 'success':
+                            completed_processors.add(proc_class.__name__)
+                            logger.info(f"✅ {proc_class.__name__} completed")
+                        else:
+                            group_failures.append(proc_class.__name__)
+                            logger.error(f"❌ {proc_class.__name__} failed: {result.get('status')}")
+                    except TimeoutError:
+                        logger.error(f"⏱️ {proc_class.__name__} timed out after 10 minutes")
+                        group_results.append({
+                            "processor": proc_class.__name__,
+                            "status": "timeout"
+                        })
+                        group_failures.append(proc_class.__name__)
+                    except Exception as e:
+                        logger.error(f"❌ {proc_class.__name__} exception: {e}")
+                        group_results.append({
+                            "processor": proc_class.__name__,
+                            "status": "exception",
+                            "error": str(e)
+                        })
+                        group_failures.append(proc_class.__name__)
+
+                all_results.extend(group_results)
+
+                # Check if critical dependencies failed
+                # If this is Level 1 and any processor failed, block Level 2
+                if level == 1 and group_failures:
+                    # Check if any failed processor is a dependency for later levels
+                    failed_critical = []
+                    for later_group in sorted_groups:
+                        if later_group.get('level', 1) > level:
+                            group_deps = later_group.get('dependencies', [])
+                            failed_critical.extend([f for f in group_failures if f in group_deps])
+
+                    if failed_critical:
+                        raise DependencyFailureError(
+                            f"Level {level} critical processors failed: {failed_critical} - "
+                            f"cannot proceed to dependent processors"
+                        )
+        else:
+            # Sequential execution (or single processor)
+            logger.info(f"🔄 Level {level}: Sequential execution of {len(processors)} processors")
+            for proc in processors:
+                try:
+                    result = run_single_analytics_processor(proc, opts)
+                    all_results.append(result)
+                    if result.get('status') == 'success':
+                        completed_processors.add(proc.__name__)
+                        logger.info(f"✅ {proc.__name__} completed")
+                    else:
+                        logger.error(f"❌ {proc.__name__} failed: {result.get('status')}")
+                        # Check if this processor is a critical dependency
+                        if proc.__name__ in dependencies:
+                            raise DependencyFailureError(
+                                f"Critical dependency {proc.__name__} failed"
+                            )
+                except Exception as e:
+                    logger.error(f"❌ {proc.__name__} exception: {e}")
+                    all_results.append({
+                        "processor": proc.__name__,
+                        "status": "exception",
+                        "error": str(e)
+                    })
+                    # Check if this processor is a critical dependency
+                    if proc.__name__ in dependencies:
+                        raise DependencyFailureError(
+                            f"Critical dependency {proc.__name__} failed with exception: {e}"
+                        )
+
+        logger.info(f"✅ Level {level} complete - proceeding to next level")
+
+    logger.info(f"✅ All {len(sorted_groups)} levels complete - {len(all_results)} processors executed")
+    return all_results
+
+def run_processors_parallel(processors, opts):
+    """
+    Execute processors in parallel (legacy mode for rollback).
+
+    This is the original parallel execution logic, preserved for the
+    SEQUENTIAL_EXECUTION_ENABLED=false rollback path.
+
+    Args:
+        processors: List of processor classes
+        opts: Options dict for processor.run()
+
+    Returns:
+        List of result dicts from all processors
+    """
+    logger.info(f"🚀 Running {len(processors)} analytics processors in PARALLEL (legacy mode)")
+    results = []
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        # Submit all processors for parallel execution
+        futures = {
+            executor.submit(run_single_analytics_processor, processor_class, opts): processor_class
+            for processor_class in processors
+        }
+
+        # Collect results as they complete
+        for future in as_completed(futures):
+            processor_class = futures[future]
+            try:
+                result = future.result(timeout=600)  # 10 min timeout per processor
+                results.append(result)
+            except TimeoutError:
+                logger.error(f"⏱️ Processor {processor_class.__name__} timed out after 10 minutes")
+                results.append({
+                    "processor": processor_class.__name__,
+                    "status": "timeout"
+                })
+            except Exception as e:
+                logger.error(f"❌ Failed to get result from {processor_class.__name__}: {e}")
+                results.append({
+                    "processor": processor_class.__name__,
+                    "status": "exception",
+                    "error": str(e)
+                })
+
+    return results
+
 # Analytics processor registry - maps source tables to dependent analytics processors
 # IMPORTANT: All 5 Phase 3 processors must have at least one trigger path for
 # Firestore completion tracking to work correctly. The Phase 3->4 orchestrator
 # expects completion messages from all 5 processors.
-ANALYTICS_TRIGGERS = {
+#
+# Session 124: Migrated to ANALYTICS_TRIGGER_GROUPS for dependency-aware execution.
+# Critical triggers (nbac_gamebook_player_stats) use sequential groups to prevent
+# race conditions. Other triggers maintain simple list format for backward compatibility.
+ANALYTICS_TRIGGER_GROUPS = {
+    # CRITICAL: Sequential execution to prevent race condition (Session 123)
+    # PlayerGameSummaryProcessor depends on TeamOffenseGameSummaryProcessor
+    # Feb 3 incident: Player ran 92 min BEFORE team, causing 1228% usage_rate
     'nbac_gamebook_player_stats': [
-        PlayerGameSummaryProcessor,
-        TeamOffenseGameSummaryProcessor,  # Moved from BDL trigger
-        TeamDefenseGameSummaryProcessor,  # Moved from BDL trigger
+        {
+            'level': 1,
+            'processors': [
+                TeamOffenseGameSummaryProcessor,
+                TeamDefenseGameSummaryProcessor
+            ],
+            'parallel': True,  # Can run in parallel within group
+            'dependencies': [],  # Level 1 has no dependencies
+            'description': 'Team stats - foundation for player calculations'
+        },
+        {
+            'level': 2,
+            'processors': [
+                PlayerGameSummaryProcessor
+            ],
+            'parallel': False,  # Only one processor
+            'dependencies': ['TeamOffenseGameSummaryProcessor'],  # SPECIFIC dependency (not TeamDefense)
+            'description': 'Player stats - requires team possessions from offense stats'
+        }
     ],
-    # REMOVED 2026-02-01: bdl_player_boxscores trigger (unreliable data quality)
-    # All processors now use NBAC sources exclusively
-    # nbac_scoreboard_v2 is kept for completeness but note it's not currently being scraped
+    # Simple list format for triggers that don't need sequential execution
+    # These will be auto-converted to single-level groups
     'nbac_scoreboard_v2': [TeamOffenseGameSummaryProcessor, TeamDefenseGameSummaryProcessor, UpcomingTeamGameContextProcessor],
-    # nbac_team_boxscore is the primary source for team defense data
     'nbac_team_boxscore': [TeamDefenseGameSummaryProcessor, TeamOffenseGameSummaryProcessor],
-    # nbac_schedule triggers team context generation (uses schedule data, not scoreboard)
-    # This is the primary trigger since nbac_scoreboard_v2 is not currently being scraped
     'nbac_schedule': [UpcomingTeamGameContextProcessor],
-    'bdl_standings': [],  # No analytics dependencies yet
-    'nbac_injury_report': [PlayerGameSummaryProcessor],  # Updates player context
-    'odds_api_player_points_props': [UpcomingPlayerGameContextProcessor],  # Re-trigger Phase 3 when betting lines arrive
+    'bdl_standings': [],
+    'nbac_injury_report': [PlayerGameSummaryProcessor],
+    'odds_api_player_points_props': [UpcomingPlayerGameContextProcessor],
 }
+
+# Backward compatibility: Convert simple lists to single-level groups
+def normalize_trigger_config(trigger_value):
+    """
+    Convert simple list format to group format for consistent processing.
+
+    Examples:
+        [ProcessorA, ProcessorB] -> [{'level': 1, 'processors': [ProcessorA, ProcessorB], ...}]
+        [{'level': 1, ...}, {'level': 2, ...}] -> unchanged
+    """
+    if not trigger_value:
+        return []
+
+    # Already in group format?
+    if isinstance(trigger_value, list) and len(trigger_value) > 0 and isinstance(trigger_value[0], dict):
+        return trigger_value
+
+    # Convert simple list to single-level group
+    return [{
+        'level': 1,
+        'processors': trigger_value,
+        'parallel': True,
+        'dependencies': [],
+        'description': 'Single-level execution (no dependencies)'
+    }]
+
+def validate_processor_groups():
+    """
+    Validate no processor appears in multiple groups within same trigger.
+    Prevents accidental duplicate execution.
+    """
+    for source_table, trigger_config in ANALYTICS_TRIGGER_GROUPS.items():
+        # Skip empty configs
+        if not trigger_config:
+            continue
+
+        # Normalize to group format
+        groups = normalize_trigger_config(trigger_config)
+
+        # Track processors seen
+        all_processors = []
+        for group in groups:
+            for proc in group.get('processors', []):
+                if proc in all_processors:
+                    raise ValueError(
+                        f"Duplicate processor {proc.__name__} in multiple groups "
+                        f"for source_table={source_table}"
+                    )
+                all_processors.append(proc)
+
+    total_unique = sum(
+        len(set(g.get('processors', []) for g in normalize_trigger_config(trigger_config)))
+        for trigger_config in ANALYTICS_TRIGGER_GROUPS.values()
+        if trigger_config
+    )
+    logger.info(f"✅ Validated processor groups: no duplicates found")
+
+# Validate on startup
+validate_processor_groups()
 
 @app.route('/', methods=['GET'])
 def index():
@@ -449,13 +735,16 @@ def process_analytics():
         source_table = raw_table.split('.')[-1] if '.' in raw_table else raw_table
 
         logger.info(f"Processing analytics for {source_table} (from {raw_table}), date: {game_date}")
-        
-        # Determine which analytics processors to run
-        processors_to_run = ANALYTICS_TRIGGERS.get(source_table, [])
-        
-        if not processors_to_run:
+
+        # Determine which analytics processors to run (Session 124: migrated to group-based execution)
+        trigger_config = ANALYTICS_TRIGGER_GROUPS.get(source_table, [])
+
+        if not trigger_config:
             logger.info(f"No analytics processors configured for {source_table}")
             return jsonify({"status": "no_processors", "source_table": source_table}), 200
+
+        # Normalize trigger config to group format (handles both list and dict formats)
+        processor_groups = normalize_trigger_config(trigger_config)
         
         # Process analytics for date range (single day or small range)
         start_date = game_date
@@ -532,36 +821,41 @@ def process_analytics():
                     f"{completeness['actual_games']}/{completeness['expected_games']} games"
                 )
 
-        # Execute processors in PARALLEL for 75% speedup (20 min → 5 min)
-        logger.info(f"🚀 Running {len(processors_to_run)} analytics processors in PARALLEL for {game_date}")
-        results = []
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            # Submit all processors for parallel execution
-            futures = {
-                executor.submit(run_single_analytics_processor, processor_class, opts): processor_class
-                for processor_class in processors_to_run
-            }
+        # Execute processors (Session 124: Sequential execution to prevent race conditions)
+        # Feature flag allows rollback to parallel execution if needed
+        total_processors = sum(len(g.get('processors', [])) for g in processor_groups)
 
-            # Collect results as they complete
-            for future in as_completed(futures):
-                processor_class = futures[future]
-                try:
-                    result = future.result(timeout=600)  # 10 min timeout per processor
-                    results.append(result)
-                except TimeoutError:
-                    logger.error(f"⏱️ Processor {processor_class.__name__} timed out after 10 minutes")
-                    results.append({
-                        "processor": processor_class.__name__,
-                        "status": "timeout"
-                    })
-                except Exception as e:
-                    logger.error(f"❌ Failed to get result from {processor_class.__name__}: {e}")
-                    results.append({
-                        "processor": processor_class.__name__,
-                        "status": "exception",
-                        "error": str(e)
-                    })
-        
+        if SEQUENTIAL_EXECUTION_ENABLED:
+            # NEW: Sequential execution with dependency ordering
+            logger.info(
+                f"🔄 Running {total_processors} analytics processors in SEQUENTIAL GROUPS "
+                f"({len(processor_groups)} levels) for {game_date}"
+            )
+            try:
+                results = run_processors_sequential(processor_groups, opts)
+            except DependencyFailureError as e:
+                logger.error(f"❌ Dependency failure: {e}")
+                # Return 500 to trigger Pub/Sub retry
+                # Dependencies might resolve on retry (e.g., if team processors were delayed)
+                return jsonify({
+                    "status": "dependency_failure",
+                    "message": str(e),
+                    "source_table": source_table,
+                    "game_date": game_date
+                }), 500
+        else:
+            # LEGACY: Parallel execution (for rollback)
+            # Extract all processors from groups into flat list
+            all_processors = []
+            for group in processor_groups:
+                all_processors.extend(group.get('processors', []))
+
+            logger.warning(
+                f"⚠️ SEQUENTIAL_EXECUTION_ENABLED=false - using LEGACY parallel execution. "
+                f"This mode is vulnerable to race conditions (Feb 3 incident)."
+            )
+            results = run_processors_parallel(all_processors, opts)
+
         # R-002 FIX: Check for failures and return appropriate status code
         # Previously always returned 200, even when processors failed
         failures = [r for r in results if r.get('status') in ('error', 'exception', 'timeout')]
