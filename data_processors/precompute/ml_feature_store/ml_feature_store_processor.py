@@ -87,8 +87,10 @@ PHASE4_MAX_STALENESS_HOURS = 6
 # - Composite 0-100 score predicting role player breakout probability
 # v2_39features: Added composite_breakout_signal (Session 126 - Feb 2026)
 # - 0-5 score combining top predictive factors (37% breakout rate at 4+)
-FEATURE_VERSION = 'v2_39features'
-FEATURE_COUNT = 39
+# TEMPORARY ROLLBACK (Session 131): Reverted to v2_37features for model compatibility
+# Models expect 37 features, need to retrain on 39 features before re-enabling
+FEATURE_VERSION = 'v2_37features'
+FEATURE_COUNT = 37
 
 FEATURE_NAMES = [
     # Recent Performance (0-4)
@@ -128,11 +130,12 @@ FEATURE_NAMES = [
     'pts_vs_season_zscore', # Z-score of L5 avg vs season avg
     'breakout_flag',        # 1.0 if L5 > season_avg + 1.5*std
 
-    # Breakout Risk (37) - Session 126 composite breakout prediction
-    'breakout_risk_score',  # 0-100 score predicting role player breakout probability
-
-    # Composite Breakout Signal (38) - Session 126 simple factor count
-    'composite_breakout_signal',  # 0-5 score, 4+ = 37% breakout rate
+    # REMOVED (Session 131): Temporarily disabled for model compatibility
+    # # Breakout Risk (37) - Session 126 composite breakout prediction
+    # 'breakout_risk_score',  # 0-100 score predicting role player breakout probability
+    #
+    # # Composite Breakout Signal (38) - Session 126 simple factor count
+    # 'composite_breakout_signal',  # 0-5 score, 4+ = 37% breakout rate
 ]
 
 # ============================================================================
@@ -201,11 +204,12 @@ ML_FEATURE_RANGES = {
     35: (-4, 4, False, 'pts_vs_season_zscore'),
     36: (0, 1, False, 'breakout_flag'),
 
-    # Breakout Risk (37) - Session 126
-    37: (0, 100, False, 'breakout_risk_score'),
-
-    # Composite Breakout Signal (38) - Session 126
-    38: (0, 5, False, 'composite_breakout_signal'),
+    # REMOVED (Session 131): Temporarily disabled for model compatibility
+    # # Breakout Risk (37) - Session 126
+    # 37: (0, 100, False, 'breakout_risk_score'),
+    #
+    # # Composite Breakout Signal (38) - Session 126
+    # 38: (0, 5, False, 'composite_breakout_signal'),
 }
 
 
@@ -1712,20 +1716,21 @@ class MLFeatureStoreProcessor(
             'injured_teammates_ppg': injured_ppg
         }
 
-        # Feature 37: Breakout risk score
-        breakout_risk_score, _ = self.breakout_risk_calculator.calculate_breakout_risk_score(
-            phase4_data, phase3_data, team_context=team_context
-        )
-        features.append(breakout_risk_score)
-        feature_sources[37] = 'calculated'
-
-        # Feature 38: Composite breakout signal (0-5)
-        # Session 126: Simple factor count - 4+ factors = 37% breakout rate
-        composite_signal, _ = self.breakout_risk_calculator.calculate_composite_breakout_signal(
-            phase4_data, phase3_data, game_context=None  # TODO: Add game_context for starter/home
-        )
-        features.append(float(composite_signal))
-        feature_sources[38] = 'calculated'
+        # REMOVED (Session 131): Temporarily disabled for model compatibility
+        # # Feature 37: Breakout risk score
+        # breakout_risk_score, _ = self.breakout_risk_calculator.calculate_breakout_risk_score(
+        #     phase4_data, phase3_data, team_context=team_context
+        # )
+        # features.append(breakout_risk_score)
+        # feature_sources[37] = 'calculated'
+        #
+        # # Feature 38: Composite breakout signal (0-5)
+        # # Session 126: Simple factor count - 4+ factors = 37% breakout rate
+        # composite_signal, _ = self.breakout_risk_calculator.calculate_composite_breakout_signal(
+        #     phase4_data, phase3_data, game_context=None  # TODO: Add game_context for starter/home
+        # )
+        # features.append(float(composite_signal))
+        # feature_sources[38] = 'calculated'
 
         return features, feature_sources
     
