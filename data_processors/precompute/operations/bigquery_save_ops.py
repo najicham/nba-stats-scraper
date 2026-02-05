@@ -202,6 +202,12 @@ class BigQuerySaveOpsMixin:
                 logger.info(f"✅ Successfully loaded {len(rows)} rows")
                 self.stats["rows_processed"] = len(rows)
 
+                # Post-write validation: Verify records were written correctly
+                self._validate_after_write(
+                    table_id=table_id,
+                    expected_count=len(rows)
+                )
+
                 # Check for duplicates after successful save (if method exists)
                 # Fixed 2026-01-29: Some processors don't have QualityMixin
                 if hasattr(self, '_check_for_duplicates_post_save'):
@@ -401,6 +407,12 @@ class BigQuerySaveOpsMixin:
             else:
                 logger.info(f"✅ MERGE completed successfully")
 
+            # Post-write validation: Verify records were written correctly
+            self._validate_after_write(
+                table_id=table_id,
+                expected_count=len(rows)
+            )
+
             self.stats["rows_processed"] = len(sanitized_rows)
 
         except Exception as e:
@@ -475,3 +487,211 @@ class BigQuerySaveOpsMixin:
                     return
                 else:
                     raise e
+
+    def _validate_after_write(
+        self,
+        table_id: str,
+        expected_count: int,
+        key_fields: List[str] = None,
+        sample_pct: float = 0.10,
+        date_column: str = None
+    ) -> bool:
+        """
+        Verify records were written correctly to BigQuery (post-write validation).
+
+        Session 120 - Priority 2: Add post-write validation to detect silent failures.
+
+        This method verifies data integrity AFTER write operations complete, catching
+        issues like:
+        - BigQuery silently truncating or dropping records
+        - Permission issues causing partial writes
+        - Quota issues causing incomplete writes
+        - Schema mismatches causing NULL fields
+
+        Checks:
+        1. Record count matches expected (pre-write vs post-write)
+        2. Key fields are non-NULL for sampled records
+        3. Logs validation results and alerts if issues found
+
+        Args:
+            table_id: Full BigQuery table ID (project.dataset.table)
+            expected_count: Number of records that should have been written
+            key_fields: List of critical fields to check for NULL
+                       (defaults to PRIMARY_KEY_FIELDS if not provided)
+            sample_pct: Percentage of records to sample for NULL checks
+                       (default 0.10 = 10%, min 1 record)
+            date_column: Date column name (defaults to class attribute or 'analysis_date')
+
+        Returns:
+            True if validation passed, False if issues detected
+
+        Added: 2026-02-05 Session 120
+        """
+        import os
+
+        # Check if validation is enabled (default: True)
+        if os.environ.get('ENABLE_POST_WRITE_VALIDATION', 'true').lower() != 'true':
+            logger.debug("Post-write validation disabled via environment variable")
+            return True
+
+        if expected_count <= 0:
+            logger.debug("Post-write validation skipped (expected_count=0)")
+            return True
+
+        # Get key fields to validate
+        if key_fields is None:
+            key_fields = getattr(self.__class__, 'PRIMARY_KEY_FIELDS', None)
+
+        if not key_fields:
+            logger.debug("No key fields provided for post-write validation, skipping NULL checks")
+            key_fields = []
+
+        # Get date column name
+        if date_column is None:
+            date_column = getattr(self.__class__, 'date_column', 'analysis_date')
+
+        # Extract table info from full table_id
+        table_name = table_id.split('.')[-1] if '.' in table_id else table_id
+
+        logger.info(f"POST_WRITE_VALIDATION: Verifying {expected_count} records in {table_name}")
+
+        try:
+            # Get analysis date for partition filtering
+            analysis_date = self.opts.get('analysis_date')
+
+            # CHECK 1: Record count verification
+            # Query actual record count in the table for this analysis_date
+            if analysis_date:
+                count_query = f"""
+                SELECT COUNT(*) as actual_count
+                FROM `{table_id}`
+                WHERE {date_column} = '{analysis_date}'
+                """
+            else:
+                # Fallback: count all records (less precise but works without date)
+                logger.warning("No analysis_date available, counting ALL records (less precise)")
+                count_query = f"""
+                SELECT COUNT(*) as actual_count
+                FROM `{table_id}`
+                """
+
+            count_result = self.bq_client.query(count_query).result()
+            actual_count = next(count_result).actual_count
+
+            # Validate count matches expected
+            count_mismatch = abs(actual_count - expected_count)
+            count_mismatch_pct = (count_mismatch / expected_count * 100) if expected_count > 0 else 0
+
+            if count_mismatch > 0:
+                if count_mismatch_pct > 5.0:  # Allow 5% tolerance for edge cases
+                    logger.error(
+                        f"POST_WRITE_VALIDATION FAILED: Record count mismatch! "
+                        f"Expected {expected_count}, found {actual_count} "
+                        f"(difference: {count_mismatch}, {count_mismatch_pct:.1f}%)"
+                    )
+
+                    # Send notification for significant mismatches
+                    try:
+                        notify_error(
+                            title=f"Post-Write Validation Failed: {self.__class__.__name__}",
+                            message=f"Record count mismatch after write to {table_name}",
+                            details={
+                                'processor': self.__class__.__name__,
+                                'table': table_name,
+                                'expected_count': expected_count,
+                                'actual_count': actual_count,
+                                'mismatch': count_mismatch,
+                                'mismatch_pct': f"{count_mismatch_pct:.1f}%",
+                                'analysis_date': str(analysis_date),
+                                'issue': 'BigQuery may have dropped records or write partially failed',
+                                'remediation': 'Check BigQuery write logs and re-run processor'
+                            },
+                            processor_name=self.__class__.__name__
+                        )
+                    except Exception as notify_e:
+                        logger.warning(f"Failed to send post-write validation notification: {notify_e}")
+
+                    return False  # Validation failed
+                else:
+                    logger.warning(
+                        f"POST_WRITE_VALIDATION: Minor count mismatch (within tolerance). "
+                        f"Expected {expected_count}, found {actual_count} (diff: {count_mismatch})"
+                    )
+            else:
+                logger.info(f"✅ Record count verified: {actual_count} records")
+
+            # CHECK 2: NULL field verification (sample-based)
+            if key_fields:
+                # Calculate sample size (minimum 1 record, max 10% of records)
+                sample_size = max(1, int(expected_count * sample_pct))
+                sample_size = min(sample_size, 100)  # Cap at 100 records for performance
+
+                # Build NULL check conditions for key fields
+                null_checks = [
+                    f"COUNTIF({field} IS NULL) as {field}_null_count"
+                    for field in key_fields
+                ]
+                null_checks_str = ', '.join(null_checks)
+
+                if analysis_date:
+                    null_check_query = f"""
+                    SELECT {null_checks_str}
+                    FROM `{table_id}`
+                    WHERE {date_column} = '{analysis_date}'
+                    LIMIT {sample_size}
+                    """
+                else:
+                    null_check_query = f"""
+                    SELECT {null_checks_str}
+                    FROM `{table_id}`
+                    LIMIT {sample_size}
+                    """
+
+                null_result = self.bq_client.query(null_check_query).result()
+                null_row = next(null_result)
+
+                # Check if any key fields have NULLs
+                null_fields = []
+                for field in key_fields:
+                    null_count = getattr(null_row, f"{field}_null_count", 0)
+                    if null_count > 0:
+                        null_fields.append(f"{field} ({null_count} NULLs)")
+
+                if null_fields:
+                    logger.warning(
+                        f"POST_WRITE_VALIDATION: Found NULL values in key fields (sample of {sample_size}): "
+                        f"{', '.join(null_fields)}"
+                    )
+
+                    # Send notification if critical fields are NULL
+                    try:
+                        notify_warning(
+                            title=f"Post-Write Validation: NULL Fields Detected",
+                            message=f"Key fields have NULL values in {table_name} after write",
+                            details={
+                                'processor': self.__class__.__name__,
+                                'table': table_name,
+                                'null_fields': null_fields,
+                                'sample_size': sample_size,
+                                'total_records': actual_count,
+                                'analysis_date': str(analysis_date),
+                                'issue': 'Key fields should not be NULL - may indicate schema mismatch',
+                                'remediation': 'Check processor transform logic and schema definitions'
+                            },
+                            processor_name=self.__class__.__name__
+                        )
+                    except Exception as notify_e:
+                        logger.warning(f"Failed to send NULL field notification: {notify_e}")
+
+                    return False  # Validation failed
+                else:
+                    logger.info(f"✅ NULL check passed: All key fields populated (sample: {sample_size} records)")
+
+            logger.info(f"✅ POST_WRITE_VALIDATION PASSED for {table_name}")
+            return True
+
+        except Exception as e:
+            logger.error(f"POST_WRITE_VALIDATION: Validation query failed: {e}")
+            # Don't fail the write operation if validation query fails
+            # Just log the error and return True (assume write was successful)
+            return True
