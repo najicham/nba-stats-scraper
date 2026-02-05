@@ -1707,14 +1707,15 @@ class MLFeatureStoreProcessor(
         # Session 127: Added real injured_teammates_ppg calculation
         # ============================================================
 
+        # REMOVED (Session 131): Temporarily disabled for model compatibility
         # Get team context with injured teammates PPG
-        team_abbr = phase4_data.get('team_abbr') or phase3_data.get('team_abbr')
-        game_date_obj = datetime.strptime(game_date, '%Y-%m-%d').date() if isinstance(game_date, str) else game_date
-        injured_ppg = self._get_injured_teammates_ppg(team_abbr, game_date_obj) if team_abbr else 0.0
-
-        team_context = {
-            'injured_teammates_ppg': injured_ppg
-        }
+        # team_abbr = phase4_data.get('team_abbr') or phase3_data.get('team_abbr')
+        # game_date_obj = datetime.strptime(game_date, '%Y-%m-%d').date() if isinstance(game_date, str) else game_date
+        # injured_ppg = self._get_injured_teammates_ppg(team_abbr, game_date_obj) if team_abbr else 0.0
+        #
+        # team_context = {
+        #     'injured_teammates_ppg': injured_ppg
+        # }
 
         # REMOVED (Session 131): Temporarily disabled for model compatibility
         # # Feature 37: Breakout risk score
