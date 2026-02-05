@@ -1,8 +1,8 @@
-# Validation Infrastructure Improvements (Sessions 118-120)
+# Validation Infrastructure Improvements (Sessions 118-121)
 
 **Project:** Defense-in-Depth Validation System
-**Duration:** Sessions 118, 119, 120 (Feb 5-7, 2026)
-**Status:** ✅ Phase 1-3 Complete, Phase 4-5 Pending
+**Duration:** Sessions 118, 119, 120, 121 (Feb 5-7, 2026)
+**Status:** ✅ Phase 1-3 Complete, Gap 1 Fixed (S121), Phase 4-5 Pending
 **Impact:** HIGH - Prevents 0-value bad data from corrupting predictions
 
 ---
@@ -114,6 +114,37 @@
 - `f690bb23` - Post-write validation implementation
 - `a78b06c1` - Session 120 handoff document
 
+### Session 121 (Feb 5, 2026) - Gap 1 Fix (CRITICAL)
+
+**Scope:** Fix critical gap - integrate PreWriteValidator into precompute processors
+
+**Achievements:**
+- ✅ Added PreWriteValidator integration to precompute BigQuerySaveOpsMixin
+  - Added missing imports: PreWriteValidator, create_validation_failure_record, get_quality_logger
+  - Added _validate_before_write() method (copied from analytics version)
+  - Integrated validation call in save_precompute() before all write operations
+- ✅ Enabled enforcement of existing validation rules:
+  - player_composite_factors: fatigue_score range (0-100), context scores validation
+  - ml_feature_store_v2: feature array length (34 elements), NaN/Inf checks
+- ✅ Tested validation blocking:
+  - Invalid records correctly blocked (fatigue_score > 100, wrong array length)
+  - Valid records pass through unchanged
+  - Violations logged to quality_events table with correct error messages
+
+**Files Modified:**
+- `data_processors/precompute/operations/bigquery_save_ops.py` (+109 lines)
+  - Lines 46-47: Added validation imports
+  - Lines 123-129: Integrated validation call in save_precompute()
+  - Lines 260-366: Added _validate_before_write() method
+
+**Root Causes Fixed:**
+- Validation rules existed but were never enforced for precompute tables
+- Precompute mixin was missing the validation integration pattern
+- Bad data could flow into Phase 4 tables without quality checks
+
+**Commits:**
+- `9ba3bcc2` - PreWriteValidator integration to precompute mixin
+
 ---
 
 ## Validation Coverage Matrix
@@ -123,8 +154,8 @@
 | **TeamOffenseGameSummaryProcessor** | ✅ S118 | ✅ S118 | ❌ | ✅ S120 | **PROTECTED** |
 | **TeamDefenseGameSummaryProcessor** | ✅ S118 | ✅ S118 | ❌ | ✅ S120 | **PROTECTED** |
 | **PlayerGameSummaryProcessor** | ❌ | ✅ | ✅ S119 | ✅ S120 | **PROTECTED** |
-| **PlayerCompositeFactorsProcessor** | ❌ | ✅* | ⚠️  | ✅ S120 | **PARTIAL** |
-| **MLFeatureStoreProcessor** | ❌ | ✅* | ⚠️  | ✅ S120 | **PARTIAL** |
+| **PlayerCompositeFactorsProcessor** | ❌ | ✅ S121 | ⚠️  | ✅ S120 | **PROTECTED** |
+| **MLFeatureStoreProcessor** | ❌ | ✅ S121 | ⚠️  | ✅ S120 | **PROTECTED** |
 | **PlayerDailyCacheProcessor** | ❌ | ❌ | ⚠️  | ✅ S120 | **VULNERABLE** |
 | **PlayerShotZoneAnalysisProcessor** | ❌ | ❌ | ❌ | ✅ S120 | **VULNERABLE** |
 | **TeamDefenseZoneAnalysisProcessor** | ❌ | ❌ | ❌ | ✅ S120 | **VULNERABLE** |
@@ -132,10 +163,9 @@
 
 **Legend:**
 - ✅ Implemented
-- ✅* Rules exist but NOT enforced (Gap 1)
 - ⚠️  Soft dependencies, no blocking gate
 - ❌ Not implemented
-- S118/S119/S120 = Session number
+- S118/S119/S120/S121 = Session number
 
 ---
 
@@ -143,11 +173,15 @@
 
 ### Gap 1: Precompute BigQuerySaveOpsMixin Missing PreWriteValidator (CRITICAL)
 
-**Status:** ❌ NOT FIXED
+**Status:** ✅ FIXED (Session 121)
 
-**Impact:** HIGH - Validation rules exist for `player_composite_factors` and `ml_feature_store_v2` but are NOT enforced
+**Impact:** HIGH - Validation rules exist for `player_composite_factors` and `ml_feature_store_v2` but were NOT enforced
 
-**Fix:** Copy `_validate_before_write()` from analytics to precompute mixin
+**Fix Applied:**
+- Added `_validate_before_write()` method to precompute BigQuerySaveOpsMixin
+- Integrated validation call in `save_precompute()` before all write operations
+- Tested and verified validation correctly blocks invalid records
+- Commit: `9ba3bcc2`
 
 **Priority:** P1 (HIGH) - **Session 121 (1 hour)**
 
