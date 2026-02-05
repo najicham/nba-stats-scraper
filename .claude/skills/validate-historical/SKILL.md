@@ -649,6 +649,31 @@ FULL OUTER JOIN bdl b
 WHERE ABS(COALESCE(n.nbac_points, 0) - COALESCE(b.bdl_points, 0)) > 2"
 ```
 
+### Source Distribution Check (Session 128)
+
+Check which source was used for player_game_summary records. Useful for validating same-night analytics vs morning gamebook processing.
+
+```bash
+# Check source distribution for a date range
+bq query --use_legacy_sql=false "
+SELECT
+  game_date,
+  primary_source_used,
+  COUNT(*) as records,
+  ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER(PARTITION BY game_date), 1) as pct
+FROM \`nba-props-platform.nba_analytics.player_game_summary\`
+WHERE game_date BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) AND CURRENT_DATE()
+GROUP BY game_date, primary_source_used
+ORDER BY game_date DESC, records DESC"
+```
+
+**Expected Distribution**:
+- `nbac_gamebook` - Morning processing (after 6 AM ET)
+- `nbac_boxscores` - Same-night processing (before 6 AM ET)
+- Mixed sources indicate re-processing occurred
+
+**Session 128 Context**: Same-night analytics uses `nbac_boxscores` fallback when gamebook isn't available yet. This is expected behavior during evening hours.
+
 ---
 
 ## Mode 9: Export Results (`--export <path>`)
