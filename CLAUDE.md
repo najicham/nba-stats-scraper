@@ -127,6 +127,46 @@ PYTHONPATH=. python ml/experiments/quick_retrain.py \
     --train-end 2026-01-31
 ```
 
+## Breakout Classifier [Keyword: BREAKOUT]
+
+**Status:** Shadow mode (no production impact)
+
+The breakout classifier identifies role players (8-16 PPG) at risk of "breakout" games (1.5x season average). Uses CatBoost model trained on 10 features.
+
+### Shared Feature Module (Session 134b)
+
+**CRITICAL:** Always use `ml/features/breakout_features.py` for feature computation to ensure train/eval consistency.
+
+```python
+from ml.features.breakout_features import (
+    get_training_data_query,
+    prepare_feature_vector,
+    validate_feature_distributions
+)
+```
+
+**Why this matters:** Session 134b discovered that training with one feature pipeline and evaluating with another caused AUC to drop from 0.62 to 0.47 (worse than random). Using the shared module fixed this.
+
+### Training & Evaluation
+
+```bash
+# Train with shared features and evaluate on holdout
+PYTHONPATH=. python ml/experiments/train_and_evaluate_breakout.py \
+  --train-end 2026-01-31 \
+  --eval-start 2026-02-01 \
+  --eval-end 2026-02-05
+```
+
+### Models in GCS
+
+```
+gs://nba-props-platform-models/breakout/v1/
+├── breakout_v1_20251102_20260205.cbm  # Active in production
+└── breakout_v1_20251102_20260115.cbm  # Backup
+```
+
+**See:** `docs/09-handoff/2026-02-05-SESSION-134-COMPLETE-SUMMARY.md` for full context
+
 ## Deployment [Keyword: DEPLOY]
 
 ### CRITICAL: Always deploy from repo root
@@ -147,6 +187,25 @@ cd predictions/worker && gcloud run deploy --source .
 | nba-phase4-precompute-processors | data_processors/precompute/Dockerfile |
 | nba-phase2-processors | data_processors/raw/Dockerfile |
 | nba-scrapers | scrapers/Dockerfile |
+
+### Deployment Options
+
+**Standard deploy** (full validation, ~8-10 min):
+```bash
+./bin/deploy-service.sh SERVICE
+```
+
+**Hot-deploy** (skips non-essential checks, ~5-6 min):
+```bash
+./bin/hot-deploy.sh SERVICE
+```
+
+Hot-deploy skips:
+- Dockerfile dependency validation
+- 120s BigQuery write verification
+- Env var preservation checks
+
+Use hot-deploy for quick fixes, standard for major changes.
 
 ### Always Deploy After Bug Fixes
 ```bash
@@ -223,6 +282,7 @@ FROM nba_reference.nba_schedule WHERE game_date = CURRENT_DATE()
 | Orphan superseded predictions | Players missing active predictions after regen | Re-run regeneration (Session 102 auto-skips edge filter) |
 | Feature cache stale | Wrong predicted values, low hit rate | Regenerate predictions for affected dates |
 | **Silent service failure** | **Service running but requests fail** | **Check `/health/deep` endpoint - missing module or broken dependency (Session 129)** |
+| **ML train/eval mismatch** | **Model has poor holdout performance despite good training metrics** | **Use shared feature module (`ml/features/`) for both training and evaluation (Session 134b)** |
 
 **Full troubleshooting:** See `docs/02-operations/session-learnings.md`
 
