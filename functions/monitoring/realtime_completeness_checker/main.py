@@ -5,21 +5,39 @@ Triggered when Phase 2 processors complete.
 Checks if all processors done for that date.
 Runs completeness check if so.
 Detects missing games in ~2 minutes vs 10 hours.
+
+Session 128: Made gamebook check time-aware. Before 6 AM ET, gamebook is not
+expected (arrives next morning), so only check BDL/boxscore sources.
 """
 
 import functions_framework
 from google.cloud import bigquery
 from datetime import datetime
+import pytz
 import json
 import base64
 import uuid
 import sys
 import os
 
-# Add project root to path for shared imports
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))
+# Project ID for BigQuery operations
+PROJECT_ID = "nba-props-platform"
 
-from shared.utils.bigquery_batch_writer import get_batch_writer
+
+def is_gamebook_expected():
+    """Check if gamebook data is expected to be available.
+
+    Gamebook PDFs are scraped at ~6 AM ET next morning.
+    Before 6 AM ET, gamebook is NOT expected - don't alert if missing.
+    After 6 AM ET, gamebook SHOULD be available - alert if missing.
+
+    Session 128: Added to prevent false alerts during evening analytics.
+    """
+    et_tz = pytz.timezone('America/New_York')
+    now_et = datetime.now(et_tz)
+
+    # Gamebook expected after 6 AM ET
+    return now_et.hour >= 6
 
 
 @functions_framework.cloud_event
@@ -110,8 +128,9 @@ def get_expected_processors_for_date(game_date):
 
 
 def track_processor_completion(processor_name, game_date, status, rows_processed):
-    """Record processor completion using BigQueryBatchWriter."""
-    table_id = "nba_orchestration.processor_completions"
+    """Record processor completion using direct BigQuery insert."""
+    bq_client = bigquery.Client()
+    table_id = f"{PROJECT_ID}.nba_orchestration.processor_completions"
 
     row = {
         'processor_name': processor_name,
@@ -121,11 +140,10 @@ def track_processor_completion(processor_name, game_date, status, rows_processed
         'rows_processed': rows_processed
     }
 
-    # Use BigQueryBatchWriter for efficient batched writes
-    writer = get_batch_writer(table_id)
-    writer.add_record(row)
-    # Flush immediately since this is a Cloud Function that may terminate
-    writer.flush()
+    # Direct insert for single record
+    errors = bq_client.insert_rows_json(table_id, [row])
+    if errors:
+        print(f"❌ Error tracking completion: {errors}")
 
 
 def get_completed_processors(game_date):
@@ -145,8 +163,33 @@ def get_completed_processors(game_date):
 
 
 def check_completeness_for_date(game_date):
-    """Run completeness check for specific date."""
+    """Run completeness check for specific date.
+
+    Session 128: Made gamebook check time-aware. Before 6 AM ET, only check
+    BDL/boxscore sources since gamebook arrives at ~6 AM next morning.
+    """
     bq_client = bigquery.Client()
+
+    # Check if gamebook data is expected at this time
+    gamebook_expected = is_gamebook_expected()
+
+    # Build WHERE clause based on what sources are expected
+    if gamebook_expected:
+        # After 6 AM ET: check both gamebook and BDL
+        where_clause = """
+        WHERE g.game_code IS NULL
+           OR b.game_code IS NULL
+           OR g.player_count < 10
+           OR b.player_count < 10
+        """
+        print(f"📋 Gamebook expected (after 6 AM ET) - checking both sources")
+    else:
+        # Before 6 AM ET: only check BDL (gamebook not expected yet)
+        where_clause = """
+        WHERE b.game_code IS NULL
+           OR b.player_count < 10
+        """
+        print(f"🌙 Gamebook NOT expected (before 6 AM ET) - only checking BDL")
 
     # Use same SQL as daily checker but for this date only
     query = f"""
@@ -209,10 +252,7 @@ def check_completeness_for_date(game_date):
     LEFT JOIN gamebook_games g ON s.game_code = g.game_code
     LEFT JOIN bdl_games b ON s.game_code = b.game_code
 
-    WHERE g.game_code IS NULL
-       OR b.game_code IS NULL
-       OR g.player_count < 10
-       OR b.player_count < 10
+    {where_clause}
     """
 
     results = list(bq_client.query(query).result())
