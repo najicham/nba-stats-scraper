@@ -159,7 +159,7 @@ case $SERVICE in
     CRITICAL_DEPS="flask google.cloud.firestore google.cloud.bigquery pandas"
     ;;
   nba-grading-service)
-    MAIN_MODULE="nba_grading_service"
+    MAIN_MODULE="main_nba_grading_service"
     CRITICAL_DEPS="google.cloud.bigquery google.cloud.pubsub_v1 google.cloud.firestore flask pandas"
     ;;
   *)

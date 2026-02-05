@@ -22,6 +22,10 @@ WORKDIR /app
 # Copy shared modules from repository root
 COPY shared/ ./shared/
 
+# Copy predictions shared module (needed for distributed_lock)
+COPY predictions/__init__.py ./predictions/__init__.py
+COPY predictions/shared/ ./predictions/shared/
+
 # Copy data_processors package structure
 COPY data_processors/__init__.py ./data_processors/__init__.py
 
