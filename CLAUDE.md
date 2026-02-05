@@ -234,12 +234,32 @@ FROM nba_reference.nba_schedule WHERE game_date = CURRENT_DATE()
   entry: python .pre-commit-hooks/validate_schema_fields.py
 ```
 
-### Health Checks & Smoke Tests (Session 129)
+### Dependency Lock Files (Session 133)
+**Ensures deterministic builds** and prevents version drift issues
+
+All services use `requirements-lock.txt` for pinned dependencies:
+- **Faster builds:** Saves 1-2 min per build (no pip dependency resolution)
+- **Deterministic:** Same package versions every time
+- **Prevents drift:** Eliminates version conflict bugs (e.g., db-dtypes)
+
+**Update lock files when dependencies change:**
+```bash
+cd <service-dir>
+docker run --rm -v $(pwd):/app -w /app python:3.11-slim bash -c \
+  "pip install --quiet --upgrade pip && \
+   pip install --quiet -r requirements.txt && \
+   pip freeze > requirements-lock.txt"
+```
+
+**Note:** Keep `requirements.txt` for documentation, use `requirements-lock.txt` for builds.
+
+### Health Checks & Smoke Tests (Sessions 129-132)
 **Prevents silent service failures** (e.g., missing modules, broken dependencies)
 
 - **Deep health checks:** `/health/deep` endpoint validates critical imports and connectivity
 - **Deployment smoke tests:** Automatically verify service functionality after deployment
-- **Defense-in-depth:** 5 layers of validation from build to recovery
+- **Drift monitoring:** Slack alerts for stale deployments (every 2 hours)
+- **Defense-in-depth:** 6 layers of validation from build to recovery
 
 **See:** `docs/05-development/health-checks-and-smoke-tests.md` for implementation guide
 
