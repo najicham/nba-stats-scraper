@@ -33,7 +33,8 @@ def _process_single_player_worker(
     absolute_min_games: int,
     cache_version: str,
     source_tracking_fields: Dict,
-    source_hashes: Dict
+    source_hashes: Dict,
+    max_days_without_active_game: int = 30  # Session 128: Recency filter parameter
 ) -> tuple:
     """Module-level worker function for ProcessPoolExecutor.
 
@@ -120,6 +121,19 @@ def _process_single_player_worker(
                 'category': 'INSUFFICIENT_DATA',
                 'can_retry': True
             })
+
+        # Session 128: Skip players with no recent active games (prevents stale data)
+        # Players on extended DNP/injury who haven't played in 30+ days get stale "last 10" averages
+        if not player_games.empty:
+            most_recent_game = player_games['game_date'].max()
+            days_since_last_game = (analysis_date - most_recent_game).days
+            if days_since_last_game > max_days_without_active_game:
+                return (False, {
+                    'entity_id': player_lookup,
+                    'reason': f"No active game in {days_since_last_game} days (max: {max_days_without_active_game})",
+                    'category': 'STALE_DATA',
+                    'can_retry': False
+                })
 
         # Flag if below preferred minimum
         is_early_season = games_count < min_games_required

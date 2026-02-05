@@ -1428,16 +1428,36 @@ def orchestrate_phase3_to_phase4(cloud_event):
                 except Exception as tracker_error:
                     logger.warning(f"BigQuery aggregate update failed (non-blocking): {tracker_error}")
 
+            # Session 128 fix: Helper to mark trigger as successful
+            def mark_trigger_success():
+                """Mark Firestore as successfully triggered (Session 128 fix)."""
+                try:
+                    doc_ref.update({
+                        '_triggered': True,
+                        '_triggered_at': firestore.SERVER_TIMESTAMP,
+                        '_trigger_succeeded': True
+                    })
+                    logger.info(f"✅ Session 128: Marked trigger as SUCCEEDED for {game_date}")
+                except Exception as e:
+                    logger.error(f"Failed to mark trigger success in Firestore: {e}")
+
             # Check health of downstream services before triggering
             services_healthy, health_status = check_phase4_services_health()
 
             if services_healthy:
                 # All services healthy - trigger Phase 4
-                trigger_phase4(game_date, correlation_id, doc_ref, message_data, mode, trigger_reason)
-                logger.info(
-                    f"✅ Phase 4 triggered successfully: mode={mode}, reason={trigger_reason}, "
-                    f"game_date={game_date}, correlation_id={correlation_id}"
-                )
+                # Session 128 fix: Wrap in try/except
+                try:
+                    trigger_phase4(game_date, correlation_id, doc_ref, message_data, mode, trigger_reason)
+                    mark_trigger_success()  # Session 128: Only mark triggered AFTER success
+                    logger.info(
+                        f"✅ Phase 4 triggered successfully: mode={mode}, reason={trigger_reason}, "
+                        f"game_date={game_date}, correlation_id={correlation_id}"
+                    )
+                except ValueError as e:
+                    # Session 128: Trigger failed - don't mark as triggered, allow retry
+                    logger.error(f"❌ Session 128: Phase 4 trigger FAILED for {game_date}: {e}. Will retry on next message.")
+                    raise  # Re-raise to NACK the Pub/Sub message
             else:
                 # Services not healthy - log warning but don't block
                 # (Phase 4 trigger will be published but may fail - Pub/Sub will retry)
@@ -1445,11 +1465,17 @@ def orchestrate_phase3_to_phase4(cloud_event):
                     f"⚠️ Phase 4 services not fully healthy, but triggering anyway "
                     f"(Pub/Sub will retry if fails): {health_status}"
                 )
-                trigger_phase4(game_date, correlation_id, doc_ref, message_data, mode, trigger_reason)
-                logger.info(
-                    f"⚠️ Phase 4 triggered with unhealthy services: mode={mode}, "
-                    f"reason={trigger_reason}, health={health_status}"
-                )
+                # Session 128 fix: Wrap in try/except
+                try:
+                    trigger_phase4(game_date, correlation_id, doc_ref, message_data, mode, trigger_reason)
+                    mark_trigger_success()  # Session 128: Only mark triggered AFTER success
+                    logger.info(
+                        f"⚠️ Phase 4 triggered with unhealthy services: mode={mode}, "
+                        f"reason={trigger_reason}, health={health_status}"
+                    )
+                except ValueError as e:
+                    logger.error(f"❌ Session 128: Phase 4 trigger FAILED (unhealthy services) for {game_date}: {e}. Will retry.")
+                    raise
         else:
             # Still waiting for more processors
             logger.info(
@@ -1568,10 +1594,12 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
         trigger_reason = "all_complete" if should_trigger else f"waiting_{completed_count}/{expected_count}"
 
     # Check if this completes the phase AND hasn't been triggered yet
+    # Session 128 fix: Check _triggered (success) not _trigger_pending (attempted)
     if should_trigger and not current.get('_triggered'):
-        # Mark as triggered to prevent duplicate triggers
-        current['_triggered'] = True
-        current['_triggered_at'] = firestore.SERVER_TIMESTAMP
+        # Session 128 fix: Mark as PENDING (not triggered) to allow retry if trigger fails
+        # The actual _triggered flag is set AFTER trigger_phase4() succeeds
+        current['_trigger_pending'] = True
+        current['_trigger_pending_at'] = firestore.SERVER_TIMESTAMP
         current['_completed_count'] = completed_count
         current['_mode'] = mode
         current['_trigger_reason'] = trigger_reason

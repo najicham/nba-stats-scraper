@@ -145,6 +145,10 @@ class PlayerDailyCacheProcessor(
         self.min_games_required = 10  # Preferred minimum
         self.absolute_min_games = 3   # Absolute minimum to write record (Session 114: lowered from 5 to match shot_zone)
 
+        # Session 128: Recency filter to prevent stale player data
+        # Players with no active game in 30+ days are skipped (on extended DNP/injury)
+        self.MAX_DAYS_WITHOUT_ACTIVE_GAME = 30
+
         # BigQuery client already initialized by PrecomputeProcessorBase with pooling
         self.project_id = os.environ.get('GCP_PROJECT_ID', self.bq_client.project)
 
@@ -1105,12 +1109,13 @@ class PlayerDailyCacheProcessor(
                 category_counts[cat] = category_counts.get(cat, 0) + 1
 
             # Show breakdown with clear labeling
-            expected_skips = category_counts.get('INSUFFICIENT_DATA', 0) + category_counts.get('INCOMPLETE_DATA', 0) + category_counts.get('NO_SHOT_ZONE', 0)
+            # Session 128: Added STALE_DATA to expected skips (players inactive 30+ days)
+            expected_skips = category_counts.get('INSUFFICIENT_DATA', 0) + category_counts.get('INCOMPLETE_DATA', 0) + category_counts.get('NO_SHOT_ZONE', 0) + category_counts.get('STALE_DATA', 0)
             errors_to_investigate = category_counts.get('PROCESSING_ERROR', 0) + category_counts.get('UNKNOWN', 0)
 
             logger.info(f"📊 Failure breakdown by category:")
             for cat, count in sorted(category_counts.items()):
-                if cat in ('INSUFFICIENT_DATA', 'INCOMPLETE_DATA', 'NO_SHOT_ZONE', 'CIRCUIT_BREAKER_ACTIVE'):
+                if cat in ('INSUFFICIENT_DATA', 'INCOMPLETE_DATA', 'NO_SHOT_ZONE', 'CIRCUIT_BREAKER_ACTIVE', 'STALE_DATA'):
                     logger.info(f"   {cat}: {count} (expected - data quality)")
                 else:
                     logger.warning(f"   {cat}: {count} ⚠️ INVESTIGATE")
@@ -1198,7 +1203,8 @@ class PlayerDailyCacheProcessor(
                     self.absolute_min_games,
                     self.cache_version,
                     source_tracking_fields,
-                    source_hashes
+                    source_hashes,
+                    self.MAX_DAYS_WITHOUT_ACTIVE_GAME  # Session 128: Recency filter
                 ): player_lookup
                 for player_lookup in all_players
             }
@@ -1373,6 +1379,19 @@ class PlayerDailyCacheProcessor(
                     'category': 'INSUFFICIENT_DATA',
                     'can_retry': True
                 })
+
+            # Session 128: Skip players with no recent active games (prevents stale data)
+            # Players on extended DNP/injury who haven't played in 30+ days get stale "last 10" averages
+            if not player_games.empty:
+                most_recent_game = player_games['game_date'].max()
+                days_since_last_game = (analysis_date - most_recent_game).days
+                if days_since_last_game > self.MAX_DAYS_WITHOUT_ACTIVE_GAME:
+                    return (False, {
+                        'entity_id': player_lookup,
+                        'reason': f"No active game in {days_since_last_game} days (max: {self.MAX_DAYS_WITHOUT_ACTIVE_GAME})",
+                        'category': 'STALE_DATA',
+                        'can_retry': False
+                    })
 
             # Flag if below preferred minimum
             is_early_season = games_count < self.min_games_required
@@ -1549,10 +1568,24 @@ class PlayerDailyCacheProcessor(
                         'can_retry': True
                     })
                     continue
-                
+
+                # Session 128: Skip players with no recent active games (prevents stale data)
+                # Players on extended DNP/injury who haven't played in 30+ days get stale "last 10" averages
+                if not player_games.empty:
+                    most_recent_game = player_games['game_date'].max()
+                    days_since_last_game = (analysis_date - most_recent_game).days
+                    if days_since_last_game > self.MAX_DAYS_WITHOUT_ACTIVE_GAME:
+                        failed.append({
+                            'entity_id': player_lookup,
+                            'reason': f"No active game in {days_since_last_game} days (max: {self.MAX_DAYS_WITHOUT_ACTIVE_GAME})",
+                            'category': 'STALE_DATA',
+                            'can_retry': False
+                        })
+                        continue
+
                 # Flag if below preferred minimum
                 is_early_season = games_count < self.min_games_required
-                
+
                 # Get team context
                 current_team = context_row['team_abbr']
                 team_games = self.team_offense_data[

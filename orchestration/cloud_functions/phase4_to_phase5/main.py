@@ -992,17 +992,42 @@ def orchestrate_phase4_to_phase5(cloud_event):
                     logger.warning(f"BigQuery aggregate update failed (non-blocking): {tracker_error}")
 
             # All tier-based triggers should activate Phase 5
+            # Session 128 fix: Wrap trigger in try/except and only mark _triggered on success
+            def mark_trigger_success():
+                """Mark Firestore as successfully triggered (Session 128 fix)."""
+                try:
+                    doc_ref.update({
+                        '_triggered': True,
+                        '_triggered_at': firestore.SERVER_TIMESTAMP,
+                        '_trigger_succeeded': True
+                    })
+                    logger.info(f"✅ Session 128: Marked trigger as SUCCEEDED for {game_date}")
+                except Exception as e:
+                    logger.error(f"Failed to mark trigger success in Firestore: {e}")
+
             if trigger_reason == 'all_complete':
                 # All processors complete - trigger Phase 5 (predictions)
-                trigger_phase5(game_date, correlation_id, message_data)
-                logger.info(
-                    f"✅ All {EXPECTED_PROCESSOR_COUNT} Phase 4 processors complete for {game_date}, "
-                    f"triggered Phase 5 predictions (correlation_id={correlation_id})"
-                )
+                try:
+                    trigger_phase5(game_date, correlation_id, message_data)
+                    mark_trigger_success()  # Session 128: Only mark triggered AFTER success
+                    logger.info(
+                        f"✅ All {EXPECTED_PROCESSOR_COUNT} Phase 4 processors complete for {game_date}, "
+                        f"triggered Phase 5 predictions (correlation_id={correlation_id})"
+                    )
+                except ValueError as e:
+                    # Session 128: Trigger failed - don't mark as triggered, allow retry
+                    logger.error(f"❌ Session 128: Trigger FAILED for {game_date}: {e}. Will retry on next message.")
+                    raise  # Re-raise to NACK the Pub/Sub message
 
             elif trigger_reason in ['tier1_timeout', 'tier2_timeout', 'tier3_timeout', 'max_timeout']:
                 # Tiered timeout reached - trigger with available processors
-                trigger_phase5(game_date, correlation_id, message_data)
+                # Session 128 fix: Wrap in try/except
+                try:
+                    trigger_phase5(game_date, correlation_id, message_data)
+                    mark_trigger_success()  # Session 128: Only mark triggered AFTER success
+                except ValueError as e:
+                    logger.error(f"❌ Session 128: Tiered trigger FAILED for {game_date}: {e}. Will retry on next message.")
+                    raise  # Re-raise to NACK
 
                 completed_count = EXPECTED_PROCESSOR_COUNT - len(missing)
 
@@ -1050,11 +1075,17 @@ def orchestrate_phase4_to_phase5(cloud_event):
                     )
             elif trigger_reason == 'timeout':
                 # Legacy timeout handling (fallback for compatibility)
-                trigger_phase5(game_date, correlation_id, message_data)
-                logger.warning(
-                    f"⚠️ LEGACY TIMEOUT: Triggering Phase 5 for {game_date} with partial data. "
-                    f"Missing processors: {missing}"
-                )
+                # Session 128 fix: Wrap in try/except
+                try:
+                    trigger_phase5(game_date, correlation_id, message_data)
+                    mark_trigger_success()  # Session 128: Only mark triggered AFTER success
+                    logger.warning(
+                        f"⚠️ LEGACY TIMEOUT: Triggering Phase 5 for {game_date} with partial data. "
+                        f"Missing processors: {missing}"
+                    )
+                except ValueError as e:
+                    logger.error(f"❌ Session 128: Legacy trigger FAILED for {game_date}: {e}. Will retry on next message.")
+                    raise
                 completed_count = EXPECTED_PROCESSOR_COUNT - len(missing)
                 send_timeout_alert(
                     game_date=game_date,
@@ -1123,9 +1154,16 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
         logger.debug(f"Processor {processor_name} already registered (duplicate Pub/Sub message)")
         return (False, 'duplicate', [])
 
-    # Already triggered - don't trigger again
+    # Already successfully triggered - don't trigger again
+    # Session 128 fix: Check _triggered (success) not _trigger_pending (attempted)
     if current.get('_triggered'):
         return (False, 'already_triggered', [])
+
+    # Session 128 fix: If trigger was attempted but not confirmed successful,
+    # allow retry by not returning early here. The calling code will retry.
+    if current.get('_trigger_pending') and not current.get('_triggered'):
+        logger.info(f"Previous trigger attempt pending but not confirmed - will retry")
+        # Don't return - continue to allow retry
 
     # Add this processor's completion data
     current[processor_name] = completion_data
@@ -1142,9 +1180,10 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
 
     # Check if this completes the phase
     if completed_count >= EXPECTED_PROCESSOR_COUNT:
-        # Mark as triggered to prevent duplicate triggers
-        current['_triggered'] = True
-        current['_triggered_at'] = firestore.SERVER_TIMESTAMP
+        # Session 128 fix: Mark as PENDING (not triggered) to allow retry if trigger fails
+        # The actual _triggered flag is set AFTER trigger_phase5() succeeds
+        current['_trigger_pending'] = True
+        current['_trigger_pending_at'] = firestore.SERVER_TIMESTAMP
         current['_completed_count'] = completed_count
         current['_trigger_reason'] = 'all_complete'
 
@@ -1202,10 +1241,12 @@ def update_completion_atomic(transaction: firestore.Transaction, doc_ref, proces
                 f"Missing: {missing_processors}. Triggering Phase 5 anyway (may have quality issues)."
             )
 
-        # If any tier triggered, mark and return
+        # If any tier triggered, mark as PENDING and return
+        # Session 128 fix: Set _trigger_pending, not _triggered
+        # The actual _triggered flag is set AFTER trigger_phase5() succeeds
         if trigger_reason:
-            current['_triggered'] = True
-            current['_triggered_at'] = firestore.SERVER_TIMESTAMP
+            current['_trigger_pending'] = True
+            current['_trigger_pending_at'] = firestore.SERVER_TIMESTAMP
             current['_completed_count'] = completed_count
             current['_trigger_reason'] = trigger_reason
             current['_tier_name'] = tier_name

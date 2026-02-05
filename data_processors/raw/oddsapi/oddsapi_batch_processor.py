@@ -502,6 +502,15 @@ class OddsApiPropsBatchProcessor(ProcessorBase):
                     WHEN lines.points_line - pred.predicted_points > 2.0 THEN 'UNDER'
                     ELSE 'HOLD'
                 END,
+                -- Session 128: Set is_actionable=FALSE for low-edge predictions
+                is_actionable = CASE
+                    WHEN ABS(pred.predicted_points - lines.points_line) < 3.0 THEN FALSE
+                    ELSE pred.is_actionable
+                END,
+                filter_reason = CASE
+                    WHEN ABS(pred.predicted_points - lines.points_line) < 3.0 THEN 'low_edge'
+                    ELSE pred.filter_reason
+                END,
                 updated_at = CURRENT_TIMESTAMP()
             FROM (
                 SELECT player_lookup, game_date, points_line, bookmaker, minutes_before_tipoff,
