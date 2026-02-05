@@ -1,0 +1,30 @@
+{
+  "name": "EXAMPLE_CV_RATIO_FOCUS",
+  "hypothesis": "Test if CV ratio as primary feature improves AUC over baseline",
+  "tags": ["breakout", "classifier", "cv_ratio", "session127"],
+
+  "feature_set": [
+    "cv_ratio",
+    "cold_streak_indicator",
+    "pts_vs_season_zscore",
+    "opponent_def_rating",
+    "home_away",
+    "explosion_ratio",
+    "points_avg_season"
+  ],
+
+  "depth": 6,
+  "iterations": 300,
+  "learning_rate": 0.05,
+  "l2_reg": 3.0,
+  "early_stopping_rounds": 30,
+
+  "min_ppg": 8.0,
+  "max_ppg": 16.0,
+  "breakout_multiplier": 1.5,
+
+  "train_days": 60,
+  "eval_days": 7,
+
+  "target_precision": 0.60
+}

@@ -1,0 +1,115 @@
+{
+  "experiment_id": "ef0ff905",
+  "experiment_name": "EXP_WIDER_PPG",
+  "timestamp": "2026-02-05T16:41:12.021042+00:00",
+  "config": {
+    "name": "EXP_WIDER_PPG",
+    "hypothesis": "Wider PPG range (6-20) to include more players",
+    "tags": [
+      "breakout",
+      "classifier",
+      "experiment"
+    ],
+    "feature_set": [
+      "cv_ratio",
+      "cold_streak_indicator",
+      "pts_vs_season_zscore",
+      "opponent_def_rating",
+      "explosion_ratio",
+      "days_since_breakout",
+      "minutes_avg_last_10",
+      "points_avg_season"
+    ],
+    "depth": 5,
+    "iterations": 500,
+    "learning_rate": 0.05,
+    "l2_reg": 3.0,
+    "early_stopping_rounds": 30,
+    "min_ppg": 6.0,
+    "max_ppg": 20.0,
+    "breakout_multiplier": 1.5,
+    "train_start": "2025-11-01",
+    "train_end": "2026-01-31",
+    "eval_start": "2026-02-01",
+    "eval_end": "2026-02-04",
+    "train_days": 60,
+    "eval_days": 7,
+    "target_precision": 0.6,
+    "skip_register": false,
+    "dry_run": false
+  },
+  "train_samples": 34067,
+  "eval_samples": 1846,
+  "train_breakout_rate": 0.1725,
+  "eval_breakout_rate": 0.2134,
+  "train_period": {
+    "start": "2025-11-01",
+    "end": "2026-01-31"
+  },
+  "eval_period": {
+    "start": "2026-02-01",
+    "end": "2026-02-04"
+  },
+  "auc_roc": 0.667,
+  "average_precision": 0.3734,
+  "optimal_threshold": 0.784,
+  "precision_at_optimal": 0.6038,
+  "recall_at_optimal": 0.0812,
+  "f1_at_optimal": 0.1432,
+  "threshold_analysis": {
+    "thresh_0.3": {
+      "threshold": 0.3,
+      "precision": 0.261,
+      "recall": 0.8604,
+      "f1": 0.4005,
+      "n_flagged": 1299,
+      "pct_flagged": 70.37
+    },
+    "thresh_0.4": {
+      "threshold": 0.4,
+      "precision": 0.2856,
+      "recall": 0.703,
+      "f1": 0.4062,
+      "n_flagged": 970,
+      "pct_flagged": 52.55
+    },
+    "thresh_0.5": {
+      "threshold": 0.5,
+      "precision": 0.3248,
+      "recall": 0.4848,
+      "f1": 0.389,
+      "n_flagged": 588,
+      "pct_flagged": 31.85
+    },
+    "thresh_0.6": {
+      "threshold": 0.6,
+      "precision": 0.3853,
+      "recall": 0.2259,
+      "f1": 0.2848,
+      "n_flagged": 231,
+      "pct_flagged": 12.51
+    },
+    "thresh_0.7": {
+      "threshold": 0.7,
+      "precision": 0.4483,
+      "recall": 0.099,
+      "f1": 0.1622,
+      "n_flagged": 87,
+      "pct_flagged": 4.71
+    }
+  },
+  "feature_importance": {
+    "cv_ratio": 16.3508,
+    "cold_streak_indicator": 1.6919,
+    "pts_vs_season_zscore": 17.2739,
+    "opponent_def_rating": 17.5139,
+    "explosion_ratio": 0.8415,
+    "days_since_breakout": 13.0638,
+    "minutes_avg_last_10": 13.692,
+    "points_avg_season": 19.5722
+  },
+  "model_path": "models/breakout_exp_EXP_WIDER_PPG_20260205_084112.cbm",
+  "config_path": "models/breakout_exp_EXP_WIDER_PPG_20260205_084112_config.json",
+  "recommendation": "READY FOR SHADOW MODE",
+  "ready_for_shadow": true
+}

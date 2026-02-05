@@ -1,0 +1,115 @@
+{
+  "experiment_id": "7f1d8197",
+  "experiment_name": "EXP_SESSION126_FEATURES",
+  "timestamp": "2026-02-05T16:40:56.099266+00:00",
+  "config": {
+    "name": "EXP_SESSION126_FEATURES",
+    "hypothesis": "Using Session 126 discovered features: CV ratio and cold streak",
+    "tags": [
+      "breakout",
+      "classifier",
+      "experiment"
+    ],
+    "feature_set": [
+      "cv_ratio",
+      "cold_streak_indicator",
+      "pts_vs_season_zscore",
+      "opponent_def_rating",
+      "explosion_ratio",
+      "days_since_breakout",
+      "minutes_avg_last_10",
+      "points_avg_season"
+    ],
+    "depth": 5,
+    "iterations": 500,
+    "learning_rate": 0.05,
+    "l2_reg": 3.0,
+    "early_stopping_rounds": 30,
+    "min_ppg": 8.0,
+    "max_ppg": 16.0,
+    "breakout_multiplier": 1.5,
+    "train_start": "2025-11-01",
+    "train_end": "2026-01-31",
+    "eval_start": "2026-02-01",
+    "eval_end": "2026-02-04",
+    "train_days": 60,
+    "eval_days": 7,
+    "target_precision": 0.6,
+    "skip_register": false,
+    "dry_run": false
+  },
+  "train_samples": 21292,
+  "eval_samples": 1139,
+  "train_breakout_rate": 0.1665,
+  "eval_breakout_rate": 0.1967,
+  "train_period": {
+    "start": "2025-11-01",
+    "end": "2026-01-31"
+  },
+  "eval_period": {
+    "start": "2026-02-01",
+    "end": "2026-02-04"
+  },
+  "auc_roc": 0.6433,
+  "average_precision": 0.331,
+  "optimal_threshold": 0.739,
+  "precision_at_optimal": 0.6,
+  "recall_at_optimal": 0.0938,
+  "f1_at_optimal": 0.1622,
+  "threshold_analysis": {
+    "thresh_0.3": {
+      "threshold": 0.3,
+      "precision": 0.2473,
+      "recall": 0.7277,
+      "f1": 0.3692,
+      "n_flagged": 659,
+      "pct_flagged": 57.86
+    },
+    "thresh_0.4": {
+      "threshold": 0.4,
+      "precision": 0.2863,
+      "recall": 0.6339,
+      "f1": 0.3944,
+      "n_flagged": 496,
+      "pct_flagged": 43.55
+    },
+    "thresh_0.5": {
+      "threshold": 0.5,
+      "precision": 0.3164,
+      "recall": 0.3884,
+      "f1": 0.3487,
+      "n_flagged": 275,
+      "pct_flagged": 24.14
+    },
+    "thresh_0.6": {
+      "threshold": 0.6,
+      "precision": 0.3309,
+      "recall": 0.2009,
+      "f1": 0.25,
+      "n_flagged": 136,
+      "pct_flagged": 11.94
+    },
+    "thresh_0.7": {
+      "threshold": 0.7,
+      "precision": 0.5306,
+      "recall": 0.1161,
+      "f1": 0.1905,
+      "n_flagged": 49,
+      "pct_flagged": 4.3
+    }
+  },
+  "feature_importance": {
+    "cv_ratio": 17.0005,
+    "cold_streak_indicator": 1.8796,
+    "pts_vs_season_zscore": 19.4858,
+    "opponent_def_rating": 18.5886,
+    "explosion_ratio": 1.0313,
+    "days_since_breakout": 10.47,
+    "minutes_avg_last_10": 15.3914,
+    "points_avg_season": 16.153
+  },
+  "model_path": "models/breakout_exp_EXP_SESSION126_FEATURES_20260205_084056.cbm",
+  "config_path": "models/breakout_exp_EXP_SESSION126_FEATURES_20260205_084056_config.json",
+  "recommendation": "MARGINAL PERFORMANCE",
+  "ready_for_shadow": false
+}

@@ -1,8 +1,9 @@
 # Breakout Detection v2 - Feature Tracking Plan
 
-**Status:** Data Collection Phase
+**Status:** Experiment Phase COMPLETE - Shadow Mode Deployment
 **Started:** 2026-02-05 (Session 127)
-**Next Review:** 2026-02-26 (3 weeks)
+**Experiment Completed:** 2026-02-05 (Session 128)
+**Next Review:** Shadow mode validation (~100 samples per category)
 
 ---
 
@@ -26,6 +27,27 @@
   - Opponent defense (20%)
   - Opportunity (15%) - includes placeholder injured_teammates_ppg
   - Historical breakout rate (10%)
+
+---
+
+## Experiment Results Summary (Session 128)
+
+### Winner: EXP_COMBINED_BEST
+| Metric | Value |
+|--------|-------|
+| AUC | **0.7302** |
+| Threshold | 1.75x season PPG |
+| PPG Filter | 6-20 |
+| Features | 8 features |
+| Model File | `models/breakout_exp_EXP_COMBINED_BEST_20260205_084509.cbm` |
+
+### Key Findings
+1. **1.75x threshold wins** - Better than 1.5x or 2.0x
+2. **PPG 6-20 filter helps** - Excludes superstars and deep bench
+3. **Deeper models overfit** - 8 features optimal
+4. **Top features:** cv_ratio (16.6%), opponent_def_rating (15.7%)
+
+**Full Results:** See `EXPERIMENT-RESULTS.md`
 
 ---
 
@@ -356,25 +378,26 @@ Once classifier is trained and validated:
 |------|-----------|--------|
 | 2026-02-05 | Deploy features 37-38 infrastructure | ✅ Done |
 | 2026-02-05 | Implement real injured_teammates_ppg | ✅ Done (Session 127) |
-| 2026-02-06 | Deploy injured_teammates_ppg fix | ⏳ Pending |
-| 2026-02-12 | Week 1 verification gate | 🔄 Pending |
-| 2026-02-19 | Week 2 data check | 🔄 Pending |
-| 2026-02-26 | Week 3 training readiness gate | 🔄 Pending |
-| 2026-03-05 | Train classifier (if ready) | ⏳ Future |
-| 2026-03-12 | Shadow mode validation | ⏳ Future |
-| 2026-03-19 | Production decision | ⏳ Future |
+| 2026-02-05 | Run 7 experiments, select winner | ✅ Done (Session 128) |
+| 2026-02-05 | Deploy shadow mode | ✅ Done (Session 128) |
+| ~2026-02-19 | Collect 100+ samples per category | 🔄 In Progress |
+| ~2026-02-26 | Shadow mode validation analysis | ⏳ Pending |
+| ~2026-03-01 | Production decision | ⏳ Future |
 
 ---
 
 ## References
 
 - **Design Doc:** `docs/08-projects/current/breakout-detection-v2/BREAKOUT-DETECTION-V2-DESIGN.md`
+- **Experiment Results:** `docs/08-projects/current/breakout-detection-v2/EXPERIMENT-RESULTS.md`
 - **Session 126 Handoff:** `docs/09-handoff/2026-02-04-SESSION-126-HANDOFF.md`
 - **Session 127 Start:** `docs/09-handoff/2026-02-05-SESSION-127-BREAKOUT-START.md`
+- **Session 128 Handoff:** `docs/09-handoff/2026-02-05-SESSION-128-HANDOFF.md`
 - **Risk Calculator:** `data_processors/precompute/ml_feature_store/breakout_risk_calculator.py:21`
 - **Feature Store:** `data_processors/precompute/ml_feature_store/ml_feature_store_processor.py:1`
 - **Feature Contract:** `shared/ml/feature_contract.py:1`
+- **Winning Model:** `models/breakout_exp_EXP_COMBINED_BEST_20260205_084509.cbm`
 
 ---
 
-*Last Updated: 2026-02-05 (Session 127)*
+*Last Updated: 2026-02-05 (Session 128)*

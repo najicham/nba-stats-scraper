@@ -199,6 +199,7 @@ _ensemble_v1_1: Optional['EnsembleV1_1'] = None
 _monthly_models: Optional[list] = None  # List of CatBoostMonthly instances
 _staging_writer: Optional['BatchStagingWriter'] = None
 _injury_filter: Optional['InjuryFilter'] = None
+_breakout_classifier = None  # Session 128: Breakout classifier for shadow mode
 
 def get_data_loader() -> 'PredictionDataLoader':
     """Lazy-load data loader on first use"""
@@ -314,6 +315,21 @@ def get_prediction_systems() -> tuple:
             xgboost_system=_xgboost,
             catboost_system=_catboost
         )
+
+        # Session 128: Initialize breakout classifier for shadow mode
+        global _breakout_classifier
+        if _breakout_classifier is None:
+            try:
+                from prediction_systems.breakout_classifier_v1 import BreakoutClassifierV1
+                _breakout_classifier = BreakoutClassifierV1()
+                if _breakout_classifier.is_loaded:
+                    logger.info("Breakout Classifier V1 loaded for shadow mode")
+                else:
+                    logger.warning("Breakout Classifier V1 initialized but model not loaded (shadow mode will return LOW_RISK)")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Breakout Classifier: {e} (shadow mode disabled)")
+                _breakout_classifier = None
+
         catboost_version = "V9" if CATBOOST_VERSION == 'v9' else "V8"
         monthly_count = len(_monthly_models) if _monthly_models else 0
         total_systems = 7 + monthly_count
@@ -1686,6 +1702,27 @@ def process_player_predictions(
                     metadata['system_errors'][system_id] = error_msg
                     system_predictions[system_id] = None
 
+        # Session 128: Breakout Classifier (Shadow Mode)
+        # Runs for all predictions but does NOT filter - just logs for validation
+        try:
+            if _breakout_classifier is not None:
+                breakout_result = _breakout_classifier.predict(
+                    features=features,
+                    player_lookup=player_lookup,
+                    season_avg=features.get('points_avg_season', 0)
+                )
+                # Store in features for format_prediction_for_bigquery (shadow mode - no filtering yet)
+                features['breakout_shadow'] = {
+                    'risk_score': breakout_result.get('risk_score'),
+                    'risk_category': breakout_result.get('risk_category'),
+                    'is_role_player': breakout_result.get('is_role_player'),
+                    'model_version': breakout_result.get('metadata', {}).get('model_version') if breakout_result.get('metadata') else None,
+                }
+                # Also store in metadata for return value logging
+                metadata['breakout_shadow'] = features['breakout_shadow']
+        except Exception as e:
+            logger.warning(f"Breakout classifier shadow error for {player_lookup}: {e}")
+
         # Convert system predictions to BigQuery format
         for system_id, prediction in system_predictions.items():
             if prediction is None:
@@ -1993,6 +2030,8 @@ def format_prediction_for_bigquery(
             'pace_score': features.get('pace_score'),
             'usage_spike_score': features.get('usage_spike_score'),
             'feature_quality_score': features.get('feature_quality_score'),
+            # Session 128: Breakout classifier shadow mode data
+            'breakout_shadow': features.get('breakout_shadow'),
         }),
 
         # Session 97: Feature quality tracking - enables filtering predictions by data quality
