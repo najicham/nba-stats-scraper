@@ -913,6 +913,42 @@ python bin/maintenance/reconcile_phase3_completion.py --days 3 --fix
 
 **Reference:** docs/08-projects/current/prevention-and-monitoring/phase3-orchestration-reliability/
 
+### Phase 0.476: Realtime Completeness Checker Health (Session 128)
+
+**IMPORTANT**: Verify the realtime completeness checker is working correctly.
+
+**Why this matters**: Session 128 made the completeness checker time-aware - before 6 AM ET, it only checks BDL/boxscore sources (gamebook isn't available yet). This prevents false alerts during evening analytics.
+
+**What to check**:
+
+```bash
+# Check recent completeness checker logs
+gcloud logging read 'resource.labels.function_name="realtime-completeness-checker"' \
+  --limit=10 --format="table(timestamp,textPayload)"
+```
+
+**Expected behavior by time**:
+- **Before 6 AM ET**: Logs should show "Gamebook NOT expected (before 6 AM ET) - only checking BDL"
+- **After 6 AM ET**: Logs should show "Gamebook expected (after 6 AM ET) - checking both sources"
+
+**Check for false alerts**:
+```bash
+# Check missing_games_log for today
+bq query --use_legacy_sql=false "
+SELECT game_date, matchup, gamebook_missing, bdl_missing, discovered_at
+FROM nba_orchestration.missing_games_log
+WHERE discovered_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+ORDER BY discovered_at DESC
+LIMIT 10"
+```
+
+**If gamebook_missing = true during evening hours (before 6 AM)**:
+- This is expected behavior - gamebook arrives at ~6 AM
+- Session 128 fix should prevent alerts for this
+
+**If bdl_missing = true**:
+- This is a real data gap - investigate BDL scraper
+
 ### Phase 0.48: Data Provenance Check (Session 99)
 
 **IMPORTANT**: Verify feature data quality and matchup data availability for predictions.
@@ -2414,7 +2450,9 @@ WHERE game_date = DATE('${GAME_DATE}')"
 
 #### 2B. Phase 3 Completion Status (MUST BE 5/5)
 
-Check that Phase 3 processors completed (they run after midnight, so check today's date).
+Check that Phase 3 processors completed.
+
+**Timing Note (Session 128)**: Phase 3 now runs same-evening using boxscore fallback when gamebook isn't available yet. Check today's date for completion status.
 
 **CRITICAL**: Phase 3 has **5 expected processors**. Anything less than 5/5 is a WARNING or CRITICAL.
 
@@ -2487,6 +2525,83 @@ EOF
 1. Check which processors are missing from the list
 2. Check Cloud Run logs for those processors: `gcloud run services logs read nba-phase3-analytics-processors --limit=50`
 3. Look for errors: timeout, quota exceeded, ModuleNotFoundError
+
+#### 2B.1: Evening Analytics Validation (Session 128)
+
+**NEW**: Phase 3 can now run same-night using boxscore fallback (doesn't wait for gamebook).
+
+**When to run this check**: Only during evening hours (6 PM - 6 AM ET) when games have finished but before morning gamebook processing.
+
+```bash
+python3 << 'EOF'
+from datetime import datetime
+import pytz
+
+# Check if we're in evening analytics window
+et_tz = pytz.timezone('America/New_York')
+now_et = datetime.now(et_tz)
+hour = now_et.hour
+
+# Evening window: 6 PM (18) to 6 AM (6)
+is_evening = hour >= 18 or hour < 6
+
+if not is_evening:
+    print(f"⏭️  Skipping evening analytics check (current hour: {hour} ET)")
+    print("  This check only applies during 6 PM - 6 AM ET window")
+    exit(0)
+
+print(f"🌙 Evening Analytics Check (current hour: {hour} ET)")
+
+# Check if tonight's games have player_game_summary records
+from google.cloud import bigquery
+bq = bigquery.Client()
+
+game_date = now_et.strftime('%Y-%m-%d')
+if hour < 6:
+    # After midnight, check yesterday's games
+    from datetime import timedelta
+    game_date = (now_et - timedelta(days=1)).strftime('%Y-%m-%d')
+
+query = f"""
+SELECT
+    COUNT(*) as total_records,
+    COUNTIF(primary_source_used = 'nbac_boxscores') as boxscore_source,
+    COUNTIF(primary_source_used = 'nbac_gamebook') as gamebook_source,
+    COUNTIF(primary_source_used IS NULL) as null_source
+FROM `nba-props-platform.nba_analytics.player_game_summary`
+WHERE game_date = '{game_date}'
+"""
+
+result = list(bq.query(query).result())[0]
+
+print(f"\n  Game Date: {game_date}")
+print(f"  Total Records: {result.total_records}")
+print(f"  Source: nbac_boxscores: {result.boxscore_source}, nbac_gamebook: {result.gamebook_source}")
+
+if result.total_records == 0:
+    print(f"\n  ⚠️  WARNING: No player_game_summary records for {game_date}")
+    print("  Possible causes:")
+    print("    1. Games haven't finished yet")
+    print("    2. Phase 3 hasn't triggered")
+    print("    3. Same-night analytics not working")
+elif result.boxscore_source > 0:
+    print(f"\n  ✅ Same-night analytics WORKING!")
+    print(f"     Using boxscore fallback ({result.boxscore_source} records)")
+elif result.gamebook_source > 0:
+    print(f"\n  ℹ️  Records using gamebook source (morning recovery ran)")
+else:
+    print(f"\n  ⚠️  Records exist but source is NULL - check processor")
+EOF
+```
+
+**Expected during evening (after games finish)**:
+- Records exist with `primary_source_used = 'nbac_boxscores'`
+- This confirms same-night analytics is working
+
+**If no records during evening**:
+1. Check if games have actually finished: `SELECT game_status FROM nba_reference.nba_schedule WHERE game_date = CURRENT_DATE()`
+2. Check Phase 2 completion in Firestore
+3. Check nba-phase3-analytics-processors logs for errors
 4. If processors failed, check if they need manual retry
 
 #### 2C. Cache Updated
