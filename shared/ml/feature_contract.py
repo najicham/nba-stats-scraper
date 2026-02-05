@@ -22,8 +22,8 @@ from dataclasses import dataclass
 # FEATURE STORE CONFIGURATION
 # =============================================================================
 
-CURRENT_FEATURE_STORE_VERSION = "v2_37features"
-FEATURE_STORE_FEATURE_COUNT = 37
+CURRENT_FEATURE_STORE_VERSION = "v2_39features"
+FEATURE_STORE_FEATURE_COUNT = 39
 
 # Canonical feature names in the feature store, IN ORDER
 # Position matters! New features must be APPENDED, never inserted.
@@ -86,6 +86,12 @@ FEATURE_STORE_NAMES: List[str] = [
     "pts_slope_10g",
     "pts_vs_season_zscore",
     "breakout_flag",
+
+    # 37: Breakout Risk (added Session 126)
+    "breakout_risk_score",
+
+    # 38: Composite Breakout Signal (added Session 126)
+    "composite_breakout_signal",
 ]
 
 # Validate feature store list length matches expected count

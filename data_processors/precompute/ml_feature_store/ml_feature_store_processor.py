@@ -50,6 +50,7 @@ from .feature_extractor import FeatureExtractor
 from .feature_calculator import FeatureCalculator
 from .quality_scorer import QualityScorer
 from .batch_writer import BatchWriter
+from .breakout_risk_calculator import BreakoutRiskCalculator
 
 # Bootstrap period support (Week 5 - Early Season Handling)
 from shared.config.nba_season_dates import is_early_season, get_season_year_from_date
@@ -82,8 +83,12 @@ PHASE4_MAX_STALENESS_HOURS = 6
 # - Minutes/efficiency (2): playing time and scoring rate trends
 # v2_37features: Added 3 player trajectory features (Session 28 - Jan 2026)
 # - Player trajectory (3): captures rising/declining performance trends
-FEATURE_VERSION = 'v2_37features'
-FEATURE_COUNT = 37
+# v2_38features: Added breakout_risk_score (Session 126 - Feb 2026)
+# - Composite 0-100 score predicting role player breakout probability
+# v2_39features: Added composite_breakout_signal (Session 126 - Feb 2026)
+# - 0-5 score combining top predictive factors (37% breakout rate at 4+)
+FEATURE_VERSION = 'v2_39features'
+FEATURE_COUNT = 39
 
 FEATURE_NAMES = [
     # Recent Performance (0-4)
@@ -122,6 +127,12 @@ FEATURE_NAMES = [
     'pts_slope_10g',        # Linear regression slope of points over L10
     'pts_vs_season_zscore', # Z-score of L5 avg vs season avg
     'breakout_flag',        # 1.0 if L5 > season_avg + 1.5*std
+
+    # Breakout Risk (37) - Session 126 composite breakout prediction
+    'breakout_risk_score',  # 0-100 score predicting role player breakout probability
+
+    # Composite Breakout Signal (38) - Session 126 simple factor count
+    'composite_breakout_signal',  # 0-5 score, 4+ = 37% breakout rate
 ]
 
 # ============================================================================
@@ -189,6 +200,12 @@ ML_FEATURE_RANGES = {
     34: (-5, 5, False, 'pts_slope_10g'),
     35: (-4, 4, False, 'pts_vs_season_zscore'),
     36: (0, 1, False, 'breakout_flag'),
+
+    # Breakout Risk (37) - Session 126
+    37: (0, 100, False, 'breakout_risk_score'),
+
+    # Composite Breakout Signal (38) - Session 126
+    38: (0, 5, False, 'composite_breakout_signal'),
 }
 
 
@@ -200,7 +217,7 @@ def validate_feature_ranges(features: list, player_lookup: str = None) -> tuple:
     at write time instead of waiting for model degradation (5+ days).
 
     Args:
-        features: List of 37 feature values
+        features: List of 39 feature values
         player_lookup: Player identifier for logging
 
     Returns:
@@ -411,6 +428,7 @@ class MLFeatureStoreProcessor(
         self.feature_calculator = FeatureCalculator()
         self.quality_scorer = QualityScorer()
         self.batch_writer = BatchWriter(self.bq_client, self.project_id)
+        self.breakout_risk_calculator = BreakoutRiskCalculator()
 
         # Data storage
         self.players_with_games = None
@@ -1678,6 +1696,26 @@ class MLFeatureStoreProcessor(
         # Feature 36: Breakout flag (exceptional recent performance)
         features.append(self.feature_calculator.calculate_breakout_flag(phase4_data, phase3_data))
         feature_sources[36] = 'calculated'
+
+        # ============================================================
+        # BREAKOUT RISK SCORE (37) - Session 126
+        # Composite 0-100 score for role player breakout prediction
+        # ============================================================
+
+        # Feature 37: Breakout risk score
+        breakout_risk_score, _ = self.breakout_risk_calculator.calculate_breakout_risk_score(
+            phase4_data, phase3_data, team_context=None  # TODO: Add team_context for injury data
+        )
+        features.append(breakout_risk_score)
+        feature_sources[37] = 'calculated'
+
+        # Feature 38: Composite breakout signal (0-5)
+        # Session 126: Simple factor count - 4+ factors = 37% breakout rate
+        composite_signal, _ = self.breakout_risk_calculator.calculate_composite_breakout_signal(
+            phase4_data, phase3_data, game_context=None  # TODO: Add game_context for starter/home
+        )
+        features.append(float(composite_signal))
+        feature_sources[38] = 'calculated'
 
         return features, feature_sources
     

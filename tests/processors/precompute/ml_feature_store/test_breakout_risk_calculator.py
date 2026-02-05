@@ -15,6 +15,7 @@ from data_processors.precompute.ml_feature_store.breakout_risk_calculator import
     BreakoutRiskComponents,
     calculate_breakout_risk,
     WEIGHT_HOT_STREAK,
+    WEIGHT_COLD_STREAK_BONUS,
     WEIGHT_VOLATILITY,
     WEIGHT_OPPONENT_DEFENSE,
     WEIGHT_OPPORTUNITY,
@@ -35,10 +36,13 @@ class TestBreakoutRiskCalculator:
         """Phase 4 data with neutral values."""
         return {
             'points_avg_last_5': 12.0,
+            'points_avg_last_10': 12.0,
             'points_avg_season': 12.0,
             'points_std_last_10': 5.0,
             'pts_vs_season_zscore': 0.0,
             'opponent_def_rating': 112.0,  # League average
+            'usage_rate_last_10': 20.0,  # Session 126: neutral usage
+            'player_usage_rate_season': 20.0,
         }
 
     @pytest.fixture
@@ -72,37 +76,47 @@ class TestBreakoutRiskCalculator:
         """Test composite score for player on hot streak."""
         hot_phase4 = {
             'points_avg_last_5': 18.0,
+            'points_avg_last_10': 14.0,  # Session 126: for cold streak calc
             'points_avg_season': 12.0,
             'points_std_last_10': 5.0,
             'pts_vs_season_zscore': 1.8,  # Very hot
             'opponent_def_rating': 118.0,  # Weak defense
+            'usage_rate_last_10': 25.0,  # Session 126: Rising usage
+            'player_usage_rate_season': 20.0,
         }
 
         score, components = calculator.calculate_breakout_risk_score(
             hot_phase4, neutral_phase3_data
         )
 
-        # Very hot player vs weak defense should score high
-        # With neutral volatility, opportunity, and historical components, score ~57
-        assert score >= 55, f"Hot player vs weak defense should score >= 55, got {score}"
+        # Session 126: With updated weights (hot_streak at 15% not 30%), but
+        # compensated by weak defense (20%) and rising usage
+        # Hot streak=100*0.15=15, cold_bonus=30*0.10=3, vol~35*0.25=9, def=90*0.20=18, opp~56*0.15=8, hist~35*0.15=5 = ~58
+        assert score >= 50, f"Hot player vs weak defense should score >= 50, got {score}"
         assert components.hot_streak_score >= 90, "Hot streak component should be very high"
 
     def test_composite_score_cold_player(self, calculator, neutral_phase3_data):
         """Test composite score for cold player."""
         cold_phase4 = {
             'points_avg_last_5': 8.0,
+            'points_avg_last_10': 11.0,  # Session 126: L5 < L10 = cold streak
             'points_avg_season': 12.0,
             'points_std_last_10': 3.0,  # Low volatility
             'pts_vs_season_zscore': -1.5,  # Very cold
             'opponent_def_rating': 108.0,  # Strong defense
+            'usage_rate_last_10': 18.0,  # Session 126: Falling usage
+            'player_usage_rate_season': 20.0,
         }
 
         score, components = calculator.calculate_breakout_risk_score(
             cold_phase4, neutral_phase3_data
         )
 
-        # Cold player vs strong defense should score low
-        assert score <= 35, f"Cold player vs strong defense should score <= 35, got {score}"
+        # Session 126: Cold player gets COLD STREAK BONUS (mean reversion)
+        # But strong defense, low volatility, and falling usage balance it
+        # Score still moderate due to mean reversion signal
+        assert score <= 50, f"Cold player vs strong defense should score <= 50, got {score}"
+        assert components.cold_streak_bonus >= 70, "Cold streak should trigger mean reversion bonus"
 
     def test_composite_score_range_clamped(self, calculator, neutral_phase3_data):
         """Test that composite score is always between 0-100."""
@@ -259,7 +273,7 @@ class TestBreakoutRiskCalculator:
         assert 45 <= components.opponent_defense_score <= 55, "Missing def rating should use league avg"
 
     # ========================================================================
-    # OPPORTUNITY COMPONENT TESTS
+    # OPPORTUNITY COMPONENT TESTS (Session 126: Updated for usage trend + injury combo)
     # ========================================================================
 
     def test_opportunity_star_injured(self, calculator, neutral_phase4_data, neutral_phase3_data):
@@ -270,7 +284,10 @@ class TestBreakoutRiskCalculator:
             neutral_phase4_data, neutral_phase3_data, team_context
         )
 
-        assert components.opportunity_score >= 75, "Star player out should give high opportunity"
+        # Session 126: Combined score = usage(50)*0.6 + injury(80)*0.4 = 62
+        # Star injured gives injury_score=80, neutral usage gives usage_score=50
+        assert components.opportunity_score >= 55, "Star player out should give elevated opportunity"
+        assert components.injured_teammates_ppg == 25.0
 
     def test_opportunity_team_healthy(self, calculator, neutral_phase4_data, neutral_phase3_data):
         """Test opportunity component when team is healthy."""
@@ -280,7 +297,10 @@ class TestBreakoutRiskCalculator:
             neutral_phase4_data, neutral_phase3_data, team_context
         )
 
-        assert components.opportunity_score <= 15, "Healthy team should give low opportunity"
+        # Session 126: Combined score = usage(50)*0.6 + injury(20)*0.4 = 38
+        # Healthy team gives injury_score=20, neutral usage gives usage_score=50
+        assert components.opportunity_score <= 45, "Healthy team should give moderate-low opportunity"
+        assert components.injured_teammates_ppg == 0.0
 
     def test_opportunity_no_context(self, calculator, neutral_phase4_data, neutral_phase3_data):
         """Test opportunity component without team context."""
@@ -288,8 +308,31 @@ class TestBreakoutRiskCalculator:
             neutral_phase4_data, neutral_phase3_data, None
         )
 
-        # Should default to low value
-        assert components.opportunity_score == 20.0, "No team context should default to 20"
+        # Session 126: Combined score = usage(50)*0.6 + injury(20)*0.4 = 38
+        # No context defaults to injury_score=20, neutral usage gives usage_score=50
+        assert 35 <= components.opportunity_score <= 45, "No team context should give neutral-ish score"
+
+    def test_opportunity_rising_usage(self, calculator, neutral_phase3_data):
+        """Session 126: Test opportunity component with rising usage trend."""
+        rising_usage_phase4 = {
+            'points_avg_last_5': 12.0,
+            'points_avg_last_10': 12.0,
+            'points_avg_season': 12.0,
+            'points_std_last_10': 5.0,
+            'pts_vs_season_zscore': 0.0,
+            'opponent_def_rating': 112.0,
+            'usage_rate_last_10': 25.0,  # Rising usage
+            'player_usage_rate_season': 20.0,
+        }
+
+        _, components = calculator.calculate_breakout_risk_score(
+            rising_usage_phase4, neutral_phase3_data, None
+        )
+
+        # Rising usage (+5%) should give usage_score=80, injury default=20
+        # Combined = 80*0.6 + 20*0.4 = 56
+        assert components.opportunity_score >= 50, "Rising usage should give elevated opportunity"
+        assert components.usage_trend >= 4.0, "Usage trend should be positive"
 
     # ========================================================================
     # HISTORICAL BREAKOUT RATE TESTS
@@ -406,8 +449,10 @@ class TestComponentWeights:
 
     def test_weights_sum_to_one(self):
         """Verify all component weights sum to 1.0 (100%)."""
+        # Session 126: Added WEIGHT_COLD_STREAK_BONUS for mean reversion
         total = (
             WEIGHT_HOT_STREAK +
+            WEIGHT_COLD_STREAK_BONUS +
             WEIGHT_VOLATILITY +
             WEIGHT_OPPONENT_DEFENSE +
             WEIGHT_OPPORTUNITY +
@@ -422,13 +467,18 @@ class TestBreakoutRiskComponents:
 
     def test_to_dict(self):
         """Test components to_dict method."""
+        # Session 126: Updated with new fields (cold_streak_bonus, cv_ratio, usage_trend, l5_vs_l10_trend)
         components = BreakoutRiskComponents(
             hot_streak_score=80.0,
+            cold_streak_bonus=50.0,  # Session 126
             volatility_score=50.0,
             opponent_defense_score=70.0,
             opportunity_score=30.0,
             historical_rate_score=40.0,
             pts_vs_season_zscore=1.2,
+            cv_ratio=0.5,  # Session 126
+            usage_trend=2.0,  # Session 126
+            l5_vs_l10_trend=0.1,  # Session 126
             points_std=6.5,
             explosion_ratio=1.6,
             opponent_def_rating=115.0,
@@ -439,5 +489,8 @@ class TestBreakoutRiskComponents:
         result = components.to_dict()
 
         assert result['hot_streak_score'] == 80.0
+        assert result['cold_streak_bonus'] == 50.0
+        assert result['cv_ratio'] == 0.5
+        assert result['usage_trend'] == 2.0
         assert result['opponent_def_rating'] == 115.0
-        assert len(result) == 11
+        assert len(result) == 15  # Updated from 11 to 15 (4 new fields)
