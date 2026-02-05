@@ -1564,12 +1564,46 @@ class UpcomingTeamGameContextProcessor(
         This replaces the previous DELETE + INSERT pattern which was
         vulnerable to race conditions and streaming buffer issues.
 
+        Session 125 Fix 2.3: Added pre-write and post-write validation to close
+        bypass gap identified in audit.
+
         Returns:
             True if successful, False otherwise
         """
         if not self.transformed_data:
             logger.warning("No data to save")
             return True
+
+        # Session 125: Pre-write validation (Fix 2.3 - Bypass Path Audit)
+        # Validates data quality BEFORE write to catch issues early
+        valid_records, invalid_records = self._validate_before_write(
+            self.transformed_data,
+            self.table_name
+        )
+
+        if invalid_records:
+            logger.warning(
+                f"PRE_WRITE_VALIDATION: Blocked {len(invalid_records)} invalid records "
+                f"from {self.table_name}"
+            )
+
+        if not valid_records:
+            logger.error(
+                f"PRE_WRITE_VALIDATION FAILED: All {len(self.transformed_data)} records "
+                f"invalid for {self.table_name}"
+            )
+            return False
+
+        # Update transformed_data to only include valid records
+        original_count = len(self.transformed_data)
+        self.transformed_data = valid_records
+        validated_count = len(self.transformed_data)
+
+        if original_count != validated_count:
+            logger.info(
+                f"PRE_WRITE_VALIDATION: Proceeding with {validated_count}/{original_count} "
+                f"valid records"
+            )
 
         logger.info("=" * 80)
         logger.info("SAVING TO BIGQUERY (MERGE PATTERN)")
@@ -1691,6 +1725,22 @@ class UpcomingTeamGameContextProcessor(
                 f"(schema: {timing['get_schema']:.1f}s, load: {timing['load_temp_table']:.1f}s, "
                 f"merge: {timing['merge_operation']:.1f}s)"
             )
+
+            # Session 125: Post-write verification (Fix 2.3 - Bypass Path Audit)
+            # Verifies data integrity AFTER write to detect silent failures
+            validation_passed = self._validate_after_write(
+                table_id,
+                expected_count=len(filtered_data)
+            )
+
+            if not validation_passed:
+                logger.error(
+                    f"POST_WRITE_VALIDATION FAILED for {self.table_name} - "
+                    f"data may be corrupted"
+                )
+                # Don't return False - data is already written
+                # Just log error and alert (handled by _validate_after_write)
+
             logger.info("=" * 80)
 
             return True
