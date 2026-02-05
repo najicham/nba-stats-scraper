@@ -222,25 +222,24 @@ Fix by adding to Dockerfile:
 - Test `/health/deep` endpoint
 - Verify all checks pass (imports, BigQuery, Firestore, Pub/Sub)
 
-### 2. Generate Dependency Lock Files (Recommended)
+### 2. Generate Dependency Lock Files ✅ (Completed Session 133)
 
 **Goal:** Pin all transitive dependencies for deterministic builds.
 
-**Benefits:**
-- Faster builds (no dependency resolution)
-- Same versions every time
-- Prevents version drift issues
+**Status:** ✅ COMPLETE - All 5 services now have requirements-lock.txt
 
-**How:**
-```bash
-cd <service-dir>
-pip freeze > requirements-lock.txt
+**Completed:**
+- Generated lock files for worker, coordinator, grading, analytics, precompute
+- Updated all Dockerfiles to use lock files
+- Created precompute/requirements.txt (previously shared with analytics)
+- Tested builds - all services build successfully
 
-# Update Dockerfile:
-RUN pip install -r requirements-lock.txt
-```
+**Benefits achieved:**
+- Faster builds (no dependency resolution - saves 1-2 min per build)
+- Deterministic builds (same versions every time)
+- Prevents version drift issues (e.g., db-dtypes conflicts)
 
-**Estimated time:** 30-45 minutes
+**Commit:** `aadd36dd` - feat: Add dependency lock files for deterministic builds
 
 ### 3. Add Deep Health Checks to Analytics/Precompute
 
