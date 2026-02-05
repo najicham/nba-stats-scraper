@@ -206,29 +206,34 @@ PYTHONPATH=. python ml/experiments/train_breakout_classifier.py \
 
 ## Immediate Priorities (While Data Collects)
 
-### P1: Implement Real injured_teammates_ppg
-**Current:** Placeholder (returns 0)
+### ✅ P1: Implement Real injured_teammates_ppg (COMPLETED - Session 127)
+**Status:** ✅ Implemented and committed (58b3c217)
 **Impact:** 30+ PPG injured → 24.5% breakout rate vs 16.2% baseline
 **Files:**
-- `data_processors/precompute/ml_feature_store/breakout_risk_calculator.py`
-- Query `nba_raw.nbac_injury_report` for injured players
-- Join with `player_daily_cache` for their season PPG
-- Sum PPG of OUT/QUESTIONABLE teammates
+- `data_processors/precompute/ml_feature_store/ml_feature_store_processor.py:1790` - Added `_get_injured_teammates_ppg()`
+- `data_processors/precompute/ml_feature_store/breakout_risk_calculator.py:454` - Uses team_context
 
 **Implementation:**
 ```python
-def get_injured_teammates_ppg(self, team_abbr: str, game_date: str) -> float:
+def _get_injured_teammates_ppg(self, team_abbr: str, game_date: date) -> float:
     """
-    Get total PPG of injured teammates for opportunity scoring.
+    Calculate total PPG of injured teammates (OUT/QUESTIONABLE/DOUBTFUL).
 
-    High-value injuries create breakout opportunities:
-    - 30+ PPG injured: 24.5% breakout rate
-    - 20-30 PPG injured: 19.8% breakout rate
-    - <20 PPG injured: 16.2% breakout rate (baseline)
+    Queries bdl_injuries for latest injury status, joins with feature store
+    for season PPG, returns sum of injured teammates' scoring.
     """
-    # Query injury report + player stats
-    # Return sum of season PPG for OUT/QUESTIONABLE players
 ```
+
+**Data Source:** `nba_raw.bdl_injuries` (Ball Don't Lie injuries)
+**Injury Statuses:** 'out', 'questionable', 'doubtful' (lowercase)
+**PPG Source:** `nba_predictions.ml_feature_store_v2` features[2] (season PPG)
+
+**Example Results (2026-02-05):**
+- OKC: 110.1 PPG injured (Shai 31.8, Chet 17.7, Jalen Williams 17.1)
+- BOS: 83.5 PPG injured (Jaylen Brown 28.9)
+- MIN: 55.9 PPG injured (Anthony Edwards 29.3, Julius Randle 22.2)
+
+**Next:** Deploy phase4 service to activate in production
 
 ### P2: Monitor Feature Generation
 - Daily checks (first week)
@@ -311,10 +316,10 @@ FROM role_players;
 
 ## Known Issues / Placeholders
 
-### 1. injured_teammates_ppg (P1 - Fix Soon)
-**Status:** Currently returns 0 (placeholder)
-**Impact:** Opportunity component not accounting for injury opportunities
-**Fix:** Implement real calculation (see P1 above)
+### 1. ~~injured_teammates_ppg~~ ✅ FIXED (Session 127)
+**Status:** ✅ Implemented and committed (58b3c217)
+**Impact:** Now properly accounts for injury opportunities in breakout risk
+**Deployed:** ⏳ Pending deployment (commit 58b3c217 not yet deployed)
 
 ### 2. Role Player Definition (P3 - Decide Before Training)
 **Status:** Not yet defined
@@ -346,6 +351,8 @@ Once classifier is trained and validated:
 | Date | Milestone | Status |
 |------|-----------|--------|
 | 2026-02-05 | Deploy features 37-38 infrastructure | ✅ Done |
+| 2026-02-05 | Implement real injured_teammates_ppg | ✅ Done (Session 127) |
+| 2026-02-06 | Deploy injured_teammates_ppg fix | ⏳ Pending |
 | 2026-02-12 | Week 1 verification gate | 🔄 Pending |
 | 2026-02-19 | Week 2 data check | 🔄 Pending |
 | 2026-02-26 | Week 3 training readiness gate | 🔄 Pending |
