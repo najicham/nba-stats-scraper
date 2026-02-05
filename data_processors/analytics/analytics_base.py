@@ -535,6 +535,24 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
                 except Exception as log_ex:
                     logger.warning(f"Failed to log processor start: {log_ex}")
 
+            # Session 117: Acquire distributed lock to prevent concurrent processing
+            # This prevents the duplicate record issues found in Session 116
+            if not self.acquire_processing_lock(str(data_date)):
+                logger.warning(
+                    f"🔒 Cannot acquire processing lock for {data_date} - another instance is processing. "
+                    f"This prevents concurrent processing duplicates (Session 116 prevention)."
+                )
+                # Mark run as skipped in run history
+                if hasattr(self, 'complete_run_tracking'):
+                    self.complete_run_tracking(
+                        status='skipped',
+                        status_message='Concurrent processing lock held by another instance',
+                        rows_processed=0
+                    )
+                return True  # Return True since this is not a failure, just a skip
+
+            logger.info(f"🔓 Acquired processing lock for {data_date}")
+
             # Check dependencies BEFORE extracting (if processor defines them)
             # In backfill mode, skip dependency checks entirely for performance
             # Pre-flight checks already verify data exists before backfill starts
@@ -1061,6 +1079,12 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             return False
 
         finally:
+            # Session 117: Release distributed lock (always, even on failure)
+            try:
+                self.release_processing_lock()
+            except Exception as lock_ex:
+                logger.warning(f"Error releasing processing lock: {lock_ex}")
+
             # Stop heartbeat regardless of success/failure
             if self.heartbeat:
                 try:
