@@ -39,6 +39,9 @@ declare -A SERVICE_SOURCES=(
     ["nba-phase3-analytics-processors"]="data_processors/phase3 shared"
     ["nba-phase4-precompute-processors"]="data_processors/phase4 shared"
 
+    # Grading
+    ["nba-grading-service"]="data_processors/grading/nba shared predictions/shared"
+
     # Orchestration
     ["phase3-to-phase4-orchestrator"]="orchestration/phase3_to_phase4"
     ["phase4-to-phase5-orchestrator"]="orchestration/phase4_to_phase5"
