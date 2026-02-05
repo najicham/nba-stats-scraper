@@ -234,17 +234,22 @@ class BreakoutClassifierV1:
 
         models_dir = Path(__file__).parent.parent.parent.parent / "models"
 
-        # Look for the specific experiment model
-        model_files = list(models_dir.glob("breakout_exp_EXP_COMBINED_BEST_*.cbm"))
+        # Look for production-named models first (naming: breakout_v1_YYYYMMDD_YYYYMMDD.cbm)
+        # Format: breakout_v1_{train_start}_{train_end}.cbm
+        model_files = list(models_dir.glob("breakout_v1_*.cbm"))
 
         if not model_files:
-            # Fallback to any breakout classifier model
+            # Fallback to experiment naming for backwards compatibility
+            model_files = list(models_dir.glob("breakout_exp_*.cbm"))
+
+        if not model_files:
+            # Last fallback to any breakout model
             model_files = list(models_dir.glob("breakout_*.cbm"))
 
         if not model_files:
             raise FileNotFoundError(
                 f"No Breakout Classifier model files found in {models_dir}. "
-                f"Expected files matching: breakout_exp_EXP_COMBINED_BEST_*.cbm"
+                f"Expected files matching: breakout_v1_*.cbm"
             )
 
         # Use the most recent model
