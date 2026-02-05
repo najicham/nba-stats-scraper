@@ -249,20 +249,20 @@ def prepare_feature_vector(row: pd.Series) -> np.ndarray:
     if features is not None:
         features = [float(f) if f is not None else None for f in features]
 
-    # Get values from row and feature store
+    # Get values from row (query results)
     points_avg_season = float(row['points_avg_season']) if row['points_avg_season'] is not None else 12.0
     points_std = float(row['points_std_last_10']) if row['points_std_last_10'] is not None else 5.0
     points_avg_last_5 = float(row['points_avg_last_5']) if row['points_avg_last_5'] is not None else 10.0
     minutes_avg = float(row['minutes_avg_last_10']) if row['minutes_avg_last_10'] is not None else 25.0
 
-    # Compute pts_vs_season_zscore
-    pts_vs_season_zscore = (points_avg_last_5 - points_avg_season) / points_std if points_std > 0 else 0.0
+    # Get pts_vs_season_zscore from FEATURE STORE (training uses feature store, not inline computation)
+    pts_vs_season_zscore = extract_feature(features, feature_names, 'pts_vs_season_zscore', 0.0)
 
     # Get computed features from query (Session 134 fix)
     explosion_ratio = float(row['explosion_ratio']) if row.get('explosion_ratio') is not None else 1.5
     days_since_breakout = float(row['days_since_breakout']) if row.get('days_since_breakout') is not None else 30.0
 
-    # Get from feature store
+    # Get from feature store (same as training)
     opponent_def_rating = extract_feature(features, feature_names, 'opponent_def_rating', 112.0)
     home_away = extract_feature(features, feature_names, 'home_away', 0.5)
     back_to_back = extract_feature(features, feature_names, 'back_to_back', 0.0)
