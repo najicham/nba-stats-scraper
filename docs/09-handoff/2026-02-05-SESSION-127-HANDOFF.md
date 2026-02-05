@@ -1,8 +1,8 @@
 # Session 127 Handoff - Orchestration Reliability Continuation
 
-**Session Date:** February 5, 2026 (12:50 AM ET)
+**Session Date:** February 5, 2026 (12:50 AM - 1:25 AM ET)
 **Session Number:** 127
-**Status:** MONITORING - Fix deployed, awaiting automatic data flow
+**Status:** COMPLETE - Found and fixed processor name bug, documented design limitation
 
 ---
 
@@ -42,6 +42,38 @@ The Feb 4 gap exists because:
 | PlayerGameSummaryProcessor | ❌ BLOCKED | 0 |
 
 PlayerGameSummaryProcessor requires `nbac_gamebook_player_stats` as a critical dependency. Since NBAC data hasn't been scraped yet for Feb 4, this processor failed.
+
+---
+
+## Critical Bugs Found and Fixed
+
+### 1. Wrong Processor Name in Completeness Checker (FIXED)
+
+The completeness checker was waiting for `BdlPlayerBoxScoresProcessor` which **hasn't run since Jan 25** (11 days ago).
+
+**Fix applied:** Changed to `BdlBoxscoresProcessor` which is the active processor.
+
+```python
+# Before (wrong)
+'BdlPlayerBoxScoresProcessor',  # Deprecated - hasn't run since Jan 25
+
+# After (correct)
+'BdlBoxscoresProcessor',  # Active processor
+```
+
+**Deployed:** 06:18 UTC (1:18 AM ET)
+
+### 2. Gamebook Dependency Blocks Same-Night Processing (DESIGN ISSUE)
+
+`PlayerGameSummaryProcessor` requires `nbac_gamebook_player_stats` as a **CRITICAL** dependency.
+
+**Problem:** Gamebooks are only published by NBA.com in the morning (~6 AM ET). They are scraped during `morning_recovery`.
+
+**Impact:** `PlayerGameSummaryProcessor` cannot run same-night. It must wait for morning recovery.
+
+**Workaround:** Team processors (`TeamOffenseGameSummaryProcessor`, `TeamDefenseGameSummaryProcessor`) CAN run same-night because they use BDL fallback.
+
+**Future consideration:** Could demote gamebook from CRITICAL to OPTIONAL to enable same-night player processing, but would reduce data quality.
 
 ---
 
@@ -100,9 +132,11 @@ The design ensures we only scrape games that are definitely complete.
 
 ---
 
-## What Was NOT Changed
+## Code Changes This Session
 
-No code changes were made this session. The fix from Session 126 was already deployed.
+| File | Change |
+|------|--------|
+| `functions/monitoring/realtime_completeness_checker/main.py` | Fixed BDL processor name |
 
 ---
 
@@ -111,6 +145,15 @@ No code changes were made this session. The fix from Session 126 was already dep
 | File | Description |
 |------|-------------|
 | `docs/09-handoff/2026-02-05-SESSION-127-HANDOFF.md` | This handoff document |
+
+---
+
+## Commits This Session
+
+```
+73380bec fix: Correct BDL processor name in completeness checker
+0201aaa0 docs: Add Session 127 handoff - orchestration monitoring
+```
 
 ---
 
