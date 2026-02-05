@@ -129,19 +129,20 @@ def validate_grading_prerequisites(target_date: str) -> Dict:
     Checks:
     1. player_game_summary has data for the target date
     2. Predictions exist for the target date
-    3. Sufficient coverage (actuals cover most predictions)
+    3. Sufficient coverage (actuals cover most predictions) - BLOCKS if < 50%
 
     Args:
         target_date: Date to validate (YYYY-MM-DD format)
 
     Returns:
         Dict with:
-        - ready: bool - True if ready for grading
-        - predictions_count: int
-        - actuals_count: int
-        - coverage_pct: float
-        - missing_reason: str (if not ready)
-        - can_auto_heal: bool
+        - ready: bool - True if ready for grading (False if coverage < 50%)
+        - predictions_count: int - Number of predictions found
+        - actuals_count: int - Number of actuals found
+        - coverage_pct: float - Coverage percentage (actuals / predictions * 100)
+        - missing_reason: str - Reason if not ready ('no_predictions', 'no_actuals', 'insufficient_coverage')
+        - message: str - Detailed message explaining the issue (if not ready)
+        - can_auto_heal: bool - True if Phase 3 analytics can be triggered to fix the issue
     """
     from google.cloud import bigquery
     from shared.clients.bigquery_pool import get_bigquery_client
@@ -196,14 +197,27 @@ def validate_grading_prerequisites(target_date: str) -> Dict:
                 'can_auto_heal': True  # Can trigger Phase 3 analytics
             }
 
-        # Low coverage warning (but still proceed)
+        # CRITICAL FIX: Block grading when coverage is insufficient
+        # Previously this only logged a warning and allowed grading to proceed,
+        # which led to incomplete/misleading grading results
         min_coverage = 50.0  # At least 50% coverage required
         if coverage_pct < min_coverage:
             logger.warning(
-                f"Low actuals coverage for {target_date}: {coverage_pct:.1f}% "
-                f"({actuals_count} actuals / {predictions_count} predictions)"
+                f"Insufficient actuals coverage for {target_date}: {coverage_pct:.1f}% "
+                f"({actuals_count} actuals / {predictions_count} predictions) - "
+                f"BLOCKING grading until coverage >= {min_coverage}%"
             )
+            return {
+                'ready': False,
+                'predictions_count': predictions_count,
+                'actuals_count': actuals_count,
+                'coverage_pct': round(coverage_pct, 1),
+                'missing_reason': 'insufficient_coverage',
+                'message': f'Coverage {coverage_pct:.1f}% is below minimum {min_coverage}%',
+                'can_auto_heal': True  # Can trigger Phase 3 analytics to get more actuals
+            }
 
+        # Coverage is sufficient - proceed with grading
         return {
             'ready': True,
             'predictions_count': predictions_count,
@@ -649,9 +663,11 @@ def run_prediction_accuracy_grading(target_date: str, skip_validation: bool = Fa
         )
 
         if not validation['ready']:
-            if validation['can_auto_heal'] and validation['missing_reason'] == 'no_actuals':
+            # Auto-heal for both no_actuals and insufficient_coverage cases
+            if validation['can_auto_heal'] and validation['missing_reason'] in ('no_actuals', 'insufficient_coverage'):
+                reason = validation['missing_reason']
                 logger.warning(
-                    f"No actuals for {target_date} - attempting auto-heal via Phase 3"
+                    f"{reason.replace('_', ' ').title()} for {target_date} - attempting auto-heal via Phase 3"
                 )
                 # Try to trigger Phase 3 analytics with retry logic
                 trigger_result = trigger_phase3_analytics(target_date, max_retries=3)
@@ -669,10 +685,12 @@ def run_prediction_accuracy_grading(target_date: str, skip_validation: bool = Fa
                         'status': 'auto_heal_pending',
                         'date': target_date,
                         'predictions_found': validation['predictions_count'],
-                        'actuals_found': 0,
+                        'actuals_found': validation['actuals_count'],
+                        'coverage_pct': validation['coverage_pct'],
                         'graded': 0,
-                        'message': f'Phase 3 analytics triggered (after {trigger_result["retries"]} retries), scheduled grading will retry after completion',
-                        'auto_heal_retries': trigger_result['retries']
+                        'message': f'Phase 3 analytics triggered for {reason} (after {trigger_result["retries"]} retries), scheduled grading will retry after completion',
+                        'auto_heal_retries': trigger_result['retries'],
+                        'auto_heal_reason': reason
                     }
                 else:
                     # Auto-heal failed
@@ -685,22 +703,26 @@ def run_prediction_accuracy_grading(target_date: str, skip_validation: bool = Fa
                         'status': 'auto_heal_failed',
                         'date': target_date,
                         'predictions_found': validation['predictions_count'],
-                        'actuals_found': 0,
+                        'actuals_found': validation['actuals_count'],
+                        'coverage_pct': validation['coverage_pct'],
                         'graded': 0,
-                        'message': f'No actuals and auto-heal failed: {error_msg}',
+                        'message': f'{reason.replace("_", " ").title()} and auto-heal failed: {error_msg}',
                         'auto_heal_error': error_msg,
                         'auto_heal_retries': trigger_result['retries'],
-                        'auto_heal_status_code': trigger_result['status_code']
+                        'auto_heal_status_code': trigger_result['status_code'],
+                        'auto_heal_reason': reason
                     }
             else:
                 # Can't auto-heal or different missing reason
+                message = validation.get('message', validation['missing_reason'])
                 return {
                     'status': validation['missing_reason'],
                     'date': target_date,
                     'predictions_found': validation['predictions_count'],
                     'actuals_found': validation['actuals_count'],
+                    'coverage_pct': validation.get('coverage_pct', 0.0),
                     'graded': 0,
-                    'message': f"Cannot grade: {validation['missing_reason']}"
+                    'message': f"Cannot grade: {message}"
                 }
 
     logger.info(f"Running prediction accuracy grading for {target_date}")

@@ -2546,6 +2546,16 @@ class PlayerGameSummaryProcessor(
 
         table_id = f"{self.project_id}.{self.dataset_id}.{self.table_name}"
 
+        # Deduplicate records before validation (Session 116 pattern)
+        records = self._deduplicate_records(records)
+
+        # Pre-write validation: Block records that would corrupt downstream data
+        # Session 122: Added to prevent usage_rate anomaly (1228% values)
+        records = self._validate_before_write(records, table_id)
+        if not records:
+            logger.warning("All records blocked by pre-write validation")
+            return
+
         # Get table schema
         try:
             table_ref = self.bq_client.get_table(table_id)

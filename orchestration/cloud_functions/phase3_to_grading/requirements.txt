@@ -1,0 +1,13 @@
+# Phase 3 -> Grading Orchestrator Requirements
+# Cloud Function dependencies
+
+# Cloud Functions framework
+functions-framework==3.*
+
+# Google Cloud libraries
+google-cloud-bigquery==3.*
+google-cloud-firestore==2.*
+google-cloud-pubsub==2.*
+
+# Timezone support
+pytz>=2024.1
