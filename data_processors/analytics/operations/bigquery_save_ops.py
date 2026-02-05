@@ -1127,6 +1127,74 @@ class BigQuerySaveOpsMixin:
                 else:
                     logger.info(f"✅ NULL check passed: All key fields populated (sample: {sample_size} records)")
 
+            # CHECK 3: Table-specific validations (Session 125 - Tier 2)
+            # Check for usage_rate anomalies in player_game_summary
+            # This directly detects Feb 3-style race condition incidents (1228% usage_rate)
+            if table_name == 'player_game_summary' and start_date and end_date:
+                anomaly_query = f"""
+                SELECT
+                    COUNTIF(usage_rate > 100 AND minutes_played > 0) as usage_rate_anomalies,
+                    COUNTIF(usage_rate IS NULL AND minutes_played > 0) as missing_usage_rate,
+                    MAX(usage_rate) as max_usage_rate
+                FROM `{table_id}`
+                WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+                """
+
+                try:
+                    anomaly_result = self.bq_client.query(anomaly_query).result()
+                    anomaly_row = next(anomaly_result)
+
+                    usage_rate_anomalies = anomaly_row.usage_rate_anomalies or 0
+                    missing_usage_rate = anomaly_row.missing_usage_rate or 0
+                    max_usage_rate = anomaly_row.max_usage_rate
+
+                    # Alert if usage_rate > 100% (CRITICAL - race condition indicator)
+                    if usage_rate_anomalies > 0:
+                        logger.error(
+                            f"POST_WRITE_VALIDATION FAILED: USAGE_RATE ANOMALY DETECTED! "
+                            f"{usage_rate_anomalies} players with usage_rate >100% "
+                            f"(max: {max_usage_rate:.1f}%)"
+                        )
+
+                        # Send critical notification
+                        try:
+                            notify_error(
+                                title=f"CRITICAL: Usage Rate Anomaly Detected",
+                                message=f"Race condition detected in {table_name}",
+                                details={
+                                    'processor': self.__class__.__name__,
+                                    'table': table_name,
+                                    'anomalies': usage_rate_anomalies,
+                                    'max_usage_rate': f"{max_usage_rate:.1f}%",
+                                    'date_range': f"{start_date} to {end_date}",
+                                    'issue': 'usage_rate >100% indicates team stats incomplete when player stats calculated',
+                                    'incident': 'Similar to Feb 3 race condition (1228% usage_rate)',
+                                    'remediation': 'Check if team processors completed before player processor. May need re-processing.'
+                                },
+                                processor_name=self.__class__.__name__
+                            )
+                        except Exception as notify_e:
+                            logger.warning(f"Failed to send usage_rate anomaly notification: {notify_e}")
+
+                        return False  # Validation failed
+
+                    # Warn if usage_rate is missing (should be populated for players with minutes)
+                    if missing_usage_rate > 0:
+                        logger.warning(
+                            f"POST_WRITE_VALIDATION: {missing_usage_rate} players have NULL usage_rate "
+                            f"despite having minutes_played > 0"
+                        )
+
+                    if usage_rate_anomalies == 0 and max_usage_rate is not None:
+                        logger.info(
+                            f"✅ Usage rate validation passed: max_usage_rate={max_usage_rate:.1f}% "
+                            f"(all values ≤100%)"
+                        )
+
+                except Exception as e:
+                    logger.error(f"POST_WRITE_VALIDATION: Usage rate check failed: {e}")
+                    # Don't fail validation if anomaly check fails (may be table structure issue)
+
             logger.info(f"✅ POST_WRITE_VALIDATION PASSED for {table_name}")
             return True
 

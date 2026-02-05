@@ -77,6 +77,95 @@ GROUP_TIMEOUT_MINUTES = {
     2: 20,  # Level 2 (player processors): 20 minutes
 }
 
+class DependencyGate:
+    """
+    Check if processor dependencies are satisfied before execution (Fix 1.2).
+
+    Prevents wasted compute by validating dependencies BEFORE launching processors.
+    Returns 500 if dependencies missing, triggering Pub/Sub retry with exponential backoff.
+    """
+
+    def __init__(self, bq_client, project_id):
+        self.bq_client = bq_client
+        self.project_id = project_id
+        self.logger = logging.getLogger(__name__)
+
+    def check_dependencies(self, processor_class, game_date: str) -> tuple:
+        """
+        Verify all dependencies are ready for processing.
+
+        Args:
+            processor_class: The processor class to check dependencies for
+            game_date: The game date being processed (YYYY-MM-DD)
+
+        Returns:
+            (can_run: bool, missing_deps: list, details: dict)
+        """
+        # Get processor's dependency requirements
+        if not hasattr(processor_class, 'get_dependencies'):
+            # No dependencies declared - can run
+            return True, [], {}
+
+        # Instantiate processor to call get_dependencies()
+        try:
+            processor = processor_class(
+                bq_client=self.bq_client,
+                project_id=self.project_id,
+                dataset_id='nba_analytics'
+            )
+            dependencies = processor.get_dependencies()
+        except Exception as e:
+            self.logger.warning(
+                f"Could not check dependencies for {processor_class.__name__}: {e}. "
+                f"Proceeding without dependency check."
+            )
+            return True, [], {}
+
+        if not dependencies:
+            return True, [], {}
+
+        missing = []
+        details = {}
+
+        for dep_table, dep_config in dependencies.items():
+            # Check if table has data for this game_date
+            date_field = dep_config.get('date_field', 'game_date')
+            expected_min = dep_config.get('expected_count_min', 1)
+
+            query = f"""
+            SELECT COUNT(*) as record_count
+            FROM `{self.project_id}.{dep_table}`
+            WHERE {date_field} = '{game_date}'
+            """
+
+            try:
+                result = self.bq_client.query(query).result()
+                count = list(result)[0].record_count
+
+                if count < expected_min:
+                    missing.append(dep_table)
+                    details[dep_table] = {
+                        'found': count,
+                        'expected_min': expected_min,
+                        'status': 'insufficient_data'
+                    }
+                else:
+                    details[dep_table] = {
+                        'found': count,
+                        'expected_min': expected_min,
+                        'status': 'ready'
+                    }
+            except Exception as e:
+                self.logger.error(f"Error checking dependency {dep_table}: {e}")
+                missing.append(dep_table)
+                details[dep_table] = {
+                    'error': str(e),
+                    'status': 'check_failed'
+                }
+
+        can_run = len(missing) == 0
+        return can_run, missing, details
+
 # ============================================================================
 # AUTHENTICATION (Issue #9: Add Authentication)
 # ============================================================================
@@ -817,6 +906,40 @@ def process_analytics():
                 logger.info(
                     f"✅ Boxscore completeness check PASSED for {game_date}: "
                     f"{completeness['actual_games']}/{completeness['expected_games']} games"
+                )
+
+        # Fix 1.2: Pre-flight dependency check (Session 125 - Tier 1 completion)
+        # Check dependencies BEFORE launching processors to prevent wasted compute
+        gate = DependencyGate(get_bigquery_client(), opts['project_id'])
+
+        for group in processor_groups:
+            for processor_class in group.get('processors', []):
+                can_run, missing_deps, dep_details = gate.check_dependencies(
+                    processor_class, game_date
+                )
+
+                if not can_run:
+                    logger.warning(
+                        f"❌ Cannot run {processor_class.__name__}: "
+                        f"missing dependencies {missing_deps}"
+                    )
+                    logger.info(f"Dependency details: {dep_details}")
+
+                    # Return 500 to trigger Pub/Sub retry
+                    # Dependencies might resolve on retry (e.g., upstream processing delayed)
+                    return jsonify({
+                        "status": "dependency_not_ready",
+                        "processor": processor_class.__name__,
+                        "missing_dependencies": missing_deps,
+                        "details": dep_details,
+                        "retry_after": "5 minutes",
+                        "source_table": source_table,
+                        "game_date": game_date
+                    }), 500
+
+                logger.info(
+                    f"✅ {processor_class.__name__} dependencies satisfied: "
+                    f"{list(dep_details.keys()) if dep_details else 'none required'}"
                 )
 
         # Execute processors (Session 124: Sequential execution to prevent race conditions)

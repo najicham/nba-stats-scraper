@@ -314,5 +314,158 @@ class TestStartupValidation(unittest.TestCase):
         logger.info(f"✅ Startup validation passed")
 
 
+class TestDependencyGate(unittest.TestCase):
+    """Test dependency gate (Fix 1.2) - pre-flight dependency checks."""
+
+    def setUp(self):
+        """Set up test fixtures."""
+        from data_processors.analytics.main_analytics_service import DependencyGate
+        self.DependencyGate = DependencyGate
+
+    def test_no_dependencies_can_run(self):
+        """Test that processors without dependencies can always run."""
+        # Mock BigQuery client
+        mock_bq = MagicMock()
+
+        # Mock processor without get_dependencies method
+        mock_processor = type('MockProcessor', (), {})
+
+        gate = self.DependencyGate(mock_bq, 'test-project')
+        can_run, missing, details = gate.check_dependencies(mock_processor, '2026-02-03')
+
+        self.assertTrue(can_run, "Processors without dependencies should be able to run")
+        self.assertEqual(missing, [], "No missing dependencies expected")
+        self.assertEqual(details, {}, "No details expected")
+        logger.info("✅ Processor without dependencies can run")
+
+    def test_dependencies_satisfied(self):
+        """Test that processor can run when dependencies are satisfied."""
+        # Mock BigQuery client
+        mock_bq = MagicMock()
+        mock_result = MagicMock()
+        mock_result.record_count = 10  # Dependencies satisfied
+        mock_bq.query.return_value.result.return_value = [mock_result]
+
+        # Mock processor with dependencies
+        class MockProcessorWithDeps:
+            def __init__(self, bq_client, project_id, dataset_id):
+                pass
+
+            def get_dependencies(self):
+                return {
+                    'nba_analytics.team_offense_game_summary': {
+                        'date_field': 'game_date',
+                        'expected_count_min': 1
+                    }
+                }
+
+        gate = self.DependencyGate(mock_bq, 'test-project')
+        can_run, missing, details = gate.check_dependencies(MockProcessorWithDeps, '2026-02-03')
+
+        self.assertTrue(can_run, "Processor should run when dependencies satisfied")
+        self.assertEqual(missing, [], "No missing dependencies")
+        self.assertIn('nba_analytics.team_offense_game_summary', details)
+        self.assertEqual(details['nba_analytics.team_offense_game_summary']['status'], 'ready')
+        logger.info("✅ Processor with satisfied dependencies can run")
+
+    def test_dependencies_missing(self):
+        """Test that processor cannot run when dependencies are missing."""
+        # Mock BigQuery client
+        mock_bq = MagicMock()
+        mock_result = MagicMock()
+        mock_result.record_count = 0  # No data found
+        mock_bq.query.return_value.result.return_value = [mock_result]
+
+        # Mock processor with dependencies
+        class MockProcessorWithDeps:
+            def __init__(self, bq_client, project_id, dataset_id):
+                pass
+
+            def get_dependencies(self):
+                return {
+                    'nba_analytics.team_offense_game_summary': {
+                        'date_field': 'game_date',
+                        'expected_count_min': 1
+                    }
+                }
+
+        gate = self.DependencyGate(mock_bq, 'test-project')
+        can_run, missing, details = gate.check_dependencies(MockProcessorWithDeps, '2026-02-03')
+
+        self.assertFalse(can_run, "Processor should NOT run when dependencies missing")
+        self.assertIn('nba_analytics.team_offense_game_summary', missing)
+        self.assertEqual(details['nba_analytics.team_offense_game_summary']['status'], 'insufficient_data')
+        self.assertEqual(details['nba_analytics.team_offense_game_summary']['found'], 0)
+        logger.info("✅ Processor correctly blocked when dependencies missing")
+
+    def test_dependency_check_error_handling(self):
+        """Test that dependency check handles BigQuery errors gracefully."""
+        # Mock BigQuery client that throws error
+        mock_bq = MagicMock()
+        mock_bq.query.side_effect = Exception("BigQuery error")
+
+        # Mock processor with dependencies
+        class MockProcessorWithDeps:
+            def __init__(self, bq_client, project_id, dataset_id):
+                pass
+
+            def get_dependencies(self):
+                return {
+                    'nba_analytics.team_offense_game_summary': {
+                        'date_field': 'game_date',
+                        'expected_count_min': 1
+                    }
+                }
+
+        gate = self.DependencyGate(mock_bq, 'test-project')
+        can_run, missing, details = gate.check_dependencies(MockProcessorWithDeps, '2026-02-03')
+
+        self.assertFalse(can_run, "Processor should NOT run when dependency check fails")
+        self.assertIn('nba_analytics.team_offense_game_summary', missing)
+        self.assertEqual(details['nba_analytics.team_offense_game_summary']['status'], 'check_failed')
+        logger.info("✅ Dependency check error handled gracefully")
+
+    def test_multiple_dependencies(self):
+        """Test processor with multiple dependencies."""
+        # Mock BigQuery client
+        mock_bq = MagicMock()
+
+        def mock_query_result(query):
+            # Return different counts based on table
+            mock_result = MagicMock()
+            if 'team_offense' in query:
+                mock_result.record_count = 10  # Satisfied
+            else:
+                mock_result.record_count = 0  # Missing
+            return MagicMock(result=lambda: [mock_result])
+
+        mock_bq.query.side_effect = mock_query_result
+
+        # Mock processor with multiple dependencies
+        class MockProcessorWithMultipleDeps:
+            def __init__(self, bq_client, project_id, dataset_id):
+                pass
+
+            def get_dependencies(self):
+                return {
+                    'nba_analytics.team_offense_game_summary': {
+                        'date_field': 'game_date',
+                        'expected_count_min': 1
+                    },
+                    'nba_analytics.team_defense_game_summary': {
+                        'date_field': 'game_date',
+                        'expected_count_min': 1
+                    }
+                }
+
+        gate = self.DependencyGate(mock_bq, 'test-project')
+        can_run, missing, details = gate.check_dependencies(MockProcessorWithMultipleDeps, '2026-02-03')
+
+        self.assertFalse(can_run, "Processor should NOT run when ANY dependency is missing")
+        self.assertIn('nba_analytics.team_defense_game_summary', missing)
+        self.assertNotIn('nba_analytics.team_offense_game_summary', missing)
+        logger.info("✅ Multiple dependencies correctly evaluated")
+
+
 if __name__ == '__main__':
     unittest.main()
