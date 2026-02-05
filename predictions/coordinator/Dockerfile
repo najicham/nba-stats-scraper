@@ -37,7 +37,10 @@ COPY predictions/coordinator/ ./predictions/coordinator/
 # Set working directory to coordinator
 WORKDIR /app/predictions/coordinator
 
-# Install dependencies
+# Install shared requirements first (includes boto3 for AWS SES)
+RUN pip install --no-cache-dir -r ../../shared/requirements.txt
+
+# Install service-specific requirements
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Set Python path to include /app for shared module imports

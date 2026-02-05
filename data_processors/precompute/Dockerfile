@@ -37,7 +37,10 @@ COPY data_processors/analytics/requirements.txt /tmp/requirements.txt
 # Set working directory to precompute for running the service
 WORKDIR /app/data_processors/precompute
 
-# Install Python dependencies
+# Install shared requirements first (includes boto3 for AWS SES)
+RUN pip install --no-cache-dir -r ../../shared/requirements.txt
+
+# Install service-specific requirements (from analytics)
 RUN pip install --no-cache-dir -r /tmp/requirements.txt
 
 # Set Python path to include /app for shared module imports

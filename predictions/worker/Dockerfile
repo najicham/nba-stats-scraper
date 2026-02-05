@@ -43,7 +43,10 @@ COPY models/catboost_v9_2026_02.cbm ./models/
 # Set working directory to worker for running the service
 WORKDIR /app/predictions/worker
 
-# Install Python dependencies
+# Install shared requirements first (includes boto3 for AWS SES)
+RUN pip install --no-cache-dir -r ../../shared/requirements.txt
+
+# Install service-specific requirements
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Set Python path to include /app for shared module imports
