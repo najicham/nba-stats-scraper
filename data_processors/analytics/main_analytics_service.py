@@ -638,6 +638,8 @@ def validate_processor_groups():
     Validate no processor appears in multiple groups within same trigger.
     Prevents accidental duplicate execution.
     """
+    total_processors = 0
+
     for source_table, trigger_config in ANALYTICS_TRIGGER_GROUPS.items():
         # Skip empty configs
         if not trigger_config:
@@ -646,7 +648,7 @@ def validate_processor_groups():
         # Normalize to group format
         groups = normalize_trigger_config(trigger_config)
 
-        # Track processors seen
+        # Track processors seen in this source_table
         all_processors = []
         for group in groups:
             for proc in group.get('processors', []):
@@ -656,13 +658,9 @@ def validate_processor_groups():
                         f"for source_table={source_table}"
                     )
                 all_processors.append(proc)
+                total_processors += 1
 
-    total_unique = sum(
-        len(set(g.get('processors', []) for g in normalize_trigger_config(trigger_config)))
-        for trigger_config in ANALYTICS_TRIGGER_GROUPS.values()
-        if trigger_config
-    )
-    logger.info(f"✅ Validated processor groups: no duplicates found")
+    logger.info(f"✅ Validated processor groups: no duplicates found ({total_processors} processor assignments)")
 
 # Validate on startup
 validate_processor_groups()

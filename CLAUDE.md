@@ -34,7 +34,17 @@ Phases connected via **Pub/Sub event triggers**. Daily workflow starts ~6 AM ET.
 4. **Keep documentation updated** - Update handoff docs and runbooks
 5. **Fix the system, not just the code** - Schema issues need schema validation
 
-## Quick Start
+## Documentation Procedure [Keyword: DOC]
+
+**When creating session documentation:**
+- **Location:** `docs/08-projects/current/<project-name>/`
+- Use existing project directory if work relates to ongoing project
+- Create new subdirectory for new projects/investigations
+- See "Documentation Index" section below for other doc locations
+
+**Shorthand:** When you say "doc this" or "use doc procedure", Claude will follow this pattern.
+
+## Quick Start [Keyword: START]
 
 ### 1. Read the Latest Handoff
 ```bash
@@ -51,7 +61,7 @@ ls -la docs/09-handoff/ | tail -5
 ./bin/check-deployment-drift.sh --verbose
 ```
 
-## Using Agents
+## Using Agents [Keyword: AGENTS]
 
 | Agent Type | Use Case | Example |
 |------------|----------|---------|
@@ -78,7 +88,7 @@ nba-stats-scraper/
 └── docs/                 # Documentation
 ```
 
-## ML Model - CatBoost V9
+## ML Model - CatBoost V9 [Keyword: MODEL]
 
 | Property | Value |
 |----------|-------|
@@ -98,7 +108,7 @@ PYTHONPATH=. python ml/experiments/quick_retrain.py \
     --train-end 2026-01-31
 ```
 
-## Deployment
+## Deployment [Keyword: DEPLOY]
 
 ### CRITICAL: Always deploy from repo root
 ```bash
@@ -132,7 +142,7 @@ git log -1 --format="%h"
 ./bin/deploy-service.sh SERVICE
 ```
 
-## Key Tables
+## Key Tables [Keyword: TABLES]
 
 ### Grading
 | Table | Use For |
@@ -148,73 +158,35 @@ git log -1 --format="%h"
 
 **Game Status:** 1=Scheduled, 2=In Progress, 3=Final
 
-## Phase 3 Orchestration Health
+## Phase 3 Health Check [Keyword: PHASE3]
 
-### Daily Health Check
 ```bash
-./bin/monitoring/phase3_health_check.sh
+./bin/monitoring/phase3_health_check.sh  # Daily health check
+python bin/maintenance/reconcile_phase3_completion.py --days 7 --fix  # Fix tracking issues
 ```
 
-Validates:
-- Firestore completion accuracy (actual vs stored count)
-- Duplicate record detection (player_game_summary)
-- Scraper timing verification (>4 hours late)
+**See:** `docs/02-operations/runbooks/phase3-orchestration.md` for full details
 
-### Fix Completion Tracking Issues
-```bash
-# Report only (default)
-python bin/maintenance/reconcile_phase3_completion.py --days 7
+## Essential Queries [Keyword: QUERIES]
 
-# Apply fixes
-python bin/maintenance/reconcile_phase3_completion.py --days 7 --fix
-```
-
-Use when Firestore completion tracking is out of sync with actual data.
-
-## Essential Queries
-
-### Check Predictions
-```bash
-bq query --use_legacy_sql=false "
-SELECT game_date, COUNT(*)
-FROM nba_predictions.player_prop_predictions
-WHERE game_date >= CURRENT_DATE() - 3
-GROUP BY 1"
-```
-
-### Hit Rate by Edge Tier
 ```sql
-SELECT
-  CASE
-    WHEN ABS(predicted_points - line_value) >= 5 THEN 'High (5+)'
-    WHEN ABS(predicted_points - line_value) >= 3 THEN 'Medium (3-5)'
-    ELSE 'Low (<3)'
-  END as tier,
-  COUNT(*) as bets,
-  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate
-FROM nba_predictions.prediction_accuracy
-WHERE system_id = 'catboost_v9'
-  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
-  AND recommendation IN ('OVER', 'UNDER')  -- Exclude PASS
-GROUP BY tier
-```
+-- Check recent predictions
+SELECT game_date, COUNT(*) FROM nba_predictions.player_prop_predictions
+WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1
 
-### Check Today's Signal
-```sql
+-- Check today's signal
 SELECT daily_signal, pct_over, high_edge_picks
 FROM nba_predictions.daily_prediction_signals
 WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v9'
+
+-- Check games status (1=Scheduled, 2=In Progress, 3=Final)
+SELECT game_id, away_team_tricode, home_team_tricode, game_status
+FROM nba_reference.nba_schedule WHERE game_date = CURRENT_DATE()
 ```
 
-### Check Games Status
-```sql
-SELECT game_id, away_team_tricode, home_team_tricode,
-  CASE game_status WHEN 1 THEN 'Scheduled' WHEN 2 THEN 'In Progress' WHEN 3 THEN 'Final' END
-FROM nba_reference.nba_schedule
-WHERE game_date = CURRENT_DATE()
-```
+**Full query library:** See `docs/02-operations/useful-queries.md`
 
-## Common Issues - Quick Reference
+## Common Issues [Keyword: ISSUES]
 
 | Issue | Symptom | Fix |
 |-------|---------|-----|
@@ -248,33 +220,13 @@ writer = get_batch_writer(table_id)
 writer.add_record(record)  # Auto-batches
 ```
 
-## Handoff Template
+## Handoff Template [Keyword: HANDOFF]
 
-Create at `docs/09-handoff/YYYY-MM-DD-SESSION-N-HANDOFF.md`:
+Create at `docs/09-handoff/YYYY-MM-DD-SESSION-N-HANDOFF.md`
 
-```markdown
-# Session N Handoff - [Date]
+**Template:** See `docs/09-handoff/HANDOFF-TEMPLATE.md`
 
-## Session Summary
-[What was accomplished]
-
-## Fixes Applied
-[Table of fixes with files and commits]
-
-## Root Causes Identified
-[Why issues happened]
-
-## Prevention Mechanisms Added
-[Validation, automation, tests]
-
-## Known Issues Still to Address
-[What's left]
-
-## Next Session Checklist
-[Prioritized TODO]
-```
-
-## End of Session Checklist
+## End of Session Checklist [Keyword: ENDSESSION]
 
 **CRITICAL:** Before ending any session where code was changed:
 
@@ -325,56 +277,20 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 | Registry | us-west2-docker.pkg.dev/nba-props-platform/nba-props |
 | Datasets | nba_predictions, nba_analytics, nba_raw, nba_orchestration |
 
-## Documentation Structure
-
-### Key Directories
-
-| Directory | Purpose | When to Use |
-|-----------|---------|-------------|
-| `docs/00-start-here/` | Quick start guides | First session, errors |
-| `docs/01-architecture/` | System design, decisions | Architecture changes |
-| `docs/02-operations/` | Runbooks, troubleshooting | Daily operations, incidents |
-| `docs/03-phases/` | Phase 1-6 pipeline docs | Phase-specific work |
-| `docs/05-development/` | Dev guides, patterns | Writing code, testing |
-| `docs/08-projects/` | **Project tracking** | **Session work, handoffs** |
-| `docs/09-handoff/` | Session handoffs | Session summaries |
-
-### Project Directory (`docs/08-projects/`)
-
-**Purpose:** Track all active, completed, and archived projects
-
-**Structure:**
-```
-docs/08-projects/
-├── current/              # Active projects (< 14 days or ongoing)
-├── completed/            # Finished projects (keep 30 days)
-├── archive/YYYY-MM/      # Historical projects by month
-├── summaries/YYYY-MM.md  # Monthly summaries (Sessions 1-92 documented)
-├── DOCUMENTATION-HYGIENE-GUIDE.md  # Cleanup guide
-└── CLEANUP-PROMPT-2026-02.md       # Cleanup phases
-```
-
-**Key Files:**
-- **Monthly Summaries:** `docs/08-projects/summaries/2026-01.md`, `2026-02.md`
-  - 70+ sessions per month summarized
-  - 10 anti-patterns + 8 established patterns documented
-  - Reference these to avoid repeating mistakes
-
-**Cleanup:** Use `/cleanup-projects` skill weekly (~15 min)
-
-### Documentation Index
+## Documentation Index [Keyword: DOCS]
 
 | Topic | Location |
 |-------|----------|
+| **Session work** | `docs/08-projects/current/<project>/` |
+| **Session handoffs** | `docs/09-handoff/` |
 | Troubleshooting | `docs/02-operations/troubleshooting-matrix.md` |
 | Session learnings | `docs/02-operations/session-learnings.md` |
 | System features | `docs/02-operations/system-features.md` |
-| Doc standards | `docs/05-development/DOCUMENTATION-STANDARDS.md` |
 | Architecture | `docs/01-architecture/` |
 | Runbooks | `docs/02-operations/runbooks/` |
-| **Projects** | `docs/08-projects/current/` |
-| **Monthly summaries** | `docs/08-projects/summaries/` |
-| Handoffs | `docs/09-handoff/` |
+| Development guides | `docs/05-development/` |
+
+**Monthly Summaries:** `docs/08-projects/summaries/` - 70+ sessions/month, anti-patterns, and lessons learned
 
 ## Feature References
 
