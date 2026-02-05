@@ -103,6 +103,14 @@ repos:
         files: ^shared/config/scraper_retry_config\.yaml$
         verbose: true
 
+      - id: validate-sql-queries
+        name: Validate SQL validation queries
+        description: Checks for Session 123 anti-patterns (cache_date = game_date, missing partition filters, etc.)
+        entry: python .pre-commit-hooks/validate_sql_queries.py
+        language: python
+        types: [python, sql]
+        verbose: true
+
   # Standard pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
