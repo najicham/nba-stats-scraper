@@ -656,15 +656,18 @@ class ParameterResolver:
         for game in games:
             # Extract game info
             game_date_yyyymmdd = game.game_date.replace('-', '')  # "20240410"
-            # Use correct attribute names - 'away_team' and 'home_team'
-            away_team = getattr(game, 'away_team', 'UNK')[:3].upper()
-            home_team = getattr(game, 'home_team', 'UNK')[:3].upper()
+            # FIX (Session 124): Use team tricodes directly, not truncated team names
+            # away_team/home_team contain full names like "Oklahoma City Thunder"
+            # away_team_tricode/home_team_tricode contain "OKC", "SAS", etc.
+            away_team = getattr(game, 'away_team_tricode', 'UNK')
+            home_team = getattr(game, 'home_team_tricode', 'UNK')
 
             # Build game_code
             game_code = f"{game_date_yyyymmdd}/{away_team}{home_team}"
 
             params_list.append({
-                'game_code': game_code
+                'game_code': game_code,
+                'gamedate': game_date_yyyymmdd  # FIX (Session 124): Add for failure tracking
             })
 
         logger.info(f"Resolved nbac_gamebook_pdf for {len(params_list)} games")
