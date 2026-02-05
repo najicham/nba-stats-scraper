@@ -794,6 +794,14 @@ def handle_prediction_request():
         # Extract correlation_id for request tracing
         correlation_id = request_data.get('correlation_id')
 
+        # Validate required fields
+        required_fields = ['player_lookup', 'game_date', 'game_id']
+        missing_fields = [field for field in required_fields if field not in request_data]
+        if missing_fields:
+            error_msg = f"Missing required fields in request: {missing_fields}"
+            logger.error(f"{error_msg} (correlation_id: {correlation_id})")
+            return jsonify({"error": error_msg, "correlation_id": correlation_id}), 400
+
         logger.info(
             f"Processing prediction request: {request_data.get('player_lookup')} on {request_data.get('game_date')} "
             f"(dataset_prefix: {dataset_prefix or 'production'}, correlation_id: {correlation_id})"

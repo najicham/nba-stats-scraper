@@ -73,12 +73,6 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
           COUNTIF(ABS(predicted_points - current_points_line) >= 5) as high_edge_picks,
           COUNTIF(confidence_score >= 0.92 AND ABS(predicted_points - current_points_line) >= 3) as premium_picks,
 
-          -- Session 112: Scenario counts for optimal betting strategies
-          COUNTIF(recommendation = 'OVER' AND current_points_line < 12 AND ABS(predicted_points - current_points_line) >= 5) as optimal_over_count,
-          COUNTIF(recommendation = 'UNDER' AND current_points_line >= 25 AND ABS(predicted_points - current_points_line) >= 3) as optimal_under_count,
-          COUNTIF(recommendation = 'OVER' AND ABS(predicted_points - current_points_line) >= 7) as ultra_high_edge_count,
-          COUNTIF(recommendation = 'UNDER' AND current_points_line < 15 AND ABS(predicted_points - current_points_line) >= 3) as anti_pattern_count,
-
           ROUND(100.0 * COUNTIF(recommendation = 'OVER') / COUNT(*), 1) as pct_over,
           ROUND(100.0 * COUNTIF(recommendation = 'UNDER') / COUNT(*), 1) as pct_under,
 
@@ -114,7 +108,13 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
             ELSE 'Balanced signals - historical 82% hit rate on high-edge picks'
           END as signal_explanation,
 
-          CURRENT_TIMESTAMP() as calculated_at
+          CURRENT_TIMESTAMP() as calculated_at,
+
+          -- Session 112: Scenario counts for optimal betting strategies (moved to end to match schema)
+          COUNTIF(recommendation = 'OVER' AND current_points_line < 12 AND ABS(predicted_points - current_points_line) >= 5) as optimal_over_count,
+          COUNTIF(recommendation = 'UNDER' AND current_points_line >= 25 AND ABS(predicted_points - current_points_line) >= 3) as optimal_under_count,
+          COUNTIF(recommendation = 'OVER' AND ABS(predicted_points - current_points_line) >= 7) as ultra_high_edge_count,
+          COUNTIF(recommendation = 'UNDER' AND current_points_line < 15 AND ABS(predicted_points - current_points_line) >= 3) as anti_pattern_count
 
         FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
         WHERE game_date = @game_date

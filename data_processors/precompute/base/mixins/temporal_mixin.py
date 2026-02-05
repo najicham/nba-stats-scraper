@@ -43,11 +43,22 @@ class TemporalMixin:
         Converts string dates to proper date objects early in processing
         to ensure all processors receive consistent date types.
 
+        Handles special keywords like 'YESTERDAY' for convenience.
+
         Updates self.opts['analysis_date'] in place.
         """
         if 'analysis_date' in self.opts and isinstance(self.opts['analysis_date'], str):
-            self.opts['analysis_date'] = date.fromisoformat(self.opts['analysis_date'])
-            logger.debug(f"Normalized analysis_date to date object: {self.opts['analysis_date']}")
+            analysis_date_str = self.opts['analysis_date']
+
+            # Handle special keyword 'YESTERDAY'
+            if analysis_date_str == 'YESTERDAY':
+                from datetime import datetime, timedelta
+                self.opts['analysis_date'] = (datetime.now().date() - timedelta(days=1))
+                logger.debug(f"Converted 'YESTERDAY' to date object: {self.opts['analysis_date']}")
+            else:
+                # Parse ISO format date string
+                self.opts['analysis_date'] = date.fromisoformat(analysis_date_str)
+                logger.debug(f"Normalized analysis_date to date object: {self.opts['analysis_date']}")
 
     def _check_early_season(self, analysis_date: date, dep_check: Optional[Dict] = None) -> bool:
         """
