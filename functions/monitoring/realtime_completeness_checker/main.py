@@ -102,9 +102,10 @@ def get_expected_processors_for_date(game_date):
     Session 126: Fixed to use correct post-game processors
     """
     # Core processors that must complete for post-game flow
+    # Session 127: Fixed BDL processor name - BdlBoxscoresProcessor is the active one
     return [
         'NbacPlayerBoxscoreProcessor',  # From nbac_player_boxscore scraper
-        'BdlPlayerBoxScoresProcessor',  # From bdl_box_scores scraper
+        'BdlBoxscoresProcessor',  # From bdl_box_scores scraper (NOT BdlPlayerBoxScoresProcessor which is deprecated)
     ]
 
 
