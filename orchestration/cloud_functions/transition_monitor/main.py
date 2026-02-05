@@ -65,9 +65,10 @@ PHASE2_TIMEOUT_HOURS = float(os.environ.get('PHASE2_TIMEOUT_HOURS', '2'))
 PHASE3_TIMEOUT_HOURS = float(os.environ.get('PHASE3_TIMEOUT_HOURS', '1'))
 PHASE4_TIMEOUT_HOURS = float(os.environ.get('PHASE4_TIMEOUT_HOURS', '1'))
 
-# How many days back to check for stuck transitions (default: 7)
+# How many days back to check for stuck transitions (default: 14)
+# Session 125: Increased from 7 to catch longer gaps like Dec 27-Jan 21 incident
 # This catches weekend transitions that might be missed if only checking today/yesterday
-LOOKBACK_DAYS = int(os.environ.get('TRANSITION_LOOKBACK_DAYS', '7'))
+LOOKBACK_DAYS = int(os.environ.get('TRANSITION_LOOKBACK_DAYS', '14'))
 
 # Import expected processors from centralized config
 try:

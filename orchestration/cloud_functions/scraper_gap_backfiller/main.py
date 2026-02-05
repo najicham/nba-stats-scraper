@@ -58,7 +58,7 @@ SCRAPER_SERVICE_URL = os.getenv(
     "SCRAPER_SERVICE_URL",
     "https://nba-scrapers-f7p3g7f6ya-wl.a.run.app"
 )
-LOOKBACK_DAYS = 7
+LOOKBACK_DAYS = 14  # Session 125: Increased from 7 to catch longer gaps
 REQUEST_TIMEOUT = 180  # 3 minutes for scraper to complete
 GAP_ALERT_THRESHOLD = 3  # Alert when any scraper has >= 3 days of gaps
 

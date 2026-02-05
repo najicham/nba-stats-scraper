@@ -1,0 +1,309 @@
+# BigQuery Schema: Validation Results Tables
+# Session: 125 (2026-02-04)
+# Purpose: Store validation results for historical analysis and trend tracking
+
+# Table: validation_runs
+# Stores one row per validation run (scheduled or manual)
+validation_runs:
+  description: "Tracks each validation run with overall status"
+  time_partitioning:
+    type: DAY
+    field: run_timestamp
+  clustering_fields:
+    - check_type
+    - status
+  schema:
+    - name: run_id
+      type: STRING
+      mode: REQUIRED
+      description: "Unique identifier for this run (UUID)"
+
+    - name: run_timestamp
+      type: TIMESTAMP
+      mode: REQUIRED
+      description: "When the validation run started"
+
+    - name: check_type
+      type: STRING
+      mode: REQUIRED
+      description: "Type of validation (e.g., historical_completeness, consecutive_failures, daily_validation, phase_boundary)"
+
+    - name: trigger_source
+      type: STRING
+      mode: NULLABLE
+      description: "What triggered this run (scheduler, manual, orchestrator)"
+
+    - name: schedule_name
+      type: STRING
+      mode: NULLABLE
+      description: "Cloud Scheduler job name if scheduled"
+
+    - name: status
+      type: STRING
+      mode: REQUIRED
+      description: "Overall status: OK, WARNING, CRITICAL, ERROR"
+
+    - name: message
+      type: STRING
+      mode: NULLABLE
+      description: "Human-readable summary"
+
+    - name: duration_ms
+      type: INT64
+      mode: NULLABLE
+      description: "How long the validation took in milliseconds"
+
+    - name: checks_passed
+      type: INT64
+      mode: NULLABLE
+      description: "Number of individual checks that passed"
+
+    - name: checks_warned
+      type: INT64
+      mode: NULLABLE
+      description: "Number of individual checks with warnings"
+
+    - name: checks_failed
+      type: INT64
+      mode: NULLABLE
+      description: "Number of individual checks that failed"
+
+    - name: target_date
+      type: DATE
+      mode: NULLABLE
+      description: "The game_date being validated (if applicable)"
+
+    - name: details
+      type: STRING
+      mode: NULLABLE
+      description: "JSON blob with additional details"
+
+
+# Table: validation_check_results
+# Stores one row per individual check within a validation run
+validation_check_results:
+  description: "Individual check results within a validation run"
+  time_partitioning:
+    type: DAY
+    field: check_timestamp
+  clustering_fields:
+    - check_name
+    - status
+  schema:
+    - name: result_id
+      type: STRING
+      mode: REQUIRED
+      description: "Unique identifier for this result"
+
+    - name: run_id
+      type: STRING
+      mode: REQUIRED
+      description: "Foreign key to validation_runs"
+
+    - name: check_timestamp
+      type: TIMESTAMP
+      mode: REQUIRED
+      description: "When this specific check ran"
+
+    - name: check_name
+      type: STRING
+      mode: REQUIRED
+      description: "Name of the check (e.g., box_score_completeness, usage_rate_coverage)"
+
+    - name: check_category
+      type: STRING
+      mode: NULLABLE
+      description: "Category: phase1, phase2, phase3, phase4, phase5, scraper, orchestration"
+
+    - name: status
+      type: STRING
+      mode: REQUIRED
+      description: "Check status: PASS, WARN, FAIL, SKIP, ERROR"
+
+    - name: severity
+      type: STRING
+      mode: NULLABLE
+      description: "Severity level: P1_CRITICAL, P2_HIGH, P3_MEDIUM, P4_LOW"
+
+    - name: expected_value
+      type: STRING
+      mode: NULLABLE
+      description: "What was expected (for comparison)"
+
+    - name: actual_value
+      type: STRING
+      mode: NULLABLE
+      description: "What was found"
+
+    - name: threshold
+      type: FLOAT64
+      mode: NULLABLE
+      description: "Threshold used for comparison (if numeric)"
+
+    - name: message
+      type: STRING
+      mode: NULLABLE
+      description: "Detailed message about the result"
+
+    - name: target_date
+      type: DATE
+      mode: NULLABLE
+      description: "The date being checked"
+
+    - name: target_table
+      type: STRING
+      mode: NULLABLE
+      description: "The table being checked (if applicable)"
+
+    - name: affected_records
+      type: INT64
+      mode: NULLABLE
+      description: "Number of records affected by this issue"
+
+    - name: details
+      type: STRING
+      mode: NULLABLE
+      description: "JSON blob with additional details"
+
+
+# Table: validation_trends
+# Daily aggregates for dashboarding and trend analysis
+validation_trends:
+  description: "Daily aggregates for trend analysis"
+  time_partitioning:
+    type: DAY
+    field: trend_date
+  schema:
+    - name: trend_date
+      type: DATE
+      mode: REQUIRED
+      description: "Date of the aggregation"
+
+    - name: total_runs
+      type: INT64
+      mode: REQUIRED
+      description: "Total validation runs on this date"
+
+    - name: ok_runs
+      type: INT64
+      mode: NULLABLE
+      description: "Runs with OK status"
+
+    - name: warning_runs
+      type: INT64
+      mode: NULLABLE
+      description: "Runs with WARNING status"
+
+    - name: critical_runs
+      type: INT64
+      mode: NULLABLE
+      description: "Runs with CRITICAL status"
+
+    - name: error_runs
+      type: INT64
+      mode: NULLABLE
+      description: "Runs that errored"
+
+    - name: total_checks
+      type: INT64
+      mode: NULLABLE
+      description: "Total individual checks run"
+
+    - name: checks_passed
+      type: INT64
+      mode: NULLABLE
+      description: "Checks that passed"
+
+    - name: checks_warned
+      type: INT64
+      mode: NULLABLE
+      description: "Checks with warnings"
+
+    - name: checks_failed
+      type: INT64
+      mode: NULLABLE
+      description: "Checks that failed"
+
+    - name: health_score
+      type: FLOAT64
+      mode: NULLABLE
+      description: "Overall health score 0-100"
+
+    - name: most_common_failures
+      type: STRING
+      mode: NULLABLE
+      description: "JSON array of most common check failures"
+
+    - name: avg_duration_ms
+      type: FLOAT64
+      mode: NULLABLE
+      description: "Average validation run duration"
+
+
+# Table: validation_alerts
+# Tracks alerts sent for validation failures
+validation_alerts:
+  description: "Tracks alerts sent for validation failures"
+  time_partitioning:
+    type: DAY
+    field: alert_timestamp
+  schema:
+    - name: alert_id
+      type: STRING
+      mode: REQUIRED
+      description: "Unique alert identifier"
+
+    - name: alert_timestamp
+      type: TIMESTAMP
+      mode: REQUIRED
+      description: "When the alert was sent"
+
+    - name: run_id
+      type: STRING
+      mode: NULLABLE
+      description: "Related validation run"
+
+    - name: check_name
+      type: STRING
+      mode: NULLABLE
+      description: "The check that triggered the alert"
+
+    - name: severity
+      type: STRING
+      mode: REQUIRED
+      description: "Alert severity: CRITICAL, WARNING, INFO"
+
+    - name: channel
+      type: STRING
+      mode: NULLABLE
+      description: "Alert channel: slack, email, pagerduty"
+
+    - name: message
+      type: STRING
+      mode: NULLABLE
+      description: "Alert message content"
+
+    - name: acknowledged
+      type: BOOL
+      mode: NULLABLE
+      description: "Whether alert was acknowledged"
+
+    - name: acknowledged_at
+      type: TIMESTAMP
+      mode: NULLABLE
+      description: "When alert was acknowledged"
+
+    - name: resolved
+      type: BOOL
+      mode: NULLABLE
+      description: "Whether issue was resolved"
+
+    - name: resolved_at
+      type: TIMESTAMP
+      mode: NULLABLE
+      description: "When issue was resolved"
+
+    - name: resolution_notes
+      type: STRING
+      mode: NULLABLE
+      description: "Notes on how issue was resolved"
