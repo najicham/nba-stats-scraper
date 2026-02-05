@@ -432,6 +432,7 @@ class PlayerDailyCacheProcessor(
             WHERE game_date < '{analysis_date.isoformat()}'  -- FIX: Changed <= to < (cache should only include games BEFORE analysis_date)
               AND season_year = {season_year}
               AND is_active = TRUE
+              AND is_dnp = FALSE  -- Session 2026-02-04: Exclude DNP players from cache (was causing 32.5% pollution)
               AND (minutes_played > 0 OR points > 0)  -- Fallback for historical data with NULL minutes
         )
         SELECT *
