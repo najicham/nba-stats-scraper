@@ -131,14 +131,23 @@ GROUP BY game_id, team_abbr
 
 ### Injuries
 
-**Primary Source:** `bdl_injuries`
-**Coverage:** 95%+
-**Status:** No fallback needed
+**Primary Source (Phase 2):** `bdl_injuries`
+**Alternative Source (Phase 1):** `nbac_injury_report` (NBA.com official - ⭐ RECOMMENDED for new work)
+**Coverage:** 95%+ (BDL), 100% (NBA.com)
+**Status:** BDL used historically, NBA.com available but not in Phase 2
 
-**Why No Fallback:**
-1. Injury data is supplementary (not critical path)
-2. Missing injury data doesn't break processing
-3. No alternative injury source with better coverage
+**Why BDL Was Chosen:**
+1. Simpler API integration vs PDF parsing
+2. Standardized JSON format
+3. Historical decision (pre-dates NBA.com scraper v16)
+
+**Why NBA.com Is Better:**
+1. Official source (authoritative)
+2. Updated every 15 minutes (vs daily BDL)
+3. 99-100% accuracy with confidence scoring
+4. See: `docs/06-reference/scrapers/00-SCRAPER-INVENTORY.md`
+
+**Recommendation:** New implementations should use `nbac_injury_report` (NBA.com) as primary, `bdl_injuries` as fallback
 
 ---
 

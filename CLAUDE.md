@@ -88,6 +88,25 @@ nba-stats-scraper/
 └── docs/                 # Documentation
 ```
 
+## Data Sources Quick Reference [Keyword: SOURCES]
+
+**Full Inventory:** See `docs/06-reference/scrapers/00-SCRAPER-INVENTORY.md`
+
+| Data Type | Primary Source | BigQuery Table | Notes |
+|-----------|----------------|----------------|-------|
+| **Injuries** | `nbac_injury_report` (NBA.com) ⭐ | `nba_raw.nbac_injury_report` | Official PDFs, 15-min updates |
+| | `bdl_injuries` (Ball Don't Lie) | `nba_raw.bdl_injuries` | Fallback only |
+| **Schedule** | `nbac_schedule` (NBA.com) | `nba_raw.nbac_schedule` | 100% coverage |
+| **Player Stats** | `nbac_gamebook_player_stats` | `nba_raw.nbac_gamebook_player_stats` | Official stats |
+| **Betting Lines** | `odds_api_*` (The Odds API) | `nba_raw.odds_api_*` | 10+ sportsbooks |
+| **Play-by-Play** | `nbac_play_by_play` | `nba_raw.nbac_play_by_play` | Every possession |
+
+**Table Naming Conventions:**
+- `nbac_*` = NBA.com official sources
+- `bdl_*` = Ball Don't Lie API
+- `odds_api_*` = The Odds API
+- `bettingpros_*` = BettingPros
+
 ## ML Model - CatBoost V9 [Keyword: MODEL]
 
 | Property | Value |
