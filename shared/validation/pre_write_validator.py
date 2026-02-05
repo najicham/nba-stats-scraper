@@ -399,6 +399,273 @@ BUSINESS_RULES: Dict[str, List[ValidationRule]] = {
             error_message="Opponent FT made cannot exceed FT attempts"
         ),
     ],
+
+    # -------------------------------------------------------------------------
+    # player_shot_zone_analysis - Phase 4 Precompute (Player Zone Stats)
+    # -------------------------------------------------------------------------
+    'player_shot_zone_analysis': [
+        # Required fields
+        ValidationRule(
+            name='required_player_lookup',
+            condition=lambda r: r.get('player_lookup') is not None,
+            error_message="player_lookup is required"
+        ),
+        ValidationRule(
+            name='required_analysis_date',
+            condition=lambda r: r.get('analysis_date') is not None,
+            error_message="analysis_date is required"
+        ),
+
+        # Zone rate percentages (distribution: should sum to ~100%)
+        ValidationRule(
+            name='paint_rate_range',
+            condition=lambda r: r.get('paint_rate_last_10') is None or 0 <= r.get('paint_rate_last_10') <= 100,
+            error_message="paint_rate_last_10 must be 0-100%"
+        ),
+        ValidationRule(
+            name='mid_range_rate_range',
+            condition=lambda r: r.get('mid_range_rate_last_10') is None or 0 <= r.get('mid_range_rate_last_10') <= 100,
+            error_message="mid_range_rate_last_10 must be 0-100%"
+        ),
+        ValidationRule(
+            name='three_pt_rate_range',
+            condition=lambda r: r.get('three_pt_rate_last_10') is None or 0 <= r.get('three_pt_rate_last_10') <= 100,
+            error_message="three_pt_rate_last_10 must be 0-100%"
+        ),
+
+        # Zone efficiency percentages (FG%)
+        ValidationRule(
+            name='paint_pct_range',
+            condition=lambda r: r.get('paint_pct_last_10') is None or 0 <= r.get('paint_pct_last_10') <= 1.0,
+            error_message="paint_pct_last_10 must be 0-1.0 (0-100%)"
+        ),
+        ValidationRule(
+            name='mid_range_pct_range',
+            condition=lambda r: r.get('mid_range_pct_last_10') is None or 0 <= r.get('mid_range_pct_last_10') <= 1.0,
+            error_message="mid_range_pct_last_10 must be 0-1.0 (0-100%)"
+        ),
+        ValidationRule(
+            name='three_pt_pct_range',
+            condition=lambda r: r.get('three_pt_pct_last_10') is None or 0 <= r.get('three_pt_pct_last_10') <= 1.0,
+            error_message="three_pt_pct_last_10 must be 0-1.0 (0-100%)"
+        ),
+
+        # Attempts per game (non-negative, reasonable max)
+        ValidationRule(
+            name='paint_attempts_pg_range',
+            condition=lambda r: r.get('paint_attempts_per_game') is None or 0 <= r.get('paint_attempts_per_game') <= 40,
+            error_message="paint_attempts_per_game must be 0-40"
+        ),
+        ValidationRule(
+            name='mid_range_attempts_pg_range',
+            condition=lambda r: r.get('mid_range_attempts_per_game') is None or 0 <= r.get('mid_range_attempts_per_game') <= 40,
+            error_message="mid_range_attempts_per_game must be 0-40"
+        ),
+        ValidationRule(
+            name='three_pt_attempts_pg_range',
+            condition=lambda r: r.get('three_pt_attempts_per_game') is None or 0 <= r.get('three_pt_attempts_per_game') <= 40,
+            error_message="three_pt_attempts_per_game must be 0-40"
+        ),
+
+        # Games in sample (positive integer)
+        ValidationRule(
+            name='games_in_sample_positive',
+            condition=lambda r: r.get('games_in_sample_10') is None or r.get('games_in_sample_10', 0) >= 0,
+            error_message="games_in_sample_10 must be non-negative"
+        ),
+
+        # Total shots sanity check
+        ValidationRule(
+            name='total_shots_reasonable',
+            condition=lambda r: r.get('total_shots_last_10') is None or 0 <= r.get('total_shots_last_10') <= 400,
+            error_message="total_shots_last_10 must be 0-400 (reasonable for 10 games)"
+        ),
+    ],
+
+    # -------------------------------------------------------------------------
+    # team_defense_zone_analysis - Phase 4 Precompute (Team Defense Zones)
+    # -------------------------------------------------------------------------
+    'team_defense_zone_analysis': [
+        # Required fields
+        ValidationRule(
+            name='required_team_abbr',
+            condition=lambda r: r.get('team_abbr') is not None,
+            error_message="team_abbr is required"
+        ),
+        ValidationRule(
+            name='required_analysis_date',
+            condition=lambda r: r.get('analysis_date') is not None,
+            error_message="analysis_date is required"
+        ),
+
+        # FG% allowed by zone (0-100% stored as 0-1.0)
+        ValidationRule(
+            name='paint_pct_allowed_range',
+            condition=lambda r: r.get('paint_pct_allowed_last_15') is None or 0 <= r.get('paint_pct_allowed_last_15') <= 1.0,
+            error_message="paint_pct_allowed_last_15 must be 0-1.0 (0-100%)"
+        ),
+        ValidationRule(
+            name='mid_range_pct_allowed_range',
+            condition=lambda r: r.get('mid_range_pct_allowed_last_15') is None or 0 <= r.get('mid_range_pct_allowed_last_15') <= 1.0,
+            error_message="mid_range_pct_allowed_last_15 must be 0-1.0 (0-100%)"
+        ),
+        ValidationRule(
+            name='three_pt_pct_allowed_range',
+            condition=lambda r: r.get('three_pt_pct_allowed_last_15') is None or 0 <= r.get('three_pt_pct_allowed_last_15') <= 1.0,
+            error_message="three_pt_pct_allowed_last_15 must be 0-1.0 (0-100%)"
+        ),
+
+        # Attempts allowed per game (non-negative, reasonable max)
+        ValidationRule(
+            name='paint_attempts_allowed_range',
+            condition=lambda r: r.get('paint_attempts_allowed_per_game') is None or 0 <= r.get('paint_attempts_allowed_per_game') <= 100,
+            error_message="paint_attempts_allowed_per_game must be 0-100"
+        ),
+        ValidationRule(
+            name='mid_range_attempts_allowed_range',
+            condition=lambda r: r.get('mid_range_attempts_allowed_per_game') is None or 0 <= r.get('mid_range_attempts_allowed_per_game') <= 100,
+            error_message="mid_range_attempts_allowed_per_game must be 0-100"
+        ),
+        ValidationRule(
+            name='three_pt_attempts_allowed_range',
+            condition=lambda r: r.get('three_pt_attempts_allowed_per_game') is None or 0 <= r.get('three_pt_attempts_allowed_per_game') <= 100,
+            error_message="three_pt_attempts_allowed_per_game must be 0-100"
+        ),
+
+        # Points allowed per game (paint zone)
+        ValidationRule(
+            name='paint_points_allowed_range',
+            condition=lambda r: r.get('paint_points_allowed_per_game') is None or 0 <= r.get('paint_points_allowed_per_game') <= 150,
+            error_message="paint_points_allowed_per_game must be 0-150"
+        ),
+
+        # Defensive rating (typical range: 80-130)
+        ValidationRule(
+            name='defensive_rating_range',
+            condition=lambda r: r.get('defensive_rating_last_15') is None or 70 <= r.get('defensive_rating_last_15') <= 140,
+            error_message="defensive_rating_last_15 must be 70-140 (reasonable NBA range)"
+        ),
+
+        # Opponent points per game
+        ValidationRule(
+            name='opponent_ppg_range',
+            condition=lambda r: r.get('opponent_points_per_game') is None or 70 <= r.get('opponent_points_per_game') <= 150,
+            error_message="opponent_points_per_game must be 70-150"
+        ),
+
+        # Games in sample (positive integer)
+        ValidationRule(
+            name='games_in_sample_positive',
+            condition=lambda r: r.get('games_in_sample') is None or r.get('games_in_sample', 0) >= 0,
+            error_message="games_in_sample must be non-negative"
+        ),
+
+        # Defense vs league average (difference, typically -20 to +20)
+        ValidationRule(
+            name='paint_defense_vs_avg_range',
+            condition=lambda r: r.get('paint_defense_vs_league_avg') is None or -0.30 <= r.get('paint_defense_vs_league_avg') <= 0.30,
+            error_message="paint_defense_vs_league_avg must be -0.30 to +0.30 (±30%)"
+        ),
+        ValidationRule(
+            name='mid_range_defense_vs_avg_range',
+            condition=lambda r: r.get('mid_range_defense_vs_league_avg') is None or -0.30 <= r.get('mid_range_defense_vs_league_avg') <= 0.30,
+            error_message="mid_range_defense_vs_league_avg must be -0.30 to +0.30 (±30%)"
+        ),
+        ValidationRule(
+            name='three_pt_defense_vs_avg_range',
+            condition=lambda r: r.get('three_pt_defense_vs_league_avg') is None or -0.30 <= r.get('three_pt_defense_vs_league_avg') <= 0.30,
+            error_message="three_pt_defense_vs_league_avg must be -0.30 to +0.30 (±30%)"
+        ),
+    ],
+
+    # -------------------------------------------------------------------------
+    # daily_opponent_defense_zones - Phase 4 Precompute (Daily Opponent Defense)
+    # -------------------------------------------------------------------------
+    'daily_opponent_defense_zones': [
+        # Required fields
+        ValidationRule(
+            name='required_game_date',
+            condition=lambda r: r.get('game_date') is not None,
+            error_message="game_date is required"
+        ),
+        ValidationRule(
+            name='required_opponent_team_abbr',
+            condition=lambda r: r.get('opponent_team_abbr') is not None,
+            error_message="opponent_team_abbr is required"
+        ),
+
+        # FG% allowed by zone (0-100% stored as 0-1.0 in NUMERIC)
+        ValidationRule(
+            name='paint_fg_pct_allowed_range',
+            condition=lambda r: r.get('paint_fg_pct_allowed') is None or 0 <= r.get('paint_fg_pct_allowed') <= 1.0,
+            error_message="paint_fg_pct_allowed must be 0-1.0 (0-100%)"
+        ),
+        ValidationRule(
+            name='mid_range_fg_pct_allowed_range',
+            condition=lambda r: r.get('mid_range_fg_pct_allowed') is None or 0 <= r.get('mid_range_fg_pct_allowed') <= 1.0,
+            error_message="mid_range_fg_pct_allowed must be 0-1.0 (0-100%)"
+        ),
+        ValidationRule(
+            name='three_pt_fg_pct_allowed_range',
+            condition=lambda r: r.get('three_pt_fg_pct_allowed') is None or 0 <= r.get('three_pt_fg_pct_allowed') <= 1.0,
+            error_message="three_pt_fg_pct_allowed must be 0-1.0 (0-100%)"
+        ),
+
+        # Attempts allowed (non-negative)
+        ValidationRule(
+            name='paint_attempts_allowed_nonnegative',
+            condition=lambda r: r.get('paint_attempts_allowed') is None or r.get('paint_attempts_allowed', 0) >= 0,
+            error_message="paint_attempts_allowed must be non-negative"
+        ),
+        ValidationRule(
+            name='mid_range_attempts_allowed_nonnegative',
+            condition=lambda r: r.get('mid_range_attempts_allowed') is None or r.get('mid_range_attempts_allowed', 0) >= 0,
+            error_message="mid_range_attempts_allowed must be non-negative"
+        ),
+        ValidationRule(
+            name='three_pt_attempts_allowed_nonnegative',
+            condition=lambda r: r.get('three_pt_attempts_allowed') is None or r.get('three_pt_attempts_allowed', 0) >= 0,
+            error_message="three_pt_attempts_allowed must be non-negative"
+        ),
+
+        # Blocks (non-negative)
+        ValidationRule(
+            name='paint_blocks_nonnegative',
+            condition=lambda r: r.get('paint_blocks') is None or r.get('paint_blocks', 0) >= 0,
+            error_message="paint_blocks must be non-negative"
+        ),
+        ValidationRule(
+            name='mid_range_blocks_nonnegative',
+            condition=lambda r: r.get('mid_range_blocks') is None or r.get('mid_range_blocks', 0) >= 0,
+            error_message="mid_range_blocks must be non-negative"
+        ),
+        ValidationRule(
+            name='three_pt_blocks_nonnegative',
+            condition=lambda r: r.get('three_pt_blocks') is None or r.get('three_pt_blocks', 0) >= 0,
+            error_message="three_pt_blocks must be non-negative"
+        ),
+
+        # Defensive rating (typical range: 80-130)
+        ValidationRule(
+            name='defensive_rating_range',
+            condition=lambda r: r.get('defensive_rating') is None or 70 <= r.get('defensive_rating') <= 140,
+            error_message="defensive_rating must be 70-140 (reasonable NBA range)"
+        ),
+
+        # Opponent points average
+        ValidationRule(
+            name='opponent_points_avg_range',
+            condition=lambda r: r.get('opponent_points_avg') is None or 70 <= r.get('opponent_points_avg') <= 150,
+            error_message="opponent_points_avg must be 70-150"
+        ),
+
+        # Games in sample (positive integer)
+        ValidationRule(
+            name='games_in_sample_positive',
+            condition=lambda r: r.get('games_in_sample') is None or r.get('games_in_sample', 0) >= 0,
+            error_message="games_in_sample must be non-negative"
+        ),
+    ],
 }
 
 
