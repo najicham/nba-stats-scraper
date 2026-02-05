@@ -152,6 +152,12 @@ BUSINESS_RULES: Dict[str, List[ValidationRule]] = {
             error_message="minutes must be 0-60 (or NULL)",
             severity="WARNING"
         ),
+        ValidationRule(
+            name='usage_rate_range',
+            condition=lambda r: r.get('usage_rate') is None or 0 <= r.get('usage_rate', 0) <= 50,
+            error_message="usage_rate must be 0-50% (or NULL) - values >100% indicate calculation error",
+            severity="ERROR"  # BLOCK writes - this is a data corruption issue
+        ),
     ],
 
     # -------------------------------------------------------------------------
