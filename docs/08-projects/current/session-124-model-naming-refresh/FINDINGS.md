@@ -156,4 +156,71 @@ if recommendation == 'UNDER' and line_value < 14 and player_volatility > 5.0:
 
 ---
 
+## Role Player Volatility Deep Dive (Opus Agent)
+
+### Breakout Statistics
+
+| Performance | % of Role Player Games |
+|-------------|------------------------|
+| MAJOR_BREAKOUT (1.75x+) | 9.5% |
+| BREAKOUT (1.5x-1.75x) | 7.4% |
+| GOOD_GAME (1.25x-1.5x) | 12.8% |
+| NORMAL/BELOW | 70.3% |
+
+**17% of role player games are breakouts (1.5x+ average)**
+
+### What Triggers Breakouts?
+
+| Factor | Breakout Rate |
+|--------|---------------|
+| HOT player (L5 > season+3) | **24.1%** |
+| WARM player (0-3 above) | 18.5% |
+| COOL player (-3 to 0) | 14.7% |
+| COLD player (< -3) | 12.0% |
+
+**HOT players have 2x the breakout rate of COLD players**
+
+### Recommended Filter Rules
+
+```python
+def should_skip_role_player_under(recommendation, line_value, season_avg, points_avg_last_5, edge):
+    if recommendation != 'UNDER':
+        return False
+    if not (8 <= season_avg <= 15):  # Not a role player
+        return False
+
+    l5_vs_season = points_avg_last_5 - season_avg
+
+    # Rule 1: Skip when player is HOT
+    if l5_vs_season > 3:
+        return True  # 24% breakout rate
+
+    # Rule 2: Skip when line too low
+    if line_value < 14:
+        return True  # High breakout risk
+
+    # Rule 3: Require higher edge
+    if edge < 4:
+        return True  # Need more margin
+
+    return False
+```
+
+### Expected Impact
+
+| Filter Combination | Hit Rate |
+|--------------------|----------|
+| No filtering | 45.5% |
+| Combined filters | **71.4%** |
+
+### Future: Breakout Prediction Model
+
+Features to add:
+- `explosion_ratio_last_10` (max/avg points)
+- `days_since_breakout`
+- `star_teammate_out` (more shots available)
+- `opp_role_breakout_rate`
+
+---
+
 *Session 124 - Model Naming Refresh & Subset Review*
