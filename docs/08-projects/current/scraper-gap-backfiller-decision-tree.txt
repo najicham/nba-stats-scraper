@@ -1,0 +1,206 @@
+================================================================================
+SCRAPER GAP BACKFILLER - HEALTH CHECK DECISION TREE
+================================================================================
+
+SCENARIO: Gap backfiller runs at midnight on Feb 5, 2026
+GOAL: Decide whether to health check before attempting backfill
+
+INPUT:
+  - scraper_name: Name of the scraper with a gap
+  - oldest_gap_date: Date of the oldest unbackfilled gap
+  - today: Current date (Feb 5, 2026)
+
+CALCULATION:
+  gap_age_days = today - oldest_gap_date
+
+================================================================================
+DECISION TREE
+================================================================================
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ For scraper with gap at oldest_gap_date:                                │
+│                                                                           │
+│  Calculate: gap_age_days = today - oldest_gap_date                       │
+└─────────────────────────────────────────────────────────────────────────┘
+                                   │
+                                   ▼
+                    ┌──────────────────────────────┐
+                    │  Is gap_age_days <= 1?       │
+                    │  (Today or yesterday's gap)  │
+                    └──────────────────────────────┘
+                                   │
+                    ┌──────────────┴──────────────┐
+                    │                              │
+                  YES                             NO
+                    │                              │
+                    ▼                              ▼
+        ┌────────────────────────┐    ┌────────────────────────────┐
+        │ SKIP HEALTH CHECK      │    │ Is scraper in              │
+        │                        │    │ POST_GAME_SCRAPERS?        │
+        │ Reason: Recent gap     │    │ (gamebook, player_boxscore)│
+        │ May be timing issue    │    └────────────────────────────┘
+        │ not scraper failure    │                 │
+        │                        │    ┌────────────┴────────────┐
+        │ Action:                │    │                          │
+        │ → Go to backfill       │  YES                         NO
+        │                        │    │                          │
+        │ Examples:              │    ▼                          ▼
+        │ - Feb 5 at midnight:   │  ┌──────────────────┐  ┌──────────────────┐
+        │   Feb 4 gap (1 day)    │  │ SKIP HEALTH      │  │ RUN HEALTH CHECK │
+        │ - Feb 5 at midnight:   │  │ CHECK            │  │                  │
+        │   Feb 5 gap (0 days)   │  │                  │  │ Reason: Old gap, │
+        └────────────────────────┘  │ Reason: Post-    │  │ non-post-game    │
+                    │                │ game scraper     │  │ scraper          │
+                    │                │ can't test with  │  │                  │
+                    │                │ today's date     │  │ Action:          │
+                    │                │ (games haven't   │  │ 1. Test scraper  │
+                    │                │ happened yet)    │  │    with today    │
+                    │                │                  │  │ 2. If pass:      │
+                    │                │ Action:          │  │    → backfill    │
+                    │                │ → Go to backfill │  │ 3. If fail:      │
+                    │                │                  │  │    → skip        │
+                    │                │ Examples:        │  │                  │
+                    │                │ - gamebook_pdf   │  │ Examples:        │
+                    │                │   Feb 2 gap      │  │ - nbac_schedule  │
+                    │                │   (3 days old)   │  │   Feb 2 gap      │
+                    │                └──────────────────┘  │   (3 days old)   │
+                    │                        │              └──────────────────┘
+                    │                        │                       │
+                    └────────────────────────┴───────────────────────┘
+                                             │
+                                             ▼
+                                    ┌────────────────┐
+                                    │ ATTEMPT        │
+                                    │ BACKFILL       │
+                                    │                │
+                                    │ Call scraper   │
+                                    │ with gap_date  │
+                                    │                │
+                                    │ If success:    │
+                                    │ → Mark as      │
+                                    │   backfilled   │
+                                    └────────────────┘
+
+================================================================================
+EXAMPLES AT MIDNIGHT ON FEB 5, 2026
+================================================================================
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ CASE 1: Post-game scraper, yesterday's gap (THE BUG THIS FIXES)           │
+├────────────────────────────────────────────────────────────────────────────┤
+│ scraper_name: nbac_gamebook_pdf                                            │
+│ oldest_gap_date: 2026-02-04                                                │
+│ today: 2026-02-05                                                          │
+│ gap_age_days: 1                                                            │
+│                                                                             │
+│ DECISION:                                                                   │
+│   gap_age_days (1) <= 1? YES                                               │
+│   → SKIP health check (skipped_recent_gap)                                 │
+│   → Go straight to backfill                                                │
+│                                                                             │
+│ OLD BEHAVIOR (BROKEN):                                                      │
+│   - oldest_gap != today, so run health check                               │
+│   - Health check tries Feb 5 gamebook → FAILS (games not played)          │
+│   - Skip backfill → Feb 4 never gets data                                  │
+│                                                                             │
+│ NEW BEHAVIOR (FIXED):                                                       │
+│   - gap_age_days = 1, skip health check                                    │
+│   - Attempt backfill for Feb 4 → SUCCESS (Feb 4 games are complete)       │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ CASE 2: Post-game scraper, 3-day old gap                                  │
+├────────────────────────────────────────────────────────────────────────────┤
+│ scraper_name: nbac_gamebook_pdf                                            │
+│ oldest_gap_date: 2026-02-02                                                │
+│ today: 2026-02-05                                                          │
+│ gap_age_days: 3                                                            │
+│                                                                             │
+│ DECISION:                                                                   │
+│   gap_age_days (3) <= 1? NO                                                │
+│   scraper in POST_GAME_SCRAPERS? YES                                       │
+│   → SKIP health check (skipped_post_game_scraper)                          │
+│   → Go straight to backfill                                                │
+│                                                                             │
+│ REASON:                                                                     │
+│   Post-game scrapers can't be tested with today's date                     │
+│   No point in health check - it will always fail                           │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ CASE 3: Non-post-game scraper, 3-day old gap                              │
+├────────────────────────────────────────────────────────────────────────────┤
+│ scraper_name: nbac_schedule                                                │
+│ oldest_gap_date: 2026-02-02                                                │
+│ today: 2026-02-05                                                          │
+│ gap_age_days: 3                                                            │
+│                                                                             │
+│ DECISION:                                                                   │
+│   gap_age_days (3) <= 1? NO                                                │
+│   scraper in POST_GAME_SCRAPERS? NO                                        │
+│   → RUN health check                                                        │
+│   → Test scraper with Feb 5 date                                           │
+│   → If pass: backfill Feb 2                                                │
+│   → If fail: skip backfill (scraper still broken)                          │
+│                                                                             │
+│ REASON:                                                                     │
+│   Gap is old enough that it's not a timing issue                           │
+│   Scraper can be tested with today's date (schedule available)             │
+│   Verify scraper is healthy before attempting backfill                     │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌────────────────────────────────────────────────────────────────────────────┐
+│ CASE 4: Non-post-game scraper, yesterday's gap                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│ scraper_name: nbac_schedule                                                │
+│ oldest_gap_date: 2026-02-04                                                │
+│ today: 2026-02-05                                                          │
+│ gap_age_days: 1                                                            │
+│                                                                             │
+│ DECISION:                                                                   │
+│   gap_age_days (1) <= 1? YES                                               │
+│   → SKIP health check (skipped_recent_gap)                                 │
+│   → Go straight to backfill                                                │
+│                                                                             │
+│ REASON:                                                                     │
+│   Gap is recent - might be timing issue, not scraper failure               │
+│   Better to attempt backfill than assume scraper is broken                 │
+└────────────────────────────────────────────────────────────────────────────┘
+
+================================================================================
+KEY INSIGHTS
+================================================================================
+
+1. RECENT GAPS (≤1 day old):
+   - Always skip health check
+   - Likely timing issue, not scraper failure
+   - Example: At midnight, yesterday's data may still be processing
+
+2. POST-GAME SCRAPERS:
+   - Always skip health check
+   - Can't be tested with today's date (games haven't happened yet)
+   - Example: Gamebook PDFs for today won't exist until games complete
+
+3. OLD GAPS (>1 day) on NON-POST-GAME SCRAPERS:
+   - Run health check to verify scraper is working
+   - If healthy: attempt backfill
+   - If broken: skip backfill (avoid wasting time)
+
+4. PRIORITY ORDER:
+   - First check: Is it recent? (catches timing issues)
+   - Second check: Is it post-game? (catches data availability)
+   - Fall through: Run health check (verify scraper health)
+
+================================================================================
+POST-GAME SCRAPERS
+================================================================================
+
+POST_GAME_SCRAPERS = {
+    'nbac_gamebook_pdf',      # PDF box scores, only available after games
+    'nbac_player_boxscore'    # Player stats, only available after games
+}
+
+These scrapers require completed games. Testing them with today's date at
+midnight will always fail because today's games haven't been played yet.
+
+================================================================================

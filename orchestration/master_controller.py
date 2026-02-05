@@ -550,13 +550,40 @@ class MasterWorkflowController:
         # Check 2: Time window
         fixed_time_str = schedule.get('fixed_time')  # e.g., "22:00"
         tolerance_minutes = schedule.get('tolerance_minutes', 30)
-        
+
         if fixed_time_str:
             hour, minute = map(int, fixed_time_str.split(':'))
             window_time = current_time.replace(hour=hour, minute=minute, second=0, microsecond=0)
-            
+
+            # FIX (Session 124): Handle day boundary crossing for late-night workflows
+            # At 11:00 PM ET (04:00 UTC), a 4:00 AM ET window should be "in 5 hours" (tomorrow),
+            # not "19 hours ago" (earlier today). The replace() method keeps the same calendar day,
+            # which causes incorrect time_diff calculations across midnight.
+            time_diff = (current_time - window_time).total_seconds()
+
+            # If target is >12 hours in the past, it's likely tomorrow's window
+            if time_diff > 12 * 3600:
+                window_time = window_time + timedelta(days=1)
+                logger.info(f"Adjusted window_time forward 1 day for {workflow_name} "
+                           f"(target {fixed_time_str} is likely tomorrow)")
+            # If target is >12 hours in the future, it's likely yesterday's window
+            elif time_diff < -12 * 3600:
+                window_time = window_time - timedelta(days=1)
+                logger.info(f"Adjusted window_time back 1 day for {workflow_name} "
+                           f"(target {fixed_time_str} was likely yesterday)")
+
             time_diff_minutes = abs((current_time - window_time).total_seconds() / 60)
-            
+
+            # Sanity check: time difference should never exceed 12 hours for any workflow
+            # If it does, this indicates a timezone or configuration bug
+            if time_diff_minutes > 720:
+                logger.error(
+                    f"ANOMALY DETECTED: time_diff_minutes={time_diff_minutes:.1f} is suspiciously large. "
+                    f"workflow={workflow_name}, current_time={current_time}, window_time={window_time}, "
+                    f"fixed_time={fixed_time_str}. This suggests a timezone calculation bug! "
+                    f"Workflow will SKIP but this needs investigation."
+                )
+
             if time_diff_minutes > tolerance_minutes:
                 return WorkflowDecision(
                     action=DecisionAction.SKIP,

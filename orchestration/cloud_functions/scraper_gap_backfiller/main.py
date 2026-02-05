@@ -62,6 +62,10 @@ LOOKBACK_DAYS = 14  # Session 125: Increased from 7 to catch longer gaps
 REQUEST_TIMEOUT = 180  # 3 minutes for scraper to complete
 GAP_ALERT_THRESHOLD = 3  # Alert when any scraper has >= 3 days of gaps
 
+# Post-game scrapers: Data only available AFTER games complete
+# Health checks with today's date will fail because games haven't happened yet
+POST_GAME_SCRAPERS = {'nbac_gamebook_pdf', 'nbac_player_boxscore'}
+
 
 # ============================================================================
 # Gap Alerting Functions
@@ -483,18 +487,44 @@ def scraper_gap_backfiller(request):
                 "gap_count": failure["gap_count"]
             }
 
-            # Skip health check if today is the gap (can't test with today)
-            if oldest_gap == today:
-                # Just try the backfill directly
-                action["health_check"] = "skipped_same_day"
+            # Calculate gap age for health check decision
+            gap_age_days = (datetime.now(timezone.utc).date() - failure["oldest_gap_date"]).days
+
+            # Determine if we should skip health check
+            # Health checks test scrapers with TODAY's date, which fails for:
+            # 1. Recent gaps (0-1 days old) - may be timing issue, not scraper failure
+            # 2. Post-game scrapers - today's games haven't happened yet
+            if gap_age_days <= 1:
+                # Recent gap (today or yesterday) - skip health check
+                # Example: At midnight on Feb 5, yesterday's (Feb 4) gap is only 1 day old
+                # Health check would test Feb 5, which may fail due to timing, not scraper health
+                action["health_check"] = "skipped_recent_gap"
+                logger.info(
+                    f"Skipping health check for {scraper_name} - gap is only {gap_age_days} day(s) old "
+                    f"(gap_date={oldest_gap}, today={today})"
+                )
+            elif scraper_name in POST_GAME_SCRAPERS:
+                # Post-game scraper - can't test with today's date
+                # Example: nbac_gamebook_pdf needs completed games, but today's games haven't started
+                action["health_check"] = "skipped_post_game_scraper"
+                logger.info(
+                    f"Skipping health check for {scraper_name} - post-game scraper cannot be tested "
+                    f"with today's date (today={today})"
+                )
             else:
-                # Test health with today's date
+                # Normal health check for older gaps on non-post-game scrapers
+                # Test if scraper is currently healthy before attempting backfill
+                logger.info(f"Running health check for {scraper_name} with date={today}")
                 if not test_scraper_health(scraper_name, today):
                     action["health_check"] = "failed"
                     action["backfill"] = "skipped"
+                    logger.warning(
+                        f"Health check failed for {scraper_name} - skipping backfill for {oldest_gap}"
+                    )
                     results["actions"].append(action)
                     continue
                 action["health_check"] = "passed"
+                logger.info(f"Health check passed for {scraper_name}")
 
             # Trigger backfill for oldest gap
             if trigger_backfill(scraper_name, oldest_gap):
