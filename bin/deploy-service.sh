@@ -114,6 +114,20 @@ echo "Build commit:    $BUILD_COMMIT"
 echo "Build timestamp: $BUILD_TIMESTAMP"
 echo "=============================================="
 
+# [0/8] Dockerfile dependency validation (Session 131)
+echo ""
+echo "[0/8] Validating Dockerfile dependencies..."
+echo "This prevents missing module/dependency bugs like Session 129-130"
+SERVICE_DIR=$(dirname "$DOCKERFILE")
+if [ -f "./bin/validate-dockerfile-dependencies.sh" ]; then
+    if ! ./bin/validate-dockerfile-dependencies.sh "$SERVICE_DIR"; then
+        echo "ERROR: Dockerfile validation failed. Fix missing dependencies before deploying."
+        exit 1
+    fi
+else
+    echo "⚠️  Dockerfile validation script not found, skipping check"
+fi
+
 echo ""
 echo "[1/8] Building $SERVICE from repo root with $DOCKERFILE..."
 docker build \

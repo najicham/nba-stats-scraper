@@ -90,13 +90,13 @@ def send_slack_alert(drift_info, severity):
     try:
         # Get appropriate webhook based on severity
         if severity == 'CRITICAL':
-            webhook_url = get_secret('SLACK_WEBHOOK_URL_ERROR')
+            webhook_url = get_secret('slack-webhook-error')
             emoji = '🔴'
         elif severity == 'WARNING':
-            webhook_url = get_secret('SLACK_WEBHOOK_URL_WARNING')
+            webhook_url = get_secret('slack-webhook-monitoring-warning')
             emoji = '⚠️'
         else:
-            webhook_url = get_secret('SLACK_WEBHOOK_URL')
+            webhook_url = get_secret('slack-webhook-url')
             emoji = 'ℹ️'
 
         services_list = '\n'.join([f"   • {svc}" for svc in drift_info.get('services', [])])

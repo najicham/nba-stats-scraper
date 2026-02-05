@@ -79,16 +79,26 @@ def health_check_deep():
             }
             all_healthy = False
 
-        # Check 2: BigQuery connectivity
+        # Check 2: BigQuery connectivity AND pandas conversion
         try:
             from shared.clients.bigquery_pool import get_bigquery_client
             client = get_bigquery_client()
-            # Simple query to verify connection
-            result = client.query("SELECT 1 as test").result()
+            # Test actual pandas conversion (catches db-dtypes issues)
+            query_job = client.query("SELECT 1 as test")
+            df = query_job.to_dataframe()
+            if len(df) != 1:
+                raise ValueError("Query returned wrong number of rows")
             checks['bigquery'] = {
                 'status': 'ok',
+                'operations': ['query', 'to_dataframe'],
                 'connection': 'verified'
             }
+        except ImportError as e:
+            checks['bigquery'] = {
+                'status': 'failed',
+                'error': f'Import error: {str(e)} (missing db-dtypes?)'
+            }
+            all_healthy = False
         except Exception as e:
             checks['bigquery'] = {
                 'status': 'failed',
@@ -100,10 +110,13 @@ def health_check_deep():
         try:
             from google.cloud import firestore
             db = firestore.Client()
-            # Verify we can access Firestore
-            collections = list(db.collections(max_results=1))
+            # Test actual write operation (catches permission issues)
+            test_ref = db.collection('_health_checks').document('test')
+            test_ref.set({'timestamp': datetime.now(timezone.utc).isoformat()})
+            test_ref.delete()
             checks['firestore'] = {
                 'status': 'ok',
+                'operations': ['write', 'delete'],
                 'connection': 'verified'
             }
         except Exception as e:

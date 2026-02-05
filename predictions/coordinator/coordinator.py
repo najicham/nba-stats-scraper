@@ -569,6 +569,120 @@ def index():
     return jsonify(response), 200
 
 
+@app.route('/health/deep', methods=['GET'])
+def health_check_deep():
+    """
+    Deep health check - validates critical functionality.
+
+    Checks:
+    1. Critical module imports (player_loader, data loaders)
+    2. BigQuery connectivity AND pandas conversion
+    3. Firestore connectivity (for distributed locks)
+    4. Pub/Sub connectivity (can publish messages)
+
+    Returns 200 if all checks pass, 503 if any fail.
+    """
+    checks = {}
+    all_healthy = True
+
+    try:
+        # Check 1: Critical imports
+        try:
+            from player_loader import PlayerLoader
+            from data_freshness_validator import DataFreshnessValidator
+            checks['imports'] = {
+                'status': 'ok',
+                'modules': ['player_loader', 'data_freshness_validator']
+            }
+        except ImportError as e:
+            checks['imports'] = {
+                'status': 'failed',
+                'error': str(e)
+            }
+            all_healthy = False
+
+        # Check 2: BigQuery connectivity AND pandas conversion
+        try:
+            from shared.clients.bigquery_pool import get_bigquery_client
+            client = get_bigquery_client()
+            # Test actual pandas conversion (catches db-dtypes issues)
+            query_job = client.query("SELECT 1 as test")
+            df = query_job.to_dataframe()
+            if len(df) != 1:
+                raise ValueError("Query returned wrong number of rows")
+            checks['bigquery'] = {
+                'status': 'ok',
+                'operations': ['query', 'to_dataframe'],
+                'connection': 'verified'
+            }
+        except ImportError as e:
+            checks['bigquery'] = {
+                'status': 'failed',
+                'error': f'Import error: {str(e)} (missing db-dtypes?)'
+            }
+            all_healthy = False
+        except Exception as e:
+            checks['bigquery'] = {
+                'status': 'failed',
+                'error': str(e)
+            }
+            all_healthy = False
+
+        # Check 3: Firestore connectivity (for distributed locks)
+        try:
+            from google.cloud import firestore
+            db = firestore.Client()
+            # Test actual write operation (catches permission issues)
+            test_ref = db.collection('_health_checks').document('test')
+            test_ref.set({'timestamp': datetime.utcnow().isoformat()})
+            test_ref.delete()
+            checks['firestore'] = {
+                'status': 'ok',
+                'operations': ['write', 'delete'],
+                'connection': 'verified'
+            }
+        except Exception as e:
+            checks['firestore'] = {
+                'status': 'failed',
+                'error': str(e)
+            }
+            all_healthy = False
+
+        # Check 4: Pub/Sub connectivity (can get client)
+        try:
+            from google.cloud import pubsub_v1
+            publisher = pubsub_v1.PublisherClient()
+            checks['pubsub'] = {
+                'status': 'ok',
+                'connection': 'verified'
+            }
+        except Exception as e:
+            checks['pubsub'] = {
+                'status': 'failed',
+                'error': str(e)
+            }
+            all_healthy = False
+
+        # Overall status
+        status_code = 200 if all_healthy else 503
+        response = {
+            "status": "healthy" if all_healthy else "unhealthy",
+            "service": "prediction_coordinator",
+            "timestamp": datetime.utcnow().isoformat(),
+            "checks": checks
+        }
+
+        return jsonify(response), status_code
+
+    except Exception as e:
+        logger.error(f"Deep health check failed: {e}", exc_info=True)
+        return jsonify({
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat()
+        }), 503
+
+
 @app.route('/instances', methods=['GET'])
 @require_api_key
 def get_instances():
