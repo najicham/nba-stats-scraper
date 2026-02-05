@@ -36,6 +36,8 @@ CHANNEL_ENV_MAP = {
     '#orchestration-health': 'SLACK_WEBHOOK_URL_ORCHESTRATION_HEALTH',
     '#nba-predictions': 'SLACK_WEBHOOK_URL_PREDICTIONS',
     '#nba-betting-signals': 'SLACK_WEBHOOK_URL_SIGNALS',
+    '#deployment-alerts': 'SLACK_WEBHOOK_URL_DEPLOYMENT_ALERTS',
+    '#canary-alerts': 'SLACK_WEBHOOK_URL_CANARY_ALERTS',
 }
 
 
