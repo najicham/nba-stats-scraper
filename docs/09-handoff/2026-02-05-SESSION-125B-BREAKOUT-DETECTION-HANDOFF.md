@@ -15,7 +15,7 @@
 # 2. Verify deployment
 gcloud run services describe prediction-worker --region=us-west2 \
   --format="value(metadata.labels.commit-sha)"
-# Should show: 6e8f7079
+# Should show: 3e8f35ef
 
 # 3. (Optional) Train breakout classifier
 PYTHONPATH=. python ml/experiments/train_breakout_classifier.py \
@@ -91,9 +91,12 @@ UTA: 38%, POR: 37%, MEM: 37%, LAL: 35%, DEN: 35%
 | `predictions/worker/worker.py` | +3 filters (role player, hot streak, quality) |
 | `data_processors/grading/.../prediction_accuracy_processor.py` | Quality propagation |
 | `ml/experiments/train_breakout_classifier.py` | NEW - breakout model training |
+| `data_processors/precompute/ml_feature_store/breakout_risk_calculator.py` | NEW - breakout risk score |
+| `tests/processors/precompute/.../test_breakout_risk_calculator.py` | NEW - 30 unit tests |
 | `.claude/skills/model-experiment/SKILL.md` | Added breakout classifier docs |
 | `validation/queries/monitoring/breakout_filter_monitoring.sql` | NEW - 6 queries |
 | `docs/08-projects/current/breakout-detection-design/` | NEW - design docs |
+| `docs/08-projects/current/breakout-risk-score/` | NEW - risk score design |
 
 ---
 
@@ -103,6 +106,8 @@ UTA: 38%, POR: 37%, MEM: 37%, LAL: 35%, DEN: 35%
 f59e4c37 - feat: Add quality filters and propagate quality to grading
 95bcc254 - feat: Strengthen role player UNDER filter and add breakout monitoring
 6e8f7079 - feat: Add hot streak UNDER filter and breakout classifier infrastructure
+6189e0a5 - docs: Add Session 125B implementation docs and handoff
+3e8f35ef - feat: Add breakout_risk_score calculator with tests and design docs
 ```
 
 **IMPORTANT:** These commits need deployment. Run:
