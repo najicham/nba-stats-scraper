@@ -76,6 +76,9 @@ class PredictionDataLoader:
         # This provides ~50x speedup (1 query vs 450 queries)
         self._historical_games_cache: Dict[date, Dict[str, List[Dict]]] = {}
 
+        # Session 128B: Cache for auto-detected feature versions
+        self._feature_version_cache: Dict[date, str] = {}
+
         # Instance-level cache for features (keyed by game_date)
         # First request for a game_date batch-loads all players, subsequent requests use cache
         # This provides ~7-8x speedup (15s → 2s for 150 players)
@@ -132,16 +135,65 @@ class PredictionDataLoader:
     # ========================================================================
     # FEATURES LOADING (Required by ALL systems)
     # ========================================================================
-    
+
+    def _detect_feature_version(self, game_date: date) -> str:
+        """
+        Auto-detect which feature version exists for a given game_date.
+
+        Session 128B: Supports both v2_37features (old) and v2_39features (new with breakout).
+        Tries v2_39features first (newer), falls back to v2_37features.
+
+        Args:
+            game_date: The game date to check
+
+        Returns:
+            Feature version string ('v2_39features' or 'v2_37features')
+        """
+        # Check cache first
+        if game_date in self._feature_version_cache:
+            return self._feature_version_cache[game_date]
+
+        # Query to detect which version exists
+        query = f"""
+        SELECT DISTINCT feature_version
+        FROM `{self.project_id}.{self.predictions_dataset}.ml_feature_store_v2`
+        WHERE game_date = @game_date
+        LIMIT 1
+        """
+
+        try:
+            from google.cloud import bigquery
+            job_config = bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter("game_date", "DATE", game_date)
+                ]
+            )
+            results = list(self.client.query(query, job_config=job_config).result())
+
+            if results and results[0]['feature_version']:
+                detected_version = results[0]['feature_version']
+                self._feature_version_cache[game_date] = detected_version
+                logger.info(f"Detected feature version {detected_version} for {game_date}")
+                return detected_version
+            else:
+                # No data found - default to v2_39features (current)
+                logger.warning(f"No feature data found for {game_date}, defaulting to v2_39features")
+                return 'v2_39features'
+
+        except Exception as e:
+            logger.error(f"Error detecting feature version for {game_date}: {e}")
+            # Default to v2_39features on error
+            return 'v2_39features'
+
     @retry_on_transient
     def load_features(
         self,
         player_lookup: str,
         game_date: date,
-        feature_version: str = 'v2_37features'
+        feature_version: str = 'auto'  # Session 128B: Auto-detect version
     ) -> Optional[Dict]:
         """
-        Load 33 features from ml_feature_store_v2 with intelligent caching
+        Load features from ml_feature_store_v2 with intelligent caching
 
         Performance optimization: First request for a game_date batch-loads ALL players
         in ONE query (~2s), subsequent requests use cache (~instant). Provides ~7-8x speedup
@@ -150,7 +202,7 @@ class PredictionDataLoader:
         Args:
             player_lookup: Player identifier (e.g., 'lebron-james')
             game_date: Game date (date object)
-            feature_version: Feature version (default: 'v2_33features')
+            feature_version: Feature version ('auto' to auto-detect, or specific version)
 
         Returns:
             Dict with features or None if not found
@@ -158,14 +210,19 @@ class PredictionDataLoader:
         Example Return:
             {
                 'feature_count': 33,
-                'feature_version': 'v2_33features',
+                'feature_version': 'v2_39features',
                 'data_source': 'phase4',
                 'feature_quality_score': 95.5,
                 'points_avg_last_5': 28.4,
                 'points_avg_last_10': 27.2,
-                # ... 23 more features
+                # ... more features
             }
         """
+        # Session 128B: Auto-detect feature version if needed
+        if feature_version == 'auto':
+            feature_version = self._detect_feature_version(game_date)
+            logger.debug(f"Auto-detected feature version: {feature_version} for {game_date}")
+
         # Check cache first (7-8x speedup via batch loading)
         if game_date in self._features_cache:
             # Check if cache is stale
@@ -795,7 +852,7 @@ class PredictionDataLoader:
         self,
         player_lookups: List[str],
         game_date: date,
-        feature_version: str = 'v2_37features'
+        feature_version: str = 'auto'  # Session 128B: Auto-detect version
     ) -> Dict[str, Dict]:
         """
         Load features for ALL players on a single date in ONE query (batch optimization)
@@ -813,6 +870,10 @@ class PredictionDataLoader:
         """
         if not player_lookups:
             return {}
+
+        # Session 128B: Auto-detect feature version if needed
+        if feature_version == 'auto':
+            feature_version = self._detect_feature_version(game_date)
 
         # Generate cache key for this batch query
         sorted_players = sorted(player_lookups)
@@ -989,7 +1050,7 @@ class PredictionDataLoader:
     def load_features_batch(
         self,
         player_game_pairs: List[tuple],
-        feature_version: str = 'v2_37features'
+        feature_version: str = 'auto'  # Session 128B: Auto-detect version
     ) -> Dict[tuple, Dict]:
         """
         Load features for multiple players at once (legacy interface)
