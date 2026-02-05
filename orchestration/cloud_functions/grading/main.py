@@ -124,105 +124,266 @@ def get_target_date(target_date_str: str) -> str:
 
 def validate_grading_prerequisites(target_date: str) -> Dict:
     """
-    Validate that prerequisites for grading are met.
+    Validate that prerequisites for grading are met using player-level matching.
+
+    ENHANCED VALIDATION (Session 123):
+    Instead of just counting total predictions vs total actuals (which can show
+    87.5% coverage when there's actually 0% overlap!), this function now performs
+    a proper JOIN to verify that the SAME players have both predictions AND actuals.
+
+    Example of the old problem:
+    - 400 predictions for players A-D
+    - 350 actuals for players E-H
+    - Old logic: 350/400 = 87.5% coverage (WRONG!)
+    - New logic: 0/400 = 0% overlap (CORRECT!)
 
     Checks:
-    1. player_game_summary has data for the target date
-    2. Predictions exist for the target date
-    3. Sufficient coverage (actuals cover most predictions) - BLOCKS if < 50%
+    1. Gradable predictions exist (active, with real lines, not invalidated)
+    2. Actuals exist with valid points data
+    3. Player-level coverage: % of predictions that have matching actuals
+    4. Game-level coverage: % of games that have actuals
+
+    Thresholds:
+    - Player coverage: >= 70% (at least 70% of predictions have matching actuals)
+    - Game coverage: >= 80% (at least 80% of games have actuals)
+    - Minimum predictions: >= 50 (need enough data to be worth grading)
 
     Args:
         target_date: Date to validate (YYYY-MM-DD format)
 
     Returns:
         Dict with:
-        - ready: bool - True if ready for grading (False if coverage < 50%)
-        - predictions_count: int - Number of predictions found
-        - actuals_count: int - Number of actuals found
-        - coverage_pct: float - Coverage percentage (actuals / predictions * 100)
-        - missing_reason: str - Reason if not ready ('no_predictions', 'no_actuals', 'insufficient_coverage')
-        - message: str - Detailed message explaining the issue (if not ready)
-        - can_auto_heal: bool - True if Phase 3 analytics can be triggered to fix the issue
+        - ready: bool - True if ready for grading
+        - predictions_count: int - Total gradable predictions
+        - actuals_count: int - Total actuals
+        - coverage_pct: float - % of predictions with matching actuals (for backward compat)
+        - player_coverage_pct: float - Same as coverage_pct
+        - game_coverage_pct: float - % of games with actuals
+        - predictions_with_actuals: int - Count of predictions that have matching actuals
+        - games_with_actuals: int - Games that have actuals
+        - total_games: int - Total games with predictions
+        - missing_reason: str (if not ready)
+        - can_auto_heal: bool
     """
     from google.cloud import bigquery
     from shared.clients.bigquery_pool import get_bigquery_client
 
     bq_client = get_bigquery_client(project_id=PROJECT_ID)
 
-    # Check predictions
-    predictions_query = f"""
-    SELECT COUNT(*) as cnt
-    FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
-    WHERE game_date = '{target_date}'
+    # ENHANCED QUERY: Join predictions with actuals at player+game level
+    # This ensures we're measuring ACTUAL overlap, not just record counts
+    coverage_query = f"""
+    WITH gradable_predictions AS (
+        -- Get distinct player+game combinations from active predictions
+        -- These are the predictions we actually want to grade
+        SELECT DISTINCT
+            player_lookup,
+            game_id
+        FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+        WHERE game_date = '{target_date}'
+            AND is_active = TRUE
+            AND current_points_line IS NOT NULL
+            AND current_points_line != 20.0  -- Exclude placeholder lines
+            AND line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
+            AND invalidation_reason IS NULL
+    ),
+    available_actuals AS (
+        -- Get distinct player+game combinations from actuals
+        -- Filter for valid points data (not NULL)
+        SELECT DISTINCT
+            player_lookup,
+            game_id
+        FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+        WHERE game_date = '{target_date}'
+            AND points IS NOT NULL
+    ),
+    coverage_analysis AS (
+        -- LEFT JOIN to find which predictions have matching actuals
+        SELECT
+            p.player_lookup,
+            p.game_id,
+            CASE WHEN a.player_lookup IS NOT NULL THEN 1 ELSE 0 END as has_actual
+        FROM gradable_predictions p
+        LEFT JOIN available_actuals a
+            ON p.player_lookup = a.player_lookup
+            AND p.game_id = a.game_id
+    )
+    SELECT
+        COUNT(*) as total_gradable_predictions,
+        SUM(has_actual) as predictions_with_actuals,
+        COUNT(DISTINCT game_id) as total_games,
+        COUNT(DISTINCT CASE WHEN has_actual = 1 THEN game_id END) as games_with_actuals
+    FROM coverage_analysis
     """
 
-    # Check actuals (player_game_summary)
-    actuals_query = f"""
+    # Also get total actuals count for logging (helps diagnose data issues)
+    actuals_count_query = f"""
     SELECT COUNT(*) as cnt
     FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
     WHERE game_date = '{target_date}'
     """
 
     try:
-        predictions_result = bq_client.query(predictions_query).to_dataframe()
-        predictions_count = int(predictions_result.iloc[0]['cnt'])
+        # Run coverage analysis (the main validation query)
+        coverage_result = bq_client.query(coverage_query).to_dataframe()
+        row = coverage_result.iloc[0]
 
-        actuals_result = bq_client.query(actuals_query).to_dataframe()
-        actuals_count = int(actuals_result.iloc[0]['cnt'])
+        total_gradable = int(row['total_gradable_predictions'])
+        predictions_with_actuals = int(row['predictions_with_actuals'])
+        total_games = int(row['total_games'])
+        games_with_actuals = int(row['games_with_actuals'])
 
-        # Calculate coverage
-        if predictions_count > 0:
-            coverage_pct = (actuals_count / predictions_count) * 100
+        # Get total actuals for diagnostic logging
+        actuals_result = bq_client.query(actuals_count_query).to_dataframe()
+        total_actuals = int(actuals_result.iloc[0]['cnt'])
+
+        # Calculate coverage percentages
+        if total_gradable > 0:
+            player_coverage_pct = (predictions_with_actuals / total_gradable) * 100
         else:
-            coverage_pct = 0.0
+            player_coverage_pct = 0.0
 
-        # Determine readiness
-        if predictions_count == 0:
+        if total_games > 0:
+            game_coverage_pct = (games_with_actuals / total_games) * 100
+        else:
+            game_coverage_pct = 0.0
+
+        # Log detailed coverage analysis
+        logger.info(
+            f"Coverage analysis for {target_date}: "
+            f"predictions={total_gradable}, with_actuals={predictions_with_actuals} "
+            f"({player_coverage_pct:.1f}%), "
+            f"games={total_games}, games_with_actuals={games_with_actuals} "
+            f"({game_coverage_pct:.1f}%), "
+            f"total_actuals_records={total_actuals}"
+        )
+
+        # VALIDATION THRESHOLDS
+        MIN_PLAYER_COVERAGE = 70.0  # At least 70% of predictions must have matching actuals
+        MIN_GAME_COVERAGE = 80.0    # At least 80% of games must have actuals
+        MIN_PREDICTIONS = 50        # Need at least 50 predictions to be worth grading
+
+        # Check: No predictions at all
+        if total_gradable == 0:
             return {
                 'ready': False,
                 'predictions_count': 0,
-                'actuals_count': actuals_count,
+                'actuals_count': total_actuals,
                 'coverage_pct': 0.0,
+                'player_coverage_pct': 0.0,
+                'game_coverage_pct': 0.0,
+                'predictions_with_actuals': 0,
+                'games_with_actuals': 0,
+                'total_games': 0,
                 'missing_reason': 'no_predictions',
                 'can_auto_heal': False
             }
 
-        if actuals_count == 0:
-            return {
-                'ready': False,
-                'predictions_count': predictions_count,
-                'actuals_count': 0,
-                'coverage_pct': 0.0,
-                'missing_reason': 'no_actuals',
-                'can_auto_heal': True  # Can trigger Phase 3 analytics
-            }
-
-        # CRITICAL FIX: Block grading when coverage is insufficient
-        # Previously this only logged a warning and allowed grading to proceed,
-        # which led to incomplete/misleading grading results
-        min_coverage = 50.0  # At least 50% coverage required
-        if coverage_pct < min_coverage:
+        # Check: No actuals at all (zero overlap)
+        if predictions_with_actuals == 0:
             logger.warning(
-                f"Insufficient actuals coverage for {target_date}: {coverage_pct:.1f}% "
-                f"({actuals_count} actuals / {predictions_count} predictions) - "
-                f"BLOCKING grading until coverage >= {min_coverage}%"
+                f"No player-level overlap for {target_date}: "
+                f"{total_gradable} predictions but 0 have matching actuals "
+                f"(total actuals records: {total_actuals}) - "
+                f"This suggests predictions and actuals are for different players!"
             )
             return {
                 'ready': False,
-                'predictions_count': predictions_count,
-                'actuals_count': actuals_count,
-                'coverage_pct': round(coverage_pct, 1),
+                'predictions_count': total_gradable,
+                'actuals_count': total_actuals,
+                'coverage_pct': 0.0,
+                'player_coverage_pct': 0.0,
+                'game_coverage_pct': 0.0,
+                'predictions_with_actuals': 0,
+                'games_with_actuals': 0,
+                'total_games': total_games,
+                'missing_reason': 'no_actuals',
+                'message': f'0 of {total_gradable} predictions have matching actuals (total actuals: {total_actuals})',
+                'can_auto_heal': True  # Can trigger Phase 3 analytics
+            }
+
+        # Check: Below minimum predictions threshold
+        if total_gradable < MIN_PREDICTIONS:
+            logger.warning(
+                f"Insufficient predictions for {target_date}: "
+                f"{total_gradable} < {MIN_PREDICTIONS} minimum"
+            )
+            return {
+                'ready': False,
+                'predictions_count': total_gradable,
+                'actuals_count': total_actuals,
+                'coverage_pct': round(player_coverage_pct, 1),
+                'player_coverage_pct': round(player_coverage_pct, 1),
+                'game_coverage_pct': round(game_coverage_pct, 1),
+                'predictions_with_actuals': predictions_with_actuals,
+                'games_with_actuals': games_with_actuals,
+                'total_games': total_games,
+                'missing_reason': 'insufficient_predictions',
+                'message': f'Only {total_gradable} predictions, need at least {MIN_PREDICTIONS}',
+                'can_auto_heal': False
+            }
+
+        # Check: Player coverage below threshold
+        if player_coverage_pct < MIN_PLAYER_COVERAGE:
+            logger.warning(
+                f"Insufficient player coverage for {target_date}: "
+                f"{player_coverage_pct:.1f}% < {MIN_PLAYER_COVERAGE}% "
+                f"({predictions_with_actuals}/{total_gradable} predictions have matching actuals) - "
+                f"BLOCKING grading until coverage >= {MIN_PLAYER_COVERAGE}%"
+            )
+            return {
+                'ready': False,
+                'predictions_count': total_gradable,
+                'actuals_count': total_actuals,
+                'coverage_pct': round(player_coverage_pct, 1),
+                'player_coverage_pct': round(player_coverage_pct, 1),
+                'game_coverage_pct': round(game_coverage_pct, 1),
+                'predictions_with_actuals': predictions_with_actuals,
+                'games_with_actuals': games_with_actuals,
+                'total_games': total_games,
                 'missing_reason': 'insufficient_coverage',
-                'message': f'Coverage {coverage_pct:.1f}% is below minimum {min_coverage}%',
+                'message': f'Player coverage {player_coverage_pct:.1f}% < {MIN_PLAYER_COVERAGE}% minimum ({predictions_with_actuals}/{total_gradable})',
                 'can_auto_heal': True  # Can trigger Phase 3 analytics to get more actuals
             }
 
-        # Coverage is sufficient - proceed with grading
+        # Check: Game coverage below threshold
+        if game_coverage_pct < MIN_GAME_COVERAGE:
+            logger.warning(
+                f"Insufficient game coverage for {target_date}: "
+                f"{game_coverage_pct:.1f}% < {MIN_GAME_COVERAGE}% "
+                f"({games_with_actuals}/{total_games} games have actuals) - "
+                f"BLOCKING grading until coverage >= {MIN_GAME_COVERAGE}%"
+            )
+            return {
+                'ready': False,
+                'predictions_count': total_gradable,
+                'actuals_count': total_actuals,
+                'coverage_pct': round(player_coverage_pct, 1),
+                'player_coverage_pct': round(player_coverage_pct, 1),
+                'game_coverage_pct': round(game_coverage_pct, 1),
+                'predictions_with_actuals': predictions_with_actuals,
+                'games_with_actuals': games_with_actuals,
+                'total_games': total_games,
+                'missing_reason': 'insufficient_game_coverage',
+                'message': f'Game coverage {game_coverage_pct:.1f}% < {MIN_GAME_COVERAGE}% minimum ({games_with_actuals}/{total_games})',
+                'can_auto_heal': True  # Can trigger Phase 3 analytics to get more actuals
+            }
+
+        # All checks passed - ready for grading
+        logger.info(
+            f"Grading prerequisites met for {target_date}: "
+            f"player_coverage={player_coverage_pct:.1f}%, game_coverage={game_coverage_pct:.1f}%"
+        )
         return {
             'ready': True,
-            'predictions_count': predictions_count,
-            'actuals_count': actuals_count,
-            'coverage_pct': round(coverage_pct, 1),
+            'predictions_count': total_gradable,
+            'actuals_count': total_actuals,
+            'coverage_pct': round(player_coverage_pct, 1),
+            'player_coverage_pct': round(player_coverage_pct, 1),
+            'game_coverage_pct': round(game_coverage_pct, 1),
+            'predictions_with_actuals': predictions_with_actuals,
+            'games_with_actuals': games_with_actuals,
+            'total_games': total_games,
             'missing_reason': None,
             'can_auto_heal': False
         }
@@ -234,6 +395,11 @@ def validate_grading_prerequisites(target_date: str) -> Dict:
             'predictions_count': 0,
             'actuals_count': 0,
             'coverage_pct': 0.0,
+            'player_coverage_pct': 0.0,
+            'game_coverage_pct': 0.0,
+            'predictions_with_actuals': 0,
+            'games_with_actuals': 0,
+            'total_games': 0,
             'missing_reason': f'validation_error: {str(e)}',
             'can_auto_heal': False
         }
@@ -658,13 +824,16 @@ def run_prediction_accuracy_grading(target_date: str, skip_validation: bool = Fa
         logger.info(
             f"Pre-grading validation for {target_date}: "
             f"predictions={validation['predictions_count']}, "
-            f"actuals={validation['actuals_count']}, "
-            f"coverage={validation['coverage_pct']}%"
+            f"with_actuals={validation.get('predictions_with_actuals', 'N/A')}, "
+            f"player_coverage={validation.get('player_coverage_pct', validation['coverage_pct'])}%, "
+            f"game_coverage={validation.get('game_coverage_pct', 'N/A')}%, "
+            f"games={validation.get('total_games', 'N/A')}/{validation.get('games_with_actuals', 'N/A')}"
         )
 
         if not validation['ready']:
-            # Auto-heal for both no_actuals and insufficient_coverage cases
-            if validation['can_auto_heal'] and validation['missing_reason'] in ('no_actuals', 'insufficient_coverage'):
+            # Auto-heal for no_actuals, insufficient_coverage, and insufficient_game_coverage cases
+            auto_healable_reasons = ('no_actuals', 'insufficient_coverage', 'insufficient_game_coverage')
+            if validation['can_auto_heal'] and validation['missing_reason'] in auto_healable_reasons:
                 reason = validation['missing_reason']
                 logger.warning(
                     f"{reason.replace('_', ' ').title()} for {target_date} - attempting auto-heal via Phase 3"
