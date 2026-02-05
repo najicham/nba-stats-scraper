@@ -299,6 +299,10 @@ class ContinuousValidator:
         if overall_status in [RunStatus.CRITICAL, RunStatus.WARNING]:
             self._send_alerts(run)
 
+        # Send daily digest for scheduled runs (always, regardless of status)
+        if trigger_source in ("scheduler", "cloud_scheduler", "pubsub"):
+            self._send_daily_digest(run)
+
         logger.info(f"Validation complete: {overall_status.value} - {message}")
         return run
 
@@ -443,63 +447,178 @@ class ContinuousValidator:
 
     def _check_data_freshness(self, target_date: date) -> CheckResult:
         """Check if data sources are fresh."""
+        # Use partition filters to avoid full table scans
         query = """
-        SELECT
-            MAX(DATE_DIFF(CURRENT_DATE(), MAX(game_date), DAY)) as max_stale_days
-        FROM (
-            SELECT MAX(game_date) as game_date FROM nba_raw.bdl_player_boxscores
+        WITH source_dates AS (
+            SELECT 'bdl_boxscores' as source, MAX(game_date) as latest_date
+            FROM nba_raw.bdl_player_boxscores
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
             UNION ALL
-            SELECT MAX(game_date) FROM nba_analytics.player_game_summary
+            SELECT 'player_game_summary', MAX(game_date)
+            FROM nba_analytics.player_game_summary
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
             UNION ALL
-            SELECT MAX(cache_date) FROM nba_precompute.player_daily_cache
+            SELECT 'player_daily_cache', MAX(cache_date)
+            FROM nba_precompute.player_daily_cache
+            WHERE cache_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
         )
+        SELECT
+            MAX(DATE_DIFF(CURRENT_DATE(), latest_date, DAY)) as max_stale_days,
+            STRING_AGG(source || ':' || CAST(DATE_DIFF(CURRENT_DATE(), latest_date, DAY) AS STRING), ', ') as details
+        FROM source_dates
+        WHERE latest_date IS NOT NULL
         """
         result = list(self.bq_client.query(query).result())[0]
 
-        if result.max_stale_days <= 1:
+        stale_days = result.max_stale_days or 0
+        details = result.details or "no data"
+
+        if stale_days <= 1:
             return CheckResult(
                 check_name='data_freshness',
                 status=CheckStatus.PASS,
                 message="All data sources are fresh (within 1 day)",
                 category='data_quality',
+                actual_value=f"{stale_days} days",
             )
-        elif result.max_stale_days <= 3:
+        elif stale_days <= 3:
             return CheckResult(
                 check_name='data_freshness',
                 status=CheckStatus.WARN,
-                message=f"Some data sources are {result.max_stale_days} days stale",
+                message=f"Some data sources are {stale_days} days stale ({details})",
                 severity=Severity.P3_MEDIUM,
                 category='data_quality',
+                actual_value=f"{stale_days} days",
             )
         else:
             return CheckResult(
                 check_name='data_freshness',
                 status=CheckStatus.FAIL,
-                message=f"Data sources are {result.max_stale_days} days stale",
+                message=f"Data sources are {stale_days} days stale ({details})",
                 severity=Severity.P1_CRITICAL,
                 category='data_quality',
+                actual_value=f"{stale_days} days",
             )
 
     def _check_scraper_failures(self, target_date: date) -> CheckResult:
-        """Check for recent scraper failures."""
-        # This would check processor_run_history for failures
-        # Simplified implementation
-        return CheckResult(
-            check_name='scraper_failures',
-            status=CheckStatus.PASS,
-            message="No recent scraper failures detected",
-            category='scraper',
-        )
+        """Check for recent scraper failures in the last 24 hours."""
+        query = """
+        SELECT
+            scraper_name,
+            COUNT(*) as failure_count
+        FROM nba_orchestration.scraper_execution_log
+        WHERE triggered_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)
+            AND status = 'failed'
+        GROUP BY scraper_name
+        ORDER BY failure_count DESC
+        LIMIT 10
+        """
+        try:
+            results = list(self.bq_client.query(query).result())
+
+            if not results:
+                return CheckResult(
+                    check_name='scraper_failures',
+                    status=CheckStatus.PASS,
+                    message="No scraper failures in last 24 hours",
+                    category='scraper',
+                )
+
+            total_failures = sum(r.failure_count for r in results)
+            failed_scrapers = [r.scraper_name for r in results]
+
+            if total_failures >= 10:
+                return CheckResult(
+                    check_name='scraper_failures',
+                    status=CheckStatus.FAIL,
+                    message=f"{total_failures} scraper failures in last 24h: {', '.join(failed_scrapers[:3])}",
+                    severity=Severity.P2_HIGH,
+                    category='scraper',
+                    affected_records=total_failures,
+                    details={'failed_scrapers': failed_scrapers},
+                )
+            elif total_failures >= 3:
+                return CheckResult(
+                    check_name='scraper_failures',
+                    status=CheckStatus.WARN,
+                    message=f"{total_failures} scraper failures in last 24h",
+                    severity=Severity.P3_MEDIUM,
+                    category='scraper',
+                    affected_records=total_failures,
+                )
+            else:
+                return CheckResult(
+                    check_name='scraper_failures',
+                    status=CheckStatus.PASS,
+                    message=f"{total_failures} minor scraper failures in last 24h (acceptable)",
+                    category='scraper',
+                )
+        except Exception as e:
+            logger.warning(f"Failed to check scraper failures: {e}")
+            return CheckResult(
+                check_name='scraper_failures',
+                status=CheckStatus.SKIP,
+                message=f"Could not check scraper failures: {str(e)}",
+                category='scraper',
+            )
 
     def _check_consecutive_failures(self, target_date: date) -> CheckResult:
-        """Check for consecutive failures."""
-        # Simplified - would integrate with consecutive_failure_monitor.py
-        return CheckResult(
-            check_name='consecutive_failures',
-            status=CheckStatus.PASS,
-            message="No consecutive failures detected",
-            category='scraper',
+        """Check for consecutive failures (same scraper failing 5+ times in a row)."""
+        query = """
+        WITH ranked_executions AS (
+            SELECT
+                scraper_name,
+                status,
+                triggered_at,
+                ROW_NUMBER() OVER (PARTITION BY scraper_name ORDER BY triggered_at DESC) as rn
+            FROM nba_orchestration.scraper_execution_log
+            WHERE triggered_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 48 HOUR)
+        ),
+        recent_failures AS (
+            SELECT
+                scraper_name,
+                COUNT(*) as consecutive_failures
+            FROM ranked_executions
+            WHERE rn <= 10 AND status = 'failed'
+            GROUP BY scraper_name
+            HAVING COUNT(*) >= 5
         )
+        SELECT scraper_name, consecutive_failures
+        FROM recent_failures
+        ORDER BY consecutive_failures DESC
+        LIMIT 5
+        """
+        try:
+            results = list(self.bq_client.query(query).result())
+
+            if not results:
+                return CheckResult(
+                    check_name='consecutive_failures',
+                    status=CheckStatus.PASS,
+                    message="No consecutive failures detected",
+                    category='scraper',
+                )
+
+            problem_scrapers = [(r.scraper_name, r.consecutive_failures) for r in results]
+            worst_scraper, worst_count = problem_scrapers[0]
+
+            return CheckResult(
+                check_name='consecutive_failures',
+                status=CheckStatus.FAIL,
+                message=f"Consecutive failures: {worst_scraper} ({worst_count}x)",
+                severity=Severity.P1_CRITICAL,
+                category='scraper',
+                affected_records=len(problem_scrapers),
+                details={'scrapers_with_consecutive_failures': problem_scrapers},
+            )
+        except Exception as e:
+            logger.warning(f"Failed to check consecutive failures: {e}")
+            return CheckResult(
+                check_name='consecutive_failures',
+                status=CheckStatus.SKIP,
+                message=f"Could not check consecutive failures: {str(e)}",
+                category='scraper',
+            )
 
     def _check_predictions_ready(self, target_date: date) -> CheckResult:
         """Check if predictions are ready for today's games."""
@@ -675,31 +794,168 @@ class ContinuousValidator:
         )
 
     def _check_deployment_drift(self, target_date: date) -> CheckResult:
-        """Check for deployment drift."""
-        return CheckResult(
-            check_name='deployment_drift',
-            status=CheckStatus.PASS,
-            message="Deployment drift check (placeholder)",
-            category='infrastructure',
-        )
+        """Check for deployment drift by comparing deployed vs committed versions."""
+        import subprocess
+
+        try:
+            # Run the deployment drift check script
+            result = subprocess.run(
+                ['./bin/check-deployment-drift.sh'],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                cwd='/home/naji/code/nba-stats-scraper'
+            )
+
+            output = result.stdout + result.stderr
+
+            # Check for drift indicators in output
+            if 'behind' in output.lower() or '✗' in output:
+                # Count services behind
+                behind_count = output.count('behind')
+                return CheckResult(
+                    check_name='deployment_drift',
+                    status=CheckStatus.WARN,
+                    message=f"{behind_count} services have deployment drift",
+                    severity=Severity.P3_MEDIUM,
+                    category='infrastructure',
+                    affected_records=behind_count,
+                )
+            else:
+                return CheckResult(
+                    check_name='deployment_drift',
+                    status=CheckStatus.PASS,
+                    message="All services up to date",
+                    category='infrastructure',
+                )
+        except subprocess.TimeoutExpired:
+            return CheckResult(
+                check_name='deployment_drift',
+                status=CheckStatus.SKIP,
+                message="Deployment drift check timed out",
+                category='infrastructure',
+            )
+        except Exception as e:
+            logger.warning(f"Failed to check deployment drift: {e}")
+            return CheckResult(
+                check_name='deployment_drift',
+                status=CheckStatus.SKIP,
+                message=f"Could not check deployment drift: {str(e)}",
+                category='infrastructure',
+            )
 
     def _check_scraper_kickoff(self, target_date: date) -> CheckResult:
-        """Check if scrapers kicked off after games ended."""
-        return CheckResult(
-            check_name='scraper_kickoff',
-            status=CheckStatus.PASS,
-            message="Scraper kickoff check (placeholder)",
-            category='scraper',
-        )
+        """Check if scrapers kicked off after games ended (for post-game validation)."""
+        query = """
+        SELECT
+            COUNT(*) as execution_count,
+            MAX(triggered_at) as last_execution
+        FROM nba_orchestration.scraper_execution_log
+        WHERE triggered_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 4 HOUR)
+            AND workflow = 'evening'
+            AND status IN ('success', 'partial')
+        """
+        try:
+            results = list(self.bq_client.query(query).result())
+
+            if not results or results[0].execution_count == 0:
+                return CheckResult(
+                    check_name='scraper_kickoff',
+                    status=CheckStatus.WARN,
+                    message="No evening scraper runs in last 4 hours",
+                    severity=Severity.P3_MEDIUM,
+                    category='scraper',
+                )
+
+            exec_count = results[0].execution_count
+            last_exec = results[0].last_execution
+
+            return CheckResult(
+                check_name='scraper_kickoff',
+                status=CheckStatus.PASS,
+                message=f"Evening scrapers running: {exec_count} executions, last at {last_exec.strftime('%H:%M') if last_exec else 'N/A'}",
+                category='scraper',
+            )
+        except Exception as e:
+            logger.warning(f"Failed to check scraper kickoff: {e}")
+            return CheckResult(
+                check_name='scraper_kickoff',
+                status=CheckStatus.SKIP,
+                message=f"Could not check scraper kickoff: {str(e)}",
+                category='scraper',
+            )
 
     def _check_games_final(self, target_date: date) -> CheckResult:
-        """Check if all games are marked final."""
-        return CheckResult(
-            check_name='games_final',
-            status=CheckStatus.PASS,
-            message="Games final check (placeholder)",
-            category='schedule',
-        )
+        """Check if all games for target date are marked final (game_status=3)."""
+        query = f"""
+        SELECT
+            game_status,
+            COUNT(*) as game_count
+        FROM nba_reference.nba_schedule
+        WHERE game_date = '{target_date}'
+        GROUP BY game_status
+        """
+        try:
+            results = list(self.bq_client.query(query).result())
+
+            if not results:
+                return CheckResult(
+                    check_name='games_final',
+                    status=CheckStatus.SKIP,
+                    message=f"No games scheduled for {target_date}",
+                    category='schedule',
+                    target_date=target_date,
+                )
+
+            status_counts = {r.game_status: r.game_count for r in results}
+            total_games = sum(status_counts.values())
+            final_games = status_counts.get(3, 0)
+            in_progress = status_counts.get(2, 0)
+            scheduled = status_counts.get(1, 0)
+
+            if final_games == total_games:
+                return CheckResult(
+                    check_name='games_final',
+                    status=CheckStatus.PASS,
+                    message=f"All {total_games} games are final",
+                    category='schedule',
+                    target_date=target_date,
+                )
+            elif in_progress > 0:
+                return CheckResult(
+                    check_name='games_final',
+                    status=CheckStatus.WARN,
+                    message=f"{in_progress}/{total_games} games still in progress",
+                    severity=Severity.P4_LOW,
+                    category='schedule',
+                    target_date=target_date,
+                )
+            elif scheduled > 0:
+                return CheckResult(
+                    check_name='games_final',
+                    status=CheckStatus.WARN,
+                    message=f"{scheduled}/{total_games} games not yet started",
+                    severity=Severity.P4_LOW,
+                    category='schedule',
+                    target_date=target_date,
+                )
+            else:
+                return CheckResult(
+                    check_name='games_final',
+                    status=CheckStatus.WARN,
+                    message=f"Only {final_games}/{total_games} games final",
+                    severity=Severity.P3_MEDIUM,
+                    category='schedule',
+                    target_date=target_date,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to check games final: {e}")
+            return CheckResult(
+                check_name='games_final',
+                status=CheckStatus.SKIP,
+                message=f"Could not check games final: {str(e)}",
+                category='schedule',
+            )
 
     def _check_phase2_progress(self, target_date: date) -> CheckResult:
         """Check Phase 2 progress during overnight processing."""
@@ -780,6 +1036,54 @@ class ContinuousValidator:
         except Exception as e:
             logger.warning(f"Could not store check results: {e}")
 
+    def _send_daily_digest(self, run: ValidationRun):
+        """Send daily digest to #orchestration-health channel."""
+        try:
+            from shared.utils.slack_channels import send_orchestration_health_digest
+
+            # Calculate data freshness from check results
+            data_freshness = None
+            for check in run.checks:
+                if check.check_name == 'data_freshness' and check.actual_value:
+                    try:
+                        data_freshness = int(check.actual_value.split()[0])
+                    except (ValueError, IndexError):
+                        pass
+
+            # Extract critical issues
+            critical_issues = []
+            for check in run.checks:
+                if check.status == CheckStatus.FAIL and check.severity == Severity.P1_CRITICAL:
+                    critical_issues.append(f"{check.check_name}: {check.message}")
+
+            digest_data = {
+                'schedule_name': run.schedule_name,
+                'target_date': str(run.target_date) if run.target_date else 'N/A',
+                'status': run.status.value,
+                'checks_passed': sum(1 for c in run.checks if c.status == CheckStatus.PASS),
+                'checks_warned': sum(1 for c in run.checks if c.status == CheckStatus.WARN),
+                'checks_failed': sum(1 for c in run.checks if c.status == CheckStatus.FAIL),
+                'checks': [
+                    {
+                        'check_name': c.check_name,
+                        'status': c.status.value,
+                        'message': c.message,
+                    }
+                    for c in run.checks
+                ],
+                'data_freshness_days': data_freshness,
+                'critical_issues': critical_issues,
+            }
+
+            success = send_orchestration_health_digest(digest_data)
+            if success:
+                logger.info(f"Daily digest sent to #orchestration-health")
+            else:
+                logger.warning("Failed to send daily digest")
+
+        except Exception as e:
+            logger.error(f"Failed to send daily digest: {e}")
+
     def _send_alerts(self, run: ValidationRun):
         """Send alerts for failed validation."""
         try:
@@ -851,6 +1155,8 @@ def run_validation_cli():
                         help='Schedule name to run')
     parser.add_argument('--date', type=str, help='Target date (YYYY-MM-DD)')
     parser.add_argument('--list', action='store_true', help='List available schedules')
+    parser.add_argument('--send-digest', action='store_true',
+                        help='Send digest to Slack (simulates scheduler trigger)')
     args = parser.parse_args()
 
     if args.list:
@@ -868,7 +1174,9 @@ def run_validation_cli():
     if args.date:
         target_date = date.fromisoformat(args.date)
 
-    result = validator.run_scheduled_validation(args.schedule, target_date, "cli")
+    # Use "scheduler" trigger source if --send-digest is set (to trigger digest)
+    trigger_source = "scheduler" if args.send_digest else "cli"
+    result = validator.run_scheduled_validation(args.schedule, target_date, trigger_source)
 
     print(f"\nValidation Result: {result.status.value}")
     print(f"Message: {result.message}")

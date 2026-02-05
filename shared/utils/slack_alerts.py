@@ -33,6 +33,7 @@ CHANNEL_ENV_MAP = {
     '#nba-alerts': 'SLACK_WEBHOOK_URL_WARNING',
     '#app-error-alerts': 'SLACK_WEBHOOK_URL_ERROR',
     '#daily-orchestration': 'SLACK_WEBHOOK_URL',
+    '#orchestration-health': 'SLACK_WEBHOOK_URL_ORCHESTRATION_HEALTH',
     '#nba-predictions': 'SLACK_WEBHOOK_URL_PREDICTIONS',
     '#nba-betting-signals': 'SLACK_WEBHOOK_URL_SIGNALS',
 }

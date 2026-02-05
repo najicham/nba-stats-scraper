@@ -4,8 +4,9 @@ Slack Channel Utilities
 Provides direct Slack posting to specific channels for specialized alerts.
 Complements the notification_system.py which routes by severity level.
 
-Channel Mapping (7 channels):
+Channel Mapping (8 channels):
 - #daily-orchestration: Daily health, stale cleanup, phase timeouts (primary orchestration channel)
+- #orchestration-health: Automated validation digests (6 AM, 8 AM, 6 PM ET)
 - #nba-pipeline-health: Backfill progress (INFO level) - legacy
 - #nba-predictions: Prediction completion (special channel)
 - #nba-betting-signals: Pre-game signal alerts (RED signal warnings)
@@ -15,6 +16,7 @@ Channel Mapping (7 channels):
 
 Environment Variables:
 - SLACK_WEBHOOK_URL: #daily-orchestration (primary - used by Cloud Functions)
+- SLACK_WEBHOOK_URL_ORCHESTRATION_HEALTH: #orchestration-health (validation digests)
 - SLACK_WEBHOOK_URL_INFO: #nba-pipeline-health (legacy)
 - SLACK_WEBHOOK_URL_PREDICTIONS: #nba-predictions
 - SLACK_WEBHOOK_URL_SIGNALS: #nba-betting-signals
@@ -295,6 +297,120 @@ _{explanation}_{action}"""
     return send_to_slack(webhook_url, text, icon_emoji=icon)
 
 
+def send_orchestration_health_digest(digest_data: Dict) -> bool:
+    """
+    Send orchestration health digest to #orchestration-health channel.
+
+    Posts daily validation summaries at scheduled times (6 AM, 8 AM, 6 PM ET).
+    Provides visibility into system health throughout the day.
+
+    Args:
+        digest_data: Dict containing:
+            - schedule_name: str (e.g., 'post_overnight')
+            - target_date: str (YYYY-MM-DD)
+            - status: str ('OK', 'WARNING', 'CRITICAL')
+            - checks_passed: int
+            - checks_warned: int
+            - checks_failed: int
+            - checks: List[Dict] with individual check results
+            - data_freshness_days: Optional[int]
+            - critical_issues: Optional[List[str]]
+
+    Returns:
+        True if sent successfully
+    """
+    webhook_url = os.environ.get('SLACK_WEBHOOK_URL_ORCHESTRATION_HEALTH')
+    if not webhook_url:
+        # Fall back to daily-orchestration if orchestration-health not set
+        webhook_url = os.environ.get('SLACK_WEBHOOK_URL')
+
+    if not webhook_url:
+        logger.debug("No webhook URL for orchestration health, skipping")
+        return False
+
+    schedule_name = digest_data.get('schedule_name', 'validation')
+    target_date = digest_data.get('target_date', 'Unknown')
+    status = digest_data.get('status', 'UNKNOWN')
+    checks_passed = digest_data.get('checks_passed', 0)
+    checks_warned = digest_data.get('checks_warned', 0)
+    checks_failed = digest_data.get('checks_failed', 0)
+    total_checks = checks_passed + checks_warned + checks_failed
+    checks = digest_data.get('checks', [])
+    data_freshness = digest_data.get('data_freshness_days', None)
+    critical_issues = digest_data.get('critical_issues', [])
+
+    # Schedule-specific headers
+    schedule_headers = {
+        'post_overnight': ':sunrise: *Morning Validation (6 AM)*',
+        'pre_game_prep': ':clock8: *Pre-Game Prep (8 AM)*',
+        'pre_game_final': ':clock6: *Pre-Game Final (6 PM)*',
+        'midday': ':sun_behind_cloud: *Midday Check (12 PM)*',
+        'post_game': ':night_with_stars: *Post-Game Check (11 PM)*',
+        'overnight': ':crescent_moon: *Overnight Check (2 AM)*',
+    }
+    header = schedule_headers.get(schedule_name, f':clipboard: *{schedule_name.replace("_", " ").title()}*')
+
+    # Status emoji and color
+    if status == 'OK':
+        status_emoji = ':white_check_mark:'
+        status_text = 'All Systems Healthy'
+    elif status == 'WARNING':
+        status_emoji = ':warning:'
+        status_text = 'Warnings Detected'
+    elif status == 'CRITICAL':
+        status_emoji = ':rotating_light:'
+        status_text = 'CRITICAL Issues'
+    else:
+        status_emoji = ':grey_question:'
+        status_text = status
+
+    # Build check summary
+    check_summary = f"*{checks_passed}* passed"
+    if checks_warned > 0:
+        check_summary += f" · *{checks_warned}* warned"
+    if checks_failed > 0:
+        check_summary += f" · *{checks_failed}* failed"
+
+    # Build failed/warned checks detail
+    issues_text = ""
+    failed_checks = [c for c in checks if c.get('status') == 'FAIL']
+    warned_checks = [c for c in checks if c.get('status') == 'WARN']
+
+    if failed_checks:
+        issues_text += "\n\n:x: *Failed Checks:*\n"
+        for c in failed_checks[:5]:
+            issues_text += f"• {c.get('check_name', 'unknown')}: {c.get('message', 'No details')}\n"
+
+    if warned_checks:
+        issues_text += "\n:warning: *Warnings:*\n"
+        for c in warned_checks[:5]:
+            issues_text += f"• {c.get('check_name', 'unknown')}: {c.get('message', 'No details')}\n"
+
+    # Data freshness indicator
+    freshness_text = ""
+    if data_freshness is not None:
+        if data_freshness <= 1:
+            freshness_text = f"\n:hourglass: Data freshness: *{data_freshness}d* :white_check_mark:"
+        elif data_freshness <= 3:
+            freshness_text = f"\n:hourglass: Data freshness: *{data_freshness}d* :warning:"
+        else:
+            freshness_text = f"\n:hourglass: Data freshness: *{data_freshness}d* :x:"
+
+    # Critical issues callout
+    critical_text = ""
+    if critical_issues:
+        critical_text = "\n\n:rotating_light: *Critical Issues:*\n"
+        for issue in critical_issues[:3]:
+            critical_text += f"• {issue}\n"
+
+    text = f"""{header}
+{status_emoji} *Status:* {status_text} | Date: {target_date}
+
+:bar_chart: *Checks:* {check_summary}{freshness_text}{issues_text}{critical_text}"""
+
+    return send_to_slack(webhook_url, text, icon_emoji=":clipboard:")
+
+
 def test_all_channels() -> Dict[str, bool]:
     """
     Send test messages to all configured channels.
@@ -345,5 +461,16 @@ def test_all_channels() -> Dict[str, bool]:
         )
     else:
         results['#nba-betting-signals'] = False
+
+    # Test #orchestration-health
+    webhook = os.environ.get('SLACK_WEBHOOK_URL_ORCHESTRATION_HEALTH')
+    if webhook:
+        results['#orchestration-health'] = send_to_slack(
+            webhook,
+            ":clipboard: Test message to #orchestration-health\n\nThis channel receives validation digests at 6 AM, 8 AM, and 6 PM ET.",
+            icon_emoji=":clipboard:"
+        )
+    else:
+        results['#orchestration-health'] = False
 
     return results

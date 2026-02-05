@@ -2041,6 +2041,93 @@ LIMIT 7
 **Note**: BDL is currently DISABLED as a backup source due to data quality issues.
 Monitor this view to determine when it's safe to re-enable by setting `USE_BDL_DATA = True` in `player_game_summary_processor.py`.
 
+### Phase 3D: Cache DNP Pollution Check (Session 123)
+
+**Purpose**: Detect DNP players polluting the player_daily_cache
+
+**Context**: Session 123 discovered that 78% of February caches were polluted with DNP players (players with no meaningful stats). This check prevents recurrence by validating yesterday's cache generation.
+
+```bash
+# Check yesterday's cache for DNP pollution
+CACHE_DATE=$(date -d "yesterday" +%Y-%m-%d)
+
+bq query --use_legacy_sql=false "
+-- DNP Pollution Check (Session 123 Corrected Query)
+-- Checks for players with ONLY DNP games and no active games
+
+WITH player_game_stats AS (
+  SELECT
+    player_lookup,
+    COUNT(*) as total_games,
+    COUNTIF(is_dnp = TRUE) as dnp_games,
+    COUNTIF(is_dnp = FALSE) as active_games
+  FROM \`nba-props-platform.nba_analytics.player_game_summary\`
+  WHERE game_date >= DATE_SUB('${CACHE_DATE}', INTERVAL 30 DAY)
+    AND game_date < '${CACHE_DATE}'
+  GROUP BY player_lookup
+)
+SELECT
+  pdc.cache_date,
+  COUNT(DISTINCT pdc.player_lookup) as cached_players,
+  COUNT(DISTINCT CASE
+    WHEN pgs.active_games = 0 AND pgs.dnp_games > 0
+    THEN pdc.player_lookup
+  END) as dnp_only_players,
+  ROUND(100.0 * COUNT(DISTINCT CASE
+    WHEN pgs.active_games = 0 AND pgs.dnp_games > 0
+    THEN pdc.player_lookup
+  END) / NULLIF(COUNT(DISTINCT pdc.player_lookup), 0), 1) as dnp_pct
+FROM \`nba-props-platform.nba_precompute.player_daily_cache\` pdc
+LEFT JOIN player_game_stats pgs ON pdc.player_lookup = pgs.player_lookup
+WHERE pdc.cache_date = '${CACHE_DATE}'
+GROUP BY pdc.cache_date
+"
+```
+
+**Expected Results**:
+- **0 DNP-only players**: ✅ PASS (cache is clean)
+- **1-2 DNP-only players**: ⚠️ WARNING (edge cases, investigate)
+- **>2 DNP-only players**: 🔴 CRITICAL (DNP filter not working)
+
+**DNP Pollution Thresholds**:
+- **0%**: Excellent, cache is clean
+- **<1%**: Acceptable (likely edge cases)
+- **1-5%**: WARNING - investigate specific players
+- **>5%**: CRITICAL - DNP filter broken, regenerate cache
+
+**If DNP pollution found**:
+1. Check if DNP filter is deployed in Phase 4:
+   ```bash
+   grep "is_dnp = FALSE" data_processors/precompute/player_daily_cache/player_daily_cache_processor.py
+   # Should show line 435 with DNP filter
+   ```
+
+2. Check Phase 4 deployment status:
+   ```bash
+   gcloud run services describe nba-phase4-precompute-processors \
+     --region=us-west2 \
+     --format="value(metadata.labels.commit-sha)"
+   # Should be on commit ede3ab89 or later (contains DNP fix from 94087b90)
+   ```
+
+3. If filter is deployed but pollution exists, regenerate cache:
+   ```bash
+   python bin/regenerate_cache_bypass_bootstrap.py ${CACHE_DATE}
+   ```
+
+4. If filter is NOT deployed, deploy Phase 4:
+   ```bash
+   ./bin/deploy-service.sh nba-phase4-precompute-processors
+   ```
+
+**Important Note** (Session 123 Learning):
+- DNP filter excludes DNP **games** from stats calculation
+- It does NOT exclude players who have mixed DNP + active games
+- This check only flags players with ONLY DNP games (no active games)
+- Players with some DNP games and some active games are VALID
+
+**Reference**: Session 123 DNP validation emergency, commit 94087b90
+
 ### Phase 4: Check Phase Completion Status
 
 **Phase 3 Analytics (Firestore)**:

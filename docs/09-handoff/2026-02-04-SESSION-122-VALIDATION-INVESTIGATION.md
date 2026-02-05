@@ -7,6 +7,40 @@
 
 ---
 
+## 🚨 CRITICAL CORRECTION (Session 123)
+
+**DNP Pollution Was NOT a False Alarm!**
+
+Session 123 discovered that the DNP validation query in this session had a **fundamental logic error** that masked severe data quality issues:
+
+- **Session 122 Result:** 0% DNP pollution (reported as "false alarm")
+- **Actual Reality:** **78% average DNP pollution** across all February caches
+- **Root Cause:** Validation query joined on `cache_date = game_date`, but `cache_date` is the analysis date while cache contains games BEFORE that date
+- **Impact:** Query always returned 0, hiding 700+ polluted cache records
+
+**What Was Actually Wrong:**
+```sql
+-- Session 122 (FLAWED):
+WHERE pdc.cache_date = pgs.game_date  -- ❌ Always returns 0
+
+-- Session 123 (CORRECTED):
+WHERE pgs.game_date < pdc.cache_date  -- ✅ Checks historical games
+```
+
+**Actions Taken (Session 123):**
+1. ✅ Deployed DNP fix to Phase 4 (commit 94087b90)
+2. ✅ Regenerated all February caches (Feb 1-4)
+3. ✅ Implemented validation query test framework
+4. ✅ Added SQL pre-commit hook to catch this anti-pattern
+
+**See:** `docs/09-handoff/2026-02-04-SESSION-123-FINAL-SUMMARY.md` for complete details
+
+**Key Learning:** Validation infrastructure needs validation. "Always zero" results should trigger investigation, not celebration.
+
+---
+
+## Original Session 122 Summary (Below)
+
 ## Executive Summary
 
 Ran comprehensive yesterday's results validation for 2026-02-03 with 4 parallel investigation agents. Identified **1 real critical issue** (usage rate anomaly) and resolved **2 false alarms** (Phase 3 completion, DNP pollution). Created long-term quality improvement plan with 143-hour roadmap.
