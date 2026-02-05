@@ -469,6 +469,99 @@ class PrecomputeProcessorBase(
         # Cached dependency check result (set in run(), used by extract_raw_data())
         self.dep_check = None
 
+        # Distributed locking (Session 117b - prevent concurrent processing)
+        self._processing_lock_id = None
+        self._firestore_client = None
+
+    def _get_firestore_client(self):
+        """Lazy initialize Firestore client for distributed locking."""
+        if self._firestore_client is None:
+            from google.cloud import firestore
+            self._firestore_client = firestore.Client(project=self.project_id)
+        return self._firestore_client
+
+    def acquire_processing_lock(self, game_date: str) -> bool:
+        """
+        Acquire distributed lock for processing a date.
+
+        Session 117b: Added to prevent concurrent processing that causes
+        MERGE failures and duplicate records.
+
+        Args:
+            game_date: Date being processed (YYYY-MM-DD format)
+
+        Returns:
+            True if lock acquired, False if another instance holds the lock
+        """
+        from google.cloud import firestore
+
+        db = self._get_firestore_client()
+        lock_id = f"{self.processor_name}_{game_date}"
+        lock_ref = db.collection('processing_locks').document(lock_id)
+
+        @firestore.transactional
+        def try_acquire(transaction):
+            lock_doc = lock_ref.get(transaction=transaction)
+
+            if lock_doc.exists:
+                lock_data = lock_doc.to_dict()
+                acquired_at = lock_data.get('acquired_at')
+
+                # Lock expired (older than 10 minutes)?
+                if acquired_at and acquired_at < datetime.now(timezone.utc) - timedelta(minutes=10):
+                    # Stale lock, acquire it
+                    transaction.update(lock_ref, {
+                        'acquired_at': firestore.SERVER_TIMESTAMP,
+                        'execution_id': self.run_id,
+                        'instance': os.environ.get('K_REVISION', 'local'),
+                        'processor': self.processor_name
+                    })
+                    logging.info(f"Acquired stale lock for {game_date} (expired)")
+                    return True
+                else:
+                    # Active lock held by another instance
+                    logging.warning(
+                        f"Cannot acquire lock for {game_date} - held by "
+                        f"instance {lock_data.get('instance')} execution {lock_data.get('execution_id')}"
+                    )
+                    return False
+            else:
+                # No lock exists, create it
+                transaction.set(lock_ref, {
+                    'acquired_at': firestore.SERVER_TIMESTAMP,
+                    'execution_id': self.run_id,
+                    'instance': os.environ.get('K_REVISION', 'local'),
+                    'processor': self.processor_name
+                })
+                logging.info(f"Acquired new lock for {game_date}")
+                return True
+
+        transaction = db.transaction()
+        acquired = try_acquire(transaction)
+
+        if acquired:
+            self._processing_lock_id = lock_id
+
+        return acquired
+
+    def release_processing_lock(self):
+        """
+        Release distributed lock.
+
+        Session 117b: Should be called in finally block to ensure cleanup.
+        """
+        if self._processing_lock_id is None:
+            return
+
+        try:
+            db = self._get_firestore_client()
+            db.collection('processing_locks').document(self._processing_lock_id).delete()
+            logging.info(f"Released lock {self._processing_lock_id}")
+        except Exception as e:
+            logging.warning(f"Failed to release lock {self._processing_lock_id}: {e}")
+        finally:
+            self._processing_lock_id = None
+
     def run(self, opts: Optional[Dict] = None) -> bool:
         """
         Execute the complete precompute processing lifecycle.
@@ -599,6 +692,24 @@ class PrecomputeProcessorBase(
                     )
                 except Exception as log_ex:
                     logger.warning(f"Failed to log processor start: {log_ex}")
+
+            # Session 117b: Acquire distributed lock to prevent concurrent processing
+            # This prevents the duplicate record issues found in Session 116
+            if not self.acquire_processing_lock(str(data_date)):
+                logger.warning(
+                    f"🔒 Cannot acquire processing lock for {data_date} - another instance is processing. "
+                    f"This prevents concurrent processing duplicates (Session 116 prevention)."
+                )
+                # Mark run as skipped in run history
+                if hasattr(self, 'complete_run_tracking'):
+                    self.complete_run_tracking(
+                        status='skipped',
+                        status_message='Concurrent processing lock held by another instance',
+                        records_processed=0,
+                        records_created=0
+                    )
+                return True  # Return success to avoid retry loops
+            logger.info(f"🔓 Acquired processing lock for {data_date}")
 
             # ═══════════════════════════════════════════════════════════════
             # DEFENSIVE CHECKS: Upstream Status + Gap Detection
@@ -900,6 +1011,12 @@ class PrecomputeProcessorBase(
                     logger.debug(f"💓 Heartbeat stopped for {self.processor_name}")
                 except Exception as hb_ex:
                     logger.warning(f"Error stopping heartbeat: {hb_ex}")
+
+            # Session 117b: Release distributed lock (always, even on failure)
+            try:
+                self.release_processing_lock()
+            except Exception as lock_ex:
+                logger.warning(f"Error releasing processing lock: {lock_ex}")
 
             # Always run finalize, even on error
             try:

@@ -1,0 +1,1 @@
+../../../../../shared/validation/scraper_config_validator.py

@@ -349,7 +349,8 @@ def _process_single_player_worker(
             'source_player_game_last_updated': f"{opts.get('analysis_date').isoformat()} 00:00:00" if opts.get('analysis_date') else None,
             'source_player_game_hash': source_hash,
 
-            'early_season_flag': False,
+            # Session 113+: Set early_season_flag when using dynamic threshold
+            'early_season_flag': min_games_required < 10,
             'insufficient_data_reason': None,
 
             'expected_games_count': completeness['expected_count'],
@@ -615,10 +616,24 @@ class PlayerShotZoneAnalysisProcessor(
             return
 
         # Note: critical dependency and stale checks already done in precompute_base.run()
-        
-        # Determine season start date (for filtering)
+
+        # Determine season start date by querying actual first game
+        # Session 113+: Must use actual season start (not Oct 1 hardcode) for dynamic threshold
         season_year = analysis_date.year if analysis_date.month >= 10 else analysis_date.year - 1
-        season_start_date = date(season_year, 10, 1)
+        season_start_query = f"""
+        SELECT MIN(game_date) as season_start
+        FROM `{self.project_id}.nba_reference.nba_schedule`
+        WHERE game_date >= '{season_year}-10-01'
+          AND game_date <= '{season_year}-11-30'
+        """
+        season_start_result = self.bq_client.query(season_start_query).result()
+        season_start_date = next(season_start_result).season_start
+
+        if season_start_date is None:
+            logger.warning(f"Could not find season start for {season_year}, defaulting to Oct 22")
+            season_start_date = date(season_year, 10, 22)
+
+        logger.info(f"Season {season_year} start date: {season_start_date}")
         self.season_start_date = season_start_date  # Store for completeness checking
         
         # Query player game data
@@ -1358,8 +1373,8 @@ class PlayerShotZoneAnalysisProcessor(
                 # v4.0 source tracking
                 **self.build_source_tracking_fields(),
 
-                # Early season
-                'early_season_flag': False,
+                # Early season (Session 113+: Set flag when using dynamic threshold)
+                'early_season_flag': effective_min < 10,
                 'insufficient_data_reason': None,
 
                 # Completeness metadata

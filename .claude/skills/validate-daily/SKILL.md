@@ -895,6 +895,24 @@ gcloud scheduler jobs run same-day-phase5 --location=us-west2
 
 **Reference**: Session 97 handoff, Session 98 validation findings
 
+### Phase 0.475: Phase 3 Orchestration Reliability
+
+Session 116/117 prevention - verify Firestore completion tracking is accurate.
+
+**Run health check:**
+```bash
+./bin/monitoring/phase3_health_check.sh --verbose
+```
+
+**Expected:** All checks pass (Firestore accurate, no duplicates, scrapers on time)
+
+**If issues found:**
+```bash
+python bin/maintenance/reconcile_phase3_completion.py --days 3 --fix
+```
+
+**Reference:** docs/08-projects/current/prevention-and-monitoring/phase3-orchestration-reliability/
+
 ### Phase 0.48: Data Provenance Check (Session 99)
 
 **IMPORTANT**: Verify feature data quality and matchup data availability for predictions.
