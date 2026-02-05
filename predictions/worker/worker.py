@@ -1857,6 +1857,19 @@ def format_prediction_for_bigquery(
                     f"edge={edge:.1f} < 5 (requires high conviction for role player UNDERs)"
                 )
 
+        # Session 125: Hot streak UNDER filter
+        # Players on hot streaks (L5 > season + 3) have only 14.3% UNDER hit rate
+        # They are likely to continue their hot streak, making UNDER very risky
+        l5_avg = features.get('points_avg_last_5', 0)
+        if is_actionable and recommendation == 'UNDER':
+            if l5_avg - season_avg > 3:
+                is_actionable = False
+                filter_reason = 'hot_streak_under_risk'
+                logger.info(
+                    f"Filtered hot streak UNDER for {player_lookup}: L5={l5_avg:.1f}, "
+                    f"season={season_avg:.1f}, diff={l5_avg - season_avg:.1f} (hot streak continuation risk)"
+                )
+
         # Session 125: Data quality filter
         # High quality (80+) has 60.6% hit rate vs Medium (70-80) at 39.1%
         quality_score = features.get('feature_quality_score', 100)
