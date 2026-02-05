@@ -1845,15 +1845,16 @@ def format_prediction_for_bigquery(
                 f"predicted={predicted_points:.1f}, line={current_points_line}, edge={edge:.1f}"
             )
 
-        # Session 125: Role player UNDER danger zone filter
-        # Edge 2.5-4 for role players (8-16 PPG) has 35.2% hit rate vs 55.1% for safe zone
+        # Session 125: Role player UNDER filter
+        # Role player UNDERs with edge < 5 have 42-45% hit rate (losing money)
+        # Edge 5+ has 55-67% hit rate - only keep high-conviction UNDERs
         if is_actionable and recommendation == 'UNDER':
-            if 8 <= season_avg <= 16 and 2.5 <= edge < 4:
+            if 8 <= season_avg <= 16 and edge < 5:
                 is_actionable = False
-                filter_reason = 'role_player_under_danger_zone'
+                filter_reason = 'role_player_under_low_edge'
                 logger.info(
                     f"Filtered role player UNDER for {player_lookup}: season_avg={season_avg:.1f}, "
-                    f"edge={edge:.1f} in danger zone (2.5-4)"
+                    f"edge={edge:.1f} < 5 (requires high conviction for role player UNDERs)"
                 )
 
         # Session 125: Data quality filter
