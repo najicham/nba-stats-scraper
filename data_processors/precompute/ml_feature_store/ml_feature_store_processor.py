@@ -1801,7 +1801,9 @@ class MLFeatureStoreProcessor(
         """
         Calculate total PPG of injured teammates (OUT/QUESTIONABLE/DOUBTFUL).
 
-        Session 127: Implements real calculation for breakout opportunity component.
+        Session 127B: Uses NBA.com official injury reports as primary source,
+        with Ball Don't Lie as fallback.
+
         Impact: 30+ PPG injured → 24.5% breakout rate vs 16.2% baseline
 
         Args:
@@ -1815,7 +1817,8 @@ class MLFeatureStoreProcessor(
             # Get previous day's feature store data for season PPG lookup
             prev_date = game_date - timedelta(days=1)
 
-            query = f"""
+            # PRIMARY: NBA.com official injury reports
+            query_nbacom = f"""
             WITH latest_features AS (
               SELECT
                 player_lookup,
@@ -1823,6 +1826,43 @@ class MLFeatureStoreProcessor(
               FROM `nba_predictions.ml_feature_store_v2`
               WHERE game_date = '{prev_date.isoformat()}'
                 AND features[OFFSET(2)] > 0  -- Only players with PPG
+            ),
+            injured_players AS (
+              SELECT DISTINCT
+                i.player_lookup,
+                COALESCE(f.season_ppg, 0) as season_ppg
+              FROM `nba_raw.nbac_injury_report` i
+              LEFT JOIN latest_features f
+                ON i.player_lookup = f.player_lookup
+              WHERE i.game_date = '{game_date.isoformat()}'
+                AND i.team = '{team_abbr}'
+                AND i.injury_status IN ('out', 'questionable', 'doubtful')
+                AND i.confidence_score >= 0.6  -- Only confident parses
+            )
+            SELECT
+              ROUND(SUM(season_ppg), 1) as total_injured_ppg,
+              COUNT(DISTINCT player_lookup) as injured_count
+            FROM injured_players
+            """
+
+            result = self.bq_client.query(query_nbacom).to_dataframe()
+
+            # Check if NBA.com has data
+            if not result.empty and result['injured_count'].iloc[0] > 0:
+                injured_ppg = float(result['total_injured_ppg'].iloc[0] or 0.0)
+                logger.debug(f"Team {team_abbr}: {injured_ppg:.1f} PPG injured (NBA.com)")
+                return injured_ppg
+
+            # FALLBACK: Ball Don't Lie if NBA.com has no data
+            logger.debug(f"Team {team_abbr}: No NBA.com data, trying BDL fallback")
+            query_bdl = f"""
+            WITH latest_features AS (
+              SELECT
+                player_lookup,
+                features[OFFSET(2)] as season_ppg
+              FROM `nba_predictions.ml_feature_store_v2`
+              WHERE game_date = '{prev_date.isoformat()}'
+                AND features[OFFSET(2)] > 0
             ),
             injured_players AS (
               SELECT DISTINCT
@@ -1839,12 +1879,13 @@ class MLFeatureStoreProcessor(
             FROM injured_players
             """
 
-            result = self.bq_client.query(query).to_dataframe()
+            result = self.bq_client.query(query_bdl).to_dataframe()
             if result.empty or result['total_injured_ppg'].iloc[0] is None:
+                logger.debug(f"Team {team_abbr}: No injury data from either source")
                 return 0.0
 
             injured_ppg = float(result['total_injured_ppg'].iloc[0])
-            logger.debug(f"Team {team_abbr}: {injured_ppg:.1f} PPG injured")
+            logger.debug(f"Team {team_abbr}: {injured_ppg:.1f} PPG injured (BDL fallback)")
             return injured_ppg
 
         except Exception as e:
