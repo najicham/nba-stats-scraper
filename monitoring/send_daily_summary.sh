@@ -4,7 +4,7 @@
 # Runs daily at 9 AM via Cloud Scheduler
 # Queries BigQuery and sends formatted summary to Slack
 
-set -e
+set -euo pipefail
 
 PROJECT_ID="nba-props-platform"
 DATASET="nba_predictions"
@@ -25,9 +25,9 @@ SELECT
   system_id,
   COUNT(*) as total_predictions,
   COUNT(DISTINCT player_lookup) as unique_players,
-  ROUND(AVG(confidence_score) * 100, 1) as avg_confidence,
-  ROUND(MIN(confidence_score) * 100, 1) as min_confidence,
-  ROUND(MAX(confidence_score) * 100, 1) as max_confidence,
+  ROUND(AVG(confidence_score), 1) as avg_confidence,
+  ROUND(MIN(confidence_score), 1) as min_confidence,
+  ROUND(MAX(confidence_score), 1) as max_confidence,
   COUNTIF(confidence_score = 0.50) as fallback_count,
   COUNTIF(recommendation = 'OVER') as over_count,
   COUNTIF(recommendation = 'UNDER') as under_count,
@@ -35,7 +35,7 @@ SELECT
   ROUND(100.0 * COUNTIF(confidence_score = 0.50) / COUNT(*), 1) as fallback_pct
 FROM \`${PROJECT_ID}.${DATASET}.${TABLE}\`
 WHERE game_date = CURRENT_DATE()
-  AND system_id = 'catboost_v8'
+  AND system_id IN ('catboost_v9', 'catboost_v9_2026_02')
 GROUP BY system_id
 "
 
@@ -91,7 +91,7 @@ MESSAGE=$(cat <<EOF
         },
         {
           "type": "mrkdwn",
-          "text": "*System:*\nCatBoost V8"
+          "text": "*System:*\nCatBoost V9"
         }
       ]
     },

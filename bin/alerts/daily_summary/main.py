@@ -117,7 +117,7 @@ def query_top_picks(client: bigquery.Client) -> List[Dict[str, Any]]:
             'prediction': row.predicted_points,
             'line': row.current_points_line,
             'recommendation': row.recommendation,
-            'confidence': row.confidence_score * 100,
+            'confidence': row.confidence_score,
             'system': row.system_id
         })
 
