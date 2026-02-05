@@ -174,7 +174,7 @@ def process_grading():
 
         # Grade predictions for the target date
         processor = PredictionAccuracyProcessor()
-        result = processor.process_game_date(target_date.strftime('%Y-%m-%d'))
+        result = processor.process_date(target_date)
 
         logger.info(f"Grading complete for {target_date}: {result}")
 
@@ -217,7 +217,7 @@ def grade_specific_date():
 
         # Grade predictions
         processor = PredictionAccuracyProcessor()
-        result = processor.process_game_date(target_date.strftime('%Y-%m-%d'))
+        result = processor.process_date(target_date)
 
         logger.info(f"Manual grading complete for {target_date}: {result}")
 
