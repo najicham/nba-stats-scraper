@@ -360,6 +360,68 @@ GROUP BY system_id
 
 ---
 
+### Infinite Pub/Sub Retries for Injured Players (Session 131)
+
+**Symptom**: Injured (OUT) players stuck in infinite Pub/Sub retry loop, batches never reach 100% completion
+
+**Cause**: Worker returned HTTP 500 (TRANSIENT) for OUT players instead of 204/4xx (PERMANENT)
+
+**Root Cause**:
+```python
+# predictions/worker/worker.py - Missing skip reason
+PERMANENT_SKIP_REASONS = {
+    'player_not_found',
+    'no_prop_lines',
+    'game_not_found',
+    'player_inactive',
+    'no_historical_data',
+    # Missing: 'player_injury_out' ❌
+}
+```
+
+**Impact**:
+- 17 injured players retried forever (Pub/Sub default behavior for 500 errors)
+- Excessive worker logs (noise)
+- Pub/Sub message buildup
+- Batches stuck at ~87% completion
+- Predictions for healthy players worked fine
+
+**Detection**:
+```bash
+# Check for TRANSIENT retries on injured players
+gcloud logging read 'resource.labels.service_name="prediction-worker"
+  AND textPayload=~"TRANSIENT.*player_injury_out"' --limit=10
+
+# Verify batch stuck at partial completion
+# Firestore: prediction_batches/{batch_id}
+# Shows: completed_players: 119, expected_players: 136 (87.5%)
+```
+
+**Fix**:
+```python
+PERMANENT_SKIP_REASONS = {
+    'player_not_found',
+    'no_prop_lines',
+    'game_not_found',
+    'player_inactive',
+    'no_historical_data',
+    'player_injury_out',  # ✅ Returns 204 - stops retries
+}
+```
+
+**Verification**:
+```bash
+# After fix - check for PERMANENT acknowledgments
+gcloud logging read 'resource.labels.service_name="prediction-worker"
+  AND textPayload=~"PERMANENT.*player_injury_out"' --limit=10
+```
+
+**Pattern**: Always classify skip reasons as PERMANENT or TRANSIENT explicitly. Default behavior (500) assumes transient and retries forever.
+
+**Related**: Session 130 (batch unblock), Session 104 (original injury skip logic)
+
+---
+
 ## Orchestration Issues
 
 ### Mode-Aware Orchestration (Session 85)
