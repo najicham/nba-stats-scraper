@@ -40,6 +40,9 @@ COPY predictions/worker/ ./predictions/worker/
 # Only copy the specific monthly models (catboost_v9_YYYY_MM.cbm pattern)
 COPY models/catboost_v9_2026_02.cbm ./models/
 
+# Copy breakout classifier model for shadow mode (Session 130B)
+COPY models/breakout_exp_EXP_COMBINED_BEST_20260205_084509.cbm ./models/
+
 # Set working directory to worker for running the service
 WORKDIR /app/predictions/worker
 
