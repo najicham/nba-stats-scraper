@@ -46,10 +46,10 @@ BREAKOUT_FEATURE_ORDER_V1 = [
 ]
 
 BREAKOUT_FEATURE_ORDER_V2 = BREAKOUT_FEATURE_ORDER_V1 + [
-    "minutes_increase_pct",    # Tier 1: Opportunity spike
-    "usage_rate_trend",        # Tier 1: Rising usage
-    "rest_days_numeric",       # Tier 1: Fatigue/freshness
-    "bench_role_player_flag",  # Tier 1: Volatility indicator
+    "minutes_increase_pct",    # V2: Recent minutes spike (L7 vs L10)
+    "usage_rate_trend",        # V2: Rising usage rate
+    "rest_days_numeric",       # V2: Fatigue/freshness
+    "fourth_quarter_trust",    # V2: Coach trust (4Q mins %)
 ]
 
 # Default to V2 for new training
@@ -68,11 +68,11 @@ FEATURE_DEFAULTS = {
     "points_avg_last_5": 10.0,
     "points_avg_season": 12.0,
     "minutes_avg_last_10": 25.0,
-    # V2 features (Tier 1 quick wins)
+    # V2 features (simplified with existing fields)
     "minutes_increase_pct": 0.0,     # No increase
     "usage_rate_trend": 0.0,         # No trend
     "rest_days_numeric": 1.0,        # 1 day rest (B2B)
-    "bench_role_player_flag": 0.0,   # Assume starter
+    "fourth_quarter_trust": 25.0,    # 25% of minutes in 4Q (neutral)
 }
 
 
@@ -122,11 +122,12 @@ def get_training_data_query(
         dc.points_avg_last_5,
         dc.points_avg_last_10,
         dc.minutes_avg_last_10,
-        dc.minutes_avg_season,  -- V2: For minutes_increase_pct
+        dc.avg_minutes_per_game_last_7,  -- V2: For minutes trend
         dc.usage_rate_last_10,  -- V2: For usage_rate_trend
         dc.player_usage_rate_season,  -- V2: For usage_rate_trend
         dc.games_in_last_7_days,  -- V2: For rest calculation
-        pgs.is_starter,  -- V2: For bench_role_player_flag
+        dc.fourth_quarter_minutes_last_7,  -- V2: Coach trust indicator
+        dc.minutes_in_last_7_days,  -- V2: For 4Q trust calculation
         -- Target variable: is this game a breakout?
         CASE
           WHEN pgs.points >= dc.points_avg_season * {config.breakout_multiplier} THEN 1
@@ -190,29 +191,12 @@ def get_training_data_query(
       GROUP BY bg.player_lookup, bg.game_date
     ),
 
-    -- Compute starter history for bench_role_player_flag (V2)
-    starter_history AS (
-      SELECT
-        bg.player_lookup,
-        bg.game_date as target_date,
-        AVG(CASE WHEN pgs2.is_starter THEN 1.0 ELSE 0.0 END) as starter_rate_last_10
-      FROM base_games bg
-      JOIN `{PROJECT_ID}.nba_analytics.player_game_summary` pgs2
-        ON pgs2.player_lookup = bg.player_lookup
-        AND pgs2.game_date < bg.game_date
-        AND pgs2.game_date >= DATE_SUB(bg.game_date, INTERVAL 30 DAY)
-        AND pgs2.minutes_played > 0
-      GROUP BY bg.player_lookup, bg.game_date
-      HAVING COUNT(*) >= 3  -- Need at least 3 recent games
-    ),
-
     -- Join with feature store for context features
     with_context AS (
       SELECT
         bg.*,
         ra.max_points_recent,
         bh.last_breakout_date,
-        sh.starter_rate_last_10,
         mf.features as feature_store_values,
         mf.feature_names as feature_store_names
       FROM base_games bg
@@ -222,9 +206,6 @@ def get_training_data_query(
       LEFT JOIN breakout_history bh
         ON bg.player_lookup = bh.player_lookup
         AND bg.game_date = bh.target_date
-      LEFT JOIN starter_history sh
-        ON bg.player_lookup = sh.player_lookup
-        AND bg.game_date = sh.target_date
       LEFT JOIN `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
         ON bg.player_lookup = mf.player_lookup
         AND bg.game_date = mf.game_date
@@ -264,13 +245,13 @@ def get_training_data_query(
         feature_store_values,
         feature_store_names,
 
-        -- V2 FEATURES (Tier 1 Quick Wins)
+        -- V2 FEATURES (Simplified - using only existing fields)
 
-        -- Feature 11: minutes_increase_pct
+        -- Feature 11: minutes_increase_pct (L7 vs L10)
         COALESCE(
           SAFE_DIVIDE(
-            minutes_avg_last_10 - minutes_avg_season,
-            NULLIF(minutes_avg_season, 0)
+            avg_minutes_per_game_last_7 - minutes_avg_last_10,
+            NULLIF(minutes_avg_last_10, 0)
           ),
           {FEATURE_DEFAULTS['minutes_increase_pct']}
         ) as minutes_increase_pct,
@@ -290,22 +271,25 @@ def get_training_data_query(
           ELSE 3.5  -- Well rested
         END as rest_days_numeric,
 
-        -- Feature 14: bench_role_player_flag
-        CASE
-          WHEN COALESCE(starter_rate_last_10, 0.0) < 0.5 THEN 1.0  -- Bench player
-          ELSE 0.0  -- Starter
-        END as bench_role_player_flag,
+        -- Feature 14: fourth_quarter_trust (4Q minutes as % of total)
+        COALESCE(
+          SAFE_DIVIDE(
+            fourth_quarter_minutes_last_7,
+            NULLIF(minutes_in_last_7_days, 0)
+          ) * 100,
+          {FEATURE_DEFAULTS['fourth_quarter_trust']}
+        ) as fourth_quarter_trust,
 
         -- Context for debugging
         points_avg_season,
         points_avg_last_5,
         points_avg_last_10,
         minutes_avg_last_10,
-        minutes_avg_season,
+        avg_minutes_per_game_last_7,
         usage_rate_last_10,
         player_usage_rate_season,
         games_in_last_7_days,
-        starter_rate_last_10,
+        fourth_quarter_minutes_last_7,
         max_points_recent,
         last_breakout_date
 
@@ -437,9 +421,9 @@ def prepare_feature_vector(
     rest_days = row.get('rest_days_numeric')
     features['rest_days_numeric'] = float(rest_days) if rest_days is not None and not pd.isna(rest_days) else FEATURE_DEFAULTS['rest_days_numeric']
 
-    # Feature 14: bench_role_player_flag (from query)
-    bench_flag = row.get('bench_role_player_flag')
-    features['bench_role_player_flag'] = float(bench_flag) if bench_flag is not None and not pd.isna(bench_flag) else FEATURE_DEFAULTS['bench_role_player_flag']
+    # Feature 14: fourth_quarter_trust (from query)
+    q4_trust = row.get('fourth_quarter_trust')
+    features['fourth_quarter_trust'] = float(q4_trust) if q4_trust is not None and not pd.isna(q4_trust) else FEATURE_DEFAULTS['fourth_quarter_trust']
 
     # Build vector in exact order
     vector = np.array([features[name] for name in BREAKOUT_FEATURE_ORDER]).reshape(1, -1)
