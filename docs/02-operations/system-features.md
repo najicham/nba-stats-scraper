@@ -14,6 +14,7 @@ Detailed documentation for major system features. For quick reference, see CLAUD
 6. [Phase 6 - Subset Exporters](#phase-6---subset-exporters)
 7. [Dynamic Subset System](#dynamic-subset-system)
 8. [Deep Health Checks & Smoke Tests](#deep-health-checks--smoke-tests)
+9. [Resilience Monitoring System](#resilience-monitoring-system)
 
 ---
 
@@ -671,3 +672,277 @@ gcloud monitoring uptime-checks create https \
 
 **Implementation:** Session 129
 **Prevents:** Silent service failures, 39-hour outages, missing module imports
+
+---
+
+## Resilience Monitoring System
+
+**Purpose:** Six-layer defense-in-depth system to prevent silent failures and improve pipeline resilience.
+
+**Added:** Session 135 (Feb 5, 2026)
+
+### Architecture
+
+The system implements 6 layers of monitoring and self-healing:
+
+```
+Layer 1: DEPLOYMENT MONITORING - 2-hour drift detection
+Layer 2: PIPELINE CANARIES - 30-minute end-to-end validation
+Layer 3: QUALITY GATES - Data quality validation at phase boundaries
+Layer 4: SELF-HEALING - Intelligent retry + auto-recovery
+Layer 5: GRACEFUL DEGRADATION - Soft dependencies + fallback
+Layer 6: PREDICTIVE ALERTS - Leading indicators
+```
+
+**Status:** Layers 1-4 implemented and operational
+
+### Layer 1: Deployment Drift Detection
+
+**Component:** `bin/monitoring/deployment_drift_alerter.py`
+
+**Purpose:** Detect when deployed services are behind latest code
+
+**How it works:**
+- Runs every 2 hours via Cloud Scheduler
+- Checks 10 critical services against latest git commits
+- Sends Slack alerts to `#deployment-alerts` when drift detected
+- Provides ready-to-run deploy commands
+
+**Services monitored:**
+- prediction-worker, prediction-coordinator
+- nba-phase1-scrapers, nba-phase2-raw-processors
+- nba-phase3-analytics-processors, nba-phase4-precompute-processors
+- nba-grading-service
+- phase3-to-phase4-orchestrator, phase4-to-phase5-orchestrator
+- nba-admin-dashboard
+
+**Impact:**
+- MTTD reduced from 6 hours → 2 hours
+- Prevents "already fixed" bugs from recurring
+- Actionable alerts with exact deploy commands
+
+**Runbook:** `docs/02-operations/runbooks/deployment-monitoring.md`
+
+### Layer 2: Pipeline Canary Queries
+
+**Component:** `bin/monitoring/pipeline_canary_queries.py`
+
+**Purpose:** Validate data quality across all 6 pipeline phases
+
+**How it works:**
+- Runs every 30 minutes via Cloud Scheduler
+- Validates real data from yesterday (stable baseline)
+- Checks row counts, NULL rates, coverage, freshness
+- Sends Slack alerts to `#canary-alerts` on failures
+
+**Canary checks:**
+
+| Phase | Validation | Thresholds |
+|-------|------------|------------|
+| Phase 1 | Scraper coverage | min 2 game dates, 2 games in last 2 days |
+| Phase 2 | Game/player records, NULLs | min 2 games, 40 players, 0 critical NULLs |
+| Phase 3 | Analytics quality | min 40 records, avg 15 min, avg 8 pts |
+| Phase 4 | Precompute quality | min 100 players, avg 70 quality |
+| Phase 5 | Prediction generation | min 50 predictions, 20 players |
+| Phase 6 | Publishing/signals | min 1 signal record, 0 NULLs |
+
+**Impact:**
+- End-to-end validation every 30 minutes
+- Per-phase failure detection
+- Clear investigation steps in alerts
+
+**Runbook:** `docs/02-operations/runbooks/canary-failure-response.md`
+
+### Layer 3: Quality Gates
+
+**Component:** `shared/validation/phase2_quality_gate.py`
+
+**Purpose:** Validate raw data quality before analytics processing
+
+**How it works:**
+- Called before Phase 3 processing starts
+- Checks game coverage, player records, NULL rates, freshness
+- Returns PROCEED, PROCEED_WITH_WARNING, or FAIL
+- Blocks Phase 3 if data quality insufficient
+
+**Quality checks:**
+- Game coverage (min 2 if scheduled)
+- Player records (min 20 per game)
+- NULL rates (<5% for critical fields)
+- Data freshness (<24 hours)
+
+**Critical fields:** player_name, team_abbr, points, minutes_decimal
+
+**Integration:** Can be called from Phase 2→3 orchestrator or Phase 3 processors
+
+### Layer 4: Self-Healing with Observability
+
+**Components:**
+- `shared/utils/healing_tracker.py` - Tracks all healing actions
+- `bin/monitoring/auto_batch_cleanup.py` - Auto-heals stalled batches
+- `bin/monitoring/analyze_healing_patterns.py` - Analyzes root causes
+
+**Purpose:** Auto-heal issues while tracking everything for prevention
+
+**Philosophy:** "Auto-heal, but track everything so we can prevent recurrence"
+
+#### Healing Tracker
+
+Dual-write to Firestore (real-time) + BigQuery (analytics) for every healing action:
+
+```python
+{
+    'healing_id': str,           # Unique ID
+    'timestamp': datetime,        # When
+    'healing_type': str,          # What kind (batch_cleanup, retry, etc.)
+    'trigger_reason': str,        # WHY (root cause)
+    'action_taken': str,          # What we did
+    'before_state': dict,         # State before
+    'after_state': dict,          # State after
+    'success': bool,              # Did it work?
+    'metadata': dict              # Type-specific data
+}
+```
+
+**Alert thresholds:**
+- Yellow: 3+ healings in 1 hour
+- Red: 10+ healings in 24 hours
+- Critical: >20% failure rate
+
+#### Auto-Batch Cleanup
+
+**Purpose:** Auto-heal stalled prediction batches
+
+**How it works:**
+- Runs every 15 minutes via Cloud Scheduler
+- Finds batches stalled >15 min at >90% completion
+- Auto-completes them
+- Records full audit trail
+
+**Observability:**
+- Sets `auto_completed: true` flag on batch
+- Records `auto_completion_reason` (why it stalled)
+- Logs full before/after state to healing_events
+- Sends Slack alert with pattern analysis
+- Alerts if cleanup running too frequently
+
+**Pattern detection:**
+If cleanup runs 3+ times in 1 hour:
+```
+⚠️ YELLOW ALERT: batch_cleanup triggered 3 times in 1h
+
+Recent Events:
+• 14:30: Batch stalled at 87.5% (injured players)
+• 14:15: Batch stalled at 91.2% (worker timeout)
+• 14:00: Batch stalled at 93.1% (injured players)
+
+Action Required: Review healing events, identify root cause
+```
+
+#### Prevention Workflow
+
+1. **Detect pattern** - Auto-cleanup runs 3+ times/hour
+2. **Analyze root causes** - `python bin/monitoring/analyze_healing_patterns.py`
+3. **Implement prevention** - Fix root cause (e.g., add to PERMANENT_SKIP_REASONS)
+4. **Monitor impact** - Healing frequency decreases
+
+**Example:** Injured player stalls (Session 131)
+- Root cause: Worker returns 500 for OUT players
+- Fix: Add 'player_injury_out' to PERMANENT_SKIP_REASONS (1 line)
+- Result: 62% reduction in stalls (8/13 → 3/13)
+
+### Usage
+
+**Daily health check:**
+```bash
+# Check all layers
+./bin/monitoring/test_resilience_components.sh
+
+# Individual components
+python bin/monitoring/deployment_drift_alerter.py
+python bin/monitoring/pipeline_canary_queries.py
+```
+
+**Analyze healing patterns:**
+```bash
+# Last 24 hours
+python bin/monitoring/analyze_healing_patterns.py
+
+# Specific time range
+python bin/monitoring/analyze_healing_patterns.py \
+    --start "2026-02-05 00:00" --end "2026-02-05 23:59"
+
+# Filter by type
+python bin/monitoring/analyze_healing_patterns.py --type batch_cleanup
+
+# Export to CSV
+python bin/monitoring/analyze_healing_patterns.py --export report.csv
+```
+
+**Query healing events (BigQuery):**
+```sql
+-- Most common root causes
+SELECT
+    trigger_reason,
+    COUNT(*) as occurrences,
+    AVG(CASE WHEN success THEN 1.0 ELSE 0.0 END) as success_rate
+FROM `nba_orchestration.healing_events`
+WHERE timestamp >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 7 DAY)
+GROUP BY trigger_reason
+ORDER BY occurrences DESC
+LIMIT 10
+```
+
+### Deployment
+
+```bash
+# Deploy Layer 1 (deployment drift)
+./bin/monitoring/setup_deployment_drift_scheduler.sh
+
+# Deploy Layer 2 (pipeline canaries)
+./bin/monitoring/setup_pipeline_canary_scheduler.sh
+
+# Deploy Layer 4 (self-healing)
+./bin/monitoring/setup_auto_batch_cleanup.sh
+```
+
+### Impact (Expected)
+
+**Before:**
+- Drift MTTD: 6 hours
+- Pipeline failure MTTD: Variable, often manual discovery
+- No automated batch cleanup
+- No healing tracking
+- Reactive: fix symptoms as they appear
+
+**After:**
+- Drift MTTD: 2 hours (67% faster)
+- Pipeline failure MTTD: 30 minutes
+- Automatic batch cleanup every 15 minutes
+- Full healing audit trail
+- Proactive: identify and prevent root causes
+
+**Metrics (30-day post-deployment):**
+- 70% reduction in manual interventions
+- 95%+ healing success rate
+- Week-over-week decrease in healing frequency
+- Sub-30-minute MTTD for all issues
+
+### Documentation
+
+**Project docs:** `docs/08-projects/current/`
+- `resilience-improvements-2026/` - Monitoring system (Layers 1-3)
+- `self-healing-with-observability/` - Self-healing system (Layer 4)
+
+**Runbooks:** `docs/02-operations/runbooks/`
+- `deployment-monitoring.md` - Layer 1 response procedures
+- `canary-failure-response.md` - Layer 2 response procedures
+
+**Procedures:** `docs/02-operations/procedures/`
+- `daily-health-check.md` - Daily verification procedures
+
+**Full summary:** `docs/08-projects/current/SESSION-135-COMPLETE-SUMMARY.md`
+
+**Implementation:** Sessions 135a (Monitoring) + 135b (Self-Healing)
+**Prevents:** Silent failures, deployment drift, pipeline quality issues, recurring stalls
+

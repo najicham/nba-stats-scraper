@@ -10,7 +10,7 @@ Usage:
 
     result = gate.check_raw_data_quality(
         game_date=date(2026, 2, 5),
-        table='nba_raw.nbac_player_boxscore'
+        table='nba_raw.nbac_gamebook_player_stats'
     )
 
     if result.status == GateStatus.FAIL:
@@ -20,8 +20,11 @@ Usage:
 
 Thresholds:
 - MIN_PLAYER_RECORDS_PER_GAME: 20 (expect 20+ players per game)
-- MAX_NULL_RATE: 0.05 (5% max NULL rate for critical fields)
-- MAX_HOURS_SINCE_SCRAPE: 24 (data must be fresh)
+- MAX_NULL_RATE: 0.05 (5% max NULL rate for critical fields on active players)
+- MAX_HOURS_SINCE_SCRAPE: 24 (data must be fresh, if timestamp available)
+
+Note: NULL checks for stats (points, minutes) only apply to active players.
+      DNP/inactive players are expected to have NULL stats.
 
 Created: 2026-02-05
 """
@@ -46,8 +49,9 @@ class RawDataMetrics:
     null_team_abbr: int
     null_points: int
     null_minutes: int
-    avg_scrape_age_hours: float
-    max_scrape_age_hours: float
+    has_processed_at: bool  # Whether timestamp field is available
+    avg_scrape_age_hours: Optional[float]
+    max_scrape_age_hours: Optional[float]
 
 
 class Phase2QualityGate:
@@ -78,7 +82,7 @@ class Phase2QualityGate:
         'team_abbr',
         'game_id',
         'points',
-        'minutes_played'
+        'minutes_decimal'
     ]
 
     def __init__(
@@ -99,7 +103,7 @@ class Phase2QualityGate:
     def check_raw_data_quality(
         self,
         game_date: date,
-        table: str = 'nba_raw.nbac_player_boxscore'
+        table: str = 'nba_raw.nbac_gamebook_player_stats'
     ) -> GateResult:
         """
         Check raw data quality for a game date.
@@ -240,10 +244,12 @@ class Phase2QualityGate:
             COUNT(*) as player_records,
             COUNTIF(player_name IS NULL) as null_player_names,
             COUNTIF(team_abbr IS NULL) as null_team_abbr,
-            COUNTIF(points IS NULL) as null_points,
-            COUNTIF(minutes_played IS NULL) as null_minutes,
-            AVG(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), scrape_timestamp, HOUR)) as avg_scrape_age_hours,
-            MAX(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), scrape_timestamp, HOUR)) as max_scrape_age_hours
+            -- Only check stats for active players (DNP/inactive expected to have NULL stats)
+            COUNTIF(player_status = 'active' AND points IS NULL) as null_points,
+            COUNTIF(player_status = 'active' AND minutes_decimal IS NULL) as null_minutes,
+            COUNTIF(processed_at IS NOT NULL) as has_processed_at_count,
+            AVG(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), processed_at, HOUR)) as avg_scrape_age_hours,
+            MAX(TIMESTAMP_DIFF(CURRENT_TIMESTAMP(), processed_at, HOUR)) as max_scrape_age_hours
         FROM `{self.project_id}.{table}`
         WHERE game_date = @game_date
         """
@@ -264,20 +270,26 @@ class Phase2QualityGate:
                 null_team_abbr=0,
                 null_points=0,
                 null_minutes=0,
-                avg_scrape_age_hours=0.0,
-                max_scrape_age_hours=0.0
+                has_processed_at=False,
+                avg_scrape_age_hours=None,
+                max_scrape_age_hours=None
             )
 
         row = result[0]
+        player_records = row['player_records'] or 0
+        has_processed_at_count = row['has_processed_at_count'] or 0
+        has_processed_at = has_processed_at_count > 0
+
         return RawDataMetrics(
             game_count=row['game_count'] or 0,
-            player_records=row['player_records'] or 0,
+            player_records=player_records,
             null_player_names=row['null_player_names'] or 0,
             null_team_abbr=row['null_team_abbr'] or 0,
             null_points=row['null_points'] or 0,
             null_minutes=row['null_minutes'] or 0,
-            avg_scrape_age_hours=float(row['avg_scrape_age_hours'] or 0),
-            max_scrape_age_hours=float(row['max_scrape_age_hours'] or 0)
+            has_processed_at=has_processed_at,
+            avg_scrape_age_hours=float(row['avg_scrape_age_hours']) if row['avg_scrape_age_hours'] is not None else None,
+            max_scrape_age_hours=float(row['max_scrape_age_hours']) if row['max_scrape_age_hours'] is not None else None
         )
 
     def _validate_metrics(
@@ -340,21 +352,22 @@ class Phase2QualityGate:
 
             if null_rate_minutes > self.MAX_NULL_RATE:
                 quality_issues.append(
-                    f"High NULL rate for minutes_played: {null_rate_minutes:.1%}"
+                    f"High NULL rate for minutes_decimal: {null_rate_minutes:.1%}"
                 )
                 quality_score -= 0.2
 
-        # Check data freshness
-        if metrics.max_scrape_age_hours > self.MAX_HOURS_SINCE_SCRAPE:
-            quality_issues.append(
-                f"Stale data: {metrics.max_scrape_age_hours:.1f} hours old (max {self.MAX_HOURS_SINCE_SCRAPE})"
-            )
-            quality_score -= 0.2
-        elif metrics.avg_scrape_age_hours > self.WARNING_HOURS_SINCE_SCRAPE:
-            quality_issues.append(
-                f"Data moderately stale: avg {metrics.avg_scrape_age_hours:.1f} hours"
-            )
-            quality_score -= 0.1
+        # Check data freshness (only if processed_at timestamp is available)
+        if metrics.has_processed_at and metrics.max_scrape_age_hours is not None:
+            if metrics.max_scrape_age_hours > self.MAX_HOURS_SINCE_SCRAPE:
+                quality_issues.append(
+                    f"Stale data: {metrics.max_scrape_age_hours:.1f} hours old (max {self.MAX_HOURS_SINCE_SCRAPE})"
+                )
+                quality_score -= 0.2
+            elif metrics.avg_scrape_age_hours is not None and metrics.avg_scrape_age_hours > self.WARNING_HOURS_SINCE_SCRAPE:
+                quality_issues.append(
+                    f"Data moderately stale: avg {metrics.avg_scrape_age_hours:.1f} hours"
+                )
+                quality_score -= 0.1
 
         # Clamp quality score
         quality_score = max(0.0, quality_score)

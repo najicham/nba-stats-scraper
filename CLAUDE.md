@@ -61,6 +61,62 @@ ls -la docs/09-handoff/ | tail -5
 ./bin/check-deployment-drift.sh --verbose
 ```
 
+## Monitoring & Self-Healing [Keyword: MONITOR]
+
+**Session 135** - Six-layer resilience system with full observability
+
+### Layer 1: Deployment Drift (2-hour detection)
+```bash
+# Manual check
+python bin/monitoring/deployment_drift_alerter.py
+
+# Automated: Runs every 2 hours, alerts to #deployment-alerts
+# Detects services with stale code, provides deploy commands
+```
+
+### Layer 2: Pipeline Canaries (30-minute validation)
+```bash
+# Manual check
+python bin/monitoring/pipeline_canary_queries.py
+
+# Automated: Runs every 30 minutes, alerts to #canary-alerts
+# Validates all 6 phases with real data quality checks
+```
+
+### Layer 3: Quality Gates
+```python
+# Phase 2→3 gate validates raw data before analytics
+from shared.validation.phase2_quality_gate import Phase2QualityGate
+gate = Phase2QualityGate(bq_client, project_id)
+result = gate.check_raw_data_quality(game_date)
+# Blocks bad data (NULL rates, missing games, stale data)
+```
+
+### Auto-Batch Cleanup (Self-Healing)
+```bash
+# Check recent healing events
+python bin/monitoring/analyze_healing_patterns.py
+
+# Automated: Runs every 15 minutes
+# Auto-heals stalled batches (>90% complete, stalled 15+ min)
+# Tracks everything: root cause, before/after state, success rate
+# Alerts if healing too frequent (indicates systemic issue)
+```
+
+**Key Principle:** "Auto-heal, but track everything so we can prevent"
+
+**Healing Workflow:**
+1. System auto-heals issue (e.g., completes stalled batch)
+2. Records full audit trail (why, what, before/after)
+3. Pattern detection alerts if too frequent
+4. Human analyzes root causes → implements prevention
+5. Healing frequency decreases over time
+
+**Slack Channels:**
+- `#deployment-alerts` - Stale deployments (every 2h)
+- `#canary-alerts` - Pipeline failures (every 30min)
+- `#nba-alerts` - Self-healing events (when triggered)
+
 ## Using Agents [Keyword: AGENTS]
 
 | Agent Type | Use Case | Example |
@@ -149,6 +205,32 @@ from ml.features.breakout_features import (
 
 ### Training & Evaluation
 
+**Production Training (recommended):**
+```bash
+# Use shared mode for production consistency
+PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py \
+  --name "PROD_V2" \
+  --mode shared \
+  --train-start 2025-11-02 \
+  --train-end 2026-01-31 \
+  --eval-start 2026-02-01 \
+  --eval-end 2026-02-05
+```
+
+**Experimental Research:**
+```bash
+# Test new features before promoting to shared module
+PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py \
+  --name "EXP_CV_RATIO" \
+  --mode experimental \
+  --features "cv_ratio,cold_streak_indicator,pts_vs_season_zscore" \
+  --train-start 2025-11-02 \
+  --train-end 2026-01-31 \
+  --eval-start 2026-02-01 \
+  --eval-end 2026-02-05
+```
+
+**Quick Evaluation:**
 ```bash
 # Train with shared features and evaluate on holdout
 PYTHONPATH=. python ml/experiments/train_and_evaluate_breakout.py \

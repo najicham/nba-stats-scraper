@@ -5,39 +5,41 @@ Enhanced Breakout Classifier Experiment Runner
 Flexible experimentation framework for breakout classifier development.
 Supports JSON config files or command-line parameters for rapid iteration.
 
+MODES:
+- SHARED (default): Use ml/features/breakout_features.py for production consistency
+  - Ensures training uses same features as evaluation/inference
+  - Uses the 10 production features from BREAKOUT_FEATURE_ORDER
+  - Recommended for all production model training
+- EXPERIMENTAL: Use custom feature sets for research
+  - Flexible query building with Session 126 features
+  - For testing new features before promoting to shared module
+
 Key Features:
-- Configurable feature sets (including new Session 126 features)
+- Production-ready shared feature module integration
+- Configurable feature sets (experimental mode)
 - Tunable hyperparameters (depth, iterations, learning_rate, l2_reg)
 - Adjustable target definitions (min_ppg, max_ppg, breakout_multiplier)
 - Structured JSON output for comparison across experiments
 - Both config file and inline parameter support
 
-New Features Available (Session 126 discoveries):
-- cv_ratio: coefficient of variation (std/avg) - strongest predictor (+0.198 correlation)
-- cold_streak_indicator: L5 avg < L10 avg * 0.8 (mean reversion signal)
-- usage_rate_trend: recent usage vs season
-- minutes_trend: recent minutes vs season
-- games_since_dnp: games since player last DNP
-
 Usage:
-    # With config file
+    # SHARED MODE (recommended for production training)
     PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py \\
-        --config experiments/config1.json
+        --name "PROD_V1" \\
+        --mode shared
 
-    # With inline params
+    # EXPERIMENTAL MODE (for feature research)
     PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py \\
         --name "EXP_CV_RATIO" \\
-        --features "cv_ratio,cold_streak_indicator,pts_vs_season_zscore,opponent_def_rating" \\
+        --mode experimental \\
+        --features "cv_ratio,cold_streak_indicator,pts_vs_season_zscore" \\
         --depth 6 --iterations 300
 
     # List available features
     PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py --list-features
 
-    # Dry run
-    PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py \\
-        --name "TEST" --dry-run
-
 Session 127 - Breakout Classifier Experimentation Framework
+Session 135 - Refactored to use shared feature module as default
 """
 
 import sys
@@ -59,6 +61,16 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import train_test_split
 import catboost as cb
+
+# Import shared feature module for production consistency
+from ml.features.breakout_features import (
+    get_training_data_query as get_shared_training_query,
+    prepare_feature_vector as prepare_shared_feature_vector,
+    validate_feature_distributions,
+    BreakoutFeatureConfig,
+    BREAKOUT_FEATURE_ORDER,
+    FEATURE_DEFAULTS,
+)
 
 PROJECT_ID = "nba-props-platform"
 MODEL_OUTPUT_DIR = Path("models")
@@ -265,7 +277,10 @@ class ExperimentConfig:
     hypothesis: str = ""
     tags: List[str] = None
 
-    # Feature configuration
+    # Mode configuration
+    mode: str = "shared"  # "shared" or "experimental"
+
+    # Feature configuration (experimental mode only)
     feature_set: List[str] = None
 
     # Hyperparameters
@@ -296,7 +311,12 @@ class ExperimentConfig:
     def __post_init__(self):
         if self.tags is None:
             self.tags = ["breakout", "classifier", "experiment"]
-        if self.feature_set is None:
+        # Default feature set based on mode
+        if self.mode == "shared":
+            # Shared mode: always use production features
+            self.feature_set = BREAKOUT_FEATURE_ORDER.copy()
+        elif self.feature_set is None:
+            # Experimental mode: default to original features if not specified
             self.feature_set = DEFAULT_FEATURES.copy()
 
     @classmethod
@@ -315,6 +335,7 @@ class ExperimentConfig:
             name=args.name,
             hypothesis=args.hypothesis,
             tags=[t.strip() for t in args.tags.split(',') if t.strip()],
+            mode=args.mode,
             feature_set=features,
             depth=args.depth,
             iterations=args.iterations,
@@ -343,10 +364,20 @@ class ExperimentConfig:
         """Validate configuration. Returns list of errors."""
         errors = []
 
-        # Validate features
-        for f in self.feature_set:
-            if f not in AVAILABLE_FEATURES:
-                errors.append(f"Unknown feature: {f}")
+        # Validate mode
+        if self.mode not in ["shared", "experimental"]:
+            errors.append(f"mode must be 'shared' or 'experimental', got: {self.mode}")
+
+        # In shared mode, warn if features specified (they'll be ignored)
+        if self.mode == "shared" and self.feature_set != BREAKOUT_FEATURE_ORDER:
+            # This is a warning, not error - features will be overridden
+            pass
+
+        # In experimental mode, validate features
+        if self.mode == "experimental":
+            for f in self.feature_set:
+                if f not in AVAILABLE_FEATURES:
+                    errors.append(f"Unknown feature: {f}")
 
         # Validate PPG range
         if self.min_ppg >= self.max_ppg:
@@ -424,10 +455,65 @@ class ExperimentResults:
 
 
 # =============================================================================
-# DATA LOADING
+# DATA LOADING (SHARED MODE - uses shared feature module)
 # =============================================================================
 
-def load_breakout_training_data(
+def load_breakout_training_data_shared(
+    client: bigquery.Client,
+    start: str,
+    end: str,
+    min_ppg: float,
+    max_ppg: float,
+    breakout_mult: float,
+) -> pd.DataFrame:
+    """
+    Load training data using the shared feature module.
+
+    This ensures consistency with production evaluation and inference.
+    Uses the same query and feature computation as backfill_breakout_shadow.py
+    """
+    config = BreakoutFeatureConfig(
+        min_ppg=min_ppg,
+        max_ppg=max_ppg,
+        breakout_multiplier=breakout_mult,
+    )
+
+    query = get_shared_training_query(start, end, config)
+    return client.query(query).to_dataframe()
+
+
+def prepare_features_shared(
+    df: pd.DataFrame,
+) -> Tuple[pd.DataFrame, pd.Series]:
+    """
+    Prepare features using the shared feature module.
+
+    This ensures consistency with production evaluation and inference.
+    """
+    rows = []
+    for _, row in df.iterrows():
+        try:
+            _, feature_dict = prepare_shared_feature_vector(row, validate=True)
+            rows.append(feature_dict)
+        except Exception as e:
+            # Skip rows with invalid features
+            print(f"Warning: Skipping row due to feature error: {e}")
+            continue
+
+    X = pd.DataFrame(rows, columns=BREAKOUT_FEATURE_ORDER)
+
+    # Get corresponding labels for rows we kept
+    valid_indices = [i for i, _ in enumerate(df.iterrows()) if i < len(rows)]
+    y = df.iloc[:len(rows)]['is_breakout'].astype(int).reset_index(drop=True)
+
+    return X, y
+
+
+# =============================================================================
+# DATA LOADING (EXPERIMENTAL MODE - flexible feature sets)
+# =============================================================================
+
+def load_breakout_training_data_experimental(
     client: bigquery.Client,
     start: str,
     end: str,
@@ -629,16 +715,18 @@ def extract_feature_from_store(
     return default
 
 
-def prepare_features(
+def prepare_features_experimental(
     df: pd.DataFrame,
     feature_list: List[str]
 ) -> Tuple[pd.DataFrame, pd.Series]:
     """
-    Prepare feature matrix for breakout classifier.
+    Prepare feature matrix for breakout classifier (EXPERIMENTAL MODE).
 
     Combines:
     - Computed features from query
     - Features extracted from feature store
+
+    For production, use prepare_features_shared() instead.
     """
     rows = []
     for _, row in df.iterrows():
@@ -800,6 +888,11 @@ def run_experiment(config: ExperimentConfig) -> Optional[ExperimentResults]:
     print(f" BREAKOUT EXPERIMENT: {config.name}")
     print("=" * 70)
     print(f"Experiment ID: {exp_id}")
+    print(f"Mode: {config.mode.upper()}")
+    if config.mode == "shared":
+        print("  Using ml/features/breakout_features.py (production consistency)")
+    else:
+        print("  Using experimental feature pipeline (research mode)")
     print(f"Training:   {dates['train_start']} to {dates['train_end']} ({train_days_actual} days)")
     print(f"Evaluation: {dates['eval_start']} to {dates['eval_end']} ({eval_days_actual} days)")
     print()
@@ -808,11 +901,17 @@ def run_experiment(config: ExperimentConfig) -> Optional[ExperimentResults]:
     print()
     print(f"Features ({len(config.feature_set)}):")
     for f in config.feature_set:
-        feat_def = AVAILABLE_FEATURES.get(f)
-        if feat_def:
-            print(f"  - {f}: {feat_def.description}")
+        if config.mode == "shared":
+            # In shared mode, show defaults from shared module
+            default = FEATURE_DEFAULTS.get(f, "N/A")
+            print(f"  - {f} (default: {default})")
         else:
-            print(f"  - {f}: (UNKNOWN)")
+            # In experimental mode, show from registry
+            feat_def = AVAILABLE_FEATURES.get(f)
+            if feat_def:
+                print(f"  - {f}: {feat_def.description}")
+            else:
+                print(f"  - {f}: (UNKNOWN)")
     print()
     print(f"Hyperparameters:")
     print(f"  depth={config.depth}, iterations={config.iterations}, "
@@ -833,22 +932,34 @@ def run_experiment(config: ExperimentConfig) -> Optional[ExperimentResults]:
 
     client = bigquery.Client(project=PROJECT_ID)
 
-    # Load training data
+    # Load training data based on mode
     print("Loading training data...")
-    df_train = load_breakout_training_data(
-        client, dates['train_start'], dates['train_end'],
-        config.min_ppg, config.max_ppg, config.breakout_multiplier,
-        config.feature_set
-    )
+    if config.mode == "shared":
+        df_train = load_breakout_training_data_shared(
+            client, dates['train_start'], dates['train_end'],
+            config.min_ppg, config.max_ppg, config.breakout_multiplier
+        )
+    else:
+        df_train = load_breakout_training_data_experimental(
+            client, dates['train_start'], dates['train_end'],
+            config.min_ppg, config.max_ppg, config.breakout_multiplier,
+            config.feature_set
+        )
     print(f"  {len(df_train):,} samples")
 
-    # Load evaluation data
+    # Load evaluation data based on mode
     print("Loading evaluation data...")
-    df_eval = load_breakout_training_data(
-        client, dates['eval_start'], dates['eval_end'],
-        config.min_ppg, config.max_ppg, config.breakout_multiplier,
-        config.feature_set
-    )
+    if config.mode == "shared":
+        df_eval = load_breakout_training_data_shared(
+            client, dates['eval_start'], dates['eval_end'],
+            config.min_ppg, config.max_ppg, config.breakout_multiplier
+        )
+    else:
+        df_eval = load_breakout_training_data_experimental(
+            client, dates['eval_start'], dates['eval_end'],
+            config.min_ppg, config.max_ppg, config.breakout_multiplier,
+            config.feature_set
+        )
     print(f"  {len(df_eval):,} samples")
 
     if len(df_train) < 500:
@@ -866,9 +977,15 @@ def run_experiment(config: ExperimentConfig) -> Optional[ExperimentResults]:
     print(f"  Training: {train_breakout_rate*100:.1f}% breakouts ({df_train['is_breakout'].sum()} of {len(df_train)})")
     print(f"  Eval:     {eval_breakout_rate*100:.1f}% breakouts ({df_eval['is_breakout'].sum()} of {len(df_eval)})")
 
-    # Prepare features
-    X_train_full, y_train_full = prepare_features(df_train, config.feature_set)
-    X_eval, y_eval = prepare_features(df_eval, config.feature_set)
+    # Prepare features based on mode
+    if config.mode == "shared":
+        print("\nPreparing features using shared module...")
+        X_train_full, y_train_full = prepare_features_shared(df_train)
+        X_eval, y_eval = prepare_features_shared(df_eval)
+    else:
+        print("\nPreparing features using experimental pipeline...")
+        X_train_full, y_train_full = prepare_features_experimental(df_train, config.feature_set)
+        X_eval, y_eval = prepare_features_experimental(df_eval, config.feature_set)
 
     # Split training into train/validation
     X_train, X_val, y_train, y_val = train_test_split(
@@ -1063,14 +1180,18 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # With config file
-    PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py --config config.json
-
-    # With inline params
+    # SHARED MODE (recommended for production models)
     PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py \\
-        --name "EXP_CV_RATIO" \\
+        --name "PROD_V2" --mode shared
+
+    # EXPERIMENTAL MODE (for feature research)
+    PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py \\
+        --name "EXP_CV_RATIO" --mode experimental \\
         --features "cv_ratio,cold_streak_indicator,pts_vs_season_zscore" \\
         --depth 6 --iterations 300
+
+    # With config file
+    PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py --config config.json
 
     # List available features
     PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py --list-features
@@ -1090,8 +1211,12 @@ Examples:
     parser.add_argument('--tags', default='breakout,classifier,experiment',
                         help='Comma-separated tags')
 
-    # Feature configuration
-    parser.add_argument('--features', help='Comma-separated feature list')
+    # Mode configuration
+    parser.add_argument('--mode', default='shared', choices=['shared', 'experimental'],
+                        help='Mode: "shared" (production features, default) or "experimental" (custom features)')
+
+    # Feature configuration (experimental mode only)
+    parser.add_argument('--features', help='Comma-separated feature list (experimental mode only, ignored in shared mode)')
 
     # Hyperparameters
     parser.add_argument('--depth', type=int, default=5, help='Tree depth (default: 5)')

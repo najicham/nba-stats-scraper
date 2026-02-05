@@ -57,16 +57,18 @@ CANARY_CHECKS = [
         phase="phase1_scrapers",
         query="""
         SELECT
-            COUNT(DISTINCT table_name) as source_tables
+            COUNT(DISTINCT game_date) as game_dates,
+            COUNT(DISTINCT game_id) as games
         FROM
-            `nba-props-platform.nba_raw.__TABLES__`
+            `nba-props-platform.nba_raw.nbac_gamebook_player_stats`
         WHERE
-            DATE(TIMESTAMP_MILLIS(creation_time)) >= CURRENT_DATE() - 1
+            game_date >= CURRENT_DATE() - 2
         """,
         thresholds={
-            'source_tables': {'min': 10}  # Expect at least 10 raw tables
+            'game_dates': {'min': 1},  # At least 1 recent game date
+            'games': {'min': 2}  # At least 2 games in last 2 days
         },
-        description="Validates scrapers created raw data tables"
+        description="Validates scrapers populated raw data"
     ),
 
     CanaryCheck(
@@ -79,7 +81,7 @@ CANARY_CHECKS = [
             COUNTIF(player_name IS NULL) as null_player_names,
             COUNTIF(team_abbr IS NULL) as null_team_abbr
         FROM
-            `nba-props-platform.nba_raw.nbac_player_boxscore`
+            `nba-props-platform.nba_raw.nbac_gamebook_player_stats`
         WHERE
             game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
         """,
@@ -98,10 +100,10 @@ CANARY_CHECKS = [
         query="""
         SELECT
             COUNT(*) as records,
-            COUNTIF(possessions IS NULL AND is_dnp = FALSE) as null_possessions,
             COUNTIF(minutes_played IS NULL AND is_dnp = FALSE) as null_minutes,
             COUNTIF(points IS NULL AND is_dnp = FALSE) as null_points,
-            AVG(CASE WHEN is_dnp = FALSE THEN possessions END) as avg_possessions
+            AVG(CASE WHEN is_dnp = FALSE THEN minutes_played END) as avg_minutes,
+            AVG(CASE WHEN is_dnp = FALSE THEN points END) as avg_points
         FROM
             `nba-props-platform.nba_analytics.player_game_summary`
         WHERE
@@ -109,12 +111,12 @@ CANARY_CHECKS = [
         """,
         thresholds={
             'records': {'min': 40},  # At least 40 player records
-            'null_possessions': {'max': 0},  # No NULL possessions for active players
             'null_minutes': {'max': 0},  # No NULL minutes
             'null_points': {'max': 0},  # No NULL points
-            'avg_possessions': {'min': 50}  # Average possessions should be reasonable
+            'avg_minutes': {'min': 15},  # Average minutes should be reasonable
+            'avg_points': {'min': 8}  # Average points should be reasonable
         },
-        description="Validates analytics processing and possession tracking"
+        description="Validates analytics processing and player stats"
     ),
 
     CanaryCheck(
@@ -123,20 +125,20 @@ CANARY_CHECKS = [
         query="""
         SELECT
             COUNT(DISTINCT player_lookup) as players,
-            AVG(games_played) as avg_games,
-            COUNTIF(points_avg IS NULL) as null_avg_points
+            AVG(feature_quality_score) as avg_quality,
+            COUNTIF(feature_quality_score < 70) as low_quality_count,
+            COUNTIF(early_season_flag) as early_season_count
         FROM
-            `nba-props-platform.nba_analytics.player_season_averages`
+            `nba-props-platform.nba_predictions.ml_feature_store_v2`
         WHERE
-            season = '2025-26'
-            AND as_of_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+            game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
         """,
         thresholds={
-            'players': {'min': 200},  # At least 200 players tracked
-            'avg_games': {'min': 10},  # Average games played > 10
-            'null_avg_points': {'max': 0}  # No NULL average points
+            'players': {'min': 100},  # At least 100 players tracked
+            'avg_quality': {'min': 70},  # Average quality score > 70
+            'low_quality_count': {'max': 50}  # Not too many low quality features
         },
-        description="Validates precomputed aggregates"
+        description="Validates precomputed ML features"
     ),
 
     CanaryCheck(
@@ -146,8 +148,9 @@ CANARY_CHECKS = [
         SELECT
             COUNT(*) as predictions,
             COUNT(DISTINCT player_lookup) as players,
-            COUNTIF(predicted_value IS NULL) as null_predictions,
-            COUNTIF(edge_percent IS NULL) as null_edge
+            COUNTIF(predicted_points IS NULL) as null_predictions,
+            COUNTIF(current_points_line IS NOT NULL) as predictions_with_lines,
+            AVG(confidence_score) as avg_confidence
         FROM
             `nba-props-platform.nba_predictions.player_prop_predictions`
         WHERE
@@ -158,7 +161,8 @@ CANARY_CHECKS = [
             'predictions': {'min': 50},  # At least 50 active predictions
             'players': {'min': 20},  # At least 20 players
             'null_predictions': {'max': 0},  # No NULL predicted values
-            'null_edge': {'max': 0}  # No NULL edge values
+            'predictions_with_lines': {'min': 20},  # At least 20 predictions have lines
+            'avg_confidence': {'min': 0.4}  # Average confidence should be reasonable
         },
         description="Validates prediction generation"
     ),
