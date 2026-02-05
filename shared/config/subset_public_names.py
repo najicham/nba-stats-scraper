@@ -17,6 +17,10 @@ SUBSET_PUBLIC_NAMES = {
     'v9_high_edge_any': {'id': '7', 'name': 'All Picks'},
     'v9_premium_safe': {'id': '8', 'name': 'Premium'},
     'v9_high_edge_warning': {'id': '9', 'name': 'Alternative'},
+    # Session 124: Direction-specific subsets for tracking OVER vs UNDER performance
+    'v9_high_edge_over_only': {'id': '10', 'name': 'OVER Only'},
+    'v9_high_edge_under_only': {'id': '11', 'name': 'UNDER Only'},
+    'v9_high_edge_all_directions': {'id': '12', 'name': 'All Directions'},
 }
 
 # Reverse lookup
