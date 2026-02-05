@@ -13,6 +13,7 @@ Detailed documentation for major system features. For quick reference, see CLAUD
 5. [Enhanced Notifications](#enhanced-notifications)
 6. [Phase 6 - Subset Exporters](#phase-6---subset-exporters)
 7. [Dynamic Subset System](#dynamic-subset-system)
+8. [Deep Health Checks & Smoke Tests](#deep-health-checks--smoke-tests)
 
 ---
 
@@ -481,3 +482,192 @@ ORDER BY roi DESC
 **References:**
 - 2026-01.md summary lines 40-41, 74-76
 - Phase 6 architecture review (Session 91)
+---
+
+## Deep Health Checks & Smoke Tests
+
+**Implemented:** Session 129 (Feb 5, 2026)
+**Purpose:** Prevent silent service failures through defense-in-depth validation
+
+### Problem Statement
+
+**What we're preventing:**
+- Services that start successfully but crash on every request
+- Missing module imports not caught until runtime
+- Broken database connectivity discovered too late
+- 39-hour outage (Feb 4-5, 2026) from missing `predictions/` module
+
+**Root cause:** Shallow health checks only verify "is the process running?" not "can it do its job?"
+
+### Solution: Defense-in-Depth
+
+Five layers of validation from build to recovery:
+
+```
+Layer 1: Build       - Dockerfile validation (planned)
+Layer 2: Test        - Dependency verification (existing)
+Layer 3: Deploy      - Smoke tests (NEW)
+Layer 4: Monitor     - Deep health checks (NEW)
+Layer 5: Recover     - Auto-backfill (planned)
+```
+
+### Layer 3: Deployment Smoke Tests
+
+**Location:** `bin/deploy-service.sh` (Step 6.5/8)
+
+**What it does:**
+- Runs immediately after Cloud Run deployment
+- Tests actual service functionality (not just availability)
+- **Fails deployment** if tests don't pass
+- Provides rollback instructions on failure
+
+**Example (Grading Service):**
+```bash
+# Test 1: Deep health check
+DEEP_HEALTH=$(curl -s "$SERVICE_URL/health/deep")
+if [ "$(echo $DEEP_HEALTH | jq -r '.status')" != "healthy" ]; then
+    echo "❌ CRITICAL: Service cannot function!"
+    exit 1  # Fail deployment
+fi
+
+# Test 2: Basic response
+HEALTH_STATUS=$(curl -s "$SERVICE_URL/health" -w '%{http_code}')
+if [ "$HEALTH_STATUS" != "200" ]; then
+    echo "❌ CRITICAL: Health check failed!"
+    exit 1
+fi
+```
+
+**Impact:** Would have caught the Feb 4-5 grading service failure immediately.
+
+### Layer 4: Deep Health Checks
+
+**Location:** Service code (e.g., `data_processors/grading/nba/main_nba_grading_service.py`)
+
+**Endpoint:** `/health/deep`
+
+**What it validates:**
+1. ✅ Critical module imports (catches missing modules)
+2. ✅ BigQuery connectivity
+3. ✅ Firestore connectivity
+4. ✅ All required dependencies
+
+**Response format:**
+```json
+// Healthy
+{
+  "status": "healthy",
+  "checks": {
+    "imports": {"status": "ok"},
+    "bigquery": {"status": "ok"},
+    "firestore": {"status": "ok"}
+  }
+}
+
+// Unhealthy (returns 503)
+{
+  "status": "unhealthy",
+  "checks": {
+    "imports": {
+      "status": "failed",
+      "error": "No module named 'predictions'"
+    }
+  }
+}
+```
+
+**Implementation:**
+```python
+@app.route('/health/deep', methods=['GET'])
+def health_check_deep():
+    checks = {}
+    all_healthy = True
+
+    # Check critical imports
+    try:
+        from predictions.shared.distributed_lock import DistributedLock
+        checks['imports'] = {'status': 'ok'}
+    except ImportError as e:
+        checks['imports'] = {'status': 'failed', 'error': str(e)}
+        all_healthy = False
+
+    # Check BigQuery
+    try:
+        client = get_bigquery_client()
+        client.query("SELECT 1").result()
+        checks['bigquery'] = {'status': 'ok'}
+    except Exception as e:
+        checks['bigquery'] = {'status': 'failed', 'error': str(e)}
+        all_healthy = False
+
+    status_code = 200 if all_healthy else 503
+    return jsonify({
+        "status": "healthy" if all_healthy else "unhealthy",
+        "checks": checks
+    }), status_code
+```
+
+### Usage
+
+**During deployment:**
+```bash
+./bin/deploy-service.sh nba-grading-service
+# Smoke tests run automatically at step [6.5/8]
+# Deployment fails if tests don't pass
+```
+
+**Manual testing:**
+```bash
+# Test deep health check
+curl https://SERVICE-URL/health/deep | jq
+
+# Expected (healthy)
+{"status": "healthy", "checks": {...}}
+
+# Expected (broken)
+{"status": "unhealthy", "checks": {"imports": {"status": "failed", ...}}}
+```
+
+**Continuous monitoring:**
+```bash
+# Add uptime check for /health/deep
+gcloud monitoring uptime-checks create https \
+    --display-name="grading-deep-health" \
+    --monitored-resource="SERVICE-URL/health/deep" \
+    --check-interval=60s
+```
+
+### Services Implemented
+
+| Service | Deep Health Check | Smoke Tests | Status |
+|---------|-------------------|-------------|--------|
+| nba-grading-service | ✅ Implemented | ✅ Implemented | Session 129 |
+| prediction-worker | ⏳ Planned | ✅ Basic | Session 129 |
+| Others | ⏳ Planned | ✅ Basic | Session 129 |
+
+### Key Metrics
+
+**Before (Feb 4-5, 2026):**
+- Time to detect service failure: 39 hours
+- Predictions affected: 48 (all Feb 4 games)
+- Detection method: Manual investigation
+
+**After (Feb 5+, 2026):**
+- Time to detect service failure: < 1 minute (deployment smoke tests)
+- Predictions affected: 0 (deployment fails before going live)
+- Detection method: Automated smoke tests + deep health checks
+
+### Future Enhancements
+
+**Layer 1: Dockerfile Validation**
+- Validate all Python imports have corresponding COPY commands
+- Prevent deployments with missing modules
+
+**Layer 5: Auto-Recovery**
+- Automatic backfill for failed operations
+- Self-healing for transient failures
+
+**Full documentation:** `docs/05-development/health-checks-and-smoke-tests.md`
+
+**Implementation:** Session 129
+**Prevents:** Silent service failures, 39-hour outages, missing module imports

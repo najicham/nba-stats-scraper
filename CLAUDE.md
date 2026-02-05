@@ -222,6 +222,7 @@ FROM nba_reference.nba_schedule WHERE game_date = CURRENT_DATE()
 | Cloud Function imports | ModuleNotFoundError | Run symlink validation, fix shared/ paths |
 | Orphan superseded predictions | Players missing active predictions after regen | Re-run regeneration (Session 102 auto-skips edge filter) |
 | Feature cache stale | Wrong predicted values, low hit rate | Regenerate predictions for affected dates |
+| **Silent service failure** | **Service running but requests fail** | **Check `/health/deep` endpoint - missing module or broken dependency (Session 129)** |
 
 **Full troubleshooting:** See `docs/02-operations/session-learnings.md`
 
@@ -232,6 +233,15 @@ FROM nba_reference.nba_schedule WHERE game_date = CURRENT_DATE()
 - id: validate-schema-fields
   entry: python .pre-commit-hooks/validate_schema_fields.py
 ```
+
+### Health Checks & Smoke Tests (Session 129)
+**Prevents silent service failures** (e.g., missing modules, broken dependencies)
+
+- **Deep health checks:** `/health/deep` endpoint validates critical imports and connectivity
+- **Deployment smoke tests:** Automatically verify service functionality after deployment
+- **Defense-in-depth:** 5 layers of validation from build to recovery
+
+**See:** `docs/05-development/health-checks-and-smoke-tests.md` for implementation guide
 
 ### Batching Pattern
 ```python

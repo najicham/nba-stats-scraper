@@ -488,6 +488,104 @@ else
     fi
 fi
 
+# [6.5/8] Run service-specific smoke tests
+echo ""
+echo "[6.5/8] Running smoke tests..."
+
+SMOKE_TEST_PASSED=true
+
+case "$SERVICE" in
+  nba-grading-service)
+    echo "Testing grading service functionality..."
+
+    # Test 1: Deep health check (validates critical imports and connectivity)
+    echo "  [1/2] Testing deep health check..."
+    DEEP_HEALTH=$(curl -s --max-time 10 "$SERVICE_URL/health/deep" 2>/dev/null || echo '{"status":"failed"}')
+    DEEP_STATUS=$(echo "$DEEP_HEALTH" | jq -r '.status' 2>/dev/null || echo "failed")
+
+    if [ "$DEEP_STATUS" = "healthy" ]; then
+        echo "    ✅ Deep health check passed"
+        echo "       - Critical imports: OK"
+        echo "       - BigQuery connectivity: OK"
+        echo "       - Firestore connectivity: OK"
+    else
+        echo "    ❌ CRITICAL: Deep health check FAILED"
+        echo "       Response: $DEEP_HEALTH"
+        echo ""
+        echo "    Service deployed but cannot function correctly!"
+        echo "    This would cause silent failures in production."
+        SMOKE_TEST_PASSED=false
+    fi
+
+    # Test 2: Service can respond to basic requests
+    echo "  [2/2] Testing basic service response..."
+    HEALTH_STATUS=$(curl -s --max-time 10 "$SERVICE_URL/health" -o /dev/null -w '%{http_code}' 2>/dev/null || echo "000")
+
+    if [ "$HEALTH_STATUS" = "200" ]; then
+        echo "    ✅ Basic health check passed"
+    else
+        echo "    ❌ CRITICAL: Basic health check failed (HTTP $HEALTH_STATUS)"
+        SMOKE_TEST_PASSED=false
+    fi
+    ;;
+
+  prediction-worker)
+    echo "Testing prediction worker functionality..."
+
+    # Test deep health check if it exists
+    echo "  [1/1] Testing service health..."
+    HEALTH_STATUS=$(curl -s --max-time 10 "$SERVICE_URL/health" -o /dev/null -w '%{http_code}' 2>/dev/null || echo "000")
+
+    if [ "$HEALTH_STATUS" = "200" ]; then
+        echo "    ✅ Health check passed"
+    else
+        echo "    ❌ CRITICAL: Health check failed (HTTP $HEALTH_STATUS)"
+        SMOKE_TEST_PASSED=false
+    fi
+    ;;
+
+  *)
+    echo "No smoke tests configured for $SERVICE (basic health check only)"
+    HEALTH_STATUS=$(curl -s --max-time 10 "$SERVICE_URL/health" -o /dev/null -w '%{http_code}' 2>/dev/null || echo "000")
+
+    if [ "$HEALTH_STATUS" = "200" ]; then
+        echo "  ✅ Basic health check passed"
+    else
+        echo "  ⚠️  WARNING: Health check returned HTTP $HEALTH_STATUS"
+    fi
+    ;;
+esac
+
+echo ""
+if [ "$SMOKE_TEST_PASSED" = true ]; then
+    echo "=============================================="
+    echo "✅ SMOKE TESTS PASSED"
+    echo "=============================================="
+    echo "Service is functional and ready for traffic"
+    echo "=============================================="
+else
+    echo "=============================================="
+    echo "❌ SMOKE TESTS FAILED"
+    echo "=============================================="
+    echo ""
+    echo "CRITICAL: Service deployed but smoke tests failed!"
+    echo ""
+    echo "The service will not function correctly in production."
+    echo "This deployment should be ROLLED BACK."
+    echo ""
+    echo "To rollback:"
+    echo "  1. List revisions:"
+    echo "     gcloud run revisions list --service=$SERVICE --region=$REGION"
+    echo "  2. Rollback to previous:"
+    echo "     gcloud run services update-traffic $SERVICE --to-revisions=PREVIOUS_REV=100 --region=$REGION"
+    echo ""
+    echo "Or fix the issue and redeploy."
+    echo "=============================================="
+
+    # Exit with error to prevent continuing with a broken deployment
+    exit 1
+fi
+
 # [7/8] Verify heartbeat code is correct
 echo ""
 echo "[7/8] Verifying heartbeat code..."

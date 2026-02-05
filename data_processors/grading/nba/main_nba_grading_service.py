@@ -48,6 +48,91 @@ def health_check():
     }), 200
 
 
+@app.route('/health/deep', methods=['GET'])
+def health_check_deep():
+    """
+    Deep health check - validates critical functionality.
+
+    Checks:
+    1. Critical module imports (predictions, shared)
+    2. BigQuery connectivity
+    3. Firestore connectivity (for distributed locks)
+
+    Returns 200 if all checks pass, 503 if any fail.
+    """
+    checks = {}
+    all_healthy = True
+
+    try:
+        # Check 1: Critical imports
+        try:
+            from predictions.shared.distributed_lock import DistributedLock
+            from shared.clients.bigquery_pool import get_bigquery_client
+            checks['imports'] = {
+                'status': 'ok',
+                'modules': ['predictions.shared', 'shared.clients']
+            }
+        except ImportError as e:
+            checks['imports'] = {
+                'status': 'failed',
+                'error': str(e)
+            }
+            all_healthy = False
+
+        # Check 2: BigQuery connectivity
+        try:
+            from shared.clients.bigquery_pool import get_bigquery_client
+            client = get_bigquery_client()
+            # Simple query to verify connection
+            result = client.query("SELECT 1 as test").result()
+            checks['bigquery'] = {
+                'status': 'ok',
+                'connection': 'verified'
+            }
+        except Exception as e:
+            checks['bigquery'] = {
+                'status': 'failed',
+                'error': str(e)
+            }
+            all_healthy = False
+
+        # Check 3: Firestore connectivity (for distributed locks)
+        try:
+            from google.cloud import firestore
+            db = firestore.Client()
+            # Verify we can access Firestore
+            collections = list(db.collections(max_results=1))
+            checks['firestore'] = {
+                'status': 'ok',
+                'connection': 'verified'
+            }
+        except Exception as e:
+            checks['firestore'] = {
+                'status': 'failed',
+                'error': str(e)
+            }
+            all_healthy = False
+
+        # Overall status
+        status_code = 200 if all_healthy else 503
+        response = {
+            "status": "healthy" if all_healthy else "unhealthy",
+            "service": "nba_grading_service",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "checks": checks
+        }
+
+        return jsonify(response), status_code
+
+    except Exception as e:
+        logger.error(f"Deep health check failed: {e}", exc_info=True)
+        return jsonify({
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }), 503
+
+
 @app.route('/process', methods=['POST'])
 def process_grading():
     """
