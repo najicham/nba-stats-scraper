@@ -1,8 +1,10 @@
 # Breakout Detection System v2 - Design Document
 
 **Created:** Session 126 (2026-02-05)
-**Status:** Design Complete, Implementation In Progress
+**Status:** ✅ Implementation Complete, Awaiting Deployment
 **Previous:** Session 125B initial implementation (3 filters deployed)
+
+> **Update (Session 126 End):** Core implementation complete. Feature store updated to v2_39features with breakout_risk_score (feature 37) and composite_breakout_signal (feature 38). Awaiting deployment of Phase 4 and other services.
 
 ---
 
@@ -32,13 +34,17 @@ This document extends the Session 125B breakout detection system with data-drive
 | `hot_streak_under_risk` | L5 > season + 3 + UNDER | **14%** |
 | `low_data_quality` | quality_score < 80 | 39% |
 
-### 1.2 Built But NOT Integrated
+### 1.2 Integration Status (Updated Session 126)
 
-| Component | Status | Gap |
-|-----------|--------|-----|
-| `breakout_risk_score` (0-100) | Calculator exists | Not in feature store |
-| `opportunity_score` component | Uses placeholder | Real injury data needed |
-| Breakout classifier training | Script ready | Not trained |
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `breakout_risk_score` (0-100) | ✅ Integrated | Feature 37 in v2_39features |
+| `composite_breakout_signal` (0-5) | ✅ Integrated | Feature 38 in v2_39features |
+| CV ratio in volatility | ✅ Integrated | Primary scoring signal |
+| Cold streak bonus | ✅ Integrated | Mean reversion component |
+| Usage trend | ✅ Integrated | In opportunity component |
+| `opportunity_score` component | ⚠️ Partial | Uses usage trend; injury data still placeholder |
+| Breakout classifier training | ⏳ Ready | Script exists, not trained |
 
 ### 1.3 Statistical Concern
 
