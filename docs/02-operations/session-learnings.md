@@ -661,6 +661,33 @@ Patterns that led to bugs or wasted effort in real sessions.
 3. Update schema to prevent NULLs: `MODE REPEATED NOT NULL`
 4. Add validation to catch this in tests
 
+### 11. ML Feature Train/Eval Mismatch (Session 134b)
+
+**Anti-Pattern**: Train ML model with one feature pipeline, evaluate/inference with a different one
+
+**Example**: Session 134b - Breakout classifier trained with AUC 0.62, evaluated with AUC 0.47
+- Training computed `explosion_ratio` from game history
+- Backfill hardcoded `explosion_ratio = 1.5`
+- Training got `pts_vs_season_zscore` from feature store
+- Backfill computed it inline
+- Model predictions were INVERSELY correlated with actual outcomes
+
+**Detection**:
+```python
+# Compare feature distributions between train and eval
+from ml.features.breakout_features import validate_feature_distributions
+validate_feature_distributions(df_train, "training")
+validate_feature_distributions(df_eval, "evaluation")
+```
+
+**Better Approach**:
+1. Create SHARED feature module used by both training and inference
+2. Never hardcode feature values - always compute from data
+3. Validate feature distributions match between train/eval
+4. Store feature computation logic WITH the model
+
+**Solution**: Created `ml/features/breakout_features.py` as single source of truth
+
 ---
 
 ## Established Patterns
