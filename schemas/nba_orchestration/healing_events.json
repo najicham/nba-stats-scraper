@@ -1,0 +1,56 @@
+[
+  {
+    "name": "healing_id",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Unique identifier for the healing event"
+  },
+  {
+    "name": "timestamp",
+    "type": "TIMESTAMP",
+    "mode": "REQUIRED",
+    "description": "When the healing action occurred (UTC)"
+  },
+  {
+    "name": "healing_type",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Type of healing action: batch_cleanup, retry, fallback, circuit_breaker_reset, etc."
+  },
+  {
+    "name": "trigger_reason",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Root cause that triggered healing (e.g., 'Batch stalled at 87% for 15+ minutes')"
+  },
+  {
+    "name": "action_taken",
+    "type": "STRING",
+    "mode": "REQUIRED",
+    "description": "Specific action performed (e.g., 'Force completed batch batch_2026-02-05_xyz')"
+  },
+  {
+    "name": "before_state",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "JSON string of state before healing"
+  },
+  {
+    "name": "after_state",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "JSON string of state after healing"
+  },
+  {
+    "name": "success",
+    "type": "BOOLEAN",
+    "mode": "REQUIRED",
+    "description": "Whether the healing action succeeded"
+  },
+  {
+    "name": "metadata",
+    "type": "STRING",
+    "mode": "NULLABLE",
+    "description": "JSON string with healing-type-specific metadata"
+  }
+]

@@ -85,7 +85,12 @@ def load_games_with_features(
     max_ppg: float = 20.0,
     breakout_mult: float = 1.5,
 ) -> pd.DataFrame:
-    """Load games with all required features for classification."""
+    """
+    Load games with all required features for classification.
+
+    Computes explosion_ratio and days_since_breakout from actual game history
+    to match training feature computation (Session 134 fix).
+    """
     query = f"""
     WITH role_player_games AS (
       SELECT
@@ -113,15 +118,78 @@ def load_games_with_features(
         AND pgs.minutes_played > 0
         AND pgs.points IS NOT NULL
     ),
-    with_features AS (
+    -- Compute max points in last 5 games for explosion_ratio
+    player_recent_games AS (
+      SELECT
+        rpg.player_lookup,
+        rpg.game_date as target_date,
+        pgs2.points,
+        ROW_NUMBER() OVER (
+          PARTITION BY rpg.player_lookup, rpg.game_date
+          ORDER BY pgs2.game_date DESC
+        ) as game_rank
+      FROM role_player_games rpg
+      JOIN `{PROJECT_ID}.nba_analytics.player_game_summary` pgs2
+        ON pgs2.player_lookup = rpg.player_lookup
+        AND pgs2.game_date < rpg.game_date
+        AND pgs2.game_date >= DATE_SUB(rpg.game_date, INTERVAL 30 DAY)
+        AND pgs2.minutes_played > 0
+    ),
+    max_l5_points AS (
+      SELECT
+        player_lookup,
+        target_date,
+        MAX(points) as max_points_last_5
+      FROM player_recent_games
+      WHERE game_rank <= 5
+      GROUP BY player_lookup, target_date
+    ),
+    with_max_l5 AS (
       SELECT
         rpg.*,
+        ml5.max_points_last_5
+      FROM role_player_games rpg
+      LEFT JOIN max_l5_points ml5
+        ON rpg.player_lookup = ml5.player_lookup
+        AND rpg.game_date = ml5.target_date
+    ),
+    -- Compute days since last breakout game
+    with_breakout_history AS (
+      SELECT
+        wml5.*,
+        (
+          SELECT MAX(pgs3.game_date)
+          FROM `{PROJECT_ID}.nba_analytics.player_game_summary` pgs3
+          JOIN `{PROJECT_ID}.nba_precompute.player_daily_cache` dc3
+            ON pgs3.player_lookup = dc3.player_lookup
+            AND pgs3.game_date = dc3.cache_date
+          WHERE pgs3.player_lookup = wml5.player_lookup
+            AND pgs3.game_date < wml5.game_date
+            AND pgs3.points >= dc3.points_avg_season * {breakout_mult}
+            AND pgs3.minutes_played > 0
+        ) as last_breakout_date
+      FROM with_max_l5 wml5
+    ),
+    -- Join with feature store
+    with_features AS (
+      SELECT
+        wbh.*,
+        -- Compute explosion_ratio (max L5 / season avg)
+        COALESCE(
+          SAFE_DIVIDE(wbh.max_points_last_5, wbh.points_avg_season),
+          1.5  -- Default only if no history
+        ) as explosion_ratio,
+        -- Compute days since breakout
+        COALESCE(
+          DATE_DIFF(wbh.game_date, wbh.last_breakout_date, DAY),
+          30  -- Default only if no prior breakout
+        ) as days_since_breakout,
         mf.features,
         mf.feature_names
-      FROM role_player_games rpg
+      FROM with_breakout_history wbh
       LEFT JOIN `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
-        ON rpg.player_lookup = mf.player_lookup
-        AND rpg.game_date = mf.game_date
+        ON wbh.player_lookup = mf.player_lookup
+        AND wbh.game_date = mf.game_date
     )
     SELECT * FROM with_features
     ORDER BY game_date, player_lookup
@@ -134,7 +202,8 @@ def load_games_with_features(
     numeric_cols = [
         'actual_points', 'minutes_played', 'points_avg_season',
         'points_std_last_10', 'points_avg_last_5', 'points_avg_last_10',
-        'minutes_avg_last_10', 'is_breakout'
+        'minutes_avg_last_10', 'is_breakout',
+        'explosion_ratio', 'days_since_breakout', 'max_points_last_5'  # Computed features
     ]
     for col in numeric_cols:
         if col in df.columns:
@@ -189,6 +258,10 @@ def prepare_feature_vector(row: pd.Series) -> np.ndarray:
     # Compute pts_vs_season_zscore
     pts_vs_season_zscore = (points_avg_last_5 - points_avg_season) / points_std if points_std > 0 else 0.0
 
+    # Get computed features from query (Session 134 fix)
+    explosion_ratio = float(row['explosion_ratio']) if row.get('explosion_ratio') is not None else 1.5
+    days_since_breakout = float(row['days_since_breakout']) if row.get('days_since_breakout') is not None else 30.0
+
     # Get from feature store
     opponent_def_rating = extract_feature(features, feature_names, 'opponent_def_rating', 112.0)
     home_away = extract_feature(features, feature_names, 'home_away', 0.5)
@@ -198,8 +271,8 @@ def prepare_feature_vector(row: pd.Series) -> np.ndarray:
     vector = np.array([
         pts_vs_season_zscore,     # 1
         points_std,               # 2
-        1.5,                      # 3. explosion_ratio (default)
-        30.0,                     # 4. days_since_breakout (default)
+        explosion_ratio,          # 3. From query (was hardcoded 1.5)
+        days_since_breakout,      # 4. From query (was hardcoded 30)
         opponent_def_rating,      # 5
         home_away,                # 6
         back_to_back,             # 7
