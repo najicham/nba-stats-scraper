@@ -209,7 +209,8 @@ FROM nba_reference.nba_schedule WHERE game_date = CURRENT_DATE()
 
 | Issue | Symptom | Fix |
 |-------|---------|-----|
-| Deployment drift | Old bugs recurring | `./bin/deploy-service.sh SERVICE` |
+| Deployment drift | Old bugs recurring | `./bin/deploy-service.sh SERVICE` (See Session 128 prevention plan) |
+| Vegas line coverage low | <40% line coverage in feature store | NORMAL - threshold is 45%, not 80% (Session 128) |
 | **Env var drift** | **Missing env vars, service crashes** | **NEVER use `--set-env-vars` (wipes all vars), ALWAYS use `--update-env-vars`** |
 | Schema mismatch | "Invalid field" error | `python .pre-commit-hooks/validate_schema_fields.py` |
 | Partition filter | 400 error on query | Add `WHERE game_date >= ...` |

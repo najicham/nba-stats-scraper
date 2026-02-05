@@ -122,6 +122,57 @@ else:
 
 ## Deployment Issues
 
+### Deployment Drift - Recurring Pattern (Sessions 64, 81, 82, 97, 128)
+
+**Symptom**: Bug fixes committed to repository but not deployed to production services, causing "already fixed" bugs to recur
+
+**Cause**: Manual deployment process with no automated drift detection
+
+**Real Examples**:
+- Session 128: 3 services 8+ hours stale (phase3, coordinator, worker)
+- Session 97: Worker env vars fix committed but not deployed
+- Session 82: Coordinator fix committed but not deployed
+- Session 81: Worker fix committed but not deployed
+- Session 64: Backfill ran with OLD code 12 hours after fix committed
+
+**Impact**:
+- Degraded system performance (missing optimizations)
+- Bugs appear "fixed" in code but still occur in production
+- Confusion during debugging (code looks correct, old version running)
+- Time wasted re-investigating "fixed" issues
+
+**Detection**:
+```bash
+# Check deployment drift
+./bin/check-deployment-drift.sh --verbose
+
+# Check specific service
+gcloud run services describe SERVICE --region=us-west2 \
+  --format="value(metadata.labels.commit-sha)"
+git log -1 --format="%h"  # Compare
+```
+
+**Prevention** (Session 128 - See `docs/02-operations/DEPLOYMENT-DRIFT-PREVENTION.md`):
+1. **Layer 1**: Automated drift monitoring (Cloud Function every 2 hours)
+2. **Layer 2**: Post-commit hook reminder
+3. **Layer 3**: Pre-prediction validation gate (blocks stale worker)
+4. **Layer 4**: CI/CD auto-deploy on merge to main
+5. **Layer 5**: Deployment dashboard with status visibility
+
+**Immediate Fix**:
+```bash
+./bin/deploy-service.sh SERVICE_NAME
+```
+
+**Long-term Fix**: Deploy drift monitoring Cloud Function
+```bash
+./bin/infrastructure/setup-drift-monitoring.sh
+```
+
+---
+
+## Deployment Issues
+
 ### Deployment Drift (Session 58)
 
 **Symptom**: Service missing recent bug fixes, known bugs recurring in production
