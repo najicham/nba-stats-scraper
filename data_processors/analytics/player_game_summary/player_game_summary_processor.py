@@ -241,7 +241,17 @@ class PlayerGameSummaryProcessor(
         Per dependency tracking guide v4.0.
         """
         return {
-            # SOURCE 1: NBA.com Gamebook (PRIMARY - Critical)
+            # SOURCE 1: NBA.com Gamebook (PRIMARY - Non-critical when fallback enabled)
+            # Session 127: Made non-critical when USE_NBAC_BOXSCORES_FALLBACK=True
+            # because nbac_player_boxscores can substitute for same-night processing.
+            # The fallback logic in _check_source_data_available() handles cases where
+            # neither source has data.
+            #
+            # NOTE: nbac_player_boxscores is NOT listed as a dependency because it's used as a
+            # FALLBACK source (substitutes for gamebook when not available), not an additional source.
+            # Availability is checked in _check_source_data_available() and used via the
+            # extraction query's nbac_boxscore_data CTE when gamebook has 0 records.
+            # This avoids generating new source tracking columns (source_nbac_box_*).
             'nba_raw.nbac_gamebook_player_stats': {
                 'field_prefix': 'source_nbac',
                 'description': 'NBA.com gamebook - primary stats with plus_minus',
@@ -250,14 +260,9 @@ class PlayerGameSummaryProcessor(
                 'expected_count_min': 200,  # ~200+ active players per day
                 'max_age_hours_warn': 12,  # Increased from 6h - allow for late game completion
                 'max_age_hours_fail': 24,
-                'critical': True
+                # Non-critical when fallback enabled - allows same-night processing
+                'critical': not self.USE_NBAC_BOXSCORES_FALLBACK
             },
-            
-            # NOTE: nbac_player_boxscores is NOT listed as a dependency because it's used as a
-            # FALLBACK source (substitutes for gamebook when not available), not an additional source.
-            # Availability is checked in _check_source_data_available() and used via the
-            # extraction query's nbac_boxscore_data CTE when gamebook has 0 records.
-            # This avoids generating new source tracking columns (source_nbac_box_*).
 
             # SOURCE 2: BDL Boxscores (FALLBACK - Non-Critical)
             'nba_raw.bdl_player_boxscores': {
