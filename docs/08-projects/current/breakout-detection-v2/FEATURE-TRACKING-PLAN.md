@@ -224,9 +224,13 @@ def _get_injured_teammates_ppg(self, team_abbr: str, game_date: date) -> float:
     """
 ```
 
-**Data Source:** `nba_raw.bdl_injuries` (Ball Don't Lie injuries)
-**Injury Statuses:** 'out', 'questionable', 'doubtful' (lowercase)
-**PPG Source:** `nba_predictions.ml_feature_store_v2` features[2] (season PPG)
+**Data Sources:**
+- **PRIMARY:** `nba_raw.nbac_injury_report` (NBA.com official PDFs, 99-100% accuracy)
+  - Updated every 15 minutes when games scheduled
+  - Injury statuses: 'out', 'questionable', 'doubtful' (lowercase)
+  - Confidence filter: >= 0.6 score
+- **FALLBACK:** `nba_raw.bdl_injuries` (Ball Don't Lie, only if NBA.com unavailable)
+- **PPG Source:** `nba_predictions.ml_feature_store_v2` features[2] (season PPG)
 
 **Example Results (2026-02-05):**
 - OKC: 110.1 PPG injured (Shai 31.8, Chet 17.7, Jalen Williams 17.1)
