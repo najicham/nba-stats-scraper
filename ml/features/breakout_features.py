@@ -8,7 +8,7 @@ should use this module to ensure feature consistency.
 Session 134 Learning: Training and evaluation used different feature pipelines,
 causing the model to have AUC 0.47 (worse than random) on holdout data.
 
-Feature List (10 features in exact order):
+V3 Feature List (13 features in exact order):
 1. pts_vs_season_zscore - Z-score of recent performance
 2. points_std_last_10 - Volatility measure
 3. explosion_ratio - Max L5 / season avg (explosive potential)
@@ -19,6 +19,9 @@ Feature List (10 features in exact order):
 8. points_avg_last_5 - Recent form
 9. points_avg_season - Baseline scoring
 10. minutes_avg_last_10 - Playing time opportunity
+11. minutes_increase_pct - Minutes trend (V2 - only good V2 feature)
+12. star_teammate_out - Star teammates OUT/DOUBTFUL (V3 - HIGH IMPACT)
+13. fg_pct_last_game - Previous game shooting % (V3 - momentum signal)
 """
 
 from dataclasses import dataclass
@@ -52,8 +55,15 @@ BREAKOUT_FEATURE_ORDER_V2 = BREAKOUT_FEATURE_ORDER_V1 + [
     "fourth_quarter_trust",    # V2: Coach trust (4Q mins %)
 ]
 
-# Default to V2 for new training
-BREAKOUT_FEATURE_ORDER = BREAKOUT_FEATURE_ORDER_V2
+# V3: Contextual features for high-confidence predictions
+BREAKOUT_FEATURE_ORDER_V3 = BREAKOUT_FEATURE_ORDER_V1 + [
+    "minutes_increase_pct",    # V2: Recent minutes spike (only good V2 feature)
+    "star_teammate_out",       # V3: Count of star teammates OUT/DOUBTFUL
+    "fg_pct_last_game",        # V3: Shooting % in previous game
+]
+
+# Default to V3 for new training
+BREAKOUT_FEATURE_ORDER = BREAKOUT_FEATURE_ORDER_V3
 
 # Default values when features are missing
 FEATURE_DEFAULTS = {
@@ -73,6 +83,9 @@ FEATURE_DEFAULTS = {
     "usage_rate_trend": 0.0,         # No trend
     "rest_days_numeric": 1.0,        # 1 day rest (B2B)
     "fourth_quarter_trust": 25.0,    # 25% of minutes in 4Q (neutral)
+    # V3 features (contextual opportunity signals)
+    "star_teammate_out": 0.0,        # No star teammates out
+    "fg_pct_last_game": 0.45,        # League average FG%
 }
 
 
@@ -115,6 +128,7 @@ def get_training_data_query(
         pgs.player_lookup,
         pgs.game_date,
         pgs.game_id,
+        pgs.team_abbr,
         pgs.points as actual_points,
         pgs.minutes_played,
         dc.points_avg_season,
@@ -191,12 +205,57 @@ def get_training_data_query(
       GROUP BY bg.player_lookup, bg.game_date
     ),
 
+    -- V3: Get previous game performance for momentum features
+    previous_game_performance AS (
+      SELECT
+        bg.player_lookup,
+        bg.game_date as target_date,
+        SAFE_DIVIDE(pgs_prev.fg_makes, pgs_prev.fg_attempts) as fg_pct_last_game
+      FROM base_games bg
+      LEFT JOIN (
+        SELECT
+          player_lookup,
+          game_date,
+          fg_makes,
+          fg_attempts,
+          LEAD(game_date) OVER (PARTITION BY player_lookup ORDER BY game_date) as next_game_date
+        FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+        WHERE minutes_played > 0
+      ) pgs_prev
+        ON pgs_prev.player_lookup = bg.player_lookup
+        AND pgs_prev.next_game_date = bg.game_date
+    ),
+
+    -- V3: Count star teammates OUT for usage opportunity
+    star_teammates_out_calc AS (
+      SELECT
+        bg.player_lookup,
+        bg.game_date as target_date,
+        COUNT(DISTINCT CASE
+          WHEN ir.injury_status IN ('out', 'doubtful')
+            AND dc_teammate.points_avg_season >= 15.0  -- Star threshold (15+ PPG)
+            AND ir.player_lookup != bg.player_lookup  -- Exclude self
+          THEN ir.player_lookup
+          ELSE NULL
+        END) as star_teammate_out
+      FROM base_games bg
+      LEFT JOIN `{PROJECT_ID}.nba_raw.nbac_injury_report` ir
+        ON ir.game_date = bg.game_date
+        AND ir.team = bg.team_abbr  -- Same team
+      LEFT JOIN `{PROJECT_ID}.nba_precompute.player_daily_cache` dc_teammate
+        ON dc_teammate.player_lookup = ir.player_lookup
+        AND dc_teammate.cache_date = ir.game_date
+      GROUP BY bg.player_lookup, bg.game_date
+    ),
+
     -- Join with feature store for context features
     with_context AS (
       SELECT
         bg.*,
         ra.max_points_recent,
         bh.last_breakout_date,
+        pgp.fg_pct_last_game,
+        sto.star_teammate_out,
         mf.features as feature_store_values,
         mf.feature_names as feature_store_names
       FROM base_games bg
@@ -206,6 +265,12 @@ def get_training_data_query(
       LEFT JOIN breakout_history bh
         ON bg.player_lookup = bh.player_lookup
         AND bg.game_date = bh.target_date
+      LEFT JOIN previous_game_performance pgp
+        ON bg.player_lookup = pgp.player_lookup
+        AND bg.game_date = pgp.target_date
+      LEFT JOIN star_teammates_out_calc sto
+        ON bg.player_lookup = sto.player_lookup
+        AND bg.game_date = sto.target_date
       LEFT JOIN `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
         ON bg.player_lookup = mf.player_lookup
         AND bg.game_date = mf.game_date
@@ -279,6 +344,14 @@ def get_training_data_query(
           ) * 100,
           {FEATURE_DEFAULTS['fourth_quarter_trust']}
         ) as fourth_quarter_trust,
+
+        -- V3 FEATURES (Contextual Opportunity Signals)
+
+        -- Feature 12 (V3): star_teammate_out
+        COALESCE(star_teammate_out, {FEATURE_DEFAULTS['star_teammate_out']}) as star_teammate_out,
+
+        -- Feature 13 (V3): fg_pct_last_game
+        COALESCE(fg_pct_last_game, {FEATURE_DEFAULTS['fg_pct_last_game']}) as fg_pct_last_game,
 
         -- Context for debugging
         points_avg_season,
@@ -424,6 +497,16 @@ def prepare_feature_vector(
     # Feature 14: fourth_quarter_trust (from query)
     q4_trust = row.get('fourth_quarter_trust')
     features['fourth_quarter_trust'] = float(q4_trust) if q4_trust is not None and not pd.isna(q4_trust) else FEATURE_DEFAULTS['fourth_quarter_trust']
+
+    # V3 FEATURES (Contextual Opportunity Signals)
+
+    # Feature 12 (V3): star_teammate_out (from query)
+    star_out = row.get('star_teammate_out')
+    features['star_teammate_out'] = float(star_out) if star_out is not None and not pd.isna(star_out) else FEATURE_DEFAULTS['star_teammate_out']
+
+    # Feature 13 (V3): fg_pct_last_game (from query)
+    fg_pct_prev = row.get('fg_pct_last_game')
+    features['fg_pct_last_game'] = float(fg_pct_prev) if fg_pct_prev is not None and not pd.isna(fg_pct_prev) else FEATURE_DEFAULTS['fg_pct_last_game']
 
     # Build vector in exact order
     vector = np.array([features[name] for name in BREAKOUT_FEATURE_ORDER]).reshape(1, -1)
