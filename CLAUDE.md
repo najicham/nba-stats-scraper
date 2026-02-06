@@ -350,6 +350,78 @@ git log -1 --format="%h"
 
 **Game Status:** 1=Scheduled, 2=In Progress, 3=Final
 
+## ML Feature Quality [Keyword: QUALITY]
+
+**Status:** Session 134 implementation in progress
+
+The ML feature store has comprehensive per-feature quality tracking:
+- **122 fields total:** 74 per-feature columns (37 quality + 37 source) + 48 aggregate/JSON fields
+- **37 features tracked** across 5 categories: matchup(6), player_history(13), team_context(3), vegas(4), game_context(11)
+- **Detection time:** <5 seconds for quality issues (vs 2+ hours manual)
+
+### Quick Quality Checks
+
+```sql
+-- Check overall quality
+SELECT game_date, AVG(feature_quality_score) as avg_quality,
+       COUNTIF(quality_alert_level = 'red') as red_count
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= CURRENT_DATE() - 7
+GROUP BY 1 ORDER BY 1 DESC;
+
+-- Check category quality
+SELECT game_date,
+       ROUND(AVG(matchup_quality_pct), 1) as matchup,
+       ROUND(AVG(player_history_quality_pct), 1) as history,
+       ROUND(AVG(game_context_quality_pct), 1) as context
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= CURRENT_DATE() - 7
+GROUP BY 1 ORDER BY 1 DESC;
+
+-- Find bad features (direct columns - FAST)
+SELECT player_lookup, feature_5_quality, feature_6_quality, feature_7_quality, feature_8_quality
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date = CURRENT_DATE()
+  AND (feature_5_quality < 50 OR feature_6_quality < 50 OR feature_7_quality < 50 OR feature_8_quality < 50);
+```
+
+### Per-Feature Quality Fields
+
+Each of 37 features has:
+- `feature_N_quality` - Quality score 0-100 (direct column)
+- `feature_N_source` - Source type: 'phase4', 'phase3', 'calculated', 'default' (direct column)
+
+**Critical features to monitor:**
+- Features 5-8: Composite factors (fatigue, shot zone, pace, usage)
+- Features 13-14: Opponent defense (def rating, pace)
+
+### Category Definitions
+
+| Category | Features | Critical? |
+|----------|----------|-----------|
+| **matchup** | 5-8, 13-14 (6 total) | ✅ Yes - Session 132 issue |
+| **player_history** | 0-4, 29-36 (13 total) | No |
+| **team_context** | 22-24 (3 total) | No |
+| **vegas** | 25-28 (4 total) | No |
+| **game_context** | 9-12, 15-21 (11 total) | No |
+
+### Common Issues
+
+| Issue | Detection | Fix |
+|-------|-----------|-----|
+| All matchup features defaulted | `matchup_quality_pct = 0` | Check PlayerCompositeFactorsProcessor ran |
+| High default rate | `default_feature_count > 6` | Check Phase 4 processors completed |
+| Low training quality | `training_quality_feature_count < 30` | Investigate per-feature quality scores |
+
+### Documentation
+
+**Project docs:** `docs/08-projects/current/feature-quality-visibility/`
+- 00-PROJECT-OVERVIEW.md - Problem analysis and solution
+- 07-FINAL-HYBRID-SCHEMA.md - Complete schema design
+- Session 134 handoff: `docs/09-handoff/2026-02-05-SESSION-134-START-HERE.md`
+
+**Key insight:** "The aggregate feature_quality_score is a lie" - it masks component failures. Always check category-level quality (matchup, history, context, vegas, game_context) for root cause.
+
 ## Phase 3 Health Check [Keyword: PHASE3]
 
 ```bash
@@ -397,6 +469,8 @@ FROM nba_reference.nba_schedule WHERE game_date = CURRENT_DATE()
 | Feature cache stale | Wrong predicted values, low hit rate | Regenerate predictions for affected dates |
 | **Silent service failure** | **Service running but requests fail** | **Check `/health/deep` endpoint - missing module or broken dependency (Session 129)** |
 | **ML train/eval mismatch** | **Model has poor holdout performance despite good training metrics** | **Use shared feature module (`ml/features/`) for both training and evaluation (Session 134b)** |
+| **Low feature quality** | **`matchup_quality_pct < 50` or high `default_feature_count`** | **Check which processor didn't run: query `missing_processors` field or check phase_completions table** |
+| **Session 132 recurrence** | **All matchup features (5-8) at quality 40** | **PlayerCompositeFactorsProcessor didn't run - check scheduler job configuration** |
 
 **Full troubleshooting:** See `docs/02-operations/session-learnings.md`
 
