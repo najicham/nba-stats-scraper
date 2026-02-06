@@ -342,6 +342,50 @@ gcloud scheduler jobs create http feature-store-health-check \
   --location=us-west2
 ```
 
+### Issue 6: Predictions Skipped Due to Quality Gate (Session 139)
+
+**Symptoms:**
+- `PREDICTIONS_SKIPPED` Slack alert in `#nba-alerts`
+- Fewer predictions than expected for a game date
+- `is_quality_ready = FALSE` for many feature store rows
+
+**Root Causes:**
+- Phase 4 processors did not complete before prediction time
+- Upstream data issues causing low feature quality scores
+- Matchup features defaulted (Session 132-style issue)
+
+**Fix:**
+```bash
+# 1. Check how many rows failed quality gate
+bq query --use_legacy_sql=false "
+SELECT
+  game_date,
+  COUNTIF(is_quality_ready) as ready,
+  COUNTIF(NOT is_quality_ready) as blocked,
+  ROUND(100.0 * COUNTIF(is_quality_ready) / COUNT(*), 1) as pct_ready
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date = 'YYYY-MM-DD'
+GROUP BY 1"
+
+# 2. Check what failed the quality gate
+bq query --use_legacy_sql=false "
+SELECT
+  player_lookup,
+  feature_quality_score,
+  quality_alert_level,
+  matchup_quality_pct,
+  default_feature_count
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date = 'YYYY-MM-DD'
+  AND NOT is_quality_ready
+LIMIT 20"
+
+# 3. Recover via BACKFILL the next day
+curl -X POST https://prediction-coordinator-url/start \
+  -H "Content-Type: application/json" \
+  -d '{"game_date":"YYYY-MM-DD","prediction_run_mode":"BACKFILL"}'
+```
+
 ---
 
 ## Validation Queries
@@ -362,6 +406,23 @@ FROM `nba-props-platform.nba_precompute.player_daily_cache`
 WHERE cache_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 GROUP BY cache_date
 ORDER BY cache_date DESC
+```
+
+### Quality Gate Readiness Query (Session 139)
+
+```sql
+-- Check quality gate pass rate for ml_feature_store_v2
+SELECT
+  game_date,
+  COUNT(*) as total,
+  COUNTIF(is_quality_ready) as gate_pass,
+  COUNTIF(NOT is_quality_ready) as gate_fail,
+  ROUND(100.0 * COUNTIF(is_quality_ready) / COUNT(*), 1) as pct_ready,
+  COUNTIF(quality_alert_level = 'red') as red_alerts
+FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+GROUP BY game_date
+ORDER BY game_date DESC;
 ```
 
 ### Find Problematic Records
@@ -438,5 +499,5 @@ WHERE cache_date = CURRENT_DATE()
 
 ---
 
-**Last Validated:** 2026-02-05
-**Validation Result:** ✅ All checks passing (7/7)
+**Last Validated:** 2026-02-06
+**Validation Result:** Updated with Session 139 quality gate monitoring

@@ -128,6 +128,17 @@ is_production_ready = (
 
 *Uses `data_quality_tier` (legacy)
 
+## Prediction Timing Columns (Session 139)
+
+| Column | Type | Table | Description |
+|--------|------|-------|-------------|
+| `prediction_made_before_game` | BOOL | `player_prop_predictions` | Whether the prediction was generated before the game start time |
+| `is_quality_ready` | BOOL | `ml_feature_store_v2` | Whether feature quality meets the hard floor for prediction generation |
+
+The `prediction_made_before_game` field enables accurate grading by distinguishing pre-game predictions (made with uncertain data) from backfill predictions (made after game results are known). Only pre-game predictions should be used for hit rate and ROI calculations.
+
+The `is_quality_ready` field is set by the quality gate system (Session 139) and indicates whether a player's feature row passes the minimum quality thresholds required for prediction generation.
+
 ## Legacy Columns (Deprecated)
 
 These columns are still populated for backward compatibility but should not be used in new code:

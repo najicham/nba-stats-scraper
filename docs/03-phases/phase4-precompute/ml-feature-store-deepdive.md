@@ -32,7 +32,7 @@
 | **Dependencies** | ALL 4 Phase 4 processors (team_defense_zone_analysis, player_shot_zone_analysis, player_composite_factors, player_daily_cache) |
 | **Phase 3 Fallback** | Uses Phase 3 analytics tables when Phase 4 data unavailable |
 | **Execution Window** | 11:25 PM - 11:50 PM EST (25 minutes) |
-| **Success Criteria** | 200+ player rows, quality_score ≥ 75, all 4 dependencies present |
+| **Success Criteria** | 200+ player rows, quality_score >= 75, all 4 dependencies present, is_quality_ready = TRUE for >90% of rows |
 | **Criticality** | **P0** - Blocks entire Phase 5 prediction pipeline |
 
 **Read this guide if you need to:**
@@ -168,6 +168,18 @@ TOTAL QUALITY SCORE: 92/100 ✅ PASS (threshold: 75)
 ```
 
 **Solution:** See [Quality Score Monitoring](#quality-score-monitoring) section.
+
+### 4b. Quality Gate Integration (Session 139)
+
+**Enhancement:** The quality score system now feeds directly into a prediction quality gate.
+
+Each feature store row includes an `is_quality_ready` boolean that determines whether the prediction worker will generate predictions for that player. The gate enforces hard floor rules:
+- `feature_quality_score >= 50`
+- `quality_alert_level != 'red'`
+- `matchup_quality_pct >= 25`
+- `default_feature_count <= 12`
+
+Players failing these thresholds are skipped, with recovery available via BACKFILL mode the next day. The `prediction_made_before_game` field in predictions tracks timing for accurate grading.
 
 ---
 

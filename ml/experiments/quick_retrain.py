@@ -134,16 +134,23 @@ def check_training_data_quality(client, start, end):
 
     Outputs a quality summary and returns True if data quality is acceptable.
     Session 104: Prevent training on low-quality data.
+    Session 139: Uses is_training_ready flag and quality visibility fields.
     """
     query = f"""
     SELECT
       COUNT(*) as total_records,
+      COUNTIF(is_training_ready = TRUE) as training_ready,
+      COUNTIF(is_quality_ready = TRUE) as quality_ready,
+      COUNTIF(quality_alert_level = 'green') as green_alerts,
+      COUNTIF(quality_alert_level = 'yellow') as yellow_alerts,
+      COUNTIF(quality_alert_level = 'red') as red_alerts,
       COUNTIF(feature_quality_score >= 85) as high_quality,
       COUNTIF(feature_quality_score >= 70 AND feature_quality_score < 85) as medium_quality,
       COUNTIF(feature_quality_score < 70) as low_quality,
       COUNTIF(data_source = 'phase4_partial') as partial_data,
       COUNTIF(data_source = 'early_season') as early_season_data,
-      ROUND(AVG(feature_quality_score), 1) as avg_quality
+      ROUND(AVG(feature_quality_score), 1) as avg_quality,
+      ROUND(AVG(matchup_quality_pct), 1) as avg_matchup_quality
     FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
     WHERE game_date BETWEEN '{start}' AND '{end}'
       AND feature_count >= 33
@@ -151,14 +158,24 @@ def check_training_data_quality(client, start, end):
     result = client.query(query).to_dataframe()
 
     total = result['total_records'].iloc[0]
+    training_ready = result['training_ready'].iloc[0]
+    quality_ready = result['quality_ready'].iloc[0]
     high_q = result['high_quality'].iloc[0]
     low_q = result['low_quality'].iloc[0]
     partial = result['partial_data'].iloc[0]
     early = result['early_season_data'].iloc[0]
     avg_q = result['avg_quality'].iloc[0]
+    green = result['green_alerts'].iloc[0]
+    yellow = result['yellow_alerts'].iloc[0]
+    red = result['red_alerts'].iloc[0]
+    avg_matchup = result['avg_matchup_quality'].iloc[0]
 
     print("\n=== Training Data Quality ===")
     print(f"Total records: {total:,}")
+    print(f"Training-ready (is_training_ready): {training_ready:,} ({100*training_ready/total:.1f}%)")
+    print(f"Quality-ready (is_quality_ready): {quality_ready:,} ({100*quality_ready/total:.1f}%)")
+    print(f"Alert levels: {green:,} green, {yellow:,} yellow, {red:,} red")
+    print(f"Avg matchup quality: {avg_matchup:.1f}%")
     print(f"High quality (85+): {high_q:,} ({100*high_q/total:.1f}%)")
     print(f"Medium quality (70-84): {result['medium_quality'].iloc[0]:,}")
     print(f"Low quality (<70): {low_q:,} ({100*low_q/total:.1f}%)")
@@ -167,14 +184,19 @@ def check_training_data_quality(client, start, end):
     print(f"Avg quality score: {avg_q:.1f}")
 
     # Warn if quality is poor
+    if training_ready < total * 0.7:
+        print("WARNING: <70% training-ready data. Check missing processors.")
+    if red > total * 0.1:
+        print("WARNING: >10% red alerts in training set")
     if low_q > total * 0.1:
-        print("⚠️  WARNING: >10% low quality data in training set")
+        print("WARNING: >10% low quality data in training set")
     if partial > total * 0.05:
-        print("⚠️  WARNING: >5% partial data in training set")
+        print("WARNING: >5% partial data in training set")
     if early > total * 0.2:
-        print("⚠️  WARNING: >20% early season data in training set")
+        print("WARNING: >20% early season data in training set")
 
-    return {'total': total, 'low_quality_pct': 100*low_q/total if total > 0 else 0, 'avg_quality': avg_q}
+    return {'total': total, 'low_quality_pct': 100*low_q/total if total > 0 else 0, 'avg_quality': avg_q,
+            'training_ready_pct': 100*training_ready/total if total > 0 else 0}
 
 
 def load_train_data(client, start, end, min_quality_score=70):

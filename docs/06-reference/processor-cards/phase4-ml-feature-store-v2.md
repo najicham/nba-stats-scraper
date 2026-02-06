@@ -13,7 +13,7 @@
 | **Schedule** | Nightly at 12:00 AM (runs LAST in Phase 4) |
 | **Duration** | ~2 minutes (450 players) |
 | **Priority** | **High** - Required for Phase 5 Week 1 |
-| **Status** | ✅ Production Ready (158+ tests passing) |
+| **Status** | ✅ Production Ready (158+ tests passing, quality gate active) |
 
 ---
 
@@ -237,6 +237,16 @@ team_defense_zone ───────┘     (450 players)    ├─→ Moving
 
 ---
 
+## Success Criteria (Updated Session 139)
+
+| Criterion | Threshold | Notes |
+|-----------|-----------|-------|
+| Player rows | >= 200 | Game day minimum |
+| Avg quality score | >= 75 | Phase 5 requirement |
+| `is_quality_ready` rate | >= 90% | Quality gate pass rate |
+| All 4 dependencies | Present | player_daily_cache, composite_factors, shot_zone, team_defense |
+| `prediction_made_before_game` | Populated | Enables accurate grading |
+
 ## Monitoring Alerts
 
 | Alert | Threshold | Severity |
@@ -247,6 +257,8 @@ team_defense_zone ───────┘     (450 players)    ├─→ Moving
 | Processing time | > 5 min | Warning |
 | Any source age | > 24 hrs | Critical |
 | Early season rate | > 20% (after week 3) | Warning |
+| Quality gate fail rate | > 10% | Warning (Session 139) |
+| `PREDICTIONS_SKIPPED` alert | Any | Warning (Session 139) |
 
 ---
 
@@ -267,12 +279,14 @@ team_defense_zone ───────┘     (450 players)    ├─→ Moving
 - **Feature Versioning**: `feature_version` field tracks which features present
 - **Phase 4 → Phase 3 Fallback**: Ensures robustness when Phase 4 incomplete
 - **Quality Scoring**: Enables Phase 5 to adjust confidence based on data quality
+- **Quality Gate (Session 139)**: `is_quality_ready` field enforces hard floor rules before predictions; BACKFILL mode recovers skipped predictions
 - **Cross-Dataset**: Writes to `nba_predictions` (not `nba_precompute`) for Phase 5 access
 - **Most Complex**: 4 Phase 4 sources + 3 Phase 3 fallbacks = 7 total dependencies
 - **158+ Tests**: Most thoroughly tested processor (includes performance tests)
 
 ---
 
-**Card Version**: 1.0
+**Card Version**: 1.1
 **Created**: 2025-11-15
+**Last Updated**: 2026-02-06 (Session 139 - quality gate, success criteria)
 **Verified Against**: Code commit 71f4bde

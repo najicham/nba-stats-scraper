@@ -362,9 +362,11 @@ The ML feature store has comprehensive per-feature quality tracking:
 ### Quick Quality Checks
 
 ```sql
--- Check overall quality
+-- Check overall quality (includes quality gate readiness)
 SELECT game_date, AVG(feature_quality_score) as avg_quality,
-       COUNTIF(quality_alert_level = 'red') as red_count
+       COUNTIF(quality_alert_level = 'red') as red_count,
+       COUNTIF(is_quality_ready) as quality_ready_count,
+       COUNT(*) as total
 FROM nba_predictions.ml_feature_store_v2
 WHERE game_date >= CURRENT_DATE() - 7
 GROUP BY 1 ORDER BY 1 DESC;
@@ -384,6 +386,8 @@ FROM nba_predictions.ml_feature_store_v2
 WHERE game_date = CURRENT_DATE()
   AND (feature_5_quality < 50 OR feature_6_quality < 50 OR feature_7_quality < 50 OR feature_8_quality < 50);
 ```
+
+**Note (Session 139):** The `prediction_made_before_game` field in `player_prop_predictions` tracks whether a prediction was generated before game start time, enabling accurate grading of pre-game vs backfill predictions.
 
 ### Per-Feature Quality Fields
 
@@ -446,6 +450,14 @@ WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v9'
 -- Check games status (1=Scheduled, 2=In Progress, 3=Final)
 SELECT game_id, away_team_tricode, home_team_tricode, game_status
 FROM nba_reference.nba_schedule WHERE game_date = CURRENT_DATE()
+
+-- Check quality-blocked predictions (Session 139)
+SELECT game_date, COUNT(*) as blocked,
+       ARRAY_AGG(DISTINCT quality_alert_level) as alert_levels
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= CURRENT_DATE() - 3
+  AND quality_alert_level = 'red'
+GROUP BY 1 ORDER BY 1 DESC;
 ```
 
 **Full query library:** See `docs/02-operations/useful-queries.md`
@@ -471,6 +483,7 @@ FROM nba_reference.nba_schedule WHERE game_date = CURRENT_DATE()
 | **ML train/eval mismatch** | **Model has poor holdout performance despite good training metrics** | **Use shared feature module (`ml/features/`) for both training and evaluation (Session 134b)** |
 | **Low feature quality** | **`matchup_quality_pct < 50` or high `default_feature_count`** | **Check which processor didn't run: query `missing_processors` field or check phase_completions table** |
 | **Session 132 recurrence** | **All matchup features (5-8) at quality 40** | **PlayerCompositeFactorsProcessor didn't run - check scheduler job configuration** |
+| **Predictions skipped due to quality** | **`PREDICTIONS_SKIPPED` Slack alert** | **Check Phase 4 processor logs, BACKFILL next day: `POST /start {"game_date":"YYYY-MM-DD","prediction_run_mode":"BACKFILL"}`** |
 
 **Full troubleshooting:** See `docs/02-operations/session-learnings.md`
 

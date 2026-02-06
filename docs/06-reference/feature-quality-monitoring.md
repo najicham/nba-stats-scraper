@@ -211,7 +211,39 @@ FROM feature_stats;
 
 ---
 
-## 4. Known Feature Issues
+## 4. Quality Gate Hard Floor Rules (Session 139)
+
+The prediction worker enforces hard floor quality rules before generating predictions. If a player's feature row fails these checks, predictions are skipped for that player and a `PREDICTIONS_SKIPPED` Slack alert is sent.
+
+### Hard Floor Thresholds
+
+| Rule | Threshold | Rationale |
+|------|-----------|-----------|
+| `feature_quality_score` | >= 50 | Below 50 indicates too many defaulted features |
+| `quality_alert_level` | != 'red' | Red alerts indicate critical data issues |
+| `matchup_quality_pct` | >= 25 | Matchup features are critical for accuracy |
+| `default_feature_count` | <= 12 | More than 12 defaults means >30% of features are guesses |
+
+### is_quality_ready Field
+
+The `is_quality_ready` boolean in `ml_feature_store_v2` is computed during feature store writes and reflects whether a row passes all hard floor rules. The prediction worker checks this field to decide whether to generate predictions.
+
+### Recovery: BACKFILL Mode
+
+When predictions are skipped due to quality, they can be recovered the next day using BACKFILL mode:
+
+```bash
+# Trigger backfill for a specific date
+curl -X POST https://prediction-coordinator-url/start \
+  -H "Content-Type: application/json" \
+  -d '{"game_date":"YYYY-MM-DD","prediction_run_mode":"BACKFILL"}'
+```
+
+BACKFILL mode relaxes quality gates since Phase 4 data is typically complete by the next day.
+
+---
+
+## 5. Known Feature Issues
 
 ### Currently Broken (as of Jan 2026)
 
@@ -230,7 +262,7 @@ FROM feature_stats;
 
 ---
 
-## 5. Troubleshooting
+## 6. Troubleshooting
 
 ### Feature suddenly all zeros
 
@@ -272,7 +304,7 @@ FROM feature_stats;
 
 ---
 
-## 6. Files Reference
+## 7. Files Reference
 
 | Purpose | Location |
 |---------|----------|
@@ -284,7 +316,7 @@ FROM feature_stats;
 
 ---
 
-## 7. Historical Context
+## 8. Historical Context
 
 ### The Fatigue Bug (Jan 2026)
 
@@ -300,4 +332,4 @@ A refactor changed `fatigue_score` from returning raw score (0-100) to returning
 
 ---
 
-*Last updated: 2026-01-31 (Session 48)*
+*Last updated: 2026-02-06 (Session 139 - quality gate hard floor rules)*

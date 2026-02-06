@@ -299,6 +299,37 @@ record = {
 #       completeness_percentage=70.0, missing_games_count=3
 ```
 
+## Quality Gate and Healing (Session 139)
+
+### Quality Gate (Prediction Worker)
+
+The prediction worker enforces a quality gate before generating predictions. Players whose feature rows fail quality thresholds are skipped, and a `PREDICTIONS_SKIPPED` Slack alert is sent.
+
+The gate checks the `is_quality_ready` field on `ml_feature_store_v2`, which is computed based on:
+- `feature_quality_score >= 50`
+- `quality_alert_level != 'red'`
+- `matchup_quality_pct >= 25`
+- `default_feature_count <= 12`
+
+### Quality Healer (BACKFILL Recovery)
+
+When predictions are blocked by the quality gate, they can be recovered via BACKFILL mode the following day. By that time, Phase 4 processors have typically completed and feature quality is sufficient.
+
+```bash
+# Recover skipped predictions
+curl -X POST https://prediction-coordinator-url/start \
+  -H "Content-Type: application/json" \
+  -d '{"game_date":"YYYY-MM-DD","prediction_run_mode":"BACKFILL"}'
+```
+
+BACKFILL mode uses relaxed quality thresholds since data completeness improves after game day.
+
+### prediction_made_before_game Field
+
+The `prediction_made_before_game` boolean in `player_prop_predictions` tracks whether a prediction was generated before the game started. This field is critical for accurate grading:
+- **Pre-game predictions** (TRUE) are used for hit rate and ROI calculations
+- **Backfill predictions** (FALSE) are excluded from performance metrics since they may have been influenced by post-game data availability
+
 ## Testing
 
 Run quality system tests:
