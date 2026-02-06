@@ -32,6 +32,8 @@ from typing import List
 # Add project root to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../..'))
 
+from google.cloud import bigquery
+
 from shared.utils.daily_scorecard import DailyScorecard, DailyScorecardRecord
 
 logging.basicConfig(
@@ -39,6 +41,57 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+PROJECT_ID = os.environ.get('GCP_PROJECT_ID', 'nba-props-platform')
+
+
+def _query_quality_metrics(game_date: date) -> dict:
+    """Query feature quality metrics from ml_feature_store_v2."""
+    client = bigquery.Client(project=PROJECT_ID)
+    query = f"""
+    SELECT
+        COUNT(*) as total_records,
+        COUNTIF(is_quality_ready = TRUE) as quality_ready_count,
+        ROUND(SAFE_DIVIDE(COUNTIF(is_quality_ready = TRUE), COUNT(*)) * 100, 1) as quality_ready_pct,
+        COUNTIF(quality_alert_level = 'red') as red_alert_count,
+        ROUND(AVG(matchup_quality_pct), 1) as avg_matchup_quality,
+        ROUND(AVG(player_history_quality_pct), 1) as avg_player_history_quality,
+        ROUND(AVG(game_context_quality_pct), 1) as avg_game_context_quality,
+        ARRAY_AGG(DISTINCT player_lookup IGNORE NULLS LIMIT 20) as red_alert_players
+    FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
+    WHERE game_date = @game_date
+    """
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+        ]
+    )
+    try:
+        rows = list(client.query(query, job_config=job_config).result())
+        if rows and rows[0].total_records > 0:
+            row = rows[0]
+            return {
+                'total_records': row.total_records,
+                'quality_ready_count': row.quality_ready_count or 0,
+                'quality_ready_pct': row.quality_ready_pct or 0.0,
+                'red_alert_count': row.red_alert_count or 0,
+                'avg_matchup_quality': row.avg_matchup_quality or 0.0,
+                'avg_player_history_quality': row.avg_player_history_quality or 0.0,
+                'avg_game_context_quality': row.avg_game_context_quality or 0.0,
+                'red_alert_players': list(row.red_alert_players or []) if row.red_alert_count else [],
+            }
+    except Exception as e:
+        logger.error(f"Error querying quality metrics: {e}")
+    return {
+        'total_records': 0,
+        'quality_ready_count': 0,
+        'quality_ready_pct': 0.0,
+        'red_alert_count': 0,
+        'avg_matchup_quality': 0.0,
+        'avg_player_history_quality': 0.0,
+        'avg_game_context_quality': 0.0,
+        'red_alert_players': [],
+    }
 
 
 def compute_scorecard(game_date: date, dry_run: bool = False) -> DailyScorecardRecord:
@@ -51,6 +104,7 @@ def compute_scorecard(game_date: date, dry_run: bool = False) -> DailyScorecardR
         # Just query and display, don't persist
         completeness = scorecard._query_data_completeness()
         phase_counts = scorecard._query_phase_counts()
+        quality = _query_quality_metrics(game_date)
 
         print(f"\n{'='*60}")
         print(f"DAILY SCORECARD - {game_date}")
@@ -60,6 +114,15 @@ def compute_scorecard(game_date: date, dry_run: bool = False) -> DailyScorecardR
         print(f"  BDL Games:       {completeness.get('bdl_games', 0)}")
         print(f"  Analytics Games: {completeness.get('analytics_games', 0)}")
         print(f"  Feature Quality: {completeness.get('feature_quality', 0):.1f}")
+
+        print(f"\nFeature Quality (ml_feature_store_v2):")
+        print(f"  Quality Ready:          {quality['quality_ready_count']}/{quality['total_records']} ({quality['quality_ready_pct']:.1f}%)")
+        print(f"  Red Alerts:             {quality['red_alert_count']}")
+        print(f"  Matchup Quality:        {quality['avg_matchup_quality']:.1f}%")
+        print(f"  Player History Quality: {quality['avg_player_history_quality']:.1f}%")
+        print(f"  Game Context Quality:   {quality['avg_game_context_quality']:.1f}%")
+        if quality['red_alert_count'] > 0:
+            print(f"  Missing Processor Players: {', '.join(quality['red_alert_players'][:5])}")
 
         print(f"\nPhase Execution:")
         for phase in ['phase_2', 'phase_3', 'phase_4', 'phase_5']:
@@ -73,6 +136,7 @@ def compute_scorecard(game_date: date, dry_run: bool = False) -> DailyScorecardR
 
     # Compute and persist
     record = scorecard.compute_daily_score()
+    quality = _query_quality_metrics(game_date)
 
     print(f"\n{'='*60}")
     print(f"DAILY SCORECARD - {game_date}")
@@ -84,6 +148,14 @@ def compute_scorecard(game_date: date, dry_run: bool = False) -> DailyScorecardR
     print(f"  BDL Games:       {record.bdl_games}")
     print(f"  Analytics Games: {record.analytics_games}")
     print(f"  Feature Quality: {record.feature_quality_avg:.1f}")
+    print(f"\nFeature Quality (ml_feature_store_v2):")
+    print(f"  Quality Ready:          {quality['quality_ready_count']}/{quality['total_records']} ({quality['quality_ready_pct']:.1f}%)")
+    print(f"  Red Alerts:             {quality['red_alert_count']}")
+    print(f"  Matchup Quality:        {quality['avg_matchup_quality']:.1f}%")
+    print(f"  Player History Quality: {quality['avg_player_history_quality']:.1f}%")
+    print(f"  Game Context Quality:   {quality['avg_game_context_quality']:.1f}%")
+    if quality['red_alert_count'] > 0:
+        print(f"  Missing Processor Players: {', '.join(quality['red_alert_players'][:5])}")
     print(f"\nPredictions:")
     print(f"  Made:   {record.predictions_made}")
     print(f"  Graded: {record.predictions_graded}")

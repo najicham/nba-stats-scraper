@@ -1137,22 +1137,36 @@ def start_prediction_batch():
             logger.warning(f"Failed to check analytics quality (non-fatal): {e}")
 
         # =========================================================================
-        # QUALITY GATE: "Predict Once, Never Replace" (Session 95)
+        # QUALITY GATE: "Predict Once, Never Replace" (Session 95, overhauled Session 139)
         # - Check for existing predictions (skip if already predicted)
-        # - Apply mode-based quality thresholds (FIRST=85%, RETRY=85%, FINAL_RETRY=80%, LAST_CALL=0%)
-        # - Set quality flags on predictions
-        # - Send alerts for quality issues
+        # - HARD FLOOR: Never predict with red alerts or matchup_quality < 50%
+        # - Apply mode-based quality thresholds (FIRST=85%, RETRY=85%, FINAL_RETRY=80%, LAST_CALL=70%)
+        # - Self-heal via QualityHealer when processors are missing
+        # - Send PREDICTIONS_SKIPPED alert for hard-blocked players
         # =========================================================================
         viable_requests = []
         quality_gate_results = {}  # Maps player_lookup to QualityGateResult
 
         try:
-            from predictions.coordinator.quality_gate import QualityGate, parse_prediction_mode
-            from predictions.coordinator.quality_alerts import check_and_send_quality_alerts, log_quality_metrics
+            from predictions.coordinator.quality_gate import QualityGate, parse_prediction_mode, PredictionMode
+            from predictions.coordinator.quality_alerts import (
+                check_and_send_quality_alerts, log_quality_metrics,
+                send_predictions_skipped_alert
+            )
 
             # Parse prediction mode
             mode = parse_prediction_mode(prediction_run_mode)
             logger.info(f"QUALITY_GATE: Applying mode={mode.value} for {game_date}")
+
+            # Session 139: BACKFILL mode validation
+            if mode == PredictionMode.BACKFILL:
+                from datetime import date as date_type
+                if game_date >= date_type.today():
+                    logger.warning(
+                        f"QUALITY_GATE: BACKFILL mode requires game_date < today, "
+                        f"got {game_date}. Switching to RETRY mode."
+                    )
+                    mode = PredictionMode.RETRY
 
             # Initialize quality gate
             quality_gate = QualityGate(project_id=PROJECT_ID, dataset_prefix=dataset_prefix)
@@ -1167,6 +1181,59 @@ def start_prediction_batch():
                     player_lookups=player_lookups,
                     mode=mode
                 )
+
+                # Session 139: Self-heal if players are hard-blocked and mode >= RETRY
+                heal_attempted = False
+                heal_success = False
+                if (summary.players_hard_blocked > 0
+                        and summary.missing_processors
+                        and mode in (PredictionMode.RETRY, PredictionMode.FINAL_RETRY,
+                                     PredictionMode.LAST_CALL)):
+                    try:
+                        from predictions.coordinator.quality_healer import QualityHealer
+                        healer = QualityHealer(project_id=PROJECT_ID)
+                        heal_result = healer.attempt_heal(
+                            game_date=game_date,
+                            batch_id=batch_id,
+                            missing_processors=summary.missing_processors,
+                        )
+                        heal_attempted = heal_result.attempted
+                        heal_success = heal_result.success
+
+                        if heal_result.success:
+                            logger.info(
+                                f"QUALITY_HEALER: Heal succeeded, re-running quality gate "
+                                f"for {summary.players_hard_blocked} blocked players"
+                            )
+                            # Re-run quality gate for previously blocked players only
+                            blocked_lookups = [
+                                r.player_lookup for r in gate_results
+                                if r.hard_floor_blocked
+                            ]
+                            if blocked_lookups:
+                                retry_results, retry_summary = quality_gate.apply_quality_gate(
+                                    game_date=game_date,
+                                    player_lookups=blocked_lookups,
+                                    mode=mode
+                                )
+                                # Merge newly viable players into results
+                                retry_map = {r.player_lookup: r for r in retry_results}
+                                gate_results = [
+                                    retry_map.get(r.player_lookup, r)
+                                    if r.hard_floor_blocked else r
+                                    for r in gate_results
+                                ]
+                                # Update summary with merged results
+                                newly_viable = sum(1 for r in retry_results if r.should_predict)
+                                summary.players_hard_blocked -= newly_viable
+                                summary.players_to_predict += newly_viable
+                                summary.players_skipped_low_quality -= newly_viable
+                                logger.info(
+                                    f"QUALITY_HEALER: {newly_viable}/{len(blocked_lookups)} "
+                                    f"players now pass quality gate after healing"
+                                )
+                    except Exception as e:
+                        logger.error(f"QUALITY_HEALER: Self-heal failed: {e}", exc_info=True)
 
                 # Build lookup for results
                 quality_gate_results = {r.player_lookup: r for r in gate_results}
@@ -1216,11 +1283,23 @@ def start_prediction_batch():
                     quality_distribution=summary.quality_distribution
                 )
 
+                # Session 139: Send PREDICTIONS_SKIPPED alert for hard-blocked players
+                if summary.players_hard_blocked > 0:
+                    blocked_results = [r for r in gate_results if r.hard_floor_blocked]
+                    send_predictions_skipped_alert(
+                        game_date=game_date,
+                        mode=mode.value,
+                        blocked_results=blocked_results,
+                        missing_processors=summary.missing_processors,
+                        heal_attempted=heal_attempted,
+                        heal_success=heal_success,
+                    )
+
                 logger.info(
                     f"QUALITY_GATE: {len(viable_requests)}/{len(requests)} players will get predictions "
                     f"(skipped_existing={summary.players_skipped_existing}, "
                     f"skipped_low_quality={summary.players_skipped_low_quality}, "
-                    f"forced={summary.players_forced})"
+                    f"hard_blocked={summary.players_hard_blocked})"
                 )
             else:
                 viable_requests = requests

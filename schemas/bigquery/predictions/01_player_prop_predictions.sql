@@ -100,6 +100,9 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.player_prop_predi
   invalidation_reason STRING,                   -- 'game_postponed', 'game_cancelled', 'player_inactive'
   invalidated_at TIMESTAMP,                     -- When prediction was invalidated
 
+  -- Pre-game flag (Session 139)
+  prediction_made_before_game BOOLEAN,            -- TRUE if made before game start, FALSE for backfills
+
   -- Timestamps (2 fields)
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP() NOT NULL,
   updated_at TIMESTAMP
@@ -328,4 +331,19 @@ ADD COLUMN IF NOT EXISTS critical_features JSON OPTIONS(description="List of cri
 
 ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
 ADD COLUMN IF NOT EXISTS line_discrepancy NUMERIC(5,2) OPTIONS(description="Difference between multiple line sources (if applicable)");
+
+-- Session 139: Quality visibility fields (from ml_feature_store_v2)
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS is_quality_ready BOOL OPTIONS(description="Session 139: Quality gate from feature store (gold/silver/bronze + score>=70 + matchup>=50)");
+
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS quality_alert_level STRING OPTIONS(description="Session 139: Quality alert level at prediction time: green, yellow, red");
+
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS matchup_quality_pct FLOAT64 OPTIONS(description="Session 139: Matchup feature quality percentage (0-100) at prediction time");
+
+-- Session 139: Track whether prediction was made before game started
+-- FALSE for BACKFILL or post-game predictions (record-keeping only, not actionable)
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS prediction_made_before_game BOOL OPTIONS(description="Session 139: TRUE if made before game start, FALSE for backfills/post-game");
 

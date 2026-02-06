@@ -123,6 +123,10 @@ class DailyReconciliation:
         check5 = self._check_phase_execution_timing(game_date)
         report.add_check(check5)
 
+        # Check 6: Feature quality distribution by category
+        check6 = self._check_quality_distribution(game_date)
+        report.add_check(check6)
+
         # Summary
         self._print_summary(report)
 
@@ -267,9 +271,9 @@ class DailyReconciliation:
             )
 
     def _check_analytics_vs_features(self, game_date: str, detailed: bool) -> ReconciliationResult:
-        """Check that analytics players have feature store data."""
+        """Check that analytics players have feature store data (quality-ready)."""
         print("\n" + "-" * 50)
-        print("CHECK 3: Analytics → Features (Missing Feature Rows)")
+        print("CHECK 3: Analytics → Features (Missing/Low-Quality Feature Rows)")
         print("-" * 50)
 
         query = f"""
@@ -283,14 +287,18 @@ class DailyReconciliation:
         features AS (
             SELECT DISTINCT
                 player_lookup,
-                game_id
+                game_id,
+                is_quality_ready,
+                quality_alert_level
             FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
             WHERE game_date = '{game_date}'
         )
         SELECT
             a.player_lookup,
             a.game_id,
-            CASE WHEN f.player_lookup IS NOT NULL THEN 1 ELSE 0 END as has_features
+            CASE WHEN f.player_lookup IS NOT NULL THEN 1 ELSE 0 END as has_features,
+            IFNULL(f.is_quality_ready, FALSE) as is_quality_ready,
+            f.quality_alert_level
         FROM analytics a
         LEFT JOIN features f ON a.game_id = f.game_id AND a.player_lookup = f.player_lookup
         """
@@ -300,19 +308,24 @@ class DailyReconciliation:
 
             analytics_players = len(results)
             with_features = sum(1 for r in results if r.has_features)
+            quality_ready = sum(1 for r in results if r.is_quality_ready)
             missing = [r for r in results if not r.has_features]
+            not_ready = [r for r in results if r.has_features and not r.is_quality_ready]
 
             print(f"   Analytics player-games: {analytics_players}")
             print(f"   With features: {with_features}")
+            print(f"   Quality-ready (is_quality_ready=TRUE): {quality_ready}")
             print(f"   Missing features: {len(missing)}")
+            if not_ready:
+                print(f"   Features present but NOT quality-ready: {len(not_ready)}")
 
             return ReconciliationResult(
                 check_name="analytics_vs_features",
                 source_name="Analytics",
-                target_name="Features",
+                target_name="Quality-Ready Features",
                 source_count=analytics_players,
-                target_count=with_features,
-                missing_count=len(missing),
+                target_count=quality_ready,
+                missing_count=analytics_players - quality_ready,
                 missing_items=[r.player_lookup for r in missing[:20]]
             )
 
@@ -321,7 +334,7 @@ class DailyReconciliation:
             return ReconciliationResult(
                 check_name="analytics_vs_features",
                 source_name="Analytics",
-                target_name="Features",
+                target_name="Quality-Ready Features",
                 source_count=0,
                 target_count=0,
                 missing_count=0,
@@ -329,7 +342,7 @@ class DailyReconciliation:
             )
 
     def _check_features_vs_predictions(self, game_date: str, detailed: bool) -> ReconciliationResult:
-        """Check that feature store players have predictions."""
+        """Check that feature store players have predictions, with quality breakdown for skipped."""
         print("\n" + "-" * 50)
         print("CHECK 4: Features → Predictions (Missing Predictions)")
         print("-" * 50)
@@ -338,7 +351,8 @@ class DailyReconciliation:
         WITH features AS (
             SELECT DISTINCT
                 player_lookup,
-                game_id
+                game_id,
+                quality_alert_level
             FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
             WHERE game_date = '{game_date}'
         ),
@@ -354,6 +368,7 @@ class DailyReconciliation:
         SELECT
             f.player_lookup,
             f.game_id,
+            f.quality_alert_level,
             CASE WHEN p.player_lookup IS NOT NULL THEN 1 ELSE 0 END as has_predictions
         FROM features f
         LEFT JOIN predictions p ON f.game_id = p.game_id AND f.player_lookup = p.player_lookup
@@ -366,9 +381,21 @@ class DailyReconciliation:
             with_predictions = sum(1 for r in results if r.has_predictions)
             missing = [r for r in results if not r.has_predictions]
 
+            # Break down skipped predictions by quality alert level
+            missing_by_alert = {}
+            for r in missing:
+                level = r.quality_alert_level or 'unknown'
+                missing_by_alert[level] = missing_by_alert.get(level, 0) + 1
+
             print(f"   Feature store player-games: {feature_players}")
             print(f"   With predictions: {with_predictions}")
             print(f"   Missing predictions: {len(missing)}")
+            if missing_by_alert:
+                print(f"   Skipped by quality_alert_level:")
+                for level in ['red', 'yellow', 'green', 'unknown']:
+                    count = missing_by_alert.get(level, 0)
+                    if count > 0:
+                        print(f"      {level}: {count}")
 
             return ReconciliationResult(
                 check_name="features_vs_predictions",
@@ -444,6 +471,93 @@ class DailyReconciliation:
                 source_count=4,
                 target_count=0,
                 missing_count=4,
+                status="error"
+            )
+
+    def _check_quality_distribution(self, game_date: str) -> ReconciliationResult:
+        """Check feature quality distribution by category for the day."""
+        print("\n" + "-" * 50)
+        print("CHECK 6: Feature Quality Distribution by Category")
+        print("-" * 50)
+
+        query = f"""
+        SELECT
+            COUNT(*) as total,
+            ROUND(AVG(matchup_quality_pct), 1) as avg_matchup,
+            ROUND(AVG(player_history_quality_pct), 1) as avg_player_history,
+            ROUND(AVG(game_context_quality_pct), 1) as avg_game_context,
+            COUNTIF(quality_alert_level = 'green') as green_count,
+            COUNTIF(quality_alert_level = 'yellow') as yellow_count,
+            COUNTIF(quality_alert_level = 'red') as red_count
+        FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
+        WHERE game_date = '{game_date}'
+        """
+
+        try:
+            results = list(self.bq_client.query(query).result())
+
+            if not results or results[0].total == 0:
+                print("   No feature store data for this date.")
+                return ReconciliationResult(
+                    check_name="quality_distribution",
+                    source_name="Feature Store",
+                    target_name="Quality Categories",
+                    source_count=0,
+                    target_count=0,
+                    missing_count=0,
+                    status="warning"
+                )
+
+            row = results[0]
+            total = row.total
+            avg_matchup = row.avg_matchup or 0.0
+            avg_player_history = row.avg_player_history or 0.0
+            avg_game_context = row.avg_game_context or 0.0
+            green = row.green_count or 0
+            yellow = row.yellow_count or 0
+            red = row.red_count or 0
+
+            print(f"   Total feature rows: {total}")
+            print(f"   Category averages:")
+            print(f"      Matchup Quality:        {avg_matchup:.1f}%")
+            print(f"      Player History Quality: {avg_player_history:.1f}%")
+            print(f"      Game Context Quality:   {avg_game_context:.1f}%")
+            print(f"   Alert level distribution:")
+            print(f"      Green:  {green} ({green/total*100:.1f}%)")
+            print(f"      Yellow: {yellow} ({yellow/total*100:.1f}%)")
+            print(f"      Red:    {red} ({red/total*100:.1f}%)")
+
+            # Flag if matchup quality is low (Session 132 recurrence indicator)
+            if avg_matchup < 50:
+                print(f"   WARNING: Low matchup quality ({avg_matchup:.1f}%) - check PlayerCompositeFactorsProcessor")
+
+            # Determine status based on red alerts and category quality
+            if red > total * 0.1 or avg_matchup < 50:
+                status = "error"
+            elif red > 0 or avg_matchup < 70:
+                status = "warning"
+            else:
+                status = "ok"
+
+            return ReconciliationResult(
+                check_name="quality_distribution",
+                source_name="Feature Store",
+                target_name="Green Quality",
+                source_count=total,
+                target_count=green,
+                missing_count=red,
+                status=status
+            )
+
+        except Exception as e:
+            logger.error(f"Check 6 failed: {e}")
+            return ReconciliationResult(
+                check_name="quality_distribution",
+                source_name="Feature Store",
+                target_name="Quality Categories",
+                source_count=0,
+                target_count=0,
+                missing_count=0,
                 status="error"
             )
 

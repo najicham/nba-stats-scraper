@@ -133,19 +133,39 @@ class Phase4ToPhase5Gate(PhaseGate):
         )
 
     def _check_feature_quality(self, target_date: str) -> dict:
-        """Check average feature quality score."""
+        """Check feature quality using aggregate score and quality visibility fields (Session 139)."""
         query = """
-        SELECT AVG(feature_quality_score) as avg_quality
+        SELECT
+            AVG(feature_quality_score) as avg_quality,
+            ROUND(COUNTIF(is_quality_ready = TRUE) * 100.0 / NULLIF(COUNT(*), 0), 1) as quality_ready_pct,
+            COUNTIF(quality_alert_level = 'red') as red_alert_count,
+            COUNT(*) as total_records,
+            ROUND(AVG(matchup_quality_pct), 1) as avg_matchup_quality
         FROM `nba_precompute.ml_feature_store`
         WHERE game_date = @target_date
         """
 
         results = self._run_query(query, {"target_date": target_date})
-        avg_quality = results[0].avg_quality if results and results[0].avg_quality else 0.0
+        if not results or not results[0].avg_quality:
+            return {"passed": False, "avg_quality": 0.0}
+
+        row = results[0]
+        avg_quality = row.avg_quality or 0.0
+        quality_ready_pct = row.quality_ready_pct or 0.0
+        red_alert_count = row.red_alert_count or 0
+        total = row.total_records or 0
+        avg_matchup = row.avg_matchup_quality or 0.0
+        red_pct = (red_alert_count / total * 100) if total > 0 else 0
+
+        # Session 139: Multi-dimensional quality check
+        passed = avg_quality >= self.QUALITY_THRESHOLD and red_pct < 15
 
         return {
-            "passed": avg_quality >= self.QUALITY_THRESHOLD,
-            "avg_quality": avg_quality
+            "passed": passed,
+            "avg_quality": avg_quality,
+            "quality_ready_pct": quality_ready_pct,
+            "red_alert_count": red_alert_count,
+            "avg_matchup_quality": avg_matchup
         }
 
     def _check_player_count(self, target_date: str) -> dict:

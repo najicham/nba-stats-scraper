@@ -1,23 +1,26 @@
 # predictions/coordinator/quality_gate.py
 """
-Quality Gate System for Predictions (Session 95)
+Quality Gate System for Predictions (Session 95, overhauled Session 139)
 
 Implements "Predict Once, Never Replace" strategy:
 - Only predict when feature quality is high enough
 - Never replace existing predictions
-- Force predictions only at LAST_CALL mode
+- HARD FLOOR: Never predict with red alerts or matchup_quality < 50% (any mode)
+- Self-heal via QualityHealer when processors are missing
+- BACKFILL mode for next-day record-keeping predictions
 
 Modes:
 - FIRST: First attempt, require 85% quality
 - RETRY: Hourly retries, require 85% quality
 - FINAL_RETRY: Last quality-gated attempt, accept 80%
-- LAST_CALL: Force all remaining predictions
+- LAST_CALL: 4 PM ET - accept 70% (was 0%, Session 139 overhaul)
+- BACKFILL: Next-day record-keeping, accept 70%
 """
 
 import logging
 from datetime import date
 from typing import Dict, List, Optional, Tuple, Any
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from google.cloud import bigquery
@@ -30,7 +33,8 @@ class PredictionMode(Enum):
     FIRST = "FIRST"           # 8 AM ET - 85% threshold
     RETRY = "RETRY"           # 9-12 PM ET - 85% threshold
     FINAL_RETRY = "FINAL_RETRY"  # 1 PM ET - 80% threshold
-    LAST_CALL = "LAST_CALL"   # 4 PM ET - force all
+    LAST_CALL = "LAST_CALL"   # 4 PM ET - 70% threshold (Session 139: was 0%)
+    BACKFILL = "BACKFILL"     # Next-day record-keeping - 70% threshold
 
 
 # Quality thresholds by mode
@@ -38,8 +42,14 @@ QUALITY_THRESHOLDS = {
     PredictionMode.FIRST: 85.0,
     PredictionMode.RETRY: 85.0,
     PredictionMode.FINAL_RETRY: 80.0,
-    PredictionMode.LAST_CALL: 0.0,  # Accept all
+    PredictionMode.LAST_CALL: 70.0,   # Session 139: was 0.0 (forced all)
+    PredictionMode.BACKFILL: 70.0,     # Session 139: next-day record-keeping
 }
+
+# Session 139: Hard floor - NEVER predict regardless of mode
+# These catch the Session 132 scenario (all matchup features defaulted)
+HARD_FLOOR_MATCHUP_QUALITY = 50.0  # matchup_quality_pct minimum
+HARD_FLOOR_ALERT_LEVELS = {'red'}  # quality_alert_level values that block
 
 
 @dataclass
@@ -53,6 +63,8 @@ class QualityGateResult:
     low_quality_flag: bool
     forced_prediction: bool
     prediction_attempt: str
+    hard_floor_blocked: bool = False       # Session 139: blocked by absolute hard floor
+    missing_processor: Optional[str] = None  # Session 139: which processor likely failed
 
 
 @dataclass
@@ -65,6 +77,8 @@ class QualityGateSummary:
     players_forced: int
     avg_quality_score: float
     quality_distribution: Dict[str, int]  # high/medium/low counts
+    players_hard_blocked: int = 0          # Session 139: blocked by hard floor
+    missing_processors: List[str] = field(default_factory=list)  # Session 139: diagnosed missing processors
 
 
 class QualityGate:
@@ -139,20 +153,30 @@ class QualityGate:
         """
         Get feature quality scores for players from ml_feature_store_v2.
 
+        Session 139: Also fetches is_quality_ready, quality_alert_level, matchup_quality_pct
+        for richer quality gating. Returns dict of scores for backward compatibility,
+        but also populates self._quality_details for enhanced gating.
+
         Args:
             game_date: Date to get features for
             player_lookups: List of player lookups
 
         Returns:
-            Dict mapping player_lookup to quality score
+            Dict mapping player_lookup to quality score (float)
         """
         if not player_lookups:
+            self._quality_details = {}
             return {}
 
         dataset = f"{self.dataset_prefix}nba_predictions" if self.dataset_prefix else "nba_predictions"
 
         query = f"""
-            SELECT player_lookup, feature_quality_score
+            SELECT
+                player_lookup,
+                feature_quality_score,
+                is_quality_ready,
+                quality_alert_level,
+                matchup_quality_pct
             FROM `{self.project_id}.{dataset}.ml_feature_store_v2`
             WHERE game_date = @game_date
               AND player_lookup IN UNNEST(@player_lookups)
@@ -167,11 +191,20 @@ class QualityGate:
 
         try:
             result = self.bq_client.query(query, job_config=job_config).result()
-            scores = {row.player_lookup: float(row.feature_quality_score or 0) for row in result}
+            scores = {}
+            self._quality_details = {}
+            for row in result:
+                scores[row.player_lookup] = float(row.feature_quality_score or 0)
+                self._quality_details[row.player_lookup] = {
+                    'is_quality_ready': row.is_quality_ready or False,
+                    'quality_alert_level': row.quality_alert_level,
+                    'matchup_quality_pct': float(row.matchup_quality_pct or 0),
+                }
             logger.info(f"Got quality scores for {len(scores)} players for {game_date}")
             return scores
         except Exception as e:
             logger.error(f"Error getting feature quality scores: {e}")
+            self._quality_details = {}
             return {}
 
     def apply_quality_gate(
@@ -183,6 +216,12 @@ class QualityGate:
         """
         Apply quality gate to a batch of players.
 
+        Session 139 overhaul:
+        - Hard floor: NEVER predict with red alerts or matchup_quality < 50% (any mode)
+        - LAST_CALL no longer forces at 0% threshold (now 70%)
+        - Diagnoses missing processors for self-healing
+        - No more forced_no_features or forced_last_call escape hatches
+
         Args:
             game_date: Date to make predictions for
             player_lookups: List of player lookups
@@ -192,7 +231,6 @@ class QualityGate:
             Tuple of (list of QualityGateResult, QualityGateSummary)
         """
         threshold = QUALITY_THRESHOLDS.get(mode, 85.0)
-        is_last_call = mode == PredictionMode.LAST_CALL
 
         logger.info(f"Applying quality gate: mode={mode.value}, threshold={threshold}%, players={len(player_lookups)}")
 
@@ -207,16 +245,21 @@ class QualityGate:
             'skipped_existing': 0,
             'skipped_low_quality': 0,
             'forced': 0,
+            'hard_blocked': 0,
             'quality_sum': 0.0,
             'quality_count': 0,
             'high': 0,
             'medium': 0,
             'low': 0,
         }
+        diagnosed_processors = set()
 
         for player_lookup in player_lookups:
             has_existing = existing_predictions.get(player_lookup, False)
             quality_score = quality_scores.get(player_lookup)
+            details = getattr(self, '_quality_details', {}).get(player_lookup, {})
+            alert_level = details.get('quality_alert_level')
+            matchup_q = details.get('matchup_quality_pct', 100)  # Default 100 for backward compat
 
             # Track quality distribution
             if quality_score is not None:
@@ -244,36 +287,74 @@ class QualityGate:
                 stats['skipped_existing'] += 1
                 continue
 
-            # Rule 2: No feature data - only proceed on LAST_CALL
-            if quality_score is None:
-                if is_last_call:
-                    results.append(QualityGateResult(
-                        player_lookup=player_lookup,
-                        should_predict=True,
-                        reason="forced_no_features",
-                        feature_quality_score=None,
-                        has_existing_prediction=False,
-                        low_quality_flag=True,
-                        forced_prediction=True,
-                        prediction_attempt=mode.value
-                    ))
-                    stats['to_predict'] += 1
-                    stats['forced'] += 1
-                else:
-                    results.append(QualityGateResult(
-                        player_lookup=player_lookup,
-                        should_predict=False,
-                        reason="no_features_available",
-                        feature_quality_score=None,
-                        has_existing_prediction=False,
-                        low_quality_flag=True,
-                        forced_prediction=False,
-                        prediction_attempt=mode.value
-                    ))
-                    stats['skipped_low_quality'] += 1
+            # Rule 2 (Session 139 HARD FLOOR): Block red alerts and low matchup quality
+            # This applies to ALL modes including LAST_CALL and BACKFILL
+            if alert_level in HARD_FLOOR_ALERT_LEVELS:
+                missing = _diagnose_missing_processor(details)
+                if missing:
+                    diagnosed_processors.add(missing)
+                logger.warning(
+                    f"HARD_FLOOR: Blocking {player_lookup} - quality_alert_level={alert_level}, "
+                    f"matchup_q={matchup_q:.0f}%, missing_processor={missing}"
+                )
+                results.append(QualityGateResult(
+                    player_lookup=player_lookup,
+                    should_predict=False,
+                    reason=f"hard_floor_red_alert",
+                    feature_quality_score=quality_score,
+                    has_existing_prediction=False,
+                    low_quality_flag=True,
+                    forced_prediction=False,
+                    prediction_attempt=mode.value,
+                    hard_floor_blocked=True,
+                    missing_processor=missing,
+                ))
+                stats['hard_blocked'] += 1
+                stats['skipped_low_quality'] += 1
                 continue
 
-            # Rule 3: Quality meets threshold - predict
+            if quality_score is not None and matchup_q < HARD_FLOOR_MATCHUP_QUALITY:
+                missing = _diagnose_missing_processor(details)
+                if missing:
+                    diagnosed_processors.add(missing)
+                logger.warning(
+                    f"HARD_FLOOR: Blocking {player_lookup} - matchup_quality={matchup_q:.0f}% "
+                    f"< {HARD_FLOOR_MATCHUP_QUALITY}%, missing_processor={missing}"
+                )
+                results.append(QualityGateResult(
+                    player_lookup=player_lookup,
+                    should_predict=False,
+                    reason=f"hard_floor_matchup_{matchup_q:.0f}",
+                    feature_quality_score=quality_score,
+                    has_existing_prediction=False,
+                    low_quality_flag=True,
+                    forced_prediction=False,
+                    prediction_attempt=mode.value,
+                    hard_floor_blocked=True,
+                    missing_processor=missing,
+                ))
+                stats['hard_blocked'] += 1
+                stats['skipped_low_quality'] += 1
+                continue
+
+            # Rule 3: No feature data at all - skip (no more LAST_CALL forcing)
+            if quality_score is None:
+                results.append(QualityGateResult(
+                    player_lookup=player_lookup,
+                    should_predict=False,
+                    reason="no_features_available",
+                    feature_quality_score=None,
+                    has_existing_prediction=False,
+                    low_quality_flag=True,
+                    forced_prediction=False,
+                    prediction_attempt=mode.value,
+                    hard_floor_blocked=True,
+                ))
+                stats['hard_blocked'] += 1
+                stats['skipped_low_quality'] += 1
+                continue
+
+            # Rule 4: Quality meets threshold - predict
             if quality_score >= threshold:
                 low_quality = quality_score < 85
                 results.append(QualityGateResult(
@@ -289,32 +370,18 @@ class QualityGate:
                 stats['to_predict'] += 1
                 continue
 
-            # Rule 4: Low quality - force on LAST_CALL, skip otherwise
-            if is_last_call:
-                results.append(QualityGateResult(
-                    player_lookup=player_lookup,
-                    should_predict=True,
-                    reason="forced_last_call",
-                    feature_quality_score=quality_score,
-                    has_existing_prediction=False,
-                    low_quality_flag=True,
-                    forced_prediction=True,
-                    prediction_attempt=mode.value
-                ))
-                stats['to_predict'] += 1
-                stats['forced'] += 1
-            else:
-                results.append(QualityGateResult(
-                    player_lookup=player_lookup,
-                    should_predict=False,
-                    reason=f"quality_below_threshold_{threshold}",
-                    feature_quality_score=quality_score,
-                    has_existing_prediction=False,
-                    low_quality_flag=True,
-                    forced_prediction=False,
-                    prediction_attempt=mode.value
-                ))
-                stats['skipped_low_quality'] += 1
+            # Rule 5: Below threshold - skip
+            results.append(QualityGateResult(
+                player_lookup=player_lookup,
+                should_predict=False,
+                reason=f"quality_below_threshold_{threshold}",
+                feature_quality_score=quality_score,
+                has_existing_prediction=False,
+                low_quality_flag=True,
+                forced_prediction=False,
+                prediction_attempt=mode.value
+            ))
+            stats['skipped_low_quality'] += 1
 
         # Build summary
         avg_quality = stats['quality_sum'] / stats['quality_count'] if stats['quality_count'] > 0 else 0.0
@@ -330,7 +397,9 @@ class QualityGate:
                 'high_85plus': stats['high'],
                 'medium_80_85': stats['medium'],
                 'low_below_80': stats['low'],
-            }
+            },
+            players_hard_blocked=stats['hard_blocked'],
+            missing_processors=sorted(diagnosed_processors),
         )
 
         # Log summary
@@ -339,9 +408,13 @@ class QualityGate:
             f"to_predict={stats['to_predict']}/{stats['total']}, "
             f"skipped_existing={stats['skipped_existing']}, "
             f"skipped_low_quality={stats['skipped_low_quality']}, "
-            f"forced={stats['forced']}, "
+            f"hard_blocked={stats['hard_blocked']}, "
             f"avg_quality={avg_quality:.1f}%"
         )
+        if diagnosed_processors:
+            logger.warning(
+                f"QUALITY_GATE: Missing processors diagnosed: {sorted(diagnosed_processors)}"
+            )
 
         return results, summary
 
@@ -491,6 +564,38 @@ class AnalyticsQualityGate:
             )
 
 
+def _diagnose_missing_processor(quality_details: Dict) -> Optional[str]:
+    """
+    Diagnose which Phase 4 processor likely failed based on quality details.
+
+    Uses matchup_quality_pct and quality_alert_level to infer which processor
+    didn't run. This enables targeted self-healing.
+
+    Args:
+        quality_details: Dict with is_quality_ready, quality_alert_level, matchup_quality_pct
+
+    Returns:
+        Processor name string or None if can't diagnose
+    """
+    matchup_q = quality_details.get('matchup_quality_pct', 100)
+    alert_level = quality_details.get('quality_alert_level')
+
+    # matchup_quality < 50% strongly indicates PlayerCompositeFactorsProcessor
+    # or its dependencies (TeamDefenseZoneAnalysis, PlayerShotZoneAnalysis) failed
+    if matchup_q < 50:
+        # matchup_q = 0 means ALL matchup features defaulted -> composite factors processor
+        if matchup_q == 0:
+            return 'PlayerCompositeFactorsProcessor'
+        # Partial matchup data -> likely a dependency processor
+        return 'PlayerCompositeFactorsProcessor'
+
+    # Red alert with decent matchup -> likely MLFeatureStoreProcessor issue
+    if alert_level == 'red':
+        return 'MLFeatureStoreProcessor'
+
+    return None
+
+
 def parse_prediction_mode(mode_str: str) -> PredictionMode:
     """
     Parse prediction mode string to enum.
@@ -512,6 +617,7 @@ def parse_prediction_mode(mode_str: str) -> PredictionMode:
         'RETRY': PredictionMode.RETRY,
         'FINAL_RETRY': PredictionMode.FINAL_RETRY,
         'LAST_CALL': PredictionMode.LAST_CALL,
+        'BACKFILL': PredictionMode.BACKFILL,
         # Legacy mappings
         'EARLY': PredictionMode.FIRST,
         'OVERNIGHT': PredictionMode.RETRY,

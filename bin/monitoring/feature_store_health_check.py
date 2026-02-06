@@ -2,8 +2,9 @@
 """
 Feature Store Health Check
 
-Validates that ml feature store (player_daily_cache) is populated correctly
-and identifies any quality issues.
+Validates that ml feature store (ml_feature_store_v2) is populated correctly
+and identifies any quality issues using the new quality fields:
+is_quality_ready, quality_alert_level, matchup_quality_pct, etc.
 
 Usage:
     python bin/monitoring/feature_store_health_check.py [--date YYYY-MM-DD] [--alert]
@@ -92,11 +93,11 @@ class FeatureStoreHealthCheck:
         return results
 
     def _check_date_coverage(self, check_date: date) -> Dict:
-        """Check if data exists for the date."""
+        """Check if data exists for the date in ml_feature_store_v2."""
         query = f"""
         SELECT COUNT(*) as record_count
-        FROM `{self.project_id}.nba_precompute.player_daily_cache`
-        WHERE cache_date = @check_date
+        FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
+        WHERE game_date = @check_date
         """
 
         job_config = bigquery.QueryJobConfig(
@@ -131,13 +132,13 @@ class FeatureStoreHealthCheck:
             }
 
     def _check_production_readiness(self, check_date: date) -> Dict:
-        """Check production readiness percentage."""
+        """Check production readiness using is_quality_ready from ml_feature_store_v2."""
         query = f"""
         SELECT
             COUNT(*) as total,
-            COUNTIF(is_production_ready = TRUE) as ready
-        FROM `{self.project_id}.nba_precompute.player_daily_cache`
-        WHERE cache_date = @check_date
+            COUNTIF(is_quality_ready = TRUE) as ready
+        FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
+        WHERE game_date = @check_date
         """
 
         job_config = bigquery.QueryJobConfig(
@@ -159,23 +160,23 @@ class FeatureStoreHealthCheck:
             severity = SEVERITY_OK
 
         return {
-            "name": "Production Readiness",
+            "name": "Production Readiness (is_quality_ready)",
             "severity": severity,
-            "message": f"{ready}/{total} records ready ({pct_ready:.1f}%)",
+            "message": f"{ready}/{total} records quality-ready ({pct_ready:.1f}%)",
             "value": pct_ready
         }
 
     def _check_null_rates(self, check_date: date) -> Dict:
-        """Check NULL rates for critical features."""
+        """Check NULL rates for critical features in ml_feature_store_v2."""
         query = f"""
         SELECT
             COUNT(*) as total,
-            COUNTIF(points_avg_last_10 IS NULL) as null_points,
-            COUNTIF(minutes_avg_last_10 IS NULL) as null_minutes,
-            COUNTIF(usage_rate_last_10 IS NULL) as null_usage,
-            COUNTIF(ts_pct_last_10 IS NULL) as null_ts
-        FROM `{self.project_id}.nba_precompute.player_daily_cache`
-        WHERE cache_date = @check_date
+            COUNTIF(feature_quality_score IS NULL) as null_quality_score,
+            COUNTIF(matchup_quality_pct IS NULL) as null_matchup,
+            COUNTIF(player_history_quality_pct IS NULL) as null_history,
+            COUNTIF(game_context_quality_pct IS NULL) as null_context
+        FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
+        WHERE game_date = @check_date
         """
 
         job_config = bigquery.QueryJobConfig(
@@ -196,10 +197,10 @@ class FeatureStoreHealthCheck:
             }
 
         null_rates = {
-            "points_avg_last_10": result.null_points / total * 100,
-            "minutes_avg_last_10": result.null_minutes / total * 100,
-            "usage_rate_last_10": result.null_usage / total * 100,
-            "ts_pct_last_10": result.null_ts / total * 100
+            "feature_quality_score": result.null_quality_score / total * 100,
+            "matchup_quality_pct": result.null_matchup / total * 100,
+            "player_history_quality_pct": result.null_history / total * 100,
+            "game_context_quality_pct": result.null_context / total * 100
         }
 
         max_null_rate = max(null_rates.values())
@@ -212,7 +213,7 @@ class FeatureStoreHealthCheck:
             message = f"Moderate NULL rates (max: {max_null_rate:.1f}%)"
         else:
             severity = SEVERITY_OK
-            message = f"All NULL rates < 2% ✓"
+            message = "All NULL rates < 2%"
 
         return {
             "name": "NULL Rates",
@@ -222,14 +223,14 @@ class FeatureStoreHealthCheck:
         }
 
     def _check_quality_tiers(self, check_date: date) -> Dict:
-        """Check quality tier distribution."""
+        """Check quality_alert_level distribution from ml_feature_store_v2."""
         query = f"""
         SELECT
-            quality_tier,
+            quality_alert_level,
             COUNT(*) as count
-        FROM `{self.project_id}.nba_precompute.player_daily_cache`
-        WHERE cache_date = @check_date
-        GROUP BY quality_tier
+        FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
+        WHERE game_date = @check_date
+        GROUP BY quality_alert_level
         """
 
         job_config = bigquery.QueryJobConfig(
@@ -239,46 +240,47 @@ class FeatureStoreHealthCheck:
         )
 
         results = self.client.query(query, job_config=job_config)
-        tier_counts = {row.quality_tier: row.count for row in results if row.quality_tier}
+        level_counts = {row.quality_alert_level: row.count for row in results if row.quality_alert_level}
 
-        poor_count = tier_counts.get("POOR", 0)
-        total = sum(tier_counts.values())
+        red_count = level_counts.get("red", 0)
+        yellow_count = level_counts.get("yellow", 0)
+        green_count = level_counts.get("green", 0)
+        total = sum(level_counts.values())
 
         if total == 0:
             return {
-                "name": "Quality Tiers",
+                "name": "Quality Alert Levels",
                 "severity": SEVERITY_WARNING,
-                "message": "No quality tier data",
+                "message": "No quality alert level data",
                 "value": {}
             }
 
-        poor_pct = (poor_count / total * 100) if total > 0 else 0
+        red_pct = (red_count / total * 100) if total > 0 else 0
 
-        if poor_pct > 5:
+        if red_pct > 5:
             severity = SEVERITY_ERROR
-        elif poor_pct > 2:
+        elif red_pct > 2 or yellow_count > total * 0.2:
             severity = SEVERITY_WARNING
-        elif poor_count == 0 and total > 0:
-            severity = SEVERITY_OK
         else:
             severity = SEVERITY_OK
 
         return {
-            "name": "Quality Tiers",
+            "name": "Quality Alert Levels",
             "severity": severity,
-            "message": f"{poor_count} POOR quality records ({poor_pct:.1f}%)",
-            "value": tier_counts
+            "message": f"green={green_count}, yellow={yellow_count}, red={red_count} ({red_pct:.1f}% red)",
+            "value": level_counts
         }
 
     def _check_completeness(self, check_date: date) -> Dict:
-        """Check data completeness."""
+        """Check data completeness and matchup quality from ml_feature_store_v2."""
         query = f"""
         SELECT
             COUNT(*) as total,
-            COUNTIF(all_windows_complete = TRUE) as complete,
-            AVG(completeness_percentage) as avg_completeness
-        FROM `{self.project_id}.nba_precompute.player_daily_cache`
-        WHERE cache_date = @check_date
+            COUNTIF(is_quality_ready = TRUE) as complete,
+            AVG(feature_quality_score) as avg_quality,
+            AVG(matchup_quality_pct) as avg_matchup_quality
+        FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
+        WHERE game_date = @check_date
         """
 
         job_config = bigquery.QueryJobConfig(
@@ -290,11 +292,17 @@ class FeatureStoreHealthCheck:
         result = list(self.client.query(query, job_config=job_config))[0]
         total = result.total
         complete = result.complete
-        avg_completeness = result.avg_completeness or 0
+        avg_quality = result.avg_quality or 0
+        avg_matchup = result.avg_matchup_quality or 0
 
         pct_complete = (complete / total * 100) if total > 0 else 0
 
-        if pct_complete < 95:
+        # Flag matchup quality separately (Session 132 recurrence indicator)
+        matchup_warning = ""
+        if avg_matchup < 50 and total > 0:
+            matchup_warning = f" | WARNING: avg matchup_quality_pct={avg_matchup:.1f}% (<50%)"
+
+        if pct_complete < 95 or avg_matchup < 50:
             severity = SEVERITY_ERROR
         elif pct_complete < 98:
             severity = SEVERITY_WARNING
@@ -302,9 +310,9 @@ class FeatureStoreHealthCheck:
             severity = SEVERITY_OK
 
         return {
-            "name": "Completeness",
+            "name": "Completeness & Matchup Quality",
             "severity": severity,
-            "message": f"{complete}/{total} records complete ({pct_complete:.1f}%)",
+            "message": f"{complete}/{total} quality-ready ({pct_complete:.1f}%), avg_quality={avg_quality:.1f}{matchup_warning}",
             "value": pct_complete
         }
 
@@ -357,9 +365,9 @@ class FeatureStoreHealthCheck:
         """Check if data was processed recently."""
         query = f"""
         SELECT
-            MAX(processed_at) as last_processed
-        FROM `{self.project_id}.nba_precompute.player_daily_cache`
-        WHERE cache_date = @check_date
+            MAX(created_at) as last_processed
+        FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
+        WHERE game_date = @check_date
         """
 
         job_config = bigquery.QueryJobConfig(
@@ -390,7 +398,7 @@ class FeatureStoreHealthCheck:
             message = f"Data is {age_hours:.1f} hours old"
         else:
             severity = SEVERITY_OK
-            message = f"Data processed {age_hours:.1f} hours ago ✓"
+            message = f"Data processed {age_hours:.1f} hours ago"
 
         return {
             "name": "Data Staleness",

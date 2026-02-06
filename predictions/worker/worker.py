@@ -412,6 +412,51 @@ def _compute_tier_adjustment(points_avg_season: float) -> float:
         return -5.5
 
 
+def _compute_prediction_made_before_game(
+    prediction_run_mode: str,
+    game_start_et: Optional[str] = None,
+) -> bool:
+    """
+    Determine if prediction was made before game start (Session 139).
+
+    BACKFILL predictions are always post-game (False).
+    For other modes, compare current time to game start time.
+    Falls back to True for normal runs (conservative assumption).
+
+    Args:
+        prediction_run_mode: Run mode (FIRST, RETRY, LAST_CALL, BACKFILL, etc.)
+        game_start_et: Optional game start time as ISO string (ET)
+
+    Returns:
+        True if prediction was made before game started
+    """
+    if prediction_run_mode == 'BACKFILL':
+        return False
+
+    if game_start_et:
+        try:
+            from zoneinfo import ZoneInfo
+            now_et = datetime.now(ZoneInfo('America/New_York'))
+            # Parse game start - try common formats
+            if 'T' in str(game_start_et):
+                game_start = datetime.fromisoformat(str(game_start_et))
+            else:
+                # Just a time string like "19:00" - assume today ET
+                parts = str(game_start_et).split(':')
+                game_start = now_et.replace(
+                    hour=int(parts[0]), minute=int(parts[1]) if len(parts) > 1 else 0,
+                    second=0, microsecond=0
+                )
+            if game_start.tzinfo is None:
+                game_start = game_start.replace(tzinfo=ZoneInfo('America/New_York'))
+            return now_et < game_start
+        except Exception:
+            pass  # Fall through to default
+
+    # Default: True for normal prediction runs (pre-game)
+    return True
+
+
 # Session 112: Player blacklist for UNDER bets (verified hit rates < 50%)
 UNDER_BLACKLIST_PLAYERS = {
     'lukadoncic',      # 45.5% UNDER hit rate
@@ -2054,15 +2099,29 @@ def format_prediction_for_bigquery(
                     f"season={season_avg:.1f}, diff={l5_avg - season_avg:.1f} (hot streak continuation risk)"
                 )
 
-        # Session 125: Data quality filter
-        # High quality (80+) has 60.6% hit rate vs Medium (70-80) at 39.1%
+        # Session 125/139: Data quality filter (upgraded to use is_quality_ready)
+        # Uses new quality visibility fields when available, falls back to score-based
+        is_quality_ready = features.get('is_quality_ready', None)
         quality_score = features.get('feature_quality_score', 100)
-        if is_actionable and quality_score < 80:
-            is_actionable = False
-            filter_reason = 'low_data_quality'
-            logger.info(
-                f"Filtered low quality for {player_lookup}: quality_score={quality_score:.1f} < 80"
-            )
+        if is_actionable:
+            if is_quality_ready is not None:
+                # Session 139: Use new quality gate (combines tier + score + matchup quality)
+                if not is_quality_ready:
+                    is_actionable = False
+                    filter_reason = 'not_quality_ready'
+                    logger.info(
+                        f"Filtered not quality ready for {player_lookup}: "
+                        f"tier={features.get('quality_tier')}, score={quality_score:.1f}, "
+                        f"matchup_q={features.get('matchup_quality_pct', 0):.0f}%, "
+                        f"alert={features.get('quality_alert_level')}"
+                    )
+            elif quality_score < 80:
+                # Fallback: Legacy score-based filter for pre-backfill data
+                is_actionable = False
+                filter_reason = 'low_data_quality'
+                logger.info(
+                    f"Filtered low quality for {player_lookup}: quality_score={quality_score:.1f} < 80"
+                )
 
     # Base record
     record = {
@@ -2192,6 +2251,18 @@ def format_prediction_for_bigquery(
         # feature_sources_json: Per-feature source tracking for full audit trail
         'matchup_data_status': features.get('matchup_data_status'),
         'feature_sources_json': features.get('feature_sources_json'),
+
+        # Session 139: Quality visibility fields - richer quality context
+        'is_quality_ready': features.get('is_quality_ready'),
+        'quality_alert_level': features.get('quality_alert_level'),
+        'matchup_quality_pct': features.get('matchup_quality_pct'),
+
+        # Session 139: Track whether prediction was made before game started
+        # False for BACKFILL mode or post-game predictions (record-keeping only)
+        'prediction_made_before_game': _compute_prediction_made_before_game(
+            features.get('prediction_run_mode', 'OVERNIGHT'),
+            features.get('game_start_et'),
+        ),
 
         # Session 103: Tier calibration metadata - raw prediction stays pure, calibration is metadata
         # scoring_tier: Player category based on season scoring average

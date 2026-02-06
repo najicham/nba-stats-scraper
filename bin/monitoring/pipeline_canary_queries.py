@@ -127,7 +127,11 @@ CANARY_CHECKS = [
             COUNT(DISTINCT player_lookup) as players,
             AVG(feature_quality_score) as avg_quality,
             COUNTIF(feature_quality_score < 70) as low_quality_count,
-            COUNTIF(early_season_flag) as early_season_count
+            COUNTIF(early_season_flag) as early_season_count,
+            -- Session 139: Quality visibility canaries
+            ROUND(COUNTIF(is_quality_ready = TRUE) * 100.0 / NULLIF(COUNT(*), 0), 1) as quality_ready_pct,
+            COUNTIF(quality_alert_level = 'red') as red_alert_count,
+            ROUND(AVG(matchup_quality_pct), 1) as avg_matchup_quality
         FROM
             `nba-props-platform.nba_predictions.ml_feature_store_v2`
         WHERE
@@ -136,9 +140,12 @@ CANARY_CHECKS = [
         thresholds={
             'players': {'min': 100},  # At least 100 players tracked
             'avg_quality': {'min': 70},  # Average quality score > 70
-            'low_quality_count': {'max': 50}  # Not too many low quality features
+            'low_quality_count': {'max': 50},  # Not too many low quality features
+            'quality_ready_pct': {'min': 60},  # Session 139: At least 60% quality-ready
+            'red_alert_count': {'max': 30},  # Session 139: Not too many red alerts
+            'avg_matchup_quality': {'min': 40}  # Session 139: Catches Session 132 scenario
         },
-        description="Validates precomputed ML features"
+        description="Validates precomputed ML features and quality visibility"
     ),
 
     CanaryCheck(

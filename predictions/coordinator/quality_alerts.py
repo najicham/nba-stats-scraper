@@ -199,6 +199,113 @@ def _send_slack_alert(alert: QualityAlert):
         logger.error(f"Failed to send Slack alert: {e}")
 
 
+def send_predictions_skipped_alert(
+    game_date: date,
+    mode: str,
+    blocked_results: list,
+    missing_processors: list,
+    heal_attempted: bool = False,
+    heal_success: bool = False,
+):
+    """
+    Send clear PREDICTIONS_SKIPPED alert with full details (Session 139).
+
+    Called when players are hard-blocked by the quality gate. Provides
+    actionable information: which players, why, and what to do next.
+
+    Args:
+        game_date: Date predictions are for
+        mode: Prediction mode (FIRST, RETRY, etc.)
+        blocked_results: List of QualityGateResult for blocked players
+        missing_processors: List of diagnosed missing processors
+        heal_attempted: Whether self-healing was attempted
+        heal_success: Whether self-healing succeeded
+    """
+    if not blocked_results:
+        return
+
+    # Build player details
+    player_lines = []
+    for r in blocked_results[:20]:  # Cap at 20 for readability
+        score_str = f"{r.feature_quality_score:.0f}%" if r.feature_quality_score is not None else "N/A"
+        player_lines.append(
+            f"  {r.player_lookup}: quality={score_str}, reason={r.reason}"
+            + (f", missing={r.missing_processor}" if r.missing_processor else "")
+        )
+
+    remaining = len(blocked_results) - 20
+    if remaining > 0:
+        player_lines.append(f"  ... and {remaining} more")
+
+    players_str = "\n".join(player_lines)
+
+    # Heal status
+    if heal_attempted:
+        heal_str = "ATTEMPTED - " + ("SUCCESS" if heal_success else "FAILED")
+    else:
+        heal_str = "NOT ATTEMPTED"
+
+    # Root cause
+    if missing_processors:
+        root_cause = ", ".join(missing_processors) + " didn't run"
+    else:
+        root_cause = "Unknown - check Phase 4 processor logs"
+
+    message = f""":no_entry: *PREDICTIONS SKIPPED - ACTION REQUIRED*
+
+*{len(blocked_results)} players* skipped for {game_date} ({mode})
+Root cause: {root_cause}
+Self-heal: {heal_str}
+
+*Skipped players:*
+```
+{players_str}
+```
+
+*Next steps:*
+1. Investigate why processor failed
+2. Backfill tomorrow: `POST /start {{"game_date":"{game_date}","prediction_run_mode":"BACKFILL"}}`
+"""
+
+    alert = QualityAlert(
+        alert_type="PREDICTIONS_SKIPPED",
+        severity="CRITICAL",
+        message=f"{len(blocked_results)} players skipped for {game_date} ({mode})",
+        details={
+            'game_date': str(game_date),
+            'mode': mode,
+            'players_blocked': len(blocked_results),
+            'missing_processors': missing_processors,
+            'heal_attempted': heal_attempted,
+            'heal_success': heal_success,
+        }
+    )
+
+    # Log the alert
+    logger.error(
+        f"QUALITY_ALERT: PREDICTIONS_SKIPPED - {len(blocked_results)} players for {game_date}",
+        extra={
+            'alert_type': 'PREDICTIONS_SKIPPED',
+            'severity': 'CRITICAL',
+            'details': alert.details,
+        }
+    )
+
+    # Send to Slack
+    try:
+        from shared.utils.slack_alerts import send_slack_alert
+        send_slack_alert(
+            message=message,
+            channel="#nba-alerts",
+            alert_type="PREDICTIONS_SKIPPED",
+        )
+        logger.info("Sent PREDICTIONS_SKIPPED Slack alert")
+    except ImportError:
+        logger.warning("Slack alerting not available - alert logged only")
+    except Exception as e:
+        logger.error(f"Failed to send PREDICTIONS_SKIPPED Slack alert: {e}")
+
+
 def log_quality_metrics(
     game_date: date,
     mode: str,

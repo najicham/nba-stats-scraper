@@ -916,7 +916,17 @@ class PredictionDataLoader:
             processing_decision_reason,
             -- Session 99: Data provenance fields for audit trail
             matchup_data_status,
-            feature_sources_json
+            feature_sources_json,
+            -- Session 139: Quality visibility fields
+            is_quality_ready,
+            quality_tier,
+            quality_alert_level,
+            matchup_quality_pct,
+            player_history_quality_pct,
+            vegas_quality_pct,
+            game_context_quality_pct,
+            default_feature_count,
+            is_training_ready
         FROM `{project}.{predictions_dataset}.ml_feature_store_v2`
         WHERE player_lookup IN UNNEST(@player_lookups)
           AND game_date = @game_date
@@ -1014,6 +1024,17 @@ class PredictionDataLoader:
                 # Session 99: Data provenance tracking for audit trail
                 features['matchup_data_status'] = getattr(row, 'matchup_data_status', None)
                 features['feature_sources_json'] = getattr(row, 'feature_sources_json', None)
+
+                # Session 139: Quality visibility fields
+                features['is_quality_ready'] = getattr(row, 'is_quality_ready', None) or False
+                features['quality_tier'] = getattr(row, 'quality_tier', None) or 'unknown'
+                features['quality_alert_level'] = getattr(row, 'quality_alert_level', None) or 'unknown'
+                features['matchup_quality_pct'] = float(getattr(row, 'matchup_quality_pct', 0) or 0)
+                features['player_history_quality_pct'] = float(getattr(row, 'player_history_quality_pct', 0) or 0)
+                features['vegas_quality_pct'] = float(getattr(row, 'vegas_quality_pct', 0) or 0)
+                features['game_context_quality_pct'] = float(getattr(row, 'game_context_quality_pct', 0) or 0)
+                features['default_feature_count'] = int(getattr(row, 'default_feature_count', 0) or 0)
+                features['is_training_ready'] = getattr(row, 'is_training_ready', None) or False
 
                 player_features[row.player_lookup] = features
 
