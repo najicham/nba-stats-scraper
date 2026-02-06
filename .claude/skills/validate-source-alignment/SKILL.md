@@ -85,11 +85,22 @@ WITH source_counts AS (
 
   UNION ALL
 
-  -- Upcoming player game context (features 25-28: vegas)
-  SELECT 'upcoming_player_game_context' as source_table,
+  -- Raw odds tables (features 25-28: vegas player prop lines)
+  -- Feature 25-28 source is odds_api + bettingpros, NOT upcoming_player_game_context.game_total
+  SELECT 'odds_player_props' as source_table,
     COUNT(DISTINCT player_lookup) as source_players
-  FROM \`nba-props-platform.nba_analytics.upcoming_player_game_context\`
-  WHERE game_date = ${TARGET_DATE}
+  FROM (
+    SELECT DISTINCT player_lookup
+    FROM \`nba-props-platform.nba_raw.odds_api_player_points_props\`
+    WHERE game_date = ${TARGET_DATE}
+      AND points_line IS NOT NULL AND points_line > 0
+    UNION DISTINCT
+    SELECT DISTINCT player_lookup
+    FROM \`nba-props-platform.nba_raw.bettingpros_player_points_props\`
+    WHERE game_date = ${TARGET_DATE}
+      AND market_type = 'points'
+      AND points_line IS NOT NULL AND points_line > 0
+  )
 ),
 feature_store AS (
   SELECT COUNT(DISTINCT player_lookup) as fs_players
@@ -108,7 +119,7 @@ SELECT
         WHEN SAFE_DIVIDE(fs.fs_players, sc.source_players) >= 0.90 THEN 'WARN'
         ELSE 'FAIL'
       END
-    WHEN sc.source_table = 'upcoming_player_game_context'
+    WHEN sc.source_table = 'odds_player_props'
       THEN CASE
         WHEN SAFE_DIVIDE(fs.fs_players, sc.source_players) >= 0.85 THEN 'PASS'
         WHEN SAFE_DIVIDE(fs.fs_players, sc.source_players) >= 0.70 THEN 'WARN'
@@ -128,7 +139,7 @@ ORDER BY sc.source_table
 |--------|------|------|------|
 | player_daily_cache | >= 98% | 90-97% | < 90% |
 | player_composite_factors | >= 98% | 90-97% | < 90% |
-| upcoming_player_game_context (vegas) | >= 85% | 70-84% | < 70% |
+| odds_player_props (vegas) | >= 85% | 70-84% | < 70% |
 | team_defense_zone_analysis | INFO only (team-level, not player-level) |
 
 ---
@@ -189,11 +200,21 @@ source_exists AS (
 
   UNION ALL
 
-  -- Check if vegas source actually has data (non-null game_total)
+  -- Check if vegas source actually has player prop lines
+  -- Features 25-28 come from raw odds tables, not upcoming_player_game_context.game_total
   SELECT DISTINCT player_lookup, game_date, 'vegas (features 25-28)' as feature_group
-  FROM \`nba-props-platform.nba_analytics.upcoming_player_game_context\`
-  WHERE game_date = ${TARGET_DATE}
-    AND game_total IS NOT NULL
+  FROM (
+    SELECT player_lookup, game_date
+    FROM \`nba-props-platform.nba_raw.odds_api_player_points_props\`
+    WHERE game_date = ${TARGET_DATE}
+      AND points_line IS NOT NULL AND points_line > 0
+    UNION DISTINCT
+    SELECT player_lookup, game_date
+    FROM \`nba-props-platform.nba_raw.bettingpros_player_points_props\`
+    WHERE game_date = ${TARGET_DATE}
+      AND market_type = 'points'
+      AND points_line IS NOT NULL AND points_line > 0
+  )
 )
 SELECT
   df.feature_group,
@@ -566,7 +587,7 @@ Overall: WARN - 1 FAIL, 1 WARN detected
 |-------------|-----------|-----|
 | default-but-exists bugs (composite) | PlayerCompositeFactorsProcessor didn't pick up all players | Check processor logs, re-run Phase 4 |
 | default-but-exists bugs (history) | player_daily_cache stale or JOIN mismatch | Check cache_date vs game_date alignment |
-| default-but-exists bugs (vegas) | upcoming_player_game_context missing players | Check Phase 3 analytics ran for all games |
+| default-but-exists bugs (vegas) | Raw odds tables have prop lines but feature store defaulted | Check FeatureExtractor._batch_extract_vegas_lines() cache population |
 | Low coverage alignment | Feature store built before source finished | Check Phase 4/5 timing, may need re-run |
 | Value mismatches > 5% | Transformation bug or stale cache | Compare specific player values, check code |
 | Source newer than feature store | Race condition in pipeline | Re-generate predictions to pick up latest data |
