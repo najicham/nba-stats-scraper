@@ -16,44 +16,92 @@ Validate ML Feature Store data quality to ensure model training uses clean data.
 ## Quick Start
 
 ```bash
-# Check last 7 days of feature data
+# Check last 7 days - quality readiness and alert levels (Session 139)
 bq query --use_legacy_sql=false "
 SELECT
   game_date,
   COUNT(*) as total,
-  COUNTIF(feature_quality_score >= 85) as high_quality,
-  COUNTIF(feature_quality_score >= 70 AND feature_quality_score < 85) as medium_quality,
-  COUNTIF(feature_quality_score < 70) as low_quality,
-  ROUND(AVG(feature_quality_score), 1) as avg_quality,
-  data_source,
-  COUNTIF(features[OFFSET(25)] > 0) as has_vegas_line
+  COUNTIF(is_quality_ready = TRUE) as quality_ready,
+  ROUND(COUNTIF(is_quality_ready = TRUE) * 100.0 / COUNT(*), 1) as ready_pct,
+  COUNTIF(quality_alert_level = 'green') as green,
+  COUNTIF(quality_alert_level = 'yellow') as yellow,
+  COUNTIF(quality_alert_level = 'red') as red,
+  ROUND(AVG(feature_quality_score), 1) as avg_score,
+  ROUND(AVG(matchup_quality_pct), 1) as matchup_q,
+  ROUND(AVG(player_history_quality_pct), 1) as history_q,
+  ROUND(AVG(vegas_quality_pct), 1) as vegas_q
 FROM nba_predictions.ml_feature_store_v2
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
   AND feature_count >= 37
-GROUP BY game_date, data_source
+GROUP BY game_date
 ORDER BY game_date DESC"
 ```
 
 ## Validation Checks
 
-### 1. Quality Score Distribution
+### 1. Quality Tier & Alert Level Distribution (Session 139)
 
-**Healthy:** >80% records have quality_score >= 70
+**Healthy:** >80% records are `is_quality_ready = TRUE`, <5% red alerts
 
 ```sql
+-- Quality tier distribution (gold/silver/bronze/poor/critical)
 SELECT
-  CASE
-    WHEN feature_quality_score >= 85 THEN 'High (85+)'
-    WHEN feature_quality_score >= 70 THEN 'Medium (70-84)'
-    ELSE 'Low (<70)'
-  END as quality_tier,
+  quality_tier,
+  quality_alert_level,
   COUNT(*) as records,
-  ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER(), 1) as pct
+  ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER(), 1) as pct,
+  ROUND(AVG(feature_quality_score), 1) as avg_score,
+  ROUND(AVG(matchup_quality_pct), 1) as avg_matchup
 FROM nba_predictions.ml_feature_store_v2
 WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
   AND feature_count >= 37
+GROUP BY 1, 2
+ORDER BY 1, 2
+```
+
+### 1b. Category Quality Breakdown (Session 139)
+
+**Critical:** If `matchup_quality_pct < 50` for many records, this is a Session 132-style failure.
+
+```sql
+-- Per-category quality breakdown
+SELECT
+  game_date,
+  ROUND(AVG(matchup_quality_pct), 1) as matchup_q,
+  ROUND(AVG(player_history_quality_pct), 1) as history_q,
+  ROUND(AVG(team_context_quality_pct), 1) as team_ctx_q,
+  ROUND(AVG(vegas_quality_pct), 1) as vegas_q,
+  ROUND(AVG(game_context_quality_pct), 1) as game_ctx_q,
+  ROUND(AVG(default_feature_count), 1) as avg_defaults,
+  COUNTIF(has_composite_factors = FALSE) as missing_composite
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  AND feature_count >= 37
 GROUP BY 1
-ORDER BY 1
+ORDER BY 1 DESC
+```
+
+### 1c. Per-Feature Quality for Critical Features (Session 139)
+
+**Check individual feature health for the most impactful features:**
+
+```sql
+-- Critical feature quality (features 5-8: composite, 13-14: opponent, 25-26: vegas)
+SELECT
+  game_date,
+  ROUND(AVG(feature_5_quality), 1) as fatigue_q,
+  ROUND(AVG(feature_6_quality), 1) as shot_zone_q,
+  ROUND(AVG(feature_7_quality), 1) as pace_q,
+  ROUND(AVG(feature_8_quality), 1) as usage_q,
+  ROUND(AVG(feature_13_quality), 1) as opp_def_q,
+  ROUND(AVG(feature_14_quality), 1) as opp_pace_q,
+  ROUND(AVG(feature_25_quality), 1) as vegas_line_q,
+  ROUND(AVG(feature_26_quality), 1) as vegas_total_q
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  AND feature_count >= 37
+GROUP BY 1
+ORDER BY 1 DESC
 ```
 
 ### 2. Vegas Line Coverage
@@ -191,11 +239,17 @@ This is intentional by sportsbooks but causes model bias if not accounted for.
 
 | Metric | Good | Warning | Critical |
 |--------|------|---------|----------|
-| Avg Quality Score | >= 80 | 70-79 | < 70 |
-| High Quality % | >= 70% | 50-69% | < 50% |
+| `is_quality_ready` % | >= 80% | 60-79% | < 60% |
+| `quality_alert_level = 'red'` % | < 5% | 5-15% | > 15% |
+| `matchup_quality_pct` avg | >= 70 | 50-69 | < 50 (Session 132!) |
+| `player_history_quality_pct` avg | >= 80 | 60-79 | < 60 |
+| `vegas_quality_pct` avg | >= 40 | 30-39 | < 30 |
+| `default_feature_count` avg | < 3 | 3-6 | > 6 |
+| Avg Quality Score (legacy) | >= 80 | 70-79 | < 70 |
 | Vegas Coverage | >= 40% | 30-39% | < 30% |
 | Partial Data % | < 5% | 5-10% | > 10% |
-| Early Season % | < 10% | 10-20% | > 20% |
+
+**Key insight (Session 134):** The aggregate `feature_quality_score` is a lie — it masks component failures. Always check category-level quality (`matchup_quality_pct`, `player_history_quality_pct`, etc.) for root cause.
 
 **Note on Vegas Coverage (Session 103):** 40% is realistic because sportsbooks don't
 offer props for bench players. The key is ensuring BALANCED coverage by tier, not

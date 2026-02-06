@@ -89,8 +89,20 @@ SELECT
     WHEN d.signal_condition = 'GREEN_OR_YELLOW' AND s.daily_signal IN ('GREEN', 'YELLOW') THEN '✅ INCLUDED'
     WHEN d.signal_condition = 'RED' AND s.daily_signal = 'RED' THEN '✅ INCLUDED'
     ELSE '❌ EXCLUDED (signal mismatch)'
-  END as status
+  END as status,
+  -- Session 140: Quality visibility fields
+  ROUND(f.feature_quality_score, 0) as quality,
+  f.quality_tier,
+  CASE
+    WHEN f.quality_alert_level = 'green' THEN '✅'
+    WHEN f.quality_alert_level = 'yellow' THEN '⚠️'
+    WHEN f.quality_alert_level = 'red' THEN '🔴'
+    ELSE '✅'
+  END as data_status,
+  ROUND(f.matchup_quality_pct, 0) as matchup_q
 FROM `nba-props-platform.nba_predictions.player_prop_predictions` p
+LEFT JOIN `nba-props-platform.nba_predictions.ml_feature_store_v2` f
+  ON p.player_lookup = f.player_lookup AND p.game_date = f.game_date
 CROSS JOIN daily_signal s
 CROSS JOIN subset_def d
 WHERE p.game_date = CURRENT_DATE()
@@ -125,11 +137,18 @@ ranked_picks AS (
     ROW_NUMBER() OVER (
       ORDER BY (ABS(p.predicted_points - p.current_points_line) * 10) + (p.confidence_score * 0.5) DESC
     ) as pick_rank,
-    -- Session 99: Data quality tracking
+    -- Session 99/139: Data quality tracking
     p.feature_quality_score,
     p.matchup_data_status,
-    p.low_quality_flag
+    p.low_quality_flag,
+    -- Session 139: Quality visibility fields
+    f.is_quality_ready,
+    f.quality_alert_level,
+    f.quality_tier,
+    ROUND(f.matchup_quality_pct, 0) as matchup_q
   FROM `nba-props-platform.nba_predictions.player_prop_predictions` p
+  LEFT JOIN `nba-props-platform.nba_predictions.ml_feature_store_v2` f
+    ON p.player_lookup = f.player_lookup AND p.game_date = f.game_date
   CROSS JOIN subset_def d
   WHERE p.game_date = CURRENT_DATE()
     AND p.system_id = d.system_id
@@ -154,15 +173,18 @@ SELECT
     WHEN d.signal_condition = 'GREEN_OR_YELLOW' AND s.daily_signal IN ('GREEN', 'YELLOW') THEN '✅'
     ELSE '⚠️ Signal mismatch'
   END as signal_ok,
-  -- Session 99: Data quality visibility
+  -- Session 139: Quality visibility (upgraded from Session 99)
   ROUND(r.feature_quality_score, 0) as quality,
+  r.quality_tier,
   CASE
-    WHEN r.matchup_data_status = 'COMPLETE' THEN '✅'
-    WHEN r.matchup_data_status = 'PARTIAL_FALLBACK' THEN '⚠️'
+    WHEN r.quality_alert_level = 'green' THEN '✅'
+    WHEN r.quality_alert_level = 'yellow' THEN '⚠️'
+    WHEN r.quality_alert_level = 'red' THEN '🔴'
     WHEN r.matchup_data_status = 'MATCHUP_UNAVAILABLE' THEN '❌'
     WHEN r.low_quality_flag THEN '⚠️'
     ELSE '✅'
-  END as data_status
+  END as data_status,
+  r.matchup_q
 FROM ranked_picks r
 CROSS JOIN daily_signal s
 CROSS JOIN subset_def d
@@ -336,6 +358,8 @@ User: /subset-picks v9_high_edge_top5 --history 14
 3. **Exclude pushes** - In historical queries, filter `actual_points != line` to exclude pushes
 4. **Use composite score for ranking** - Edge * 10 + Confidence * 0.5
 5. **Today has no results yet** - Historical queries should exclude CURRENT_DATE()
+6. **Quality gate (Session 139/140)** - Picks with `quality_alert_level = 'red'` or `matchup_quality_pct < 50` are now blocked by the hard floor in the quality gate and should not appear in active predictions. If they do, investigate Phase 4 processor status.
+7. **prediction_made_before_game (Session 139)** - For historical queries, filter `WHERE prediction_made_before_game = TRUE` to exclude backfill predictions that were generated after game results were known.
 
 ## Related Tables
 

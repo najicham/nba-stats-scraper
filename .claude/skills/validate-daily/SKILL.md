@@ -949,38 +949,44 @@ LIMIT 10"
 **If bdl_missing = true**:
 - This is a real data gap - investigate BDL scraper
 
-### Phase 0.48: Data Provenance Check (Session 99)
+### Phase 0.48: Feature Quality Visibility Check (Sessions 99, 139)
 
-**IMPORTANT**: Verify feature data quality and matchup data availability for predictions.
+**IMPORTANT**: Verify feature data quality using the per-category quality fields (Session 139 upgrade).
 
-**Why this matters**: Predictions made with degraded data (wrong matchup factors, defaults) may be less reliable. Session 99 added tracking to identify these cases.
+**Why this matters**: The aggregate `feature_quality_score` masks component failures (Session 134 insight). Use category-level quality and alert levels for actionable diagnostics.
 
 **What to check**:
 
 ```bash
 bq query --use_legacy_sql=false "
--- Check matchup data status distribution for today's features
+-- Quality readiness and alert level distribution
 SELECT
-  matchup_data_status,
-  COUNT(*) as players,
-  ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER(), 1) as pct,
-  ROUND(AVG(feature_quality_score), 1) as avg_quality
+  COUNTIF(is_quality_ready = TRUE) as quality_ready,
+  ROUND(COUNTIF(is_quality_ready = TRUE) * 100.0 / COUNT(*), 1) as ready_pct,
+  COUNTIF(quality_alert_level = 'green') as green,
+  COUNTIF(quality_alert_level = 'yellow') as yellow,
+  COUNTIF(quality_alert_level = 'red') as red,
+  ROUND(AVG(matchup_quality_pct), 1) as matchup_q,
+  ROUND(AVG(player_history_quality_pct), 1) as history_q,
+  ROUND(AVG(vegas_quality_pct), 1) as vegas_q,
+  ROUND(AVG(game_context_quality_pct), 1) as game_ctx_q,
+  ROUND(AVG(default_feature_count), 1) as avg_defaults
 FROM \`nba-props-platform.nba_predictions.ml_feature_store_v2\`
-WHERE game_date = CURRENT_DATE()
-GROUP BY matchup_data_status
-ORDER BY players DESC"
+WHERE game_date = CURRENT_DATE()"
 ```
 
 **Expected Results**:
 
-| Status | Meaning | Action |
-|--------|---------|--------|
-| `COMPLETE` | All matchup data available | ✅ Good |
-| `PARTIAL_FALLBACK` | Some player-specific fallbacks used | ⚠️ Acceptable |
-| `MATCHUP_UNAVAILABLE` | Matchup factors defaulted to 0 | 🔴 Investigate |
-| `NULL` | Legacy data before Session 99 | ℹ️ Expected for older data |
+| Metric | Good | Warning | Action |
+|--------|------|---------|--------|
+| `ready_pct` | >= 80% | < 60% | 🔴 Check which processor didn't run |
+| `red` alerts | < 5% | > 15% | 🔴 Investigate `quality_alerts` array |
+| `matchup_q` | >= 70 | < 50 | 🔴 Session 132 recurrence! Check composite factors |
+| `history_q` | >= 80 | < 60 | ⚠️ Check player_daily_cache |
+| `vegas_q` | >= 40 | < 30 | ⚠️ Normal for early morning (lines not yet set) |
+| `avg_defaults` | < 3 | > 6 | ⚠️ Multiple features using fallback values |
 
-**If MATCHUP_UNAVAILABLE > 10%**:
+**If `matchup_q < 50` (Session 132 pattern)**:
 1. 🔴 P1 CRITICAL: Matchup data missing for significant portion of players
 2. Check if `player-composite-factors-upcoming` job ran at 5 AM ET
 3. Manually trigger composite factors processor:
@@ -998,22 +1004,49 @@ ORDER BY players DESC"
      -d '{"processors": ["MLFeatureStoreProcessor"], "analysis_date": "TODAY", "strict_mode": false, "skip_dependency_check": true}'
    ```
 
-**Check predictions have provenance stored**:
+**Check matchup data status (legacy) + quality in predictions**:
 
 ```bash
 bq query --use_legacy_sql=false "
--- Verify predictions store matchup data status
+-- Verify predictions quality tracking
 SELECT
   COALESCE(matchup_data_status, 'NULL') as status,
   COUNT(*) as predictions,
-  ROUND(AVG(feature_quality_score), 1) as avg_quality
+  ROUND(AVG(feature_quality_score), 1) as avg_quality,
+  COUNTIF(low_quality_flag = TRUE) as low_quality_count
 FROM \`nba-props-platform.nba_predictions.player_prop_predictions\`
 WHERE game_date = CURRENT_DATE()
   AND system_id = 'catboost_v9'
 GROUP BY status"
 ```
 
-**Reference**: Session 99 handoff, docs/08-projects/current/feature-store-upcoming-games/
+**Check prediction timing and quality gate enforcement (Session 139/140)**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Verify prediction_made_before_game is populated and quality gate blocks
+SELECT
+  prediction_made_before_game,
+  prediction_run_mode,
+  COUNT(*) as predictions
+FROM \`nba-props-platform.nba_predictions.player_prop_predictions\`
+WHERE game_date = CURRENT_DATE()
+  AND system_id = 'catboost_v9'
+  AND is_active = TRUE
+GROUP BY 1, 2"
+```
+
+**Expected Results**:
+- `prediction_made_before_game = TRUE`: All pre-game predictions
+- `prediction_made_before_game = FALSE`: Only if BACKFILL mode ran for this date
+- If `prediction_made_before_game` is NULL: deployment hasn't landed yet -- check prediction-worker
+
+**Quality Gate Hard Floor (Session 139)**:
+- The quality gate now blocks predictions for `quality_alert_level = 'red'` or `matchup_quality_pct < 50` in ALL modes (including LAST_CALL)
+- If players are blocked, check `#nba-alerts` for `PREDICTIONS_SKIPPED` alerts with root cause and BACKFILL instructions
+- The `QualityHealer` module automatically re-triggers Phase 4 processors on quality failure before giving up
+
+**Reference**: Session 99 handoff, Session 134 quality insight, Session 139 field adoption, Session 140 deployment
 
 ### Phase 0.49: Duplicate Team Record Detection (Session 103 - CRITICAL)
 

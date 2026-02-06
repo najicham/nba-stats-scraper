@@ -125,6 +125,23 @@ best = registry.get_best_experiment(metric="hit_rate")
 registry.promote_experiment(experiment_id="...")
 ```
 
+## Quality Metadata
+
+When reviewing experiment results, also log the quality distribution of the training and evaluation data. This helps identify whether poor model performance is caused by low-quality input data rather than model issues.
+
+```sql
+-- Quality distribution for an experiment's training period
+SELECT
+  ROUND(100.0 * COUNTIF(is_quality_ready = TRUE) / COUNT(*), 1) as pct_quality_ready,
+  ROUND(AVG(feature_quality_score), 1) as avg_feature_quality_score,
+  COUNTIF(quality_alert_level = 'red') as red_alert_count,
+  COUNT(*) as total_rows
+FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+WHERE game_date BETWEEN @train_start AND @train_end
+```
+
+Include `pct_quality_ready` and `avg_feature_quality_score` alongside hit rate and MAE when comparing experiments. A model trained on 90%+ quality-ready data is more trustworthy than one trained on 60%.
+
 ## Output Format
 
 ```

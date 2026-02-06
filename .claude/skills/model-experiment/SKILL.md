@@ -65,6 +65,14 @@ PYTHONPATH=. python ml/experiments/train_breakout_classifier.py \
 PYTHONPATH=. python ml/experiments/train_breakout_classifier.py --name "TEST" --dry-run
 ```
 
+## Data Quality Filtering
+
+**Always filter training and evaluation data by quality fields from `ml_feature_store_v2`:**
+
+- **Training data**: Use `WHERE is_quality_ready = TRUE` to exclude rows with missing or defaulted features. Minimum threshold: `feature_quality_score >= 70`.
+- **Evaluation data**: Also apply `is_quality_ready = TRUE` filter. Evaluating on unfiltered data inflates error rates and produces misleading metrics (low-quality rows have defaulted features that hurt accuracy regardless of model quality).
+- **Sanity check**: If fewer than 60% of rows pass `is_quality_ready = TRUE`, investigate Phase 4 processor failures before training.
+
 ## Regression Model Options
 
 | Option | Default | Description |

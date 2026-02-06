@@ -123,6 +123,59 @@ ORDER BY hit_rate DESC;
 
 **Note**: Replace `@period` with the actual number of days (default: 7).
 
+### Step 2b: Performance by Feature Quality Tier
+
+**IMPORTANT**: For accurate ROI metrics, filter to `is_quality_ready = TRUE`. Predictions made with low feature quality (defaulted matchup features, missing processors) pollute performance numbers.
+
+```sql
+-- Performance by quality tier and quality alert level
+WITH picks_with_quality AS (
+  SELECT
+    p.game_date,
+    p.player_lookup,
+    ABS(p.predicted_points - p.current_points_line) as edge,
+    p.recommendation,
+    p.current_points_line,
+    pgs.points as actual_points,
+    CASE
+      WHEN pgs.points = p.current_points_line THEN NULL
+      WHEN (pgs.points > p.current_points_line AND p.recommendation = 'OVER') OR
+           (pgs.points < p.current_points_line AND p.recommendation = 'UNDER')
+      THEN 1 ELSE 0
+    END as is_correct,
+    fq.is_quality_ready,
+    fq.quality_alert_level,
+    fq.feature_quality_score
+  FROM `nba-props-platform.nba_predictions.player_prop_predictions` p
+  JOIN `nba-props-platform.nba_analytics.player_game_summary` pgs
+    ON p.player_lookup = pgs.player_lookup AND p.game_date = pgs.game_date
+  JOIN `nba-props-platform.nba_predictions.ml_feature_store_v2` fq
+    ON p.player_lookup = fq.player_lookup AND p.game_date = fq.game_date
+  WHERE p.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL @period DAY)
+    AND p.game_date < CURRENT_DATE()
+    AND p.system_id = 'catboost_v9'
+    AND p.current_points_line IS NOT NULL
+    AND pgs.points != p.current_points_line
+)
+SELECT
+  CASE WHEN is_quality_ready THEN 'quality_ready' ELSE 'not_ready' END as quality_tier,
+  quality_alert_level,
+  COUNT(*) as picks,
+  SUM(is_correct) as wins,
+  ROUND(100.0 * SUM(is_correct) / NULLIF(COUNT(*), 0), 1) as hit_rate,
+  ROUND((100.0 * SUM(is_correct) / NULLIF(COUNT(*), 0) - 52.38) / 52.38 * 100, 1) as approx_roi_pct,
+  ROUND(AVG(feature_quality_score), 1) as avg_quality_score
+FROM picks_with_quality
+GROUP BY 1, 2
+HAVING COUNT(*) >= 5
+ORDER BY quality_tier, quality_alert_level;
+```
+
+**Interpretation**: Use `quality_alert_level` as a stratification dimension alongside signal and edge filters. The levels are:
+- **green**: All features healthy -- trust performance numbers
+- **yellow**: Some features degraded -- review with caution
+- **red**: Critical features missing -- exclude from ROI calculations
+
 ### Step 3: Calculate Signal Effectiveness
 
 Compare performance on GREEN vs RED signal days:
@@ -231,6 +284,7 @@ At standard -110 odds:
 3. **Minimum sample size** - At least 5 picks to show a subset
 4. **Signal data dependency** - Signals must exist in `daily_prediction_signals` table
 5. **Default period** - 7 days if not specified
+6. **Quality filtering** - For accurate ROI metrics, filter to `is_quality_ready = TRUE` via JOIN to `nba_predictions.ml_feature_store_v2`. Predictions with `matchup_quality_pct < 50` were made with defaulted matchup features and should be excluded from performance analysis (Session 132/139)
 
 ## Related Tables
 
@@ -238,6 +292,7 @@ At standard -110 odds:
 - `nba_predictions.daily_prediction_signals` - Daily signal metrics
 - `nba_predictions.player_prop_predictions` - Base predictions
 - `nba_analytics.player_game_summary` - Actual results for grading
+- `nba_predictions.ml_feature_store_v2` - Feature quality fields (`is_quality_ready`, `quality_alert_level`, `matchup_quality_pct`, `feature_quality_score`)
 
 ## Related Skills
 

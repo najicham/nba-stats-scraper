@@ -75,31 +75,65 @@ This prevents confusion when comparing analyses across sessions.
 | Medium Edge | 3-5 | Moderate disagreement |
 | Low Edge | <3 | Close to Vegas line |
 
-### Data Quality Filters (Session 99)
+### Data Quality Filters (Sessions 99, 139)
 
 | Filter | Definition | Purpose |
 |--------|------------|---------|
-| **Complete Data** | `matchup_data_status = 'COMPLETE'` | Only predictions with full matchup data |
-| **Exclude Degraded** | `matchup_data_status != 'MATCHUP_UNAVAILABLE'` | Exclude defaulted matchup factors |
-| **High Quality** | `feature_quality_score >= 85` | Above threshold quality score |
+| **Quality Ready** | `is_quality_ready = TRUE` | New: gold/silver/bronze tier + score >= 70 + matchup >= 50 |
+| **Training Ready** | `is_training_ready = TRUE` | New: suitable for ML training data |
+| **Complete Data** | `matchup_data_status = 'COMPLETE'` | Legacy: full matchup data |
+| **Exclude Degraded** | `matchup_data_status != 'MATCHUP_UNAVAILABLE'` | Legacy: exclude defaulted matchup factors |
+| **High Quality** | `feature_quality_score >= 85` | Legacy: above threshold quality score |
+| **Green Alert** | `quality_alert_level = 'green'` | New: no quality issues detected |
 
 **Why filter by data quality?**
-- Predictions with `MATCHUP_UNAVAILABLE` used neutral defaults (0.0) for matchup-specific factors
-- These predictions may be less accurate since shot_zone_mismatch and pace_score are missing
-- Use these filters to analyze whether data quality affects hit rate
+- Predictions with degraded matchup data used neutral defaults (0.0) for matchup-specific factors
+- The aggregate `feature_quality_score` masks component failures — use `quality_alert_level` and category quality instead
+- Use `is_quality_ready` as the primary quality gate (combines tier, score, and matchup quality)
 
-**Example: Compare hit rate by data quality:**
+**Pre-game vs Backfill (Session 139/140)**:
+- `prediction_made_before_game = TRUE`: Legitimate pre-game predictions (use for accuracy)
+- `prediction_made_before_game = FALSE`: BACKFILL predictions generated after game results (exclude from analysis)
+- For accurate hit rate analysis, add `AND pp.prediction_made_before_game = TRUE` when joining to `player_prop_predictions`
+- Predictions with `quality_alert_level = 'red'` are now blocked by the quality gate hard floor (Session 139)
+
+**Example: Compare hit rate by quality tier (Session 139):**
 ```sql
 SELECT
-  COALESCE(matchup_data_status, 'LEGACY') as data_status,
+  f.quality_tier,
+  f.quality_alert_level,
   COUNT(*) as predictions,
-  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate
-FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
-  AND system_id = 'catboost_v9'
-  AND recommendation IN ('OVER', 'UNDER')
-GROUP BY data_status
-ORDER BY predictions DESC;
+  ROUND(100.0 * COUNTIF(pa.prediction_correct) / COUNT(*), 1) as hit_rate,
+  ROUND(AVG(f.matchup_quality_pct), 1) as avg_matchup_q
+FROM `nba-props-platform.nba_predictions.prediction_accuracy` pa
+JOIN `nba-props-platform.nba_predictions.ml_feature_store_v2` f
+  ON pa.player_lookup = f.player_lookup AND pa.game_date = f.game_date
+WHERE pa.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+  AND pa.system_id = 'catboost_v9'
+  AND pa.recommendation IN ('OVER', 'UNDER')
+GROUP BY 1, 2
+ORDER BY hit_rate DESC;
+```
+
+**Example: Compare hit rate by matchup quality (Session 139):**
+```sql
+SELECT
+  CASE
+    WHEN f.matchup_quality_pct >= 80 THEN 'High Matchup (80+)'
+    WHEN f.matchup_quality_pct >= 50 THEN 'Med Matchup (50-79)'
+    ELSE 'Low Matchup (<50)'
+  END as matchup_quality,
+  COUNT(*) as predictions,
+  ROUND(100.0 * COUNTIF(pa.prediction_correct) / COUNT(*), 1) as hit_rate
+FROM `nba-props-platform.nba_predictions.prediction_accuracy` pa
+JOIN `nba-props-platform.nba_predictions.ml_feature_store_v2` f
+  ON pa.player_lookup = f.player_lookup AND pa.game_date = f.game_date
+WHERE pa.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+  AND pa.system_id = 'catboost_v9'
+  AND pa.recommendation IN ('OVER', 'UNDER')
+  AND ABS(pa.predicted_points - pa.line_value) >= 3
+GROUP BY 1
+ORDER BY hit_rate DESC;
 ```
 
 ## Standard Queries

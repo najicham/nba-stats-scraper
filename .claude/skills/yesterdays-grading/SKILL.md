@@ -225,7 +225,60 @@ By Tier:
 Trading Picks (90+ conf, 3+ edge): 12 bets, 9 hits (75.0%)
 ```
 
+## Quality Context Query (Session 140)
+
+**IMPORTANT**: Join grading results to feature quality to understand whether poor performance is caused by low-quality input data rather than model issues.
+
+```sql
+-- Quality-stratified grading for yesterday
+SELECT
+  CASE WHEN fq.is_quality_ready THEN 'quality_ready' ELSE 'not_ready' END as quality_tier,
+  fq.quality_alert_level,
+  COUNT(*) as predictions,
+  ROUND(100.0 * COUNTIF(pa.prediction_correct) / COUNT(*), 1) as hit_rate,
+  ROUND(AVG(pa.absolute_error), 2) as mae,
+  ROUND(AVG(fq.matchup_quality_pct), 1) as avg_matchup_q
+FROM `nba-props-platform.nba_predictions.prediction_accuracy` pa
+JOIN `nba-props-platform.nba_predictions.ml_feature_store_v2` fq
+  ON pa.player_lookup = fq.player_lookup AND pa.game_date = fq.game_date
+WHERE pa.game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+  AND pa.system_id = 'catboost_v9'
+  AND pa.prediction_correct IS NOT NULL
+GROUP BY 1, 2
+ORDER BY quality_tier, quality_alert_level;
+```
+
+**Interpretation**:
+- If `quality_ready` hit rate >> `not_ready`, data quality is the limiting factor, not the model
+- Predictions with `quality_alert_level = 'red'` should now be blocked by the quality gate (Session 139)
+- If any red-alert predictions appear, investigate whether they were generated before the gate was deployed
+
+## Pre-game vs Backfill Predictions (Session 139)
+
+**IMPORTANT**: The `prediction_made_before_game` field distinguishes real pre-game predictions from backfill predictions generated after game results were known.
+
+- **Pre-game** (`prediction_made_before_game = TRUE`): Legitimate predictions for grading
+- **Backfill** (`prediction_made_before_game = FALSE`): Record-keeping only, exclude from accuracy analysis
+
+```sql
+-- Check prediction timing for yesterday
+SELECT
+  prediction_made_before_game,
+  COUNT(*) as predictions,
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate
+FROM `nba-props-platform.nba_predictions.prediction_accuracy` pa
+JOIN `nba-props-platform.nba_predictions.player_prop_predictions` pp
+  ON pa.player_lookup = pp.player_lookup
+  AND pa.game_date = pp.game_date
+  AND pa.system_id = pp.system_id
+WHERE pa.game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+  AND pa.system_id = 'catboost_v9'
+GROUP BY 1;
+```
+
+**If backfill predictions exist**: These were generated via BACKFILL mode for players who were quality-blocked pre-game. Their accuracy should not count toward model performance.
+
 ## Parameters
 
 - `date`: Specific date to check (default: yesterday)
-- `system_id`: Which model to check (default: catboost_v8)
+- `system_id`: Which model to check (default: catboost_v9)

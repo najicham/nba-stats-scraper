@@ -76,6 +76,51 @@ ORDER BY system_id, period
 - **catboost_v8**: Historical model (Jan 18-28, 2026)
 - **ensemble models**: Active for comparison
 
+**Quality Context**: For any health check query above, you can JOIN to `nba_predictions.ml_feature_store_v2` on `player_lookup` and `game_date` to understand whether poor performance correlates with low feature quality. Predictions where `matchup_quality_pct < 50` should be excluded from accuracy analysis since they were made with defaulted matchup features (see Session 132).
+
+## Hit Rate by Feature Quality Tier
+
+**IMPORTANT**: Stratify hit rate by feature quality to separate model issues from data quality issues. If `not_ready` predictions drag down overall metrics, the model may be fine -- the pipeline needs fixing.
+
+```sql
+-- Hit rate by feature quality tier
+SELECT
+  CASE WHEN fq.is_quality_ready THEN 'quality_ready' ELSE 'not_ready' END as quality_tier,
+  COUNT(*) as predictions,
+  ROUND(100.0 * COUNTIF(pa.hit = TRUE) / COUNT(*), 1) as hit_rate,
+  ROUND(AVG(pa.absolute_error), 2) as mae,
+  ROUND(AVG(fq.feature_quality_score), 1) as avg_quality_score
+FROM nba_predictions.prediction_accuracy pa
+JOIN nba_predictions.ml_feature_store_v2 fq
+  ON pa.player_lookup = fq.player_lookup AND pa.game_date = fq.game_date
+WHERE pa.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+  AND pa.system_id = 'catboost_v9'
+  AND pa.prediction_correct IS NOT NULL
+GROUP BY 1
+ORDER BY 1;
+```
+
+**Interpretation**:
+- If `quality_ready` hit rate is significantly higher than `not_ready`, feature quality is a key driver of performance
+- If both tiers perform similarly, the issue is model-level, not data-level
+- Always exclude `matchup_quality_pct < 50` predictions when evaluating true model accuracy
+
+```sql
+-- Accurate model health: exclude low-quality matchup predictions
+SELECT
+  'Last 14 Days (quality filtered)' as period,
+  COUNT(*) as predictions,
+  ROUND(100.0 * COUNTIF(pa.prediction_correct) / COUNT(*), 1) as hit_rate,
+  ROUND(AVG(pa.absolute_error), 2) as mae
+FROM nba_predictions.prediction_accuracy pa
+JOIN nba_predictions.ml_feature_store_v2 fq
+  ON pa.player_lookup = fq.player_lookup AND pa.game_date = fq.game_date
+WHERE pa.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+  AND pa.system_id = 'catboost_v9'
+  AND pa.prediction_correct IS NOT NULL
+  AND fq.matchup_quality_pct >= 50;
+```
+
 ## Vegas Sharpness Query
 
 **IMPORTANT**: Compare ALL active models vs Vegas to see which performs best.
@@ -270,5 +315,5 @@ Recommendations:
 |-------|---------|--------|
 | VEGAS_SHARP | Market unusually efficient | Raise edge thresholds |
 | MODEL_DRIFT | Model performance degrading | Retrain on recent data |
-| DATA_QUALITY | Pipeline/feature issues | Check feature store |
+| DATA_QUALITY | Pipeline/feature issues | Check `ml_feature_store_v2` quality fields: `is_quality_ready`, `matchup_quality_pct`, `quality_alert_level` |
 | NORMAL_VARIANCE | Expected fluctuation | Monitor, no action |

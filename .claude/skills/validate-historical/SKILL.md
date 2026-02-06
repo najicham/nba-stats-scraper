@@ -218,6 +218,29 @@ python scripts/spot_check_data_accuracy.py \
   --checks rolling_avg,usage_rate
 ```
 
+**Check ML feature quality trends (Session 139)**:
+
+```bash
+# Trend is_quality_ready percentage over time
+bq query --use_legacy_sql=false "
+SELECT
+  game_date,
+  COUNT(*) as total_rows,
+  COUNTIF(is_quality_ready = TRUE) as quality_ready,
+  ROUND(100.0 * COUNTIF(is_quality_ready = TRUE) / COUNT(*), 1) as pct_quality_ready,
+  ROUND(AVG(matchup_quality_pct), 1) as avg_matchup_quality,
+  COUNTIF(quality_alert_level = 'red') as red_alerts
+FROM \`nba-props-platform.nba_predictions.ml_feature_store_v2\`
+WHERE game_date BETWEEN '2026-01-18' AND '2026-01-25'
+GROUP BY game_date
+ORDER BY game_date DESC"
+```
+
+**Quality trend checks**:
+- `pct_quality_ready` dropping below 60% indicates Phase 4 processor failures
+- `avg_matchup_quality` dropping below 50% catches Session 132-style degradation (all matchup features defaulted)
+- Rising `red_alerts` count signals systemic quality regression -- investigate per-feature scores
+
 **Analyze trends**:
 - Is accuracy stable or declining?
 - Are failures clustered around specific dates?
