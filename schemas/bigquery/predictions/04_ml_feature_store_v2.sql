@@ -154,6 +154,9 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.ml_feature_store_
   default_feature_count INT64 OPTIONS(
     description='Total count of features using defaults.'
   ),
+  default_feature_indices ARRAY<INT64> OPTIONS(
+    description='Session 142: Indices of features using default/fallback values (empty = all real data).'
+  ),
   phase4_feature_count INT64 OPTIONS(
     description='Count of features from Phase 4 precompute (highest quality). Target: 25+ of 37.'
   ),
@@ -606,7 +609,9 @@ ADD COLUMN IF NOT EXISTS is_training_ready BOOL
 ADD COLUMN IF NOT EXISTS training_quality_feature_count INT64
   OPTIONS (description='Count of features meeting training quality bar'),
 ADD COLUMN IF NOT EXISTS is_quality_ready BOOL
-  OPTIONS (description='TRUE if meets quality gate: quality_tier in (gold, silver, bronze) AND score >= 70 AND matchup >= 50');
+  OPTIONS (description='TRUE if meets quality gate: quality_tier in (gold, silver, bronze) AND score >= 70 AND matchup >= 50'),
+ADD COLUMN IF NOT EXISTS default_feature_indices ARRAY<INT64>
+  OPTIONS (description='Session 142: Indices of features using default/fallback values (empty = all real data)');
 
 -- Category quality (18 fields)
 ALTER TABLE `nba-props-platform.nba_predictions.ml_feature_store_v2`

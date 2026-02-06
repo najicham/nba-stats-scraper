@@ -400,7 +400,9 @@ WHERE game_date = CURRENT_DATE()
 
 **Impact:** Coverage drops from ~180 to ~75 predictions per game day. This is intentional -- accuracy > coverage. To increase coverage, fix the data pipeline (Phase 4 processors, vegas line coverage), never relax the tolerance.
 
-**Audit:** `default_feature_count` is written to `player_prop_predictions` for every prediction.
+**Audit:** `default_feature_count` and `default_feature_indices` are written to `player_prop_predictions` for every prediction.
+
+**Feature Completeness (Session 142):** `default_feature_indices ARRAY<INT64>` tracks exactly which feature indices used defaults. See `shared/ml/feature_contract.py` for `FEATURE_SOURCE_MAP` mapping indices to pipeline components. See `docs/08-projects/current/feature-completeness/00-PROJECT-OVERVIEW.md` for gap analysis.
 
 ### Per-Feature Quality Fields
 
@@ -482,6 +484,13 @@ SELECT game_date,
 FROM nba_predictions.ml_feature_store_v2
 WHERE game_date >= CURRENT_DATE() - 3
 GROUP BY 1 ORDER BY 1 DESC;
+
+-- Session 142: Diagnose which features are most commonly defaulted
+SELECT idx, COUNT(*) as default_count
+FROM nba_predictions.ml_feature_store_v2,
+UNNEST(default_feature_indices) as idx
+WHERE game_date >= CURRENT_DATE() - 7
+GROUP BY 1 ORDER BY 2 DESC;
 ```
 
 **Full query library:** See `docs/02-operations/useful-queries.md`

@@ -103,6 +103,9 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.player_prop_predi
   -- Pre-game flag (Session 139)
   prediction_made_before_game BOOLEAN,            -- TRUE if made before game start, FALSE for backfills
 
+  -- Feature completeness tracking (Session 142)
+  default_feature_indices ARRAY<INT64>,           -- Indices of features using default/fallback values
+
   -- Timestamps (2 fields)
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP() NOT NULL,
   updated_at TIMESTAMP
@@ -350,4 +353,8 @@ ADD COLUMN IF NOT EXISTS prediction_made_before_game BOOL OPTIONS(description="S
 -- Session 141: Default feature count for audit trail (zero tolerance enforcement)
 ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
 ADD COLUMN IF NOT EXISTS default_feature_count INT64 OPTIONS(description="Session 141: Number of features using default/fallback values (0 = all real data)");
+
+-- Session 142: Default feature indices for per-feature audit trail
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS default_feature_indices ARRAY<INT64> OPTIONS(description="Session 142: Indices of features using default/fallback values (empty = all real data)");
 

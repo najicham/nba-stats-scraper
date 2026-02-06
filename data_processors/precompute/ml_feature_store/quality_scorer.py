@@ -437,6 +437,10 @@ class QualityScorer:
         # ================================================================
         fields = {}
 
+        # --- Session 142: Default feature indices for per-feature audit trail ---
+        default_indices = [idx for idx in range(num_features) if is_default.get(idx, False)]
+        fields['default_feature_indices'] = default_indices
+
         # --- Section 1: Aggregate Quality (9 new fields) ---
         fields['quality_tier'] = quality_tier
         fields['quality_alert_level'] = alert_level

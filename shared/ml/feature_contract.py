@@ -294,6 +294,43 @@ def get_contract(model_version: str) -> ModelFeatureContract:
 
 
 # =============================================================================
+# FEATURE SOURCE CLASSIFICATION (Session 142)
+# =============================================================================
+# All 33 V9 features are REQUIRED for prediction (zero tolerance, Session 141).
+# If any feature has source='default', prediction is blocked.
+# These constants map feature indices to their upstream pipeline source,
+# helping diagnose which pipeline component to fix when coverage drops.
+
+# Features populated by Phase 4 precompute processors
+FEATURES_FROM_PHASE4 = [0, 1, 2, 3, 4, 5, 6, 7, 8, 13, 14, 22, 23, 29, 31, 32]
+
+# Features populated by Phase 3 analytics
+FEATURES_FROM_PHASE3 = [15, 16, 17]
+
+# Features calculated on-the-fly during feature store generation
+FEATURES_CALCULATED = [9, 10, 11, 12, 21, 24, 28, 30, 33, 34, 35, 36]
+
+# Features from vegas/odds data
+FEATURES_VEGAS = [25, 26, 27]
+
+# Features from shot zone analysis
+FEATURES_SHOT_ZONE = [18, 19, 20]
+
+# Reverse mapping: feature index -> source pipeline component
+FEATURE_SOURCE_MAP = {}
+for _idx in FEATURES_FROM_PHASE4:
+    FEATURE_SOURCE_MAP[_idx] = 'phase4'
+for _idx in FEATURES_FROM_PHASE3:
+    FEATURE_SOURCE_MAP[_idx] = 'phase3'
+for _idx in FEATURES_CALCULATED:
+    FEATURE_SOURCE_MAP[_idx] = 'calculated'
+for _idx in FEATURES_VEGAS:
+    FEATURE_SOURCE_MAP[_idx] = 'vegas'
+for _idx in FEATURES_SHOT_ZONE:
+    FEATURE_SOURCE_MAP[_idx] = 'shot_zone'
+
+
+# =============================================================================
 # DEFAULT VALUES FOR MISSING FEATURES
 # =============================================================================
 

@@ -2271,6 +2271,9 @@ def format_prediction_for_bigquery(
         # Session 141: Default feature count for audit trail (zero tolerance enforcement)
         'default_feature_count': features.get('default_feature_count'),
 
+        # Session 142: Default feature indices for per-feature audit trail
+        'default_feature_indices': features.get('default_feature_indices', []),
+
         # Session 139: Track whether prediction was made before game started
         # False for BACKFILL mode or post-game predictions (record-keeping only)
         'prediction_made_before_game': _compute_prediction_made_before_game(
