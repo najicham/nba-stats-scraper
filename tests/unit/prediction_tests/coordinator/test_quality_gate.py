@@ -23,6 +23,7 @@ from predictions.coordinator.quality_gate import (
     QUALITY_THRESHOLDS,
     HARD_FLOOR_MATCHUP_QUALITY,
     HARD_FLOOR_ALERT_LEVELS,
+    HARD_FLOOR_MAX_DEFAULTS,
     parse_prediction_mode,
     _diagnose_missing_processor,
 )
@@ -397,3 +398,140 @@ class TestQualityGateSummaryDataclass:
         )
         assert summary.players_hard_blocked == 0
         assert summary.missing_processors == []
+
+
+class TestZeroTolerance:
+    """Tests for Session 141 zero tolerance for default features."""
+
+    def test_hard_floor_max_defaults_is_zero(self):
+        assert HARD_FLOOR_MAX_DEFAULTS == 0
+
+    @pytest.fixture
+    def gate(self):
+        """Create a QualityGate with mocked BQ client."""
+        gate = QualityGate(project_id='test-project', dataset_prefix='test_')
+        gate._bq_client = MagicMock()
+        return gate
+
+    def _mock_quality_gate(self, gate, existing_preds, quality_scores, quality_details):
+        """Helper to mock both get_existing_predictions and get_feature_quality_scores."""
+        gate.get_existing_predictions = MagicMock(return_value=existing_preds)
+        gate.get_feature_quality_scores = MagicMock(return_value=quality_scores)
+        gate._quality_details = quality_details
+
+    def test_zero_defaults_passes(self, gate):
+        """Player with 0 defaults and high quality passes."""
+        players = ['player-a']
+        self._mock_quality_gate(
+            gate,
+            existing_preds={},
+            quality_scores={'player-a': 92.0},
+            quality_details={'player-a': {
+                'is_quality_ready': True,
+                'quality_alert_level': 'green',
+                'matchup_quality_pct': 95,
+                'default_feature_count': 0,
+            }},
+        )
+
+        results, summary = gate.apply_quality_gate(date(2026, 2, 6), players, PredictionMode.FIRST)
+
+        assert results[0].should_predict is True
+        assert results[0].reason == 'quality_sufficient'
+
+    def test_three_defaults_blocked_even_with_high_quality(self, gate):
+        """Player with 3 defaults blocked even if quality score is 90+."""
+        players = ['player-a']
+        self._mock_quality_gate(
+            gate,
+            existing_preds={},
+            quality_scores={'player-a': 92.0},
+            quality_details={'player-a': {
+                'is_quality_ready': False,
+                'quality_alert_level': 'yellow',
+                'matchup_quality_pct': 95,
+                'default_feature_count': 3,
+            }},
+        )
+
+        results, summary = gate.apply_quality_gate(date(2026, 2, 6), players, PredictionMode.FIRST)
+
+        assert results[0].should_predict is False
+        assert results[0].hard_floor_blocked is True
+        assert results[0].reason == 'zero_tolerance_defaults_3'
+        assert summary.players_hard_blocked == 1
+
+    def test_backfill_mode_also_blocked_by_defaults(self, gate):
+        """BACKFILL mode is also blocked by defaults (no exceptions)."""
+        players = ['player-a']
+        self._mock_quality_gate(
+            gate,
+            existing_preds={},
+            quality_scores={'player-a': 85.0},
+            quality_details={'player-a': {
+                'is_quality_ready': False,
+                'quality_alert_level': 'yellow',
+                'matchup_quality_pct': 80,
+                'default_feature_count': 3,
+            }},
+        )
+
+        results, summary = gate.apply_quality_gate(date(2026, 2, 6), players, PredictionMode.BACKFILL)
+
+        assert results[0].should_predict is False
+        assert results[0].hard_floor_blocked is True
+        assert 'zero_tolerance_defaults' in results[0].reason
+
+    def test_last_call_mode_also_blocked_by_defaults(self, gate):
+        """LAST_CALL mode is also blocked by defaults (no exceptions)."""
+        players = ['player-a']
+        self._mock_quality_gate(
+            gate,
+            existing_preds={},
+            quality_scores={'player-a': 80.0},
+            quality_details={'player-a': {
+                'is_quality_ready': False,
+                'quality_alert_level': 'yellow',
+                'matchup_quality_pct': 75,
+                'default_feature_count': 1,
+            }},
+        )
+
+        results, summary = gate.apply_quality_gate(date(2026, 2, 6), players, PredictionMode.LAST_CALL)
+
+        assert results[0].should_predict is False
+        assert results[0].hard_floor_blocked is True
+        assert results[0].reason == 'zero_tolerance_defaults_1'
+
+    def test_mixed_batch_defaults_vs_clean(self, gate):
+        """In a mixed batch, only clean players pass."""
+        players = ['clean', 'has_defaults']
+        self._mock_quality_gate(
+            gate,
+            existing_preds={},
+            quality_scores={'clean': 90.0, 'has_defaults': 90.0},
+            quality_details={
+                'clean': {
+                    'is_quality_ready': True,
+                    'quality_alert_level': 'green',
+                    'matchup_quality_pct': 95,
+                    'default_feature_count': 0,
+                },
+                'has_defaults': {
+                    'is_quality_ready': False,
+                    'quality_alert_level': 'yellow',
+                    'matchup_quality_pct': 95,
+                    'default_feature_count': 3,
+                },
+            },
+        )
+
+        results, summary = gate.apply_quality_gate(date(2026, 2, 6), players, PredictionMode.FIRST)
+
+        assert summary.players_to_predict == 1
+        assert summary.players_hard_blocked == 1
+        # Find results by player
+        clean_result = next(r for r in results if r.player_lookup == 'clean')
+        defaults_result = next(r for r in results if r.player_lookup == 'has_defaults')
+        assert clean_result.should_predict is True
+        assert defaults_result.should_predict is False

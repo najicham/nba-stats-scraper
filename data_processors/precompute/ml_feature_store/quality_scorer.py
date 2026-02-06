@@ -363,9 +363,10 @@ class QualityScorer:
         matchup_pct = category_quality.get('matchup', 0.0)
 
         # Alert level
+        # Session 141: Changed default_count threshold from >10 to >0 (zero tolerance)
         if matchup_pct < 50 or quality_score < 50:
             alert_level = 'red'
-        elif default_count > 10 or quality_score < 70 or matchup_pct < 70:
+        elif default_count > 0 or quality_score < 70 or matchup_pct < 70:
             alert_level = 'yellow'
         else:
             alert_level = 'green'
@@ -403,10 +404,12 @@ class QualityScorer:
         )
 
         # Quality-based production readiness (NEW field, separate from is_production_ready)
+        # Session 141: Added default_count == 0 (zero tolerance for default features)
         is_quality_ready = (
             quality_tier in ('gold', 'silver', 'bronze')
             and quality_score >= 70
             and matchup_pct >= 50
+            and default_count == 0
         )
 
         # Optional feature count (non-critical features present)

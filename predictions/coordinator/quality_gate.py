@@ -50,6 +50,7 @@ QUALITY_THRESHOLDS = {
 # These catch the Session 132 scenario (all matchup features defaulted)
 HARD_FLOOR_MATCHUP_QUALITY = 50.0  # matchup_quality_pct minimum
 HARD_FLOOR_ALERT_LEVELS = {'red'}  # quality_alert_level values that block
+HARD_FLOOR_MAX_DEFAULTS = 0  # Session 141: Zero tolerance for default features
 
 
 @dataclass
@@ -176,7 +177,8 @@ class QualityGate:
                 feature_quality_score,
                 is_quality_ready,
                 quality_alert_level,
-                matchup_quality_pct
+                matchup_quality_pct,
+                default_feature_count
             FROM `{self.project_id}.{dataset}.ml_feature_store_v2`
             WHERE game_date = @game_date
               AND player_lookup IN UNNEST(@player_lookups)
@@ -199,6 +201,7 @@ class QualityGate:
                     'is_quality_ready': row.is_quality_ready or False,
                     'quality_alert_level': row.quality_alert_level,
                     'matchup_quality_pct': float(row.matchup_quality_pct or 0),
+                    'default_feature_count': int(row.default_feature_count or 0),
                 }
             logger.info(f"Got quality scores for {len(scores)} players for {game_date}")
             return scores
@@ -332,6 +335,29 @@ class QualityGate:
                     prediction_attempt=mode.value,
                     hard_floor_blocked=True,
                     missing_processor=missing,
+                ))
+                stats['hard_blocked'] += 1
+                stats['skipped_low_quality'] += 1
+                continue
+
+            # Rule 2b (Session 141 Zero Tolerance): Block any defaulted features
+            # This applies to ALL modes including LAST_CALL and BACKFILL
+            default_count = details.get('default_feature_count', 0)
+            if quality_score is not None and default_count > HARD_FLOOR_MAX_DEFAULTS:
+                logger.warning(
+                    f"HARD_FLOOR: Blocking {player_lookup} - default_feature_count={default_count} "
+                    f"> {HARD_FLOOR_MAX_DEFAULTS} (zero tolerance)"
+                )
+                results.append(QualityGateResult(
+                    player_lookup=player_lookup,
+                    should_predict=False,
+                    reason=f"zero_tolerance_defaults_{default_count}",
+                    feature_quality_score=quality_score,
+                    has_existing_prediction=False,
+                    low_quality_flag=True,
+                    forced_prediction=False,
+                    prediction_attempt=mode.value,
+                    hard_floor_blocked=True,
                 ))
                 stats['hard_blocked'] += 1
                 stats['skipped_low_quality'] += 1

@@ -2123,6 +2123,17 @@ def format_prediction_for_bigquery(
                     f"Filtered low quality for {player_lookup}: quality_score={quality_score:.1f} < 80"
                 )
 
+        # Session 141: Zero tolerance for default features (defense-in-depth)
+        # Coordinator quality gate should already block these, but this catches edge cases
+        default_feature_count = features.get('default_feature_count', 0)
+        if is_actionable and default_feature_count > 0:
+            is_actionable = False
+            filter_reason = 'has_default_features'
+            logger.info(
+                f"Filtered default features for {player_lookup}: "
+                f"default_feature_count={default_feature_count}"
+            )
+
     # Base record
     record = {
         'prediction_id': str(uuid.uuid4()),
@@ -2256,6 +2267,9 @@ def format_prediction_for_bigquery(
         'is_quality_ready': features.get('is_quality_ready'),
         'quality_alert_level': features.get('quality_alert_level'),
         'matchup_quality_pct': features.get('matchup_quality_pct'),
+
+        # Session 141: Default feature count for audit trail (zero tolerance enforcement)
+        'default_feature_count': features.get('default_feature_count'),
 
         # Session 139: Track whether prediction was made before game started
         # False for BACKFILL mode or post-game predictions (record-keeping only)

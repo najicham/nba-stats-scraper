@@ -347,3 +347,7 @@ ADD COLUMN IF NOT EXISTS matchup_quality_pct FLOAT64 OPTIONS(description="Sessio
 ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
 ADD COLUMN IF NOT EXISTS prediction_made_before_game BOOL OPTIONS(description="Session 139: TRUE if made before game start, FALSE for backfills/post-game");
 
+-- Session 141: Default feature count for audit trail (zero tolerance enforcement)
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS default_feature_count INT64 OPTIONS(description="Session 141: Number of features using default/fallback values (0 = all real data)");
+
