@@ -185,11 +185,13 @@ PYTHONPATH=. python ml/experiments/quick_retrain.py \
 
 ## Breakout Classifier [Keyword: BREAKOUT]
 
-**Status:** Shadow mode (no production impact)
+**Status:** Shadow mode (no production impact) - V3 development in progress
 
-The breakout classifier identifies role players (8-16 PPG) at risk of "breakout" games (1.5x season average). Uses CatBoost model trained on 10 features.
+The breakout classifier identifies role players (8-16 PPG) at risk of "breakout" games (1.5x season average). Currently using V2 model with 14 features (AUC 0.5708).
 
-### Shared Feature Module (Session 134b)
+**Critical Issue (Session 135):** No high-confidence predictions (max <0.6, need 0.769+). V3 development focuses on contextual features to unlock high-confidence signals.
+
+### Shared Feature Module (Sessions 134b, 135)
 
 **CRITICAL:** Always use `ml/features/breakout_features.py` for feature computation to ensure train/eval consistency.
 
@@ -239,15 +241,45 @@ PYTHONPATH=. python ml/experiments/train_and_evaluate_breakout.py \
   --eval-end 2026-02-05
 ```
 
+### V2 Performance (Session 135)
+
+**Current Production Model:** `breakout_shared_v1_20251102_20260205.cbm`
+- **AUC:** 0.5708 (14 features)
+- **Precision@0.5:** 23.9%
+- **Critical Issue:** No high-confidence predictions (max <0.6)
+- **Best Feature:** `minutes_increase_pct` (16.9% importance)
+
+**Why V2 Isn't Production-Ready:**
+- Target: 60% precision at 0.769 threshold
+- Actual: No predictions above 0.6 confidence
+- Root cause: Statistical features plateau, need contextual features
+
+### V3 Roadmap (Next Priority)
+
+**High-Impact Features to Add:**
+1. `star_teammate_out` - Star teammates OUT (+0.04-0.07 AUC expected)
+2. `fg_pct_last_game` - Hot shooting rhythm
+3. `points_last_4q` - 4Q performance signal
+4. `opponent_key_injuries` - Weakened defense
+
+**Infrastructure Ready:**
+- Injury integration: `predictions/shared/injury_integration.py`
+- Shared feature module: `ml/features/breakout_features.py`
+- Dual-mode experiment runner
+
 ### Models in GCS
 
 ```
 gs://nba-props-platform-models/breakout/v1/
-├── breakout_v1_20251102_20260205.cbm  # Active in production
-└── breakout_v1_20251102_20260115.cbm  # Backup
+├── breakout_shared_v1_20251102_20260205.cbm  # V2 Production (AUC 0.5708)
+├── breakout_v2_14features.cbm                # V2 Experimental
+└── breakout_v1_20251102_20260115.cbm         # V1 Backup
 ```
 
-**See:** `docs/09-handoff/2026-02-05-SESSION-134-COMPLETE-SUMMARY.md` for full context
+**See:**
+- `docs/09-handoff/2026-02-05-SESSION-135-HANDOFF.md` - V3 roadmap and quick start
+- `docs/09-handoff/2026-02-05-SESSION-135-BREAKOUT-V2-AND-V3-PLAN.md` - Full session details
+- `docs/09-handoff/NEXT-SESSION-PROMPT.md` - Copy-paste prompt for Session 136
 
 ## Deployment [Keyword: DEPLOY]
 
