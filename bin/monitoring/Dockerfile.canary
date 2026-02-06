@@ -1,0 +1,25 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install minimal dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Copy monitoring requirements
+COPY bin/monitoring/requirements.txt /app/monitoring-requirements.txt
+
+# Install monitoring dependencies
+RUN pip install --no-cache-dir -r /app/monitoring-requirements.txt
+
+# Copy shared module
+COPY shared/ /app/shared/
+
+# Copy monitoring scripts
+COPY bin/monitoring/ /app/bin/monitoring/
+
+# Set Python path
+ENV PYTHONPATH=/app
+
+CMD ["python", "bin/monitoring/pipeline_canary_queries.py"]

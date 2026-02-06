@@ -1,0 +1,24 @@
+FROM google/cloud-sdk:slim
+
+WORKDIR /app
+
+# Install Python and pip
+RUN apt-get update && apt-get install -y python3 python3-pip && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Copy monitoring requirements
+COPY bin/monitoring/requirements.txt /app/monitoring-requirements.txt
+
+# Install monitoring dependencies
+RUN pip3 install --no-cache-dir --break-system-packages -r /app/monitoring-requirements.txt
+
+# Copy shared module
+COPY shared/ /app/shared/
+
+# Copy monitoring scripts
+COPY bin/monitoring/ /app/bin/monitoring/
+
+# Set Python path
+ENV PYTHONPATH=/app
+
+CMD ["python3", "bin/monitoring/deployment_drift_alerter_cloudrun.py"]
