@@ -9,8 +9,7 @@ import logging
 from datetime import date, datetime
 from typing import List, Optional
 
-from shared.utils.schedule import NBAScheduleService
-from shared.utils.schedule.models import GameType
+from google.cloud import bigquery
 
 logger = logging.getLogger(__name__)
 
@@ -18,62 +17,77 @@ logger = logging.getLogger(__name__)
 def get_game_dates_for_range(
     start_date: date,
     end_date: date,
-    game_type: GameType = GameType.REGULAR_PLAYOFF
+    game_type=None  # Kept for backward compatibility, not used with BQ approach
 ) -> List[date]:
     """
     Get list of dates with NBA games in the given range.
 
-    Uses GCS schedule data as source of truth - no database dependency.
-    Automatically skips dates with no games (Thanksgiving, off-days, etc.)
+    Queries BigQuery nba_reference.nba_schedule directly for reliable
+    coverage across all seasons (2021+). GCS schedule files only exist
+    for recent seasons.
 
     Args:
         start_date: Start date (inclusive)
         end_date: End date (inclusive)
-        game_type: Type of games to include (default: regular season + playoffs)
+        game_type: Unused, kept for backward compatibility
 
     Returns:
         List of date objects where games were played, sorted chronologically
-
-    Example:
-        >>> from shared.backfill.schedule_utils import get_game_dates_for_range
-        >>> from datetime import date
-        >>> dates = get_game_dates_for_range(date(2021, 11, 15), date(2021, 11, 30))
-        >>> len(dates)  # 15 game days (skips Nov 25 Thanksgiving)
-        15
     """
-    # Determine which seasons we need to query
+    logger.info(f"Fetching game dates from {start_date} to {end_date} via BigQuery")
+
+    client = bigquery.Client()
+    query = f"""
+        SELECT DISTINCT game_date
+        FROM `nba-props-platform.nba_reference.nba_schedule`
+        WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
+          AND game_status = 3  -- Final games only
+        ORDER BY game_date
+    """
+
+    try:
+        results = client.query(query).result()
+        game_dates = [row.game_date for row in results]
+
+        total_calendar_days = (end_date - start_date).days + 1
+        skipped_days = total_calendar_days - len(game_dates)
+
+        logger.info(
+            f"Found {len(game_dates)} game dates out of {total_calendar_days} "
+            f"calendar days (skipping {skipped_days} off-days)"
+        )
+
+        return game_dates
+
+    except Exception as e:
+        logger.error(f"Failed to fetch game dates from BigQuery: {e}")
+        logger.info("Falling back to NBAScheduleService GCS reader...")
+        return _get_game_dates_gcs_fallback(start_date, end_date)
+
+
+def _get_game_dates_gcs_fallback(start_date: date, end_date: date) -> List[date]:
+    """Fallback to GCS schedule reader if BigQuery is unavailable."""
+    from shared.utils.schedule import NBAScheduleService
+    from shared.utils.schedule.models import GameType
+
     start_season = _get_season_for_date(start_date)
     end_season = _get_season_for_date(end_date)
     seasons = list(range(start_season, end_season + 1))
 
-    logger.info(f"Fetching game dates from {start_date} to {end_date} (seasons: {seasons})")
-
-    # Use GCS-only mode - no database dependency
     schedule = NBAScheduleService.from_gcs_only()
-
-    # Get all game dates for the seasons
     game_date_info = schedule.get_all_game_dates(
         seasons=seasons,
-        game_type=game_type,
+        game_type=GameType.REGULAR_PLAYOFF,
         start_date=str(start_date),
         end_date=str(end_date)
     )
 
-    # Extract just the dates
     game_dates = []
     for info in game_date_info:
         game_date = datetime.strptime(info['date'], '%Y-%m-%d').date()
         game_dates.append(game_date)
 
-    # Sort and dedupe (should already be sorted but be safe)
-    game_dates = sorted(set(game_dates))
-
-    total_calendar_days = (end_date - start_date).days + 1
-    skipped_days = total_calendar_days - len(game_dates)
-
-    logger.info(f"Found {len(game_dates)} game dates out of {total_calendar_days} calendar days (skipping {skipped_days} off-days)")
-
-    return game_dates
+    return sorted(set(game_dates))
 
 
 def _get_season_for_date(date_obj: date) -> int:
