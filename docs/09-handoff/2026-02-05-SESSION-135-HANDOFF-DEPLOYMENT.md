@@ -100,13 +100,12 @@ Built complete 6-layer resilience monitoring system with self-healing (Layers 1-
 ✅ slack-webhook-canary-alerts (created)
 ```
 
-### 🔄 Deployment In Progress
+### ❌ Deployment Attempted (Failed - Dependency Issues)
 
 **Layer 1: Deployment Drift Alerter**
-- Status: 🔄 BUILDING (started 5 min ago)
-- Command running in background: Task ID `b43bc3f`
-- Using Cloud Run source deployment with Buildpacks
-- ETA: 5-10 minutes
+- Status: ❌ FAILED (Buildpacks dependency conflict)
+- Issue: shared/requirements.txt has conflicting pinned versions
+- Recommendation: Use simpler requirements or existing service pattern
 
 **To check status:**
 ```bash
@@ -134,9 +133,38 @@ cat /tmp/claude-1000/-home-naji-code-nba-stats-scraper/tasks/b43bc3f.output
 
 ---
 
+## ⚠️ RECOMMENDED: Simpler Deployment Approach
+
+The source deployment failed due to `shared/requirements.txt` dependency conflicts. Use one of these approaches:
+
+**Option A: Create minimal requirements for monitoring jobs**
+```bash
+# Create monitoring-specific requirements
+cat > monitoring-requirements.txt <<EOF
+requests>=2.31.0
+google-cloud-bigquery>=3.13.0
+google-cloud-firestore>=2.11.0
+EOF
+
+# Use in deployment with --requirements flag (if supported)
+# Or copy to job directory before deployment
+```
+
+**Option B: Use existing service deployment pattern**
+- Check how `prediction-worker` or `nba-scrapers` are deployed
+- Copy their Dockerfile pattern
+- Adapt for monitoring jobs
+
+**Option C: Manual deployment with pre-built image**
+- Build locally with Docker using fixed requirements
+- Push to GCR
+- Deploy job from image
+
 ## 📋 Step-by-Step Completion Guide
 
-### Step 1: Wait for Layer 1 Deployment (5-10 min)
+### Step 1: Deploy Layer 1 - Deployment Drift Alerter (10-15 min)
+
+**Choose deployment approach above, then:**
 
 **Check if build completed:**
 ```bash
