@@ -21,6 +21,7 @@ Phases connected via **Pub/Sub event triggers**. Daily workflow starts ~6 AM ET.
 ## Core Principles
 
 - **Data quality first** - Discovery queries before assumptions
+- **Zero tolerance for defaults** - Never predict with fabricated feature values (Session 141)
 - **Always filter partitions** - Massive BigQuery performance gains
 - **Batch over streaming** - Avoid 90-min DML locks
 - **One small thing at a time** - With comprehensive testing
@@ -352,12 +353,13 @@ git log -1 --format="%h"
 
 ## ML Feature Quality [Keyword: QUALITY]
 
-**Status:** Session 134 implementation in progress
+**Status:** Session 141 - Zero tolerance for default features
 
 The ML feature store has comprehensive per-feature quality tracking:
 - **122 fields total:** 74 per-feature columns (37 quality + 37 source) + 48 aggregate/JSON fields
 - **37 features tracked** across 5 categories: matchup(6), player_history(13), team_context(3), vegas(4), game_context(11)
 - **Detection time:** <5 seconds for quality issues (vs 2+ hours manual)
+- **Zero tolerance (Session 141):** Predictions blocked for ANY player with `default_feature_count > 0`
 
 ### Quick Quality Checks
 
@@ -389,6 +391,17 @@ WHERE game_date = CURRENT_DATE()
 
 **Note (Session 139):** The `prediction_made_before_game` field in `player_prop_predictions` tracks whether a prediction was generated before game start time, enabling accurate grading of pre-game vs backfill predictions.
 
+### Zero Tolerance Policy (Session 141)
+
+**CRITICAL:** Predictions are blocked for any player with `default_feature_count > 0`. Three enforcement layers:
+1. **Phase 4 (quality_scorer.py):** `is_quality_ready=false` when any defaults exist
+2. **Coordinator (quality_gate.py):** `HARD_FLOOR_MAX_DEFAULTS = 0` hard floor blocks all modes
+3. **Worker (worker.py):** Defense-in-depth sets `is_actionable=false`
+
+**Impact:** Coverage drops from ~180 to ~75 predictions per game day. This is intentional -- accuracy > coverage. To increase coverage, fix the data pipeline (Phase 4 processors, vegas line coverage), never relax the tolerance.
+
+**Audit:** `default_feature_count` is written to `player_prop_predictions` for every prediction.
+
 ### Per-Feature Quality Fields
 
 Each of 37 features has:
@@ -414,7 +427,7 @@ Each of 37 features has:
 | Issue | Detection | Fix |
 |-------|-----------|-----|
 | All matchup features defaulted | `matchup_quality_pct = 0` | Check PlayerCompositeFactorsProcessor ran |
-| High default rate | `default_feature_count > 6` | Check Phase 4 processors completed |
+| Any defaults present | `default_feature_count > 0` | Prediction blocked (Session 141 zero tolerance). Fix upstream data gaps. |
 | Low training quality | `training_quality_feature_count < 30` | Investigate per-feature quality scores |
 
 ### Documentation
@@ -425,6 +438,8 @@ Each of 37 features has:
 - Session 134 handoff: `docs/09-handoff/2026-02-05-SESSION-134-START-HERE.md`
 
 **Key insight:** "The aggregate feature_quality_score is a lie" - it masks component failures. Always check category-level quality (matchup, history, context, vegas, game_context) for root cause.
+
+**Session 141:** Zero tolerance project docs at `docs/08-projects/current/zero-tolerance-defaults/`
 
 ## Phase 3 Health Check [Keyword: PHASE3]
 
@@ -458,6 +473,15 @@ FROM nba_predictions.ml_feature_store_v2
 WHERE game_date >= CURRENT_DATE() - 3
   AND quality_alert_level = 'red'
 GROUP BY 1 ORDER BY 1 DESC;
+
+-- Session 141: Check zero tolerance impact (defaults vs clean)
+SELECT game_date,
+       COUNTIF(default_feature_count = 0) as clean_players,
+       COUNTIF(default_feature_count > 0) as blocked_players,
+       COUNTIF(is_quality_ready) as quality_ready
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= CURRENT_DATE() - 3
+GROUP BY 1 ORDER BY 1 DESC;
 ```
 
 **Full query library:** See `docs/02-operations/useful-queries.md`
@@ -481,9 +505,10 @@ GROUP BY 1 ORDER BY 1 DESC;
 | Feature cache stale | Wrong predicted values, low hit rate | Regenerate predictions for affected dates |
 | **Silent service failure** | **Service running but requests fail** | **Check `/health/deep` endpoint - missing module or broken dependency (Session 129)** |
 | **ML train/eval mismatch** | **Model has poor holdout performance despite good training metrics** | **Use shared feature module (`ml/features/`) for both training and evaluation (Session 134b)** |
-| **Low feature quality** | **`matchup_quality_pct < 50` or high `default_feature_count`** | **Check which processor didn't run: query `missing_processors` field or check phase_completions table** |
+| **Low feature quality** | **`matchup_quality_pct < 50` or `default_feature_count > 0`** | **Check which processor didn't run: query `missing_processors` field or check phase_completions table** |
 | **Session 132 recurrence** | **All matchup features (5-8) at quality 40** | **PlayerCompositeFactorsProcessor didn't run - check scheduler job configuration** |
 | **Predictions skipped due to quality** | **`PREDICTIONS_SKIPPED` Slack alert** | **Check Phase 4 processor logs, BACKFILL next day: `POST /start {"game_date":"YYYY-MM-DD","prediction_run_mode":"BACKFILL"}`** |
+| **Zero tolerance blocking** | **`zero_tolerance_defaults_N` in quality gate logs** | **Normal behavior (Session 141). Fix by ensuring Phase 4 processors run for all players. Never relax the tolerance.** |
 
 **Full troubleshooting:** See `docs/02-operations/session-learnings.md`
 
