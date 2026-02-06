@@ -38,7 +38,8 @@ from data_processors.precompute.base import PrecomputeProcessorBase
 
 # Pattern imports (Week 1 - Foundation Patterns)
 from shared.processors.patterns import SmartSkipMixin, EarlyExitMixin, CircuitBreakerMixin
-from shared.config.source_coverage import get_tier_from_score
+from shared.config.source_coverage import get_tier_from_score  # Legacy, still used by early-season path
+from data_processors.precompute.ml_feature_store.quality_scorer import get_feature_quality_tier
 
 # Smart Idempotency (Pattern #1)
 from data_processors.raw.smart_idempotency_mixin import SmartIdempotencyMixin
@@ -77,12 +78,8 @@ PHASE4_MINIMUM_RECORDS = 50
 PHASE4_MAX_STALENESS_HOURS = 6
 
 # Feature version and names
-# v2_33features: Added 8 new features for V8 CatBoost model (Jan 2026)
-# - Vegas lines (4): betting context for value detection
-# - Opponent history (2): player performance vs specific opponent
-# - Minutes/efficiency (2): playing time and scoring rate trends
-# v2_37features: Added 3 player trajectory features (Session 28 - Jan 2026)
-# - Player trajectory (3): captures rising/declining performance trends
+# v2_33features: Added 8 features for V8 model (Vegas, opponent, minutes/efficiency)
+# v2_37features: Added 4 features (DNP rate + 3 player trajectory) - current version
 # v2_38features: Added breakout_risk_score (Session 126 - Feb 2026)
 # - Composite 0-100 score predicting role player breakout probability
 # v2_39features: Added composite_breakout_signal (Session 126 - Feb 2026)
@@ -1428,16 +1425,22 @@ class MLFeatureStoreProcessor(
         # Extract Phase 3 data (fallback + calculated features)
         phase3_data = self.feature_extractor.extract_phase3_data(player_lookup, game_date)
 
-        # Generate 33 features (v2_33features for V8 model)
+        # Generate 37 features (v2_37features)
         features, feature_sources = self._extract_all_features(
             phase4_data, phase3_data,
             player_lookup=player_lookup,
             opponent=opponent_team_abbr
         )
 
-        # Calculate quality score
+        # Calculate quality score and build quality visibility fields
         quality_score = self.quality_scorer.calculate_quality_score(feature_sources)
         data_source = self.quality_scorer.determine_primary_source(feature_sources)
+        quality_fields = self.quality_scorer.build_quality_visibility_fields(
+            feature_sources=feature_sources,
+            feature_values=features,
+            feature_names=FEATURE_NAMES,
+            quality_score=quality_score,
+        )
 
         # Build output record with v4.0 source tracking
         record = {
@@ -1447,7 +1450,7 @@ class MLFeatureStoreProcessor(
             'game_id': player_row['game_id'],
 
             # Features
-            'features': features,  # List of 33 floats (v2_33features)
+            'features': features,  # List of 37 floats (v2_37features)
             'feature_sources': feature_sources,  # Session 95 fix: Store for FEATURE SOURCE ALERT counting
             'feature_names': FEATURE_NAMES,
             'feature_count': FEATURE_COUNT,
@@ -1458,8 +1461,8 @@ class MLFeatureStoreProcessor(
             'is_home': player_row.get('is_home'),
             'days_rest': phase3_data.get('days_rest'),
             
-            # Quality (quality_tier derived from feature_quality_score)
-            'quality_tier': get_tier_from_score(quality_score).value,
+            # Quality (quality_tier uses feature store visibility tiers)
+            'quality_tier': get_feature_quality_tier(quality_score),
             'feature_quality_score': quality_score,
             'data_source': data_source,
             
@@ -1545,12 +1548,21 @@ class MLFeatureStoreProcessor(
         # Compute and add data hash (Smart Idempotency - Pattern #1)
         record['data_hash'] = self.compute_data_hash(record)
 
+        # ============================================================
+        # QUALITY VISIBILITY (Session 137 - 120 new fields)
+        # Merge quality visibility fields into the record.
+        # quality_tier is overwritten with the feature-store-specific tier.
+        # is_production_ready is NOT overwritten (kept as completeness-based).
+        # is_quality_ready is a NEW field for quality-based gating.
+        # ============================================================
+        record.update(quality_fields)
+
         return record
     
     def _extract_all_features(self, phase4_data: Dict, phase3_data: Dict,
                                player_lookup: str = None, opponent: str = None) -> tuple:
         """
-        Extract all 33 features with Phase 4 → Phase 3 → Default fallback.
+        Extract all 37 features with Phase 4 → Phase 3 → Default fallback.
 
         Args:
             phase4_data: Dict with Phase 4 table data
@@ -1560,7 +1572,7 @@ class MLFeatureStoreProcessor(
 
         Returns:
             tuple: (features_list, feature_sources_dict)
-                features_list: List of 33 float values
+                features_list: List of 37 float values
                 feature_sources_dict: Dict mapping feature index to source
         """
         features = []

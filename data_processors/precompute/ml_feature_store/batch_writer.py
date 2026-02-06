@@ -107,9 +107,9 @@ class BatchWriter:
 
             logger.info(f"Loaded {len(rows)} rows to temp table ({self._timing['load_temp_table']:.2f}s)")
 
-            # Step 5: MERGE from temp to target
+            # Step 5: MERGE from temp to target (dynamic UPDATE SET from schema)
             step_start = time.time()
-            merge_success = self._merge_to_target(table_id, temp_table_id, game_date)
+            merge_success = self._merge_to_target(table_id, temp_table_id, game_date, target_schema)
             self._timing['merge_operation'] = time.time() - step_start
 
             if not merge_success:
@@ -336,20 +336,49 @@ class BatchWriter:
         return True
 
     def _merge_to_target(self, target_table_id: str, temp_table_id: str,
-                        game_date: date) -> bool:
+                        game_date: date, target_schema: list) -> bool:
         """
         MERGE data from temp table to target.
 
         Uses player_lookup + game_date as merge key.
+        Dynamically builds UPDATE SET from schema to avoid hardcoded column drift.
 
         Args:
             target_table_id: Full target table ID
             temp_table_id: Full temp table ID
             game_date: Game date for the merge
+            target_schema: BigQuery schema fields from target table
 
         Returns:
             bool: True if successful
         """
+        # Define columns excluded from UPDATE SET
+        # - Merge keys: used in ON clause, not updated
+        # - created_at: preserve original creation timestamp
+        # - updated_at: set explicitly to CURRENT_TIMESTAMP()
+        MERGE_KEYS = {'player_lookup', 'game_date'}
+        SPECIAL_COLUMNS = {'created_at', 'updated_at'}
+        EXCLUDE_FROM_UPDATE = MERGE_KEYS | SPECIAL_COLUMNS
+
+        # Build UPDATE SET dynamically from schema
+        update_columns = [
+            f.name for f in target_schema
+            if f.name not in EXCLUDE_FROM_UPDATE
+        ]
+
+        if not update_columns:
+            raise RuntimeError("No columns to update - schema may be empty or misconfigured")
+
+        update_set_lines = [f"{col} = source.{col}" for col in update_columns]
+        # Always explicitly set updated_at to current timestamp
+        update_set_lines.append("updated_at = CURRENT_TIMESTAMP()")
+        update_set_clause = ",\n                ".join(update_set_lines)
+
+        logger.info(
+            f"Dynamic MERGE: {len(update_columns)} columns in UPDATE SET "
+            f"(excluded: {sorted(EXCLUDE_FROM_UPDATE)})"
+        )
+
         # Build MERGE query
         # Match on player_lookup + game_date
         # Use ROW_NUMBER to deduplicate source rows (same player may appear twice if reprocessed)
@@ -368,54 +397,7 @@ class BatchWriter:
            AND target.game_date = source.game_date
         WHEN MATCHED THEN
             UPDATE SET
-                universal_player_id = source.universal_player_id,
-                game_id = source.game_id,
-                features = source.features,
-                feature_names = source.feature_names,
-                feature_count = source.feature_count,
-                feature_version = source.feature_version,
-                opponent_team_abbr = source.opponent_team_abbr,
-                is_home = source.is_home,
-                days_rest = source.days_rest,
-                quality_tier = source.quality_tier,
-                feature_quality_score = source.feature_quality_score,
-                feature_generation_time_ms = source.feature_generation_time_ms,
-                data_source = source.data_source,
-                early_season_flag = source.early_season_flag,
-                insufficient_data_reason = source.insufficient_data_reason,
-                source_daily_cache_last_updated = source.source_daily_cache_last_updated,
-                source_daily_cache_rows_found = source.source_daily_cache_rows_found,
-                source_daily_cache_completeness_pct = source.source_daily_cache_completeness_pct,
-                source_daily_cache_hash = source.source_daily_cache_hash,
-                source_composite_last_updated = source.source_composite_last_updated,
-                source_composite_rows_found = source.source_composite_rows_found,
-                source_composite_completeness_pct = source.source_composite_completeness_pct,
-                source_composite_hash = source.source_composite_hash,
-                source_shot_zones_last_updated = source.source_shot_zones_last_updated,
-                source_shot_zones_rows_found = source.source_shot_zones_rows_found,
-                source_shot_zones_completeness_pct = source.source_shot_zones_completeness_pct,
-                source_shot_zones_hash = source.source_shot_zones_hash,
-                source_team_defense_last_updated = source.source_team_defense_last_updated,
-                source_team_defense_rows_found = source.source_team_defense_rows_found,
-                source_team_defense_completeness_pct = source.source_team_defense_completeness_pct,
-                source_team_defense_hash = source.source_team_defense_hash,
-                expected_games_count = source.expected_games_count,
-                actual_games_count = source.actual_games_count,
-                completeness_percentage = source.completeness_percentage,
-                missing_games_count = source.missing_games_count,
-                is_production_ready = source.is_production_ready,
-                data_quality_issues = source.data_quality_issues,
-                last_reprocess_attempt_at = source.last_reprocess_attempt_at,
-                reprocess_attempt_count = source.reprocess_attempt_count,
-                circuit_breaker_active = source.circuit_breaker_active,
-                circuit_breaker_until = source.circuit_breaker_until,
-                manual_override_required = source.manual_override_required,
-                season_boundary_detected = source.season_boundary_detected,
-                backfill_bootstrap_mode = source.backfill_bootstrap_mode,
-                processing_decision_reason = source.processing_decision_reason,
-                historical_completeness = source.historical_completeness,
-                data_hash = source.data_hash,
-                updated_at = CURRENT_TIMESTAMP()
+                {update_set_clause}
         WHEN NOT MATCHED THEN
             INSERT ROW
         """

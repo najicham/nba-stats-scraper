@@ -130,13 +130,14 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.ml_feature_store_
   updated_at TIMESTAMP,
 
   -- ========================================================================
-  -- FEATURE QUALITY VISIBILITY (120 new fields - Session 134)
+  -- FEATURE QUALITY VISIBILITY (120 new fields + 2 reused = 122 total - Session 134/137)
   -- Hybrid schema: flat columns for critical fields, JSON for details
   -- Design: docs/08-projects/current/feature-quality-visibility/07-FINAL-HYBRID-SCHEMA.md
   --
   -- NOTE: feature_quality_score (above) is reused as aggregate quality score.
-  -- NOTE: is_production_ready (above) semantics updated to include quality checks:
-  --   TRUE if completeness >= 90% AND quality_tier in ('gold','silver','bronze')
+  -- NOTE: is_production_ready (above) is UNCHANGED (completeness-based).
+  -- NOTE: is_quality_ready (below) is the NEW quality-based gate:
+  --   TRUE if quality_tier in ('gold','silver','bronze')
   --   AND feature_quality_score >= 70 AND matchup_quality_pct >= 50
   -- ========================================================================
 
@@ -167,6 +168,9 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.ml_feature_store_
   ),
   training_quality_feature_count INT64 OPTIONS(
     description='Count of features meeting training quality bar. Filter: WHERE training_quality_feature_count >= 30.'
+  ),
+  is_quality_ready BOOL OPTIONS(
+    description='TRUE if meets quality gate: quality_tier in (gold, silver, bronze) AND score >= 70 AND matchup >= 50. Separate from is_production_ready (completeness-based).'
   ),
 
   -- Section 2: Category Quality (18 fields)
@@ -376,7 +380,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.ml_feature_store_
 PARTITION BY game_date
 CLUSTER BY player_lookup, feature_version, game_date
 OPTIONS(
-  description="ML feature store with flexible array-based features (v2.0). Includes v4.0 dependency tracking, smart patterns, and Session 134 feature quality visibility (114 quality fields for per-feature monitoring).",
+  description="ML feature store with flexible array-based features (v2.0). Includes v4.0 dependency tracking, smart patterns, and Session 134/137 feature quality visibility (120 new + 2 reused = 122 quality fields).",
   require_partition_filter=TRUE
 );
 
@@ -600,14 +604,16 @@ ADD COLUMN IF NOT EXISTS calculated_feature_count INT64
 ADD COLUMN IF NOT EXISTS is_training_ready BOOL
   OPTIONS (description='TRUE if meets training quality bar'),
 ADD COLUMN IF NOT EXISTS training_quality_feature_count INT64
-  OPTIONS (description='Count of features meeting training quality bar');
+  OPTIONS (description='Count of features meeting training quality bar'),
+ADD COLUMN IF NOT EXISTS is_quality_ready BOOL
+  OPTIONS (description='TRUE if meets quality gate: quality_tier in (gold, silver, bronze) AND score >= 70 AND matchup >= 50');
 
 -- Category quality (18 fields)
 ALTER TABLE `nba-props-platform.nba_predictions.ml_feature_store_v2`
 ADD COLUMN IF NOT EXISTS matchup_quality_pct FLOAT64
   OPTIONS (description='Quality % for matchup features (5-8, 13-14)'),
 ADD COLUMN IF NOT EXISTS player_history_quality_pct FLOAT64
-  OPTIONS (description='Quality % for player history features (0-4, 29-32)'),
+  OPTIONS (description='Quality % for player history features (0-4, 29-36). 13 features.'),
 ADD COLUMN IF NOT EXISTS team_context_quality_pct FLOAT64
   OPTIONS (description='Quality % for team context features (22-24)'),
 ADD COLUMN IF NOT EXISTS vegas_quality_pct FLOAT64

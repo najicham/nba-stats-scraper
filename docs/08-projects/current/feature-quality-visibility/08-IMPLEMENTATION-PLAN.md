@@ -53,7 +53,7 @@ The processor already writes `feature_sources` as a Python dict. The batch_write
 - Add `calculate_training_ready()` — stricter tier check
 - Add `calculate_alert_level()` — green/yellow/red
 - Add `calculate_alerts()` — list of specific alert strings
-- Add `build_quality_visibility_fields()` — master function returning all 128 fields (37 per-feature columns)
+- Add `build_quality_visibility_fields()` — master function returning all 120 new fields (122 total) (37 per-feature columns)
 - Update existing `calculate_quality_score()` to use new tier names
 - Keep backward compatibility: still return `quality_score`, `quality_tier`, `data_source`
 
@@ -107,17 +107,15 @@ record.update(quality_fields)
 
 **Run the ALTER TABLE statements from `04_ml_feature_store_v2.sql`:**
 ```bash
-# Step 4 ALTER TABLE blocks add 128 new columns
+# Step 4 ALTER TABLE blocks add 121 new columns (120 quality + is_quality_ready)
 bq query --use_legacy_sql=false < schemas/bigquery/predictions/04_ml_feature_store_v2_quality_alter.sql
 ```
 
 Or extract Step 4 ALTER TABLE blocks and run them. The columns are all nullable so existing data is unaffected.
 
-### Step 4: Update batch_writer.py (if needed)
+### Step 4: Refactor batch_writer.py MERGE (REQUIRED)
 
-The batch_writer uses the BigQuery table schema to build the MERGE query. Since it dynamically reads column names, **no code changes should be needed** — the new columns will be picked up automatically from the schema.
-
-**Verify:** The MERGE query in batch_writer builds UPDATE SET and INSERT from all columns. Confirm it handles NULL for columns not in the record dict (it should, since new columns are nullable).
+**Session 137 finding:** The MERGE query had a hardcoded UPDATE SET with ~48 explicit columns. New quality columns would NOT be updated on reprocessing. This was refactored to a dynamic UPDATE SET built from the target table schema, excluding only merge keys (`player_lookup`, `game_date`) and special columns (`created_at`, `updated_at`). The `updated_at` is set explicitly to `CURRENT_TIMESTAMP()`. This proven pattern is already used by 3 other processors in the codebase.
 
 ### Step 5: Create the unpivot view
 
@@ -283,9 +281,9 @@ LIMIT 10;
 ```
 Pre-deploy:
 - [ ] quality_scorer.py enhanced with all quality visibility functions
-- [ ] ml_feature_store_processor.py integrates quality fields (128 fields, all 37 features)
+- [ ] ml_feature_store_processor.py integrates quality fields (121 new fields (122 total), all 37 features)
 - [ ] Unit tests pass for new quality scoring (all 37 features covered)
-- [ ] ALTER TABLE statements applied to BigQuery (128 new columns)
+- [ ] ALTER TABLE statements applied to BigQuery (121 new columns (120 quality + is_quality_ready))
 - [ ] Unpivot view created
 
 Deploy:
