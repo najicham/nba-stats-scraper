@@ -69,7 +69,8 @@ jobs:
           if [ "$DEPLOYED_SHA" = "$SHORT_SHA" ]; then
             echo "Deployment verified"
           else
-            echo "::warning::Commit SHA mismatch - expected $SHORT_SHA, got $DEPLOYED_SHA"
+            echo "::error::Commit SHA mismatch - expected $SHORT_SHA, got $DEPLOYED_SHA"
+            exit 1
           fi
 
       - name: Health check
@@ -86,5 +87,6 @@ jobs:
             echo "Service URL: $SERVICE_URL"
             echo "Deployed $SERVICE successfully"
           else
-            echo "::warning::Could not determine service URL for $SERVICE"
+            echo "::error::Could not determine service URL for $SERVICE"
+            exit 1
           fi

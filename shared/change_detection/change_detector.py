@@ -43,7 +43,7 @@ class ChangeDetector:
                 return '''
                 WITH current_raw AS (
                     SELECT player_lookup, points, assists
-                    FROM nba_raw.bdl_player_boxscores
+                    FROM nba_raw.nbac_gamebook_player_stats
                     WHERE game_date = @game_date
                 ),
                 last_processed AS (
@@ -217,7 +217,7 @@ class PlayerChangeDetector(ChangeDetector):
         Detect player changes by comparing raw boxscore vs processed analytics.
         """
         # Default fields to check
-        # NOTE: Only include fields that exist in BOTH bdl_player_boxscores AND player_game_summary
+        # NOTE: Only include fields that exist in BOTH nbac_gamebook_player_stats AND player_game_summary
         # injury_status/active_status don't exist in these tables (they're in nbac_injury_report)
         # rebounds doesn't exist in player_game_summary (has offensive_rebounds, defensive_rebounds)
         if change_detection_fields is None:
@@ -238,7 +238,7 @@ class PlayerChangeDetector(ChangeDetector):
             SELECT
                 player_lookup,
                 {', '.join(change_detection_fields)}
-            FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+            FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
             WHERE game_date = @game_date
         ),
         last_processed AS (
@@ -263,7 +263,7 @@ class PlayerChangeDetector(ChangeDetector):
         """Count total players for this date."""
         query = f"""
         SELECT COUNT(DISTINCT player_lookup) as total
-        FROM `{self.project_id}.nba_raw.nbac_player_boxscores`
+        FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
         WHERE game_date = @game_date
         """
 
