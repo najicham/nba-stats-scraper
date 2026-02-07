@@ -284,6 +284,58 @@ gs://nba-props-platform-models/breakout/v1/
 
 ## Deployment [Keyword: DEPLOY]
 
+### Auto-Deploy via Cloud Build Triggers (Session 147)
+
+**Primary method: Push to main auto-deploys changed services.**
+
+Cloud Build triggers watch GitHub for pushes to `main` and auto-deploy only the services whose files changed. Each trigger also watches `shared/` so shared code changes deploy all services.
+
+| Trigger | Watches | Cloud Build Trigger |
+|---------|---------|---------------------|
+| prediction-coordinator | `predictions/coordinator/**`, `predictions/shared/**`, `shared/**` | `deploy-prediction-coordinator` |
+| prediction-worker | `predictions/worker/**`, `predictions/shared/**`, `shared/**` | `deploy-prediction-worker` |
+| nba-phase3-analytics-processors | `data_processors/analytics/**`, `shared/**` | `deploy-nba-phase3-analytics-processors` |
+| nba-phase4-precompute-processors | `data_processors/precompute/**`, `shared/**` | `deploy-nba-phase4-precompute-processors` |
+| nba-phase2-raw-processors | `data_processors/raw/**`, `shared/**` | `deploy-nba-phase2-raw-processors` |
+| nba-scrapers | `scrapers/**`, `shared/**` | `deploy-nba-scrapers` |
+
+**How it works:**
+1. Push to `main` triggers Cloud Build via GitHub webhook
+2. Cloud Build clones repo, builds Docker image with correct Dockerfile
+3. Deploys to Cloud Run with `--update-env-vars` (preserves existing env vars)
+4. Labels deployment with commit SHA for drift detection
+
+**Monitor triggers:**
+```bash
+# List triggers
+gcloud builds triggers list --region=us-west2 --project=nba-props-platform
+
+# Check recent builds
+gcloud builds list --region=us-west2 --project=nba-props-platform --limit=5
+
+# View build logs
+gcloud builds log BUILD_ID --region=us-west2 --project=nba-props-platform
+```
+
+### Manual Deploy Options
+
+For cases where auto-deploy isn't suitable (debugging, hotfixes before push):
+
+**Standard deploy** (full validation, ~8-10 min):
+```bash
+./bin/deploy-service.sh SERVICE
+```
+
+**Hot-deploy** (skips non-essential checks, ~5-6 min):
+```bash
+./bin/hot-deploy.sh SERVICE
+```
+
+**GitHub Actions** (manual trigger from UI):
+```bash
+gh workflow run "CD - Auto Deploy on Main" -f service=prediction-coordinator
+```
+
 ### CRITICAL: Always deploy from repo root
 ```bash
 # Correct
@@ -300,29 +352,10 @@ cd predictions/worker && gcloud run deploy --source .
 | prediction-worker | predictions/worker/Dockerfile |
 | nba-phase3-analytics-processors | data_processors/analytics/Dockerfile |
 | nba-phase4-precompute-processors | data_processors/precompute/Dockerfile |
-| nba-phase2-processors | data_processors/raw/Dockerfile |
+| nba-phase2-raw-processors | data_processors/raw/Dockerfile |
 | nba-scrapers | scrapers/Dockerfile |
 
-### Deployment Options
-
-**Standard deploy** (full validation, ~8-10 min):
-```bash
-./bin/deploy-service.sh SERVICE
-```
-
-**Hot-deploy** (skips non-essential checks, ~5-6 min):
-```bash
-./bin/hot-deploy.sh SERVICE
-```
-
-Hot-deploy skips:
-- Dockerfile dependency validation
-- 120s BigQuery write verification
-- Env var preservation checks
-
-Use hot-deploy for quick fixes, standard for major changes.
-
-### Always Deploy After Bug Fixes
+### Check Deployment Status
 ```bash
 # Check deployed commit
 gcloud run services describe SERVICE --region=us-west2 \
@@ -331,8 +364,8 @@ gcloud run services describe SERVICE --region=us-west2 \
 # Compare to latest
 git log -1 --format="%h"
 
-# Redeploy if different
-./bin/deploy-service.sh SERVICE
+# Full drift check
+./bin/check-deployment-drift.sh --verbose
 ```
 
 ## Key Tables [Keyword: TABLES]
@@ -576,27 +609,24 @@ Create at `docs/09-handoff/YYYY-MM-DD-SESSION-N-HANDOFF.md`
 **CRITICAL:** Before ending any session where code was changed:
 
 ```bash
-# 1. Check deployment drift
+# 1. Commit and push (auto-deploy triggers on push to main)
+git push origin main
+
+# 2. Verify Cloud Build triggers fired (if service code changed)
+gcloud builds list --region=us-west2 --project=nba-props-platform --limit=5
+
+# 3. If auto-deploy didn't trigger (non-service changes), check drift
 ./bin/check-deployment-drift.sh --verbose
-
-# 2. Deploy stale services (if any)
-./bin/deploy-service.sh <service-name>
-
-# 3. Verify deployments
-./bin/whats-deployed.sh
 
 # 4. Create handoff document
 ```
 
-**Why this matters:** Sessions 64, 81, 82, and 97 had fixes committed but not deployed, causing recurring issues. Deployment drift is the #1 cause of "already fixed" bugs reappearing.
+**Session 147:** Cloud Build triggers now auto-deploy on push to main. Manual deploys are only needed for debugging or when auto-deploy fails. See DEPLOY section for details.
 
-| If you changed... | Deploy... |
-|-------------------|-----------|
-| `predictions/worker/` | `prediction-worker` |
-| `predictions/coordinator/` | `prediction-coordinator` |
-| `data_processors/analytics/` | `nba-phase3-analytics-processors` |
-| `data_processors/precompute/` | `nba-phase4-precompute-processors` |
-| `shared/` | ALL services that use shared code |
+**Fallback** (if auto-deploy fails or for urgent hotfixes):
+```bash
+./bin/hot-deploy.sh <service-name>
+```
 
 ## Conventions
 
