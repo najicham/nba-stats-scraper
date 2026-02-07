@@ -127,6 +127,14 @@ class DailyReconciliation:
         check6 = self._check_quality_distribution(game_date)
         report.add_check(check6)
 
+        # Check 7: Cache miss rate (Session 147)
+        check7 = self._check_cache_miss_rate(game_date)
+        report.add_check(check7)
+
+        # Check 8: Post-game reconciliation - played vs cached vs predicted (Session 147)
+        check8 = self._check_played_vs_cached(game_date)
+        report.add_check(check8)
+
         # Summary
         self._print_summary(report)
 
@@ -558,6 +566,175 @@ class DailyReconciliation:
                 source_count=0,
                 target_count=0,
                 missing_count=0,
+                status="error"
+            )
+
+    def _check_cache_miss_rate(self, game_date: str) -> ReconciliationResult:
+        """Check cache miss rate in the ML feature store (Session 147)."""
+        print("\n" + "-" * 50)
+        print("CHECK 7: Cache Miss Rate (Session 147)")
+        print("-" * 50)
+
+        query = f"""
+        SELECT
+            COUNTIF(cache_miss_fallback_used) as cache_misses,
+            COUNT(*) as total,
+            ROUND(COUNTIF(cache_miss_fallback_used) / NULLIF(COUNT(*), 0) * 100, 1) as miss_rate_pct
+        FROM `{self.project_id}.nba_predictions.ml_feature_store_v2`
+        WHERE game_date = '{game_date}'
+        """
+
+        try:
+            results = list(self.bq_client.query(query).result())
+
+            if not results or results[0].total == 0:
+                print("   No feature store data for this date.")
+                return ReconciliationResult(
+                    check_name="cache_miss_rate",
+                    source_name="Feature Store",
+                    target_name="Cache Hits",
+                    source_count=0, target_count=0, missing_count=0,
+                    status="warning"
+                )
+
+            row = results[0]
+            total = row.total
+            misses = row.cache_misses or 0
+            hits = total - misses
+            miss_rate = row.miss_rate_pct or 0.0
+
+            print(f"   Total players: {total}")
+            print(f"   Cache hits: {hits}")
+            print(f"   Cache misses (fallback used): {misses}")
+            print(f"   Miss rate: {miss_rate}%")
+
+            # For daily predictions, >0% is a warning; >5% is an error
+            if miss_rate > 5:
+                status = "error"
+                print(f"   ERROR: High cache miss rate - check PlayerDailyCacheProcessor")
+            elif miss_rate > 0:
+                status = "warning"
+                print(f"   WARNING: Non-zero cache miss rate - investigate player list mismatch")
+            else:
+                status = "ok"
+
+            return ReconciliationResult(
+                check_name="cache_miss_rate",
+                source_name="Feature Store Players",
+                target_name="Cache Hits",
+                source_count=total,
+                target_count=hits,
+                missing_count=misses,
+                status=status
+            )
+
+        except Exception as e:
+            logger.error(f"Check 7 failed: {e}")
+            return ReconciliationResult(
+                check_name="cache_miss_rate",
+                source_name="Feature Store",
+                target_name="Cache Hits",
+                source_count=0, target_count=0, missing_count=0,
+                status="error"
+            )
+
+    def _check_played_vs_cached(self, game_date: str) -> ReconciliationResult:
+        """Post-game reconciliation: who played vs who was cached/predicted (Session 147)."""
+        print("\n" + "-" * 50)
+        print("CHECK 8: Post-Game Reconciliation - Played vs Cached/Predicted")
+        print("-" * 50)
+
+        query = f"""
+        WITH played AS (
+            SELECT DISTINCT player_lookup
+            FROM `{self.project_id}.nba_analytics.player_game_summary`
+            WHERE game_date = '{game_date}' AND is_dnp = FALSE
+        ),
+        cached AS (
+            SELECT DISTINCT player_lookup
+            FROM `{self.project_id}.nba_precompute.player_daily_cache`
+            WHERE cache_date = '{game_date}'
+        ),
+        predicted AS (
+            SELECT DISTINCT player_lookup
+            FROM `{self.project_id}.nba_predictions.player_prop_predictions`
+            WHERE game_date = '{game_date}' AND is_active = TRUE
+        )
+        SELECT
+            (SELECT COUNT(*) FROM played) as players_played,
+            (SELECT COUNT(*) FROM cached) as players_cached,
+            (SELECT COUNT(*) FROM predicted) as players_predicted,
+            (SELECT COUNT(*) FROM played p
+             LEFT JOIN cached c ON p.player_lookup = c.player_lookup
+             WHERE c.player_lookup IS NULL) as played_not_cached,
+            (SELECT COUNT(*) FROM played p
+             LEFT JOIN predicted pr ON p.player_lookup = pr.player_lookup
+             WHERE pr.player_lookup IS NULL) as played_not_predicted
+        """
+
+        try:
+            results = list(self.bq_client.query(query).result())
+
+            if not results:
+                return ReconciliationResult(
+                    check_name="played_vs_cached",
+                    source_name="Players Played",
+                    target_name="Players Cached",
+                    source_count=0, target_count=0, missing_count=0,
+                    status="warning"
+                )
+
+            row = results[0]
+            played = row.players_played or 0
+            cached = row.players_cached or 0
+            predicted = row.players_predicted or 0
+            not_cached = row.played_not_cached or 0
+            not_predicted = row.played_not_predicted or 0
+
+            print(f"   Players who played: {played}")
+            print(f"   Players cached: {cached}")
+            print(f"   Players predicted: {predicted}")
+            print(f"   Played but NOT cached: {not_cached}")
+            print(f"   Played but NOT predicted: {not_predicted}")
+
+            if played == 0:
+                print("   No boxscores yet (games may not have finished)")
+                return ReconciliationResult(
+                    check_name="played_vs_cached",
+                    source_name="Players Played",
+                    target_name="Players Cached",
+                    source_count=0, target_count=0, missing_count=0,
+                    status="ok"
+                )
+
+            # Cache coverage: played but not cached indicates upcoming_player_game_context gaps
+            cache_coverage_pct = ((played - not_cached) / played * 100) if played > 0 else 100
+            print(f"   Cache coverage: {cache_coverage_pct:.1f}%")
+
+            if not_cached > 10:
+                status = "error"
+            elif not_cached > 3:
+                status = "warning"
+            else:
+                status = "ok"
+
+            return ReconciliationResult(
+                check_name="played_vs_cached",
+                source_name="Players Played",
+                target_name="Players Cached",
+                source_count=played,
+                target_count=played - not_cached,
+                missing_count=not_cached,
+                status=status
+            )
+
+        except Exception as e:
+            logger.error(f"Check 8 failed: {e}")
+            return ReconciliationResult(
+                check_name="played_vs_cached",
+                source_name="Players Played",
+                target_name="Players Cached",
+                source_count=0, target_count=0, missing_count=0,
                 status="error"
             )
 

@@ -1,0 +1,90 @@
+name: Deploy Service
+
+# Reusable workflow for deploying a single Cloud Run service
+# Called by auto-deploy.yml for each service that needs deployment
+
+on:
+  workflow_call:
+    inputs:
+      service:
+        required: true
+        type: string
+        description: 'Cloud Run service name'
+      dockerfile:
+        required: true
+        type: string
+        description: 'Path to Dockerfile relative to repo root'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Build and deploy via Cloud Build
+        env:
+          SERVICE: ${{ inputs.service }}
+          DOCKERFILE: ${{ inputs.dockerfile }}
+          PROJECT: nba-props-platform
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          SHORT_SHA=${COMMIT_SHA:0:8}
+          BUILD_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+          echo "Deploying $SERVICE (commit $SHORT_SHA)"
+          echo "Dockerfile: $DOCKERFILE"
+
+          # Submit to Cloud Build using the repo's cloudbuild.yaml
+          # This builds with the correct Dockerfile and deploys with --update-env-vars (safe)
+          gcloud builds submit \
+            --config cloudbuild.yaml \
+            --substitutions="_SERVICE=$SERVICE,_DOCKERFILE=$DOCKERFILE,_BUILD_TIMESTAMP=$BUILD_TIMESTAMP,SHORT_SHA=$SHORT_SHA" \
+            --project "$PROJECT" \
+            --quiet
+
+      - name: Verify deployment
+        env:
+          SERVICE: ${{ inputs.service }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          SHORT_SHA=${COMMIT_SHA:0:8}
+
+          DEPLOYED_SHA=$(gcloud run services describe "$SERVICE" \
+            --region=us-west2 \
+            --project=nba-props-platform \
+            --format="value(metadata.labels.commit-sha)" 2>/dev/null || echo "unknown")
+
+          echo "Expected: $SHORT_SHA"
+          echo "Deployed: $DEPLOYED_SHA"
+
+          if [ "$DEPLOYED_SHA" = "$SHORT_SHA" ]; then
+            echo "Deployment verified"
+          else
+            echo "::warning::Commit SHA mismatch - expected $SHORT_SHA, got $DEPLOYED_SHA"
+          fi
+
+      - name: Health check
+        env:
+          SERVICE: ${{ inputs.service }}
+        run: |
+          SERVICE_URL=$(gcloud run services describe "$SERVICE" \
+            --region=us-west2 \
+            --project=nba-props-platform \
+            --format="value(status.url)" 2>/dev/null)
+
+          # Cloud Run services require auth, so just check the URL exists
+          if [ -n "$SERVICE_URL" ]; then
+            echo "Service URL: $SERVICE_URL"
+            echo "Deployed $SERVICE successfully"
+          else
+            echo "::warning::Could not determine service URL for $SERVICE"
+          fi
