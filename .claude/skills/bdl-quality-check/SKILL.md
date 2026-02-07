@@ -1,217 +1,130 @@
-# BDL Data Quality Check Skill
+---
+name: bdl-quality-check
+description: Check BDL service status, generate issue reports for vendor contact
+---
+
+# BDL Service Status Check
 
 <command-name>/bdl-quality</command-name>
 
 ## Purpose
 
-Check BDL (Ball Don't Lie) API data quality by comparing boxscore data against NBA.com (nbac) source data for specific dates or date ranges.
+Check the current status of the BDL (Ball Don't Lie) API service, view issue history, and generate reports for vendor communication/cancellation.
 
 ## Usage
 
 ```
-/bdl-quality                     # Check yesterday's data
-/bdl-quality 2026-01-15          # Check specific date
-/bdl-quality 2026-01-01 2026-01-15  # Check date range
+/bdl-quality                    # Quick status summary (last 14 days)
+/bdl-quality report             # Generate full markdown report for vendor
+/bdl-quality 30                 # Check last 30 days
 ```
 
 ## What This Skill Does
 
-1. **Compares BDL vs NBAC data** for the same players and games
-2. **Calculates accuracy metrics**:
-   - Exact match rate (minutes)
-   - Major error rate (>5 min off)
-   - Points accuracy
-   - Coverage percentage
-3. **Identifies problematic records** with large discrepancies
-4. **Reports readiness status** for potential re-enablement
+1. **Queries `nba_orchestration.bdl_service_issues`** view for daily service health
+2. **Shows issue timeline** grouped by outage/quality/operational periods
+3. **Reports retry & latency metrics** - did data eventually arrive? how late?
+4. **Generates vendor-ready reports** via `bin/monitoring/bdl_issue_report.py`
 
 ## Instructions
 
-When the user runs `/bdl-quality`, execute the following queries and provide analysis:
+### Step 1: Quick Status Check
 
-### Step 1: Check Date Coverage
+Run this query to get the recent BDL status:
 
-```sql
+```bash
+bq query --use_legacy_sql=false "
 SELECT
   game_date,
-  COUNT(*) as bdl_records,
-  (SELECT COUNT(*) FROM nba_raw.nbac_player_boxscores WHERE game_date = b.game_date) as nbac_records
-FROM nba_raw.bdl_player_boxscores b
-WHERE game_date = @check_date
-  OR (game_date BETWEEN @start_date AND @end_date)
-GROUP BY 1
-ORDER BY 1 DESC
+  games_expected,
+  games_eventually_available,
+  games_never_available,
+  total_scrape_attempts,
+  avg_hours_to_data,
+  issue_type,
+  issue_summary
+FROM nba_orchestration.bdl_service_issues
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+ORDER BY game_date DESC
+"
 ```
 
-### Step 2: Compare Player Stats (Minutes Focus)
+### Step 2: Summary Statistics
 
-```sql
-WITH comparison AS (
-  SELECT
-    b.game_date,
-    b.player_lookup,
-    b.player_full_name,
-    b.team_abbr,
-    -- BDL data
-    SAFE_CAST(REPLACE(b.minutes, ':', '.') AS FLOAT64) as bdl_minutes,
-    b.points as bdl_points,
-    -- NBAC data
-    n.minutes as nbac_minutes,
-    n.points as nbac_points,
-    -- Differences
-    ABS(SAFE_CAST(REPLACE(b.minutes, ':', '.') AS FLOAT64) - SAFE_CAST(n.minutes AS FLOAT64)) as minutes_diff
-  FROM nba_raw.bdl_player_boxscores b
-  LEFT JOIN nba_raw.nbac_player_boxscores n
-    ON b.player_lookup = n.player_lookup
-    AND b.game_date = n.game_date
-  WHERE b.game_date = @check_date
-    AND n.player_lookup IS NOT NULL  -- Only compare matched players
-)
+```bash
+bq query --use_legacy_sql=false "
 SELECT
-  game_date,
-  COUNT(*) as total_players,
-  ROUND(100.0 * COUNTIF(minutes_diff <= 1) / COUNT(*), 1) as exact_match_pct,
-  ROUND(100.0 * COUNTIF(minutes_diff > 5) / COUNT(*), 1) as major_error_pct,
-  ROUND(AVG(minutes_diff), 1) as avg_minutes_diff,
-  MAX(minutes_diff) as max_minutes_diff
-FROM comparison
-GROUP BY 1
+  COUNT(*) as days_tracked,
+  COUNTIF(issue_type = 'FULL_OUTAGE') as full_outage_days,
+  COUNTIF(issue_type IN ('MAJOR_OUTAGE', 'PARTIAL_OUTAGE')) as partial_outage_days,
+  COUNTIF(issue_type LIKE '%QUALITY%') as quality_issue_days,
+  COUNTIF(issue_type = 'OPERATIONAL') as operational_days,
+  SUM(games_expected) as total_games,
+  SUM(games_eventually_available) as games_got_data,
+  SUM(games_never_available) as games_no_data,
+  SUM(total_scrape_attempts) as total_attempts,
+  ROUND(100.0 * SUM(games_eventually_available) / SUM(games_expected), 1) as delivery_pct
+FROM nba_orchestration.bdl_service_issues
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 45 DAY)
+"
 ```
 
-### Step 3: Identify Worst Discrepancies
+### Step 3: Generate Report (if user asks for "report")
 
-```sql
--- Show top 10 largest discrepancies
-WITH comparison AS (
-  SELECT
-    b.game_date,
-    b.player_full_name,
-    b.team_abbr,
-    SAFE_CAST(REPLACE(b.minutes, ':', '.') AS FLOAT64) as bdl_minutes,
-    SAFE_CAST(n.minutes AS FLOAT64) as nbac_minutes,
-    b.points as bdl_points,
-    n.points as nbac_points,
-    ABS(SAFE_CAST(REPLACE(b.minutes, ':', '.') AS FLOAT64) - SAFE_CAST(n.minutes AS FLOAT64)) as minutes_diff
-  FROM nba_raw.bdl_player_boxscores b
-  JOIN nba_raw.nbac_player_boxscores n
-    ON b.player_lookup = n.player_lookup AND b.game_date = n.game_date
-  WHERE b.game_date = @check_date
-)
-SELECT * FROM comparison
-ORDER BY minutes_diff DESC
-LIMIT 10
+```bash
+PYTHONPATH=. python bin/monitoring/bdl_issue_report.py --format markdown --days 45
 ```
 
-### Step 4: Determine Readiness Status
-
-Based on the metrics:
-- **READY_TO_ENABLE**: Exact match >= 90%, Major errors < 5%, 7+ consecutive good days
-- **NOT_READY**: Exact match < 70% OR Major errors > 15%
-- **MONITORING**: Between the thresholds
+Or save to file:
+```bash
+PYTHONPATH=. python bin/monitoring/bdl_issue_report.py --output bdl_cancellation_report.md --days 45
+```
 
 ## Output Format
 
 Provide a summary like:
 
 ```
-## BDL Data Quality Report: [DATE or DATE RANGE]
+## BDL Service Status
 
-### Summary Metrics
-| Metric | Value | Status |
-|--------|-------|--------|
-| Exact Match Rate | X.X% | GOOD/POOR |
-| Major Error Rate | X.X% | GOOD/POOR |
-| Avg Minutes Diff | X.X min | - |
-| Coverage | X.X% | - |
+**Current Status:** FULL_OUTAGE (since YYYY-MM-DD)
 
-### Readiness: [READY_TO_ENABLE / NOT_READY / MONITORING]
+### Last 14 Days
+| Date | Games | Available | Attempts | Latency | Status |
+|------|-------|-----------|----------|---------|--------|
+| ...  | ...   | ...       | ...      | ...     | ...    |
 
-### Worst Discrepancies
-[Table of top 10 issues]
+### Overall (45 days)
+- X days full outage, Y days partial, Z days operational
+- Data delivery rate: X.X% (N/M games)
+- N games never received data despite M scrape attempts
+- When data arrived: avg Xh delay, max Yh delay
 
 ### Recommendation
-[Brief recommendation based on findings]
+[Based on current data - re-enable, continue monitoring, or cancel]
 ```
+
+## Key Columns in bdl_service_issues
+
+| Column | Meaning |
+|--------|---------|
+| `games_eventually_available` | Games that got data on ANY retry attempt |
+| `games_never_available` | Games that never got data despite all retries |
+| `total_scrape_attempts` | Total API calls (multiple per game) |
+| `avg_hours_to_data` | Average latency when data did arrive |
+| `max_hours_to_data` | Worst-case latency |
+| `issue_type` | FULL_OUTAGE / MAJOR_OUTAGE / PARTIAL_OUTAGE / QUALITY_DEGRADATION / LATE_DATA / OPERATIONAL |
 
 ## Background
 
-BDL API was disabled on 2026-01-28 due to persistent data quality issues:
-- ~33% exact match rate on minutes
-- ~28% major errors (>5 min off)
-- Systematic underreporting pattern
-
-The API continues running for monitoring purposes. Re-enablement requires 7+ consecutive days of good quality data.
-
-## Injury Data Quality Check (Session 105 - NEW)
-
-BDL also provides injury data via `bdl_injuries` table. Compare against NBA.com `nbac_injury_report`.
-
-### Check Injury Data Coverage
-
-```sql
--- Compare injury sources for today
-SELECT
-  'bdl_injuries' as source,
-  COUNT(*) as records,
-  COUNT(DISTINCT player_lookup) as players,
-  COUNT(DISTINCT team_abbr) as teams
-FROM nba_raw.bdl_injuries
-WHERE scrape_date = CURRENT_DATE()
-
-UNION ALL
-
-SELECT
-  'nbac_injury_report',
-  COUNT(*),
-  COUNT(DISTINCT player_lookup),
-  COUNT(DISTINCT team)
-FROM nba_raw.nbac_injury_report
-WHERE report_date = CURRENT_DATE()
-```
-
-### Compare Injury Status
-
-```sql
--- Check for mismatches between BDL and NBAC injury status
-WITH bdl AS (
-  SELECT player_lookup, injury_status_normalized as bdl_status, team_abbr
-  FROM nba_raw.bdl_injuries
-  WHERE scrape_date = CURRENT_DATE()
-),
-nbac AS (
-  SELECT player_lookup, LOWER(status) as nbac_status, team
-  FROM nba_raw.nbac_injury_report
-  WHERE report_date = CURRENT_DATE()
-)
-SELECT
-  COALESCE(b.player_lookup, n.player_lookup) as player,
-  b.bdl_status,
-  n.nbac_status,
-  CASE
-    WHEN b.player_lookup IS NULL THEN 'BDL_MISSING'
-    WHEN n.player_lookup IS NULL THEN 'NBAC_MISSING'
-    WHEN b.bdl_status = n.nbac_status THEN 'MATCH'
-    ELSE 'STATUS_DIFF'
-  END as comparison
-FROM bdl b
-FULL OUTER JOIN nbac n ON b.player_lookup = n.player_lookup
-WHERE b.bdl_status IS NULL OR n.nbac_status IS NULL OR b.bdl_status != n.nbac_status
-ORDER BY comparison, player
-```
-
-### Injury Quality Thresholds
-
-| Metric | Good | Warning | Critical |
-|--------|------|---------|----------|
-| Status Match Rate | >= 80% | 60-79% | < 60% |
-| Coverage (vs NBAC) | >= 90% | 70-89% | < 70% |
-| Missing in BDL | < 10% | 10-20% | > 20% |
-
-**Note**: BDL injury data was enabled in Session 105. Monitor quality before using for predictions.
+- BDL API disabled 2026-01-28 due to persistent data quality issues
+- All active queries migrated to NBA.com (`nbac_gamebook_player_stats`) in Session 149
+- Monitoring continues via automated scrape attempts + this view
+- Re-enablement requires `bdl_readiness = 'READY_TO_ENABLE'` in `nba_orchestration.bdl_quality_trend`
 
 ## Related Files
 
-- Quality monitoring: `bin/monitoring/check_bdl_data_quality.py`
-- Processor disable flag: `data_processors/analytics/player_game_summary/player_game_summary_processor.py` (line 90: `USE_BDL_DATA = False`)
-- Quality trend view: `nba_orchestration.bdl_quality_trend`
-- Injury scheduler: `bdl-injuries-hourly` (runs every 4 hours)
+- Issue tracking view: `schemas/bigquery/views/bdl_service_issues.sql`
+- Report generator: `bin/monitoring/bdl_issue_report.py`
+- Quality alerts: `bin/monitoring/bdl_quality_alert.py` (daily via GitHub Actions)
+- Project docs: `docs/08-projects/current/bdl-monitoring/00-PROJECT-OVERVIEW.md`

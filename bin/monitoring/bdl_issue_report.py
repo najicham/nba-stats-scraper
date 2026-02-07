@@ -247,7 +247,7 @@ def format_text(rows: list, periods: list, stats: dict) -> str:
             date_str = f"{p['start_date']} to {p['end_date']}"
         lines.append(f"  [{p['issue_type']}] {date_str} ({p['days']} days)")
         if p["issue_type"] == "FULL_OUTAGE":
-            lines.append(f"    -> {p['total_games_missing']} games returned no data")
+            lines.append(f"    -> {p['total_games_never_available']} games returned no data")
         elif p["total_major_issues"] > 0:
             lines.append(f"    -> {p['total_major_issues']} major data mismatches")
     lines.append("")
