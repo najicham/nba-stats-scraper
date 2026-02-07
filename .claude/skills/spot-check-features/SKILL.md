@@ -1003,6 +1003,120 @@ NOT (35 + 0 + 33 + 0 + 34) / 5 = 20.4 ❌ WRONG (old bug)
 - Verify player_stats.py has lines 163-172 DNP filter
 - Regenerate affected dates with correct code
 
+### 24. Player Record Coverage vs Game Summary (Session 144)
+
+**CRITICAL:** Verify every player in `player_game_summary` has a feature store record.
+
+```sql
+-- Player record coverage: does every player have a feature store record?
+SELECT
+  g.game_date,
+  COUNT(DISTINCT g.player_lookup) as game_summary_players,
+  COUNT(DISTINCT f.player_lookup) as feature_store_players,
+  COUNT(DISTINCT g.player_lookup) - COUNT(DISTINCT f.player_lookup) as missing_records,
+  ROUND(COUNT(DISTINCT f.player_lookup) / COUNT(DISTINCT g.player_lookup) * 100, 1) as record_coverage_pct
+FROM nba_analytics.player_game_summary g
+LEFT JOIN nba_predictions.ml_feature_store_v2 f
+  ON g.player_lookup = f.player_lookup AND g.game_date = f.game_date
+WHERE g.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+GROUP BY 1 ORDER BY 1
+```
+
+| Metric | GOOD | WARNING | CRITICAL |
+|--------|------|---------|----------|
+| Record coverage | 100% | 95-99% | <95% |
+
+**If missing records:** Check if MLFeatureStoreProcessor ran for the date. Check `processor_run_history` for errors.
+
+### 25. Per-Feature Default Breakdown (Session 144)
+
+**CRITICAL:** Understand exactly which features are defaulted and which upstream component is responsible.
+
+```sql
+-- Which features default most often? (maps to upstream pipeline component)
+SELECT
+  idx as feature_index,
+  CASE
+    WHEN idx IN (0,1,2,3,4,5,6,7,8,13,14,22,23,29,31,32) THEN 'phase4'
+    WHEN idx IN (15,16,17) THEN 'phase3'
+    WHEN idx IN (25,26,27) THEN 'vegas'
+    WHEN idx IN (18,19,20) THEN 'shot_zone'
+    ELSE 'calculated'
+  END as upstream_source,
+  COUNT(*) as default_count,
+  ROUND(COUNT(*) / (SELECT COUNT(*) FROM nba_predictions.ml_feature_store_v2
+    WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)) * 100, 1) as pct_defaulted
+FROM nba_predictions.ml_feature_store_v2,
+UNNEST(default_feature_indices) as idx
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+GROUP BY 1, 2 ORDER BY 4 DESC
+```
+
+**Feature Index → Name → Upstream Source:**
+| Index | Name | Source | Fix If Defaulted |
+|-------|------|--------|-----------------|
+| 0-4 | pts_avg_l5/l10/season, std, games_7d | Phase 4 player_daily_cache | Check player_daily_cache processor |
+| 5-8 | fatigue, shot_zone, pace, usage | Phase 4 player_composite_factors | Check player_composite_factors processor |
+| 13-14 | opp_def_rating, opp_pace | Phase 4 team_defense_zone_analysis | Check team_defense_zone_analysis processor |
+| 18-20 | pct_paint/mid/three | Phase 4 player_shot_zone_analysis | Check player_shot_zone_analysis processor |
+| 22-23 | team_pace, team_off_rating | Phase 4 player_daily_cache | Check player_daily_cache processor |
+| 25-27 | vegas_line, opening, line_move | Vegas odds_api scrapers | Check odds_api scraper ran, line coverage |
+| 31-32 | minutes_avg_l10, ppm_avg_l10 | Phase 4 player_daily_cache | Check player_daily_cache processor |
+
+### 26. Feature Completeness Dashboard (Session 144)
+
+**HIGH:** Combined view showing both player coverage and feature completeness.
+
+```sql
+-- Combined coverage dashboard: records + feature quality
+SELECT
+  game_date,
+  COUNT(*) as total_records,
+  COUNTIF(default_feature_count = 0) as fully_complete,
+  ROUND(COUNTIF(default_feature_count = 0) / COUNT(*) * 100, 1) as pct_fully_complete,
+  COUNTIF(is_quality_ready) as quality_ready,
+  ROUND(AVG(default_feature_count), 1) as avg_defaults,
+  ROUND(AVG(matchup_quality_pct), 1) as matchup_q,
+  ROUND(AVG(vegas_quality_pct), 1) as vegas_q,
+  ROUND(AVG(player_history_quality_pct), 1) as history_q
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+GROUP BY 1 ORDER BY 1
+```
+
+| Metric | GOOD | WARNING | CRITICAL |
+|--------|------|---------|----------|
+| pct_fully_complete | >50% | 30-50% | <30% |
+| avg_defaults | <2 | 2-5 | >5 |
+| vegas_q | >70 | 50-70 | <50 |
+| matchup_q | >90 | 70-90 | <70 |
+
+**Key insight (Session 144):** "100% player coverage" ≠ "100% feature completeness". Always check BOTH dimensions. Vegas lines (features 25-27) are the #1 blocker at ~57% defaulted. All other categories are >90%.
+
+### 27. Feature Store Gap Tracking (Session 144)
+
+**MEDIUM:** Check the gap tracking table for unresolved gaps needing backfill.
+
+```sql
+-- Unresolved feature store gaps
+SELECT
+  game_date,
+  reason,
+  COUNT(*) as gap_count,
+  COUNT(DISTINCT player_lookup) as unique_players
+FROM nba_predictions.feature_store_gaps
+WHERE resolved_at IS NULL
+GROUP BY 1, 2
+ORDER BY 1 DESC, 3 DESC
+LIMIT 20
+```
+
+**If gaps exist:** Run backfill for the affected dates:
+```bash
+PYTHONPATH=. python backfill_jobs/precompute/ml_feature_store/ml_feature_store_precompute_backfill.py \
+  --start-date YYYY-MM-DD --end-date YYYY-MM-DD --skip-preflight
+```
+
 ## Pre-Training Checklist
 
 Before running `/model-experiment`:
@@ -1027,9 +1141,15 @@ Before running `/model-experiment`:
 13. **NEW (Session 113):** Validate L5/L10 calculations match manual (DNP handling check #9)
 14. **NEW (Session 113):** Check for unmarked DNPs in source data (check #10)
 
+**Data Quality - Coverage & Completeness (Session 144):**
+15. **CRITICAL (Session 144):** Player record coverage vs game_summary - must be 100% (check #24)
+16. **CRITICAL (Session 144):** Per-feature default breakdown - identify upstream blockers (check #25)
+17. **HIGH (Session 144):** Feature completeness dashboard - both dimensions (check #26)
+18. **MEDIUM (Session 144):** Feature store gap tracking table (check #27)
+
 **Data Quality - Early Season & Coverage:**
-15. **MEDIUM (Session 113+):** Check early season bootstrap coverage (check #15)
-16. **MEDIUM (Session 113+):** Shot zone dynamic threshold effectiveness (check #17)
+19. **MEDIUM (Session 113+):** Check early season bootstrap coverage (check #15)
+20. **MEDIUM (Session 113+):** Shot zone dynamic threshold effectiveness (check #17)
 
 **Model Training:**
 17. Confirm model experiment includes tier bias analysis (built-in since Session 104)
@@ -1084,4 +1204,6 @@ Status: GOOD - Ready for model training
 - Session 113+: Deployment drift pre-check (#19), monthly quality trends (#20)
 - **Session 115: DNP caching architecture validation (#21), Phase 3/4 consistency (#22), DNP filtering validation (#23)**
 - **Session 115 Key Finding:** DNP players in cache is INTENTIONAL design (not a bug) - filtering happens during aggregation
+- **Session 144: Player record coverage (#24), per-feature default breakdown (#25), feature completeness dashboard (#26), gap tracking (#27)**
+- **Session 144 Key Finding:** "100% player coverage" ≠ "100% feature completeness". Vegas lines (25-27) cause 57% of defaults. Only 37-45% of records are fully complete.
 *Part of: Data Quality & Model Experiment Infrastructure*

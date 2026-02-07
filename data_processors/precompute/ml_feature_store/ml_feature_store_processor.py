@@ -728,7 +728,9 @@ class MLFeatureStoreProcessor(
 
         # BOOTSTRAP PERIOD: Check for early season BEFORE failing on missing dependencies
         # If early season (days 0-6), CREATE PLACEHOLDERS instead of failing
-        if self._is_early_season(analysis_date, season_year):
+        # Session 144: skip_early_season_check allows backfill to generate real features
+        # for bootstrap period dates where historical data now exists
+        if not self.opts.get('skip_early_season_check', False) and self._is_early_season(analysis_date, season_year):
             logger.info(
                 f"📝 Early season detected for {analysis_date} (day 0-6 of season {season_year}): "
                 f"creating placeholder records with NULL features"
@@ -1378,6 +1380,79 @@ class MLFeatureStoreProcessor(
 
             # Save failures to BigQuery for auditing
             self.save_failures_to_bq()
+
+            # Session 144: Record gaps for automatic backfill tracking
+            self._record_feature_store_gaps(analysis_date)
+
+    def _record_feature_store_gaps(self, analysis_date: date) -> None:
+        """Record feature store gaps for failed/skipped players (Session 144).
+
+        Maps failure categories to gap reasons and writes to feature_store_gaps table
+        for automatic detection and backfill.
+        """
+        if not self.failed_entities:
+            return
+
+        # Map failure categories to gap reasons
+        category_to_reason = {
+            'CIRCUIT_BREAKER_ACTIVE': 'circuit_breaker',
+            'INCOMPLETE_DATA_SKIPPED': 'missing_phase4',
+            'UPSTREAM_INCOMPLETE': 'upstream_incomplete',
+            'FEATURE_VALIDATION_ERROR': 'processing_error',
+            'INSUFFICIENT_DATA': 'insufficient_data',
+            'MISSING_UPSTREAM': 'missing_phase4',
+            'calculation_error': 'processing_error',
+            'PROCESSING_ERROR': 'processing_error',
+        }
+
+        from shared.config.nba_season_dates import get_season_year_from_date
+        season_year = get_season_year_from_date(analysis_date)
+
+        # Build player context lookup from players_with_games
+        player_context = {}
+        if self.players_with_games:
+            for p in self.players_with_games:
+                pl = p.get('player_lookup', '')
+                player_context[pl] = p
+
+        rows = []
+        now = datetime.now(timezone.utc)
+        for entity in self.failed_entities:
+            player_lookup = entity.get('entity_id', '')
+            category = entity.get('category', 'UNKNOWN')
+            reason = category_to_reason.get(category, 'unknown')
+            ctx = player_context.get(player_lookup, {})
+
+            rows.append({
+                'player_lookup': player_lookup,
+                'game_date': analysis_date.isoformat(),
+                'game_id': ctx.get('game_id'),
+                'reason': reason,
+                'reason_detail': entity.get('reason', ''),
+                'team_abbr': ctx.get('team_abbr'),
+                'opponent_team_abbr': ctx.get('opponent_team_abbr'),
+                'season_year': season_year,
+                'detected_at': now.isoformat(),
+                'detected_by': 'processor',
+                'resolved_at': None,
+                'resolved_by': None,
+                'backfill_attempt_count': 0,
+                'last_backfill_attempt_at': None,
+                'last_backfill_error': None,
+            })
+
+        if not rows:
+            return
+
+        try:
+            table_ref = f'{self.project_id}.nba_predictions.feature_store_gaps'
+            errors = self.bq_client.insert_rows_json(table_ref, rows)
+            if errors:
+                logger.warning(f"Failed to insert {len(errors)} gap records: {errors[:2]}")
+            else:
+                logger.info(f"Recorded {len(rows)} feature store gaps for {analysis_date}")
+        except Exception as e:
+            logger.warning(f"Gap tracking write failed (non-fatal): {e}")
 
     def _generate_player_features(self, player_row: Dict, completeness: Dict, upstream_status: Dict, circuit_breaker_status: Dict, is_bootstrap: bool, is_season_boundary: bool) -> Dict:
         """

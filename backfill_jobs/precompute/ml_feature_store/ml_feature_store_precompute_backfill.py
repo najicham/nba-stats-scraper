@@ -129,9 +129,10 @@ class MLFeatureStoreBackfill:
             logger.error(f"Error checking dependencies: {e}")
             return {'available': False, 'error': str(e)}
 
-    def run_precompute_processing(self, analysis_date: date, dry_run: bool = False) -> Dict:
+    def run_precompute_processing(self, analysis_date: date, dry_run: bool = False,
+                                   include_bootstrap: bool = False) -> Dict:
         """Run precompute processing for a single date."""
-        if is_bootstrap_date(analysis_date):
+        if not include_bootstrap and is_bootstrap_date(analysis_date):
             return {
                 'status': 'skipped_bootstrap',
                 'date': analysis_date.isoformat()
@@ -153,7 +154,8 @@ class MLFeatureStoreBackfill:
             'project_id': 'nba-props-platform',
             'backfill_mode': True,
             'skip_downstream_trigger': True,
-            'strict_mode': False
+            'strict_mode': False,
+            'skip_early_season_check': include_bootstrap,  # Session 144: allow bootstrap dates
         }
 
         try:
@@ -177,10 +179,30 @@ class MLFeatureStoreBackfill:
                 'error': str(e)
             }
 
+    def _resolve_gaps_for_date(self, analysis_date: date) -> None:
+        """Mark feature_store_gaps as resolved for a successfully processed date (Session 144)."""
+        try:
+            query = f"""
+                UPDATE `nba-props-platform.nba_predictions.feature_store_gaps`
+                SET resolved_at = CURRENT_TIMESTAMP(),
+                    resolved_by = 'backfill'
+                WHERE game_date = '{analysis_date}'
+                  AND resolved_at IS NULL
+            """
+            job = self.bq_client.query(query)
+            result = job.result()
+            rows_affected = job.num_dml_affected_rows or 0
+            if rows_affected > 0:
+                logger.info(f"  Resolved {rows_affected} gaps for {analysis_date}")
+        except Exception as e:
+            logger.warning(f"  Gap resolution failed (non-fatal): {e}")
+
     def run_backfill(self, start_date: date, end_date: date, dry_run: bool = False,
-                     checkpoint: BackfillCheckpoint = None):
+                     checkpoint: BackfillCheckpoint = None, include_bootstrap: bool = False):
         """Run backfill processing day-by-day with checkpoint support."""
         logger.info(f"Starting ML Feature Store backfill from {start_date} to {end_date}")
+        if include_bootstrap:
+            logger.info("INCLUDE BOOTSTRAP: Early season dates will be processed with real features")
         logger.info(f"CRITICAL: This processor runs LAST - requires ALL Phase 4 processors to complete first")
 
         if not self.validate_date_range(start_date, end_date):
@@ -224,12 +246,13 @@ class MLFeatureStoreBackfill:
             day_number = actual_start_idx + processed_days + 1
             logger.info(f"Processing game date {day_number}/{total_game_dates}: {current_date}")
 
-            result = self.run_precompute_processing(current_date, dry_run)
+            result = self.run_precompute_processing(current_date, dry_run, include_bootstrap=include_bootstrap)
 
             if result['status'] == 'success':
                 successful_days += 1
                 total_players += result.get('players_processed', 0)
                 logger.info(f"  ✓ Success: {result.get('players_processed', 0)} players, version={result.get('feature_version')}")
+                self._resolve_gaps_for_date(current_date)
                 if checkpoint:
                     checkpoint.mark_date_complete(current_date)
             elif result['status'] == 'skipped_bootstrap':
@@ -321,7 +344,8 @@ class MLFeatureStoreBackfill:
         except Exception as e:
             logger.warning(f"Post-backfill validation error (non-fatal): {e}")
 
-    def process_specific_dates(self, dates: List[date], dry_run: bool = False):
+    def process_specific_dates(self, dates: List[date], dry_run: bool = False,
+                               include_bootstrap: bool = False):
         """Process specific dates."""
         logger.info(f"Processing {len(dates)} specific dates")
 
@@ -330,7 +354,7 @@ class MLFeatureStoreBackfill:
         failed = []
 
         for single_date in dates:
-            result = self.run_precompute_processing(single_date, dry_run)
+            result = self.run_precompute_processing(single_date, dry_run, include_bootstrap=include_bootstrap)
             if result['status'] == 'success':
                 successful += 1
                 logger.info(f"  ✓ {single_date}: {result.get('players_processed', 0)} players")
@@ -369,6 +393,8 @@ Output: nba_predictions.ml_feature_store_v2 (25 features per player per game)
     parser.add_argument('--no-resume', action='store_true', help='Ignore checkpoint')
     parser.add_argument('--status', action='store_true', help='Show checkpoint status')
     parser.add_argument('--skip-preflight', action='store_true', help='Skip Phase 3 pre-flight check (not recommended)')
+    parser.add_argument('--include-bootstrap', action='store_true',
+                        help='Process bootstrap period dates (first 14 days of season) with real features instead of skipping')
 
     args = parser.parse_args()
     backfiller = MLFeatureStoreBackfill()
@@ -376,7 +402,8 @@ Output: nba_predictions.ml_feature_store_v2 (25 features per player per game)
     if args.dates:
         try:
             date_list = [datetime.strptime(d.strip(), '%Y-%m-%d').date() for d in args.dates.split(',')]
-            backfiller.process_specific_dates(date_list, dry_run=args.dry_run)
+            backfiller.process_specific_dates(date_list, dry_run=args.dry_run,
+                                              include_bootstrap=args.include_bootstrap)
         except ValueError as e:
             logger.error(f"Invalid date format: {e}")
             sys.exit(1)
@@ -427,11 +454,13 @@ Output: nba_predictions.ml_feature_store_v2 (25 features per player per game)
     logger.info(f"Phase 4 ML Feature Store backfill configuration:")
     logger.info(f"  Date range: {start_date} to {end_date}")
     logger.info(f"  Dry run: {args.dry_run}")
+    logger.info(f"  Include bootstrap: {args.include_bootstrap}")
     logger.info(f"  Checkpoint: {checkpoint.checkpoint_path}")
     logger.info(f"  Execution order: 5/5 (FINAL - runs last)")
 
     backfiller.run_backfill(start_date, end_date, dry_run=args.dry_run,
-                            checkpoint=checkpoint if not args.dry_run else None)
+                            checkpoint=checkpoint if not args.dry_run else None,
+                            include_bootstrap=args.include_bootstrap)
 
 
 if __name__ == "__main__":

@@ -12,6 +12,7 @@ Version: 1.8 (Session 143: Per-query timing, date-bounded CTEs, query timeouts)
 """
 
 import logging
+import statistics
 from datetime import date, timedelta
 from typing import Dict, List, Optional, Any
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -758,6 +759,74 @@ class FeatureExtractor:
 
         logger.debug(f"Batch season_stats: {len(self._season_stats_lookup)} players (season {season_year})")
 
+    def _compute_cache_fields_from_games(self, player_lookup: str, game_date: date) -> Dict[str, Any]:
+        """Compute daily_cache equivalent fields from last_10_games data (Session 144).
+
+        When PlayerDailyCacheProcessor doesn't have an entry for a player (it only
+        caches players with TODAY's games, not all season players), compute the
+        same rolling stats from the already-extracted last_10_games data.
+
+        Returns dict matching daily_cache schema fields, or empty dict if no data.
+        """
+        games = self._last_10_games_lookup.get(player_lookup, [])
+        if not games:
+            return {}
+
+        # Filter out DNP games for stat calculations (same as cache processor)
+        played_games = [g for g in games if not g.get('is_dnp', False) and g.get('minutes_played', 0) > 0]
+        if not played_games:
+            return {}
+
+        # Last 5 and last 10 played games
+        last_5 = played_games[:5]
+        last_10 = played_games[:10]
+
+        points_l5 = [g['points'] for g in last_5 if g.get('points') is not None]
+        points_l10 = [g['points'] for g in last_10 if g.get('points') is not None]
+        minutes_l10 = [g['minutes_played'] for g in last_10 if g.get('minutes_played') is not None]
+
+        result = {}
+
+        if points_l5:
+            result['points_avg_last_5'] = sum(points_l5) / len(points_l5)
+        if points_l10:
+            result['points_avg_last_10'] = sum(points_l10) / len(points_l10)
+            if len(points_l10) >= 2:
+                result['points_std_last_10'] = statistics.stdev(points_l10)
+            else:
+                result['points_std_last_10'] = 0.0
+        if minutes_l10:
+            result['minutes_avg_last_10'] = sum(minutes_l10) / len(minutes_l10)
+
+        # Games in last 7 days (handle date/Timestamp types from BigQuery)
+        seven_days_ago = game_date - timedelta(days=7)
+        games_in_7d = 0
+        for g in played_games:
+            gd = g.get('game_date')
+            if gd is not None:
+                if hasattr(gd, 'date'):
+                    gd = gd.date()  # Convert pandas Timestamp to date
+                if gd >= seven_days_ago:
+                    games_in_7d += 1
+        result['games_in_last_7_days'] = games_in_7d
+
+        # Season stats from the separate lookup
+        season = self._season_stats_lookup.get(player_lookup, {})
+        if season.get('points_avg_season') is not None:
+            result['points_avg_season'] = season['points_avg_season']
+
+        # Shot zone percentages from game data (paint, mid, three, FT)
+        total_paint = sum(g.get('paint_attempts', 0) or 0 for g in last_10)
+        total_mid = sum(g.get('mid_range_attempts', 0) or 0 for g in last_10)
+        total_three = sum(g.get('three_pt_attempts', 0) or 0 for g in last_10)
+        total_fg = sum(g.get('fg_attempts', 0) or 0 for g in last_10)
+
+        if total_fg > 0:
+            result['paint_rate_last_10'] = total_paint / total_fg
+            result['three_pt_rate_last_10'] = total_three / total_fg
+
+        return result
+
     def _batch_extract_team_games(self, game_date: date, team_abbrs: List[str]) -> None:
         """
         Batch extract team season games for win percentage calculation.
@@ -1111,6 +1180,15 @@ class FeatureExtractor:
             # Use batch cache (O(1) lookups - no BQ queries!)
             cache_data = self._daily_cache_lookup.get(player_lookup, {})
             phase4_data.update(cache_data)
+
+            # Session 144: When daily_cache misses a player, compute from last_10_games
+            # This fixes the ~13% default rate caused by PlayerDailyCacheProcessor
+            # only caching players with games TODAY (not all active season players)
+            if not cache_data and player_lookup in self._last_10_games_lookup:
+                computed = self._compute_cache_fields_from_games(player_lookup, game_date)
+                if computed:
+                    phase4_data.update(computed)
+                    logger.debug(f"{player_lookup}: Computed cache fields from last_10_games (cache miss fallback)")
 
             composite_data = self._composite_factors_lookup.get(player_lookup, {})
             phase4_data.update(composite_data)
