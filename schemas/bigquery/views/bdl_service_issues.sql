@@ -11,16 +11,43 @@
 
 CREATE OR REPLACE VIEW `nba-props-platform.nba_orchestration.bdl_service_issues` AS
 WITH
--- Daily availability from scrape attempts
+-- Per-game retry analysis: was data eventually available? how many attempts?
+per_game AS (
+  SELECT
+    game_date,
+    home_team,
+    away_team,
+    COUNT(*) as attempts,
+    COUNTIF(was_available) as successful_attempts,
+    MAX(CAST(was_available AS INT64)) = 1 as eventually_available,
+    MIN(scrape_timestamp) as first_attempt,
+    MIN(IF(was_available, scrape_timestamp, NULL)) as first_success,
+    -- Latency: hours between game date and first successful scrape
+    TIMESTAMP_DIFF(
+      MIN(IF(was_available, scrape_timestamp, NULL)),
+      TIMESTAMP(game_date),
+      HOUR
+    ) as hours_to_first_success
+  FROM `nba_orchestration.bdl_game_scrape_attempts`
+  GROUP BY game_date, home_team, away_team
+),
+
+-- Daily availability from per-game data
 daily_availability AS (
   SELECT
     game_date,
-    COUNT(DISTINCT CONCAT(home_team, '_', away_team)) as games_expected,
-    COUNTIF(was_available) as games_available,
-    COUNTIF(NOT was_available) as games_missing,
-    ROUND(SAFE_DIVIDE(COUNTIF(was_available), COUNT(DISTINCT CONCAT(home_team, '_', away_team))) * 100, 1) as availability_pct,
-    MAX(scrape_timestamp) as last_scrape
-  FROM `nba_orchestration.bdl_game_scrape_attempts`
+    COUNT(*) as games_expected,
+    COUNTIF(eventually_available) as games_eventually_available,
+    COUNTIF(NOT eventually_available) as games_never_available,
+    ROUND(SAFE_DIVIDE(COUNTIF(eventually_available), COUNT(*)) * 100, 1) as eventual_availability_pct,
+    SUM(attempts) as total_scrape_attempts,
+    SUM(successful_attempts) as total_successful_attempts,
+    -- Latency stats (only for games that eventually succeeded)
+    ROUND(AVG(IF(eventually_available, hours_to_first_success, NULL)), 1) as avg_hours_to_data,
+    MAX(IF(eventually_available, hours_to_first_success, NULL)) as max_hours_to_data,
+    -- Retry burden: how many attempts needed per game
+    ROUND(AVG(attempts), 1) as avg_attempts_per_game
+  FROM per_game
   GROUP BY game_date
 ),
 
@@ -59,9 +86,13 @@ daily_status AS (
   SELECT
     a.game_date,
     a.games_expected,
-    a.games_available,
-    a.games_missing,
-    a.availability_pct,
+    a.games_eventually_available,
+    a.games_never_available,
+    a.eventual_availability_pct,
+    a.total_scrape_attempts,
+    a.avg_attempts_per_game,
+    a.avg_hours_to_data,
+    a.max_hours_to_data,
     COALESCE(q.major_issues, 0) as major_issues,
     COALESCE(q.minor_issues, 0) as minor_issues,
     s.coverage_pct,
@@ -70,21 +101,26 @@ daily_status AS (
     s.missing_players,
     s.bdl_status,
     CASE
-      WHEN a.availability_pct = 0 THEN 'FULL_OUTAGE'
-      WHEN a.availability_pct < 50 THEN 'MAJOR_OUTAGE'
-      WHEN a.availability_pct < 90 THEN 'PARTIAL_OUTAGE'
+      WHEN a.eventual_availability_pct = 0 THEN 'FULL_OUTAGE'
+      WHEN a.eventual_availability_pct < 50 THEN 'MAJOR_OUTAGE'
+      WHEN a.eventual_availability_pct < 90 THEN 'PARTIAL_OUTAGE'
       WHEN COALESCE(q.major_issues, 0) > 10 THEN 'QUALITY_DEGRADATION'
       WHEN COALESCE(q.major_issues, 0) > 0 THEN 'MINOR_QUALITY_ISSUES'
-      WHEN a.availability_pct >= 90 THEN 'OPERATIONAL'
+      WHEN a.avg_hours_to_data > 24 THEN 'LATE_DATA'
+      WHEN a.eventual_availability_pct >= 90 THEN 'OPERATIONAL'
       ELSE 'UNKNOWN'
     END as issue_type,
     CASE
-      WHEN a.availability_pct = 0 THEN CONCAT('No data returned (', a.games_expected, ' games expected)')
-      WHEN a.availability_pct < 50 THEN CONCAT('Partial outage: ', a.games_available, '/', a.games_expected, ' games')
-      WHEN COALESCE(q.major_issues, 0) > 10 THEN CONCAT(q.major_issues, ' major data mismatches (wrong minutes/points)')
-      WHEN COALESCE(q.major_issues, 0) > 0 THEN CONCAT(q.major_issues, ' minor data mismatches')
-      WHEN a.availability_pct >= 90 THEN 'Operational'
-      ELSE 'No monitoring data'
+      WHEN a.eventual_availability_pct = 0 THEN
+        CONCAT('No data returned (', a.games_expected, ' games, ', a.total_scrape_attempts, ' attempts)')
+      WHEN a.eventual_availability_pct < 50 THEN
+        CONCAT('Partial outage: ', a.games_eventually_available, '/', a.games_expected, ' games eventually available')
+      WHEN COALESCE(q.major_issues, 0) > 10 THEN
+        CONCAT(q.major_issues, ' major data mismatches (wrong minutes/points)')
+      WHEN a.avg_hours_to_data > 24 THEN
+        CONCAT('Data arrived late: avg ', CAST(a.avg_hours_to_data AS STRING), 'h, max ', CAST(a.max_hours_to_data AS STRING), 'h')
+      WHEN a.eventual_availability_pct >= 90 THEN 'Operational'
+      ELSE CONCAT(a.games_eventually_available, '/', a.games_expected, ' games available')
     END as issue_summary
   FROM daily_availability a
   LEFT JOIN daily_quality q ON a.game_date = q.game_date

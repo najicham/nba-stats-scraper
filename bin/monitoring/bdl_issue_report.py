@@ -27,9 +27,13 @@ def query_daily_issues(client: bigquery.Client, days: int) -> list:
     SELECT
         game_date,
         games_expected,
-        games_available,
-        games_missing,
-        availability_pct,
+        games_eventually_available,
+        games_never_available,
+        eventual_availability_pct,
+        total_scrape_attempts,
+        avg_attempts_per_game,
+        avg_hours_to_data,
+        max_hours_to_data,
         major_issues,
         minor_issues,
         issue_type,
@@ -47,39 +51,39 @@ def group_into_periods(rows: list) -> list:
         return []
 
     periods = []
-    current = {
-        "issue_type": rows[0].issue_type,
-        "start_date": rows[0].game_date,
-        "end_date": rows[0].game_date,
-        "days": 1,
-        "total_games_expected": rows[0].games_expected,
-        "total_games_missing": rows[0].games_missing,
-        "total_major_issues": rows[0].major_issues,
-        "total_minor_issues": rows[0].minor_issues,
-        "sample_summary": rows[0].issue_summary,
-    }
+    def _new_period(row):
+        return {
+            "issue_type": row.issue_type,
+            "start_date": row.game_date,
+            "end_date": row.game_date,
+            "days": 1,
+            "total_games_expected": row.games_expected,
+            "total_games_never_available": row.games_never_available,
+            "total_games_eventually_available": row.games_eventually_available,
+            "total_scrape_attempts": row.total_scrape_attempts,
+            "total_major_issues": row.major_issues,
+            "total_minor_issues": row.minor_issues,
+            "max_hours_to_data": row.max_hours_to_data,
+            "sample_summary": row.issue_summary,
+        }
+
+    current = _new_period(rows[0])
 
     for row in rows[1:]:
         if row.issue_type == current["issue_type"]:
             current["end_date"] = row.game_date
             current["days"] += 1
             current["total_games_expected"] += row.games_expected
-            current["total_games_missing"] += row.games_missing
+            current["total_games_never_available"] += row.games_never_available
+            current["total_games_eventually_available"] += row.games_eventually_available
+            current["total_scrape_attempts"] += row.total_scrape_attempts
             current["total_major_issues"] += row.major_issues
             current["total_minor_issues"] += row.minor_issues
+            if row.max_hours_to_data and (current["max_hours_to_data"] is None or row.max_hours_to_data > current["max_hours_to_data"]):
+                current["max_hours_to_data"] = row.max_hours_to_data
         else:
             periods.append(current)
-            current = {
-                "issue_type": row.issue_type,
-                "start_date": row.game_date,
-                "end_date": row.game_date,
-                "days": 1,
-                "total_games_expected": row.games_expected,
-                "total_games_missing": row.games_missing,
-                "total_major_issues": row.major_issues,
-                "total_minor_issues": row.minor_issues,
-                "sample_summary": row.issue_summary,
-            }
+            current = _new_period(row)
 
     periods.append(current)
     return periods
@@ -95,8 +99,12 @@ def calc_overall_stats(rows: list) -> dict:
     quality_days = sum(1 for r in rows if "QUALITY" in r.issue_type)
     operational_days = sum(1 for r in rows if r.issue_type == "OPERATIONAL")
     total_games = sum(r.games_expected for r in rows)
-    total_available = sum(r.games_available for r in rows)
+    total_eventually_available = sum(r.games_eventually_available for r in rows)
+    total_never_available = sum(r.games_never_available for r in rows)
+    total_attempts = sum(r.total_scrape_attempts for r in rows)
     total_major = sum(r.major_issues for r in rows)
+    latency_values = [r.avg_hours_to_data for r in rows if r.avg_hours_to_data is not None]
+    max_latency = max((r.max_hours_to_data for r in rows if r.max_hours_to_data is not None), default=None)
 
     return {
         "date_range": f"{rows[0].game_date} to {rows[-1].game_date}",
@@ -106,9 +114,13 @@ def calc_overall_stats(rows: list) -> dict:
         "operational_days": operational_days,
         "uptime_pct": round((total_days - outage_days) / total_days * 100, 1) if total_days > 0 else 0,
         "total_games_expected": total_games,
-        "total_games_available": total_available,
+        "total_games_eventually_available": total_eventually_available,
+        "total_games_never_available": total_never_available,
+        "total_scrape_attempts": total_attempts,
         "total_major_mismatches": total_major,
-        "data_delivery_pct": round(total_available / total_games * 100, 1) if total_games > 0 else 0,
+        "data_delivery_pct": round(total_eventually_available / total_games * 100, 1) if total_games > 0 else 0,
+        "avg_latency_hours": round(sum(latency_values) / len(latency_values), 1) if latency_values else None,
+        "max_latency_hours": max_latency,
     }
 
 
@@ -130,9 +142,12 @@ def format_markdown(rows: list, periods: list, stats: dict) -> str:
     lines.append(f"- **{stats['outage_days']} days of complete outage** (0% data returned)")
     lines.append(f"- **{stats['quality_issue_days']} days of data quality issues** (incorrect stats returned)")
     lines.append(f"- **{stats['operational_days']} days operational**")
-    lines.append(f"- **Overall data delivery rate: {stats['data_delivery_pct']}%** ({stats['total_games_available']}/{stats['total_games_expected']} games)")
+    lines.append(f"- **Overall data delivery rate: {stats['data_delivery_pct']}%** ({stats['total_games_eventually_available']}/{stats['total_games_expected']} games)")
+    lines.append(f"- **{stats['total_games_never_available']} games** never received data despite {stats['total_scrape_attempts']} scrape attempts")
     if stats['total_major_mismatches'] > 0:
         lines.append(f"- **{stats['total_major_mismatches']} major data mismatches** (wrong minutes/points vs official NBA.com data)")
+    if stats['avg_latency_hours'] is not None:
+        lines.append(f"- **When data did arrive:** avg {stats['avg_latency_hours']}h delay, max {stats['max_latency_hours']}h delay")
     lines.append("")
 
     # Issue timeline
@@ -147,11 +162,15 @@ def format_markdown(rows: list, periods: list, stats: dict) -> str:
         duration = f"{p['days']} day{'s' if p['days'] != 1 else ''}"
 
         if p["issue_type"] == "FULL_OUTAGE":
-            details = f"{p['total_games_missing']} games returned no data"
-        elif p["issue_type"] == "MAJOR_OUTAGE":
-            details = f"Only {p['total_games_expected'] - p['total_games_missing']}/{p['total_games_expected']} games returned"
+            details = f"{p['total_games_never_available']} games never returned data ({p['total_scrape_attempts']} attempts)"
+        elif p["issue_type"] in ("MAJOR_OUTAGE", "PARTIAL_OUTAGE"):
+            details = f"{p['total_games_eventually_available']}/{p['total_games_expected']} games eventually available"
+            if p["max_hours_to_data"]:
+                details += f" (up to {p['max_hours_to_data']}h late)"
         elif "QUALITY" in p["issue_type"]:
             details = f"{p['total_major_issues']} major + {p['total_minor_issues']} minor data mismatches"
+        elif p["issue_type"] == "LATE_DATA":
+            details = f"Data arrived avg {p['max_hours_to_data']}h late"
         elif p["issue_type"] == "OPERATIONAL":
             details = "Service operational"
         else:
@@ -163,8 +182,8 @@ def format_markdown(rows: list, periods: list, stats: dict) -> str:
     # Daily detail
     lines.append("## Daily Detail")
     lines.append("")
-    lines.append("| Date | Games Expected | Available | Missing | Major Issues | Status |")
-    lines.append("|------|---------------|-----------|---------|-------------|--------|")
+    lines.append("| Date | Games | Available | Never Available | Attempts | Avg Latency (h) | Major Issues | Status |")
+    lines.append("|------|-------|-----------|-----------------|----------|-----------------|-------------|--------|")
     for row in reversed(list(rows)):
         status_icon = {
             "FULL_OUTAGE": "OUTAGE",
@@ -172,11 +191,13 @@ def format_markdown(rows: list, periods: list, stats: dict) -> str:
             "PARTIAL_OUTAGE": "PARTIAL",
             "QUALITY_DEGRADATION": "QUALITY",
             "MINOR_QUALITY_ISSUES": "MINOR",
+            "LATE_DATA": "LATE",
             "OPERATIONAL": "OK",
         }.get(row.issue_type, row.issue_type)
+        latency_str = f"{row.avg_hours_to_data}" if row.avg_hours_to_data else "-"
         lines.append(
-            f"| {row.game_date} | {row.games_expected} | {row.games_available} | "
-            f"{row.games_missing} | {row.major_issues} | {status_icon} |"
+            f"| {row.game_date} | {row.games_expected} | {row.games_eventually_available} | "
+            f"{row.games_never_available} | {row.total_scrape_attempts} | {latency_str} | {row.major_issues} | {status_icon} |"
         )
     lines.append("")
 
@@ -211,8 +232,12 @@ def format_text(rows: list, periods: list, stats: dict) -> str:
     lines.append(f"  Days with quality issues:{stats['quality_issue_days']}")
     lines.append(f"  Days operational:        {stats['operational_days']}")
     lines.append(f"  Data delivery rate:      {stats['data_delivery_pct']}%")
-    lines.append(f"  Games missing data:      {stats['total_games_missing']}/{stats['total_games_expected']}")
+    lines.append(f"  Games never available:   {stats['total_games_never_available']}/{stats['total_games_expected']}")
+    lines.append(f"  Total scrape attempts:   {stats['total_scrape_attempts']}")
     lines.append(f"  Major data mismatches:   {stats['total_major_mismatches']}")
+    if stats['avg_latency_hours']:
+        lines.append(f"  Avg latency (when avail):{stats['avg_latency_hours']}h")
+        lines.append(f"  Max latency:             {stats['max_latency_hours']}h")
     lines.append("")
     lines.append("ISSUE PERIODS")
     lines.append("-" * 40)
