@@ -35,9 +35,9 @@ COPY predictions/shared/ ./predictions/shared/
 # Copy worker code and dependencies
 COPY predictions/worker/ ./predictions/worker/
 
-# Copy monthly retrained model files (Session 70)
-# V8 and V9 can fallback to GCS, but monthly models need local files
-# Only copy the specific monthly models (catboost_v9_YYYY_MM.cbm pattern)
+# Copy monthly retrained model files from build context (Session 70, fixed Session 148)
+# Models are gitignored so Cloud Build downloads them from GCS in cloudbuild.yaml Step 0.
+# For local builds, ensure models/ has the required .cbm files.
 COPY models/catboost_v9_2026_02.cbm ./models/
 
 # Breakout classifier model loaded from GCS via BREAKOUT_CLASSIFIER_MODEL_PATH env var
