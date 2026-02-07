@@ -1,107 +1,54 @@
-# Session 149 Prompt
+# Session 150 Prompt
 
-Read the Session 148 handoff for full context: `docs/09-handoff/2026-02-07-SESSION-148-HANDOFF.md`
+Read the Session 149 handoff for full context: `docs/09-handoff/2026-02-07-SESSION-149-HANDOFF.md`
 
 ## Context
 
-Session 148 fixed three systemic issues:
-1. **Change detector** queried disabled BDL tables instead of nbac — caused Phase 3 to miss games. Fixed + backfilled Feb 6.
-2. **GitHub Actions CD** silently swallowed deploy errors. Fixed to fail properly. Also granted `artifactregistry.writer` IAM role.
-3. **prediction-worker model** was gitignored but Dockerfile tried to COPY it. Fixed via GCS download step in cloudbuild.yaml.
+Session 149 completed both tasks from Session 148's prompt:
+1. **BDL query migration** — All 8 active `bdl_player_boxscores` queries replaced with `nbac_gamebook_player_stats`. DNP detection updated for nbac minutes format.
+2. **Cloud Build optimization** — Lock files for raw + scrapers, Dockerfile reordering for layer caching, error suppression fix, conditional GCS model download.
+3. **BDL issue tracking** — New `nba_orchestration.bdl_service_issues` view + `bin/monitoring/bdl_issue_report.py` report script.
 
-All 6 services deployed at commit `2e6e5386`. Pipeline healthy.
+All 6 services deployed at commit `5a123df1`. Pipeline healthy.
 
-## Task 1: Fix Remaining BDL References (HIGH)
+## BDL Status
 
-Several `shared/` modules still query `nba_raw.bdl_player_boxscores` which was disabled in Session 8. These silently return empty/stale data.
-
-### Files to Fix
-
-**`shared/utils/completeness_checker.py`** — 5 active queries:
-
-| Method | Line | Purpose |
-|--------|------|---------|
-| `_query_dnp_games()` | ~628 | Counts DNP games (0 minutes) |
-| `check_raw_boxscore_for_player()` | ~1171 | Checks if player appeared in raw boxscore |
-| `check_raw_boxscore_batch()` | ~1225 | Batch version |
-| `get_player_game_dates()` | ~1560 | Gets player games + team |
-| `get_player_game_dates_batch()` | ~1673 | Batch version |
-
-**`shared/utils/postponement_detector.py`** (line ~263) — games with boxscore data
-**`shared/validation/continuous_validator.py`** (line ~454) — data freshness check
-**`shared/validation/context/player_universe.py`** (line ~248) — player universe
-
-**Fix:** Replace `bdl_player_boxscores` → `nbac_gamebook_player_stats` in all query methods.
-
-**CRITICAL — Verify field compatibility first:**
-```sql
--- Check that nbac table has the fields these queries use
-SELECT column_name, data_type
-FROM `nba-props-platform.nba_raw.INFORMATION_SCHEMA.COLUMNS`
-WHERE table_name = 'nbac_gamebook_player_stats'
-  AND column_name IN ('player_lookup', 'game_date', 'team_abbr', 'minutes')
-```
-The `minutes` field format may differ (BDL uses string '00'/'25', nbac may use different format). Adjust the `_query_dnp_games()` WHERE clause accordingly.
-
-**Do NOT change:** Config files (fallback_config.yaml, validation/config.py, chain_config.py) — these correctly declare BDL as a fallback source. Leave anything outside `shared/`.
-
-## Task 2: Optimize Cloud Build Performance (MEDIUM)
-
-Current build times:
-
-| Service | Time | Issues |
-|---------|------|--------|
-| prediction-worker | **6m18s** | GCS download adds ~2min, deps after code |
-| nba-phase3-analytics | 4m44s | Deps after code |
-| nba-scrapers | 4m39s | **No lock file**, `|| true` swallows errors |
-| nba-phase2-raw | 4m21s | **No lock file** |
-| prediction-coordinator | 4m16s | Deps after code |
-| nba-phase4-precompute | 3m58s | Deps after code |
-
-### A. Add lock files to raw + scrapers (~30-60s savings each)
+**32/33 days full outage, 2.4% data delivery rate.** BDL is effectively dead. Generate a cancellation report:
 ```bash
-cd data_processors/raw
-docker run --rm -v $(pwd):/app -w /app python:3.11-slim bash -c \
-  "pip install --quiet --upgrade pip && pip install --quiet -r requirements.txt && pip freeze > requirements-lock.txt"
-
-cd ../../scrapers
-docker run --rm -v $(pwd):/app -w /app python:3.11-slim bash -c \
-  "pip install --quiet --upgrade pip && pip install --quiet -r requirements.txt && pip freeze > requirements-lock.txt"
+PYTHONPATH=. python bin/monitoring/bdl_issue_report.py --output bdl_cancellation_report.md
 ```
-Then update both Dockerfiles to use `requirements-lock.txt`.
 
-### B. Reorder COPY/RUN for Docker layer caching (~1-2min savings on code-only changes)
-All 6 Dockerfiles copy code BEFORE installing deps. Restructure:
-```dockerfile
-# Copy ONLY requirements first (cached layer)
-COPY shared/requirements.txt ./shared/requirements.txt
-COPY service/requirements-lock.txt ./service/requirements-lock.txt
-RUN pip install --no-cache-dir -r shared/requirements.txt
-RUN pip install --no-cache-dir -r service/requirements-lock.txt
-# THEN copy code (code changes don't bust pip cache)
-COPY shared/ ./shared/
-COPY service/ ./service/
-```
-**Note:** Cloud Build doesn't cache Docker layers by default. Check if Kaniko or `--cache-from` is configured. If not, this only helps local builds.
+## Suggested Priorities
 
-### C. Fix scrapers error suppression
-`scrapers/Dockerfile` line ~44: Remove `|| true` from pip install.
+### 1. Breakout Classifier V3 (HIGH)
+Session 135 roadmap identifies 4 high-impact contextual features:
+- `star_teammate_out` — Star teammates OUT (+0.04-0.07 AUC expected)
+- `fg_pct_last_game` — Hot shooting rhythm
+- `points_last_4q` — 4Q performance signal
+- `opponent_key_injuries` — Weakened defense
 
-### D. Optimize GCS model download step
-`cloudbuild.yaml` Step 0 pulls the full `cloud-sdk` image (~1.5GB) for every build. Consider:
-- Use lighter `gcr.io/cloud-builders/gsutil` image
-- Skip Step 0 for non-worker services (conditional on `_SERVICE`)
+Infrastructure is ready: injury integration at `predictions/shared/injury_integration.py`, shared feature module at `ml/features/breakout_features.py`.
+
+See: `docs/09-handoff/2026-02-05-SESSION-135-BREAKOUT-V2-AND-V3-PLAN.md`
+
+### 2. Feature Completeness (MEDIUM)
+Coverage is ~75 predictions/game due to zero tolerance defaults. To increase without relaxing tolerance:
+- Check which features are most commonly defaulted: `SELECT idx, COUNT(*) FROM nba_predictions.ml_feature_store_v2, UNNEST(default_feature_indices) as idx WHERE game_date >= CURRENT_DATE() - 7 GROUP BY 1 ORDER BY 2 DESC`
+- Fix upstream data gaps in Phase 4 processors
+
+See: `docs/08-projects/current/feature-completeness/00-PROJECT-OVERVIEW.md`
+
+### 3. BDL Formal Decommission (LOW)
+When ready, clean up the ~10 config files that still reference BDL as a fallback source. See the "Remaining BDL References" section in the Session 149 handoff.
 
 ## Verification
-
 ```bash
-# Check all services deployed
-gcloud builds list --region=us-west2 --project=nba-props-platform --limit=6 \
-  --format="table(substitutions._SERVICE,status,createTime)"
-
 # Run daily validation
 /validate-daily
 
-# After BDL fixes, verify completeness checker with nbac data
-bq query --use_legacy_sql=false "SELECT COUNT(*) FROM nba_raw.nbac_gamebook_player_stats WHERE game_date = CURRENT_DATE() - 1"
+# Check deployment drift
+./bin/check-deployment-drift.sh --verbose
+
+# Check BDL status
+bq query --use_legacy_sql=false "SELECT * FROM nba_orchestration.bdl_service_issues ORDER BY game_date DESC LIMIT 10"
 ```
