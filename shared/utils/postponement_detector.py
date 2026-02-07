@@ -258,11 +258,6 @@ class PostponementDetector:
             WHERE game_date = @check_date
               AND game_status = 3
         ),
-        bdl_games AS (
-            SELECT DISTINCT game_id
-            FROM `nba_raw.bdl_player_boxscores`
-            WHERE game_date = @check_date
-        ),
         gamebook_games AS (
             SELECT DISTINCT game_id
             FROM `nba_raw.nbac_gamebook_player_stats`
@@ -272,18 +267,13 @@ class PostponementDetector:
             s.game_id,
             s.home_team_tricode,
             s.away_team_tricode,
-            b.game_id IS NOT NULL as has_bdl,
             g.game_id IS NOT NULL as has_gamebook
         FROM schedule s
-        LEFT JOIN bdl_games b ON CONCAT(
-            FORMAT_DATE('%Y%m%d', @check_date), '_',
-            s.away_team_tricode, '_', s.home_team_tricode
-        ) = b.game_id
         LEFT JOIN gamebook_games g ON CONCAT(
             FORMAT_DATE('%Y%m%d', @check_date), '_',
             s.away_team_tricode, '_', s.home_team_tricode
         ) = g.game_id
-        WHERE b.game_id IS NULL AND g.game_id IS NULL
+        WHERE g.game_id IS NULL
         """
 
         job_config = bigquery.QueryJobConfig(
@@ -316,10 +306,9 @@ class PostponementDetector:
                 'game_id': row.game_id,
                 'game_date': str(check_date),
                 'teams': f"{row.away_team_tricode}@{row.home_team_tricode}",
-                'has_bdl': row.has_bdl,
                 'has_gamebook': row.has_gamebook,
                 'detection_source': 'cross_validation',
-                'details': "Game marked Final but no boxscore data in BDL or Gamebook",
+                'details': "Game marked Final but no boxscore data in Gamebook",
                 'recommended_action': 'Check if game was postponed or data scraping failed'
             })
             logger.warning(

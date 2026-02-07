@@ -19,7 +19,15 @@ LABEL build.timestamp="${BUILD_TIMESTAMP}"
 
 WORKDIR /app
 
-# Copy shared modules from repository root
+# Copy ONLY requirements first (cached layer - deps rarely change)
+COPY shared/requirements.txt ./shared/requirements.txt
+COPY predictions/coordinator/requirements-lock.txt ./predictions/coordinator/requirements-lock.txt
+
+# Install dependencies before copying code (code changes don't bust pip cache)
+RUN pip install --no-cache-dir -r shared/requirements.txt
+RUN pip install --no-cache-dir -r predictions/coordinator/requirements-lock.txt
+
+# Now copy all source code
 COPY shared/ ./shared/
 
 # Copy predictions package structure
@@ -36,12 +44,6 @@ COPY predictions/coordinator/ ./predictions/coordinator/
 
 # Set working directory to coordinator
 WORKDIR /app/predictions/coordinator
-
-# Install shared requirements first (includes boto3 for AWS SES)
-RUN pip install --no-cache-dir -r ../../shared/requirements.txt
-
-# Install service-specific requirements (using lock file for deterministic builds)
-RUN pip install --no-cache-dir -r requirements-lock.txt
 
 # Set Python path to include /app for shared module imports
 ENV PYTHONPATH=/app:$PYTHONPATH

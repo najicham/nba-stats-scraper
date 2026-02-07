@@ -245,7 +245,7 @@ def _query_bdl_players(
     SELECT DISTINCT
         player_lookup,
         team_abbr
-    FROM `{PROJECT_ID}.nba_raw.bdl_player_boxscores`
+    FROM `{PROJECT_ID}.nba_raw.nbac_gamebook_player_stats`
     WHERE game_date = @game_date
       AND player_lookup IS NOT NULL
     """

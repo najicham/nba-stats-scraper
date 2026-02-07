@@ -450,8 +450,8 @@ class ContinuousValidator:
         # Use partition filters to avoid full table scans
         query = """
         WITH source_dates AS (
-            SELECT 'bdl_boxscores' as source, MAX(game_date) as latest_date
-            FROM nba_raw.bdl_player_boxscores
+            SELECT 'gamebook_stats' as source, MAX(game_date) as latest_date
+            FROM nba_raw.nbac_gamebook_player_stats
             WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
             UNION ALL
             SELECT 'player_game_summary', MAX(game_date)

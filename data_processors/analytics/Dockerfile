@@ -23,20 +23,22 @@ LABEL build.timestamp="${BUILD_TIMESTAMP}"
 # Set working directory
 WORKDIR /app
 
-# Copy shared module from repository root (relative to build context)
+# Copy ONLY requirements first (cached layer - deps rarely change)
+COPY shared/requirements.txt ./shared/requirements.txt
+COPY data_processors/analytics/requirements-lock.txt ./data_processors/analytics/requirements-lock.txt
+
+# Install dependencies before copying code (code changes don't bust pip cache)
+RUN pip install --no-cache-dir -r shared/requirements.txt
+RUN pip install --no-cache-dir -r data_processors/analytics/requirements-lock.txt
+
+# Now copy all source code
 COPY shared/ ./shared/
 
-# Copy analytics processor code and dependencies
+# Copy analytics processor code
 COPY data_processors/analytics/ ./data_processors/analytics/
 
 # Set working directory to analytics for running the service
 WORKDIR /app/data_processors/analytics
-
-# Install shared requirements first (includes boto3 for AWS SES)
-RUN pip install --no-cache-dir -r ../../shared/requirements.txt
-
-# Install service-specific requirements (using lock file for deterministic builds)
-RUN pip install --no-cache-dir -r requirements-lock.txt
 
 # Set Python path to include /app for shared module imports
 ENV PYTHONPATH=/app:$PYTHONPATH

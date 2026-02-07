@@ -11,17 +11,23 @@
 #     --project nba-props-platform
 
 steps:
-  # Step 0: Download model files from GCS (for prediction-worker)
-  # Creates models/ directory with monthly model files needed by the Dockerfile.
-  # For non-worker services, the COPY in Dockerfile won't reference models/ so this is a no-op.
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  # Step 0: Download model files from GCS (only for prediction-worker)
+  # Creates models/ directory with monthly model files needed by the worker Dockerfile.
+  # Skipped for non-worker services to save ~2min build time.
+  - name: 'gcr.io/cloud-builders/gsutil'
     entrypoint: bash
     args:
       - '-c'
       - |
-        mkdir -p models
-        gcloud storage cp "gs://nba-props-platform-models/catboost/v9/monthly/*.cbm" models/ 2>/dev/null || true
-        ls -la models/ 2>/dev/null || true
+        if [ "${_SERVICE}" = "prediction-worker" ]; then
+          echo "Downloading model files for prediction-worker..."
+          mkdir -p models
+          gsutil -m cp "gs://nba-props-platform-models/catboost/v9/monthly/*.cbm" models/
+          ls -la models/
+        else
+          echo "Skipping model download (not prediction-worker)"
+          mkdir -p models
+        fi
 
   # Step 1: Build the Docker image
   - name: 'gcr.io/cloud-builders/docker'

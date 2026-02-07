@@ -31,7 +31,15 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy shared module from repository root (relative to build context)
+# Copy ONLY requirements first (cached layer - deps rarely change)
+COPY shared/requirements.txt ./shared/requirements.txt
+COPY scrapers/requirements-lock.txt ./scrapers/requirements-lock.txt
+
+# Install dependencies before copying code (code changes don't bust pip cache)
+RUN pip install --no-cache-dir -r shared/requirements.txt
+RUN pip install --no-cache-dir -r scrapers/requirements-lock.txt
+
+# Now copy all source code
 COPY shared/ ./shared/
 
 # Copy orchestration module (needed for config_loader import in health.py)
@@ -40,14 +48,8 @@ COPY orchestration/ ./orchestration/
 # Copy config directory (needed for workflows.yaml)
 COPY config/ ./config/
 
-# Install shared requirements first (for better caching)
-RUN pip install --no-cache-dir -r shared/requirements.txt || true
-
-# Copy scrapers code and dependencies
+# Copy scrapers code
 COPY scrapers/ ./scrapers/
-
-# Install scrapers requirements
-RUN pip install --no-cache-dir -r scrapers/requirements.txt
 
 # Set Python path to find modules
 ENV PYTHONPATH=/app:$PYTHONPATH

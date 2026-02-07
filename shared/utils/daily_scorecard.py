@@ -248,7 +248,7 @@ class DailyScorecard:
             ),
             bdl AS (
                 SELECT COUNT(DISTINCT game_id) as actual
-                FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+                FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
                 WHERE game_date = @game_date
             ),
             analytics AS (

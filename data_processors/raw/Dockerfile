@@ -29,24 +29,26 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy shared module from repository root (relative to build context)
+# Copy ONLY requirements first (cached layer - deps rarely change)
+COPY shared/requirements.txt ./shared/requirements.txt
+COPY data_processors/raw/requirements-lock.txt ./data_processors/raw/requirements-lock.txt
+
+# Install dependencies before copying code (code changes don't bust pip cache)
+RUN pip install --no-cache-dir -r shared/requirements.txt
+RUN pip install --no-cache-dir -r data_processors/raw/requirements-lock.txt
+
+# Now copy all source code
 COPY shared/ ./shared/
 
 # Copy scrapers utils (needed for team mappings and utilities)
 COPY scrapers/__init__.py ./scrapers/__init__.py
 COPY scrapers/utils/ ./scrapers/utils/
 
-# Copy raw processor code and dependencies
+# Copy raw processor code
 COPY data_processors/raw/ ./data_processors/raw/
 
 # Set working directory to raw for running the service
 WORKDIR /app/data_processors/raw
-
-# Install shared requirements first (includes boto3 for AWS SES)
-RUN pip install --no-cache-dir -r ../../shared/requirements.txt
-
-# Install service-specific requirements
-RUN pip install --no-cache-dir -r requirements.txt
 
 # Set Python path to include /app for shared module imports
 ENV PYTHONPATH=/app:$PYTHONPATH

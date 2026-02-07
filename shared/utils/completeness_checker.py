@@ -625,7 +625,7 @@ class CompletenessChecker:
                 player_lookup,
                 game_date,
                 minutes
-            FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+            FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
             WHERE player_lookup IN UNNEST(@player_lookups)
               AND {date_filter}
         ),
@@ -645,7 +645,7 @@ class CompletenessChecker:
             player_lookup,
             COUNT(DISTINCT game_date) as dnp_count
         FROM ranked_games
-        WHERE (minutes = '00' OR minutes = '' OR minutes IS NULL OR minutes = '0')
+        WHERE (minutes IS NULL OR minutes = '00:00')
           {"AND game_num <= " + str(lookback_window) if window_type == 'games' else ""}
         GROUP BY player_lookup
         """
@@ -1162,13 +1162,12 @@ class CompletenessChecker:
         """
         from google.cloud import bigquery
 
-        # Normalize player_lookup to BDL format (removes underscores, spaces, etc.)
+        # Normalize player_lookup (removes underscores, spaces, etc.)
         normalized_lookup = normalize_name_for_lookup(player_lookup)
 
-        # Use bdl_player_boxscores which has player_lookup directly
         query = f"""
         SELECT COUNT(*) > 0 as player_in_game
-        FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+        FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
         WHERE game_date = @game_date
           AND player_lookup = @player_lookup
         """
@@ -1212,17 +1211,16 @@ class CompletenessChecker:
         if not player_lookups or not game_dates:
             return {}
 
-        # Normalize all player lookups to BDL format
+        # Normalize all player lookups
         normalized_lookups = [normalize_name_for_lookup(p) for p in player_lookups]
         # Create mapping from normalized back to original
         norm_to_original = {normalize_name_for_lookup(p): p for p in player_lookups}
 
-        # Use bdl_player_boxscores which has player_lookup directly
         query = f"""
         SELECT
           player_lookup,
           game_date
-        FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+        FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
         WHERE player_lookup IN UNNEST(@player_lookups)
           AND game_date IN UNNEST(@game_dates)
         """
@@ -1557,7 +1555,7 @@ class CompletenessChecker:
             SELECT DISTINCT
                 game_date,
                 team_abbr
-            FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+            FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
             WHERE player_lookup = @player_lookup
               AND game_date >= @lookback_start
               AND game_date <= @analysis_date
@@ -1670,7 +1668,7 @@ class CompletenessChecker:
                 player_lookup,
                 game_date,
                 team_abbr
-            FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+            FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
             WHERE player_lookup IN UNNEST(@player_lookups)
               AND game_date >= @lookback_start
               AND game_date <= @analysis_date
