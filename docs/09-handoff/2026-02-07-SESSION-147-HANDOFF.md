@@ -39,17 +39,22 @@ The existing `auto-deploy.yml` had critical bugs:
 - Service name mismatch (`nba-phase1-scrapers` vs `nba-scrapers`)
 - Created reusable `deploy-service.yml` workflow
 
-### 8. Set Up Cloud Build Triggers (CI/CD)
+### 8. Set Up Cloud Build Triggers (CI/CD) -- TESTED & WORKING
 Created 6 Cloud Build triggers connected directly to GitHub:
 - Push to `main` auto-deploys only changed services
 - Each trigger watches service paths + `shared/`
 - Builds inside Google's network (no WSL2 issues)
 - Uses `cloudbuild.yaml` with correct Dockerfiles
 
+**Manually triggered and verified:** `deploy-prediction-coordinator` built and deployed successfully via Cloud Build trigger. Commit `79c969e` deployed and verified.
+
 **Infrastructure created:**
 - GitHub connection: `nba-github-connection` (2nd gen, us-west2)
 - Repository link: `najicham/nba-stats-scraper`
-- IAM: Cloud Build P4SA granted `secretmanager.admin`
+- Service account: `github-actions-deploy@nba-props-platform.iam.gserviceaccount.com` (user-managed, required for 2nd gen triggers)
+- IAM roles on SA: `cloudbuild.builds.builder`, `iam.serviceAccountUser`, `run.admin`, `storage.admin`, `logging.logWriter`
+- IAM on Cloud Build P4SA: `secretmanager.admin` (for GitHub token storage)
+- `gh` CLI installed and authenticated
 
 **Triggers:**
 | Trigger | Path Filters |
@@ -61,17 +66,32 @@ Created 6 Cloud Build triggers connected directly to GitHub:
 | `deploy-prediction-coordinator` | `predictions/coordinator/**`, `predictions/shared/**`, `shared/**` |
 | `deploy-prediction-worker` | `predictions/worker/**`, `predictions/shared/**`, `shared/**` |
 
+**Manual trigger command:**
+```bash
+gcloud builds triggers run deploy-prediction-coordinator \
+  --branch=main --region=us-west2 --project=nba-props-platform
+```
+
 ## Current Deployment State
 
-All services deployed at `0672bdf7`. Cloud Build triggers will auto-deploy on next push with service code changes.
+| Service | Deployed Commit | Notes |
+|---------|----------------|-------|
+| prediction-coordinator | `79c969e` | Deployed via Cloud Build trigger test |
+| nba-phase4-precompute-processors | `56d6db1c` | Session 146 |
+| nba-phase3-analytics-processors | `56d6db1c` | Session 145 |
+| prediction-worker | `aa1248e0` | Session 145 |
+| nba-phase2-raw-processors | `246abe9b` | Session 144 |
+| nba-scrapers | `ddc1396c` | Hasn't needed changes recently |
+
+All services are current for their code. Cloud Build triggers will auto-deploy on next push with service code changes.
 
 ## What's Next
 
-1. **Test Cloud Build triggers end-to-end** - Make a small service code change, push, and verify auto-deploy fires
-2. **Monitor trigger reliability** - Watch the first few auto-deploys
-3. **Consider Slack notifications** - Alert on build failures
-4. **`required_default_count` is NULL** for Feb 6-7 - Will populate on next daily run
-5. **Run `/reconcile-yesterday`** after next game day to test the new skill
+1. **Run `/reconcile-yesterday`** after next game day to test the new skill
+2. **Verify `required_default_count` populates** - Feb 6-7 had NULL values, next daily run should fix
+3. **Monitor auto-deploy** on next push with service code changes
+4. **Consider Slack notifications** for Cloud Build failures
+5. **Consider consolidating** deployment-drift-detection.yml (less critical now)
 
 ## Files Changed
 

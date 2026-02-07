@@ -68,9 +68,15 @@ Health check + drift detection (existing monitoring)
 - **GitHub App Installation:** `108550949` (installed on all repos for `najicham`)
 
 ### IAM Permissions
-- Cloud Build service account: `756957797294@cloudbuild.gserviceaccount.com`
-- Roles: `cloudbuild.builds.builder`, `iam.serviceAccountUser`, `run.admin`, `storage.admin`, `secretmanager.admin`
-- Service agent: `service-756957797294@gcp-sa-cloudbuild.iam.gserviceaccount.com` has `secretmanager.admin` for GitHub token storage
+
+**Trigger service account** (user-managed, required for 2nd gen triggers):
+- SA: `github-actions-deploy@nba-props-platform.iam.gserviceaccount.com`
+- Roles: `cloudbuild.builds.builder`, `iam.serviceAccountUser`, `run.admin`, `storage.admin`, `logging.logWriter`
+- **Note:** 2nd gen triggers require a user-managed SA, not the default `PROJECT_NUMBER@cloudbuild.gserviceaccount.com`
+
+**Cloud Build P4SA** (Google-managed, for GitHub connection):
+- SA: `service-756957797294@gcp-sa-cloudbuild.iam.gserviceaccount.com`
+- Role: `secretmanager.admin` (stores GitHub OAuth token)
 
 ### Shared Config
 - `cloudbuild.yaml` -- Generic build config supporting all services via substitution variables
