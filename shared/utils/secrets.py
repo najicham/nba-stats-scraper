@@ -63,10 +63,6 @@ class SecretManager:
         """Get Odds API key."""
         return self.get_secret('odds-api-key', fallback_env_var='ODDS_API_KEY')
 
-    def get_bdl_api_key(self) -> str:
-        """Get Ball Don't Lie API key."""
-        return self.get_secret('bdl-api-key', fallback_env_var='BDL_API_KEY')
-
     def get_brevo_smtp_password(self) -> str:
         """Get Brevo SMTP password."""
         return self.get_secret('brevo-smtp-password', fallback_env_var='BREVO_SMTP_PASSWORD')

@@ -25,7 +25,6 @@ class PhaseTransitionConfig:
     phase2_expected_processors: List[str] = field(default_factory=lambda: [
         # Core daily processors that reliably publish completion messages
         # NOTE: These must match the processor_name values in config/workflows.yaml
-        'p2_bdl_box_scores',          # Daily box scores from balldontlie
         'p2_bigdataball_pbp',         # Per-game play-by-play
         'p2_odds_game_lines',         # Per-game odds
         'p2_nbacom_schedule',         # Schedule updates
@@ -37,7 +36,6 @@ class PhaseTransitionConfig:
     # Required: MUST complete before Phase 3 can proceed (with deadline)
     # Optional: Nice to have, but won't block Phase 3
     phase2_required_processors: List[str] = field(default_factory=lambda: [
-        'p2_bdl_box_scores',          # Critical for player predictions
         'p2_odds_game_lines',         # Critical for betting lines
         'p2_nbacom_schedule',         # Critical for game schedule
         'p2_nbacom_gamebook_pdf',     # Critical for post-game stats

@@ -68,11 +68,6 @@ ENV_VARS="$ENV_VARS,GIT_BRANCH=$GIT_BRANCH"
 ENV_VARS="$ENV_VARS,DEPLOY_TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 # Add API keys if available
-if [[ -n "${BDL_API_KEY:-}" ]]; then
-    ENV_VARS="$ENV_VARS,BDL_API_KEY=$BDL_API_KEY"
-    echo "BDL API key configured"
-fi
-
 if [[ -n "${ODDS_API_KEY:-}" ]]; then
     ENV_VARS="$ENV_VARS,ODDS_API_KEY=$ODDS_API_KEY"
     echo "Odds API key configured"

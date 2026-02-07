@@ -153,8 +153,6 @@ def get_all_service_urls() -> dict:
 class ExternalAPIs:
     """External API endpoints."""
     SENDGRID = 'https://api.sendgrid.com/v3/mail/send'
-    BALLDONTLIE = 'https://api.balldontlie.io/v1'
-    BALLDONTLIE_LIVE = 'https://api.balldontlie.io/v1/box_scores/live'
 
 
 def get_external_api(api_name: str) -> str:
@@ -162,14 +160,12 @@ def get_external_api(api_name: str) -> str:
     Get external API URL.
 
     Args:
-        api_name: API identifier (e.g., 'sendgrid', 'balldontlie')
+        api_name: API identifier (e.g., 'sendgrid')
 
     Returns:
         API URL string
     """
     api_map = {
         'sendgrid': ExternalAPIs.SENDGRID,
-        'balldontlie': ExternalAPIs.BALLDONTLIE,
-        'balldontlie_live': ExternalAPIs.BALLDONTLIE_LIVE,
     }
     return api_map.get(api_name.lower(), '')

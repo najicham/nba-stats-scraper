@@ -827,6 +827,23 @@ class FeatureExtractor:
         if total_fg > 0:
             result['paint_rate_last_10'] = total_paint / total_fg
             result['three_pt_rate_last_10'] = total_three / total_fg
+            result['mid_range_rate_last_10'] = total_mid / total_fg
+
+        # Team context: pace and offensive rating from team_games_lookup
+        # Get player's team from player_context_lookup or last_10_games
+        player_context = self._player_context_lookup.get(player_lookup, {})
+        team_abbr = player_context.get('team_abbr')
+        if team_abbr:
+            team_games = self._team_games_lookup.get(team_abbr, [])
+            # Use last 10 team games (sorted by game_date ascending, take last 10)
+            recent_team_games = team_games[-10:] if len(team_games) >= 10 else team_games
+            if recent_team_games:
+                pace_values = [g['pace'] for g in recent_team_games if g.get('pace') is not None]
+                rating_values = [g['offensive_rating'] for g in recent_team_games if g.get('offensive_rating') is not None]
+                if pace_values:
+                    result['team_pace_last_10'] = sum(pace_values) / len(pace_values)
+                if rating_values:
+                    result['team_off_rating_last_10'] = sum(rating_values) / len(rating_values)
 
         return result
 
@@ -848,7 +865,9 @@ class FeatureExtractor:
         SELECT
             team_abbr,
             game_date,
-            win_flag
+            win_flag,
+            pace,
+            offensive_rating
         FROM `{self.project_id}.nba_analytics.team_offense_game_summary`
         WHERE season_year = {season_year}
           AND game_date < '{game_date}'

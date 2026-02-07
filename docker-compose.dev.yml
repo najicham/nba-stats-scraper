@@ -13,7 +13,6 @@ services:
       - LOCAL_DEV=true
       # API Keys from .env file
       - ODDS_API_KEY=${ODDS_API_KEY}
-      - BDL_API_KEY=${BDL_API_KEY}
       - PROJECT_ID=${PROJECT_ID}
     env_file:
       - .env  # This will load your .env file

@@ -72,35 +72,11 @@ NBA_SCRAPER_REGISTRY: Dict[str, Tuple[str, str]] = {
     ),
     
     # ========================================================================
-    # Ball Don't Lie Scrapers (6 total)
+    # Ball Don't Lie Scrapers (injuries only — other BDL services decommissioned Session 151)
     # ========================================================================
-    "bdl_games": (
-        "scrapers.balldontlie.bdl_games", 
-        "BdlGamesScraper"
-    ),
-    "bdl_box_scores": (
-        "scrapers.balldontlie.bdl_box_scores", 
-        "BdlBoxScoresScraper"
-    ),
-    "bdl_player_box_scores": (
-        "scrapers.balldontlie.bdl_player_box_scores", 
-        "BdlPlayerBoxScoresScraper"
-    ),
-    "bdl_active_players": (
-        "scrapers.balldontlie.bdl_active_players", 
-        "BdlActivePlayersScraper"
-    ),
     "bdl_injuries": (
-        "scrapers.balldontlie.bdl_injuries", 
+        "scrapers.balldontlie.bdl_injuries",
         "BdlInjuriesScraper"
-    ),
-    "bdl_standings": (
-        "scrapers.balldontlie.bdl_standings",
-        "BdlStandingsScraper"
-    ),
-    "bdl_live_box_scores": (
-        "scrapers.balldontlie.bdl_live_box_scores",
-        "BdlLiveBoxScoresScraper"
     ),
 
     # ========================================================================
