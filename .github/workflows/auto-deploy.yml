@@ -123,13 +123,13 @@ jobs:
 
           echo ""
           echo "Services to deploy:"
-          [ "$deploy_scrapers" = "true" ] && echo "  - nba-scrapers"
-          [ "$deploy_phase2" = "true" ] && echo "  - nba-phase2-raw-processors"
-          [ "$deploy_phase3" = "true" ] && echo "  - nba-phase3-analytics-processors"
-          [ "$deploy_phase4" = "true" ] && echo "  - nba-phase4-precompute-processors"
-          [ "$deploy_coordinator" = "true" ] && echo "  - prediction-coordinator"
-          [ "$deploy_worker" = "true" ] && echo "  - prediction-worker"
-          [ "$any" = "false" ] && echo "  (none - no service changes detected)"
+          [ "$deploy_scrapers" = "true" ] && echo "  - nba-scrapers" || true
+          [ "$deploy_phase2" = "true" ] && echo "  - nba-phase2-raw-processors" || true
+          [ "$deploy_phase3" = "true" ] && echo "  - nba-phase3-analytics-processors" || true
+          [ "$deploy_phase4" = "true" ] && echo "  - nba-phase4-precompute-processors" || true
+          [ "$deploy_coordinator" = "true" ] && echo "  - prediction-coordinator" || true
+          [ "$deploy_worker" = "true" ] && echo "  - prediction-worker" || true
+          [ "$any" = "false" ] && echo "  (none - no service changes detected)" || true
 
   # Each service deploys as a separate job for parallelism and independent failure
   deploy-scrapers:
