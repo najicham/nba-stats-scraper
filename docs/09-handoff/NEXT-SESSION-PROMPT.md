@@ -22,28 +22,47 @@ Sessions 144-145 fixed this:
 | Phase 2 (raw) | **Deployed** with timing breakdown | `246abe9b` |
 | Phase 3 (analytics) | **Deployed** with timing breakdown | `246abe9b` |
 | Prediction Worker | **Deployed** with vegas optional | `aa1248e0` |
-| Prediction Coordinator | **NEEDS DEPLOY** - TLS timeout during push | - |
+| Prediction Coordinator | **NEEDS DEPLOY** - 3 attempts failed with TLS timeout | - |
 
-### Background Tasks (may still be running)
-- **2025-26 backfill** (task b09541c): Processing ~92 dates from 2025-11-04. Was at date 9/92 when session ended. Uses checkpoints so progress is saved.
-- **Coordinator deploy** (task b745dcf): Hot-deploy retry was in progress.
+### Background Tasks (may have completed)
+- **2025-26 backfill**: Was processing ~92 dates from 2025-11-04. Was at date 13/92 when session ended. Uses checkpoints so progress is saved.
 
 ## Immediate Tasks
 
-### 1. Deploy Prediction Coordinator
-The coordinator deploy failed twice with TLS handshake timeouts. Retry:
+### 1. Deploy Prediction Coordinator (CRITICAL)
+
+The coordinator deploy failed 3 times with Docker registry TLS handshake timeouts. The local `docker push` to `us-west2-docker.pkg.dev` keeps timing out. Try using Cloud Build instead which pushes from Google's network:
+
 ```bash
-./bin/hot-deploy.sh prediction-coordinator
-# or
+# Option A: Use gcloud run deploy with --source (uses Cloud Build, avoids local push)
+gcloud run deploy prediction-coordinator \
+  --source . \
+  --region us-west2 \
+  --project nba-props-platform \
+  --no-traffic
+
+# Option B: Submit build to Cloud Build explicitly, then deploy
+gcloud builds submit --tag us-west2-docker.pkg.dev/nba-props-platform/nba-props/prediction-coordinator:latest .
+gcloud run deploy prediction-coordinator \
+  --image us-west2-docker.pkg.dev/nba-props-platform/nba-props/prediction-coordinator:latest \
+  --region us-west2
+
+# Option C: Just retry the normal deploy (TLS issue may have resolved)
 ./bin/deploy-service.sh prediction-coordinator
+```
+
+Look at how `bin/deploy-service.sh` works - it does a local Docker build + push. The TLS timeout is between our WSL2 machine and Google's Docker registry. Cloud Build avoids this entirely by building and pushing from within Google's network.
+
+After deploying, verify:
+```bash
+gcloud run services describe prediction-coordinator --region=us-west2 --format="value(metadata.labels.commit-sha)"
+# Should show 3e30f923 or later
 ```
 
 ### 2. Verify All Deployments
 ```bash
 ./bin/check-deployment-drift.sh --verbose
 ```
-
-All services should show commit `aa1248e0` or later.
 
 ### 3. Verify Vegas Optional Impact
 After the next pipeline run with deployed code, check:
@@ -70,7 +89,7 @@ FROM nba_predictions.ml_feature_store_v2
 WHERE game_date >= '2025-11-04' AND game_date <= '2026-02-06'
 "
 
-# If still missing, restart:
+# If still missing, restart (checkpoints save progress):
 PYTHONPATH=. python backfill_jobs/precompute/ml_feature_store/ml_feature_store_precompute_backfill.py \
   --start-date 2025-11-04 --end-date 2026-02-06 --skip-preflight
 ```
