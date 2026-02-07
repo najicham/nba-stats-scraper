@@ -178,7 +178,8 @@ class QualityGate:
                 is_quality_ready,
                 quality_alert_level,
                 matchup_quality_pct,
-                default_feature_count
+                default_feature_count,
+                required_default_count
             FROM `{self.project_id}.{dataset}.ml_feature_store_v2`
             WHERE game_date = @game_date
               AND player_lookup IN UNNEST(@player_lookups)
@@ -202,6 +203,7 @@ class QualityGate:
                     'quality_alert_level': row.quality_alert_level,
                     'matchup_quality_pct': float(row.matchup_quality_pct or 0),
                     'default_feature_count': int(row.default_feature_count or 0),
+                    'required_default_count': int(row.required_default_count or row.default_feature_count or 0),
                 }
             logger.info(f"Got quality scores for {len(scores)} players for {game_date}")
             return scores
@@ -340,13 +342,15 @@ class QualityGate:
                 stats['skipped_low_quality'] += 1
                 continue
 
-            # Rule 2b (Session 141 Zero Tolerance): Block any defaulted features
+            # Rule 2b (Session 141 Zero Tolerance): Block any defaulted REQUIRED features
+            # Session 145: Use required_default_count (excludes optional vegas features)
+            # Vegas lines unavailable for ~60% of players (bench) - normal, not a blocker
             # This applies to ALL modes including LAST_CALL and BACKFILL
-            default_count = details.get('default_feature_count', 0)
+            default_count = details.get('required_default_count', details.get('default_feature_count', 0))
             if quality_score is not None and default_count > HARD_FLOOR_MAX_DEFAULTS:
                 logger.warning(
-                    f"HARD_FLOOR: Blocking {player_lookup} - default_feature_count={default_count} "
-                    f"> {HARD_FLOOR_MAX_DEFAULTS} (zero tolerance)"
+                    f"HARD_FLOOR: Blocking {player_lookup} - required_default_count={default_count} "
+                    f"> {HARD_FLOOR_MAX_DEFAULTS} (zero tolerance, excludes optional vegas)"
                 )
                 results.append(QualityGateResult(
                     player_lookup=player_lookup,

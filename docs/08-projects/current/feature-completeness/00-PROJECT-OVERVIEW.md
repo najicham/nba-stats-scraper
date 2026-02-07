@@ -1,4 +1,4 @@
-# Feature Completeness Tracking (Session 142)
+# Feature Completeness Tracking (Sessions 142-145)
 
 ## Problem
 
@@ -8,6 +8,8 @@ We need to:
 1. **Track which features are missing** per prediction for diagnostics
 2. **Know exactly what's defaulted** so we can fix the pipeline
 3. **Document the feature contract** so future sessions know what to fix
+4. **Make vegas features optional** so bench players without prop lines still get predictions (Session 145)
+5. **Fix cache timing** so the feature store sees daily cache data (Session 144)
 
 ## Solution
 
@@ -66,24 +68,50 @@ Based on last 7 days of data:
 
 ### Path to Higher Coverage
 
-Current: ~75 predictions/day (players with ALL 33 features from real data).
+**Before Session 144-145:** ~75 predictions/day (37% fully complete records)
 
-To increase coverage, fix in priority order:
-1. **Composite factors (5-8)**: Fix processor for 52 additional players (+52 potential)
-2. **Shot zones (18-20)**: Handle sparse data for 126 players (some overlap)
-3. **Player history (0-4)**: Bootstrap new players (some overlap)
-4. **Vegas (25-27)**: Structural -- only fixable by changing feature requirements
+**After Session 144 (cache miss fallback):** ~50-63% fully complete (cache timing fix)
+
+**After Session 145 (vegas optional):** ~95-100% predictions enabled (vegas no longer blocks)
+
+#### Fixes Applied (Sessions 144-145)
+
+| Fix | Session | Impact | Status |
+|-----|---------|--------|--------|
+| Cache miss fallback (`feature_extractor.py`) | 144 | 37% → ~50% complete | **Deployed** |
+| Vegas features optional in zero-tolerance | 145 | ~50% → ~95% predictions enabled | **Implemented** |
+| Gap tracking table (`feature_store_gaps`) | 144 | Automatic gap detection | **Deployed** |
+| `required_default_count` field | 145 | Distinguishes required vs optional defaults | **Implemented** |
+| `--include-bootstrap` flag for backfill | 144 | Bootstrap period backfill support | **Implemented** |
+
+#### Root Cause Analysis (Session 144)
+
+| Root Cause | Features | Default Rate | Fix |
+|-----------|----------|-------------|-----|
+| **PlayerDailyCacheProcessor** only caches today's game players (~175/457) | 0-4, 22-23, 31-32 | 13% | **FIXED** - fallback computes from last_10_games |
+| **Vegas lines** unavailable for bench players (~60%) | 25-27 | 60% | **FIXED** - made optional in zero-tolerance |
+| **Shot zone** timing/coverage gaps | 18-20 | 24% | **PARTIALLY FIXED** by cache fallback |
+| **Composite factors** processor coverage | 5-8 | 4% | OK - low rate |
+
+#### Remaining Work
+
+1. **Fix PlayerDailyCacheProcessor root cause** - Cache all season players, not just today's games
+2. **Scraper health monitoring** - Alert when tier 1-2 star players lack vegas lines (indicates scraper issue)
+3. **Shot zone coverage** - Improve processor for sparse-data players
 
 ## Files Modified
 
-| File | Change |
-|------|--------|
-| `schemas/bigquery/predictions/01_player_prop_predictions.sql` | Added `default_feature_indices ARRAY<INT64>` |
-| `schemas/bigquery/predictions/04_ml_feature_store_v2.sql` | Added `default_feature_indices ARRAY<INT64>` |
-| `data_processors/precompute/ml_feature_store/quality_scorer.py` | Emits `default_feature_indices` from existing `is_default` dict |
-| `predictions/worker/worker.py` | Writes `default_feature_indices` to prediction record |
-| `predictions/worker/data_loaders.py` | Loads `default_feature_indices` from feature store |
-| `shared/ml/feature_contract.py` | Added feature source classification constants |
+| File | Change | Session |
+|------|--------|---------|
+| `schemas/bigquery/predictions/01_player_prop_predictions.sql` | Added `default_feature_indices ARRAY<INT64>` | 142 |
+| `schemas/bigquery/predictions/04_ml_feature_store_v2.sql` | Added `default_feature_indices`, `required_default_count` | 142, 145 |
+| `data_processors/precompute/ml_feature_store/quality_scorer.py` | `default_feature_indices`, `required_default_count`, `OPTIONAL_FEATURES` | 142, 145 |
+| `data_processors/precompute/ml_feature_store/feature_extractor.py` | `_compute_cache_fields_from_games()` fallback | 144 |
+| `data_processors/precompute/ml_feature_store/ml_feature_store_processor.py` | `_record_feature_store_gaps()`, `skip_early_season_check` | 144 |
+| `predictions/coordinator/quality_gate.py` | Uses `required_default_count` for gating | 145 |
+| `predictions/worker/worker.py` | Uses `required_default_count` for filtering | 145 |
+| `shared/ml/feature_contract.py` | `FEATURES_OPTIONAL`, `FEATURE_SOURCE_MAP` | 142, 145 |
+| `backfill_jobs/precompute/ml_feature_store/ml_feature_store_precompute_backfill.py` | `--include-bootstrap`, `_resolve_gaps_for_date()` | 144 |
 
 ## Verification
 

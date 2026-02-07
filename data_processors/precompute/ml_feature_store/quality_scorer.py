@@ -119,6 +119,11 @@ DEFAULT_FALLBACK_REASONS = {
     31: 'minutes_ppm_unavailable', 32: 'minutes_ppm_unavailable',
 }
 
+# Session 145: Optional features - not counted in zero-tolerance gating
+# Vegas lines unavailable for ~60% of players (bench players without published lines)
+# Still tracked as defaults for visibility, but don't block predictions
+OPTIONAL_FEATURES = {25, 26, 27}  # Vegas line, opening line, line movement
+
 # Training quality threshold per feature
 TRAINING_QUALITY_THRESHOLD = 85.0
 
@@ -310,6 +315,13 @@ class QualityScorer:
 
         default_count = sum(1 for idx in range(num_features) if is_default.get(idx, True))
 
+        # Session 145: Required defaults exclude optional features (vegas)
+        # Used for is_quality_ready gating - vegas absence doesn't block predictions
+        required_default_count = sum(
+            1 for idx in range(num_features)
+            if is_default.get(idx, True) and idx not in OPTIONAL_FEATURES
+        )
+
         # ================================================================
         # Category quality
         # ================================================================
@@ -364,9 +376,10 @@ class QualityScorer:
 
         # Alert level
         # Session 141: Changed default_count threshold from >10 to >0 (zero tolerance)
+        # Session 145: Use required_default_count for alert level (vegas-only defaults = green)
         if matchup_pct < 50 or quality_score < 50:
             alert_level = 'red'
-        elif default_count > 0 or quality_score < 70 or matchup_pct < 70:
+        elif required_default_count > 0 or quality_score < 70 or matchup_pct < 70:
             alert_level = 'yellow'
         else:
             alert_level = 'green'
@@ -404,12 +417,15 @@ class QualityScorer:
         )
 
         # Quality-based production readiness (NEW field, separate from is_production_ready)
-        # Session 141: Added default_count == 0 (zero tolerance for default features)
+        # Session 141: Zero tolerance for default features
+        # Session 145: Use required_default_count (excludes optional vegas features)
+        # Vegas lines are unavailable for ~60% of players (bench players) - this is normal.
+        # Scraper health monitoring separately detects when star players lack lines.
         is_quality_ready = (
             quality_tier in ('gold', 'silver', 'bronze')
             and quality_score >= 70
             and matchup_pct >= 50
-            and default_count == 0
+            and required_default_count == 0
         )
 
         # Optional feature count (non-critical features present)
@@ -446,6 +462,7 @@ class QualityScorer:
         fields['quality_alert_level'] = alert_level
         fields['quality_alerts'] = alerts if alerts else []
         fields['default_feature_count'] = default_count
+        fields['required_default_count'] = required_default_count  # Session 145: excludes optional (vegas)
         fields['phase4_feature_count'] = canonical_counts['phase4']
         fields['phase3_feature_count'] = canonical_counts['phase3']
         fields['calculated_feature_count'] = canonical_counts['calculated']

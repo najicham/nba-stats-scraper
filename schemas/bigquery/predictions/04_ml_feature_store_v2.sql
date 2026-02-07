@@ -152,7 +152,10 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.ml_feature_store_
     description='Specific alerts triggered, e.g. all_matchup_features_defaulted, high_default_rate_20pct.'
   ),
   default_feature_count INT64 OPTIONS(
-    description='Total count of features using defaults.'
+    description='Total count of features using defaults (includes optional vegas features).'
+  ),
+  required_default_count INT64 OPTIONS(
+    description='Session 145: Count of REQUIRED features using defaults (excludes optional vegas 25-27). Used for zero-tolerance gating.'
   ),
   default_feature_indices ARRAY<INT64> OPTIONS(
     description='Session 142: Indices of features using default/fallback values (empty = all real data).'

@@ -316,6 +316,12 @@ FEATURES_VEGAS = [25, 26, 27]
 # Features from shot zone analysis
 FEATURES_SHOT_ZONE = [18, 19, 20]
 
+# Session 145: Optional features - not counted in zero-tolerance gating
+# Vegas lines are unavailable for ~60% of players (bench players without published lines).
+# These features are still tracked as defaults for visibility, but don't block predictions.
+# Scraper health monitoring separately alerts when star players are missing lines.
+FEATURES_OPTIONAL = set(FEATURES_VEGAS)  # {25, 26, 27}
+
 # Reverse mapping: feature index -> source pipeline component
 FEATURE_SOURCE_MAP = {}
 for _idx in FEATURES_FROM_PHASE4:

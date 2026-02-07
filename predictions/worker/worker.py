@@ -2123,15 +2123,16 @@ def format_prediction_for_bigquery(
                     f"Filtered low quality for {player_lookup}: quality_score={quality_score:.1f} < 80"
                 )
 
-        # Session 141: Zero tolerance for default features (defense-in-depth)
+        # Session 141: Zero tolerance for default REQUIRED features (defense-in-depth)
+        # Session 145: Use required_default_count (excludes optional vegas features)
         # Coordinator quality gate should already block these, but this catches edge cases
-        default_feature_count = features.get('default_feature_count', 0)
-        if is_actionable and default_feature_count > 0:
+        required_defaults = features.get('required_default_count', features.get('default_feature_count', 0))
+        if is_actionable and required_defaults > 0:
             is_actionable = False
             filter_reason = 'has_default_features'
             logger.info(
                 f"Filtered default features for {player_lookup}: "
-                f"default_feature_count={default_feature_count}"
+                f"required_default_count={required_defaults}"
             )
 
     # Base record
