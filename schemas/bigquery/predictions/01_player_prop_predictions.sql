@@ -258,6 +258,11 @@ ADD COLUMN IF NOT EXISTS feature_version STRING
 ADD COLUMN IF NOT EXISTS feature_quality_score FLOAT64
   OPTIONS (description='Quality score of features at prediction time (0-100)');
 
+-- Session 152: Vegas line source from feature store
+ALTER TABLE `nba-props-platform.nba_predictions.player_prop_predictions`
+ADD COLUMN IF NOT EXISTS vegas_line_source STRING
+  OPTIONS (description='Session 152: Which scraper source provided ML features 25-28. Values: odds_api, bettingpros, both, none. Distinct from line_source_api which tracks the prediction line.');
+
 -- ============================================================================
 -- VERSION HISTORY
 -- ============================================================================

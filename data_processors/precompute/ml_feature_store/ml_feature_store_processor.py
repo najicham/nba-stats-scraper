@@ -1630,6 +1630,10 @@ class MLFeatureStoreProcessor(
         # Session 146: Track cache miss fallback usage for investigation
         record['cache_miss_fallback_used'] = self.feature_extractor.was_cache_miss(player_lookup)
 
+        # Session 152: Vegas line source tracking (which scraper provided ML features 25-28)
+        vegas_data = self.feature_extractor.get_vegas_lines(player_lookup)
+        record['vegas_line_source'] = vegas_data.get('vegas_line_source', 'none')
+
         # Add early season fields (required for hash calculation)
         record['early_season_flag'] = False  # Normal processing, not early season
         record['insufficient_data_reason'] = None

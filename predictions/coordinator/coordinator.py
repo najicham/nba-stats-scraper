@@ -407,6 +407,60 @@ def _check_for_postponed_games(game_date: date) -> dict:
     return result
 
 
+# =============================================================================
+# VEGAS LINE SOURCE COVERAGE CHECK (Session 152)
+# Checks feature store to determine which scrapers provided vegas data.
+# Alerts when coverage is degraded (>50% of players have no line source).
+# =============================================================================
+
+def _check_vegas_source_coverage(game_date: date, dataset_prefix: str = '') -> dict:
+    """Check vegas line source distribution in feature store for a game date.
+
+    Returns dict with source counts and coverage status.
+    Status is 'degraded' when >50% of players have no vegas line source,
+    indicating a scraper failure rather than normal bench player gaps.
+    """
+    try:
+        client = get_bq_client()
+        dataset = f"{dataset_prefix}nba_predictions" if dataset_prefix else "nba_predictions"
+
+        query = f"""
+        SELECT
+            COUNTIF(vegas_line_source = 'odds_api') as odds_api_only,
+            COUNTIF(vegas_line_source = 'bettingpros') as bettingpros_only,
+            COUNTIF(vegas_line_source = 'both') as both_sources,
+            COUNTIF(vegas_line_source = 'none' OR vegas_line_source IS NULL) as no_source,
+            COUNT(*) as total
+        FROM `{PROJECT_ID}.{dataset}.ml_feature_store_v2`
+        WHERE game_date = '{game_date}'
+        """
+
+        result = client.query(query).result()
+        row = list(result)[0] if result.total_rows > 0 else None
+
+        if not row or row.total == 0:
+            return {'status': 'no_data', 'total': 0}
+
+        total = row.total
+        no_source = row.no_source
+        coverage_pct = (total - no_source) * 100.0 / total
+
+        coverage = {
+            'odds_api_only': row.odds_api_only,
+            'bettingpros_only': row.bettingpros_only,
+            'both_sources': row.both_sources,
+            'no_source': no_source,
+            'total': total,
+            'coverage_pct': coverage_pct,
+            'status': 'degraded' if no_source / total > 0.5 else 'healthy',
+        }
+        return coverage
+
+    except Exception as e:
+        logger.warning(f"Vegas source coverage check failed: {e}")
+        return {'status': 'error', 'error': str(e), 'total': 0}
+
+
 def require_api_key(f):
     """
     Decorator to require API key authentication for endpoints.
@@ -1308,6 +1362,27 @@ def start_prediction_batch():
             logger.error(f"QUALITY_GATE: Failed to apply quality gate (publishing all): {e}", exc_info=True)
             viable_requests = requests
 
+        # =========================================================================
+        # VEGAS LINE SOURCE COVERAGE CHECK (Session 152)
+        # Check feature store vegas source distribution before publishing.
+        # Alert when >50% of players have no line source (scraper failure).
+        # =========================================================================
+        try:
+            vegas_coverage = _check_vegas_source_coverage(game_date, dataset_prefix)
+            if vegas_coverage.get('status') == 'degraded':
+                from predictions.coordinator.quality_alerts import send_vegas_coverage_alert
+                send_vegas_coverage_alert(game_date, prediction_run_mode, vegas_coverage)
+            elif vegas_coverage.get('total', 0) > 0:
+                logger.info(
+                    f"VEGAS_COVERAGE: {vegas_coverage.get('coverage_pct', 0):.0f}% "
+                    f"(both={vegas_coverage.get('both_sources', 0)}, "
+                    f"oa={vegas_coverage.get('odds_api_only', 0)}, "
+                    f"bp={vegas_coverage.get('bettingpros_only', 0)}, "
+                    f"none={vegas_coverage.get('no_source', 0)})"
+                )
+        except Exception as e:
+            logger.warning(f"Vegas coverage check failed (non-fatal): {e}")
+
         # Publish viable requests to Pub/Sub (with batch historical data if available)
         # Session 76: Include prediction_run_mode for traceability
         published_count = publish_prediction_requests(
@@ -1528,6 +1603,307 @@ def regenerate_with_supersede():
         }), 500
 
 
+@app.route('/check-lines', methods=['POST'])
+@require_api_key
+def check_lines():
+    """
+    Session 152: Hourly line check — detect new/moved lines, trigger targeted re-prediction.
+
+    Called by Cloud Scheduler every hour 8 AM – 6 PM ET. Detects:
+    1. Players predicted WITHOUT lines who now have lines available
+    2. Players whose lines moved >= threshold since prediction was made
+
+    For affected players: supersedes old predictions, generates new ones.
+    Phase 6 re-export triggers automatically via existing event-driven flow.
+
+    Request body:
+    {
+        "game_date": "2026-02-07",         // optional, defaults to TODAY (ET)
+        "line_change_threshold": 1.0,      // optional, min line move to trigger
+        "dry_run": false                   // optional, detect only, don't re-predict
+    }
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        from predictions.coordinator.quality_alerts import send_line_check_alert
+
+        data = request.get_json() or {}
+
+        # Resolve game date
+        game_date_str = data.get('game_date')
+        if game_date_str and game_date_str != 'TODAY':
+            game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
+        else:
+            game_date = datetime.now(ZoneInfo('America/New_York')).date()
+
+        line_change_threshold = data.get('line_change_threshold', 1.0)
+        dry_run = data.get('dry_run', False)
+
+        logger.info(
+            f"Line check starting for {game_date} "
+            f"(threshold={line_change_threshold}, dry_run={dry_run})"
+        )
+
+        # Check if games exist and haven't all started
+        from google.cloud import bigquery as bq
+        client = get_bq_client()
+        games_query = f"""
+        SELECT
+            COUNT(*) as total_games,
+            COUNTIF(game_status = 1) as scheduled_games
+        FROM `{PROJECT_ID}.nba_reference.nba_schedule`
+        WHERE game_date = @game_date
+        """
+        job_config = bq.QueryJobConfig(
+            query_parameters=[
+                bq.ScalarQueryParameter("game_date", "DATE", game_date),
+            ]
+        )
+        games_result = list(client.query(games_query, job_config=job_config).result())
+        total_games = games_result[0].total_games if games_result else 0
+        scheduled_games = games_result[0].scheduled_games if games_result else 0
+
+        if total_games == 0:
+            logger.info(f"Line check: no games on {game_date}")
+            return jsonify({'status': 'no_games', 'game_date': str(game_date)}), 200
+
+        if scheduled_games == 0:
+            logger.info(f"Line check: all {total_games} games already started/finished on {game_date}")
+            return jsonify({
+                'status': 'all_games_started',
+                'game_date': str(game_date),
+                'total_games': total_games
+            }), 200
+
+        # Detect players needing re-prediction
+        player_loader = get_player_loader()
+
+        new_line_players = player_loader.get_players_with_new_lines(game_date)
+        stale_line_players = player_loader.get_players_with_stale_predictions(
+            game_date, line_change_threshold=line_change_threshold
+        )
+
+        # Union + dedup
+        all_affected = sorted(set(new_line_players + stale_line_players))
+
+        if not all_affected:
+            logger.info(f"Line check: no changes detected for {game_date}")
+            return jsonify({
+                'status': 'no_changes',
+                'game_date': str(game_date),
+                'new_lines': 0,
+                'line_moves': 0
+            }), 200
+
+        logger.info(
+            f"Line check: {len(all_affected)} players affected "
+            f"({len(new_line_players)} new lines, {len(stale_line_players)} line moves)"
+        )
+
+        if dry_run:
+            send_line_check_alert(
+                game_date=game_date,
+                new_line_players=new_line_players,
+                stale_line_players=stale_line_players,
+                batch_id=None,
+                dry_run=True,
+            )
+            return jsonify({
+                'status': 'dry_run',
+                'game_date': str(game_date),
+                'new_lines': len(new_line_players),
+                'line_moves': len(stale_line_players),
+                'total_affected': len(all_affected),
+                'affected_players': all_affected[:50],
+            }), 200
+
+        # Supersede old predictions for affected players
+        superseded_count = _mark_predictions_superseded_for_players(
+            game_date=str(game_date),
+            player_lookups=all_affected,
+            reason='line_check',
+            metadata={
+                'new_line_count': len(new_line_players),
+                'stale_line_count': len(stale_line_players),
+                'threshold': line_change_threshold,
+            }
+        )
+
+        # Generate new predictions for affected players
+        gen_result = _generate_predictions_for_players(
+            game_date=str(game_date),
+            player_lookups=all_affected,
+            reason='line_check',
+            metadata={
+                'new_line_count': len(new_line_players),
+                'stale_line_count': len(stale_line_players),
+                'threshold': line_change_threshold,
+            }
+        )
+
+        batch_id = gen_result.get('batch_id')
+
+        # Send Slack notification
+        send_line_check_alert(
+            game_date=game_date,
+            new_line_players=new_line_players,
+            stale_line_players=stale_line_players,
+            batch_id=batch_id,
+            dry_run=False,
+        )
+
+        return jsonify({
+            'status': 'success',
+            'game_date': str(game_date),
+            'new_lines': len(new_line_players),
+            'line_moves': len(stale_line_players),
+            'total_affected': len(all_affected),
+            'superseded_count': superseded_count,
+            'requests_published': gen_result.get('requests_published', 0),
+            'batch_id': batch_id,
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Line check failed: {e}", exc_info=True)
+        return jsonify({'status': 'error', 'error': str(e)}), 500
+
+
+@app.route('/morning-summary', methods=['POST'])
+@require_api_key
+def morning_summary():
+    """
+    Session 152: Send morning prediction + line coverage summary to Slack.
+
+    Called by Cloud Scheduler at 7:30 AM ET daily. Queries today's predictions
+    and line source stats, then sends a formatted Slack message.
+
+    Request body:
+    {
+        "game_date": "2026-02-07"  // optional, defaults to TODAY (ET)
+    }
+    """
+    try:
+        from zoneinfo import ZoneInfo
+        from google.cloud import bigquery as bq
+        from predictions.coordinator.quality_alerts import send_morning_line_summary
+
+        data = request.get_json() or {}
+
+        game_date_str = data.get('game_date')
+        if game_date_str and game_date_str != 'TODAY':
+            game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
+        else:
+            game_date = datetime.now(ZoneInfo('America/New_York')).date()
+
+        logger.info(f"Morning summary starting for {game_date}")
+
+        client = get_bq_client()
+
+        # Query prediction stats
+        pred_query = f"""
+        SELECT
+            COUNT(*) as total,
+            COUNTIF(current_points_line IS NOT NULL) as with_lines,
+            COUNTIF(current_points_line IS NULL) as without_lines,
+            COUNTIF(is_actionable) as actionable,
+            COUNTIF(ABS(predicted_points - current_points_line) >= 3) as medium_edge,
+            COUNTIF(ABS(predicted_points - current_points_line) >= 5) as high_edge,
+            COUNTIF(vegas_line_source = 'odds_api') as vls_odds_api,
+            COUNTIF(vegas_line_source = 'bettingpros') as vls_bettingpros,
+            COUNTIF(vegas_line_source = 'both') as vls_both,
+            COUNTIF(vegas_line_source = 'none' OR vegas_line_source IS NULL) as vls_none
+        FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+        WHERE game_date = @game_date
+          AND is_active = TRUE
+          AND system_id = 'catboost_v9'
+        """
+
+        job_config = bq.QueryJobConfig(
+            query_parameters=[
+                bq.ScalarQueryParameter("game_date", "DATE", game_date),
+            ]
+        )
+        pred_rows = list(client.query(pred_query, job_config=job_config).result())
+
+        if not pred_rows or pred_rows[0].total == 0:
+            logger.info(f"Morning summary: no predictions for {game_date}")
+            return jsonify({
+                'status': 'no_predictions',
+                'game_date': str(game_date)
+            }), 200
+
+        pr = pred_rows[0]
+
+        # Query feature quality stats
+        quality_query = f"""
+        SELECT
+            AVG(feature_quality_score) as avg_quality,
+            COUNTIF(NOT is_quality_ready) as blocked_count
+        FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
+        WHERE game_date = @game_date
+        """
+        quality_rows = list(client.query(quality_query, job_config=job_config).result())
+        qr = quality_rows[0] if quality_rows else None
+
+        # Query subset pick counts
+        subset_query = f"""
+        SELECT
+            d.subset_name,
+            COUNT(DISTINCT p.player_lookup) as pick_count
+        FROM `{PROJECT_ID}.nba_predictions.dynamic_subset_definitions` d
+        CROSS JOIN `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
+        WHERE d.is_active = TRUE
+          AND d.system_id = 'catboost_v9'
+          AND p.game_date = @game_date
+          AND p.is_active = TRUE
+          AND p.system_id = 'catboost_v9'
+          AND p.recommendation IN ('OVER', 'UNDER')
+          AND p.current_points_line IS NOT NULL
+          AND ABS(p.predicted_points - p.current_points_line) >= COALESCE(d.min_edge, 0)
+          AND p.confidence_score >= COALESCE(d.min_confidence, 0)
+        GROUP BY d.subset_name
+        ORDER BY pick_count DESC
+        """
+        subset_rows = list(client.query(subset_query, job_config=job_config).result())
+        subset_stats = {row.subset_name: row.pick_count for row in subset_rows}
+
+        # Send Slack summary
+        send_morning_line_summary(
+            game_date=game_date,
+            prediction_stats={
+                'total': pr.total,
+                'with_lines': pr.with_lines,
+                'without_lines': pr.without_lines,
+                'actionable': pr.actionable,
+                'medium_edge': pr.medium_edge,
+                'high_edge': pr.high_edge,
+            },
+            line_source_stats={
+                'odds_api': pr.vls_odds_api,
+                'bettingpros': pr.vls_bettingpros,
+                'both': pr.vls_both,
+                'none': pr.vls_none,
+            },
+            subset_stats=subset_stats,
+            feature_stats={
+                'avg_quality': float(qr.avg_quality or 0) if qr else 0,
+                'blocked_count': int(qr.blocked_count or 0) if qr else 0,
+            },
+        )
+
+        return jsonify({
+            'status': 'success',
+            'game_date': str(game_date),
+            'total_predictions': pr.total,
+            'with_lines': pr.with_lines,
+            'without_lines': pr.without_lines,
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Morning summary failed: {e}", exc_info=True)
+        return jsonify({'status': 'error', 'error': str(e)}), 500
+
+
 def _regenerate_with_supersede_internal(
     game_date: str,
     reason: str,
@@ -1657,6 +2033,69 @@ def _mark_predictions_superseded(
     superseded_count = result.num_dml_affected_rows if hasattr(result, 'num_dml_affected_rows') else 0
 
     logger.info(f"Marked {superseded_count} predictions as superseded for {game_date}")
+    return superseded_count
+
+
+def _mark_predictions_superseded_for_players(
+    game_date: str,
+    player_lookups: List[str],
+    reason: str,
+    metadata: dict
+) -> int:
+    """
+    Session 152: Mark existing predictions as superseded for SPECIFIC players only.
+
+    Same as _mark_predictions_superseded() but scoped to a list of players
+    instead of the entire date. Used by /check-lines for targeted re-prediction.
+
+    Args:
+        game_date: Date of predictions to supersede
+        player_lookups: List of player_lookups to supersede
+        reason: Reason for superseding (e.g., 'line_check_new_lines')
+        metadata: Additional context
+
+    Returns:
+        Number of predictions marked as superseded
+    """
+    import json as json_module
+    from google.cloud import bigquery
+
+    if not player_lookups:
+        return 0
+
+    client = bigquery.Client()
+    project_id = client.project
+
+    query = f"""
+    UPDATE `{project_id}.nba_predictions.player_prop_predictions`
+    SET
+        superseded = TRUE,
+        superseded_at = CURRENT_TIMESTAMP(),
+        superseded_reason = @reason,
+        superseded_metadata = PARSE_JSON(@metadata_json)
+    WHERE game_date = @game_date
+      AND player_lookup IN UNNEST(@player_lookups)
+      AND (superseded IS NULL OR superseded = FALSE)
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("game_date", "STRING", game_date),
+            bigquery.ScalarQueryParameter("reason", "STRING", reason),
+            bigquery.ScalarQueryParameter("metadata_json", "STRING", json_module.dumps(metadata)),
+            bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups),
+        ]
+    )
+
+    query_job = client.query(query, job_config=job_config)
+    result = query_job.result()
+
+    superseded_count = result.num_dml_affected_rows if hasattr(result, 'num_dml_affected_rows') else 0
+
+    logger.info(
+        f"Marked {superseded_count} predictions as superseded for "
+        f"{len(player_lookups)} players on {game_date} (reason={reason})"
+    )
     return superseded_count
 
 
@@ -1898,6 +2337,174 @@ def _generate_predictions_for_date(
 
     except Exception as e:
         logger.error(f"Prediction generation failed for {game_date}: {e}", exc_info=True)
+        return {
+            'status': 'error',
+            'requests_published': 0,
+            'error': str(e)
+        }
+
+
+def _generate_predictions_for_players(
+    game_date: str,
+    player_lookups: List[str],
+    reason: str,
+    metadata: dict
+) -> dict:
+    """
+    Session 152: Generate predictions for SPECIFIC players only.
+
+    Reuses the existing prediction infrastructure but filters to only the
+    target players. Used by /check-lines for targeted re-prediction after
+    line changes or new line arrivals.
+
+    Args:
+        game_date: Date to generate predictions for (YYYY-MM-DD string)
+        player_lookups: List of player_lookups to generate predictions for
+        reason: Reason for generation (e.g., 'line_check')
+        metadata: Context metadata
+
+    Returns:
+        dict with status, counts, batch_id
+    """
+    try:
+        game_date_obj = datetime.strptime(game_date, '%Y-%m-%d').date()
+        target_set = set(player_lookups)
+
+        batch_id = f"linecheck_{game_date}_{int(time.time())}"
+        logger.info(
+            f"Generating targeted predictions for {len(target_set)} players "
+            f"on {game_date} (batch_id={batch_id}, reason={reason})"
+        )
+
+        # Get ALL prediction requests for this date, then filter to targets
+        player_loader = get_player_loader()
+        all_requests = player_loader.create_prediction_requests(
+            game_date=game_date_obj,
+            min_minutes=15,
+            use_multiple_lines=False,
+            dataset_prefix=''
+        )
+
+        # Filter to target players only
+        requests = [r for r in all_requests if r.get('player_lookup') in target_set]
+
+        if not requests:
+            logger.warning(
+                f"No matching prediction requests for {len(target_set)} target players on {game_date}"
+            )
+            return {
+                'status': 'success',
+                'requests_published': 0,
+                'batch_id': batch_id,
+                'note': 'No matching players found in prediction requests'
+            }
+
+        logger.info(f"Filtered to {len(requests)}/{len(all_requests)} requests for target players")
+
+        # Create batch state in Firestore
+        try:
+            state_manager = get_state_manager()
+            correlation_id = f"linecheck_{reason}"
+
+            if ENABLE_MULTI_INSTANCE:
+                instance_manager = get_coordinator_instance_manager()
+                instance_id = instance_manager.instance_id
+
+                batch_state = state_manager.create_batch_with_transaction(
+                    batch_id=batch_id,
+                    game_date=game_date,
+                    expected_players=len(requests),
+                    correlation_id=correlation_id,
+                    dataset_prefix='',
+                    instance_id=instance_id
+                )
+
+                if batch_state is None:
+                    logger.warning(f"Line check batch {batch_id} already exists")
+                    return {
+                        'status': 'already_exists',
+                        'batch_id': batch_id,
+                        'message': 'Batch was created by another coordinator instance'
+                    }
+
+                state_manager.claim_batch_for_processing(
+                    batch_id=batch_id,
+                    instance_id=instance_id
+                )
+            else:
+                state_manager.create_batch(
+                    batch_id=batch_id,
+                    game_date=game_date,
+                    expected_players=len(requests),
+                    correlation_id=correlation_id,
+                    dataset_prefix=''
+                )
+
+            logger.info(f"Line check batch state created: {batch_id} ({len(requests)} players)")
+
+        except Exception as e:
+            logger.error(f"Failed to create line check batch state: {e}", exc_info=True)
+            return {
+                'status': 'error',
+                'requests_published': 0,
+                'batch_id': batch_id,
+                'error': f'Failed to create batch state: {str(e)}'
+            }
+
+        # Batch-load historical games for target players
+        batch_historical_games = None
+        try:
+            batch_start = time.time()
+            from predictions.worker.data_loaders import PredictionDataLoader
+            data_loader = PredictionDataLoader(project_id=PROJECT_ID, dataset_prefix='')
+
+            batch_historical_games = data_loader.load_historical_games_batch(
+                player_lookups=list(target_set),
+                game_date=game_date_obj,
+                lookback_days=90,
+                max_games=30
+            )
+            batch_elapsed = time.time() - batch_start
+            total_games = sum(len(games) for games in batch_historical_games.values())
+            logger.info(
+                f"Batch loaded {total_games} historical games for "
+                f"{len(batch_historical_games)} target players in {batch_elapsed:.2f}s"
+            )
+        except Exception as e:
+            logger.warning(f"Batch historical load failed for line check: {e}")
+
+        # Publish prediction requests
+        published_count = publish_prediction_requests(
+            requests=requests,
+            batch_id=batch_id,
+            batch_historical_games=batch_historical_games,
+            dataset_prefix='',
+            prediction_run_mode='LINE_CHECK'
+        )
+
+        if published_count == 0:
+            return {
+                'status': 'error',
+                'requests_published': 0,
+                'batch_id': batch_id,
+                'error': 'Failed to publish any prediction requests'
+            }
+
+        logger.info(
+            f"Line check: published {published_count}/{len(requests)} requests "
+            f"for {game_date} (batch_id={batch_id})"
+        )
+
+        return {
+            'status': 'success',
+            'requests_published': published_count,
+            'batch_id': batch_id,
+            'players_found': len(requests),
+            'reason': reason
+        }
+
+    except Exception as e:
+        logger.error(f"Targeted prediction generation failed for {game_date}: {e}", exc_info=True)
         return {
             'status': 'error',
             'requests_published': 0,

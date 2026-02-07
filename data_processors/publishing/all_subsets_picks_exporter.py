@@ -3,11 +3,15 @@ All Subsets Picks Exporter for Phase 6 Publishing
 
 Exports all 9 subset groups' picks in a single file with clean API.
 Main endpoint for fetching daily picks without exposing technical details.
+
+Session 152: Added subset snapshot recording for history tracking.
 """
 
+import json
 import logging
+import uuid
 from typing import Dict, List, Any, Optional
-from datetime import date
+from datetime import date, datetime, timezone
 
 from google.cloud import bigquery
 
@@ -344,12 +348,14 @@ class AllSubsetsPicksExporter(BaseExporter):
             for r in results
         }
 
-    def export(self, target_date: str) -> str:
+    def export(self, target_date: str, trigger_source: str = 'unknown', batch_id: str = None) -> str:
         """
         Generate and upload all subsets picks to GCS.
 
         Args:
             target_date: Date string in YYYY-MM-DD format
+            trigger_source: What triggered this export (overnight, same_day, line_check, manual)
+            batch_id: Optional prediction batch ID that triggered this export
 
         Returns:
             GCS path where file was uploaded
@@ -369,4 +375,69 @@ class AllSubsetsPicksExporter(BaseExporter):
             f"with {total_picks} total picks for {target_date} to {gcs_path}"
         )
 
+        # Session 152: Record subset snapshot for history tracking
+        self._record_snapshot(target_date, json_data, trigger_source, batch_id)
+
         return gcs_path
+
+    def _record_snapshot(
+        self,
+        target_date: str,
+        json_data: Dict[str, Any],
+        trigger_source: str,
+        batch_id: Optional[str],
+    ) -> None:
+        """
+        Session 152: Record subset picks snapshot to BigQuery for history tracking.
+
+        Each export creates a snapshot row per subset group, capturing the exact
+        picks at that moment. Enables tracking how subsets change throughout the day
+        and future subset locking.
+
+        Args:
+            target_date: Date string in YYYY-MM-DD format
+            json_data: The full export JSON (with groups)
+            trigger_source: What triggered this export
+            batch_id: Optional prediction batch ID
+        """
+        try:
+            from shared.clients.bigquery_pool import get_bigquery_client
+            from shared.config.gcp_config import get_project_id
+
+            project_id = get_project_id()
+            client = get_bigquery_client(project_id)
+            table_id = f"{project_id}.nba_predictions.subset_pick_snapshots"
+
+            snapshot_id = str(uuid.uuid4())[:12]
+            snapshot_at = datetime.now(timezone.utc).isoformat()
+
+            rows = []
+            for group in json_data.get('groups', []):
+                rows.append({
+                    'snapshot_id': snapshot_id,
+                    'snapshot_at': snapshot_at,
+                    'game_date': target_date,
+                    'trigger_source': trigger_source,
+                    'batch_id': batch_id,
+                    'subset_id': group['id'],
+                    'subset_name': group['name'],
+                    'pick_count': len(group.get('picks', [])),
+                    'picks': json.dumps(group.get('picks', [])),
+                    'is_locked': False,
+                    'locked_at': None,
+                    'lock_reason': None,
+                })
+
+            if rows:
+                errors = client.insert_rows_json(table_id, rows)
+                if errors:
+                    logger.warning(f"Errors inserting subset snapshots: {errors}")
+                else:
+                    logger.info(
+                        f"Recorded {len(rows)} subset snapshots "
+                        f"(snapshot_id={snapshot_id}, trigger={trigger_source})"
+                    )
+
+        except Exception as e:
+            # Non-fatal: snapshot recording should never block exports
+            logger.warning(f"Failed to record subset snapshot: {e}")

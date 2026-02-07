@@ -220,6 +220,9 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.ml_feature_store_
   has_vegas_line BOOL OPTIONS(
     description='TRUE if vegas line available. FALSE is normal for low-volume props.'
   ),
+  vegas_line_source STRING OPTIONS(
+    description='Session 152: Which source provided vegas line data. Values: odds_api, bettingpros, both, none. NULL for pre-Session-152 data.'
+  ),
   critical_features_training_quality BOOL OPTIONS(
     description='TRUE if ALL critical features (matchup 5-8, defense 13-14) meet training quality bar.'
   ),
@@ -789,6 +792,11 @@ ADD COLUMN IF NOT EXISTS matchup_data_status STRING
 ALTER TABLE `nba-props-platform.nba_predictions.ml_feature_store_v2`
 ADD COLUMN IF NOT EXISTS cache_miss_fallback_used BOOL
   OPTIONS (description='Session 146: TRUE if player_daily_cache had no entry and features were computed from last_10_games fallback. Use to investigate cache coverage gaps.');
+
+-- Session 152: Vegas line source tracking
+ALTER TABLE `nba-props-platform.nba_predictions.ml_feature_store_v2`
+ADD COLUMN IF NOT EXISTS vegas_line_source STRING
+  OPTIONS (description='Session 152: Which scraper source provided ML features 25-28. Values: odds_api, bettingpros, both, none. NULL for pre-Session-152 data.');
 
 -- ============================================================================
 -- MONITORING VIEW: Feature Quality Unpivot (Session 134)

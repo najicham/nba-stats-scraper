@@ -1474,7 +1474,80 @@ class PlayerLoader:
         except Exception as e:
             logger.error(f"Error detecting stale predictions for {game_date}: {e}", exc_info=True)
             return []
-    
+
+    def get_players_with_new_lines(
+        self,
+        game_date: date
+    ) -> List[str]:
+        """
+        Session 152: Detect players predicted WITHOUT lines who now have lines available.
+
+        Used by /check-lines endpoint to trigger targeted re-prediction when
+        betting lines arrive for players who were previously predicted without them.
+
+        Args:
+            game_date: Game date to check
+
+        Returns:
+            List of player_lookup values needing re-prediction due to new lines
+        """
+        query = """
+        WITH predicted_without_lines AS (
+            SELECT DISTINCT player_lookup
+            FROM `{project}.nba_predictions.player_prop_predictions`
+            WHERE game_date = @game_date
+              AND is_active = TRUE
+              AND system_id = 'catboost_v9'
+              AND (current_points_line IS NULL
+                   OR vegas_line_source = 'none'
+                   OR vegas_line_source IS NULL)
+        ),
+        raw_lines_now AS (
+            SELECT DISTINCT player_lookup FROM (
+                SELECT player_lookup FROM `{project}.nba_raw.odds_api_player_points_props`
+                WHERE game_date = @game_date
+                  AND points_line IS NOT NULL AND points_line > 0
+                UNION DISTINCT
+                SELECT player_lookup FROM `{project}.nba_raw.bettingpros_player_points_props`
+                WHERE game_date = @game_date
+                  AND market_type = 'points'
+                  AND points_line IS NOT NULL AND points_line > 0
+            )
+        )
+        SELECT p.player_lookup
+        FROM predicted_without_lines p
+        INNER JOIN raw_lines_now r ON p.player_lookup = r.player_lookup
+        LIMIT 500
+        """.format(project=self.project_id)
+
+        job_config = bigquery.QueryJobConfig(
+            query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+            ]
+        )
+
+        try:
+            result = self.client.query(query, job_config=job_config).result(timeout=30)
+            new_line_players = [row.player_lookup for row in result]
+
+            if new_line_players:
+                logger.info(
+                    f"Found {len(new_line_players)} players with new lines available "
+                    f"(previously predicted without lines) for {game_date}"
+                )
+                for p in new_line_players[:5]:
+                    logger.debug(f"  New line available: {p}")
+                if len(new_line_players) > 5:
+                    logger.debug(f"  ... and {len(new_line_players) - 5} more")
+            else:
+                logger.info(f"No new lines found for players predicted without lines on {game_date}")
+
+            return new_line_players
+
+        except Exception as e:
+            logger.error(f"Error detecting new lines for {game_date}: {e}", exc_info=True)
+            return []
+
     def close(self):
         """Close BigQuery client connection"""
         self.client.close()

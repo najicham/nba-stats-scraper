@@ -981,10 +981,16 @@ class FeatureExtractor:
         ),
         combined AS (
             -- Use Odds API first, fall back to BettingPros
+            -- Session 152: Track which source provided the line
             SELECT
                 COALESCE(oa.player_lookup, bp.player_lookup) as player_lookup,
                 COALESCE(oa.vegas_points_line, bp.vegas_points_line) as vegas_points_line,
-                COALESCE(oa.vegas_opening_line, bp.vegas_opening_line, oa.vegas_points_line, bp.vegas_points_line) as vegas_opening_line
+                COALESCE(oa.vegas_opening_line, bp.vegas_opening_line, oa.vegas_points_line, bp.vegas_points_line) as vegas_opening_line,
+                CASE
+                    WHEN oa.player_lookup IS NOT NULL AND bp.player_lookup IS NOT NULL THEN 'both'
+                    WHEN oa.player_lookup IS NOT NULL THEN 'odds_api'
+                    WHEN bp.player_lookup IS NOT NULL THEN 'bettingpros'
+                END as vegas_line_source
             FROM odds_api_lines oa
             FULL OUTER JOIN bettingpros_lines bp USING (player_lookup)
         )
@@ -993,7 +999,8 @@ class FeatureExtractor:
             vegas_points_line,
             vegas_opening_line,
             vegas_points_line - vegas_opening_line as vegas_line_move,
-            1.0 as has_vegas_line
+            1.0 as has_vegas_line,
+            vegas_line_source
         FROM combined
         WHERE vegas_points_line IS NOT NULL
         """

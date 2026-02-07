@@ -1050,6 +1050,99 @@ GROUP BY 1, 2"
 
 **Reference**: Session 99 handoff, Session 134 quality insight, Session 139 field adoption, Session 140 deployment
 
+### Phase 0.485: Betting Line Source Validation (Session 152)
+
+**IMPORTANT**: Verify that betting line scrapers collected data for all scheduled games and that lines flow into the feature store.
+
+**Why this matters**: `check_vegas_line_coverage.sh` checks player-level % in the feature store but can't distinguish "sportsbook doesn't offer this line" from "our scraper failed." This check validates at the game level that our scrapers ran and collected lines from both sources (Odds API + BettingPros).
+
+**When to run**: Pre-game validation (confirms lines are ready before predictions run).
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Game-level betting line source coverage
+WITH scheduled AS (
+  SELECT DISTINCT home_team_tricode, away_team_tricode
+  FROM \`nba-props-platform.nba_reference.nba_schedule\`
+  WHERE game_date = CURRENT_DATE() AND game_status IN (1, 2, 3)
+),
+odds_api AS (
+  SELECT home_team_abbr, away_team_abbr,
+         COUNT(DISTINCT player_lookup) as player_count
+  FROM \`nba-props-platform.nba_raw.odds_api_player_points_props\`
+  WHERE game_date = CURRENT_DATE() AND points_line IS NOT NULL AND points_line > 0
+  GROUP BY 1, 2
+),
+bettingpros AS (
+  SELECT player_team, COUNT(DISTINCT player_lookup) as player_count
+  FROM \`nba-props-platform.nba_raw.bettingpros_player_points_props\`
+  WHERE game_date = CURRENT_DATE() AND market_type = 'points'
+    AND points_line IS NOT NULL AND points_line > 0
+  GROUP BY 1
+)
+SELECT
+  CONCAT(s.away_team_tricode, ' @ ', s.home_team_tricode) as matchup,
+  COALESCE(oa.player_count, 0) as odds_api_players,
+  COALESCE(bp_home.player_count, 0) + COALESCE(bp_away.player_count, 0) as bettingpros_players,
+  CASE WHEN COALESCE(oa.player_count, 0) > 0 OR COALESCE(bp_home.player_count, 0) + COALESCE(bp_away.player_count, 0) > 0
+       THEN 'OK' ELSE 'MISSING' END as status
+FROM scheduled s
+LEFT JOIN odds_api oa ON s.home_team_tricode = oa.home_team_abbr AND s.away_team_tricode = oa.away_team_abbr
+LEFT JOIN bettingpros bp_home ON s.home_team_tricode = bp_home.player_team
+LEFT JOIN bettingpros bp_away ON s.away_team_tricode = bp_away.player_team
+ORDER BY status DESC, matchup"
+```
+
+**Pipeline flow check** (players with raw lines but missing from feature store):
+
+```bash
+bq query --use_legacy_sql=false "
+WITH raw_players AS (
+  SELECT DISTINCT player_lookup
+  FROM \`nba-props-platform.nba_raw.odds_api_player_points_props\`
+  WHERE game_date = CURRENT_DATE() AND points_line IS NOT NULL AND points_line > 0
+),
+fs AS (
+  SELECT player_lookup, feature_25_quality
+  FROM \`nba-props-platform.nba_predictions.ml_feature_store_v2\`
+  WHERE game_date = CURRENT_DATE()
+)
+SELECT
+  COUNT(r.player_lookup) as raw_players_with_lines,
+  COUNTIF(fs.player_lookup IS NOT NULL) as in_feature_store,
+  COUNTIF(fs.player_lookup IS NULL) as dropped_in_pipeline
+FROM raw_players r
+LEFT JOIN fs ON r.player_lookup = fs.player_lookup"
+```
+
+**Expected Results**:
+
+| Metric | Good | Warning | Action |
+|--------|------|---------|--------|
+| Games with either source | 100% | < 100% | Check scraper logs for missing games |
+| Odds API game coverage | >= 80% | < 60% | Check Odds API scraper + quota |
+| BettingPros game coverage | >= 80% | < 60% | Check BettingPros scraper |
+| Pipeline drops | 0 | > 0 | Check Phase 4 player roster — dropped players not in upcoming game context |
+
+**If games MISSING from all sources**:
+1. Check if scraper ran: look for recent scraper logs for `odds_api_player_props` and `bettingpros_props`
+2. Check if lines exist for that game at sportsbooks (new/obscure matchups may not have props yet)
+3. If scraper ran but no data: check for API errors, rate limits, or changed endpoints
+
+**If pipeline drops > 0**:
+1. Players with raw lines but not in feature store are likely not in the upcoming game context
+2. Check if the dropped players are on the schedule (traded, G-League, inactive)
+3. This is normal for a small number of fringe players
+
+**Standalone script** (for deeper investigation or multi-day checks):
+```bash
+python bin/monitoring/check_betting_line_sources.py --days 7
+```
+
+**Reference**: Session 152, complements `check_vegas_line_coverage.sh`
+
 ### Phase 0.49: Duplicate Team Record Detection (Session 103 - CRITICAL)
 
 **IMPORTANT**: Check for duplicate team_offense_game_summary records with conflicting stats.

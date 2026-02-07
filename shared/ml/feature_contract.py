@@ -322,6 +322,15 @@ FEATURES_SHOT_ZONE = [18, 19, 20]
 # Scraper health monitoring separately alerts when star players are missing lines.
 FEATURES_OPTIONAL = set(FEATURES_VEGAS)  # {25, 26, 27}
 
+# Session 152: Vegas line source values
+# Stored in ml_feature_store_v2.vegas_line_source and player_prop_predictions.vegas_line_source
+# Tracks which scraper provided the ML features (25-28), distinct from line_source_api
+# which tracks which source provided the prediction's betting line value.
+VEGAS_SOURCE_ODDS_API = 'odds_api'
+VEGAS_SOURCE_BETTINGPROS = 'bettingpros'
+VEGAS_SOURCE_BOTH = 'both'
+VEGAS_SOURCE_NONE = 'none'
+
 # Reverse mapping: feature index -> source pipeline component
 FEATURE_SOURCE_MAP = {}
 for _idx in FEATURES_FROM_PHASE4:

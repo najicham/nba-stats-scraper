@@ -2275,6 +2275,10 @@ def format_prediction_for_bigquery(
         # Session 142: Default feature indices for per-feature audit trail
         'default_feature_indices': features.get('default_feature_indices', []),
 
+        # Session 152: Vegas line source from feature store (which scraper provided ML features 25-28)
+        # Distinct from line_source_api which tracks the prediction's betting line source
+        'vegas_line_source': features.get('vegas_line_source'),
+
         # Session 139: Track whether prediction was made before game started
         # False for BACKFILL mode or post-game predictions (record-keeping only)
         'prediction_made_before_game': _compute_prediction_made_before_game(

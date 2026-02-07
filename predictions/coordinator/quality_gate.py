@@ -35,6 +35,7 @@ class PredictionMode(Enum):
     FINAL_RETRY = "FINAL_RETRY"  # 1 PM ET - 80% threshold
     LAST_CALL = "LAST_CALL"   # 4 PM ET - 70% threshold (Session 139: was 0%)
     BACKFILL = "BACKFILL"     # Next-day record-keeping - 70% threshold
+    LINE_CHECK = "LINE_CHECK"  # Session 152: Hourly line check - 85% threshold
 
 
 # Quality thresholds by mode
@@ -44,6 +45,7 @@ QUALITY_THRESHOLDS = {
     PredictionMode.FINAL_RETRY: 80.0,
     PredictionMode.LAST_CALL: 70.0,   # Session 139: was 0.0 (forced all)
     PredictionMode.BACKFILL: 70.0,     # Session 139: next-day record-keeping
+    PredictionMode.LINE_CHECK: 85.0,   # Session 152: Hourly line check
 }
 
 # Session 139: Hard floor - NEVER predict regardless of mode
@@ -648,6 +650,7 @@ def parse_prediction_mode(mode_str: str) -> PredictionMode:
         'FINAL_RETRY': PredictionMode.FINAL_RETRY,
         'LAST_CALL': PredictionMode.LAST_CALL,
         'BACKFILL': PredictionMode.BACKFILL,
+        'LINE_CHECK': PredictionMode.LINE_CHECK,  # Session 152: Hourly line check
         # Legacy mappings
         'EARLY': PredictionMode.FIRST,
         'OVERNIGHT': PredictionMode.RETRY,
