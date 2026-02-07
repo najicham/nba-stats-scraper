@@ -403,7 +403,7 @@ class PlayerDailyCacheProcessor(
         
         logger.info("Extracting upcoming player context data...")
         self._extract_upcoming_context_data(analysis_date)
-        
+
         logger.info("Extracting shot zone analysis data...")
         self._extract_shot_zone_data(analysis_date)
 

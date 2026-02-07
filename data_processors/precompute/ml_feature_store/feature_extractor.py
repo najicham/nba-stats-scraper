@@ -48,6 +48,9 @@ class FeatureExtractor:
         self._season_stats_lookup: Dict[str, Dict] = {}
         self._team_games_lookup: Dict[str, List[Dict]] = {}
 
+        # Cache miss tracking (Session 146)
+        self._cache_miss_players: set = set()
+
         # V8 Model Features (added Jan 2026)
         self._vegas_lines_lookup: Dict[str, Dict] = {}
         self._opponent_history_lookup: Dict[str, Dict] = {}
@@ -1188,6 +1191,7 @@ class FeatureExtractor:
                 computed = self._compute_cache_fields_from_games(player_lookup, game_date)
                 if computed:
                     phase4_data.update(computed)
+                    self._cache_miss_players.add(player_lookup)  # Session 146: Track cache misses
                     logger.debug(f"{player_lookup}: Computed cache fields from last_10_games (cache miss fallback)")
 
             composite_data = self._composite_factors_lookup.get(player_lookup, {})
@@ -1217,6 +1221,20 @@ class FeatureExtractor:
                 phase4_data.update(team_defense_data)
 
         return phase4_data
+
+    def was_cache_miss(self, player_lookup: str) -> bool:
+        """Check if a player's daily cache data was computed via fallback (Session 146)."""
+        return player_lookup in self._cache_miss_players
+
+    def get_cache_miss_summary(self) -> Dict[str, Any]:
+        """Get summary of cache misses for current batch (Session 146)."""
+        total_players = len(self._daily_cache_lookup) + len(self._cache_miss_players)
+        return {
+            'cache_hit_count': len(self._daily_cache_lookup),
+            'cache_miss_count': len(self._cache_miss_players),
+            'cache_miss_players': sorted(self._cache_miss_players),
+            'cache_miss_rate': len(self._cache_miss_players) / total_players if total_players > 0 else 0.0,
+        }
 
     def get_data_provenance(self) -> Dict[str, Any]:
         """

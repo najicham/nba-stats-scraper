@@ -1329,6 +1329,17 @@ class MLFeatureStoreProcessor(
             f"({success_rate:.1f}% success rate) in {self._timing['calculate_precompute']:.2f}s"
         )
 
+        # Session 146: Log cache miss summary for investigation
+        cache_miss_summary = self.feature_extractor.get_cache_miss_summary()
+        if cache_miss_summary['cache_miss_count'] > 0:
+            logger.info(
+                f"📊 Cache miss summary: {cache_miss_summary['cache_miss_count']} misses "
+                f"/ {cache_miss_summary['cache_hit_count']} hits "
+                f"({cache_miss_summary['cache_miss_rate']:.1%} miss rate). "
+                f"Players: {', '.join(cache_miss_summary['cache_miss_players'][:10])}"
+                f"{'...' if cache_miss_summary['cache_miss_count'] > 10 else ''}"
+            )
+
         # Session 52: Feature source validation
         # Alert when Phase 4 composite features are all using defaults (indicates upstream issue)
         if success_count >= 50:
@@ -1615,6 +1626,9 @@ class MLFeatureStoreProcessor(
             if record.get('data_quality_issues') is None:
                 record['data_quality_issues'] = []
             record['data_quality_issues'].append('matchup_factors_used_defaults')
+
+        # Session 146: Track cache miss fallback usage for investigation
+        record['cache_miss_fallback_used'] = self.feature_extractor.was_cache_miss(player_lookup)
 
         # Add early season fields (required for hash calculation)
         record['early_season_flag'] = False  # Normal processing, not early season

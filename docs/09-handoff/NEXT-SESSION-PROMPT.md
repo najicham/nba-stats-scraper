@@ -1,132 +1,99 @@
-# Session 146 Prompt
+# Session 147 Prompt
 
 Read these handoff docs for context:
-- `docs/09-handoff/2026-02-07-SESSION-145-HANDOFF.md` - Vegas optional implementation details
-- `docs/09-handoff/2026-02-07-SESSION-144-HANDOFF.md` - Cache miss fallback and root cause analysis
+- `docs/09-handoff/2026-02-07-SESSION-146-HANDOFF.md` - Cache miss tracking, Cloud Build, architectural insight
 - `docs/08-projects/current/feature-completeness/00-PROJECT-OVERVIEW.md` - Full project overview
 
-## Why We're Working on This
+## Uncommitted Changes - Commit First
 
-Our ML feature store (`ml_feature_store_v2`) had only 37-45% of records fully complete (zero defaults) despite 100% player coverage. The zero-tolerance policy (Session 141) blocks predictions for ANY player with default features. This meant only ~75 predictions/day instead of ~180+.
-
-Sessions 144-145 fixed this:
-1. **Session 144:** Cache miss fallback in `feature_extractor.py` - computed stats from `last_10_games` when `player_daily_cache` missed (~13% of records). Deployed.
-2. **Session 145:** Made vegas features (25-27) optional in zero-tolerance gating. Vegas lines are unavailable for ~60% of players (bench players) - this is normal, not a bug.
-
-## Current State (end of Session 145)
-
-### Deployed Services
-| Service | Status | Commit |
-|---------|--------|--------|
-| Phase 4 (precompute) | **Deployed** with vegas optional | `aa1248e0` |
-| Phase 2 (raw) | **Deployed** with timing breakdown | `246abe9b` |
-| Phase 3 (analytics) | **Deployed** with timing breakdown | `246abe9b` |
-| Prediction Worker | **Deployed** with vegas optional | `aa1248e0` |
-| Prediction Coordinator | **NEEDS DEPLOY** - 3 attempts failed with TLS timeout | - |
-
-### Background Tasks (may have completed)
-- **2025-26 backfill**: Was processing ~92 dates from 2025-11-04. Was at date 13/92 when session ended. Uses checkpoints so progress is saved.
+Session 146 left uncommitted changes. Commit before doing anything else:
+```bash
+git add cloudbuild.yaml bin/cloud-deploy.sh \
+  data_processors/precompute/ml_feature_store/feature_extractor.py \
+  data_processors/precompute/ml_feature_store/ml_feature_store_processor.py \
+  data_processors/precompute/player_daily_cache/player_daily_cache_processor.py \
+  schemas/bigquery/predictions/04_ml_feature_store_v2.sql \
+  docs/08-projects/current/feature-completeness/00-PROJECT-OVERVIEW.md \
+  docs/09-handoff/NEXT-SESSION-PROMPT.md \
+  docs/09-handoff/2026-02-07-SESSION-146-HANDOFF.md
+git commit -m "feat: Add cache miss tracking and Cloud Build deploy (Session 146)"
+```
 
 ## Immediate Tasks
 
-### 1. Deploy Prediction Coordinator (CRITICAL)
+### 1. Update Validation Skills for Cache Miss Tracking (PRIORITY)
 
-The coordinator deploy failed 3 times with Docker registry TLS handshake timeouts. The local `docker push` to `us-west2-docker.pkg.dev` keeps timing out. Try using Cloud Build instead which pushes from Google's network:
+Session 146 added `cache_miss_fallback_used BOOL` to `ml_feature_store_v2` and deployed it. Now update our validation tooling to surface this:
 
-```bash
-# Option A: Use gcloud run deploy with --source (uses Cloud Build, avoids local push)
-gcloud run deploy prediction-coordinator \
-  --source . \
-  --region us-west2 \
-  --project nba-props-platform \
-  --no-traffic
+**Where to add checks:**
+- `/validate-daily` skill - add a cache miss rate check
+- Any pipeline canary monitoring
 
-# Option B: Submit build to Cloud Build explicitly, then deploy
-gcloud builds submit --tag us-west2-docker.pkg.dev/nba-props-platform/nba-props/prediction-coordinator:latest .
-gcloud run deploy prediction-coordinator \
-  --image us-west2-docker.pkg.dev/nba-props-platform/nba-props/prediction-coordinator:latest \
-  --region us-west2
-
-# Option C: Just retry the normal deploy (TLS issue may have resolved)
-./bin/deploy-service.sh prediction-coordinator
+**What to check:**
+```sql
+-- Daily predictions: cache miss rate should be ~0%
+-- Backfill dates: 5-15% is expected
+SELECT game_date,
+  COUNTIF(cache_miss_fallback_used) as cache_misses,
+  COUNT(*) as total,
+  ROUND(COUNTIF(cache_miss_fallback_used) / COUNT(*) * 100, 1) as miss_rate_pct
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= CURRENT_DATE() - 3
+GROUP BY 1 ORDER BY 1;
 ```
 
-Look at how `bin/deploy-service.sh` works - it does a local Docker build + push. The TLS timeout is between our WSL2 machine and Google's Docker registry. Cloud Build avoids this entirely by building and pushing from within Google's network.
+**Alert logic:** If `miss_rate_pct > 0%` for today's date (non-backfill), flag as issue -- means `upcoming_player_game_context` and `player_daily_cache` have a player list mismatch.
+
+**Post-game reconciliation (user request):** After boxscores arrive, compare who played (`player_game_summary`) vs who was cached (`player_daily_cache`). This identifies gaps in `upcoming_player_game_context` for continuous improvement. Could be added to validate-daily as a next-day check.
+
+### 2. Deploy Prediction Coordinator
+
+Still needs deploy from Session 145 (vegas optional gating). Use the new cloud deploy script:
+```bash
+./bin/cloud-deploy.sh prediction-coordinator
+```
+This is the first real test of the Cloud Build deploy. If it fails, debug and fix the script.
 
 After deploying, verify:
 ```bash
 gcloud run services describe prediction-coordinator --region=us-west2 --format="value(metadata.labels.commit-sha)"
-# Should show 3e30f923 or later
-```
-
-### 2. Verify All Deployments
-```bash
-./bin/check-deployment-drift.sh --verbose
+# Should show recent commit
 ```
 
 ### 3. Verify Vegas Optional Impact
-After the next pipeline run with deployed code, check:
+
+After coordinator is deployed, check that quality-ready rates improved:
 ```sql
 SELECT game_date,
   COUNT(*) as total_records,
   COUNTIF(is_quality_ready) as quality_ready,
-  COUNTIF(required_default_count = 0) as req_defaults_zero,
-  COUNTIF(default_feature_count = 0) as all_defaults_zero,
   ROUND(COUNTIF(is_quality_ready) / COUNT(*) * 100, 1) as pct_ready
 FROM nba_predictions.ml_feature_store_v2
 WHERE game_date >= CURRENT_DATE() - 1
 GROUP BY 1 ORDER BY 1;
 ```
+Before: ~37-45% quality_ready. Expected after: ~90-95%.
 
-Before: ~37-45% quality_ready. Expected after: ~90-95% quality_ready.
+### 4. Check ML Feature Store Backfill
 
-### 4. Check/Finish 2025-26 Backfill
+A backfill was running (2025-11-04 to 2026-02-06). Check if it completed:
 ```bash
-# Check remaining
-bq query --use_legacy_sql=false "
-SELECT COUNTIF(feature_1_source IS NULL) as missing, COUNT(*) as total
-FROM nba_predictions.ml_feature_store_v2
-WHERE game_date >= '2025-11-04' AND game_date <= '2026-02-06'
-"
-
-# If still missing, restart (checkpoints save progress):
-PYTHONPATH=. python backfill_jobs/precompute/ml_feature_store/ml_feature_store_precompute_backfill.py \
-  --start-date 2025-11-04 --end-date 2026-02-06 --skip-preflight
+# Check checkpoint
+cat /tmp/backfill_checkpoints/ml_feature_store_2025-11-04_2026-02-06.json 2>/dev/null | python -m json.tool | tail -5
 ```
 
-### 5. Run 2021 Season Backfill (3,231 records)
-```bash
-PYTHONPATH=. python backfill_jobs/precompute/ml_feature_store/ml_feature_store_precompute_backfill.py \
-  --start-date 2021-11-02 --end-date 2021-12-31 --skip-preflight
-```
+## Key Architecture (from Session 146)
 
-### 6. Add Scraper Health Monitoring (Vegas Lines)
-User wants to know when star players (PPG > 20) are missing vegas lines, since that indicates a scraper issue vs normal bench player absence. Add to canary monitoring or `/validate-daily`.
+**Daily predictions:** Both `PlayerDailyCacheProcessor` and `MLFeatureStoreProcessor` use `upcoming_player_game_context WHERE game_date = TODAY`. Same source = same players = no cache misses expected.
 
-### 7. Fix PlayerDailyCacheProcessor Root Cause
-The cache miss fallback is a band-aid. Fix the processor to cache ALL active season players:
-- `data_processors/precompute/player_daily_cache/player_daily_cache_processor.py`
-- Currently queries `upcoming_player_game_context WHERE game_date = TODAY` (175 players)
-- Should also query all active season players like shot zone processor does (457 players)
+**Backfill:** Feature store uses `player_game_summary` (who actually played) while historical cache used `upcoming_player_game_context` (who was expected). The Session 144 fallback (`_compute_cache_fields_from_games()`) handles mismatches. `cache_miss_fallback_used` now tracks these.
 
-## Key Architecture
+## Deployment State
 
-### Vegas Optional System (Session 145)
-- `FEATURES_OPTIONAL = {25, 26, 27}` in `shared/ml/feature_contract.py`
-- `default_feature_count` → ALL defaults (including vegas) → for visibility
-- `required_default_count` → REQUIRED defaults only → for gating
-- `is_quality_ready` uses `required_default_count == 0` (not `default_feature_count`)
-- Coordinator and worker both use `required_default_count` for zero-tolerance check
-- BQ column `required_default_count INT64` added to `ml_feature_store_v2`
-
-### Cache Miss Fallback (Session 144)
-- `feature_extractor.py:_compute_cache_fields_from_games()` computes from `last_10_games`
-- Fixes features 0-4, 22-23, 31-32 when `player_daily_cache` misses
-
-### Gap Tracking (Session 144)
-- Table: `nba_predictions.feature_store_gaps`
-- Processor logs skipped players with reason mapping
-- Backfill resolves gaps on success
-
-### Pipeline Flow for Late-Arriving Vegas Lines
-Verified working: odds scraper runs continuously → feature store queries latest snapshot → Phase 4→5 orchestrator triggers prediction regeneration → old predictions superseded
+| Service | Status | Notes |
+|---------|--------|-------|
+| nba-phase4-precompute-processors | **Deployed** | Cache miss tracking |
+| nba-phase3-analytics-processors | Deployed | |
+| nba-phase2-raw-processors | Deployed | |
+| prediction-worker | Deployed | Vegas optional |
+| prediction-coordinator | **NEEDS DEPLOY** | Vegas optional gating |

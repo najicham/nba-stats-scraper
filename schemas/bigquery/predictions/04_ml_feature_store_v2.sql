@@ -785,6 +785,11 @@ ADD COLUMN IF NOT EXISTS primary_data_source STRING
 ADD COLUMN IF NOT EXISTS matchup_data_status STRING
   OPTIONS (description='DEPRECATED: Use matchup_quality_pct and has_composite_factors. Remove after 3 months.');
 
+-- Session 146: Cache miss tracking
+ALTER TABLE `nba-props-platform.nba_predictions.ml_feature_store_v2`
+ADD COLUMN IF NOT EXISTS cache_miss_fallback_used BOOL
+  OPTIONS (description='Session 146: TRUE if player_daily_cache had no entry and features were computed from last_10_games fallback. Use to investigate cache coverage gaps.');
+
 -- ============================================================================
 -- MONITORING VIEW: Feature Quality Unpivot (Session 134)
 -- Unpivots 37 per-feature quality/source columns into rows for easy aggregation.

@@ -95,7 +95,7 @@ Based on last 7 days of data:
 
 #### Remaining Work
 
-1. **Fix PlayerDailyCacheProcessor root cause** - Cache all season players, not just today's games
+1. **Investigate cache misses during backfill** - Add tracking to feature extractor so cache misses are logged with player + date for investigation. Daily predictions are fine (same player list), but backfill uses `player_game_summary` which may include players not in historical `upcoming_player_game_context`.
 2. **Scraper health monitoring** - Alert when tier 1-2 star players lack vegas lines (indicates scraper issue)
 3. **Shot zone coverage** - Improve processor for sparse-data players
 
