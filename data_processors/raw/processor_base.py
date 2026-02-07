@@ -569,12 +569,22 @@ class ProcessorBase(DeploymentFreshnessMixin, ProcessorVersionMixin, RunHistoryM
 
             self.post_process()
 
+            # Build timing breakdown for performance analysis (Session 143)
+            _timing_breakdown = {
+                'total_runtime': self.stats.get('total_runtime'),
+                'load_time': self.stats.get('load_time'),
+                'transform_time': self.stats.get('transform_time'),
+                'save_time': self.stats.get('save_time'),
+            }
+            _timing_breakdown = {k: v for k, v in _timing_breakdown.items() if v is not None}
+
             # Record successful run to history
             self.record_run_complete(
                 status='success',
                 records_processed=self.stats.get('rows_inserted', 0),
                 records_created=self.stats.get('rows_inserted', 0),
-                summary=self.stats
+                summary=self.stats,
+                timing_breakdown=_timing_breakdown
             )
 
             # Log completion to pipeline_event_log (added Jan 29, 2026)

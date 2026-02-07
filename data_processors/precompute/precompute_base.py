@@ -894,12 +894,27 @@ class PrecomputeProcessorBase(
             self.log_processing_run(success=True)
             self.post_process()
 
+            # Build timing breakdown for performance analysis (Session 143)
+            _timing_breakdown = {
+                'total_runtime': self.stats.get('total_runtime'),
+                'extract_time': self.stats.get('extract_time'),
+                'calculate_time': self.stats.get('calculate_time'),
+                'save_time': self.stats.get('save_time'),
+                'dependency_check_time': self.stats.get('dependency_check_time'),
+            }
+            # Include custom timing from processors (e.g., ML Feature Store's _timing dict)
+            if hasattr(self, '_timing') and self._timing:
+                _timing_breakdown['detail'] = self._timing
+            # Remove None values
+            _timing_breakdown = {k: v for k, v in _timing_breakdown.items() if v is not None}
+
             # Record successful run to history
             self.record_run_complete(
                 status='success',
                 records_processed=self.stats.get('rows_processed', 0),
                 records_created=self.stats.get('rows_processed', 0),
-                summary=self.stats
+                summary=self.stats,
+                timing_breakdown=_timing_breakdown
             )
 
             # Log processor completion to pipeline_event_log (added Jan 25)

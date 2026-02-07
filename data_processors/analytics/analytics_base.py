@@ -964,12 +964,24 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             self.log_processing_run(success=True)
             self.post_process()
 
+            # Build timing breakdown for performance analysis (Session 143)
+            _timing_breakdown = {
+                'total_runtime': self.stats.get('total_runtime'),
+                'extract_time': self.stats.get('extract_time'),
+                'transform_time': self.stats.get('transform_time'),
+                'save_time': self.stats.get('save_time'),
+                'dependency_check_time': self.stats.get('dependency_check_time'),
+                'change_detection_time': self.stats.get('change_detection_time'),
+            }
+            _timing_breakdown = {k: v for k, v in _timing_breakdown.items() if v is not None}
+
             # Record successful run to history
             self.record_run_complete(
                 status='success',
                 records_processed=self.stats.get('rows_processed', 0),
                 records_created=self.stats.get('rows_processed', 0),
-                summary=self.stats
+                summary=self.stats,
+                timing_breakdown=_timing_breakdown
             )
 
             # Log processor completion to pipeline_event_log (added Jan 25)

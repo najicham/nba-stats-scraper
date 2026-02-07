@@ -236,7 +236,8 @@ class RunHistoryMixin:
         error: Optional[Exception] = None,
         summary: Optional[Dict] = None,
         warnings: Optional[List[str]] = None,
-        failure_category: Optional[str] = None
+        failure_category: Optional[str] = None,
+        timing_breakdown: Optional[Dict] = None
     ) -> None:
         """
         Record completed processor run to BigQuery.
@@ -254,13 +255,15 @@ class RunHistoryMixin:
             error: Exception if failed
             summary: Additional summary data
             warnings: List of warning messages
-            failure_category: Category of failure for filtering alerts (NEW!)
+            failure_category: Category of failure for filtering alerts
                 - 'no_data_available': Expected, no data to process (don't alert)
                 - 'upstream_failure': Dependency failed
                 - 'processing_error': Real processing error (ALERT!)
                 - 'timeout': Operation timed out
                 - 'configuration_error': Missing required options
                 - 'unknown': Default for backward compatibility
+            timing_breakdown: Per-stage timing dict (Session 143), e.g.:
+                {"extract_time": 2.3, "transform_time": 18.1, "save_time": 6.0}
         """
         if not self._run_start_time:
             logger.warning("No run start time - call start_run_tracking() first")
@@ -374,6 +377,10 @@ class RunHistoryMixin:
             # NEW: Failure categorization (2026-01-14, Session 35)
             # Used to filter expected failures from monitoring alerts
             'failure_category': failure_category,
+
+            # NEW: Timing breakdown (2026-02-06, Session 143)
+            # Per-stage timing for performance analysis across all processors
+            'timing_breakdown': json.dumps(timing_breakdown, default=str) if timing_breakdown else None,
         }
 
         # Remove None values and new fields if schema doesn't have them yet

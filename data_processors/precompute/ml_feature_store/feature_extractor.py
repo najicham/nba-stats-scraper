@@ -8,7 +8,7 @@ Extracts raw data from:
 - Phase 3 (fallback): player_game_summary, upcoming_player_game_context,
                       team_offense_game_summary, team_defense_game_summary
 
-Version: 1.4 (Optimized queries with date range pruning for 3-4x speedup)
+Version: 1.8 (Session 143: Per-query timing, date-bounded CTEs, query timeouts)
 """
 
 import logging
@@ -62,13 +62,15 @@ class FeatureExtractor:
         self._matchup_data_available: bool = True  # False if composite factors missing for exact date
         self._composite_factors_source: str = 'none'  # 'exact_date', 'fallback', 'none'
 
-    def _safe_query(self, query: str, query_name: str = "query") -> pd.DataFrame:
+    def _safe_query(self, query: str, query_name: str = "query",
+                     timeout: int = 120) -> pd.DataFrame:
         """
-        Execute BigQuery query with error handling.
+        Execute BigQuery query with error handling and timeout.
 
         Args:
             query: SQL query to execute
             query_name: Descriptive name for logging
+            timeout: Maximum seconds to wait for query results (default 120s)
 
         Returns:
             DataFrame with results, or empty DataFrame on error
@@ -78,10 +80,15 @@ class FeatureExtractor:
         """
         from google.api_core.exceptions import GoogleAPIError
         try:
-            return self.bq_client.query(query).to_dataframe()
+            job = self.bq_client.query(query)
+            return job.result(timeout=timeout).to_dataframe()
         except GoogleAPIError as e:
             logger.error(f"BigQuery query failed [{query_name}]: {e}")
             logger.debug(f"Failed query:\n{query[:500]}...")
+            raise
+        except TimeoutError:
+            logger.error(f"BigQuery query timed out after {timeout}s [{query_name}]")
+            logger.debug(f"Timed out query:\n{query[:500]}...")
             raise
     
     # ========================================================================
@@ -242,24 +249,37 @@ class FeatureExtractor:
         all_opponents = list(set(p.get('opponent_team_abbr') for p in players_with_games if p.get('opponent_team_abbr')))
         all_teams = list(set(p.get('team_abbr') for p in players_with_games if p.get('team_abbr')))
 
+        # Per-query timing tracker (Session 143)
+        query_timings = {}
+
+        def timed_task(name, fn):
+            """Wrapper that times each extraction task."""
+            def wrapper():
+                t0 = time.time()
+                fn()
+                elapsed = time.time() - t0
+                query_timings[name] = elapsed
+                logger.info(f"[QUERY_TIMING] {name}: {elapsed:.1f}s")
+            return wrapper
+
         # Run ALL 11 batch extractions in PARALLEL using ThreadPoolExecutor
         # Each query is independent and can run concurrently
         # V8 Model: Added vegas_lines, opponent_history, minutes_ppm (Jan 2026)
         # v1.7 (Session 62): Pass backfill_mode to vegas_lines for raw table joins
         extraction_tasks = [
-            ('daily_cache', lambda: self._batch_extract_daily_cache(game_date)),
-            ('composite_factors', lambda: self._batch_extract_composite_factors(game_date)),
-            ('shot_zone', lambda: self._batch_extract_shot_zone(game_date)),
-            ('team_defense', lambda: self._batch_extract_team_defense(game_date, all_opponents)),
-            ('player_context', lambda: self._batch_extract_player_context(game_date)),
-            ('last_10_games', lambda: self._batch_extract_last_10_games(game_date, all_players)),
-            ('season_stats', lambda: self._batch_extract_season_stats(game_date, all_players)),
-            ('team_games', lambda: self._batch_extract_team_games(game_date, all_teams)),
+            ('daily_cache', timed_task('daily_cache', lambda: self._batch_extract_daily_cache(game_date))),
+            ('composite_factors', timed_task('composite_factors', lambda: self._batch_extract_composite_factors(game_date))),
+            ('shot_zone', timed_task('shot_zone', lambda: self._batch_extract_shot_zone(game_date))),
+            ('team_defense', timed_task('team_defense', lambda: self._batch_extract_team_defense(game_date, all_opponents))),
+            ('player_context', timed_task('player_context', lambda: self._batch_extract_player_context(game_date))),
+            ('last_10_games', timed_task('last_10_games', lambda: self._batch_extract_last_10_games(game_date, all_players))),
+            ('season_stats', timed_task('season_stats', lambda: self._batch_extract_season_stats(game_date, all_players))),
+            ('team_games', timed_task('team_games', lambda: self._batch_extract_team_games(game_date, all_teams))),
             # V8 Model Features (Jan 2026)
             # v1.7: backfill_mode joins raw betting tables for higher coverage
-            ('vegas_lines', lambda: self._batch_extract_vegas_lines(game_date, all_players, backfill_mode)),
-            ('opponent_history', lambda: self._batch_extract_opponent_history(game_date, players_with_games)),
-            ('minutes_ppm', lambda: self._batch_extract_minutes_ppm(game_date, all_players)),
+            ('vegas_lines', timed_task('vegas_lines', lambda: self._batch_extract_vegas_lines(game_date, all_players, backfill_mode))),
+            ('opponent_history', timed_task('opponent_history', lambda: self._batch_extract_opponent_history(game_date, players_with_games))),
+            ('minutes_ppm', timed_task('minutes_ppm', lambda: self._batch_extract_minutes_ppm(game_date, all_players))),
         ]
 
         # Auto-retry logic for transient network/BigQuery errors
@@ -313,6 +333,16 @@ class FeatureExtractor:
                     raise
 
         elapsed = time.time() - start_time
+
+        # Log per-query timing breakdown (Session 143)
+        if query_timings:
+            sorted_timings = sorted(query_timings.items(), key=lambda x: x[1], reverse=True)
+            timing_str = ", ".join(f"{name}={t:.1f}s" for name, t in sorted_timings)
+            logger.info(f"[QUERY_TIMING_BREAKDOWN] {timing_str}")
+            slowest_name, slowest_time = sorted_timings[0]
+            if slowest_time > 30:
+                logger.warning(f"[SLOW_QUERY] {slowest_name} took {slowest_time:.1f}s (>{30}s threshold)")
+
         logger.info(
             f"Batch extraction complete in {elapsed:.1f}s: "
             f"{len(self._daily_cache_lookup)} daily_cache, "
@@ -625,17 +655,20 @@ class FeatureExtractor:
         lookback_days = 60
         lookback_date = game_date - timedelta(days=lookback_days)
 
-        # v1.6 FIX: Use CTE to get true total_games_available (no date limit)
-        # while still using 60-day window for efficient last-10 retrieval.
-        # This prevents incorrect bootstrap detection for players with older games.
+        # v1.6 FIX: Use CTE to get true total_games_available for bootstrap detection.
+        # v1.7 FIX (Session 143): Add 365-day lower bound to avoid full table scan.
+        # Bootstrap detection only needs to know if player has >= 10 games within a year.
+        # Players with 10+ games in the last year are never bootstrap candidates.
         query = f"""
         WITH total_games_per_player AS (
-            -- Count ALL historical games (no date limit) for accurate bootstrap detection
+            -- Count games within 1 year for bootstrap detection (Session 143: added date bound)
+            -- 10 games in a year is more than enough to avoid bootstrap mode
             SELECT
                 player_lookup,
                 COUNT(*) as total_games_available
             FROM `{self.project_id}.nba_analytics.player_game_summary`
             WHERE game_date < '{game_date}'
+              AND game_date >= DATE_SUB('{game_date}', INTERVAL 365 DAY)
             GROUP BY player_lookup
         ),
         last_10_games AS (
@@ -893,10 +926,14 @@ class FeatureExtractor:
         Batch extract player performance vs specific opponent.
 
         Features extracted:
-        - avg_points_vs_opponent: Average points scored vs this opponent (last 3 years)
+        - avg_points_vs_opponent: Average points scored vs this opponent (last 1 year)
         - games_vs_opponent: Number of games played vs this opponent
 
         Source: player_game_summary (Phase 3)
+
+        v1.8 (Session 143): Reduced lookback from 3 years to 1 year for performance.
+        NBA rosters change significantly year-over-year, so recent matchups are more
+        relevant anyway. This reduces BigQuery scan volume significantly.
         """
         if not players_with_games:
             return
@@ -930,7 +967,7 @@ class FeatureExtractor:
             ON p.player_lookup = g.player_lookup
             AND g.opponent_team_abbr = p.opponent
             AND g.game_date < '{game_date}'
-            AND g.game_date >= DATE_SUB('{game_date}', INTERVAL 3 YEAR)
+            AND g.game_date >= DATE_SUB('{game_date}', INTERVAL 1 YEAR)
         GROUP BY p.player_lookup, p.opponent
         """
         result = self._safe_query(query, "batch_extract")

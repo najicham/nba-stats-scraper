@@ -163,6 +163,16 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_reference.processor_run_histo
                              --   'configuration_error': Missing required options
                              --   'unknown': Default for backward compatibility
 
+    -- =============================================================================
+    -- TIMING BREAKDOWN (Added 2026-02-06, Session 143)
+    -- Captures per-stage timing for performance analysis across all processors
+    -- =============================================================================
+
+    timing_breakdown JSON, -- Per-stage timing in seconds, e.g.:
+                           -- {"extract_time": 2.3, "transform_time": 18.1, "save_time": 6.0}
+                           -- Phase 4 ML Feature Store adds query-level detail:
+                           -- {"extract_time": 3.0, "queries": {"daily_cache": 0.5, "last_10_games": 1.2, ...}}
+
     PRIMARY KEY (processor_name, data_date, run_id) NOT ENFORCED
 )
 PARTITION BY data_date

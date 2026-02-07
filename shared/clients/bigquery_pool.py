@@ -95,6 +95,18 @@ def get_bigquery_client(project_id: str = None, location: Optional[str] = None) 
 
         client = bigquery.Client(**kwargs)
 
+        # Session 143: Increase HTTP connection pool for parallel queries.
+        # Default urllib3 pool_maxsize=10 causes connection starvation when
+        # running 11+ concurrent BigQuery queries (e.g., ML Feature Store).
+        try:
+            from requests.adapters import HTTPAdapter
+            adapter = HTTPAdapter(pool_connections=20, pool_maxsize=20)
+            if hasattr(client, '_connection') and hasattr(client._connection, 'http'):
+                client._connection.http.mount("https://", adapter)
+                logger.debug("Increased BQ client HTTP pool to 20 connections")
+        except Exception as e:
+            logger.debug(f"Could not increase HTTP pool size: {e}")
+
         _client_cache[cache_key] = client
 
         logger.info(
