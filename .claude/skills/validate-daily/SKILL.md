@@ -970,7 +970,8 @@ SELECT
   ROUND(AVG(player_history_quality_pct), 1) as history_q,
   ROUND(AVG(vegas_quality_pct), 1) as vegas_q,
   ROUND(AVG(game_context_quality_pct), 1) as game_ctx_q,
-  ROUND(AVG(default_feature_count), 1) as avg_defaults
+  ROUND(AVG(default_feature_count), 1) as avg_defaults,
+  ROUND(COUNTIF(cache_miss_fallback_used) * 100.0 / NULLIF(COUNT(*), 0), 1) as cache_miss_pct
 FROM \`nba-props-platform.nba_predictions.ml_feature_store_v2\`
 WHERE game_date = CURRENT_DATE()"
 ```
@@ -985,6 +986,7 @@ WHERE game_date = CURRENT_DATE()"
 | `history_q` | >= 80 | < 60 | ⚠️ Check player_daily_cache |
 | `vegas_q` | >= 40 | < 30 | ⚠️ Normal for early morning (lines not yet set) |
 | `avg_defaults` | < 3 | > 6 | ⚠️ Multiple features using fallback values |
+| `cache_miss_pct` | 0% | > 0% | ⚠️ Cache/feature store player list mismatch (Session 147) |
 
 **If `matchup_q < 50` (Session 132 pattern)**:
 1. 🔴 P1 CRITICAL: Matchup data missing for significant portion of players
@@ -2196,6 +2198,96 @@ GROUP BY pdc.cache_date
 - Players with some DNP games and some active games are VALID
 
 **Reference**: Session 123 DNP validation emergency, commit 94087b90
+
+### Phase 3E: Cache Miss Rate Check (Session 147)
+
+**Purpose**: Detect cache misses in the ML Feature Store pipeline
+
+**Context**: Session 146 added `cache_miss_fallback_used` tracking to `ml_feature_store_v2`. When the PlayerDailyCacheProcessor doesn't have data for a player, the feature extractor falls back to computing values from `last_10_games`. For daily predictions, cache miss rate should be 0% since both cache and feature store use the same player list (`upcoming_player_game_context`). Any misses indicate a pipeline issue.
+
+```bash
+bq query --use_legacy_sql=false "
+-- Cache Miss Rate Check (Session 147)
+-- For daily predictions: expect 0% miss rate
+-- For backfill dates: 5-15% is expected
+SELECT
+  game_date,
+  COUNTIF(cache_miss_fallback_used) as cache_misses,
+  COUNT(*) as total,
+  ROUND(COUNTIF(cache_miss_fallback_used) / COUNT(*) * 100, 1) as miss_rate_pct
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= CURRENT_DATE() - 3
+GROUP BY 1
+ORDER BY 1 DESC
+"
+```
+
+**Expected Results**:
+- **0% miss rate (today)**: ✅ PASS (cache and feature store in sync)
+- **1-5% miss rate (today)**: ⚠️ WARNING (player list mismatch between cache and feature store)
+- **>5% miss rate (today)**: 🔴 CRITICAL (cache processor may have failed)
+- **5-15% miss rate (past dates)**: ✅ OK for backfill (expected behavior)
+
+**If cache misses found for today's date**:
+1. Check if `PlayerDailyCacheProcessor` ran successfully:
+   ```bash
+   gcloud logging read "resource.type=cloud_run_revision AND \
+     resource.labels.service_name=nba-phase4-precompute-processors AND \
+     severity>=WARNING AND textPayload=~'cache' AND \
+     timestamp>='$(date -u +%Y-%m-%dT00:00:00Z)'" \
+     --limit=20 --format='table(timestamp,textPayload)'
+   ```
+
+2. Compare player lists between cache and feature store:
+   ```bash
+   bq query --use_legacy_sql=false "
+   WITH cache_players AS (
+     SELECT DISTINCT player_lookup
+     FROM nba_precompute.player_daily_cache
+     WHERE cache_date = CURRENT_DATE()
+   ),
+   feature_players AS (
+     SELECT DISTINCT player_lookup
+     FROM nba_predictions.ml_feature_store_v2
+     WHERE game_date = CURRENT_DATE()
+   )
+   SELECT f.player_lookup as missing_from_cache
+   FROM feature_players f
+   LEFT JOIN cache_players c ON f.player_lookup = c.player_lookup
+   WHERE c.player_lookup IS NULL
+   ORDER BY 1
+   "
+   ```
+
+3. If systematic: check `upcoming_player_game_context` for gaps
+
+**Post-Game Reconciliation** (next-day check):
+```bash
+# Compare who played vs who was cached (run day after games)
+YESTERDAY=$(date -d "yesterday" +%Y-%m-%d)
+
+bq query --use_legacy_sql=false "
+WITH played AS (
+  SELECT DISTINCT player_lookup
+  FROM nba_analytics.player_game_summary
+  WHERE game_date = '${YESTERDAY}' AND is_dnp = FALSE
+),
+cached AS (
+  SELECT DISTINCT player_lookup
+  FROM nba_precompute.player_daily_cache
+  WHERE cache_date = '${YESTERDAY}'
+)
+SELECT
+  COUNT(DISTINCT p.player_lookup) as players_who_played,
+  COUNT(DISTINCT c.player_lookup) as players_cached,
+  COUNT(DISTINCT CASE WHEN c.player_lookup IS NULL THEN p.player_lookup END) as played_not_cached,
+  COUNT(DISTINCT CASE WHEN p.player_lookup IS NULL THEN c.player_lookup END) as cached_not_played
+FROM played p
+FULL OUTER JOIN cached c ON p.player_lookup = c.player_lookup
+"
+```
+
+**Reference**: Session 146 cache miss tracking, Session 144 cache miss fallback
 
 ### Phase 4: Check Phase Completion Status
 

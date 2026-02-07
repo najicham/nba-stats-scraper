@@ -100,11 +100,12 @@ echo ""
 # --config uses the repo's cloudbuild.yaml
 # --substitutions passes service-specific values
 echo "[1/3] Submitting to Cloud Build..."
+# Note: --region is NOT passed to builds submit (Cloud Build runs globally)
+# The --region flag is only used for Cloud Run deployment in cloudbuild.yaml
 gcloud builds submit \
     --config cloudbuild.yaml \
     --substitutions="_SERVICE=$SERVICE,_DOCKERFILE=$DOCKERFILE,_BUILD_TIMESTAMP=$BUILD_TIMESTAMP,SHORT_SHA=$BUILD_COMMIT" \
     --project "$PROJECT" \
-    --region "$REGION" \
     --quiet 2>&1 | while IFS= read -r line; do
     # Show progress but filter verbose output
     case "$line" in

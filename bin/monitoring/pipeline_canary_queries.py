@@ -131,7 +131,9 @@ CANARY_CHECKS = [
             -- Session 139: Quality visibility canaries
             ROUND(COUNTIF(is_quality_ready = TRUE) * 100.0 / NULLIF(COUNT(*), 0), 1) as quality_ready_pct,
             COUNTIF(quality_alert_level = 'red') as red_alert_count,
-            ROUND(AVG(matchup_quality_pct), 1) as avg_matchup_quality
+            ROUND(AVG(matchup_quality_pct), 1) as avg_matchup_quality,
+            -- Session 147: Cache miss rate tracking
+            ROUND(COUNTIF(cache_miss_fallback_used) * 100.0 / NULLIF(COUNT(*), 0), 1) as cache_miss_rate_pct
         FROM
             `nba-props-platform.nba_predictions.ml_feature_store_v2`
         WHERE
@@ -143,7 +145,8 @@ CANARY_CHECKS = [
             'low_quality_count': {'max': 50},  # Not too many low quality features
             'quality_ready_pct': {'min': 60},  # Session 139: At least 60% quality-ready
             'red_alert_count': {'max': 30},  # Session 139: Not too many red alerts
-            'avg_matchup_quality': {'min': 40}  # Session 139: Catches Session 132 scenario
+            'avg_matchup_quality': {'min': 40},  # Session 139: Catches Session 132 scenario
+            'cache_miss_rate_pct': {'max': 5}  # Session 147: Cache miss rate should be near 0% for daily
         },
         description="Validates precomputed ML features and quality visibility"
     ),
