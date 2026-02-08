@@ -1011,6 +1011,7 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
         except Exception as e:
             logger.error("AnalyticsProcessorBase Error: %s", e, exc_info=True)
             sentry_sdk.capture_exception(e)
+            self.last_error = e
 
             # Categorize the failure for monitoring/alerting
             current_step = self._get_current_step()

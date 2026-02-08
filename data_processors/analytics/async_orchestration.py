@@ -170,10 +170,17 @@ def run_processor_with_async_support(
                 "elapsed_seconds": round(elapsed, 2)
             }
         else:
-            logger.error(f"Failed to run {processor_name}")
+            # Extract error details from processor stats if available
+            error_msg = "Unknown error (processor.run() returned False)"
+            if hasattr(processor, 'stats') and isinstance(processor.stats, dict):
+                error_msg = processor.stats.get('error', error_msg)
+            if hasattr(processor, 'last_error'):
+                error_msg = str(processor.last_error)
+            logger.error(f"Failed to run {processor_name}: {error_msg}")
             return {
                 "processor": processor_name,
                 "status": "error",
+                "error": error_msg,
                 "async_used": async_used,
                 "elapsed_seconds": round(elapsed, 2)
             }

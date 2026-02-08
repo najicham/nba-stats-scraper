@@ -452,10 +452,16 @@ def run_single_analytics_processor(processor_class, opts, prefer_async=None):
                 "stats": stats
             }
         else:
-            logger.error(f"Failed to run {processor_class.__name__}")
+            error_msg = "Unknown error (processor.run() returned False)"
+            if hasattr(processor, 'stats') and isinstance(processor.stats, dict):
+                error_msg = processor.stats.get('error', error_msg)
+            if hasattr(processor, 'last_error'):
+                error_msg = str(processor.last_error)
+            logger.error(f"Failed to run {processor_class.__name__}: {error_msg}")
             return {
                 "processor": processor_class.__name__,
-                "status": "error"
+                "status": "error",
+                "error": error_msg
             }
     except Exception as e:
         logger.error(f"Analytics processor {processor_class.__name__} failed: {e}", exc_info=True)

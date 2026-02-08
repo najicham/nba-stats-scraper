@@ -1016,7 +1016,11 @@ class BigQuerySaveOpsMixin:
                 """
 
             count_result = self.bq_client.query(count_query).result()
-            actual_count = next(count_result).actual_count
+            count_row = next(count_result, None)
+            if count_row is None:
+                logger.error("POST_WRITE_VALIDATION: Count query returned no rows")
+                return False
+            actual_count = count_row.actual_count
 
             # Validate count matches expected
             count_mismatch = abs(actual_count - expected_count)
@@ -1088,7 +1092,10 @@ class BigQuerySaveOpsMixin:
                     """
 
                 null_result = self.bq_client.query(null_check_query).result()
-                null_row = next(null_result)
+                null_row = next(null_result, None)
+                if null_row is None:
+                    logger.warning("POST_WRITE_VALIDATION: NULL check query returned no rows, skipping")
+                    null_row = type('Row', (), {})()  # Empty object for attribute access
 
                 # Check if any key fields have NULLs
                 null_fields = []
@@ -1142,10 +1149,14 @@ class BigQuerySaveOpsMixin:
 
                 try:
                     anomaly_result = self.bq_client.query(anomaly_query).result()
-                    anomaly_row = next(anomaly_result)
-
-                    usage_rate_anomalies = anomaly_row.usage_rate_anomalies or 0
-                    missing_usage_rate = anomaly_row.missing_usage_rate or 0
+                    anomaly_row = next(anomaly_result, None)
+                    if anomaly_row is None:
+                        logger.warning("POST_WRITE_VALIDATION: Anomaly check query returned no rows, skipping")
+                        usage_rate_anomalies = 0
+                        missing_usage_rate = 0
+                    else:
+                        usage_rate_anomalies = anomaly_row.usage_rate_anomalies or 0
+                        missing_usage_rate = anomaly_row.missing_usage_rate or 0
                     max_usage_rate = anomaly_row.max_usage_rate
 
                     # Alert if usage_rate > 100% (CRITICAL - race condition indicator)

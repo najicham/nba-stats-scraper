@@ -43,7 +43,28 @@ steps:
         echo "Deployment package ready:"
         ls -la /workspace/deploy_pkg/
 
-  # Step 1: Deploy Cloud Function
+  # Step 1: Validate imports before deploying (catches missing dependencies)
+  # Installs requirements and tries to import main.py to catch ModuleNotFoundError
+  - name: 'python:3.11-slim'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        echo "Validating imports for ${_FUNCTION_NAME}..."
+        cd /workspace/deploy_pkg
+        pip install --quiet -r requirements.txt 2>&1 | tail -3
+        python -c "
+        import sys, importlib
+        sys.path.insert(0, '.')
+        try:
+            importlib.import_module('main')
+            print('Import validation PASSED')
+        except Exception as e:
+            print(f'Import validation FAILED: {e}')
+            sys.exit(1)
+        "
+
+  # Step 2: Deploy Cloud Function
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
     entrypoint: gcloud
     args:
@@ -62,7 +83,7 @@ steps:
       - '--trigger-topic'
       - '${_TRIGGER_TOPIC}'
       - '--service-account=756957797294-compute@developer.gserviceaccount.com'
-      - '--set-env-vars'
+      - '--update-env-vars'
       - 'GCP_PROJECT=nba-props-platform'
       - '--memory'
       - '${_MEMORY}'
