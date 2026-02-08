@@ -17,7 +17,7 @@ We discovered and fixed training data contamination in the ML pipeline:
 
 ## Priority 1: Feature Store Backfill (DO THIS FIRST)
 
-Re-run ML feature store processor for current season (Nov 2025 - Feb 2026) with Session 156 improvements. This will produce fewer defaults and give much better training data for V9 retrain.
+Re-run ML feature store processor for current season (Nov 2025 - Feb 2026) with Session 156 improvements. This will produce fewer defaults and cleaner training data for the regular end-of-month retrain.
 
 **Before running, review and update the backfill script:**
 1. Read `scripts/regenerate_ml_feature_store.py` — this runs `MLFeatureStoreProcessor` locally for a date range
@@ -29,21 +29,13 @@ PYTHONPATH=. python scripts/regenerate_ml_feature_store.py \
   --start-date 2025-11-02 --end-date 2026-02-07
 ```
 
-## Priority 2: V9 Retrain
-
-After backfill completes:
-```bash
-PYTHONPATH=. python ml/experiments/quick_retrain.py \
-    --name "V9_CLEAN_POST_BACKFILL" \
-    --train-start 2025-11-02 \
-    --train-end 2026-02-18 \
-    --eval-start 2026-02-01 \
-    --eval-end 2026-02-18
-```
-
-## Priority 3: Tier Bias Investigation
+## Priority 2: Tier Bias Investigation
 
 Both V9 and clean retrain show regression-to-mean: stars -9 pts, bench +7 pts. Investigate root cause and fix.
+
+## DO NOT retrain V9 yet
+
+V9 is performing adequately (54-56% hit rate, 65%+ at edge 3+). A clean retrain was tested in Session 157 but the eval window was too small to draw conclusions. **Wait until end of February for the regular monthly retrain** — by then the backfilled data + 2-3 weeks of new clean data will give a much better training set and enough eval data for a reliable comparison.
 
 ## Feature Ideas (Later)
 

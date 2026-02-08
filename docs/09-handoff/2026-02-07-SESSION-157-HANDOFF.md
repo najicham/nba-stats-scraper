@@ -102,21 +102,13 @@ PYTHONPATH=. python backfill_jobs/precompute/ml_feature_store/ml_feature_store_p
 2. **Add logging for missing data.** When a feature can't find upstream data and falls back to default, log which player/date/feature was affected so we can identify data gaps to fix.
 3. **Verify the script uses the deployed code.** The regenerate script imports `MLFeatureStoreProcessor` directly from the local codebase, which now has Session 156 changes. Make sure this is the current code.
 
-### Priority 2: V9 Retrain
-
-After backfill completes, retrain V9 with clean data:
-```bash
-PYTHONPATH=. python ml/experiments/quick_retrain.py \
-    --name "V9_CLEAN_POST_BACKFILL" \
-    --train-start 2025-11-02 \
-    --train-end 2026-02-18 \
-    --eval-start 2026-02-01 \
-    --eval-end 2026-02-18
-```
-
-### Priority 3: Tier Bias Investigation
+### Priority 2: Tier Bias Investigation
 
 Both V9 and clean retrain show regression-to-mean: stars underestimated by 9 pts, bench overestimated by 7 pts. Investigate and fix.
+
+### DO NOT Retrain V9 Yet
+
+V9 is performing adequately (54-56% hit rate, 65%+ at edge 3+). A clean retrain was tested in Session 157 but the 6-day eval window was too small for reliable comparison. **Wait until end of February for the regular monthly retrain.** By then the backfilled data + new clean data will give a much better training set.
 
 ## Feature Ideas to Explore Later
 
