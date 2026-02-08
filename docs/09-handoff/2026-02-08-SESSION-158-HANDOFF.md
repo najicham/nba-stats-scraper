@@ -156,15 +156,55 @@ Many "failures" are `stale_running_cleanup` (stuck 4+ hours) or `DependencyError
 
 ## Next Session Priorities
 
-1. **Verify predictions are working** (schema fix + worker redeploy should have fixed it)
-2. **Backfill predictions for Feb 7** (10 games, zero predictions)
-3. **Verify backfill (processors 3-5)** completed and check contamination improvement
-4. **Build schema validation** to prevent this class of bug:
-   - Worker startup check that validates output fields against BQ schema
-   - Or pre-deploy script that compares code field names with BQ table columns
-5. **Export season subset picks** once backfill is done: `PYTHONPATH=. python backfill_jobs/publishing/daily_export.py --date 2026-02-08 --only season-subsets`
-6. **Start past-seasons backfill** (2021-2025) once current-season processors 3-5 complete
-7. **Investigate PredictionCoordinator stuck-in-running pattern** — may need a force-reset endpoint or shorter timeout
+### Fire: Get predictions working again
+1. **Verify predictions are landing** — schema fix + worker redeploy done, but Pub/Sub retries exhausted
+2. **Trigger BACKFILL for Feb 7** (10 games, zero predictions) and **Feb 8** (4 games)
+3. **Check backfill processors 3-5** (PID 3453211) — verify contamination improved
+
+### Build: Make the system more robust (prevent surprises)
+
+**Problem 1: Schema mismatches go undetected until production breaks**
+- Code adds a field to worker output → deploys → BQ table doesn't have column → 100% write failure
+- This is what broke predictions for Feb 7-8 (`vegas_line_source` and `required_default_count` missing)
+
+**Fix: Worker startup schema validation**
+- In `predictions/shared/batch_staging_writer.py`, the `_get_main_table_schema()` method already fetches the BQ schema
+- Add a `validate_output_fields()` method that compares the worker's known output field names against BQ columns
+- Log WARNING for any field the worker writes that BQ doesn't have
+- Call this on first write (lazy init) and fail fast with a clear error instead of cryptic "JSON table error"
+- Also: add a `/health/deep` check that runs this validation — drift detection catches it within 2 hours
+
+**Problem 2: PredictionCoordinator gets stuck in "running" state for 4+ hours**
+- Coordinator starts a batch, workers fail, coordinator never gets completion signal
+- Auto-cleanup only runs every 4 hours — too slow
+- Meanwhile, new trigger attempts see "already_running" and bail
+
+**Fix: Coordinator timeout + force-reset**
+- Add a configurable batch timeout (e.g., 30 min) — if no progress after timeout, auto-mark as failed
+- Add a `/reset` endpoint that clears the stuck batch from Firestore
+- Reduce stale_running_cleanup interval from 4h to 1h
+
+**Problem 3: Phase 4 cascade failures from timing**
+- DailyCacheProcessor runs at 7:15 UTC but Phase 3 isn't done yet → "DependencyError: PlayerGameSummaryProcessor at 0.0%"
+- This cascades: DailyCache → CompositeFactors → FeatureStore → Predictions all fail
+
+**Fix: Smarter retry or scheduling**
+- Option A: Add exponential backoff retry in Phase 4 processors (wait 5 min, retry 3x before failing)
+- Option B: Delay Phase 4 trigger by 30 min after Phase 3 completion signal
+- Option C: Make Phase 4 processors poll for Phase 3 readiness instead of failing fast
+
+**Problem 4: No "prediction gap" alerting**
+- Feb 7 had zero predictions and nobody was alerted
+- The canary system checks pipeline health but may not specifically check "did we make predictions today?"
+
+**Fix: Daily prediction count alert**
+- Add to canary or Cloud Scheduler: "If games today > 0 AND predictions today == 0 after 3 PM ET, alert #nba-alerts"
+- Simple BQ query, run every hour from noon to 8 PM ET
+
+### Remaining items
+5. **Export season subset picks** — `PYTHONPATH=. python backfill_jobs/publishing/daily_export.py --date 2026-02-08 --only season-subsets`
+6. **Start past-seasons backfill** (2021-2025) after current-season processors 3-5 complete
+7. **Deploy Phase 5→6 Cloud Function** — `season-subsets` was added to code but Cloud Functions need manual deploy
 
 ---
 
