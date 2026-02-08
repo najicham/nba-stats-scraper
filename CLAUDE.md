@@ -169,13 +169,17 @@ nba-stats-scraper/
 | Property | Value |
 |----------|-------|
 | System ID | `catboost_v9` |
-| Production Model | `catboost_v9_33features_20260201_011018.cbm` (Session 163) |
-| Training | Current season only (Nov 2, 2025 - Jan 8, 2026) |
-| **Medium Quality (3+ edge)** | **71.2% hit rate** (Jan 12 week holdout) |
+| Production Model | `catboost_v9_33features_20260201_011018` (Session 163) |
+| Training | 2025-11-02 to 2026-01-08 |
+| **Medium Quality (3+ edge)** | **71.2% hit rate** |
 | **High Quality (5+ edge)** | **79.0% hit rate, +50.9% ROI** |
-| All Bets (no filter) | 54.7% hit rate, +4.5% ROI |
+| MAE | 4.82 |
+| SHA256 (prefix) | `5b3a187b1b6d` |
+| Status | PRODUCTION (since 2026-02-08) |
 
 **CRITICAL:** Use edge >= 3 filter. 73% of predictions have edge < 3 and lose money.
+
+**Notes:** Evaluated on Jan 9-31 holdout. Backfill grading shows 71.2% on Jan 12 week.
 
 ### Model Governance (Sessions 163-164)
 
@@ -189,23 +193,33 @@ nba-stats-scraper/
 Session 163 discovered that the Feb 2 retrain crashed hit rate from 71.2% to 51.2% despite having better MAE. The retrain had systematic UNDER bias (-2.26 avg pred_vs_vegas).
 
 **Governance gates** (enforced in `quick_retrain.py`):
-1. Vegas bias: pred_vs_vegas within +/- 1.5
-2. High-edge (3+) hit rate >= 60%
-3. Sample size >= 50 graded edge 3+ bets
-4. No critical tier bias (> +/- 5 points)
-5. MAE improvement vs baseline
+1. **Duplicate check:** Blocks if same training dates exist (Session 165)
+2. Vegas bias: pred_vs_vegas within +/- 1.5
+3. High-edge (3+) hit rate >= 60%
+4. Sample size >= 50 graded edge 3+ bets
+5. No critical tier bias (> +/- 5 points)
+6. MAE improvement vs baseline
 
 **Promotion process:** Train -> Gates pass -> Upload to GCS -> Register -> Shadow 2+ days -> Promote
 
 **Rollback:** `gcloud run services update prediction-worker --region=us-west2 --update-env-vars="CATBOOST_V9_MODEL_PATH=gs://..."`
 
-### Model Registry
+**Model Naming Convention (Session 165):**
+- Format: `catboost_v9_33f_train{start}-{end}_{timestamp}.cbm`
+- Example: `catboost_v9_33f_train20251102-20260108_20260208_144749.cbm`
+- Training range now visible in filename (start and end dates)
+
+### Model Registry (Session 165: Governance Sync)
 ```bash
 ./bin/model-registry.sh list              # List all models with SHA256
 ./bin/model-registry.sh production        # Show production model
 ./bin/model-registry.sh validate          # Verify GCS paths + SHA256 integrity
-./bin/model-registry.sh manifest          # Show GCS manifest
+./bin/model-registry.sh manifest          # Show GCS manifest (source of truth)
+./bin/model-registry.sh sync              # Sync GCS manifest → BQ registry
+./bin/model-registry.sh claude-md         # Generate CLAUDE.md model section
 ```
+
+**IMPORTANT:** After updating `manifest.json` in GCS, run `./bin/model-registry.sh sync` to update BigQuery registry.
 
 ### Monthly Retraining
 ```bash
@@ -673,7 +687,11 @@ gcloud builds list --region=us-west2 --project=nba-props-platform --limit=5
 # 3. If auto-deploy didn't trigger (non-service changes), check drift
 ./bin/check-deployment-drift.sh --verbose
 
-# 4. Create handoff document
+# 4. If model governance changes made, sync and validate
+./bin/model-registry.sh sync                    # Sync GCS manifest to BQ
+./bin/check-deployment-drift.sh                 # Validates model deployment
+
+# 5. Create handoff document
 ```
 
 **Session 147:** Cloud Build triggers now auto-deploy on push to main. Manual deploys are only needed for debugging or when auto-deploy fails. See DEPLOY section for details.
