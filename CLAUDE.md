@@ -177,9 +177,14 @@ nba-stats-scraper/
 
 **CRITICAL:** Use edge >= 3 filter. 73% of predictions have edge < 3 and lose money.
 
-### Model Governance (Session 163)
+### Model Governance (Sessions 163-164)
 
 **NEVER deploy a retrained model without passing ALL governance gates.**
+**NEVER deploy a model without explicit user approval at each step.**
+
+**Training a model is NOT deploying it.** Use `/model-experiment` to train and evaluate. Deployment is a separate multi-step process requiring user sign-off. See the skill's "Model Promotion Checklist" for the full process.
+
+**Session 163 Lesson:** A retrained model with BETTER MAE (4.12 vs 4.82) crashed hit rate from 71.2% to 51.2% because it had systematic UNDER bias (-2.26 vs Vegas). The model predicted points lower than Vegas lines, causing 87% UNDER recommendations. Lower MAE does NOT mean better betting performance.
 
 Session 163 discovered that the Feb 2 retrain crashed hit rate from 71.2% to 51.2% despite having better MAE. The retrain had systematic UNDER bias (-2.26 avg pred_vs_vegas).
 

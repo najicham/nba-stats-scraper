@@ -9,6 +9,25 @@ Train CatBoost models on recent data. Supports two model types:
 1. **Regression** (default): Points prediction model, compared to V9 baseline
 2. **Breakout Classifier**: Binary classifier for role player breakout games
 
+## CRITICAL: Training Is NOT Deployment
+
+**This skill ONLY trains and evaluates models. It does NOT deploy them.**
+
+Deploying a model is a separate, multi-step process that requires:
+1. ALL 5 governance gates passing (Vegas bias, hit rate, sample size, tier bias, MAE)
+2. Model uploaded to GCS and registered in manifest
+3. 2+ days of shadow testing with a separate system_id (e.g., `catboost_v9_shadow`)
+4. User explicitly approves promotion after reviewing shadow results
+5. Backfill of predictions for dates that used the old model
+
+**Session 163 Lesson:** A retrained model with BETTER MAE crashed hit rate from 71.2% to 51.2% because it had systematic UNDER bias (-2.26 vs Vegas). Lower MAE does NOT mean better betting performance. The governance gates exist specifically to catch this.
+
+**NEVER do any of the following without explicit user approval:**
+- Change `CATBOOST_V9_MODEL_PATH` env var on any Cloud Run service
+- Upload a model file to `gs://nba-props-platform-models/catboost/v9/`
+- Modify `manifest.json` in GCS
+- Set `status: "production"` in the model registry
+
 ## Trigger
 - User wants to train a new model
 - User asks about model retraining
@@ -326,8 +345,62 @@ ORDER BY created_at DESC LIMIT 5"
 | `ml/experiments/evaluate_model.py` | Detailed evaluation |
 | `ml/experiments/train_walkforward.py` | Walk-forward training |
 
+## Model Promotion Checklist (Post-Training)
+
+If a trained model passes all governance gates, the promotion process is:
+
+```
+Step 1: EXPERIMENT (this skill)
+  - Train model with quick_retrain.py
+  - All 5 governance gates MUST pass
+  - Model saved locally in models/ directory
+  - Registered in ml_experiments table
+
+Step 2: UPLOAD + REGISTER (requires user approval)
+  - Upload to GCS: gs://nba-props-platform-models/catboost/v9/
+  - Register in manifest.json with SHA256
+  - Register in BQ model registry
+  - ./bin/model-registry.sh validate
+
+Step 3: SHADOW (requires user approval)
+  - Deploy with separate system_id (e.g., catboost_v9_shadow)
+  - Run for 2+ days alongside production model
+  - Compare shadow predictions vs production predictions
+  - Verify: hit rate, Vegas bias, tier bias, coverage
+
+Step 4: PROMOTE (requires user approval)
+  - Update CATBOOST_V9_MODEL_PATH env var
+  - Backfill predictions for affected dates
+  - Update model_version in manifest as "production"
+  - Monitor for 24h post-promotion
+
+Step 5: VERIFY
+  - Check predictions have new model_version string
+  - Check hit rates haven't degraded
+  - Check pred_vs_vegas is within +/- 1.5
+```
+
+**At each step, get explicit user approval before proceeding.**
+
+## What Constitutes a "Different Model"
+
+Two model files are different models even if they:
+- Use the same features (33 V9 features)
+- Use the same algorithm (CatBoost)
+- Have the same system_id (catboost_v9)
+
+They are different if ANY of the following differ:
+- Training date range
+- Training data quality filters
+- Hyperparameters
+- Feature preprocessing
+- Model file SHA256 hash
+
+The dynamic model_version (e.g., `v9_20260201_011018`) distinguishes different model files in prediction data. The SHA256 hash in each prediction provides an immutable audit trail.
+
 ---
 *Created: Session 58*
 *Updated: Session 125 - Added breakout classifier support*
 *Updated: Session 156 - Zero tolerance for training data quality (required_default_count = 0)*
+*Updated: Session 164 - Added governance warnings, promotion checklist, deployment prevention*
 *Part of: Monthly Retraining Infrastructure*

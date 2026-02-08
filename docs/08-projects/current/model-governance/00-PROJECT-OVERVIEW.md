@@ -141,6 +141,23 @@ The Dockerfile copied `catboost_v9_2026_02.cbm` but the code searched for `catbo
 ### 5. Health checks should validate the active model
 The worker health check (`/health/deep`) only validated the V8 model path. V9 model loading was lazy (deferred to first prediction). The health check should verify that the production model (V9) can be loaded.
 
+## Session 164 Updates
+
+### Coordinator /reset Bug Fix
+The `/reset` endpoint called `ProgressTracker.reset()` which set `is_complete=False`, preventing new batches from starting. Fixed to set `current_tracker = None` instead.
+
+### Backfill Status (Feb 1-8)
+- Feb 1: 143/181 predictions regenerated (38 players consistently fail — likely missing Phase 4 features)
+- Feb 2-8: Backfill in progress with `force:true` to bypass orphaned tracker state
+- All new predictions will have dynamic `model_version` (e.g., `v9_20260201_011018`) instead of `v9_current_season`
+
+### Experiment Skill Hardened
+Updated `/model-experiment` skill (SKILL.md) with:
+- Explicit "Training Is NOT Deployment" warning
+- Model Promotion Checklist (5 steps, each requiring user approval)
+- Definition of what constitutes a "different model"
+- CLAUDE.md cross-reference
+
 ## Future Work
 
 ### Not Yet Implemented
