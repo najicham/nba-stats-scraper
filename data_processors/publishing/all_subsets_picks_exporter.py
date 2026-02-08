@@ -1,17 +1,17 @@
 """
 All Subsets Picks Exporter for Phase 6 Publishing
 
-Exports all 9 subset groups' picks in a single file with clean API.
+Exports all subset groups' picks in a single file with clean API.
 Main endpoint for fetching daily picks without exposing technical details.
 
 Session 152: Added subset snapshot recording for history tracking.
+Session 153: Reads from materialized current_subset_picks table.
+             Falls back to on-the-fly computation for old dates.
+             Removed _record_snapshot (superseded by SubsetMaterializer).
 """
 
-import json
 import logging
-import uuid
 from typing import Dict, List, Any, Optional
-from datetime import date, datetime, timezone
 
 from google.cloud import bigquery
 
@@ -27,7 +27,10 @@ class AllSubsetsPicksExporter(BaseExporter):
     Export all subset picks in one combined file.
 
     Output file:
-    - picks/{date}.json - All 9 groups in one file
+    - picks/{date}.json - All groups in one file
+
+    Session 153: Reads from materialized current_subset_picks table when available.
+    Falls back to on-the-fly computation for dates without materialized data.
 
     JSON structure (CLEAN - no technical details):
     {
@@ -64,50 +67,111 @@ class AllSubsetsPicksExporter(BaseExporter):
         """
         Generate combined picks JSON for all subsets.
 
+        Session 153: Tries to read from materialized current_subset_picks first.
+        Falls back to on-the-fly computation if no materialized data exists.
+
         Args:
             target_date: Date string in YYYY-MM-DD format
 
         Returns:
             Dictionary ready for JSON serialization with clean structure
         """
-        # Get all active subset definitions
-        subsets = self._query_subset_definitions()
+        # Try materialized table first (Session 153)
+        materialized_picks = self._query_materialized_picks(target_date)
 
-        # Get all predictions for this date
-        predictions = self._query_all_predictions(target_date)
+        if materialized_picks:
+            logger.info(f"Using materialized picks for {target_date} ({len(materialized_picks)} rows)")
+            return self._build_json_from_materialized(target_date, materialized_picks)
 
-        # Get daily signal for filtering
-        daily_signal = self._query_daily_signal(target_date)
+        # Fallback: compute on-the-fly (for old dates without materialized data)
+        logger.info(f"No materialized picks for {target_date}, computing on-the-fly")
+        return self._build_json_on_the_fly(target_date)
 
-        # Get all subset performance in one query (optimization)
+    def _query_materialized_picks(self, target_date: str) -> List[Dict[str, Any]]:
+        """
+        Query materialized subset picks from current_subset_picks table.
+
+        Uses the latest version_id for the date (append-only design, no is_current flag).
+
+        Args:
+            target_date: Date string in YYYY-MM-DD format
+
+        Returns:
+            List of pick dictionaries, or empty list if none found
+        """
+        query = """
+        SELECT
+          subset_id,
+          subset_name,
+          player_name,
+          team,
+          opponent,
+          predicted_points,
+          current_points_line,
+          recommendation,
+          composite_score
+        FROM `nba_predictions.current_subset_picks`
+        WHERE game_date = @target_date
+          AND version_id = (
+            SELECT MAX(version_id)
+            FROM `nba_predictions.current_subset_picks`
+            WHERE game_date = @target_date
+          )
+        ORDER BY subset_id, composite_score DESC
+        """
+        params = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+        try:
+            return self.query_to_list(query, params)
+        except Exception as e:
+            logger.warning(f"Failed to query materialized picks (table may not exist): {e}")
+            return []
+
+    def _build_json_from_materialized(
+        self,
+        target_date: str,
+        materialized_picks: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """
+        Build export JSON from materialized picks data.
+
+        Args:
+            target_date: Date string in YYYY-MM-DD format
+            materialized_picks: Rows from current_subset_picks
+
+        Returns:
+            Dictionary ready for JSON serialization
+        """
+        # Get performance stats
         all_performance = self._get_all_subset_performance()
+
+        # Group picks by subset_id
+        picks_by_subset = {}
+        for pick in materialized_picks:
+            sid = pick['subset_id']
+            if sid not in picks_by_subset:
+                picks_by_subset[sid] = {
+                    'subset_name': pick['subset_name'],
+                    'picks': [],
+                }
+            picks_by_subset[sid]['picks'].append(pick)
 
         # Build clean groups
         clean_groups = []
-        for subset in subsets:
-            # Filter predictions for this subset
-            subset_picks = self._filter_picks_for_subset(
-                predictions,
-                subset,
-                daily_signal
-            )
+        for subset_id, data in picks_by_subset.items():
+            public = get_public_name(subset_id)
+            stats = all_performance.get(subset_id, {'hit_rate': 0.0, 'roi': 0.0})
 
-            # Get public name
-            public = get_public_name(subset['subset_id'])
-
-            # Get historical performance stats from cache
-            stats = all_performance.get(subset['subset_id'], {'hit_rate': 0.0, 'roi': 0.0})
-
-            # Build clean pick structure
             clean_picks = []
-            for pick in subset_picks:
+            for pick in data['picks']:
                 clean_picks.append({
                     'player': pick['player_name'],
                     'team': pick['team'],
                     'opponent': pick['opponent'],
                     'prediction': round(pick['predicted_points'], 1),
                     'line': round(pick['current_points_line'], 1),
-                    'direction': pick['recommendation']
+                    'direction': pick['recommendation'],
                 })
 
             clean_groups.append({
@@ -116,19 +180,75 @@ class AllSubsetsPicksExporter(BaseExporter):
                 'stats': {
                     'hit_rate': round(stats.get('hit_rate', 0.0), 1),
                     'roi': round(stats.get('roi', 0.0), 1),
-                    'days': 30
+                    'days': 30,
                 },
-                'picks': clean_picks
+                'picks': clean_picks,
             })
 
         # Sort by ID
+        clean_groups.sort(key=lambda x: int(x['id']) if x['id'].isdigit() else 999)
+
+        return {
+            'date': target_date,
+            'generated_at': self.get_generated_at(),
+            'model': get_model_codename('catboost_v9'),
+            'groups': clean_groups,
+        }
+
+    def _build_json_on_the_fly(self, target_date: str) -> Dict[str, Any]:
+        """
+        Fallback: compute subset picks on-the-fly (for dates without materialized data).
+
+        This preserves the original generate_json logic from before Session 153.
+
+        Args:
+            target_date: Date string in YYYY-MM-DD format
+
+        Returns:
+            Dictionary ready for JSON serialization
+        """
+        subsets = self._query_subset_definitions()
+        predictions = self._query_all_predictions(target_date)
+        daily_signal = self._query_daily_signal(target_date)
+        all_performance = self._get_all_subset_performance()
+
+        clean_groups = []
+        for subset in subsets:
+            subset_picks = self._filter_picks_for_subset(
+                predictions, subset, daily_signal
+            )
+            public = get_public_name(subset['subset_id'])
+            stats = all_performance.get(subset['subset_id'], {'hit_rate': 0.0, 'roi': 0.0})
+
+            clean_picks = []
+            for pick in subset_picks:
+                clean_picks.append({
+                    'player': pick['player_name'],
+                    'team': pick['team'],
+                    'opponent': pick['opponent'],
+                    'prediction': round(pick['predicted_points'], 1),
+                    'line': round(pick['current_points_line'], 1),
+                    'direction': pick['recommendation'],
+                })
+
+            clean_groups.append({
+                'id': public['id'],
+                'name': public['name'],
+                'stats': {
+                    'hit_rate': round(stats.get('hit_rate', 0.0), 1),
+                    'roi': round(stats.get('roi', 0.0), 1),
+                    'days': 30,
+                },
+                'picks': clean_picks,
+            })
+
         clean_groups.sort(key=lambda x: int(x['id']))
 
         return {
             'date': target_date,
             'generated_at': self.get_generated_at(),
             'model': get_model_codename('catboost_v9'),
-            'groups': clean_groups
+            'groups': clean_groups,
         }
 
     def _query_subset_definitions(self) -> List[Dict[str, Any]]:
@@ -167,7 +287,7 @@ class AllSubsetsPicksExporter(BaseExporter):
 
     def _query_all_predictions(self, target_date: str) -> List[Dict[str, Any]]:
         """
-        Query all predictions for a specific date.
+        Query all predictions for a specific date (fallback path).
 
         Args:
             target_date: Date string in YYYY-MM-DD format
@@ -227,7 +347,7 @@ class AllSubsetsPicksExporter(BaseExporter):
 
     def _query_daily_signal(self, target_date: str) -> Optional[Dict[str, Any]]:
         """
-        Query daily signal for filtering.
+        Query daily signal for filtering (fallback path).
 
         Args:
             target_date: Date string in YYYY-MM-DD format
@@ -260,7 +380,7 @@ class AllSubsetsPicksExporter(BaseExporter):
         daily_signal: Optional[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """
-        Filter predictions based on subset criteria.
+        Filter predictions based on subset criteria (fallback path).
 
         Args:
             predictions: List of all predictions
@@ -375,69 +495,4 @@ class AllSubsetsPicksExporter(BaseExporter):
             f"with {total_picks} total picks for {target_date} to {gcs_path}"
         )
 
-        # Session 152: Record subset snapshot for history tracking
-        self._record_snapshot(target_date, json_data, trigger_source, batch_id)
-
         return gcs_path
-
-    def _record_snapshot(
-        self,
-        target_date: str,
-        json_data: Dict[str, Any],
-        trigger_source: str,
-        batch_id: Optional[str],
-    ) -> None:
-        """
-        Session 152: Record subset picks snapshot to BigQuery for history tracking.
-
-        Each export creates a snapshot row per subset group, capturing the exact
-        picks at that moment. Enables tracking how subsets change throughout the day
-        and future subset locking.
-
-        Args:
-            target_date: Date string in YYYY-MM-DD format
-            json_data: The full export JSON (with groups)
-            trigger_source: What triggered this export
-            batch_id: Optional prediction batch ID
-        """
-        try:
-            from shared.clients.bigquery_pool import get_bigquery_client
-            from shared.config.gcp_config import get_project_id
-
-            project_id = get_project_id()
-            client = get_bigquery_client(project_id)
-            table_id = f"{project_id}.nba_predictions.subset_pick_snapshots"
-
-            snapshot_id = str(uuid.uuid4())[:12]
-            snapshot_at = datetime.now(timezone.utc).isoformat()
-
-            rows = []
-            for group in json_data.get('groups', []):
-                rows.append({
-                    'snapshot_id': snapshot_id,
-                    'snapshot_at': snapshot_at,
-                    'game_date': target_date,
-                    'trigger_source': trigger_source,
-                    'batch_id': batch_id,
-                    'subset_id': group['id'],
-                    'subset_name': group['name'],
-                    'pick_count': len(group.get('picks', [])),
-                    'picks': json.dumps(group.get('picks', [])),
-                    'is_locked': False,
-                    'locked_at': None,
-                    'lock_reason': None,
-                })
-
-            if rows:
-                errors = client.insert_rows_json(table_id, rows)
-                if errors:
-                    logger.warning(f"Errors inserting subset snapshots: {errors}")
-                else:
-                    logger.info(
-                        f"Recorded {len(rows)} subset snapshots "
-                        f"(snapshot_id={snapshot_id}, trigger={trigger_source})"
-                    )
-
-        except Exception as e:
-            # Non-fatal: snapshot recording should never block exports
-            logger.warning(f"Failed to record subset snapshot: {e}")

@@ -74,6 +74,7 @@ from data_processors.publishing.subset_definitions_exporter import SubsetDefinit
 from data_processors.publishing.daily_signals_exporter import DailySignalsExporter
 from data_processors.publishing.subset_performance_exporter import SubsetPerformanceExporter
 from data_processors.publishing.all_subsets_picks_exporter import AllSubsetsPicksExporter
+from data_processors.publishing.subset_materializer import SubsetMaterializer
 
 # Configure logging
 logging.basicConfig(
@@ -335,9 +336,24 @@ def export_date(
 
     # === PHASE 6 SUBSET EXPORTS (Session 90) ===
 
-    # Subset picks exporter (all 9 groups in one file)
+    # Subset picks exporter (all groups in one file)
+    # Session 153: Materialize subsets to BigQuery first, then export to GCS
     if 'subset-picks' in export_types:
         try:
+            # Step 1: Materialize subsets to BigQuery (creates queryable entity)
+            materializer = SubsetMaterializer()
+            mat_result = materializer.materialize(target_date, trigger_source='export')
+            logger.info(
+                f"  Subset Materialization: {mat_result.get('total_picks', 0)} picks "
+                f"across {len(mat_result.get('subsets', {}))} subsets "
+                f"(version={mat_result.get('version_id')})"
+            )
+        except Exception as e:
+            # Non-fatal: if materialization fails, export will use fallback
+            logger.warning(f"  Subset Materialization failed (export will use fallback): {e}")
+
+        try:
+            # Step 2: Export to GCS (reads from materialized table or falls back)
             exporter = AllSubsetsPicksExporter()
             path = exporter.export(target_date)
             result['paths']['subset_picks'] = path

@@ -909,6 +909,39 @@ def run_prediction_accuracy_grading(target_date: str, skip_validation: bool = Fa
     return result
 
 
+def run_subset_grading(target_date: str) -> Dict:
+    """
+    Run subset grading using materialized subset membership.
+
+    Session 153: Grades subsets based on what was actually in each subset
+    at game time, not retroactive recomputation.
+
+    Args:
+        target_date: Date to grade (YYYY-MM-DD format)
+
+    Returns:
+        Subset grading result dictionary
+    """
+    sys.path.insert(0, '/workspace')
+
+    from datetime import date as date_type
+    from data_processors.grading.subset_grading.subset_grading_processor import (
+        SubsetGradingProcessor
+    )
+
+    logger.info(f"Running subset grading for {target_date}")
+
+    # Parse date
+    year, month, day = map(int, target_date.split('-'))
+    game_date = date_type(year, month, day)
+
+    processor = SubsetGradingProcessor(project_id=PROJECT_ID)
+    result = processor.process_date(game_date)
+
+    logger.info(f"Subset grading result for {target_date}: {result}")
+    return result
+
+
 def run_system_daily_performance(target_date: str) -> Dict:
     """
     Run system daily performance aggregation for a specific date.
@@ -1194,6 +1227,17 @@ def main(cloud_event):
             except Exception as e:
                 logger.warning(f"Post-grading validation failed (non-fatal): {e}")
                 validation_result = {'passed': True, 'error': str(e)}
+
+        # Step 2b: Grade subsets using materialized membership (Session 153)
+        if grading_result.get('status') == 'success':
+            try:
+                subset_grading_result = run_subset_grading(target_date)
+                logger.info(
+                    f"Subset grading: {subset_grading_result.get('subsets_graded', 0)} subsets graded"
+                )
+            except Exception as e:
+                # Non-fatal: subset grading failure should not block prediction grading
+                logger.warning(f"Subset grading failed (non-fatal): {e}")
 
         # Step 3: Run system daily performance aggregation (if enabled)
         if run_aggregation and grading_result.get('status') == 'success':
