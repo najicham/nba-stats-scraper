@@ -118,3 +118,39 @@ curl -X POST "https://prediction-coordinator-756957797294.us-west2.run.app/start
 - `bin/model-registry.sh` — SHA256 validation, manifest command
 - `nba_predictions.model_registry` — Added SHA256 column, fixed statuses
 - `gs://nba-props-platform-models/catboost/v9/manifest.json` — Created
+
+## Lessons Learned
+
+### 1. MAE is a misleading metric for betting models
+The Feb 2 retrain had better MAE (4.12 vs 4.82) but worse betting performance. MAE measures how close predictions are to actual outcomes — but for OVER/UNDER betting, what matters is whether your prediction is on the *right side of the line*. A model that predicts 15 when a player scores 20 (MAE=5) on a line of 18 still wins the OVER bet. A model that predicts 17 (MAE=3, better!) on the same line loses.
+
+**Rule:** Always check `avg(predicted - vegas_line)` bias. If it's outside +/-1.5, the model is miscalibrated regardless of MAE.
+
+### 2. Model identity must be immutable
+A static `MODEL_VERSION = "v9_current_season"` for all retrains made it impossible to distinguish predictions from different model files in grading data. Every prediction must carry the exact model file name and SHA256 hash.
+
+### 3. Expanding training data isn't always better
+The original V9 (Nov 2 - Jan 8, 9,993 samples) outperformed the retrain (Nov 2 - Jan 31, ~15K samples). Possible reasons:
+- Late January data had lower Vegas line coverage (~39-60% vegas_quality_pct)
+- More data diluted early-season patterns that were predictive
+- The model may need weighting by data quality, not just recency
+
+### 4. Dockerfile and code must agree on file patterns
+The Dockerfile copied `catboost_v9_2026_02.cbm` but the code searched for `catboost_v9_33features_*.cbm`. The monthly model sat in the Docker image completely unused for days. Always verify the code path matches the build artifact.
+
+### 5. Health checks should validate the active model
+The worker health check (`/health/deep`) only validated the V8 model path. V9 model loading was lazy (deferred to first prediction). The health check should verify that the production model (V9) can be loaded.
+
+## Future Work
+
+### Not Yet Implemented
+1. **Shadow testing infrastructure** — Run a challenger model alongside production with a different `system_id` (e.g., `catboost_v9_shadow`). Compare predictions without affecting live output.
+2. **Automated holdout evaluation in CI** — Cloud Build step that runs the retrained model against the last 7 days of holdout data before allowing deployment.
+3. **Model performance monitoring** — Weekly automated check of `pred_vs_vegas` drift. Alert if bias exceeds +/-1.0 for 3+ consecutive days.
+4. **V8 model parity** — V8's catboost_v8.py should also get dynamic versioning and SHA256 tracking.
+5. **Health check for V9 model** — `/health/deep` should validate V9 model accessibility, not just V8.
+
+### Open Questions
+1. Why does expanding the training window degrade performance? Is it data quality or overfitting?
+2. Should we weight training samples by `feature_quality_score` instead of treating all rows equally?
+3. Is there an optimal training window size (60 days? 90 days? Dynamic?)
