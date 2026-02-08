@@ -3,24 +3,22 @@ Subset public name mappings for clean API.
 
 Maps internal subset IDs to user-facing names and IDs that don't reveal
 technical details or strategy.
+
+Session 154: Redesigned from 18 overlapping subsets to 8 clean, distinct subsets
+based on full-season performance data. Key dimensions: edge, direction, signal.
 """
 
 # Subset public name mapping
-# IDs ordered logically: Top 1-10, Best Value variants, Premium, Alternative
+# IDs ordered by conviction: highest first
 SUBSET_PUBLIC_NAMES = {
-    'v9_high_edge_top1': {'id': '1', 'name': 'Top Pick'},
-    'v9_high_edge_top3': {'id': '2', 'name': 'Top 3'},
-    'v9_high_edge_top5': {'id': '3', 'name': 'Top 5'},
-    'v9_high_edge_top10': {'id': '4', 'name': 'Top 10'},
-    'v9_high_edge_balanced': {'id': '5', 'name': 'Best Value'},
-    'v9_high_edge_top5_balanced': {'id': '6', 'name': 'Best Value Top 5'},
-    'v9_high_edge_any': {'id': '7', 'name': 'All Picks'},
-    'v9_premium_safe': {'id': '8', 'name': 'Premium'},
-    'v9_high_edge_warning': {'id': '9', 'name': 'Alternative'},
-    # Session 124: Direction-specific subsets for tracking OVER vs UNDER performance
-    'v9_high_edge_over_only': {'id': '10', 'name': 'OVER Only'},
-    'v9_high_edge_under_only': {'id': '11', 'name': 'UNDER Only'},
-    'v9_high_edge_all_directions': {'id': '12', 'name': 'All Directions'},
+    'top_pick': {'id': '1', 'name': 'Top Pick'},
+    'top_3': {'id': '2', 'name': 'Top 3'},
+    'top_5': {'id': '3', 'name': 'Top 5'},
+    'high_edge_over': {'id': '4', 'name': 'High Edge OVER'},
+    'high_edge_all': {'id': '5', 'name': 'High Edge All'},
+    'ultra_high_edge': {'id': '6', 'name': 'Ultra High Edge'},
+    'green_light': {'id': '7', 'name': 'Green Light'},
+    'all_picks': {'id': '8', 'name': 'All Picks'},
 }
 
 # Reverse lookup

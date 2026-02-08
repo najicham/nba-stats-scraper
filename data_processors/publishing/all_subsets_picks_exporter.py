@@ -242,7 +242,7 @@ class AllSubsetsPicksExporter(BaseExporter):
                 'picks': clean_picks,
             })
 
-        clean_groups.sort(key=lambda x: int(x['id']))
+        clean_groups.sort(key=lambda x: int(x['id']) if x['id'].isdigit() else 999)
 
         return {
             'date': target_date,
@@ -269,6 +269,7 @@ class AllSubsetsPicksExporter(BaseExporter):
           min_edge,
           min_confidence,
           signal_condition,
+          direction,
           pct_over_min,
           pct_over_max,
           is_active
@@ -407,10 +408,19 @@ class AllSubsetsPicksExporter(BaseExporter):
                 if pred['confidence_score'] < float(subset['min_confidence']):
                     continue
 
-            # Apply signal condition filter
+            # Apply direction filter (OVER, UNDER, or ANY/None = no filter)
+            direction = subset.get('direction')
+            if direction and direction not in ('ANY', None):
+                if pred['recommendation'] != direction:
+                    continue
+
+            # Apply signal condition filter (only when we have actual signal data)
             signal_condition = subset.get('signal_condition')
-            if signal_condition and signal:
-                if signal != signal_condition:
+            if signal_condition and signal_condition != 'ANY' and signal:
+                if signal_condition == 'GREEN_OR_YELLOW':
+                    if signal not in ('GREEN', 'YELLOW'):
+                        continue
+                elif signal != signal_condition:
                     continue
 
             # Apply pct_over range filter

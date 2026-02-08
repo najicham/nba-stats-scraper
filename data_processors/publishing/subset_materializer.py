@@ -201,6 +201,7 @@ class SubsetMaterializer:
           min_edge,
           min_confidence,
           signal_condition,
+          direction,
           pct_over_min,
           pct_over_max,
           is_active
@@ -315,9 +316,19 @@ class SubsetMaterializer:
                 if pred['confidence_score'] < float(subset['min_confidence']):
                     continue
 
+            # Direction filter (OVER, UNDER, or ANY/None = no filter)
+            direction = subset.get('direction')
+            if direction and direction not in ('ANY', None):
+                if pred['recommendation'] != direction:
+                    continue
+
+            # Signal filter (only applied when we have both a condition and actual signal data)
             signal_condition = subset.get('signal_condition')
-            if signal_condition and signal:
-                if signal != signal_condition:
+            if signal_condition and signal_condition != 'ANY' and signal:
+                if signal_condition == 'GREEN_OR_YELLOW':
+                    if signal not in ('GREEN', 'YELLOW'):
+                        continue
+                elif signal != signal_condition:
                     continue
 
             if pct_over is not None:
