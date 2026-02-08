@@ -101,7 +101,7 @@ except Exception as e:
           # Download and verify SHA256
           TMP_FILE="/tmp/model_validate_$(basename "$gcs_path")"
           gsutil -q cp "$gcs_path" "$TMP_FILE" 2>/dev/null
-          ACTUAL_SHA=$(sha256sum "$TMP_FILE" | cut -c1-16)
+          ACTUAL_SHA=$(sha256sum "$TMP_FILE" | cut -d' ' -f1)
           rm -f "$TMP_FILE"
           if [ "$ACTUAL_SHA" = "$sha256_expected" ]; then
             echo "OK $model_id (SHA256 verified)"
