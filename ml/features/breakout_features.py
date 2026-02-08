@@ -274,6 +274,11 @@ def get_training_data_query(
       LEFT JOIN `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
         ON bg.player_lookup = mf.player_lookup
         AND bg.game_date = mf.game_date
+        -- Session 156: Quality gate for training data - only use clean feature store records.
+        -- required_default_count excludes optional vegas (features 25-27).
+        -- Records with non-vegas defaults have garbage feature values that corrupt training.
+        AND COALESCE(mf.required_default_count, mf.default_feature_count, 0) = 0
+        AND COALESCE(mf.feature_quality_score, 0) >= 70
     ),
 
     -- Compute final features

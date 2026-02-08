@@ -677,6 +677,8 @@ class FeatureExtractor:
         ),
         last_10_games AS (
             -- Use 60-day window for efficient retrieval of recent games
+            -- Session 156: Added usage_rate, assisted_fg_makes, fg_makes, team_abbr
+            -- for complete cache miss fallback computation
             SELECT
                 player_lookup,
                 game_date,
@@ -688,6 +690,10 @@ class FeatureExtractor:
                 mid_range_attempts,
                 three_pt_attempts,
                 is_dnp,  -- v3.1: Added for dnp_rate feature calculation
+                usage_rate,  -- Session 156: for player_usage_rate_season fallback
+                assisted_fg_makes,  -- Session 156: for assisted_rate_last_10 fallback
+                fg_makes,  -- Session 156: for assisted_rate_last_10 fallback
+                team_abbr,  -- Session 156: for team lookups in fallback
                 ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as rn
             FROM `{self.project_id}.nba_analytics.player_game_summary`
             WHERE game_date < '{game_date}'
@@ -704,6 +710,10 @@ class FeatureExtractor:
             l.mid_range_attempts,
             l.three_pt_attempts,
             l.is_dnp,  -- v3.1: Added for dnp_rate feature calculation
+            l.usage_rate,
+            l.assisted_fg_makes,
+            l.fg_makes,
+            l.team_abbr,
             t.total_games_available
         FROM last_10_games l
         JOIN total_games_per_player t ON l.player_lookup = t.player_lookup
@@ -801,22 +811,68 @@ class FeatureExtractor:
         if minutes_l10:
             result['minutes_avg_last_10'] = sum(minutes_l10) / len(minutes_l10)
 
-        # Games in last 7 days (handle date/Timestamp types from BigQuery)
+        # Helper to normalize game dates (handles Timestamp and date objects)
+        def _normalize_date(gd):
+            if gd is not None and hasattr(gd, 'date'):
+                return gd.date()  # Convert pandas Timestamp to date
+            return gd
+
+        # Games in last 7 and 14 days (handle date/Timestamp types from BigQuery)
         seven_days_ago = game_date - timedelta(days=7)
+        fourteen_days_ago = game_date - timedelta(days=14)
         games_in_7d = 0
+        games_in_14d = 0
+        minutes_in_7d = 0.0
+        minutes_in_14d = 0.0
         for g in played_games:
-            gd = g.get('game_date')
+            gd = _normalize_date(g.get('game_date'))
             if gd is not None:
-                if hasattr(gd, 'date'):
-                    gd = gd.date()  # Convert pandas Timestamp to date
+                mins = g.get('minutes_played', 0) or 0
                 if gd >= seven_days_ago:
                     games_in_7d += 1
+                    minutes_in_7d += mins
+                if gd >= fourteen_days_ago:
+                    games_in_14d += 1
+                    minutes_in_14d += mins
         result['games_in_last_7_days'] = games_in_7d
+        result['games_in_last_14_days'] = games_in_14d
+        result['minutes_in_last_7_days'] = minutes_in_7d
+        result['minutes_in_last_14_days'] = minutes_in_14d
 
-        # Season stats from the separate lookup
+        # Back-to-backs in last 14 days: count pairs of games on consecutive days
+        recent_dates = sorted([
+            _normalize_date(g.get('game_date'))
+            for g in played_games
+            if _normalize_date(g.get('game_date')) is not None
+               and _normalize_date(g.get('game_date')) >= fourteen_days_ago
+        ])
+        b2b_count = 0
+        for i in range(1, len(recent_dates)):
+            if (recent_dates[i] - recent_dates[i - 1]).days == 1:
+                b2b_count += 1
+        result['back_to_backs_last_14_days'] = b2b_count
+
+        # Assisted rate: sum(assisted_fg_makes) / sum(fg_makes) from last 10
+        total_assisted = sum(g.get('assisted_fg_makes', 0) or 0 for g in last_10)
+        total_fgm = sum(g.get('fg_makes', 0) or 0 for g in last_10)
+        if total_fgm > 0:
+            result['assisted_rate_last_10'] = total_assisted / total_fgm
+
+        # PPM avg last 10: sum(points) / sum(minutes)
+        total_pts = sum(g.get('points', 0) or 0 for g in last_10)
+        total_mins = sum(g.get('minutes_played', 0) or 0 for g in last_10)
+        if total_mins > 0:
+            result['ppm_avg_last_10'] = total_pts / total_mins
+
+        # Player usage rate season: avg(usage_rate) from season stats lookup or games
         season = self._season_stats_lookup.get(player_lookup, {})
         if season.get('points_avg_season') is not None:
             result['points_avg_season'] = season['points_avg_season']
+
+        # Usage rate from games data (fallback for player_usage_rate_season)
+        usage_rates = [g.get('usage_rate') for g in played_games if g.get('usage_rate') is not None]
+        if usage_rates:
+            result['player_usage_rate_season'] = sum(usage_rates) / len(usage_rates)
 
         # Shot zone percentages from game data (paint, mid, three, FT)
         total_paint = sum(g.get('paint_attempts', 0) or 0 for g in last_10)
@@ -833,6 +889,9 @@ class FeatureExtractor:
         # Get player's team from player_context_lookup or last_10_games
         player_context = self._player_context_lookup.get(player_lookup, {})
         team_abbr = player_context.get('team_abbr')
+        # Session 156: Also try team_abbr from the games data if context is missing
+        if not team_abbr and played_games:
+            team_abbr = played_games[0].get('team_abbr')
         if team_abbr:
             team_games = self._team_games_lookup.get(team_abbr, [])
             # Use last 10 team games (sorted by game_date ascending, take last 10)

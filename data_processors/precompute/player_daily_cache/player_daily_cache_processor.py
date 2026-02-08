@@ -477,30 +477,78 @@ class PlayerDailyCacheProcessor(
     def _extract_upcoming_context_data(self, analysis_date: date) -> None:
         """Extract upcoming player game context (today's games).
 
+        Session 156: Expanded to include ALL rostered players on teams with games today,
+        not just players already in upcoming_player_game_context. This ensures the daily
+        cache covers every player the feature store will need, reducing cache miss fallback usage.
+
         In backfill mode, if no context data exists, generates synthetic context
         from player_game_summary instead (who actually played vs who was expected).
         """
 
+        # Session 156: Get context players + roster players on teams with games today
+        # The UNION ensures players who are on rosters but missing from context
+        # (e.g., recently activated, questionable status) still get cache entries.
         query = f"""
-        SELECT
-            player_lookup,
-            universal_player_id,
-            team_abbr,
-            game_date,
-            games_in_last_7_days,
-            games_in_last_14_days,
-            minutes_in_last_7_days,
-            minutes_in_last_14_days,
-            back_to_backs_last_14_days,
-            avg_minutes_per_game_last_7,
-            fourth_quarter_minutes_last_7,
-            player_age
-        FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
-        WHERE game_date = '{analysis_date.isoformat()}'
+        WITH context_players AS (
+            SELECT
+                player_lookup,
+                universal_player_id,
+                team_abbr,
+                game_date,
+                games_in_last_7_days,
+                games_in_last_14_days,
+                minutes_in_last_7_days,
+                minutes_in_last_14_days,
+                back_to_backs_last_14_days,
+                avg_minutes_per_game_last_7,
+                fourth_quarter_minutes_last_7,
+                player_age
+            FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
+            WHERE game_date = '{analysis_date.isoformat()}'
+        ),
+        -- Teams with games today
+        teams_with_games AS (
+            SELECT DISTINCT team_abbr
+            FROM context_players
+        ),
+        -- Roster players on those teams who are NOT already in context
+        -- Uses recent player_game_summary to find rostered players with game history
+        roster_players AS (
+            SELECT DISTINCT
+                pgs.player_lookup,
+                pgs.universal_player_id,
+                pgs.team_abbr,
+                DATE('{analysis_date.isoformat()}') as game_date,
+                -- Fatigue metrics will be NULL; the cache processor handles NULLs gracefully
+                NULL as games_in_last_7_days,
+                NULL as games_in_last_14_days,
+                CAST(NULL AS INT64) as minutes_in_last_7_days,
+                CAST(NULL AS INT64) as minutes_in_last_14_days,
+                NULL as back_to_backs_last_14_days,
+                NULL as avg_minutes_per_game_last_7,
+                NULL as fourth_quarter_minutes_last_7,
+                NULL as player_age
+            FROM `{self.project_id}.nba_analytics.player_game_summary` pgs
+            WHERE pgs.game_date >= DATE_SUB('{analysis_date.isoformat()}', INTERVAL 30 DAY)
+              AND pgs.game_date < '{analysis_date.isoformat()}'
+              AND pgs.team_abbr IN (SELECT team_abbr FROM teams_with_games)
+              AND pgs.player_lookup NOT IN (SELECT player_lookup FROM context_players)
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY pgs.player_lookup ORDER BY pgs.game_date DESC) = 1
+        )
+        SELECT * FROM context_players
+        UNION ALL
+        SELECT * FROM roster_players
         """
 
         self.upcoming_context_data = self.bq_client.query(query).to_dataframe()
-        logger.info(f"Extracted {len(self.upcoming_context_data)} upcoming player contexts")
+        context_count = len(self.upcoming_context_data)
+
+        # Count how many came from roster expansion vs context
+        roster_expanded = self.upcoming_context_data[self.upcoming_context_data['games_in_last_7_days'].isna()].shape[0] if not self.upcoming_context_data.empty else 0
+        if roster_expanded > 0:
+            logger.info(f"Extracted {context_count} upcoming player contexts ({context_count - roster_expanded} from context + {roster_expanded} roster expansion)")
+        else:
+            logger.info(f"Extracted {context_count} upcoming player contexts")
 
         # BACKFILL MODE: Generate synthetic context from PGS if no context data exists
         if self.upcoming_context_data.empty and self.is_backfill_mode:

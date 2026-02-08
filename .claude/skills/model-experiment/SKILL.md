@@ -65,13 +65,28 @@ PYTHONPATH=. python ml/experiments/train_breakout_classifier.py \
 PYTHONPATH=. python ml/experiments/train_breakout_classifier.py --name "TEST" --dry-run
 ```
 
-## Data Quality Filtering
+## Data Quality Filtering (Session 156: Zero Tolerance for Training)
 
-**Always filter training and evaluation data by quality fields from `ml_feature_store_v2`:**
+**CRITICAL: All training and evaluation queries MUST enforce zero tolerance for non-vegas defaults.**
 
-- **Training data**: Use `WHERE is_quality_ready = TRUE` to exclude rows with missing or defaulted features. Minimum threshold: `feature_quality_score >= 70`.
-- **Evaluation data**: Also apply `is_quality_ready = TRUE` filter. Evaluating on unfiltered data inflates error rates and produces misleading metrics (low-quality rows have defaulted features that hurt accuracy regardless of model quality).
-- **Sanity check**: If fewer than 60% of rows pass `is_quality_ready = TRUE`, investigate Phase 4 processor failures before training.
+The only features allowed to be missing are vegas lines (features 25-27) because ~60% of bench players don't have published prop lines. All other features MUST have real data.
+
+**Required filters on `ml_feature_store_v2`:**
+```sql
+-- Zero tolerance: no non-vegas defaults (required_default_count excludes optional vegas 25-27)
+AND COALESCE(mf.required_default_count, mf.default_feature_count, 0) = 0
+-- Minimum quality score
+AND mf.feature_quality_score >= 70
+```
+
+**Why this matters (Session 156 discovery):**
+- CatBoost training had `feature_quality_score >= 70` but NOT `required_default_count = 0`
+- Breakout classifier had NO quality filter at all on `ml_feature_store_v2` joins
+- Records from returning-from-injury players (e.g., 3+ months out) have 7+ defaulted features with garbage values (hardcoded 10.0 for points avg, 50.0 for fatigue, etc.)
+- These records contaminate training: model learns that "default features = X outcome"
+- All training scripts now enforce zero tolerance (Session 156 fix)
+
+**Sanity check**: If fewer than 60% of rows pass quality filters, investigate Phase 4 processor failures before training.
 
 ## Regression Model Options
 
@@ -314,4 +329,5 @@ ORDER BY created_at DESC LIMIT 5"
 ---
 *Created: Session 58*
 *Updated: Session 125 - Added breakout classifier support*
+*Updated: Session 156 - Zero tolerance for training data quality (required_default_count = 0)*
 *Part of: Monthly Retraining Infrastructure*

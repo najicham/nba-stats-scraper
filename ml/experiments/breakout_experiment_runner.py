@@ -673,6 +673,9 @@ def load_breakout_training_data_experimental(
       WHERE wbh.game_date BETWEEN '{start}' AND '{end}'
         AND mf.feature_count >= 33
         AND wbh.is_breakout_game IS NOT NULL
+        -- Session 156: Quality gate for training data
+        AND COALESCE(mf.required_default_count, mf.default_feature_count, 0) = 0
+        AND COALESCE(mf.feature_quality_score, 0) >= 70
     )
     SELECT DISTINCT
       player_lookup,

@@ -793,6 +793,28 @@ class MLFeatureStoreProcessor(
         )
         self._timing['batch_extract_all_data'] = time.time() - step_start
 
+        # Session 156: Filter out players with no recent game history
+        # Require presence in _last_10_games_lookup (games in the 60-day window).
+        # Players returning from 3+ month injury or with zero recent games would produce
+        # feature store records that are 7+ defaults — these:
+        # 1. Get blocked by quality gate anyway (required_default_count > 0)
+        # 2. Risk contaminating training data (breakout classifier had NO quality filter)
+        # 3. Inflate quality monitoring metrics with noise
+        # Season-only stats (from _season_stats_lookup) are NOT sufficient — a player with
+        # 2 games from October but 0 games in the last 60 days has no meaningful recent features.
+        # These players naturally re-enter once they play games and accumulate recent history.
+        pre_filter_count = len(self.players_with_games)
+        self.players_with_games = [
+            p for p in self.players_with_games
+            if p['player_lookup'] in self.feature_extractor._last_10_games_lookup
+        ]
+        filtered_count = pre_filter_count - len(self.players_with_games)
+        if filtered_count > 0:
+            logger.info(
+                f"Session 156: Filtered {filtered_count} players with no recent games "
+                f"(not in 60-day lookback window) ({pre_filter_count} → {len(self.players_with_games)})"
+            )
+
         # Set raw_data to pass base class validation
         self.raw_data = self.players_with_games
 
@@ -1772,15 +1794,26 @@ class MLFeatureStoreProcessor(
         feature_sources[30] = 'opponent_history' if opponent_data else 'fallback'
 
         # Features 31-32: Minutes/PPM (HIGH IMPORTANCE: 14.6% + 10.9%)
+        # Session 156: Try dedicated lookup first, fall back to phase4_data (cache fallback)
         minutes_ppm_data = self.feature_extractor.get_minutes_ppm(player_lookup) if player_lookup else {}
 
-        minutes_avg = minutes_ppm_data.get('minutes_avg_last_10', 28.0)
+        minutes_avg = minutes_ppm_data.get('minutes_avg_last_10')
+        if minutes_avg is None:
+            # Fall back to phase4_data which includes cache miss fallback values
+            minutes_avg = phase4_data.get('minutes_avg_last_10', 28.0)
         features.append(float(minutes_avg) if minutes_avg is not None else 28.0)
-        feature_sources[31] = 'minutes_ppm' if minutes_ppm_data else 'fallback'
+        feature_sources[31] = 'minutes_ppm' if minutes_ppm_data.get('minutes_avg_last_10') is not None else (
+            'phase4' if phase4_data.get('minutes_avg_last_10') is not None else 'default'
+        )
 
-        ppm_avg = minutes_ppm_data.get('ppm_avg_last_10', 0.4)
+        ppm_avg = minutes_ppm_data.get('ppm_avg_last_10')
+        if ppm_avg is None:
+            # Fall back to phase4_data which includes cache miss fallback values
+            ppm_avg = phase4_data.get('ppm_avg_last_10', 0.4)
         features.append(float(ppm_avg) if ppm_avg is not None else 0.4)
-        feature_sources[32] = 'minutes_ppm' if minutes_ppm_data else 'fallback'
+        feature_sources[32] = 'minutes_ppm' if minutes_ppm_data.get('ppm_avg_last_10') is not None else (
+            'phase4' if phase4_data.get('ppm_avg_last_10') is not None else 'default'
+        )
 
         # Feature 33: DNP Rate (v2.1 - gamebook-based DNP pattern detection)
         # Uses is_dnp field from player_game_summary to catch late scratches,

@@ -213,12 +213,22 @@ def load_train_data(client, start, end, min_quality_score=70):
     Session 104: Added quality filter to prevent training on bad data.
     Session 107: Now loads feature_names for safe name-based extraction.
     Session 107: Added filter to exclude bad default records (L5=10.0 when L10>15).
+    Session 156: Added required_default_count = 0 filter (zero tolerance for training).
+        Only vegas features (25-27) are allowed to be missing — they're in OPTIONAL_FEATURES
+        and excluded from required_default_count. All other features MUST have real data.
+        This prevents training on records from returning-from-injury players, cold starts,
+        or any data quality issues that would produce garbage feature values.
     """
     quality_filter = f"AND mf.feature_quality_score >= {min_quality_score}" if min_quality_score > 0 else ""
 
     # Session 107: Exclude records where pts_avg_last_5 is default 10.0 but pts_avg_last_10
     # shows the player should be higher. These are cold start errors (only 15 records total).
     bad_default_filter = "AND NOT (mf.features[OFFSET(0)] = 10.0 AND mf.features[OFFSET(1)] > 15)"
+
+    # Session 156: Zero tolerance for non-vegas defaults in training data.
+    # required_default_count excludes optional vegas features (25-27).
+    # COALESCE handles records from before Session 141 when this field didn't exist.
+    zero_tolerance_filter = "AND COALESCE(mf.required_default_count, mf.default_feature_count, 0) = 0"
 
     query = f"""
     SELECT mf.features, mf.feature_names, pgs.points as actual_points
@@ -231,6 +241,7 @@ def load_train_data(client, start, end, min_quality_score=70):
       AND mf.data_source NOT IN ('phase4_partial', 'early_season')
       {quality_filter}
       {bad_default_filter}
+      {zero_tolerance_filter}
     """
     return client.query(query).to_dataframe()
 
@@ -275,6 +286,8 @@ def load_eval_data(client, start, end, line_source='draftkings'):
     WHERE mf.game_date BETWEEN '{start}' AND '{end}'
       AND mf.feature_count >= 33 AND pgs.points IS NOT NULL
       AND (l.line - FLOOR(l.line)) IN (0, 0.5)
+      -- Session 156: Quality gate for eval data (same standard as training)
+      AND COALESCE(mf.required_default_count, mf.default_feature_count, 0) = 0
     """
     return client.query(query).to_dataframe()
 
