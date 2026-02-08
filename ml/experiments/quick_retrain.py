@@ -3,7 +3,24 @@
 Quick Model Retrain - Simple Monthly Retraining Script
 
 Designed for the /model-experiment skill and monthly retraining pipeline.
-Trains a CatBoost model on recent data and evaluates against V8 baseline.
+Trains a CatBoost model on recent data and evaluates against V9 baseline.
+
+Model Governance (Session 163):
+- Models are saved with standard naming: catboost_v9_{train_end}_{timestamp}.cbm
+- SHA256 hash computed and displayed for registry
+- Vegas bias check: BLOCKS if avg pred_vs_vegas outside +/- 1.5
+- Tier bias check: BLOCKS if any tier > +/- 5 points
+- Must pass ALL gates before manual promotion to production
+- Use ./bin/model-registry.sh to manage the registry
+
+Promotion Checklist (do NOT skip):
+1. Holdout evaluation on >= 7 days (this script)
+2. High-edge (3+) hit rate >= 60%
+3. pred_vs_vegas bias within +/- 1.5
+4. No critical tier bias (> +/- 5)
+5. Register in model_registry table
+6. Upload to GCS with standard naming
+7. Shadow test for 2+ days before switching CATBOOST_V9_MODEL_PATH
 
 Usage:
     # Quick retrain with defaults (last 60 days training, last 7 days eval)
@@ -15,22 +32,11 @@ Usage:
         --train-start 2025-12-01 --train-end 2026-01-20 \
         --eval-start 2026-01-21 --eval-end 2026-01-28
 
-    # Use different line source (default is draftkings to match production)
-    PYTHONPATH=. python ml/experiments/quick_retrain.py \
-        --name "V9_VERIFY" \
-        --line-source draftkings
-
     # Dry run
     PYTHONPATH=. python ml/experiments/quick_retrain.py --name "TEST" --dry-run
 
-Features:
-- Simple date range defaults (--train-days 60, --eval-days 7)
-- Production-equivalent evaluation with configurable line source (default: DraftKings)
-- Automatic comparison to V8 baseline
-- Registers in ml_experiments table
-- Clear recommendation output
-
 Session 58 - Monthly Retraining Infrastructure
+Session 163 - Model Governance Gates
 """
 
 import sys
@@ -38,6 +44,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import argparse
+import hashlib
 import uuid
 import json
 import numpy as np
@@ -464,11 +471,23 @@ def main():
     # Compute tier bias (NEW: Session 104 - catch regression-to-mean bias)
     tier_bias = compute_tier_bias(preds, y_eval.values)
 
-    # Save model
+    # Vegas bias gate (Session 163 — the Feb 2 retrain had good MAE but -2.26 Vegas bias)
+    pred_vs_vegas = np.mean(preds - lines)
+    VEGAS_BIAS_LIMIT = 1.5
+
+    # Save model with standard naming
     MODEL_OUTPUT_DIR.mkdir(exist_ok=True)
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
-    model_path = MODEL_OUTPUT_DIR / f"catboost_retrain_{args.name}_{ts}.cbm"
+    train_end_compact = dates['train_end'].replace('-', '')
+    model_path = MODEL_OUTPUT_DIR / f"catboost_v9_{train_end_compact}_{ts}.cbm"
     model.save_model(str(model_path))
+
+    # Compute SHA256 for registry
+    sha256 = hashlib.sha256()
+    with open(model_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha256.update(chunk)
+    model_sha256 = sha256.hexdigest()
 
     # Results
     print("\n" + "=" * 70)
@@ -517,42 +536,54 @@ def main():
             print(f"  {tier_name}: N/A (no samples)")
 
     if tier_bias['has_critical_bias']:
-        print("\n🔴 CRITICAL: Tier bias > ±5 detected! Model has regression-to-mean issue.")
+        print("\nCRITICAL: Tier bias > +/-5 detected! Model has regression-to-mean issue.")
 
-    # Recommendation with sample size and bias awareness
+    # Vegas Bias Analysis (Session 163 — most important single metric)
     print("\n" + "-" * 40)
-    mae_better = mae < V9_BASELINE['mae']
+    print("VEGAS BIAS (pred_vs_vegas)")
+    print("-" * 40)
+    vegas_emoji = "OK" if abs(pred_vs_vegas) <= VEGAS_BIAS_LIMIT else "FAIL"
+    print(f"  avg(predicted - vegas_line) = {pred_vs_vegas:+.2f} [{vegas_emoji}]")
+    print(f"  (limit: +/-{VEGAS_BIAS_LIMIT}. Feb 2 retrain was -2.26 = UNDER bias disaster)")
+    if abs(pred_vs_vegas) > VEGAS_BIAS_LIMIT:
+        print(f"  BLOCKED: Vegas bias outside +/-{VEGAS_BIAS_LIMIT} — model is miscalibrated vs market")
 
-    # Check filtered metrics only if sample size is reliable
+    # Governance Gate Summary
+    print("\n" + "=" * 70)
+    print(" GOVERNANCE GATES")
+    print("=" * 70)
+    mae_better = mae < V9_BASELINE['mae']
     edge3_reliable = bets_edge3 >= MIN_BETS_RELIABLE
     edge5_reliable = bets_edge5 >= MIN_BETS_RELIABLE
 
-    # Warnings for low sample sizes
-    if not edge3_reliable or not edge5_reliable:
-        print(f"⚠️  LOW SAMPLE SIZE: edge3={bets_edge3}, edge5={bets_edge5} (need {MIN_BETS_RELIABLE}+)")
-        print("    Filtered hit rates are NOT statistically reliable.")
-        print()
+    gates = []
+    gates.append(("MAE improvement", mae_better, f"{mae:.4f} vs {V9_BASELINE['mae']:.4f}"))
+    gates.append(("Hit rate (3+) >= 60%", (hr_edge3 or 0) >= 60, f"{hr_edge3}% (n={bets_edge3})"))
+    gates.append(("Hit rate (3+) sample >= 50", edge3_reliable, f"n={bets_edge3}"))
+    gates.append((f"Vegas bias within +/-{VEGAS_BIAS_LIMIT}", abs(pred_vs_vegas) <= VEGAS_BIAS_LIMIT, f"{pred_vs_vegas:+.2f}"))
+    gates.append(("No critical tier bias", not tier_bias['has_critical_bias'], ""))
 
-    # Critical bias blocks deployment
-    if tier_bias['has_critical_bias']:
-        print("❌ BLOCKED: Critical tier bias detected - do not deploy")
-        print("   Model has regression-to-mean problem (underestimates stars, overestimates bench)")
-    # Core decision: MAE + overall hit rate (always reliable with enough eval data)
-    elif mae_better and hr_all_better:
-        if edge3_reliable and hr_edge3_better is False:
-            print("⚠️ MIXED: Better MAE/overall but worse on edge 3+ filter")
-        elif edge5_reliable and hr_edge5_better is False:
-            print("⚠️ MIXED: Better MAE/overall but worse on edge 5+ filter")
-        else:
-            print("✅ RECOMMEND: Beats V9 on MAE and hit rate - consider shadow mode")
-    elif mae_better:
-        print("⚠️ MIXED: Better MAE but similar/lower hit rate")
-    elif hr_all_better:
-        print("⚠️ MIXED: Better hit rate but worse MAE")
+    all_passed = True
+    for gate_name, passed, detail in gates:
+        status = "PASS" if passed else "FAIL"
+        if not passed:
+            all_passed = False
+        print(f"  [{status}] {gate_name}: {detail}")
+
+    print()
+    if all_passed:
+        print("ALL GATES PASSED — model eligible for shadow testing")
+        print("Next steps:")
+        print(f"  1. Upload: gsutil cp {model_path} gs://nba-props-platform-models/catboost/v9/{model_path.name}")
+        print(f"  2. Register: ./bin/model-registry.sh  (add to BQ + manifest)")
+        print(f"  3. Shadow test 2+ days, then update CATBOOST_V9_MODEL_PATH env var")
     else:
-        print("❌ V9 still better - try different training window")
+        print("GATES FAILED — do NOT deploy this model")
+        print("Fix the failing gates or try different training parameters")
 
     print(f"\nModel saved: {model_path}")
+    print(f"SHA256: {model_sha256}")
+    print(f"Size: {model_path.stat().st_size:,} bytes")
 
     # Register
     if not args.skip_register:
@@ -572,6 +603,9 @@ def main():
                     'hit_rate_edge_5plus': hr_edge5, 'bets_edge_5plus': bets_edge5,
                     'tier_bias': {k: v for k, v in tier_bias.items() if k != 'has_critical_bias'},
                     'has_critical_bias': tier_bias['has_critical_bias'],
+                    'pred_vs_vegas_bias': round(float(pred_vs_vegas), 4),
+                    'all_gates_passed': all_passed,
+                    'model_sha256': model_sha256,
                 }),
                 'model_path': str(model_path),
                 'status': 'completed',
