@@ -8,41 +8,44 @@ START, then read `docs/09-handoff/2026-02-07-SESSION-157-HANDOFF.md` for full co
 
 ## Session 157 Summary
 
-We investigated and fixed training data contamination in the ML pipeline:
+We discovered and fixed training data contamination in the ML pipeline:
 
-- **Discovery:** 33.2% of V9 training data had non-vegas defaults (garbage values). The quality score weighted average (`feature_quality_score >= 70`) masked individual feature defaults.
-- **Root cause:** Training scripts used `feature_quality_score >= 70` instead of `required_default_count = 0`. The prediction pipeline was already correctly gated since Session 141, but training scripts were not.
-- **Fix:** Created `shared/ml/training_data_loader.py` — a shared module that enforces zero-tolerance quality filters at the SQL level. Migrated all 6 active training scripts to use it. Archived 41 legacy V6-V10 scripts.
-- **V9 retrain:** Tested but inconclusive (6-day eval window too small). V9 performance is adequate (54-56% hit rate) — plan is to wait 2-3 weeks for clean data and retrain with larger eval window.
+- **33.2% of V9 training data had garbage default values** that passed the quality filter because `feature_quality_score` was a weighted average that masked individual defaults (5 defaults → score 91.9, still passing >= 70).
+- **Fixed with 3 layers:** (1) shared training data loader enforcing `required_default_count = 0`, (2) quality score now capped at 69 when defaults exist, (3) fixed 7,088 historical BigQuery records
+- **Migrated 6 active training scripts** to shared loader, archived 41 legacy scripts
+- **V9 retrain** tested but eval window too small — waiting for backfill + clean data
 
-## What needs to happen this session
+## Priority 1: Feature Store Backfill (DO THIS FIRST)
 
-### 1. Verify deployed Session 156 data improvements
-Check if today's feature store data shows improvement from the cache fallback and player filtering changes:
-```sql
--- Compare default rates: today vs last week
-SELECT game_date,
-  COUNT(*) as total,
-  COUNTIF(required_default_count = 0) as clean,
-  ROUND(100.0 * COUNTIF(required_default_count = 0) / COUNT(*), 1) as clean_pct
-FROM nba_predictions.ml_feature_store_v2
-WHERE game_date >= CURRENT_DATE() - 7
-GROUP BY 1 ORDER BY 1 DESC;
+Re-run ML feature store processor for current season (Nov 2025 - Feb 2026) with Session 156 improvements. This will produce fewer defaults and give much better training data for V9 retrain.
+
+**Before running, review and update the backfill script:**
+1. Read `scripts/regenerate_ml_feature_store.py` — this runs `MLFeatureStoreProcessor` locally for a date range
+2. Consider whether `PlayerDailyCacheProcessor` also needs re-running (Session 156 expanded its player selection with roster UNION)
+3. **Add logging for missing data** — when a feature falls back to default, log which player/date/feature was affected so we can identify data gaps to fix upstream
+4. Run the backfill:
+```bash
+PYTHONPATH=. python scripts/regenerate_ml_feature_store.py \
+  --start-date 2025-11-02 --end-date 2026-02-07
 ```
 
-### 2. Feature store backfill (optional)
-Re-run ML feature store processor for Jan-Feb 2026 to produce cleaner records with the improved cache fallback. This gives the V9 retrain (task 3) better training data.
+## Priority 2: V9 Retrain
 
-### 3. V9 retrain (if enough clean data)
-If 2+ weeks of clean data have accumulated:
+After backfill completes:
 ```bash
 PYTHONPATH=. python ml/experiments/quick_retrain.py \
-    --name "V9_CLEAN_FEB20" \
+    --name "V9_CLEAN_POST_BACKFILL" \
     --train-start 2025-11-02 \
     --train-end 2026-02-18 \
     --eval-start 2026-02-01 \
     --eval-end 2026-02-18
 ```
 
-### 4. Tier bias investigation
-Both old V9 and clean retrain show: stars underestimated by 9 pts, bench overestimated by 7 pts. This is a regression-to-mean issue separate from contamination. Investigate and fix.
+## Priority 3: Tier Bias Investigation
+
+Both V9 and clean retrain show regression-to-mean: stars -9 pts, bench +7 pts. Investigate root cause and fix.
+
+## Feature Ideas (Later)
+
+- `games_missed_in_last_10` — team games missed, indicates injury/rest patterns
+- `days_on_current_team` — for recently traded players, usage may be unpredictable first 5-10 games

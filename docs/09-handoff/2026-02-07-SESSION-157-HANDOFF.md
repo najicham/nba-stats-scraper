@@ -1,7 +1,7 @@
 # Session 157 Handoff: Training Data Contamination Fix + Shared Loader
 
 **Date:** 2026-02-07
-**Focus:** Investigated and fixed training data contamination, created shared training data loader, archived legacy scripts
+**Focus:** Investigated and fixed training data contamination, created shared training data loader, archived legacy scripts, fixed quality scores
 
 ## What Was Done
 
@@ -32,105 +32,119 @@ Most commonly defaulted non-vegas features:
 
 ### 3. Root Cause Analysis
 
-**The bug:** `feature_quality_score` is a weighted average across all 37 features. A record with 5 defaulted features still scores 91.9 (passing the >= 70 threshold) because 32 good features "carry" the average up.
+**The bug:** `feature_quality_score` was a weighted average across all 37 features. A record with 5 defaulted features could score 91.9 (passing >= 70 threshold) because good features carried the average. Training scripts used this score instead of `required_default_count = 0`.
 
-**Why it wasn't caught:** The system had two separate quality gates:
-- `is_quality_ready` (uses `required_default_count = 0`) — used by **prediction pipeline** since Session 141
-- `feature_quality_score >= 70` (weighted average) — used by **training scripts**
+**Three layers of fix implemented:**
+1. **Shared training data loader** (`shared/ml/training_data_loader.py`) — enforces `required_default_count = 0` at SQL level
+2. **Quality score cap** (`quality_scorer.py`) — records with 1+ required defaults now capped at 69, 5+ capped at 49
+3. **Historical score fix** — SQL UPDATE fixed 7,088 records in BigQuery so `feature_quality_score >= 70` now excludes all contaminated records
 
-These were never reconciled. Training scripts used the weaker gate.
-
-**Why contamination happened at the data level:**
-1. PlayerDailyCacheProcessor only cached players with today's games
-2. Cache miss fallback was incomplete (10 of 25+ fields)
-3. Players returning from injury got records with 7+ defaults
-4. Feature store created records for players with zero recent game history
-
-### 4. V9 Retrain Evaluation
-
-Trained clean model with zero-tolerance filters:
-- Training data: 9,746 samples (down from ~14,000 with contamination)
-- MAE: 5.20 vs 5.14 baseline (+0.06)
-- Hit rate: 50.00% vs 54.53% baseline (-4.53%) on 6-day eval window
-- Tier bias: Stars -9.11, Bench +7.20 (pre-existing issue, not from contamination)
-
-**Decision: Don't deploy retrained model yet.** The 6-day eval window is too small for reliable comparison. Wait 2-3 weeks for clean data to accumulate, then retrain with 14+ day eval window.
-
-### 5. Created Shared Training Data Loader
+### 4. Created Shared Training Data Loader
 
 **New file: `shared/ml/training_data_loader.py`**
 
-Single source of truth for ML training data quality filters. Three functions:
+Single source of truth for ML training data quality filters:
 - `get_quality_where_clause(alias)` — for WHERE conditions
 - `get_quality_join_clause(alias)` — for LEFT JOIN ON conditions
 - `load_clean_training_data(client, start, end)` — full DataFrame loader with validation
 
-Quality filters enforced at SQL level, cannot be bypassed:
-```sql
-COALESCE(mf.required_default_count, mf.default_feature_count, 0) = 0
-AND mf.feature_count >= 33
-AND mf.feature_quality_score >= 70
-AND mf.data_source NOT IN ('phase4_partial', 'early_season')
+### 5. Migrated All Active Training Scripts + Archived 41 Legacy
+
+6 active scripts migrated to shared loader. 41 legacy V6-V10 scripts moved to `ml/archive/`.
+
+### 6. Fixed Quality Score Calculation
+
+**quality_scorer.py** now caps scores when required (non-vegas) defaults exist:
+- 1+ required defaults → max 69 (below bronze threshold)
+- 5+ required defaults → max 49 (critical tier)
+- Vegas-only defaults → no cap (optional features)
+
+### 7. Fixed Historical Quality Scores in BigQuery
+
+SQL UPDATE applied to 7,088 records (Nov 2025 - Feb 2026). After fix:
+- Records with 1-4 defaults: all capped at 69 (0 pass >= 70 filter)
+- Records with 5+ defaults: avg 58.2, max 69 (0 pass >= 70 filter)
+- Clean records: unchanged, 14,406 pass >= 70
+
+### 8. V9 Retrain Evaluation (Inconclusive)
+
+Trained clean model — eval window too small (6 days, 467 samples). Decision: wait for backfill + 2-3 weeks of clean data, then retrain.
+
+## Commits Made
+
+1. `327770c9` — Session 156 changes (cache fallback, training quality gates, player filter)
+2. `e49f00ac` — Shared training data loader + archive 41 legacy scripts
+3. `a0f84491` — Session 157 handoff docs
+4. `518edba4` — Quality score cap fix
+
+## What Was NOT Done — Next Session Must Do
+
+### Priority 1: Feature Store Backfill (CURRENT SEASON)
+
+**Goal:** Re-run ML feature store processor for Nov 2025 - Feb 2026 (~98 game dates) with Session 156 improvements. This will:
+- Produce fewer defaults (improved cache fallback fills 25+ fields)
+- Filter out returning-from-injury players with no recent games
+- Give the V9 retrain much better training data
+
+**Backfill scripts available:**
+```bash
+# Option 1: Simple regenerate script (recommended)
+PYTHONPATH=. python scripts/regenerate_ml_feature_store.py \
+  --start-date 2025-11-02 --end-date 2026-02-07
+
+# Option 2: Full backfill with checkpoints
+PYTHONPATH=. python backfill_jobs/precompute/ml_feature_store/ml_feature_store_precompute_backfill.py \
+  --start-date 2025-11-02 --end-date 2026-02-07 --include-bootstrap
 ```
 
-Validation prevents setting quality score below 50.
+**IMPORTANT: Review backfill script before running.** Consider:
+1. **Should PlayerDailyCacheProcessor also be re-run?** Session 156 expanded its player selection (UNION with roster players). The ML feature store depends on daily cache data. If cache is stale, feature store will still have gaps.
+2. **Add logging for missing data.** When a feature can't find upstream data and falls back to default, log which player/date/feature was affected so we can identify data gaps to fix.
+3. **Verify the script uses the deployed code.** The regenerate script imports `MLFeatureStoreProcessor` directly from the local codebase, which now has Session 156 changes. Make sure this is the current code.
 
-### 6. Migrated All Active Training Scripts
+### Priority 2: V9 Retrain
 
-| Script | Migration |
-|--------|-----------|
-| `quick_retrain.py` | Uses `load_clean_training_data()` and `get_quality_where_clause()` |
-| `train_breakout_classifier.py` | Uses `get_quality_where_clause()` via helper |
-| `breakout_experiment_runner.py` | Uses `get_quality_where_clause()` via helper |
-| `backfill_breakout_shadow.py` | Uses `get_quality_join_clause()` via helper |
-| `breakout_features.py` | Uses `get_quality_join_clause()` via helper |
-| `evaluate_model.py` | Added inline quality filters |
+After backfill completes, retrain V9 with clean data:
+```bash
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "V9_CLEAN_POST_BACKFILL" \
+    --train-start 2025-11-02 \
+    --train-end 2026-02-18 \
+    --eval-start 2026-02-01 \
+    --eval-end 2026-02-18
+```
 
-### 7. Archived 41 Legacy Scripts
+### Priority 3: Tier Bias Investigation
 
-Moved to `ml/archive/` and `ml/archive/experiments/`:
-- 30 legacy training scripts (V6-V10 era, no quality filters)
-- 11 legacy experiment scripts
+Both V9 and clean retrain show regression-to-mean: stars underestimated by 9 pts, bench overestimated by 7 pts. Investigate and fix.
 
-Active directories now contain only 15 files total — all verified to have quality filters.
+## Feature Ideas to Explore Later
 
-## What Was NOT Done
+User suggested investigating these signals (not yet implemented):
 
-### 1. V9 Retrain and Deploy
-The retrained model showed comparable MAE but worse hit rate on a tiny eval window. Need more clean data before making a decision. Recommend waiting until ~Feb 20 and retraining with 14+ day eval.
+1. **games_missed_in_last_10** — How many of the team's last 10 games did the player miss? Indicates injury/rest patterns. Could help identify "rust" after returning.
 
-### 2. Feature Store Backfill
-Historical feature store records were NOT re-processed with the improved fallback. The Session 156 improvements will produce better features going forward but existing records still have the old defaults. Consider backfilling Jan-Feb 2026 for better training data.
+2. **days_on_current_team** — For recently traded players, track how long they've been on the new team. Players on new teams may have unpredictable usage patterns for the first 5-10 games.
 
-### 3. Tier Bias Investigation
-Both the original V9 and clean retrain show regression-to-mean bias: underestimates stars (-9 pts), overestimates bench (+7 pts). This is a separate issue from contamination and needs investigation.
+**Where to add:** These would be new features in `feature_extractor.py` and added to a V11 contract. Not urgent but worth investigating for model improvement.
+
+## Prevention Summary (3 Layers)
+
+1. **Layer 1 — Shared loader** (`training_data_loader.py`): Enforces `required_default_count = 0` at SQL level
+2. **Layer 2 — Quality score cap** (`quality_scorer.py`): 1+ defaults → max 69, fails >= 70 filter
+3. **Layer 3 — Historical fix**: 7,088 BigQuery records updated, zero contaminated records pass filters
 
 ## Key Files
 
 ```
-shared/ml/training_data_loader.py          # NEW: Shared quality enforcement
-ml/experiments/quick_retrain.py             # UPDATED: Uses shared loader
-ml/experiments/train_breakout_classifier.py # UPDATED: Uses shared loader
-ml/experiments/breakout_experiment_runner.py # UPDATED: Uses shared loader
-ml/experiments/backfill_breakout_shadow.py  # UPDATED: Uses shared loader
-ml/experiments/evaluate_model.py            # UPDATED: Added quality filters
-ml/features/breakout_features.py            # UPDATED: Uses shared loader
-ml/archive/                                 # 41 archived legacy scripts
+shared/ml/training_data_loader.py                              # NEW: Shared quality enforcement
+data_processors/precompute/ml_feature_store/quality_scorer.py  # UPDATED: Score capping
+ml/experiments/quick_retrain.py                                # UPDATED: Uses shared loader
+ml/experiments/train_breakout_classifier.py                    # UPDATED: Uses shared loader
+ml/experiments/breakout_experiment_runner.py                    # UPDATED: Uses shared loader
+ml/experiments/backfill_breakout_shadow.py                     # UPDATED: Uses shared loader
+ml/experiments/evaluate_model.py                               # UPDATED: Quality filters
+ml/features/breakout_features.py                               # UPDATED: Uses shared loader
+ml/archive/                                                    # 41 archived legacy scripts
+scripts/regenerate_ml_feature_store.py                         # Backfill tool (review before using)
 ```
-
-## Prevention Summary
-
-The contamination bug can no longer recur because:
-
-1. **Shared loader enforces filters at SQL level** — `training_data_loader.py`
-2. **Validation rejects weak quality scores** — min 50, recommended 70
-3. **Post-query validation** — `load_clean_training_data()` verifies zero tolerance in returned data
-4. **Legacy scripts archived** — only quality-filtered scripts remain active
-5. **100% coverage verified** — automated check confirms every active script with feature store queries has quality filters
-
-## Next Session Priorities
-
-1. **Wait for clean data** — Monitor feature store quality for 2-3 weeks
-2. **V9 retrain** (~Feb 20) — Retrain with larger eval window (14+ days)
-3. **Feature store backfill** — Re-run ML feature store for Jan-Feb 2026 dates
-4. **Tier bias investigation** — Separate from contamination, affects both old and new models
