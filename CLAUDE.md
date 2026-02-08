@@ -284,11 +284,13 @@ gs://nba-props-platform-models/breakout/v1/
 
 ## Deployment [Keyword: DEPLOY]
 
-### Auto-Deploy via Cloud Build Triggers (Session 147)
+### Auto-Deploy via Cloud Build Triggers (Sessions 147, 160)
 
 **Primary method: Push to main auto-deploys changed services.**
 
 Cloud Build triggers watch GitHub for pushes to `main` and auto-deploy only the services whose files changed. Each trigger also watches `shared/` so shared code changes deploy all services.
+
+**Cloud Run Services (7 triggers, `cloudbuild.yaml`):**
 
 | Trigger | Watches | Cloud Build Trigger |
 |---------|---------|---------------------|
@@ -298,7 +300,16 @@ Cloud Build triggers watch GitHub for pushes to `main` and auto-deploy only the 
 | nba-phase4-precompute-processors | `data_processors/precompute/**`, `shared/**` | `deploy-nba-phase4-precompute-processors` |
 | nba-phase2-raw-processors | `data_processors/raw/**`, `shared/**` | `deploy-nba-phase2-raw-processors` |
 | nba-scrapers | `scrapers/**`, `shared/**` | `deploy-nba-scrapers` |
-| **phase5b-grading** (Cloud Function) | `orchestration/cloud_functions/grading/**`, `data_processors/grading/**`, `shared/**` | `deploy-phase5b-grading` |
+
+**Cloud Functions (5 triggers, `cloudbuild-functions.yaml`):**
+
+| Trigger | Watches | Cloud Build Trigger |
+|---------|---------|---------------------|
+| phase5b-grading | `orchestration/cloud_functions/grading/**`, `data_processors/grading/**`, `shared/**` | `deploy-phase5b-grading` |
+| phase2-to-phase3-orchestrator | `orchestration/cloud_functions/phase2_to_phase3/**`, `shared/**` | `deploy-phase2-to-phase3-orchestrator` |
+| phase3-to-phase4-orchestrator | `orchestration/cloud_functions/phase3_to_phase4/**`, `shared/**` | `deploy-phase3-to-phase4-orchestrator` |
+| phase4-to-phase5-orchestrator | `orchestration/cloud_functions/phase4_to_phase5/**`, `shared/**` | `deploy-phase4-to-phase5-orchestrator` |
+| phase5-to-phase6-orchestrator | `orchestration/cloud_functions/phase5_to_phase6/**`, `shared/**` | `deploy-phase5-to-phase6-orchestrator` |
 
 **How it works:**
 1. Push to `main` triggers Cloud Build via GitHub webhook

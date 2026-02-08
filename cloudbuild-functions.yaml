@@ -5,6 +5,8 @@
 # deploy source code directly. This config prepares the deployment package
 # and deploys using gcloud functions deploy.
 #
+# Used by: phase5b-grading, phase2→3/3→4/4→5/5→6 orchestrators
+#
 # Substitution variables:
 #   _FUNCTION_NAME: Cloud Function name (e.g., phase5b-grading)
 #   _ENTRY_POINT: Function entry point (e.g., main)
@@ -21,33 +23,21 @@ steps:
     args:
       - '-c'
       - |
-        echo "Preparing deployment package..."
+        echo "Preparing deployment package for ${_FUNCTION_NAME}..."
         mkdir -p /workspace/deploy_pkg
 
         # Copy cloud function entry point and requirements
         cp ${_SOURCE_DIR}/main.py /workspace/deploy_pkg/
         cp ${_SOURCE_DIR}/requirements.txt /workspace/deploy_pkg/
 
-        # Copy required source directories
+        # Copy all source directories (each function imports what it needs)
         cp -r data_processors /workspace/deploy_pkg/
         cp -r shared /workspace/deploy_pkg/
         cp -r predictions /workspace/deploy_pkg/
+        cp -r orchestration /workspace/deploy_pkg/
 
-        # Ensure __init__.py files exist
-        touch /workspace/deploy_pkg/data_processors/__init__.py
-        touch /workspace/deploy_pkg/data_processors/grading/__init__.py
-        touch /workspace/deploy_pkg/data_processors/grading/prediction_accuracy/__init__.py
-        touch /workspace/deploy_pkg/data_processors/grading/system_daily_performance/__init__.py
-        touch /workspace/deploy_pkg/data_processors/grading/subset_grading/__init__.py
-        touch /workspace/deploy_pkg/shared/__init__.py
-        touch /workspace/deploy_pkg/predictions/__init__.py
-        touch /workspace/deploy_pkg/predictions/worker/__init__.py
-
-        # Add additional dependencies
-        cat >> /workspace/deploy_pkg/requirements.txt << 'REQS'
-        # Additional dependencies for grading processors
-        pytz>=2023.0
-        REQS
+        # Ensure __init__.py files exist in all Python package directories
+        find /workspace/deploy_pkg -type d -exec touch {}/__init__.py \;
 
         echo "Deployment package ready:"
         ls -la /workspace/deploy_pkg/
