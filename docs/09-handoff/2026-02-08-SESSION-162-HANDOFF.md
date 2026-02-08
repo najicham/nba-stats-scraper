@@ -1,7 +1,7 @@
 # Session 162 Handoff
 
 **Date:** 2026-02-08
-**Status:** All fixes pushed to main, all deploys succeeded. Past-seasons Phase 4 backfill running.
+**Status:** All fixes pushed to main (4 commits), all 12 auto-deploys succeeded. Past-seasons Phase 4 backfill running in background.
 
 ---
 
@@ -11,101 +11,224 @@
 # 1. Check if past-seasons Phase 4 backfill finished (PID 3789597)
 ps -p 3789597 -o pid,etime --no-headers 2>/dev/null || echo "Finished"
 
-# 2. If finished, check quality
+# 2. If finished, check quality improvement
 ./bin/monitoring/check_training_data_quality.sh --recent
 
-# 3. Run daily validation
+# 3. IMPORTANT: The backfill started BEFORE the validation fix (Commit 4).
+#    ~3,604 defense zone records were blocked by the old ±0.30 rule.
+#    After backfill finishes, re-run JUST defense zone for affected dates:
+#    ./bin/backfill/run_phase4_backfill.sh --start-date 2021-10-19 --end-date 2025-06-22 --processor team_defense_zone_analysis
+
+# 4. Run daily validation (now uses correct season_avg bias methodology)
 /validate-daily
 
-# 4. Check backfill log for errors (defense zone records should no longer be blocked)
-grep -c "BLOCKED" /tmp/claude-1000/-home-naji-code-nba-stats-scraper/99e040b4-2e92-425f-9409-7bb9d4d00644/scratchpad/phase4_past_seasons_backfill.log
+# 5. Verify Phase 2→3 orchestrator triggers on next game day
+#    Check Firestore: phase2_completion/<date> should show _triggered=True
 ```
 
 ---
 
-## What Session 162 Did (3 commits)
+## What Session 162 Did
 
-### Commit 1: `c9a02f4e` — UpcomingTeamGameContext unpack bug + bias methodology
+### The Theme: Cross-Layer Synchronization Failures
 
-**Bug:** `UpcomingTeamGameContextProcessor.save_analytics()` line 1579 tried to unpack `_validate_before_write()` into `(valid_records, invalid_records)`, but the method returns only `List[Dict]`. This crashed every time the processor ran.
+Every bug this session was a **mismatch between two components that should agree**:
+- A method returns `List[Dict]` but the caller unpacks it as a tuple
+- Validation expects ±0.30 (fractions) but the processor outputs ±15.0 (percentage points)
+- `next()` assumes a query always returns rows, but sometimes it doesn't
+- `--set-env-vars` wipes all env vars, should be `--update-env-vars`
+- Bias queries tier by `actual_points` (what happened) instead of `season_avg` (what the player is)
 
-**Fix:** Changed to single-value assignment: `valid_records = self._validate_before_write(...)`.
+---
 
-**Also:** Updated `/validate-daily` skill (4 query sections) to use `season_avg` tiers instead of `actual_points` tiers. The `actual_points` methodology was survivorship bias (Session 161 finding, confused 4+ sessions).
+### Commit 1: `c9a02f4e` — Two fixes
 
-### Commit 2: `ee68ce7a` — Service reliability improvements (4 fixes)
+**Bug 1: UpcomingTeamGameContextProcessor crash**
+- `save_analytics()` line 1579: `valid_records, invalid_records = self._validate_before_write(...)`
+- But `_validate_before_write()` (in `bigquery_save_ops.py`) returns **one value** (`List[Dict]`), not a tuple
+- Python tried to unpack the list's elements as `(valid_records, invalid_records)` → `ValueError: too many values to unpack`
+- **Impact:** UpcomingTeamGameContext failed on EVERY run. Phase 3 was incomplete (4/5) for Feb 7.
+- **Fix:** `valid_records = self._validate_before_write(...)` — single assignment
+- **Why only this processor?** Other callers (line 208, line 2559) already used single assignment. This was the only processor with a custom `save_analytics()` that had the bug.
 
-1. **Error visibility in processor responses**
-   - `async_orchestration.py` and `main_analytics_service.py`: When `processor.run()` returns `False`, responses now include `"error": "actual message"` instead of just `{"status": "error"}`.
-   - `analytics_base.py`: Sets `self.last_error = e` in except block.
+**Bug 2: Model bias queries used wrong methodology**
+- `/validate-daily` skill had 4 SQL queries that tiered players by `actual_points` (survivorship bias)
+- Changed all 4 to use `season_avg` tiers — see "Model Bias: Why It Was Circular Reasoning" section below
+- Files: `.claude/skills/validate-daily/SKILL.md` (Phases 0.466, 0.55, Player Tier Breakdown)
 
-2. **Protected `next()` calls in `_validate_after_write`**
-   - `bigquery_save_ops.py`: 3 unprotected `next()` calls changed to `next(iter, None)` with graceful fallbacks. Prevents `StopIteration` crash on empty query results.
+### Commit 2: `ee68ce7a` — Service reliability (4 fixes)
 
-3. **Deploy-time import validation for Cloud Functions**
-   - `cloudbuild-functions.yaml`: Added Step 1 that installs requirements and runs `python -c "import main"` before deploying. Would have caught the PyYAML incident (Session 161).
+**Fix 1: Error visibility in processor API responses**
+- When `processor.run()` returns `False`, the HTTP response was just `{"status": "error"}` with **no error message**
+- Debugging required searching Cloud Logging (often delayed 10+ min)
+- Now returns `{"status": "error", "error": "actual error message"}`
+- Added `self.last_error = e` in `analytics_base.py` exception handler
+- Files: `async_orchestration.py`, `main_analytics_service.py`, `analytics_base.py`
 
-4. **Fixed `--set-env-vars` to `--update-env-vars`**
-   - `cloudbuild-functions.yaml` line 65: Was wiping all existing env vars on every Cloud Function deploy.
+**Fix 2: Protected `next()` calls in `_validate_after_write`**
+- `bigquery_save_ops.py` had 3 bare `next(query_result)` calls (lines 1019, 1091, 1145)
+- If a BigQuery COUNT/NULL/anomaly query returned 0 rows → `StopIteration` crash
+- **This was the SECOND bug** hiding behind Bug 1. Fixing the unpack bug let the code reach `_validate_after_write` for the first time, which then crashed.
+- Changed to `next(query_result, None)` with graceful fallbacks
+- File: `bigquery_save_ops.py`
 
-### Commit 3: `344b0378` — Defense zone validation unit mismatch
+**Fix 3: Deploy-time import validation for Cloud Functions**
+- Added Step 1 to `cloudbuild-functions.yaml`: installs requirements, runs `python -c "import main"`
+- Would have caught Session 161's PyYAML crash before deploying
+- File: `cloudbuild-functions.yaml`
 
-**Bug:** Validation rules for `team_defense_zone_analysis` expected `vs_league_avg` values in fractions (±0.30) but the processor outputs percentage points (±15.0). This blocked 100% of records during the 2021-2025 Phase 4 backfill.
+**Fix 4: `--set-env-vars` → `--update-env-vars`**
+- `cloudbuild-functions.yaml` used `--set-env-vars` which **wipes ALL existing env vars** on every deploy
+- CLAUDE.md already warned about this: "NEVER use `--set-env-vars`"
+- Changed to `--update-env-vars` (adds/updates without wiping)
+- File: `cloudbuild-functions.yaml`
 
-**Evidence:** The comment on line 569 already said "typically -20 to +20" and tests expected ±15.0 — only the validation rule had the wrong units.
+### Commit 3: `344b0378` — Validation unit mismatch
 
-**Fix:** Changed thresholds from ±0.30 to ±15.0 for `paint_defense_vs_league_avg`, `mid_range_defense_vs_league_avg`, `three_pt_defense_vs_league_avg`.
+**Bug: Defense zone validation blocked 100% of records**
+- `pre_write_validator.py` rules for `team_defense_zone_analysis`:
+  - `paint_defense_vs_league_avg`: must be ±0.30
+  - `mid_range_defense_vs_league_avg`: must be ±0.30
+  - `three_pt_defense_vs_league_avg`: must be ±0.30
+- But the processor calculates: `(zone_pct - league_avg) * 100` → **percentage points** (e.g., 4.0 = "4pp worse")
+- Schema docs say "Range: -10.00 to +10.00", tests expect ±15.0
+- The comment ON THE SAME LINE said "typically -20 to +20" — only the rule had the wrong units
+- **Impact:** ALL 30/30 team records blocked per game date. ~3,604 records blocked in the running backfill.
+- **Fix:** Changed thresholds from ±0.30 to ±15.0
+- File: `shared/validation/pre_write_validator.py`
+
+### Commit 4: `cd12ef3b` — Documentation
+
+- Session handoff and project overview docs
+
+---
+
+## Model Bias: Why It Was Circular Reasoning
+
+**This has confused Sessions 101, 102, 124, 161, and 162. DO NOT SKIP THIS SECTION.**
+
+### The Wrong Query (what 4+ sessions ran)
+
+```sql
+SELECT
+  CASE
+    WHEN actual_points >= 25 THEN 'Stars'
+    WHEN actual_points >= 15 THEN 'Starters'
+    WHEN actual_points >= 5 THEN 'Role'
+    ELSE 'Bench'
+  END as tier,
+  AVG(predicted_points - actual_points) as bias
+FROM prediction_accuracy ...
+```
+
+**Result:** Stars show -10.1 bias. Bench shows +5.2 bias. "The model is terrible!"
+
+### Why This Is Wrong
+
+This query selects players **AFTER seeing their actual score**, then checks if the model predicted correctly. That's backwards.
+
+**Think of it this way:**
+1. You pick everyone who scored 30+ points in a game
+2. You check what the model predicted for them
+3. Of course the model predicted lower — **you selected the games where they scored unusually high**
+
+A player averaging 20 PPG who explodes for 35 points enters the "Stars (25+)" tier. The model predicted ~20 (reasonable!), but the query says that's a -15 "bias." It's not bias — it's **selecting for outlier performances and blaming the model for not predicting outliers.**
+
+The same logic works in reverse for "Bench (<5)": a player averaging 12 PPG who has a bad 3-point game enters the "Bench" tier. The model predicted ~12 (correct!), but the query says that's +9 "over-prediction."
+
+### The Correct Query
+
+```sql
+WITH player_avgs AS (
+  SELECT player_lookup, AVG(actual_points) as season_avg
+  FROM prediction_accuracy
+  WHERE system_id = 'catboost_v9' AND game_date >= '2025-11-01'
+  GROUP BY 1
+)
+SELECT
+  CASE
+    WHEN pa.season_avg >= 25 THEN 'Stars'    -- Players who ARE stars
+    WHEN pa.season_avg >= 15 THEN 'Starters'
+    WHEN pa.season_avg >= 8 THEN 'Role'
+    ELSE 'Bench'
+  END as tier,
+  AVG(p.predicted_points - p.actual_points) as bias
+FROM prediction_accuracy p
+JOIN player_avgs pa USING (player_lookup) ...
+```
+
+**Result:** Stars show **-0.3 bias**. The model is well-calibrated.
+
+### Why the Difference Is So Large
+
+| Tier Method | Stars Bias | What It Measures |
+|-------------|-----------|------------------|
+| `actual_points >= 25` | -10.1 | "When someone scores 25+, did we predict 25+?" (measures outlier prediction) |
+| `season_avg >= 25` | -0.3 | "For players who average 25+, are we systematically wrong?" (measures real bias) |
+
+The -10.1 is measuring **variance**, not **bias**. Any regression model will show this pattern because it predicts the expected value, not the outcome of a single game.
+
+### Where This Is Now Enforced
+
+- `/validate-daily` skill: All 4 bias queries updated (Phase 0.466, Phase 0.55, bias trend, tier breakdown)
+- `CLAUDE.md`: Explains the correct methodology in the "Critical Context" section
+- `docs/08-projects/current/session-161-model-eval-and-subsets/00-PROJECT-OVERVIEW.md`: Full analysis
+- `docs/08-projects/current/session-124-model-naming-refresh/TIER-BIAS-METHODOLOGY.md`: Reference doc
+
+**Rule for future sessions:** If you see "star player bias > 3pts", check which tier methodology the query uses. If it uses `actual_points`, the result is meaningless.
 
 ---
 
 ## Current State
 
 ### Phase 3 (Feb 7-8)
-- **Feb 7:** 5/5 processors complete (UpcomingTeamGameContext now works after fix)
-- **Feb 8:** Games still in progress/scheduled. Will process when Phase 2 completes.
+- **Feb 7:** 5/5 processors complete. UpcomingTeamGameContext succeeded after both fixes (unpack + next()).
+- **Feb 8:** Games were in progress during session. Will process via normal pipeline when Phase 2 completes.
 
 ### Phase 4 Past-Seasons Backfill (PID 3789597)
-- **Status:** Running, started ~19:15 UTC
-- **Range:** 2021-10-19 to 2025-06-22 (~853 game dates)
-- **Note:** The validation fix (Commit 3) was pushed AFTER the backfill started. The running backfill process uses the OLD validation rules. Records blocked by the old rules won't be written. **If significant data is missing, restart the backfill after it finishes.**
-- **Check:** `grep -c "BLOCKED" <backfill_log>` to see how many records were blocked
+- **Status:** Running since ~19:15 UTC Feb 8
+- **Range:** 2021-10-19 to 2025-06-22 (~853 game dates, 7-9 hours)
+- **Known Issue:** ~3,604 defense zone records blocked by old ±0.30 validation (fix pushed after start)
+- **Action needed:** After completion, re-run `team_defense_zone_analysis` processor for blocked dates
 
 ### Phase 2→3 Orchestrator
-- Healthy (PyYAML fix from Session 161 deployed and verified)
-- Will trigger on next Phase 2 completion event
+- Healthy (PyYAML fix from Session 161 deployed and verified at 18:37 UTC)
+- Loaded 5 expected processors, startup probe succeeded
+- Will trigger on next Phase 2 completion (monitoring-only role; actual Phase 3 trigger is via direct Pub/Sub)
 
-### Pipeline Health
-- Predictions running for today (65 total, 4 actionable)
-- Signal is RED (UNDER_HEAVY) for Feb 6-8
-- All 12 Cloud Build triggers working
+### Training Data Quality
+- 24.6% of rows still have required feature defaults (unchanged — cache backfill improves future predictions, not existing feature store rows)
+- Top defaulted: Vegas features (25-27) at 51.3%, shot zone (18-20) at ~20%
+
+### Subset Picks
+- 1,246 rows across 28 days (Jan 9 - Feb 6), all from backfill
+- No data for Feb 7-8 yet (SubsetMaterializer runs via Phase 5→6, which hasn't fired for these dates)
+- `subset-picks` IS in `TONIGHT_EXPORT_TYPES` — should work next time Phase 5→6 runs
+
+### V9 Retrain
+- User confirmed **not worth it** even with better data. No retrain planned.
 
 ---
 
-## V9 Retrain Decision
+## Prevention Mechanisms Added This Session
 
-User confirmed V9 retrain is **not worth it** even with better data. Task deleted.
+| What | Prevents | File |
+|------|----------|------|
+| Deploy-time `python -c "import main"` | Missing dependencies (PyYAML-type) | `cloudbuild-functions.yaml` |
+| Error messages in `{"status":"error"}` responses | Blind debugging through Cloud Logging | `async_orchestration.py`, `main_analytics_service.py` |
+| `next(iter, None)` pattern | StopIteration crashes on empty results | `bigquery_save_ops.py` |
+| `--update-env-vars` (not `--set-env-vars`) | Env var wipe on deploy | `cloudbuild-functions.yaml` |
+| `season_avg` tier queries | Survivorship bias in model evaluation | `.claude/skills/validate-daily/SKILL.md` |
 
 ---
 
-## Key Findings: Why Services Keep Breaking
+## Remaining Work for Future Sessions
 
-### The Pattern
-Every bug found this session was a **synchronization failure between two layers**:
-- Processor output ↔ Validation rules (unit mismatch)
-- Method return type ↔ Caller unpacking (tuple bug)
-- requirements.txt ↔ actual imports (missing dependency)
-
-### Prevention Added
-1. Deploy-time import validation (catches missing dependencies before deploy)
-2. Error messages in responses (makes debugging 10x faster)
-3. Protected `next()` calls (prevents silent crashes)
-
-### Still Needed
-- Audit all validation rules against actual processor output
-- Search for other unprotected `next()` calls
-- Check if Cloud Functions lost env vars from `--set-env-vars` in past deploys
-
-**Full analysis:** `docs/08-projects/current/session-162-service-reliability/00-PROJECT-OVERVIEW.md`
+1. **Re-run defense zone backfill** after current backfill completes (~3,604 blocked records)
+2. **Audit all validation rules** in `pre_write_validator.py` against actual processor output — the unit mismatch pattern could exist elsewhere
+3. **Search for unprotected `next()` calls** outside analytics (`grep -rn "next(" --include="*.py" | grep -v "next("` to find bare calls without default)
+4. **Audit Cloud Function env vars** — `--set-env-vars` may have wiped important vars in past deploys
+5. **OVER-only strategy evaluation** — OVER direction is strongest subset filter (82.8% vs 67.6% at same edge). Worth evaluating for production use.
 
 ---
 
@@ -121,8 +244,22 @@ Every bug found this session was a **synchronization failure between two layers*
 | `data_processors/analytics/operations/bigquery_save_ops.py` | Protected 3 `next()` calls with default `None` |
 | `cloudbuild-functions.yaml` | Added import validation step, fixed `--set-env-vars` → `--update-env-vars` |
 | `shared/validation/pre_write_validator.py` | Fixed defense zone validation from ±0.30 to ±15.0 |
-| `docs/08-projects/current/session-162-service-reliability/00-PROJECT-OVERVIEW.md` | NEW |
+| `docs/08-projects/current/session-162-service-reliability/00-PROJECT-OVERVIEW.md` | NEW — full reliability audit |
 | `docs/09-handoff/2026-02-08-SESSION-162-HANDOFF.md` | NEW (this file) |
+
+---
+
+## Debugging Timeline (for reference)
+
+The UpcomingTeamGameContext fix required 5 retries to resolve because two bugs were stacked:
+
+1. **First run:** `_validate_before_write` unpack crash (Bug 1)
+2. **Deploy commit `c9a02f4e`** (unpack fix)
+3. **Retries 2-3:** Still errored — old Cloud Run instance serving, or new code reached `_validate_after_write` which had Bug 2 (`next()` crash)
+4. **Deploy commit `ee68ce7a`** (next() fix)
+5. **Retry 4:** `status: success` in 18.76s
+
+**Lesson:** When fixing a crash that prevents downstream code from running, expect the downstream code to have its own bugs. Fix #1 unmasked Fix #2.
 
 ---
 *Session 162 — Co-Authored-By: Claude Opus 4.6*
