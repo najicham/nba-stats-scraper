@@ -4,53 +4,40 @@ Read the Session 154 handoff: `docs/09-handoff/2026-02-07-SESSION-154-HANDOFF.md
 
 ## Context
 
-Session 154 reviewed, finalized, and deployed the **materialized subsets + subset grading** system from Session 153.
+Session 154 deployed materialized subsets + grading, set up Cloud Build auto-deploy for grading CF, and **redesigned all subsets** from 18 overlapping/broken ones to 8 clean data-driven ones with direction filtering.
 
-**What was done:**
-- Reviewed all 7 files, design validated (append-only, pre-tip grading, fallback)
-- Added `game_id` and `rank_in_subset` to schema + materializer (Session 153 gap)
-- Created both BQ tables (`current_subset_picks`, `subset_grading_results`)
-- Committed and pushed — Cloud Run auto-deploys succeeded
-- Created Cloud Build trigger for grading Cloud Function (`deploy-phase5b-grading`)
-- Grading CF now auto-deploys on push (uses `cloudbuild-functions.yaml`)
+**Key things that happened:**
+- Added `direction` column to `dynamic_subset_definitions` and filtering code
+- Fixed signal `ANY` bug (was treating it as a literal, filtering out all picks on signal days)
+- Deactivated 18 old subsets, inserted 8 new ones based on full-season performance data
+- OVER at 5+ edge = 82.4% hit rate (biggest finding driving the redesign)
+- Subset reference doc: `docs/08-projects/current/subset-redesign/00-SUBSET-REFERENCE.md`
 
-## Priority 1: Verify First Day of Operation (HIGH)
+## Priority 1: Verify Pipeline Works (HIGH)
 
-Monitor that the system works end-to-end:
+Check that today's predictions triggered materialization:
 
 ```bash
-# Check if materialized data exists for today
-bq query --use_legacy_sql=false '
+bq query --nouse_legacy_sql '
 SELECT version_id, computed_at, trigger_source, COUNT(*) as picks,
        COUNT(DISTINCT subset_id) as subsets
 FROM nba_predictions.current_subset_picks
 WHERE game_date = CURRENT_DATE()
-GROUP BY 1, 2, 3
-ORDER BY 2 DESC'
-
-# Check subset grading results (populated after morning grading)
-bq query --use_legacy_sql=false '
-SELECT subset_id, subset_name, total_picks, graded_picks, wins, hit_rate, roi
-FROM nba_predictions.subset_grading_results
-WHERE game_date >= CURRENT_DATE() - 3
-ORDER BY game_date DESC, subset_id'
+GROUP BY 1, 2, 3 ORDER BY 2 DESC'
 ```
 
-## Priority 2: Backfill Historical Dates (MEDIUM)
-
-Materialize subsets for recent dates so grading has data to work with:
-
+If empty, trigger manually:
 ```python
-# Backfill recent dates
 from data_processors.publishing.subset_materializer import SubsetMaterializer
 m = SubsetMaterializer()
-for date in ['2026-02-05', '2026-02-06', '2026-02-07']:
-    result = m.materialize(date, trigger_source='backfill')
-    print(f"{date}: {result['total_picks']} picks")
+result = m.materialize('YYYY-MM-DD', trigger_source='manual')
+print(result)
 ```
 
-## Open Items (from Session 153, not yet addressed)
+## Priority 2: Full-Season Backfill (HIGH)
 
-- **Filtering logic duplication** — `_filter_picks_for_subset()` exists in both SubsetMaterializer and AllSubsetsPicksExporter. Acceptable for now (fallback is temporary).
-- **`subset_pick_snapshots` table cleanup** — Session 152's table is superseded. Leave for now.
-- **Switch performance view to grading table** — Once `subset_grading_results` has data, can replace `v_dynamic_subset_performance` reads.
+User wants to backfill materialized subset picks for the **entire season** (since 2025-11-02). The handoff doc has the backfill script. After backfill, run subset grading on all dates.
+
+## Priority 3: Validate Website JSON (MEDIUM)
+
+Check the exported JSON shows 8 clean groups with correct names and IDs 1-8.
