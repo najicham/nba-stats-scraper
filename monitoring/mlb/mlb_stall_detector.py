@@ -218,9 +218,9 @@ class MlbStallDetector:
             """
 
             result = self.bq_client.query(query).result()
-            row = next(result)
+            row = next(result, None)
 
-            if row.last_activity is None or row.record_count == 0:
+            if row is None or row.last_activity is None or row.record_count == 0:
                 return StallCheckResult(
                     stage_key=stage_key,
                     stage_name=config['name'],

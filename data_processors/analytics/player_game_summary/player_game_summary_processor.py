@@ -380,7 +380,8 @@ class PlayerGameSummaryProcessor(
         WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
         """
         result = self.bq_client.query(query).result()
-        count = next(result).team_game_count
+        row = next(result, None)
+        count = row.team_game_count if row else 0
 
         # Get expected count from NBA schedule (2 teams per game)
         expected_query = f"""
@@ -390,7 +391,8 @@ class PlayerGameSummaryProcessor(
           AND game_status = 3
         """
         expected_result = self.bq_client.query(expected_query).result()
-        expected_count = next(expected_result).expected_team_game_count
+        expected_row = next(expected_result, None)
+        expected_count = expected_row.expected_team_game_count if expected_row else 0
 
         # Consider ready if we have at least 50% of expected data
         # or if no games are scheduled (allow processing to continue)
@@ -450,8 +452,8 @@ class PlayerGameSummaryProcessor(
 
         try:
             result = self.bq_client.query(query).result()
-            row = next(result)
-            team_count = row.team_count
+            row = next(result, None)
+            team_count = row.team_count if row else 0
             null_possessions = row.null_possessions_count
             invalid_quality = row.invalid_quality_count
         except Exception as e:
@@ -467,7 +469,8 @@ class PlayerGameSummaryProcessor(
 
         try:
             expected_result = self.bq_client.query(expected_query).result()
-            expected_count = next(expected_result).expected_team_count
+            expected_row = next(expected_result, None)
+            expected_count = expected_row.expected_team_count if expected_row else 0
         except Exception as e:
             return False, f"Failed to query schedule: {e}", {}
 
@@ -539,7 +542,8 @@ class PlayerGameSummaryProcessor(
         """
         try:
             result = self.bq_client.query(gamebook_query).result()
-            gamebook_count = next(result).record_count
+            row = next(result, None)
+            gamebook_count = row.record_count if row else 0
 
             if gamebook_count > 0:
                 logger.info(f"PRIMARY source available: nbac_gamebook_player_stats has {gamebook_count} records")
@@ -554,7 +558,8 @@ class PlayerGameSummaryProcessor(
                     AND game_status = 'Final'
                 """
                 result = self.bq_client.query(boxscore_query).result()
-                boxscore_count = next(result).record_count
+                row = next(result, None)
+                boxscore_count = row.record_count if row else 0
 
                 if boxscore_count > 0:
                     logger.info(

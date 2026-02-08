@@ -40,7 +40,8 @@ def cleanup_duplicates(dry_run: bool = True):
         """.format(project=PROJECT_ID)
 
         result = client.query(count_query).result()
-        count = next(result).duplicate_count
+        row = next(result, None)
+        count = row.duplicate_count if row else 0
         print(f"DRY RUN: Would remove duplicates from {count} player-game combinations")
 
         # Also show sample of duplicates
@@ -97,7 +98,8 @@ def cleanup_duplicates(dry_run: bool = True):
     """.format(project=PROJECT_ID)
 
     result = client.query(verify_query).result()
-    remaining = next(result).duplicate_count
+    row = next(result, None)
+    remaining = row.duplicate_count if row else 0
     print(f"Verification: {remaining} duplicate player-game combinations remaining (should be 0)")
 
 

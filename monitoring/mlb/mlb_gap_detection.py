@@ -283,8 +283,8 @@ class MlbGapDetector:
 
         try:
             result = self.bq_client.query(query).result()
-            row = next(result)
-            return row.cnt
+            row = next(result, None)
+            return row.cnt if row else 0
         except Exception as e:
             logger.error(f"BigQuery check failed for {table}: {e}")
             return -1

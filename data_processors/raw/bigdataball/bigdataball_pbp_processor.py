@@ -836,7 +836,8 @@ class BigDataBallPbpProcessor(SmartIdempotencyMixin, ProcessorBase):
             
             query_job = self.bq_client.query(check_query)
             result = query_job.result(timeout=60)
-            existing_rows = next(result).existing_rows
+            row = next(result, None)
+            existing_rows = row.existing_rows if row else 0
             
             if existing_rows > 0:
                 # Data already exists - this is likely a duplicate file for the same game

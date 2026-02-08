@@ -133,12 +133,12 @@ class EspnScoreboardValidator(BaseValidator):
         
         try:
             result = self._execute_query(query, start_date, end_date)
-            row = next(result)
-            
-            total_games = row.total_games if row.total_games else 0
-            low_conf_count = row.low_confidence_count if row.low_confidence_count else 0
-            avg_conf = row.avg_confidence if row.avg_confidence else 0
-            min_conf = row.min_confidence if row.min_confidence else 0
+            row = next(result, None)
+
+            total_games = row.total_games if row and row.total_games else 0
+            low_conf_count = row.low_confidence_count if row and row.low_confidence_count else 0
+            avg_conf = row.avg_confidence if row and row.avg_confidence else 0
+            min_conf = row.min_confidence if row and row.min_confidence else 0
             
             # Consider passed if less than 5% have low confidence
             passed = (total_games == 0) or (low_conf_count / total_games < 0.05)

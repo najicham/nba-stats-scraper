@@ -110,7 +110,9 @@ def detect_regression(
             )
 
             baseline_result = client.query(baseline_query, job_config=baseline_job_config).result()
-            baseline_row = next(baseline_result)
+            baseline_row = next(baseline_result, None)
+            if baseline_row is None:
+                continue
             baseline_coverage = float(baseline_row.coverage_pct) if baseline_row.coverage_pct else 0.0
             baseline_records = baseline_row.total_records
 
@@ -123,7 +125,9 @@ def detect_regression(
             )
 
             new_result = client.query(baseline_query, job_config=new_job_config).result()
-            new_row = next(new_result)
+            new_row = next(new_result, None)
+            if new_row is None:
+                continue
             new_coverage = float(new_row.coverage_pct) if new_row.coverage_pct else 0.0
             new_records = new_row.total_records
 

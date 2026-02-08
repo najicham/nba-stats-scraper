@@ -701,7 +701,8 @@ class BaseValidator:
             """
             
             result = self._execute_query(query, start_date, end_date)
-            null_count = next(result).null_count
+            row = next(result, None)
+            null_count = row.null_count if row else 0
             
             passed = null_count == 0
             duration = time.time() - check_start
@@ -818,9 +819,9 @@ class BaseValidator:
         try:
             # Freshness check uses direct query (partition filter already in WHERE clause)
             result = self.bq_client.query(query).result(timeout=60)
-            row = next(result)
-            
-            hours_old = row.hours_old if row.hours_old else 9999
+            row = next(result, None)
+
+            hours_old = row.hours_old if row and row.hours_old else 9999
             passed = hours_old <= max_age_hours
             
             duration = time.time() - check_start

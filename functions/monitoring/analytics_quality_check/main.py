@@ -58,7 +58,18 @@ def get_analytics_quality(game_date: str) -> Dict:
     """
 
     result = client.query(query).result()
-    row = next(result)
+    row = next(result, None)
+    if row is None:
+        return {
+            'game_date': game_date,
+            'game_count': 0,
+            'total_active': 0,
+            'total_with_minutes': 0,
+            'total_with_usage_rate': 0,
+            'min_active_per_game': 0,
+            'minutes_coverage_pct': 0,
+            'usage_rate_coverage_pct': 0,
+        }
 
     return {
         'game_date': game_date,

@@ -220,7 +220,9 @@ class BdlPlayerBoxScoresScraper(ScraperBase, ScraperFlaskMixin):
 
         # Date-window mode
         self._date_iter = self._build_date_iter()
-        first_date = next(self._date_iter)
+        first_date = next(self._date_iter, None)
+        if first_date is None:
+            raise ValueError("No dates available for box scores date range")
         self.url = f"{self.base_url}?{self._qs(self._build_query({'dates[]': first_date}))}"
         logger.info("Player box-scores URL (date mode first page): %s", self.url)
 

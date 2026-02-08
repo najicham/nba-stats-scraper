@@ -2866,9 +2866,9 @@ def reset_batch():
             min_completion_pct=0.0       # No minimum - force regardless of progress
         )
 
-        # Reset in-memory tracker
-        if current_tracker:
-            current_tracker.reset()
+        # Reset in-memory tracker — set to None so /start won't see "already_running"
+        # Bug fix (Session 164): reset() sets is_complete=False which blocks new batches
+        current_tracker = None
         current_batch_id = None
         current_game_date = None
 

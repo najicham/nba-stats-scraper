@@ -390,9 +390,9 @@ class EspnScoreboardBackfill:
             """
             
             result = client.query(query).result(timeout=60)
-            row = next(result)
-            
-            return row.count > 0
+            row = next(result, None)
+
+            return row.count > 0 if row else False
             
         except Exception as e:
             # If table doesn't exist or query fails, assume not processed

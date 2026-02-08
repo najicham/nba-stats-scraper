@@ -225,9 +225,11 @@ class MlbPitcherPropsValidator(BaseValidator):
         """
 
         result = self._execute_query(query, start_date, end_date)
-        row = next(result)
-
-        total_books = (row.bp_sportsbooks or 0) + (row.oddsa_sportsbooks or 0)
+        row = next(result, None)
+        if row is None:
+            total_books = 0
+        else:
+            total_books = (row.bp_sportsbooks or 0) + (row.oddsa_sportsbooks or 0)
         passed = total_books >= 3  # At least 3 sportsbooks
 
         duration = time.time() - check_start
@@ -238,9 +240,9 @@ class MlbPitcherPropsValidator(BaseValidator):
             layer="bigquery",
             passed=passed,
             severity="warning",
-            message=f"Found {total_books} sportsbooks (BP: {row.bp_sportsbooks}, ODDSA: {row.oddsa_sportsbooks})",
+            message=f"Found {total_books} sportsbooks (BP: {row.bp_sportsbooks if row else 0}, ODDSA: {row.oddsa_sportsbooks if row else 0})",
             affected_count=0 if passed else 1,
-            affected_items=[f"BP: {row.bp_sportsbooks}", f"ODDSA: {row.oddsa_sportsbooks}"],
+            affected_items=[f"BP: {row.bp_sportsbooks if row else 0}", f"ODDSA: {row.oddsa_sportsbooks if row else 0}"],
             execution_duration=duration
         ))
 

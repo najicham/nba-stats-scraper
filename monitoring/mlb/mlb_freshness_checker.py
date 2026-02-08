@@ -235,9 +235,9 @@ class MlbFreshnessChecker:
             """
 
             result = self.bq_client.query(query).result()
-            row = next(result)
+            row = next(result, None)
 
-            if row.last_update is None or row.record_count == 0:
+            if row is None or row.last_update is None or row.record_count == 0:
                 return FreshnessResult(
                     source_key=source_key,
                     source_name=config['name'],
@@ -349,8 +349,8 @@ class MlbFreshnessChecker:
             WHERE game_date = '{game_date}'
             """
             result = self.bq_client.query(query).result()
-            row = next(result)
-            return row.cnt > 0
+            row = next(result, None)
+            return row.cnt > 0 if row else False
         except Exception as e:
             logger.error(f"Error checking games: {e}")
             return True  # Assume yes if we can't check

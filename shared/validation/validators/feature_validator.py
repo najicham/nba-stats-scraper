@@ -79,7 +79,10 @@ def validate_feature_coverage(
             )
 
             result = client.query(query, job_config=job_config).result()
-            row = next(result)
+            row = next(result, None)
+            if row is None:
+                results[feature] = {'coverage_pct': 0.0, 'passed': False, 'threshold': 0, 'is_critical': False}
+                continue
 
             coverage_pct = float(row.coverage_pct) if row.coverage_pct else 0.0
             threshold = get_feature_threshold(feature)

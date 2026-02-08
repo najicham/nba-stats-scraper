@@ -627,7 +627,8 @@ class PlayerShotZoneAnalysisProcessor(
           AND game_date <= '{season_year}-11-30'
         """
         season_start_result = self.bq_client.query(season_start_query).result()
-        season_start_date = next(season_start_result).season_start
+        row = next(season_start_result, None)
+        season_start_date = row.season_start if row else None
 
         if season_start_date is None:
             logger.warning(f"Could not find season start for {season_year}, defaulting to Oct 22")

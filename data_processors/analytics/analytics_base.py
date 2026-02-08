@@ -1319,7 +1319,8 @@ class AnalyticsProcessorBase(FailureTrackingMixin, BigQuerySaveOpsMixin, Depende
             WHERE game_date BETWEEN '{start_date}' AND '{end_date}'
             """
             result = self.bq_client.query(query).result()
-            count = next(result).cnt
+            row = next(result, None)
+            count = row.cnt if row else 0
             return count > 0, count
         except Exception as e:
             logger.debug(f"Could not check target data existence: {e}")

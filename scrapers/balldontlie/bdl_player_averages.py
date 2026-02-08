@@ -342,7 +342,9 @@ class BdlPlayerAveragesScraper(ScraperBase, ScraperFlaskMixin):
         return f"{self._API_BASE}/{self.opts['category']}?{_qs(qs)}"
 
     def set_url(self) -> None:
-        first_chunk = next(self._chunk_iter)
+        first_chunk = next(self._chunk_iter, None)
+        if first_chunk is None:
+            raise ValueError("No player ID chunks available for averages request")
         self.base_url = f"{self._API_BASE}/{self.opts['category']}"
         self.url = self._build_url(first_chunk)
         logger.debug(

@@ -118,7 +118,8 @@ class BackfillProgressMonitor:
           AND game_date BETWEEN @start_date AND @end_date
         """
         result = self.client.query(query, job_config=job_config).result(timeout=60)
-        return next(result).total
+        row = next(result, None)
+        return row.total if row else 0
 
     def get_phase_progress(self, phase: str, tables, date_field: str = 'game_date',
                           season: Optional[str] = None) -> Dict:
@@ -167,7 +168,8 @@ class BackfillProgressMonitor:
             """
             try:
                 result = self.client.query(query, job_config=job_config).result(timeout=60)
-                dates = next(result).dates
+                row = next(result, None)
+                dates = row.dates if row else 0
                 progress['tables'][table] = dates
                 # Use max for overall phase progress (tables should converge)
                 progress['total_dates'] = max(progress['total_dates'], dates)
@@ -234,7 +236,9 @@ class BackfillProgressMonitor:
         """
         try:
             result = self.client.query(query, job_config=job_config).result(timeout=60)
-            row = next(result)
+            row = next(result, None)
+            if row is None:
+                return {'dates_processed': 0, 'total_runs': 0, 'first_run': None, 'last_run': None}
             return {
                 'dates_processed': row.dates_processed,
                 'total_runs': row.total_runs,

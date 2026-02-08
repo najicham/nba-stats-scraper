@@ -146,15 +146,18 @@ class MlbPredictionCoverageValidator(BaseValidator):
         """
 
         result = self._execute_query(query, start_date, end_date)
-        row = next(result)
+        row = next(result, None)
 
         issues = []
-        if row.invalid_confidence > 0:
-            issues.append(f"{row.invalid_confidence} invalid confidence values")
-        if row.invalid_prediction > 0:
-            issues.append(f"{row.invalid_prediction} invalid predictions")
-        if row.invalid_recommendation > 0:
-            issues.append(f"{row.invalid_recommendation} invalid recommendations")
+        if row is None:
+            issues.append("No data returned from query")
+        else:
+            if row.invalid_confidence > 0:
+                issues.append(f"{row.invalid_confidence} invalid confidence values")
+            if row.invalid_prediction > 0:
+                issues.append(f"{row.invalid_prediction} invalid predictions")
+            if row.invalid_recommendation > 0:
+                issues.append(f"{row.invalid_recommendation} invalid recommendations")
 
         passed = len(issues) == 0
         duration = time.time() - check_start

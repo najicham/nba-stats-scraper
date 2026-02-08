@@ -293,7 +293,9 @@ class BdlGameAdvStatsScraper(ScraperBase, ScraperFlaskMixin):
 
         # Window mode: iterate startDate -> endDate day by day
         self._date_iter = self._gen_dates()
-        first_date = next(self._date_iter)
+        first_date = next(self._date_iter, None)
+        if first_date is None:
+            raise ValueError("No dates available for adv-stats date range")
         self.url = f"{self.base_url}?{_qs(self._build_params({'dates[]': first_date}))}"
         logger.debug("Adv-stats URL (date mode first page): %s", self.url)
 

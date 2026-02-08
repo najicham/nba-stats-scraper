@@ -370,7 +370,9 @@ class PredictionCoverageChecker:
             logger.info(f"\n⚠️  NAME RESOLUTION ISSUES ({len(name_issues)} players):")
             logger.info("   These need AI resolution or manual alias creation:")
             for player in name_issues[:10]:
-                gap = next(g for g in gaps if g['player_lookup'] == player)
+                gap = next((g for g in gaps if g['player_lookup'] == player), None)
+                if gap is None:
+                    continue
                 logger.info(f"     - {player} (line: {gap['line_value']})")
             if len(name_issues) > 10:
                 logger.info(f"     ... and {len(name_issues) - 10} more")

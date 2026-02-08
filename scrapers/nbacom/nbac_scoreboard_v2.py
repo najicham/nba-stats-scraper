@@ -280,11 +280,15 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
         """Convert V2 response to V3 format with scores and key details"""
         try:
             # Pull GameHeader rows
-            gh = next(s for s in v2["resultSets"] if s["name"] == "GameHeader")
+            gh = next((s for s in v2["resultSets"] if s["name"] == "GameHeader"), None)
+            if gh is None:
+                raise ValueError("Missing GameHeader resultSet in V2 response")
             idx_gh = {h: i for i, h in enumerate(gh["headers"])}
 
             # Build lookup from LineScore for team abbreviations AND scores
-            ls = next(s for s in v2["resultSets"] if s["name"] == "LineScore")
+            ls = next((s for s in v2["resultSets"] if s["name"] == "LineScore"), None)
+            if ls is None:
+                raise ValueError("Missing LineScore resultSet in V2 response")
             idx_ls = {h: i for i, h in enumerate(ls["headers"])}
             
             # Map (gameId, teamId) -> team data including scores
@@ -407,10 +411,14 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
     def _v2_to_v3_minimal(self, v2: dict) -> dict:
         """Minimal V2 to V3 conversion as fallback"""
         try:
-            gh = next(s for s in v2["resultSets"] if s["name"] == "GameHeader")
+            gh = next((s for s in v2["resultSets"] if s["name"] == "GameHeader"), None)
+            if gh is None:
+                raise ValueError("Missing GameHeader resultSet in V2 minimal response")
             idx_gh = {h: i for i, h in enumerate(gh["headers"])}
 
-            ls = next(s for s in v2["resultSets"] if s["name"] == "LineScore")
+            ls = next((s for s in v2["resultSets"] if s["name"] == "LineScore"), None)
+            if ls is None:
+                raise ValueError("Missing LineScore resultSet in V2 minimal response")
             idx_ls = {h: i for i, h in enumerate(ls["headers"])}
             
             # Simple abbreviation lookup
@@ -696,12 +704,16 @@ class GetNbaComScoreboardV2(ScraperBase, ScraperFlaskMixin):
         """
         try:
             # Get GameHeader for main game info
-            game_header = next(s for s in v2_data["resultSets"] if s["name"] == "GameHeader")
+            game_header = next((s for s in v2_data["resultSets"] if s["name"] == "GameHeader"), None)
+            if game_header is None:
+                raise ValueError("Missing GameHeader resultSet in V2 data")
             gh_headers = game_header["headers"]
             gh_idx = {h: i for i, h in enumerate(gh_headers)}
-            
+
             # Get LineScore for team stats
-            line_score = next(s for s in v2_data["resultSets"] if s["name"] == "LineScore")
+            line_score = next((s for s in v2_data["resultSets"] if s["name"] == "LineScore"), None)
+            if line_score is None:
+                raise ValueError("Missing LineScore resultSet in V2 data")
             ls_headers = line_score["headers"]
             ls_idx = {h: i for i, h in enumerate(ls_headers)}
             

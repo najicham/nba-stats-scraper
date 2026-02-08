@@ -191,8 +191,8 @@ def check_if_data_exists(
 
     try:
         result = client.query(query, job_config=job_config).result()
-        row = next(result)
-        record_count = row.record_count
+        row = next(result, None)
+        record_count = row.record_count if row else 0
 
         # Consider data to exist if there are any records
         data_exists = record_count > 0
@@ -238,7 +238,9 @@ def check_game_status(client: bigquery.Client, game_date: str) -> Dict:
 
     try:
         result = client.query(query, job_config=job_config).result()
-        row = next(result)
+        row = next(result, None)
+        if row is None:
+            return {'total_games': 0, 'postponed_games': 0, 'finished_games': 0, 'scheduled_or_live': 0, 'all_postponed': False}
 
         status = {
             'total_games': row.total_games,
