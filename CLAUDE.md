@@ -298,11 +298,12 @@ Cloud Build triggers watch GitHub for pushes to `main` and auto-deploy only the 
 | nba-phase4-precompute-processors | `data_processors/precompute/**`, `shared/**` | `deploy-nba-phase4-precompute-processors` |
 | nba-phase2-raw-processors | `data_processors/raw/**`, `shared/**` | `deploy-nba-phase2-raw-processors` |
 | nba-scrapers | `scrapers/**`, `shared/**` | `deploy-nba-scrapers` |
+| **phase5b-grading** (Cloud Function) | `orchestration/cloud_functions/grading/**`, `data_processors/grading/**`, `shared/**` | `deploy-phase5b-grading` |
 
 **How it works:**
 1. Push to `main` triggers Cloud Build via GitHub webhook
-2. Cloud Build clones repo, builds Docker image with correct Dockerfile
-3. Deploys to Cloud Run with `--update-env-vars` (preserves existing env vars)
+2. **Cloud Run services:** Cloud Build builds Docker image and deploys to Cloud Run
+3. **Cloud Functions:** Cloud Build packages source and deploys via `gcloud functions deploy` (uses `cloudbuild-functions.yaml`)
 4. Labels deployment with commit SHA for drift detection
 
 **Monitor triggers:**

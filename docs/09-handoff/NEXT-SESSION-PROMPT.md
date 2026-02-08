@@ -1,37 +1,56 @@
-# Session 152 Prompt
+# Session 155 Prompt
 
-Read the Session 151 handoff: `docs/09-handoff/2026-02-07-SESSION-151-HANDOFF.md`
+Read the Session 154 handoff: `docs/09-handoff/2026-02-07-SESSION-154-HANDOFF.md`
 
 ## Context
 
-Session 151 completed three tasks:
-- **Breakout V3 trained:** AUC 0.5924 (+0.02 vs V2 0.5708) on 7-day eval (N=520). Not promoted — no high-confidence predictions yet.
-- **Feature completeness fix:** Added team_pace_last_10, team_off_rating_last_10, mid_range_rate_last_10 to fallback computation. Unblocks ~48 players/day.
-- **BDL decommission:** Removed BDL from 10 config files (orchestration, workflows, registry, deploy scripts, secrets). Kept injuries + source code.
+Session 154 reviewed, finalized, and deployed the **materialized subsets + subset grading** system from Session 153.
 
-## Suggested Priorities
+**What was done:**
+- Reviewed all 7 files, design validated (append-only, pre-tip grading, fallback)
+- Added `game_id` and `rank_in_subset` to schema + materializer (Session 153 gap)
+- Created both BQ tables (`current_subset_picks`, `subset_grading_results`)
+- Committed and pushed — Cloud Run auto-deploys succeeded
+- Created Cloud Build trigger for grading Cloud Function (`deploy-phase5b-grading`)
+- Grading CF now auto-deploys on push (uses `cloudbuild-functions.yaml`)
 
-### 1. Monitor Feature Completeness Impact (HIGH)
-Check if today's predictions show fewer defaults:
-```sql
-SELECT game_date, COUNTIF(default_feature_count = 0) as clean, COUNT(*) as total
-FROM nba_predictions.ml_feature_store_v2
-WHERE game_date >= '2026-02-08'
-GROUP BY 1
-```
+## Priority 1: Verify First Day of Operation (HIGH)
 
-### 2. Breakout V3 Larger Evaluation (MEDIUM)
-7-day eval showed +0.02 AUC improvement but `star_teammate_out` had 4.5x distribution shift (eval mean 0.971 vs train 0.213). Try:
+Monitor that the system works end-to-end:
+
 ```bash
-PYTHONPATH=. python ml/experiments/train_and_evaluate_breakout.py \
-  --train-end 2026-01-15 --eval-start 2026-01-16 --eval-end 2026-02-07
+# Check if materialized data exists for today
+bq query --use_legacy_sql=false '
+SELECT version_id, computed_at, trigger_source, COUNT(*) as picks,
+       COUNT(DISTINCT subset_id) as subsets
+FROM nba_predictions.current_subset_picks
+WHERE game_date = CURRENT_DATE()
+GROUP BY 1, 2, 3
+ORDER BY 2 DESC'
+
+# Check subset grading results (populated after morning grading)
+bq query --use_legacy_sql=false '
+SELECT subset_id, subset_name, total_picks, graded_picks, wins, hit_rate, roi
+FROM nba_predictions.subset_grading_results
+WHERE game_date >= CURRENT_DATE() - 3
+ORDER BY game_date DESC, subset_id'
 ```
 
-### 3. Remaining BDL Cleanup (LOW)
-10 more files still reference BDL as fallback source (validation configs, processor patterns). See Session 151 handoff for full list.
+## Priority 2: Backfill Historical Dates (MEDIUM)
 
-## Verification
-```bash
-/validate-daily
-./bin/check-deployment-drift.sh --verbose
+Materialize subsets for recent dates so grading has data to work with:
+
+```python
+# Backfill recent dates
+from data_processors.publishing.subset_materializer import SubsetMaterializer
+m = SubsetMaterializer()
+for date in ['2026-02-05', '2026-02-06', '2026-02-07']:
+    result = m.materialize(date, trigger_source='backfill')
+    print(f"{date}: {result['total_picks']} picks")
 ```
+
+## Open Items (from Session 153, not yet addressed)
+
+- **Filtering logic duplication** — `_filter_picks_for_subset()` exists in both SubsetMaterializer and AllSubsetsPicksExporter. Acceptable for now (fallback is temporary).
+- **`subset_pick_snapshots` table cleanup** — Session 152's table is superseded. Leave for now.
+- **Switch performance view to grading table** — Once `subset_grading_results` has data, can replace `v_dynamic_subset_performance` reads.
