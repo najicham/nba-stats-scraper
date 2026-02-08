@@ -91,8 +91,8 @@ Makefile.complex
 
 # Cloud Build temporary files
 /tmp/cloudbuild-*.yaml
-cloudbuild-*.yaml
 build-*.yaml
+# Note: cloudbuild.yaml and cloudbuild-functions.yaml are tracked (not ignored)
 
 # Google Cloud authentication & secrets
 service-account-key.json

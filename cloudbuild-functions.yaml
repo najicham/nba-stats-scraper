@@ -1,0 +1,98 @@
+# Cloud Build configuration for Cloud Functions
+# Deploys Cloud Functions by packaging source and running gcloud functions deploy.
+#
+# Unlike cloudbuild.yaml (Cloud Run services with Docker), Cloud Functions
+# deploy source code directly. This config prepares the deployment package
+# and deploys using gcloud functions deploy.
+#
+# Substitution variables:
+#   _FUNCTION_NAME: Cloud Function name (e.g., phase5b-grading)
+#   _ENTRY_POINT: Function entry point (e.g., main)
+#   _SOURCE_DIR: Source directory relative to repo root (e.g., orchestration/cloud_functions/grading)
+#   _TRIGGER_TOPIC: Pub/Sub trigger topic (e.g., nba-grading-trigger)
+#   _MEMORY: Memory allocation (default: 1Gi)
+#   _TIMEOUT: Function timeout (default: 300s)
+
+steps:
+  # Step 0: Prepare deployment package
+  # Cloud Functions need all dependencies in a flat directory
+  - name: 'gcr.io/cloud-builders/gsutil'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        echo "Preparing deployment package..."
+        mkdir -p /workspace/deploy_pkg
+
+        # Copy cloud function entry point and requirements
+        cp ${_SOURCE_DIR}/main.py /workspace/deploy_pkg/
+        cp ${_SOURCE_DIR}/requirements.txt /workspace/deploy_pkg/
+
+        # Copy required source directories
+        cp -r data_processors /workspace/deploy_pkg/
+        cp -r shared /workspace/deploy_pkg/
+        cp -r predictions /workspace/deploy_pkg/
+
+        # Ensure __init__.py files exist
+        touch /workspace/deploy_pkg/data_processors/__init__.py
+        touch /workspace/deploy_pkg/data_processors/grading/__init__.py
+        touch /workspace/deploy_pkg/data_processors/grading/prediction_accuracy/__init__.py
+        touch /workspace/deploy_pkg/data_processors/grading/system_daily_performance/__init__.py
+        touch /workspace/deploy_pkg/data_processors/grading/subset_grading/__init__.py
+        touch /workspace/deploy_pkg/shared/__init__.py
+        touch /workspace/deploy_pkg/predictions/__init__.py
+        touch /workspace/deploy_pkg/predictions/worker/__init__.py
+
+        # Add additional dependencies
+        cat >> /workspace/deploy_pkg/requirements.txt << 'REQS'
+        # Additional dependencies for grading processors
+        pytz>=2023.0
+        REQS
+
+        echo "Deployment package ready:"
+        ls -la /workspace/deploy_pkg/
+
+  # Step 1: Deploy Cloud Function
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'functions'
+      - 'deploy'
+      - '${_FUNCTION_NAME}'
+      - '--gen2'
+      - '--runtime'
+      - 'python311'
+      - '--region'
+      - 'us-west2'
+      - '--source'
+      - '/workspace/deploy_pkg'
+      - '--entry-point'
+      - '${_ENTRY_POINT}'
+      - '--trigger-topic'
+      - '${_TRIGGER_TOPIC}'
+      - '--service-account=756957797294-compute@developer.gserviceaccount.com'
+      - '--set-env-vars'
+      - 'GCP_PROJECT=nba-props-platform'
+      - '--memory'
+      - '${_MEMORY}'
+      - '--timeout'
+      - '${_TIMEOUT}'
+      - '--max-instances'
+      - '3'
+      - '--min-instances'
+      - '0'
+      - '--project'
+      - 'nba-props-platform'
+
+substitutions:
+  _FUNCTION_NAME: ''
+  _ENTRY_POINT: 'main'
+  _SOURCE_DIR: ''
+  _TRIGGER_TOPIC: ''
+  _MEMORY: '1Gi'
+  _TIMEOUT: '300s'
+
+timeout: 600s
+
+options:
+  logging: CLOUD_LOGGING_ONLY
