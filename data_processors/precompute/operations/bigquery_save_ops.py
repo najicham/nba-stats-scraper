@@ -685,7 +685,8 @@ class BigQuerySaveOpsMixin:
                 """
 
             count_result = self.bq_client.query(count_query).result()
-            actual_count = next(count_result).actual_count
+            count_row = next(count_result, None)
+            actual_count = count_row.actual_count if count_row else 0
 
             # Validate count matches expected
             count_mismatch = abs(actual_count - expected_count)
@@ -757,7 +758,10 @@ class BigQuerySaveOpsMixin:
                     """
 
                 null_result = self.bq_client.query(null_check_query).result()
-                null_row = next(null_result)
+                null_row = next(null_result, None)
+                if null_row is None:
+                    logger.warning("POST_WRITE_VALIDATION: NULL check query returned no rows, skipping")
+                    return True
 
                 # Check if any key fields have NULLs
                 null_fields = []

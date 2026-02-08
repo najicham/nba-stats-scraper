@@ -682,8 +682,8 @@ class BatchConsolidator:
             result = query_job.result(timeout=30)
 
             # Get the count
-            row = next(iter(result))
-            duplicate_count = row.duplicate_count or 0
+            row = next(iter(result), None)
+            duplicate_count = (row.duplicate_count or 0) if row else 0
 
             if duplicate_count > 0:
                 # Log details of duplicates for investigation
@@ -784,8 +784,8 @@ class BatchConsolidator:
         try:
             count_job = self.bq_client.query(count_query)
             count_result = count_job.result(timeout=60)
-            row = next(iter(count_result))
-            duplicates_found = row.duplicate_count or 0
+            row = next(iter(count_result), None)
+            duplicates_found = (row.duplicate_count or 0) if row else 0
 
             logger.info(f"Found {duplicates_found} duplicate predictions for game_date={game_date}")
 

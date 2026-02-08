@@ -89,10 +89,10 @@ class ScheduleDatabaseReader:
             job_config = bigquery.QueryJobConfig(query_parameters=params)
             # Wait for completion with timeout to prevent indefinite hangs
             result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
-            row = next(result)
+            row = next(result, None)
 
-            return row.count > 0
-            
+            return row.count > 0 if row else False
+
         except Exception as e:
             logger.warning("Error checking database for %s: %s", game_date, e)
             return None  # Signal to use GCS fallback
@@ -129,10 +129,10 @@ class ScheduleDatabaseReader:
             job_config = bigquery.QueryJobConfig(query_parameters=params)
             # Wait for completion with timeout to prevent indefinite hangs
             result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
-            row = next(result)
-            
-            return row.count
-            
+            row = next(result, None)
+
+            return row.count if row else 0
+
         except Exception as e:
             logger.warning("Error querying database for %s: %s", game_date, e)
             return None

@@ -173,16 +173,17 @@ BUSINESS_RULES: Dict[str, List[ValidationRule]] = {
         ),
 
         # Context scores ranges
+        # shot_zone_mismatch_score: adjustment factor, typically -10 to +10 (processor allows -15 to +15)
         ValidationRule(
-            name='matchup_difficulty_range',
-            condition=lambda r: r.get('matchup_difficulty_score') is None or -50 <= r.get('matchup_difficulty_score', 0) <= 50,
-            error_message="matchup_difficulty_score must be -50 to 50"
+            name='shot_zone_mismatch_range',
+            condition=lambda r: r.get('shot_zone_mismatch_score') is None or -15 <= r.get('shot_zone_mismatch_score', 0) <= 15,
+            error_message="shot_zone_mismatch_score must be -15 to 15"
         ),
+        # pace_score: adjustment factor, typically -3 to +3 (processor allows -8 to +8)
         ValidationRule(
             name='pace_score_range',
-            condition=lambda r: r.get('pace_score') is None or 70 <= r.get('pace_score', 100) <= 130,
-            error_message="pace_score must be 70-130",
-            severity="WARNING"
+            condition=lambda r: r.get('pace_score') is None or -8 <= r.get('pace_score', 0) <= 8,
+            error_message="pace_score must be -8 to 8"
         ),
 
         # Required fields

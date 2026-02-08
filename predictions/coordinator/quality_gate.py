@@ -525,7 +525,14 @@ class AnalyticsQualityGate:
 
         try:
             result = self.bq_client.query(query, job_config=job_config).result()
-            row = next(result)
+            row = next(result, None)
+            if row is None:
+                logger.warning("Quality gate query returned no rows — assuming no data for date")
+                return AnalyticsQualityResult(
+                    game_date=game_date, game_count=0, active_players=0,
+                    usage_rate_coverage_pct=0.0, minutes_coverage_pct=0.0,
+                    passes_threshold=False, issues=["No data returned from query"]
+                )
 
             game_count = row.game_count or 0
             active_players = row.active_players or 0
