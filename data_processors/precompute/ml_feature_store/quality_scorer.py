@@ -181,7 +181,16 @@ class QualityScorer:
         """
         Calculate overall feature quality score.
 
-        Quality = weighted average of source quality across all features.
+        Quality = weighted average of source quality across all features,
+        CAPPED when required (non-vegas) defaults exist.
+
+        Session 157: Added default penalty cap. Previously, 5 defaulted features
+        could still produce a 91.9 score (because 32 good features carried the
+        average). This masked the contamination bug that allowed 33% of V9 training
+        data to have garbage default values. Now:
+        - 1+ required defaults → score capped at 69 (below bronze threshold)
+        - 5+ required defaults → score capped at 49 (critical tier)
+        This makes the score honest: any record with defaults is visibly degraded.
 
         Args:
             feature_sources: Dict mapping feature index to source type.
@@ -205,9 +214,24 @@ class QualityScorer:
 
         quality_score = total_weight / float(num_features)
 
+        # Session 157: Cap score when required (non-vegas) defaults exist.
+        # The weighted average masks individual defaults — a record with 5 defaults
+        # could score 91.9, which is misleading. Cap ensures the score reflects
+        # that the record contains garbage data and shouldn't be used for training.
+        required_defaults = sum(
+            1 for idx in range(num_features)
+            if feature_sources.get(idx, 'default') in ('default', 'fallback', 'missing')
+            and idx not in OPTIONAL_FEATURES
+        )
+        if required_defaults >= 5:
+            quality_score = min(quality_score, 49.0)  # Critical tier
+        elif required_defaults >= 1:
+            quality_score = min(quality_score, 69.0)  # Below bronze threshold
+
         logger.debug(
             f"Quality score: {quality_score:.1f} for {num_features} features "
-            f"(sources: {self._summarize_sources(feature_sources)})"
+            f"(sources: {self._summarize_sources(feature_sources)}"
+            f"{f', capped due to {required_defaults} required defaults' if required_defaults > 0 else ''})"
         )
 
         return round(quality_score, 2)
