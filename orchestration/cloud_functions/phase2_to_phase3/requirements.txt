@@ -18,3 +18,6 @@ requests==2.*
 # Data processing (required by shared utils)
 pandas>=2.0.0
 pyarrow>=10.0.0
+psutil>=5.9.0  # Required by prometheus_metrics
+PyYAML>=6.0  # Required by scraper_retry_config
+pytz>=2023.0  # Timezone support
