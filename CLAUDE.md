@@ -169,20 +169,58 @@ nba-stats-scraper/
 | Property | Value |
 |----------|-------|
 | System ID | `catboost_v9` |
-| Training | Current season only (Nov 2025+) |
-| **Medium Quality (3+ edge)** | **65.0% hit rate, +24.0% ROI** - RECOMMENDED |
+| Production Model | `catboost_v9_33features_20260201_011018.cbm` (Session 163) |
+| Training | Current season only (Nov 2, 2025 - Jan 8, 2026) |
+| **Medium Quality (3+ edge)** | **71.2% hit rate** (Jan 12 week holdout) |
 | **High Quality (5+ edge)** | **79.0% hit rate, +50.9% ROI** |
 | All Bets (no filter) | 54.7% hit rate, +4.5% ROI |
 
 **CRITICAL:** Use edge >= 3 filter. 73% of predictions have edge < 3 and lose money.
 
+### Model Governance (Session 163)
+
+**NEVER deploy a retrained model without passing ALL governance gates.**
+
+Session 163 discovered that the Feb 2 retrain crashed hit rate from 71.2% to 51.2% despite having better MAE. The retrain had systematic UNDER bias (-2.26 avg pred_vs_vegas).
+
+**Governance gates** (enforced in `quick_retrain.py`):
+1. Vegas bias: pred_vs_vegas within +/- 1.5
+2. High-edge (3+) hit rate >= 60%
+3. Sample size >= 50 graded edge 3+ bets
+4. No critical tier bias (> +/- 5 points)
+5. MAE improvement vs baseline
+
+**Promotion process:** Train -> Gates pass -> Upload to GCS -> Register -> Shadow 2+ days -> Promote
+
+**Rollback:** `gcloud run services update prediction-worker --region=us-west2 --update-env-vars="CATBOOST_V9_MODEL_PATH=gs://..."`
+
+### Model Registry
+```bash
+./bin/model-registry.sh list              # List all models with SHA256
+./bin/model-registry.sh production        # Show production model
+./bin/model-registry.sh validate          # Verify GCS paths + SHA256 integrity
+./bin/model-registry.sh manifest          # Show GCS manifest
+```
+
 ### Monthly Retraining
 ```bash
 PYTHONPATH=. python ml/experiments/quick_retrain.py \
-    --name "V9_FEB_RETRAIN" \
+    --name "V9_MAR_RETRAIN" \
     --train-start 2025-11-02 \
-    --train-end 2026-01-31
+    --train-end 2026-02-28
+# Script outputs ALL GATES PASSED/FAILED — do NOT deploy without passing
 ```
+
+### Model Files in GCS
+```
+gs://nba-props-platform-models/catboost/v9/
+├── manifest.json                                    # Source of truth
+├── catboost_v9_33features_20260201_011018.cbm       # PRODUCTION (SHA: 5b3a187b)
+├── catboost_v9_feb_02_retrain.cbm                   # DEPRECATED (UNDER bias)
+└── monthly/catboost_v9_2026_02.cbm                  # Untested
+```
+
+**See:** `docs/08-projects/current/model-governance/00-PROJECT-OVERVIEW.md`
 
 ## Breakout Classifier [Keyword: BREAKOUT]
 
