@@ -750,51 +750,59 @@ curl -X POST "${COORDINATOR_URL}/regenerate-with-supersede" \
 
 **Reference**: Session 102 handoff, `docs/09-handoff/2026-02-03-SESSION-102-HANDOFF.md`
 
-### Phase 0.466: Model Bias Check (Session 102 - CRITICAL)
+### Phase 0.466: Model Bias Check (Session 102, fixed Session 162)
 
 **IMPORTANT**: Verify model predictions are not systematically biased by player tier.
 
-**Why this matters**: Session 102 discovered CatBoost V9 has regression-to-mean bias. Stars are under-predicted by ~9 pts, causing high-edge UNDER picks on stars to systematically lose. Feb 2 went 0/7 on high-edge picks.
+**CRITICAL METHODOLOGY NOTE (Session 161)**: Always tier players by their **season average** (what the player IS), never by `actual_points` (what they scored in one game). Using `actual_points` creates survivorship bias — selecting players who scored high and then noting the model predicted lower is circular reasoning. See `docs/08-projects/current/session-161-model-eval-and-subsets/00-PROJECT-OVERVIEW.md`.
 
 **What to check**:
 
 ```bash
 bq query --use_legacy_sql=false "
--- Check model bias by player tier (should be <3 pts for all)
+-- Check model bias by player tier using SEASON AVERAGE (correct methodology)
+-- Tiers by what the player IS (season avg), not what they scored (actual_points)
+WITH player_avgs AS (
+  SELECT player_lookup, AVG(actual_points) as season_avg
+  FROM nba_predictions.prediction_accuracy
+  WHERE system_id = 'catboost_v9' AND game_date >= '2025-11-01'
+  GROUP BY 1
+)
 SELECT
   CASE
-    WHEN actual_points >= 25 THEN '1_Stars (25+)'
-    WHEN actual_points >= 15 THEN '2_Starters (15-24)'
-    WHEN actual_points >= 5 THEN '3_Role (5-14)'
-    ELSE '4_Bench (<5)'
+    WHEN pa.season_avg >= 25 THEN '1_Stars (25+ avg)'
+    WHEN pa.season_avg >= 15 THEN '2_Starters (15-24 avg)'
+    WHEN pa.season_avg >= 8 THEN '3_Role (8-14 avg)'
+    ELSE '4_Bench (<8 avg)'
   END as tier,
   COUNT(*) as n,
-  ROUND(AVG(predicted_points - actual_points), 1) as bias,
-  CASE WHEN ABS(AVG(predicted_points - actual_points)) > 3 THEN '❌ FAIL' ELSE '✅ OK' END as status
-FROM nba_predictions.prediction_accuracy
-WHERE system_id = 'catboost_v9'
-  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  ROUND(AVG(p.predicted_points - p.actual_points), 1) as bias,
+  CASE WHEN ABS(AVG(p.predicted_points - p.actual_points)) > 3 THEN '❌ FAIL' ELSE '✅ OK' END as status
+FROM nba_predictions.prediction_accuracy p
+JOIN player_avgs pa USING (player_lookup)
+WHERE p.system_id = 'catboost_v9'
+  AND p.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 GROUP BY 1
 ORDER BY 1"
 ```
 
 **Expected Result**:
-- All tiers should have bias < 3 pts
-- Stars and Bench tiers are most prone to bias
+- All tiers should have bias < 3 pts (Session 161 showed -0.3 for stars with correct methodology)
+- If using season_avg tiers shows high bias, it's a real model issue (not measurement artifact)
 
 **If FAIL (any tier has bias > 3 pts)**:
 
 | Tier | Bias Direction | Root Cause |
 |------|----------------|------------|
-| Stars (25+) | Under-predicted | Regression-to-mean |
-| Bench (<5) | Over-predicted | Regression-to-mean |
+| Stars (25+ avg) | Under-predicted | Real regression-to-mean in model |
+| Bench (<8 avg) | Over-predicted | Model over-predicting low-usage players |
 
 **Resolution**:
 1. Check `docs/08-projects/current/feature-mismatch-investigation/MODEL-BIAS-INVESTIGATION.md`
 2. Consider adding tier recalibration in worker.py
-3. Plan V10 model retraining with tier features
+3. Plan model retraining with tier features
 
-**Reference**: Session 102 handoff, `docs/09-handoff/2026-02-03-SESSION-102-MODEL-INVESTIGATION-HANDOFF.md`
+**Reference**: Session 161 model eval methodology, Session 102 handoff
 
 ### Phase 0.47: Session 97 Quality Gate Check (CRITICAL)
 
@@ -1422,11 +1430,11 @@ Signal: Heavy UNDER skew - historically 54% hit rate vs 82% on balanced days
 - System design: `docs/08-projects/current/pre-game-signals-strategy/DYNAMIC-SUBSET-DESIGN.md`
 - Statistical validation: Session 70 findings (23 days, p=0.0065)
 
-### Phase 0.55: Model Bias Check (Session 101 - NEW)
+### Phase 0.55: Model Bias Check (Session 101, fixed Session 162)
 
 **IMPORTANT**: If RED signal detected, check for underlying model bias.
 
-**Why this matters**: Session 101 discovered that RED signals (heavy UNDER skew) can indicate **regression-to-mean bias** in the model. The model was under-predicting star players by ~9 points and over-predicting bench players by ~6 points, causing all high-edge picks to be UNDERs on stars.
+**CRITICAL METHODOLOGY NOTE (Session 161)**: Use **season average** tiers, not `actual_points` tiers. Tiering by actual_points is survivorship bias. See Phase 0.466 note above.
 
 **When to run**: Only if RED signal detected in Phase 0.5, OR if high-edge picks have been losing consistently.
 
@@ -1434,42 +1442,49 @@ Signal: Heavy UNDER skew - historically 54% hit rate vs 82% on balanced days
 
 ```bash
 bq query --use_legacy_sql=false "
--- Check model bias by player scoring tier (last 14 days)
+-- Check model bias by player tier using SEASON AVERAGE (correct methodology)
+WITH player_avgs AS (
+  SELECT player_lookup, AVG(actual_points) as season_avg
+  FROM nba_predictions.prediction_accuracy
+  WHERE system_id = 'catboost_v9' AND game_date >= '2025-11-01'
+  GROUP BY 1
+)
 SELECT
   CASE
-    WHEN actual_points >= 25 THEN '1_Stars (25+)'
-    WHEN actual_points >= 15 THEN '2_Starters (15-24)'
-    WHEN actual_points >= 5 THEN '3_Role (5-14)'
-    ELSE '4_Bench (<5)'
+    WHEN pa.season_avg >= 25 THEN '1_Stars (25+ avg)'
+    WHEN pa.season_avg >= 15 THEN '2_Starters (15-24 avg)'
+    WHEN pa.season_avg >= 8 THEN '3_Role (8-14 avg)'
+    ELSE '4_Bench (<8 avg)'
   END as tier,
   COUNT(*) as predictions,
-  ROUND(AVG(predicted_points), 1) as avg_predicted,
-  ROUND(AVG(actual_points), 1) as avg_actual,
-  ROUND(AVG(predicted_points - actual_points), 1) as bias,
+  ROUND(AVG(p.predicted_points), 1) as avg_predicted,
+  ROUND(AVG(p.actual_points), 1) as avg_actual,
+  ROUND(AVG(p.predicted_points - p.actual_points), 1) as bias,
   CASE
-    WHEN ABS(AVG(predicted_points - actual_points)) > 5 THEN '🔴 CRITICAL'
-    WHEN ABS(AVG(predicted_points - actual_points)) > 3 THEN '🟡 WARNING'
+    WHEN ABS(AVG(p.predicted_points - p.actual_points)) > 5 THEN '🔴 CRITICAL'
+    WHEN ABS(AVG(p.predicted_points - p.actual_points)) > 3 THEN '🟡 WARNING'
     ELSE '✅ OK'
   END as status
-FROM nba_predictions.prediction_accuracy
-WHERE system_id = 'catboost_v9'
-  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
-  AND actual_points IS NOT NULL
+FROM nba_predictions.prediction_accuracy p
+JOIN player_avgs pa USING (player_lookup)
+WHERE p.system_id = 'catboost_v9'
+  AND p.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+  AND p.actual_points IS NOT NULL
 GROUP BY 1
 ORDER BY 1"
 ```
 
-**Expected**: Bias < ±3 points for all tiers
+**Expected**: Bias < ±3 points for all tiers (Session 161 showed -0.3 for stars with correct methodology)
 
 **Alert Thresholds**:
 
 | Tier | Acceptable Bias | Warning | Critical |
 |------|-----------------|---------|----------|
-| Stars (25+) | ±3 pts | ±3-5 pts | >±5 pts |
+| Stars (25+ avg) | ±3 pts | ±3-5 pts | >±5 pts |
 | Starters | ±2 pts | ±2-4 pts | >±4 pts |
 | Role/Bench | ±3 pts | ±3-5 pts | >±5 pts |
 
-**If CRITICAL bias detected (Session 101 pattern)**:
+**If CRITICAL bias detected**:
 
 | Finding | Root Cause | Action |
 |---------|------------|--------|
@@ -1495,16 +1510,23 @@ GROUP BY 1
 ORDER BY 1 DESC"
 ```
 
-2. Check if bias is getting worse over time:
+2. Check if bias is getting worse over time (using season_avg tiers):
 ```bash
 bq query --use_legacy_sql=false "
+WITH player_avgs AS (
+  SELECT player_lookup, AVG(actual_points) as season_avg
+  FROM nba_predictions.prediction_accuracy
+  WHERE system_id = 'catboost_v9' AND game_date >= '2025-11-01'
+  GROUP BY 1
+)
 SELECT
-  DATE_TRUNC(game_date, WEEK) as week,
-  ROUND(AVG(CASE WHEN actual_points >= 25 THEN predicted_points - actual_points END), 1) as star_bias,
-  ROUND(AVG(CASE WHEN actual_points < 5 THEN predicted_points - actual_points END), 1) as bench_bias
-FROM nba_predictions.prediction_accuracy
-WHERE system_id = 'catboost_v9'
-  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
+  DATE_TRUNC(p.game_date, WEEK) as week,
+  ROUND(AVG(CASE WHEN pa.season_avg >= 25 THEN p.predicted_points - p.actual_points END), 1) as star_bias,
+  ROUND(AVG(CASE WHEN pa.season_avg < 8 THEN p.predicted_points - p.actual_points END), 1) as bench_bias
+FROM nba_predictions.prediction_accuracy p
+JOIN player_avgs pa USING (player_lookup)
+WHERE p.system_id = 'catboost_v9'
+  AND p.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
 GROUP BY 1
 ORDER BY 1 DESC"
 ```
@@ -1514,7 +1536,7 @@ ORDER BY 1 DESC"
 - **Proper**: Retrain with tier features
 - **Best**: Switch to quantile regression
 
-**Reference**: Session 101 handoff - discovered -9.3 bias on stars causing 0/7 high-edge picks on Feb 2.
+**Reference**: Session 161 model eval methodology, Session 101 handoff
 
 ### Phase 0.6: Orchestrator Health (CRITICAL)
 
@@ -3168,30 +3190,40 @@ ORDER BY pa.system_id, week_start DESC"
 
 #### Player Tier Performance Breakdown
 
-Check if degradation is uniform or tier-specific (shows ALL active models):
+Check if degradation is uniform or tier-specific (shows ALL active models).
+
+**CRITICAL (Session 161)**: Uses season_avg tiers, NOT actual_points tiers. See Phase 0.466 methodology note.
 
 ```bash
 bq query --use_legacy_sql=false "
--- Performance by player scoring tier (last 4 weeks, ALL MODELS)
+-- Performance by player tier using SEASON AVERAGE (correct methodology)
 WITH active_models AS (
   SELECT DISTINCT system_id
   FROM nba_predictions.prediction_accuracy
   WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
     AND (system_id LIKE 'catboost_%' OR system_id LIKE 'ensemble_%')
+),
+player_avgs AS (
+  SELECT player_lookup, system_id, AVG(actual_points) as season_avg
+  FROM nba_predictions.prediction_accuracy
+  WHERE game_date >= '2025-11-01'
+    AND system_id IN (SELECT system_id FROM active_models)
+  GROUP BY 1, 2
 )
 SELECT
   pa.system_id,
   DATE_TRUNC(pa.game_date, WEEK) as week,
   CASE
-    WHEN pa.actual_points >= 25 THEN '1_stars_25+'
-    WHEN pa.actual_points >= 15 THEN '2_starters_15-25'
-    WHEN pa.actual_points >= 5 THEN '3_rotation_5-15'
-    ELSE '4_bench_<5'
+    WHEN pav.season_avg >= 25 THEN '1_stars_25+_avg'
+    WHEN pav.season_avg >= 15 THEN '2_starters_15-25_avg'
+    WHEN pav.season_avg >= 8 THEN '3_rotation_8-15_avg'
+    ELSE '4_bench_<8_avg'
   END as tier,
   COUNT(*) as predictions,
   ROUND(100.0 * COUNTIF(pa.prediction_correct) / NULLIF(COUNTIF(pa.prediction_correct IS NOT NULL), 0), 1) as hit_rate,
   ROUND(AVG(pa.predicted_points - pa.actual_points), 2) as bias
 FROM nba_predictions.prediction_accuracy pa
+JOIN player_avgs pav ON pa.player_lookup = pav.player_lookup AND pa.system_id = pav.system_id
 WHERE pa.system_id IN (SELECT system_id FROM active_models)
   AND pa.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 4 WEEK)
   AND pa.prediction_correct IS NOT NULL
@@ -3200,9 +3232,9 @@ ORDER BY pa.system_id, week DESC, tier"
 ```
 
 **What to look for**:
-- **Star tier (25+) hit rate < 60%**: Model under-predicting breakout performances
+- **Star tier (25+ avg) hit rate < 60%**: Real model weakness on high-usage players
 - **Bench tier bias > +5**: Model over-predicting low-minute players
-- **Tier divergence > 20%**: Stars at 55%, bench at 75% = different failure modes
+- **Tier divergence > 20%**: Different failure modes by tier
 
 **If tier-specific issues detected**:
 - Stars under-predicted: Add player trajectory features (pts_slope_10g, breakout_flag)

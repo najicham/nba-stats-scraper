@@ -1576,33 +1576,28 @@ class UpcomingTeamGameContextProcessor(
 
         # Session 125: Pre-write validation (Fix 2.3 - Bypass Path Audit)
         # Validates data quality BEFORE write to catch issues early
-        valid_records, invalid_records = self._validate_before_write(
+        # Note: _validate_before_write returns only valid records (invalid are logged internally)
+        original_count = len(self.transformed_data)
+        valid_records = self._validate_before_write(
             self.transformed_data,
             self.table_name
         )
 
-        if invalid_records:
-            logger.warning(
-                f"PRE_WRITE_VALIDATION: Blocked {len(invalid_records)} invalid records "
-                f"from {self.table_name}"
-            )
-
         if not valid_records:
             logger.error(
-                f"PRE_WRITE_VALIDATION FAILED: All {len(self.transformed_data)} records "
+                f"PRE_WRITE_VALIDATION FAILED: All {original_count} records "
                 f"invalid for {self.table_name}"
             )
             return False
 
         # Update transformed_data to only include valid records
-        original_count = len(self.transformed_data)
         self.transformed_data = valid_records
         validated_count = len(self.transformed_data)
 
         if original_count != validated_count:
-            logger.info(
-                f"PRE_WRITE_VALIDATION: Proceeding with {validated_count}/{original_count} "
-                f"valid records"
+            logger.warning(
+                f"PRE_WRITE_VALIDATION: Blocked {original_count - validated_count} invalid records, "
+                f"proceeding with {validated_count}/{original_count} valid records"
             )
 
         logger.info("=" * 80)
