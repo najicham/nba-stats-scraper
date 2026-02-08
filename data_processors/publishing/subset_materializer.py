@@ -16,6 +16,7 @@ Session 153: Created to materialize subsets at prediction time.
 
 import logging
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Dict, List, Any, Optional
 
 from google.cloud import bigquery
@@ -182,11 +183,19 @@ class SubsetMaterializer:
 
     def _write_rows(self, rows: List[Dict[str, Any]]) -> None:
         """Write rows to current_subset_picks using streaming insert (append-only)."""
-        errors = self.bq_client.insert_rows_json(self.table_id, rows)
+        # Convert Decimal types to float for JSON serialization
+        cleaned_rows = []
+        for row in rows:
+            cleaned = {}
+            for k, v in row.items():
+                cleaned[k] = float(v) if isinstance(v, Decimal) else v
+            cleaned_rows.append(cleaned)
+
+        errors = self.bq_client.insert_rows_json(self.table_id, cleaned_rows)
         if errors:
             logger.error(f"Errors inserting subset picks: {errors}")
             raise RuntimeError(f"BigQuery insert errors: {errors}")
-        logger.info(f"Inserted {len(rows)} rows to {self.table_id}")
+        logger.info(f"Inserted {len(cleaned_rows)} rows to {self.table_id}")
 
     def _query_subset_definitions(self) -> List[Dict[str, Any]]:
         """Query all active subset definitions."""
