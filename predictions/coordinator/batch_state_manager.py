@@ -797,6 +797,23 @@ _Check Cloud Logging for detailed error traces._"""
 
         logger.info(f"Marked batch as complete: {batch_id}")
 
+    @retry_on_firestore_error(max_attempts=3, base_delay=0.5)
+    def update_expected_players(self, batch_id: str, expected_players: int) -> None:
+        """
+        Update expected_players on an existing batch (e.g., after quality gate filtering).
+
+        Args:
+            batch_id: Batch identifier
+            expected_players: New expected player count
+        """
+        _, _, SERVER_TIMESTAMP = _get_firestore_helpers()
+        doc_ref = self.collection.document(batch_id)
+        doc_ref.update({
+            'expected_players': expected_players,
+            'updated_at': SERVER_TIMESTAMP
+        })
+        logger.info(f"Updated expected_players for {batch_id}: {expected_players}")
+
     def check_and_complete_stalled_batch(
         self,
         batch_id: str,

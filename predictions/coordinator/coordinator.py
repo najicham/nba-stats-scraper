@@ -1390,9 +1390,29 @@ def start_prediction_batch():
         published_count = publish_prediction_requests(
             viable_requests, batch_id, batch_historical_games, dataset_prefix, prediction_run_mode
         )
-        
+
+        # Update expected_players to match actual published count (quality gate may filter most)
+        actual_expected = published_count
+        if actual_expected != len(requests):
+            current_tracker.expected_players = actual_expected
+            try:
+                state_manager = get_state_manager()
+                state_manager.update_expected_players(batch_id, actual_expected)
+            except Exception as e:
+                logger.warning(f"Failed to update expected_players in Firestore (non-fatal): {e}")
+
+        # If nothing was published, mark batch complete immediately
+        if published_count == 0:
+            current_tracker.is_complete = True
+            try:
+                state_manager = get_state_manager()
+                state_manager.mark_batch_complete(batch_id)
+                logger.info(f"Batch {batch_id} marked complete (0 publishable players after quality gate)")
+            except Exception as e:
+                logger.warning(f"Failed to mark empty batch complete (non-fatal): {e}")
+
         logger.info(f"Published {published_count}/{len(requests)} prediction requests")
-        
+
         # Return batch info
         return jsonify({
             'status': 'started',

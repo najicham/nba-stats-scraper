@@ -666,7 +666,8 @@ def handle_prediction_request():
     }
 
     Returns:
-        204 on success, 400/500 on error
+        204 on success or permanent failure (ACKs message, prevents Pub/Sub retry storm)
+        500 on transient failure only (triggers Pub/Sub retry)
     """
     start_time = time.time()
 
@@ -685,17 +686,17 @@ def handle_prediction_request():
     universal_player_id = None
 
     try:
-        # Parse Pub/Sub message
+        # Parse Pub/Sub message — return 204 for malformed envelopes to ACK and prevent retry storm
         envelope = request.get_json()
         if not envelope:
-            logger.error("No Pub/Sub message received", exc_info=True)
-            return ('Bad Request: no Pub/Sub message received', 400)
+            logger.error("POISON_MESSAGE: No Pub/Sub envelope received — ACKing to stop retries")
+            return ('', 204)
 
         # Decode message
         pubsub_message = envelope.get('message', {})
         if not pubsub_message:
-            logger.error("No message field in envelope", exc_info=True)
-            return ('Bad Request: invalid Pub/Sub message format', 400)
+            logger.error("POISON_MESSAGE: No message field in envelope — ACKing to stop retries")
+            return ('', 204)
 
         # Get message data
         message_data = base64.b64decode(pubsub_message['data']).decode('utf-8')
@@ -707,13 +708,13 @@ def handle_prediction_request():
         # Extract correlation_id for request tracing
         correlation_id = request_data.get('correlation_id')
 
-        # Validate required fields
+        # Validate required fields — ACK (204) malformed messages to prevent poison pill retries
         required_fields = ['player_lookup', 'game_date', 'game_id']
         missing_fields = [field for field in required_fields if field not in request_data]
         if missing_fields:
             error_msg = f"Missing required fields in request: {missing_fields}"
-            logger.error(f"{error_msg} (correlation_id: {correlation_id})")
-            return jsonify({"error": error_msg, "correlation_id": correlation_id}), 400
+            logger.error(f"POISON_MESSAGE: {error_msg} — ACKing to stop retries (correlation_id: {correlation_id})")
+            return ('', 204)
 
         logger.info(
             f"Processing prediction request: {request_data.get('player_lookup')} on {request_data.get('game_date')} "
@@ -913,7 +914,9 @@ def handle_prediction_request():
                 error_type='KeyError'
             )
 
-        return (f'Bad Request: missing field {e}', 400)
+        # ACK (204) — KeyError is a permanent failure, retry won't fix a missing field
+        logger.error(f"POISON_MESSAGE: KeyError {e} — ACKing to stop retries")
+        return ('', 204)
     except Exception as e:
         duration = time.time() - start_time
         logger.error(f"Error processing prediction request: {e}", exc_info=True)
