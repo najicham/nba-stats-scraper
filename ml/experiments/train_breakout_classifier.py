@@ -55,8 +55,16 @@ from sklearn.metrics import (
 from sklearn.model_selection import train_test_split
 import catboost as cb
 
+from shared.ml.training_data_loader import get_quality_where_clause, get_quality_join_clause
+
 PROJECT_ID = "nba-props-platform"
 MODEL_OUTPUT_DIR = Path("models")
+
+
+def _get_quality_clause(alias='mf'):
+    """Session 157: Shared quality clause for WHERE conditions."""
+    return get_quality_where_clause(alias)
+
 
 # Breakout definition
 BREAKOUT_MULTIPLIER = 1.5  # actual_points >= season_avg * 1.5
@@ -227,9 +235,8 @@ def load_breakout_training_data(client, start, end, min_ppg, max_ppg, breakout_m
       WHERE wbh.game_date BETWEEN '{start}' AND '{end}'
         AND mf.feature_count >= 33
         AND wbh.is_breakout_game IS NOT NULL  -- Filter to rows where we computed breakout
-        -- Session 156: Quality gate for training data
-        AND COALESCE(mf.required_default_count, mf.default_feature_count, 0) = 0
-        AND COALESCE(mf.feature_quality_score, 0) >= 70
+        -- Session 157: Uses shared.ml.training_data_loader quality clause
+        AND {_get_quality_clause()}
     )
     SELECT DISTINCT
       player_lookup,

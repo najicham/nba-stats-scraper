@@ -33,7 +33,15 @@ import pandas as pd
 from google.cloud import bigquery
 import catboost as cb
 
+from shared.ml.training_data_loader import get_quality_join_clause
+
 PROJECT_ID = "nba-props-platform"
+
+
+def _get_quality_join_clause(alias='mf'):
+    """Session 157: Shared quality clause for LEFT JOIN ON conditions."""
+    return get_quality_join_clause(alias)
+
 
 # Features in order used by experiment runner (DEFAULT_FEATURES)
 TRAINING_FEATURES = [
@@ -190,10 +198,8 @@ def load_games_with_features(
       LEFT JOIN `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
         ON wbh.player_lookup = mf.player_lookup
         AND wbh.game_date = mf.game_date
-        -- Session 156: Quality gate for training data - only use clean feature store records.
-        -- required_default_count excludes optional vegas (features 25-27).
-        AND COALESCE(mf.required_default_count, mf.default_feature_count, 0) = 0
-        AND COALESCE(mf.feature_quality_score, 0) >= 70
+        -- Session 157: Uses shared.ml.training_data_loader quality clause
+        AND {_get_quality_join_clause()}
     )
     SELECT * FROM with_features
     ORDER BY game_date, player_lookup

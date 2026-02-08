@@ -203,51 +203,33 @@ def load_train_data(client, start, end, min_quality_score=70):
     """
     Load training data from feature store with quality filters.
 
+    Uses shared.ml.training_data_loader for enforced zero-tolerance quality gates.
+    Session 157: Migrated to shared loader to prevent contamination bugs.
+
     Args:
         client: BigQuery client
         start: Start date (YYYY-MM-DD)
         end: End date (YYYY-MM-DD)
         min_quality_score: Minimum feature_quality_score (default 70)
-            Set to 0 to disable quality filtering.
-
-    Session 104: Added quality filter to prevent training on bad data.
-    Session 107: Now loads feature_names for safe name-based extraction.
-    Session 107: Added filter to exclude bad default records (L5=10.0 when L10>15).
-    Session 156: Added required_default_count = 0 filter (zero tolerance for training).
-        Only vegas features (25-27) are allowed to be missing — they're in OPTIONAL_FEATURES
-        and excluded from required_default_count. All other features MUST have real data.
-        This prevents training on records from returning-from-injury players, cold starts,
-        or any data quality issues that would produce garbage feature values.
     """
-    quality_filter = f"AND mf.feature_quality_score >= {min_quality_score}" if min_quality_score > 0 else ""
+    from shared.ml.training_data_loader import load_clean_training_data
 
     # Session 107: Exclude records where pts_avg_last_5 is default 10.0 but pts_avg_last_10
     # shows the player should be higher. These are cold start errors (only 15 records total).
-    bad_default_filter = "AND NOT (mf.features[OFFSET(0)] = 10.0 AND mf.features[OFFSET(1)] > 15)"
+    bad_default_filter = "NOT (mf.features[OFFSET(0)] = 10.0 AND mf.features[OFFSET(1)] > 15)"
 
-    # Session 156: Zero tolerance for non-vegas defaults in training data.
-    # required_default_count excludes optional vegas features (25-27).
-    # COALESCE handles records from before Session 141 when this field didn't exist.
-    zero_tolerance_filter = "AND COALESCE(mf.required_default_count, mf.default_feature_count, 0) = 0"
-
-    query = f"""
-    SELECT mf.features, mf.feature_names, pgs.points as actual_points
-    FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
-    JOIN `{PROJECT_ID}.nba_analytics.player_game_summary` pgs
-      ON mf.player_lookup = pgs.player_lookup AND mf.game_date = pgs.game_date
-    WHERE mf.game_date BETWEEN '{start}' AND '{end}'
-      AND mf.feature_count >= 33
-      AND pgs.points IS NOT NULL AND pgs.minutes_played > 0
-      AND mf.data_source NOT IN ('phase4_partial', 'early_season')
-      {quality_filter}
-      {bad_default_filter}
-      {zero_tolerance_filter}
-    """
-    return client.query(query).to_dataframe()
+    return load_clean_training_data(
+        client, start, end,
+        min_quality_score=min_quality_score,
+        additional_where=bad_default_filter,
+    )
 
 
 def load_eval_data(client, start, end, line_source='draftkings'):
     """Load eval data with real prop lines.
+
+    Uses shared.ml.training_data_loader for enforced zero-tolerance quality gates.
+    Session 157: Migrated to shared loader to prevent contamination bugs.
 
     Args:
         client: BigQuery client
@@ -255,6 +237,8 @@ def load_eval_data(client, start, end, line_source='draftkings'):
         end: End date (YYYY-MM-DD)
         line_source: 'draftkings' (default, matches production), 'bettingpros', or 'fanduel'
     """
+    from shared.ml.training_data_loader import get_quality_where_clause
+
     # Configure table and filter based on line source
     if line_source == 'draftkings':
         table = f"`{PROJECT_ID}.nba_raw.odds_api_player_points_props`"
@@ -269,7 +253,8 @@ def load_eval_data(client, start, end, line_source='draftkings'):
         bookmaker_filter = "bookmaker = 'BettingPros Consensus' AND bet_side = 'over'"
         line_col = "points_line"
 
-    # Session 107: Added feature_names for safe name-based extraction
+    quality_clause = get_quality_where_clause("mf")
+
     query = f"""
     WITH lines AS (
       SELECT game_date, player_lookup, {line_col} as line
@@ -284,10 +269,9 @@ def load_eval_data(client, start, end, line_source='draftkings'):
       ON mf.player_lookup = pgs.player_lookup AND mf.game_date = pgs.game_date
     JOIN lines l ON mf.player_lookup = l.player_lookup AND mf.game_date = l.game_date
     WHERE mf.game_date BETWEEN '{start}' AND '{end}'
-      AND mf.feature_count >= 33 AND pgs.points IS NOT NULL
+      AND {quality_clause}
+      AND pgs.points IS NOT NULL
       AND (l.line - FLOOR(l.line)) IN (0, 0.5)
-      -- Session 156: Quality gate for eval data (same standard as training)
-      AND COALESCE(mf.required_default_count, mf.default_feature_count, 0) = 0
     """
     return client.query(query).to_dataframe()
 

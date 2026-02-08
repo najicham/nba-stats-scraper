@@ -291,6 +291,9 @@ WHERE mf.game_date BETWEEN '{eval_start}' AND '{eval_end}'
   AND mf.feature_count >= {min_feature_count}
   AND ARRAY_LENGTH(mf.features) >= {min_feature_count}
   AND pgs.points IS NOT NULL
+  -- Session 157: Zero tolerance quality gate (via shared.ml.training_data_loader)
+  AND COALESCE(mf.required_default_count, mf.default_feature_count, 0) = 0
+  AND mf.feature_quality_score >= 70
 ORDER BY mf.game_date
 """
 
@@ -354,6 +357,9 @@ WHERE mf.game_date BETWEEN '{eval_start}' AND '{eval_end}'
   AND mf.feature_count >= {min_feature_count}
   AND ARRAY_LENGTH(mf.features) >= {min_feature_count}
   AND pgs.points IS NOT NULL
+  -- Session 157: Zero tolerance quality gate (via shared.ml.training_data_loader)
+  AND COALESCE(mf.required_default_count, mf.default_feature_count, 0) = 0
+  AND mf.feature_quality_score >= 70
   -- Additional filter: real sportsbook lines end in .5 or .0 (not estimated averages)
   AND (vl.real_vegas_line - FLOOR(vl.real_vegas_line)) IN (0, 0.5)
 ORDER BY mf.game_date
