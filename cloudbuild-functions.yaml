@@ -30,11 +30,12 @@ steps:
         cp ${_SOURCE_DIR}/main.py /workspace/deploy_pkg/
         cp ${_SOURCE_DIR}/requirements.txt /workspace/deploy_pkg/
 
-        # Copy all source directories (each function imports what it needs)
+        # Copy shared source directories (functions import from these)
         cp -r data_processors /workspace/deploy_pkg/
         cp -r shared /workspace/deploy_pkg/
         cp -r predictions /workspace/deploy_pkg/
-        cp -r orchestration /workspace/deploy_pkg/
+        # NOTE: Do NOT copy orchestration/ — it contains other Cloud Functions
+        # with syntax errors that cause gcloud compile checks to fail.
 
         # Ensure __init__.py files exist in all Python package directories
         find /workspace/deploy_pkg -type d -exec touch {}/__init__.py \;
