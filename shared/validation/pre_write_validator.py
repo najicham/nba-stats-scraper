@@ -566,21 +566,24 @@ BUSINESS_RULES: Dict[str, List[ValidationRule]] = {
             error_message="games_in_sample must be non-negative"
         ),
 
-        # Defense vs league average (difference, typically -20 to +20)
+        # Defense vs league average: percentage POINTS (not fractions), range -15 to +15 pp
+        # Processor: (zone_pct - league_avg_pct) * 100 → e.g., (0.62 - 0.58) * 100 = 4.0 pp
+        # Schema: "Range: -10.00 to +10.00", tests expect ±15.0
+        # Session 162: Fixed from ±0.30 (fractions) to ±15.0 (percentage points) — unit mismatch
         ValidationRule(
             name='paint_defense_vs_avg_range',
-            condition=lambda r: r.get('paint_defense_vs_league_avg') is None or -0.30 <= r.get('paint_defense_vs_league_avg') <= 0.30,
-            error_message="paint_defense_vs_league_avg must be -0.30 to +0.30 (±30%)"
+            condition=lambda r: r.get('paint_defense_vs_league_avg') is None or -15.0 <= r.get('paint_defense_vs_league_avg') <= 15.0,
+            error_message="paint_defense_vs_league_avg must be -15.0 to +15.0 (percentage points)"
         ),
         ValidationRule(
             name='mid_range_defense_vs_avg_range',
-            condition=lambda r: r.get('mid_range_defense_vs_league_avg') is None or -0.30 <= r.get('mid_range_defense_vs_league_avg') <= 0.30,
-            error_message="mid_range_defense_vs_league_avg must be -0.30 to +0.30 (±30%)"
+            condition=lambda r: r.get('mid_range_defense_vs_league_avg') is None or -15.0 <= r.get('mid_range_defense_vs_league_avg') <= 15.0,
+            error_message="mid_range_defense_vs_league_avg must be -15.0 to +15.0 (percentage points)"
         ),
         ValidationRule(
             name='three_pt_defense_vs_avg_range',
-            condition=lambda r: r.get('three_pt_defense_vs_league_avg') is None or -0.30 <= r.get('three_pt_defense_vs_league_avg') <= 0.30,
-            error_message="three_pt_defense_vs_league_avg must be -0.30 to +0.30 (±30%)"
+            condition=lambda r: r.get('three_pt_defense_vs_league_avg') is None or -15.0 <= r.get('three_pt_defense_vs_league_avg') <= 15.0,
+            error_message="three_pt_defense_vs_league_avg must be -15.0 to +15.0 (percentage points)"
         ),
     ],
 
