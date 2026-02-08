@@ -156,6 +156,7 @@ class BatchStagingWriter:
         # Construct dataset name with optional prefix
         self.staging_dataset = f"{dataset_prefix}_nba_predictions" if dataset_prefix else "nba_predictions"
         self._main_table_schema: Optional[List[bigquery.SchemaField]] = None
+        self._schema_validated: bool = False
 
     def _get_main_table_schema(self) -> List[bigquery.SchemaField]:
         """
@@ -170,6 +171,65 @@ class BatchStagingWriter:
             self._main_table_schema = main_table.schema
             logger.debug(f"Cached main table schema with {len(self._main_table_schema)} fields")
         return self._main_table_schema
+
+    def validate_output_schema(self, sample_record_keys: Optional[List[str]] = None) -> Dict[str, Any]:
+        """
+        Validate that all fields the worker writes exist in the BQ table schema.
+
+        Session 159: Prevents schema mismatch errors that caused 100% write failures
+        for Feb 7-8 2026 (vegas_line_source and required_default_count missing from BQ).
+
+        Args:
+            sample_record_keys: Optional list of field names the worker writes.
+                If not provided, fetches schema only and returns column list.
+
+        Returns:
+            Dict with:
+                - valid: bool (True if all record keys exist in BQ)
+                - bq_columns: set of column names in BQ table
+                - missing_from_bq: list of fields in record but not in BQ
+                - extra_in_bq: list of fields in BQ but not in record
+        """
+        try:
+            schema = self._get_main_table_schema()
+            bq_columns = {field.name for field in schema}
+
+            if sample_record_keys is None:
+                return {
+                    'valid': True,
+                    'bq_columns': bq_columns,
+                    'missing_from_bq': [],
+                    'extra_in_bq': [],
+                }
+
+            record_keys = set(sample_record_keys)
+            missing_from_bq = sorted(record_keys - bq_columns)
+            extra_in_bq = sorted(bq_columns - record_keys)
+
+            if missing_from_bq:
+                logger.critical(
+                    f"SCHEMA MISMATCH: Worker writes fields that don't exist in BQ table! "
+                    f"Missing from BQ: {missing_from_bq}. "
+                    f"Fix: ALTER TABLE {self.project_id}.{self.staging_dataset}.{MAIN_PREDICTIONS_TABLE} "
+                    f"ADD COLUMN <name> <type> for each missing field."
+                )
+
+            return {
+                'valid': len(missing_from_bq) == 0,
+                'bq_columns': bq_columns,
+                'missing_from_bq': missing_from_bq,
+                'extra_in_bq': extra_in_bq,
+            }
+
+        except Exception as e:
+            logger.error(f"Schema validation failed: {e}", exc_info=True)
+            return {
+                'valid': False,
+                'bq_columns': set(),
+                'missing_from_bq': [],
+                'extra_in_bq': [],
+                'error': str(e),
+            }
 
     def _generate_staging_table_name(self, batch_id: str, worker_id: str) -> str:
         """
@@ -228,6 +288,30 @@ class BatchStagingWriter:
         try:
             # Get schema from main table
             schema = self._get_main_table_schema()
+
+            # Session 159: Validate schema on first write to catch mismatches early
+            if not self._schema_validated and predictions:
+                record_keys = list(predictions[0].keys())
+                validation = self.validate_output_schema(record_keys)
+                self._schema_validated = True
+
+                if not validation['valid']:
+                    missing = validation['missing_from_bq']
+                    error_msg = (
+                        f"SCHEMA MISMATCH: Worker output has {len(missing)} fields not in BQ table: "
+                        f"{missing}. All writes will fail. Fix the BQ schema before retrying."
+                    )
+                    logger.critical(error_msg)
+                    return StagingWriteResult(
+                        staging_table_name=staging_table_id,
+                        rows_written=0,
+                        success=False,
+                        error_message=error_msg
+                    )
+                else:
+                    logger.info(
+                        f"Schema validation passed: {len(record_keys)} worker fields match BQ table"
+                    )
 
             # Configure the load job
             # WRITE_APPEND allows multiple workers to write without conflict

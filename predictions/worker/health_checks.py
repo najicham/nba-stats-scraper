@@ -361,6 +361,68 @@ class HealthChecker:
                 'duration_ms': int((time.time() - start_time) * 1000)
             }
 
+    def check_output_schema(self) -> Dict[str, Any]:
+        """
+        Session 159: Check that worker output fields match the BQ table schema.
+
+        Catches schema mismatches that caused 100% write failures for Feb 7-8 2026.
+        Compares the BQ table columns against known critical output fields.
+
+        Returns:
+            {"check": "output_schema", "status": "pass|fail", "details": {...}, "duration_ms": 123}
+        """
+        start_time = time.time()
+        check_name = "output_schema"
+
+        try:
+            from predictions.shared.batch_staging_writer import BatchStagingWriter
+
+            writer = BatchStagingWriter(self.bq_client, self.project_id)
+            validation = writer.validate_output_schema()
+
+            bq_columns = validation.get('bq_columns', set())
+
+            # Check critical fields that have caused production issues
+            critical_fields = [
+                'prediction_id', 'system_id', 'player_lookup', 'game_date',
+                'game_id', 'predicted_points', 'confidence_score', 'recommendation',
+                'is_active', 'is_actionable', 'vegas_line_source',
+                'required_default_count', 'default_feature_count',
+                'default_feature_indices',
+            ]
+
+            missing_critical = [f for f in critical_fields if f not in bq_columns]
+
+            if missing_critical:
+                return {
+                    'check': check_name,
+                    'status': 'fail',
+                    'details': {
+                        'bq_column_count': len(bq_columns),
+                        'missing_critical_fields': missing_critical,
+                    },
+                    'duration_ms': int((time.time() - start_time) * 1000)
+                }
+
+            return {
+                'check': check_name,
+                'status': 'pass',
+                'details': {
+                    'bq_column_count': len(bq_columns),
+                    'critical_fields_present': len(critical_fields),
+                },
+                'duration_ms': int((time.time() - start_time) * 1000)
+            }
+
+        except Exception as e:
+            logger.error(f"Output schema health check failed: {e}", exc_info=True)
+            return {
+                'check': check_name,
+                'status': 'fail',
+                'error': str(e),
+                'duration_ms': int((time.time() - start_time) * 1000)
+            }
+
     def run_all_checks(self, parallel: bool = True) -> Dict[str, Any]:
         """
         Run all health checks.
@@ -382,12 +444,13 @@ class HealthChecker:
 
         if parallel:
             # Run checks in parallel using ThreadPoolExecutor
-            with ThreadPoolExecutor(max_workers=4) as executor:
+            with ThreadPoolExecutor(max_workers=5) as executor:
                 futures = {
                     executor.submit(self.check_gcs_access): "gcs_access",
                     executor.submit(self.check_bigquery_access): "bigquery_access",
                     executor.submit(self.check_model_loading): "model_loading",
-                    executor.submit(self.check_configuration): "configuration"
+                    executor.submit(self.check_configuration): "configuration",
+                    executor.submit(self.check_output_schema): "output_schema",  # Session 159
                 }
 
                 for future in as_completed(futures):
@@ -409,7 +472,8 @@ class HealthChecker:
                 self.check_gcs_access(),
                 self.check_bigquery_access(),
                 self.check_model_loading(),
-                self.check_configuration()
+                self.check_configuration(),
+                self.check_output_schema(),  # Session 159
             ]
 
         # Determine overall status

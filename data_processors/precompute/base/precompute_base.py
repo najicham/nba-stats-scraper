@@ -276,6 +276,32 @@ class PrecomputeProcessorBase(
             else:
                 self.dep_check = self.check_dependencies(analysis_date)
 
+                # Session 159: Retry with backoff when critical dependencies are missing.
+                # Phase 4 cascade failures happen when Phase 3 isn't done yet (timing).
+                # Instead of failing immediately, wait and retry up to 3 times.
+                max_dep_retries = int(opts.get('dependency_retries', 3))
+                dep_retry_base_seconds = int(opts.get('dependency_retry_base_seconds', 60))
+
+                dep_retry_count = 0
+                while (not self.dep_check['all_critical_present']
+                       and not self.dep_check.get('is_early_season')
+                       and dep_retry_count < max_dep_retries):
+                    dep_retry_count += 1
+                    wait_seconds = dep_retry_base_seconds * dep_retry_count  # 60s, 120s, 180s
+                    missing = self.dep_check.get('missing', [])
+                    logger.warning(
+                        f"Missing critical dependencies: {missing}. "
+                        f"Retry {dep_retry_count}/{max_dep_retries} in {wait_seconds}s..."
+                    )
+                    import time as _time
+                    _time.sleep(wait_seconds)
+                    self.dep_check = self.check_dependencies(analysis_date)
+
+                if dep_retry_count > 0 and self.dep_check['all_critical_present']:
+                    logger.info(
+                        f"Dependencies resolved after {dep_retry_count} retries"
+                    )
+
             dep_check_seconds = self.get_elapsed_seconds("dependency_check")
             self.stats["dependency_check_time"] = dep_check_seconds
 

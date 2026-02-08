@@ -980,8 +980,10 @@ def start_prediction_batch():
                 logger.warning(f"Postponement check failed (continuing anyway): {e}")
 
         # Check if batch already running
+        # Session 159: Reduced stall threshold from 600s (10min) to 300s (5min)
+        # to detect stuck batches faster and allow new runs sooner
         if current_tracker and not current_tracker.is_complete:
-            is_stalled = current_tracker.is_stalled(stall_threshold_seconds=600)
+            is_stalled = current_tracker.is_stalled(stall_threshold_seconds=300)
             if not force and not is_stalled:
                 logger.warning("Batch already in progress")
                 return jsonify({
@@ -2803,6 +2805,88 @@ def check_stalled_batches():
 
     except Exception as e:
         logger.error(f"Error checking stalled batches: {e}", exc_info=True)
+        return jsonify({
+            'status': 'error',
+            'message': str(e)
+        }), 500
+
+
+@app.route('/reset', methods=['POST'])
+@require_api_key
+def reset_batch():
+    """
+    Session 159: Force-reset a stuck batch so a new one can start.
+
+    Unlike /check-stalled (which requires 95%+ completion), this endpoint
+    unconditionally marks the batch as complete/failed and clears the in-memory
+    tracker. Use when a batch is stuck at 0% due to worker failures.
+
+    Request body:
+    {
+        "batch_id": "batch_2026-02-07_123456",  // Optional: specific batch
+        "game_date": "2026-02-07"                // Optional: reset by game date
+    }
+
+    At least one of batch_id or game_date must be provided.
+    """
+    global current_tracker, current_batch_id, current_game_date
+
+    try:
+        request_data = request.get_json() or {}
+        batch_id = request_data.get('batch_id')
+        game_date = request_data.get('game_date')
+
+        if not batch_id and not game_date:
+            return jsonify({
+                'status': 'error',
+                'message': 'Provide batch_id or game_date'
+            }), 400
+
+        state_manager = get_state_manager()
+
+        # If game_date provided but not batch_id, find active batch for that date
+        if not batch_id and game_date:
+            active_batches = state_manager.get_active_batches()
+            matching = [b for b in active_batches if str(b.game_date) == game_date]
+            if matching:
+                batch_id = matching[0].batch_id
+            elif current_batch_id and current_game_date and str(current_game_date) == game_date:
+                batch_id = current_batch_id
+
+        if not batch_id:
+            return jsonify({
+                'status': 'no_batch',
+                'message': f'No active batch found for game_date={game_date}'
+            }), 404
+
+        # Force-complete the batch in Firestore
+        completed = state_manager.check_and_complete_stalled_batch(
+            batch_id=batch_id,
+            stall_threshold_minutes=0,  # No threshold - force immediate
+            min_completion_pct=0.0       # No minimum - force regardless of progress
+        )
+
+        # Reset in-memory tracker
+        if current_tracker:
+            current_tracker.reset()
+        current_batch_id = None
+        current_game_date = None
+
+        logger.warning(
+            f"BATCH RESET: batch_id={batch_id}, firestore_completed={completed}, "
+            f"in_memory_tracker_cleared=True"
+        )
+
+        return jsonify({
+            'status': 'reset',
+            'batch_id': batch_id,
+            'firestore_completed': completed,
+            'tracker_cleared': True,
+            'message': 'Batch reset. You can now trigger a new batch with /start.'
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Error resetting batch: {e}", exc_info=True)
         return jsonify({
             'status': 'error',
             'message': str(e)

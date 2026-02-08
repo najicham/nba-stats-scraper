@@ -801,22 +801,26 @@ _Check Cloud Logging for detailed error traces._"""
         self,
         batch_id: str,
         stall_threshold_minutes: int = 10,
-        min_completion_pct: float = 95.0
+        min_completion_pct: float = 95.0,
+        max_batch_age_minutes: int = 30,
     ) -> bool:
         """
         Check if a batch is stalled and complete it with partial results.
 
-        A batch is considered stalled if:
-        1. It has reached the minimum completion percentage (default 95%)
-        2. No new completions for stall_threshold_minutes (default 10 min)
+        A batch is considered stalled if EITHER:
+        1. It has reached min_completion_pct AND no progress for stall_threshold_minutes
+        2. It has exceeded max_batch_age_minutes regardless of completion (Session 159)
 
-        This prevents batches from waiting indefinitely for workers that
-        will never respond (crashed, timed out, Pub/Sub issues).
+        Session 159: Added max_batch_age_minutes to auto-fail batches that have been
+        running too long. Previously, a batch at 0% would never be cleaned up because
+        it didn't meet the 95% completion threshold. This caused Feb 7-8 2026 outage
+        where stuck batches blocked new predictions for 4+ hours.
 
         Args:
             batch_id: Batch identifier
             stall_threshold_minutes: Minutes without progress = stalled
             min_completion_pct: Minimum % complete to allow partial completion
+            max_batch_age_minutes: Absolute timeout - force-complete regardless of progress
 
         Returns:
             True if batch was marked complete (was stalled), False otherwise
@@ -832,8 +836,51 @@ _Check Cloud Logging for detailed error traces._"""
             logger.debug(f"Batch {batch_id} already complete")
             return False
 
-        # Check completion percentage
         completion_pct = state.get_completion_percentage()
+
+        # Get batch document for timestamp checks
+        doc_ref = self.collection.document(batch_id)
+        doc = doc_ref.get()
+        data = doc.to_dict()
+
+        # Session 159: Check absolute batch age first (bypasses completion % check)
+        start_time = data.get('start_time')
+        if start_time:
+            if hasattr(start_time, 'timestamp'):
+                batch_start = datetime.fromtimestamp(start_time.timestamp(), tz=timezone.utc)
+            else:
+                batch_start = start_time
+
+            batch_age = datetime.now(timezone.utc) - batch_start
+            if batch_age > timedelta(minutes=max_batch_age_minutes):
+                completed = len(state.completed_players)
+                expected = state.expected_players
+
+                logger.warning(
+                    f"⚠️ Batch {batch_id} TIMED OUT after {batch_age.total_seconds()/60:.0f} min "
+                    f"at {completed}/{expected} ({completion_pct:.1f}%) - "
+                    f"force-completing (max_batch_age={max_batch_age_minutes} min)"
+                )
+
+                _, _, SERVER_TIMESTAMP = _get_firestore_helpers()
+                doc_ref.update({
+                    'is_complete': True,
+                    'completion_time': SERVER_TIMESTAMP,
+                    'updated_at': SERVER_TIMESTAMP,
+                    'stall_completed': True,
+                    'stall_reason': (
+                        f"Batch timeout: {batch_age.total_seconds()/60:.0f} min > "
+                        f"{max_batch_age_minutes} min limit at {completion_pct:.1f}%"
+                    )
+                })
+
+                logger.info(
+                    f"✅ Marked timed-out batch {batch_id} as complete "
+                    f"({completed}/{expected} players, {state.total_predictions} predictions)"
+                )
+                return True
+
+        # Check completion percentage for stall-based completion
         if completion_pct < min_completion_pct:
             logger.debug(
                 f"Batch {batch_id} at {completion_pct:.1f}% - below threshold "
@@ -842,13 +889,8 @@ _Check Cloud Logging for detailed error traces._"""
             return False
 
         # Check for stall (no updates for threshold minutes)
-        doc_ref = self.collection.document(batch_id)
-        doc = doc_ref.get()
-        data = doc.to_dict()
-
         updated_at = data.get('updated_at')
         if updated_at:
-            # Handle both Firestore timestamp and datetime
             if hasattr(updated_at, 'timestamp'):
                 last_update = datetime.fromtimestamp(updated_at.timestamp(), tz=timezone.utc)
             else:
@@ -873,14 +915,13 @@ _Check Cloud Logging for detailed error traces._"""
             f"marking complete with partial results"
         )
 
-        # Lazy-load Firestore helpers
         _, _, SERVER_TIMESTAMP = _get_firestore_helpers()
 
         doc_ref.update({
             'is_complete': True,
             'completion_time': SERVER_TIMESTAMP,
             'updated_at': SERVER_TIMESTAMP,
-            'stall_completed': True,  # Flag to indicate partial completion
+            'stall_completed': True,
             'stall_reason': f"No progress for {stall_threshold_minutes} min at {completion_pct:.1f}%"
         })
 

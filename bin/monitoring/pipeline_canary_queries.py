@@ -177,6 +177,43 @@ CANARY_CHECKS = [
         description="Validates prediction generation"
     ),
 
+    # Session 159: Prediction gap alerting
+    # Feb 7-8 2026 had zero predictions with nobody alerted.
+    # This check catches "games scheduled but no predictions" scenarios.
+    CanaryCheck(
+        name="Phase 5 - Prediction Gap",
+        phase="phase5_prediction_gap",
+        query="""
+        WITH scheduled_games AS (
+            SELECT COUNT(*) as games_today
+            FROM `nba-props-platform.nba_reference.nba_schedule`
+            WHERE game_date = CURRENT_DATE()
+              AND game_status IN (1, 2, 3)  -- Scheduled, In Progress, or Final
+        ),
+        predictions_today AS (
+            SELECT COUNT(*) as prediction_count,
+                   COUNT(DISTINCT game_id) as games_with_predictions
+            FROM `nba-props-platform.nba_predictions.player_prop_predictions`
+            WHERE game_date = CURRENT_DATE()
+              AND is_active = TRUE
+        )
+        SELECT
+            g.games_today,
+            p.prediction_count,
+            p.games_with_predictions,
+            CASE
+                WHEN g.games_today > 0 AND p.prediction_count = 0 THEN 1
+                ELSE 0
+            END as prediction_gap
+        FROM scheduled_games g
+        CROSS JOIN predictions_today p
+        """,
+        thresholds={
+            'prediction_gap': {'max': 0},  # FAIL if games exist but zero predictions
+        },
+        description="Detects days with scheduled games but no predictions generated"
+    ),
+
     CanaryCheck(
         name="Phase 6 - Publishing",
         phase="phase6_publishing",

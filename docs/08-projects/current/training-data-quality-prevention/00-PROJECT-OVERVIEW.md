@@ -1,8 +1,8 @@
 # Training Data Quality Prevention
 
 **Project:** Prevent training data contamination from recurring
-**Sessions:** 157 (discovery + fix), 158 (prevention + backfill)
-**Status:** Active (backfill in progress)
+**Sessions:** 157 (discovery + fix), 158 (prevention + backfill), 159 (robustness + Phase 4 retry)
+**Status:** Active (backfill processors 3-5 at 56%, ETA ~4h from Session 159 start)
 
 ## Problem Statement
 
@@ -70,14 +70,26 @@ Session 157 discovered that **33.2% of V9 training data was contaminated** with 
 - Root cause analysis showing which features default most
 - Session 157 baseline comparison
 
+## Session 159 Updates
+
+### Phase 4 Cascade Prevention
+- Added **retry with backoff** for Phase 4 dependency checks (60s/120s/180s intervals, 3 retries)
+- File: `data_processors/precompute/base/precompute_base.py`
+- Prevents DailyCache -> CompositeFactors -> FeatureStore cascade failure when Phase 3 is slow
+
+### Current Contamination Status (Session 159)
+- Required-feature contamination: **24.6%** (last 14 days)
+- Top offenders: Features 18-20 (shot zone, ~20%), Features 31-32 (averages, ~13.5%)
+- Backfill processors 3-5 at 56% (date 54/96, Dec 27) - contamination should drop after completion
+
 ## Contamination Timeline
 
 | Date Range | Contamination % | Cause | Status |
 |------------|-----------------|-------|--------|
-| Nov 2025 | ~33% | Composite factors not running | Fixed (Session 158 backfill) |
-| Dec 2025 | ~15% | Partial processor coverage | Fixed (Session 158 backfill) |
-| Jan 2026 | ~8% | Improved but not fully clean | Fixed (Session 158 backfill) |
-| Feb 2026+ | <5% target | Prevention mechanisms active | Monitoring |
+| Nov 2025 | ~33% | Composite factors not running | Backfill in progress (Session 158-159) |
+| Dec 2025 | ~15% | Partial processor coverage | Backfill in progress |
+| Jan 2026 | 24.7% (req) | Shot zone + averages defaults | Backfill pending |
+| Feb 2026 | 24.6% (req) | Shot zone + averages defaults | Backfill pending |
 
 ## Backfill Scope
 
