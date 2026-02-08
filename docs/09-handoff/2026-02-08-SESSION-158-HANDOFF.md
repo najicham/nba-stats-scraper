@@ -1,287 +1,178 @@
-# Session 158 Handoff — Training Data Quality Prevention + Phase 6 Export Redesign
+# Session 158 Handoff — Quality Prevention + Schema Fix + Phase 6 Exports
 
 **Date:** 2026-02-08
-**Focus:** Contamination prevention, monitoring, backfill, and consolidated Phase 6 exports
-**Status:** Code complete, backfill in progress, nothing committed/pushed yet
+**Focus:** Training data quality prevention, schema mismatch fix, consolidated Phase 6 exports
+**Status:** Committed + pushed. Schema fixed in BQ. Backfill from processor 3 still running.
 
-## TL;DR for Next Session
+## CRITICAL: Immediate Actions for Next Session
 
-1. Check if current-season backfill finished (PID 3383866)
-2. Verify contamination dropped: `./bin/monitoring/check_training_data_quality.sh`
-3. Commit all changes, push to main (auto-deploys)
-4. Start past-seasons backfill
-5. Export Phase 6 season file
-6. Wire `season-subsets` export into daily orchestration
+### 1. Verify Predictions Are Working Again
 
----
+We discovered a **schema mismatch** that broke ALL prediction writes since Feb 8 03:36 UTC. The `player_prop_predictions` table was missing `vegas_line_source` and `required_default_count` columns. We added them and redeployed the worker. **Verify predictions are landing:**
 
-## What Was Done
-
-### Part A: Training Data Quality Prevention
-
-Session 157 discovered **33.2% of V9 training data was contaminated** with default feature values. This session added four prevention layers:
-
-#### 1. Fixed Backfill Script Pre-Flight Check
-- **File:** `bin/backfill/run_phase4_backfill.sh`
-- Changed BQ connectivity test from `timeout bq query` to Python-based `bigquery.Client().query('SELECT 1').result()`
-- The `bq` CLI wasn't reliably available in nohup/background environments
-
-#### 2. Post-Write Validation in ML Feature Store Processor
-- **File:** `data_processors/precompute/ml_feature_store/ml_feature_store_processor.py`
-- New methods: `_validate_written_data()` and `_send_contamination_alert()`
-- Runs after every BigQuery write in `save_precompute()`
-- Queries just-written records for contamination metrics
-- Always logs quality summary (observability)
-- Sends Slack alert if `pct_with_defaults > 30%`
-- Non-blocking — does not prevent completion publishing
-- Stats tracked: `post_write_pct_with_defaults`, `post_write_pct_quality_ready`, `post_write_avg_matchup_quality`
-
-#### 3. Phase 4→5 Quality Gate Enhancement
-- **File:** `orchestration/cloud_functions/phase4_to_phase5/main.py`
-- Extended `verify_phase4_data_ready()` to query quality metrics from `ml_feature_store_v2`
-- Checks `pct_quality_ready` and `avg_required_defaults`
-- Logs WARNING if quality-ready < 40%
-- Informational only — Phase 5 quality gate remains enforcement point
-
-#### 4. Training Data Contamination Monitor
-- **New file:** `bin/monitoring/check_training_data_quality.sh` (executable)
-- Checks V9 training window (default: Nov 2025 - present)
-- Monthly breakdown: total, clean, contaminated, contamination %, quality-ready %
-- Exit code 1 if contamination > 5%
-- Integrated into `/validate-daily` as Phase 0.487
-- Added to `/spot-check-features` as Check #28
-
-#### Baseline (pre-backfill):
-```
-Overall: 40.79% contaminated (10,032 of 24,594 records)
-Nov 2025: 72.8% contaminated
-Dec 2025: 30.7%
-Jan 2026: 26.1%
-Feb 2026: 24.1%
+```bash
+python3 << 'PYEOF'
+from google.cloud import bigquery
+client = bigquery.Client(project='nba-props-platform')
+q = """
+SELECT game_date, COUNT(*) as total, COUNTIF(is_actionable) as actionable
+FROM nba_predictions.player_prop_predictions
+WHERE game_date >= '2026-02-07'
+GROUP BY 1 ORDER BY 1
+"""
+for r in client.query(q).result():
+    print(f"  {r.game_date}: {r.total} total, {r.actionable} actionable")
+PYEOF
 ```
 
-### Part B: Phase 6 Export Redesign
-
-#### 5. Consolidated Per-Day Export (picks/{date}.json)
-- **File:** `data_processors/publishing/all_subsets_picks_exporter.py`
-- Replaced `stats` (30-day rolling) with `record` (calendar-aligned W-L)
-- Added `signal` at top level (was a separate file)
-- Records include season-to-date, current month, current week (Mon-Sun)
-- Single BigQuery query via conditional aggregation
-- Old `signals/{date}.json` and `subsets/performance.json` still work independently
-
-**New per-day JSON structure:**
-```json
-{
-  "date": "2026-02-07",
-  "generated_at": "...",
-  "model": "926A",
-  "signal": "favorable",
-  "groups": [
-    {
-      "id": "1",
-      "name": "Top Pick",
-      "record": {
-        "season": {"wins": 42, "losses": 18, "pct": 70.0},
-        "month": {"wins": 8, "losses": 3, "pct": 72.7},
-        "week": {"wins": 3, "losses": 1, "pct": 75.0}
-      },
-      "picks": [
-        {"player": "LeBron James", "team": "LAL", "opponent": "BOS",
-         "prediction": 26.1, "line": 24.5, "direction": "OVER"}
-      ]
-    }
-  ]
-}
+If no predictions for Feb 8, trigger manually:
+```bash
+COORDINATOR_URL="https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app"
+curl -X POST "$COORDINATOR_URL/start" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -d '{"game_date":"2026-02-08","prediction_run_mode":"BACKFILL"}'
 ```
 
-#### 6. Season Subset Picks Exporter (NEW)
-- **New file:** `data_processors/publishing/season_subset_picks_exporter.py`
-- Full season of picks in one file for instant tab/date switching on frontend
-- Estimated ~1MB for full season (96 dates × 8 subsets)
-- Includes actual results and hit/miss for graded games
-- Dates ordered newest-first within each subset
-- W-L records (season/month/week) at subset level
-- GCS path: `gs://nba-props-platform-api/v1/subsets/season.json`
-- Cache: 1 hour
-- Registered in daily_export.py as `season-subsets` export type
+If coordinator says "already_running", the old stuck batch needs to expire or be cleaned up. Check Firestore for the batch lock.
 
-**Season JSON structure:**
-```json
-{
-  "generated_at": "...",
-  "model": "926A",
-  "season": "2025-26",
-  "groups": [
-    {
-      "id": "1",
-      "name": "Top Pick",
-      "record": {
-        "season": {"wins": 42, "losses": 18, "pct": 70.0},
-        "month": {"wins": 8, "losses": 3, "pct": 72.7},
-        "week": {"wins": 3, "losses": 1, "pct": 75.0}
-      },
-      "dates": [
-        {
-          "date": "2026-02-07",
-          "signal": "favorable",
-          "picks": [
-            {"player": "LeBron James", "team": "LAL", "opponent": "BOS",
-             "prediction": 26.1, "line": 24.5, "direction": "OVER",
-             "actual": 28, "result": "hit"}
-          ]
-        }
-      ]
-    }
-  ]
-}
+### 2. Also trigger predictions for Feb 7 (missed entirely)
+
+Yesterday (Feb 7) had 10 games and **zero predictions**. Backfill it:
+```bash
+curl -X POST "$COORDINATOR_URL/start" \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -d '{"game_date":"2026-02-07","prediction_run_mode":"BACKFILL"}'
 ```
 
-**Key design decisions:**
-- `actual` and `result` are `null` for unplayed/ungraded games
-- `result` is one of: `"hit"`, `"miss"`, `"push"`, `null`
-- Reads from `current_subset_picks` joined with `player_game_summary` for actuals
-- Uses latest `version_id` per date (append-only materialization design)
-- Records query uses `v_dynamic_subset_performance` view — **NOTE:** this view has a 30-day window hardcoded. For season records, the query uses conditional aggregation within the base CTE, so it works. But if the view is changed, check this.
+### 3. Check Backfill (Processors 3-5) Status
 
----
+A backfill running processors 3 (composite_factors), 4 (daily_cache), 5 (ml_feature_store) was started for the full current season (Nov 2 - Feb 7):
 
-## What Still Needs To Be Done
-
-### Immediate (this or next session)
-
-#### 1. Check Backfill Status
 ```bash
 # Check if still running
-ps -p 3383866 -o pid,etime --no-headers 2>/dev/null || echo "Finished"
+ps -p 3453211 -o pid,etime --no-headers 2>/dev/null || echo "Finished"
 
 # Check progress
-grep "Processing game date" /tmp/claude-1000/-home-naji-code-nba-stats-scraper/d47f9bad-ba83-4067-a1b2-601b94d64944/scratchpad/current_season_backfill2.log | sort -u | tail -5
+grep -E "Processing game date|✓|✗|Running #" /tmp/claude-1000/-home-naji-code-nba-stats-scraper/b9e9d67e-7be2-43ae-b51d-8f89c7a40db8/scratchpad/backfill_p3_5.log | tail -10
 
-# After completion, verify contamination dropped
-./bin/monitoring/check_training_data_quality.sh
+# After completion, check contamination
+./bin/monitoring/check_training_data_quality.sh --recent
 ```
 
-#### 2. Commit and Push (Auto-Deploys)
-```bash
-# Stage all changes
-git add \
-  bin/backfill/run_phase4_backfill.sh \
-  data_processors/precompute/ml_feature_store/ml_feature_store_processor.py \
-  orchestration/cloud_functions/phase4_to_phase5/main.py \
-  bin/monitoring/check_training_data_quality.sh \
-  .claude/skills/validate-daily/SKILL.md \
-  .claude/skills/spot-check-features/SKILL.md \
-  data_processors/publishing/all_subsets_picks_exporter.py \
-  data_processors/publishing/season_subset_picks_exporter.py \
-  backfill_jobs/publishing/daily_export.py \
-  docs/08-projects/current/training-data-quality-prevention/00-PROJECT-OVERVIEW.md \
-  docs/09-handoff/2026-02-08-SESSION-158-HANDOFF.md
+Note: Processors 1-2 (team_defense_zone, player_shot_zone) already completed for all 96 dates. The initial backfill only completed those because processor 2 had Firestore connectivity errors that set `FAILED=1`, causing the sequential phase to be skipped.
 
-git commit -m "feat: Training data quality prevention + consolidated Phase 6 exports (Session 158)
+### 4. Schema Validation Prevention
 
-Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
+**Root cause of the schema mismatch:** Code changes added `vegas_line_source` to worker output (Session 64) and `required_default_count` (Session 141), but the `ALTER TABLE ADD COLUMN` migrations were in SQL files that never got executed against the production table.
 
-git push origin main
-```
+**How to prevent this:**
+- Create a pre-deploy schema validation that checks every field the worker writes exists in the target BQ table
+- Or: add a startup check to the worker that validates its output fields against the BQ schema
+- Search for: `predictions/shared/batch_staging_writer.py` line 229 `_get_main_table_schema()` — this is where the schema is fetched. A validation step here could log warnings for missing fields.
 
-Auto-deploy triggers will deploy:
-- `nba-phase4-precompute-processors` (post-write validation)
-- `nba-scrapers` (if shared/ changed)
-- Phase 4→5 orchestrator is a Cloud Function — needs manual deploy or separate trigger
-
-#### 3. Start Past-Seasons Backfill
-```bash
-nohup ./bin/backfill/run_phase4_backfill.sh \
-  --start-date 2021-10-19 --end-date 2025-06-22 --no-resume \
-  > /tmp/past_seasons_backfill.log 2>&1 &
-```
-~853 game dates, estimated 7-9 hours.
-
-#### 4. Export Season Subset Picks
-```bash
-# Export the new season file
-PYTHONPATH=. python backfill_jobs/publishing/daily_export.py \
-  --date 2026-02-08 --only season-subsets
-
-# Verify it landed in GCS
-gsutil ls gs://nba-props-platform-api/v1/subsets/season.json
-gsutil cat gs://nba-props-platform-api/v1/subsets/season.json | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'{len(d[\"groups\"])} groups, {sum(len(g[\"dates\"]) for g in d[\"groups\"])} date entries')"
-```
-
-#### 5. Wire `season-subsets` Into Daily Orchestration (NOT YET DONE)
-
-The `season-subsets` export is registered in `daily_export.py` but is **not yet triggered automatically** by the daily pipeline. It needs to be added to the Phase 5→6 orchestration.
-
-**Where to add it:**
-
-The Phase 5→6 trigger happens in the prediction coordinator after predictions complete. Look at:
-- `predictions/coordinator/` — after prediction batch completes, it triggers Phase 6 exports
-- `orchestration/cloud_functions/` — check if there's a phase5_to_phase6 orchestrator
-
-The season file should regenerate **once per day** (not on every prediction run, since it's the full season). Options:
-1. **Add to the existing subset-picks export trigger** — when `subset-picks` runs, also run `season-subsets`
-2. **Add to a daily scheduler** — Cloud Scheduler job that runs the export once at ~6 AM ET
-3. **Trigger after grading** — since results are needed, trigger after Phase 5b grading completes
-
-**Recommended approach:** Add `season-subsets` alongside the existing `subset-picks` export in the Phase 6 trigger path. The query is fast (~10s) and the file has a 1-hour cache, so running it multiple times per day is fine.
-
-**What to look for in the codebase:**
-```bash
-# Find where subset-picks export is triggered in production
-grep -r "subset-picks\|subset_picks\|AllSubsetsPicksExporter" predictions/ orchestration/
-```
+**The pre-commit hook `validate_schema_fields.py` exists** but only validates schema SQL files, not runtime BQ table state. We need a deploy-time or startup-time check.
 
 ---
 
-## Research Findings (Not Yet Implemented)
+## What Was Done in Session 158
 
-### Phase 2 Data Completeness for L5/L10 Averages
+### Part A: Training Data Quality Prevention
+1. **Post-write validation** in `ml_feature_store_processor.py` — logs quality summary after every write, Slack alert if >30% defaults
+2. **Phase 4→5 quality gate** extended in `phase4_to_phase5/main.py` — warns if quality-ready <40%
+3. **Three-tier contamination monitor** `bin/monitoring/check_training_data_quality.sh` (v2):
+   - Tier 1: Required-feature defaults (blocks predictions)
+   - Tier 2: Optional-feature defaults (vegas — expected)
+   - Tier 3: Per-feature breakdown (pinpoints problems)
+   - Threshold: exits 1 if required contamination >15%
+   - `--recent` flag for last 14 days only
+4. Updated `/validate-daily` (Phase 0.487) and `/spot-check-features` (Check #28)
 
-**Problem:** `StatsAggregator.aggregate()` blindly does `played_games.head(5)` — no verification that 5 games represent all games in the lookback period. If Phase 2 missed a box score, the "L5" silently computes from a wider window.
+### Part B: Phase 6 Export Redesign
+5. **Consolidated per-day export** `picks/{date}.json` now includes:
+   - `signal` at top level (favorable/neutral/challenging)
+   - `record` per subset (season/month/week W-L)
+   - Replaced old `stats` field (breaking change for frontend!)
+6. **Season file exporter** `season_subset_picks_exporter.py` — full season in one JSON (~1MB):
+   - `gs://nba-props-platform-api/v1/subsets/season.json`
+   - Per-pick `actual` and `result` (hit/miss/push/null)
+   - Dates newest-first within each subset tab
+7. **Wired into orchestration** — `season-subsets` added to `TONIGHT_EXPORT_TYPES` in phase5→6
 
-**Infrastructure exists but isn't wired up:**
-- `shared/validation/historical_completeness.py` — has `assess_historical_completeness()`
-- `shared/validation/window_completeness.py` — has decision logic (skip < 70%, flag < 100%)
-- `ml_feature_store_v2` schema has `historical_completeness` STRUCT
-- Feature extractor populates it at prediction time
+### Part C: Schema Fix (Discovered Mid-Session)
+8. **Added missing columns** to `player_prop_predictions`:
+   - `vegas_line_source STRING` (was in worker code since Session 64)
+   - `required_default_count INT64` (was in worker code since Session 141)
+9. **Redeployed prediction-worker** to pick up new schema
 
-**What's missing:**
-- `StatsAggregator` doesn't return metadata (games_used, completeness_pct)
-- `player_daily_cache` doesn't store completeness fields
-- `WindowCompletenessValidator` isn't integrated into Phase 4 cache
+### Part D: Investigation Findings
 
-**Files to modify if implementing:**
-- `data_processors/precompute/player_daily_cache/aggregators/stats_aggregator.py`
-- `data_processors/precompute/player_daily_cache/builders/cache_builder.py`
-- `schemas/bigquery/precompute/04_player_daily_cache.sql`
+**Why contamination appears high (40.79%) but actual required-feature impact is ~24%:**
+- Vegas features (25-27) inflate `default_feature_count` but don't block predictions (optional)
+- `required_default_count` properly excludes vegas
+- The three-tier monitor now separates these clearly
 
-This is a medium-sized project — plan it before implementing.
+**Why predictions were missing for Feb 7-8:**
+- PredictionCoordinator getting stuck in `running` state → cleaned up after 4 hours
+- Root cause: `PlayerDailyCacheProcessor` fails when Phase 3 hasn't completed yet (timing)
+- This triggers cascade: DailyCache fails → CompositeFactors can't run → FeatureStore can't run → Coordinator can't run
+- Deeper root cause: staging write error from schema mismatch (field `vegas_line_source` missing from BQ table)
+
+**Phase 4 processor failure rates (last 2 days):**
+| Processor | Success | Failed | Failure Rate |
+|-----------|---------|--------|-------------|
+| MLFeatureStoreProcessor | 15 | 18 | 55% |
+| PlayerCompositeFactorsProcessor | 8 | 12 | 60% |
+| PlayerDailyCacheProcessor | 5 | 9 | 64% |
+| PlayerShotZoneAnalysisProcessor | 5 | 5 | 50% |
+| TeamDefenseZoneAnalysisProcessor | 7 | 5 | 42% |
+
+Many "failures" are `stale_running_cleanup` (stuck 4+ hours) or `DependencyError` (upstream not ready).
 
 ---
 
-## All Files Changed
+## Files Changed (All Committed + Pushed)
 
 | File | Change |
 |------|--------|
-| `bin/backfill/run_phase4_backfill.sh` | Fix pre-flight BQ check (Python instead of bq CLI) |
-| `data_processors/precompute/ml_feature_store/ml_feature_store_processor.py` | Add `_validate_written_data()` + `_send_contamination_alert()` |
-| `orchestration/cloud_functions/phase4_to_phase5/main.py` | Add quality metrics check in `verify_phase4_data_ready()` |
-| `bin/monitoring/check_training_data_quality.sh` | **NEW** — training data contamination monitor |
-| `.claude/skills/validate-daily/SKILL.md` | Add Phase 0.487 training contamination check |
-| `.claude/skills/spot-check-features/SKILL.md` | Add Check #28 training contamination check |
-| `data_processors/publishing/all_subsets_picks_exporter.py` | Replace `stats` with `record`, add `signal`, calendar-aligned W-L |
-| `data_processors/publishing/season_subset_picks_exporter.py` | **NEW** — full-season picks with results in one file |
-| `backfill_jobs/publishing/daily_export.py` | Register `season-subsets` export type |
-| `docs/08-projects/current/training-data-quality-prevention/00-PROJECT-OVERVIEW.md` | **NEW** — project overview |
-| `docs/09-handoff/2026-02-08-SESSION-158-HANDOFF.md` | **NEW** — this handoff |
+| `bin/backfill/run_phase4_backfill.sh` | Python-based pre-flight check |
+| `bin/monitoring/check_training_data_quality.sh` | **NEW** — three-tier contamination monitor v2 |
+| `data_processors/precompute/ml_feature_store/ml_feature_store_processor.py` | Post-write validation + Slack alerts |
+| `orchestration/cloud_functions/phase4_to_phase5/main.py` | Quality metrics in verify_phase4_data_ready |
+| `orchestration/cloud_functions/phase5_to_phase6/main.py` | Added `season-subsets` to export types |
+| `data_processors/publishing/all_subsets_picks_exporter.py` | `stats` → `record` (W-L), added `signal` |
+| `data_processors/publishing/season_subset_picks_exporter.py` | **NEW** — full-season subset picks file |
+| `backfill_jobs/publishing/daily_export.py` | Registered `season-subsets` export type |
+| `.claude/skills/validate-daily/SKILL.md` | Phase 0.487 training contamination check |
+| `.claude/skills/spot-check-features/SKILL.md` | Check #28 training contamination |
+| `docs/08-projects/current/training-data-quality-prevention/00-PROJECT-OVERVIEW.md` | **NEW** — project docs |
 
-## Key Context
-
-- **Nothing has been committed or pushed yet** — all changes are local
-- **Current-season backfill is running** in background (PID 3383866)
-- The `v_dynamic_subset_performance` view has a **30-day hardcoded window** (`WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)`). The season records query works around this by using `current_subset_picks` + `player_game_summary` directly for picks, and conditional aggregation for the records query. But the records query does go through the view — if season records show zeros, this view's 30-day limit may need to be extended or the records query needs to go direct.
-- The `AllSubsetsPicksExporter` changes are **breaking** for any frontend that expected the old `stats` field — it's now `record` with a different structure. If there's a frontend consuming this, coordinate the deploy.
+**BQ changes (applied directly, not in code):**
+- `ALTER TABLE nba_predictions.player_prop_predictions ADD COLUMN vegas_line_source STRING`
+- `ALTER TABLE nba_predictions.player_prop_predictions ADD COLUMN required_default_count INT64`
 
 ---
+
+## Next Session Priorities
+
+1. **Verify predictions are working** (schema fix + worker redeploy should have fixed it)
+2. **Backfill predictions for Feb 7** (10 games, zero predictions)
+3. **Verify backfill (processors 3-5)** completed and check contamination improvement
+4. **Build schema validation** to prevent this class of bug:
+   - Worker startup check that validates output fields against BQ schema
+   - Or pre-deploy script that compares code field names with BQ table columns
+5. **Export season subset picks** once backfill is done: `PYTHONPATH=. python backfill_jobs/publishing/daily_export.py --date 2026-02-08 --only season-subsets`
+6. **Start past-seasons backfill** (2021-2025) once current-season processors 3-5 complete
+7. **Investigate PredictionCoordinator stuck-in-running pattern** — may need a force-reset endpoint or shorter timeout
+
+---
+
+## Research Not Yet Implemented
+
+### Phase 2 Data Completeness for L5/L10 Averages
+`StatsAggregator.aggregate()` blindly does `played_games.head(5)` without verifying all games are present. Infrastructure exists (`shared/validation/window_completeness.py`) but isn't wired into Phase 4 cache. Medium-sized project.
+
+---
+
 *Session 158 — Co-Authored-By: Claude Opus 4.6*
