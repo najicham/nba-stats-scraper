@@ -68,9 +68,9 @@ trap cleanup SIGINT SIGTERM
 preflight_check() {
     echo -e "\n${CYAN}=== PRE-FLIGHT CHECKS ===${NC}"
 
-    # Check BigQuery connectivity
+    # Check BigQuery connectivity (using Python client, same as processors)
     echo -e "${YELLOW}Checking BigQuery connectivity...${NC}"
-    if timeout $PREFLIGHT_TIMEOUT bq query --use_legacy_sql=false 'SELECT 1' > /dev/null 2>&1; then
+    if timeout $PREFLIGHT_TIMEOUT python3 -c "from google.cloud import bigquery; bigquery.Client().query('SELECT 1').result(); print('OK')" > /dev/null 2>&1; then
         echo -e "${GREEN}✓ BigQuery connection OK${NC}"
     else
         echo -e "${RED}✗ BigQuery connection failed${NC}"

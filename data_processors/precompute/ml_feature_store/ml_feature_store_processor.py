@@ -2131,6 +2131,137 @@ class MLFeatureStoreProcessor(
         logger.info(f"Write complete: {write_stats['rows_processed']}/{len(self.transformed_data)} rows "
                    f"({write_stats['batches_written']} batches)")
 
+        # Session 158: Post-write validation — catches contamination early
+        self._validate_written_data(analysis_date)
+
+    def _validate_written_data(self, analysis_date: date) -> None:
+        """
+        Session 158: Validate written feature store data for contamination.
+
+        Queries the just-written records and checks for high default rates,
+        which indicate upstream processor failures (e.g., Session 157 scenario
+        where composite factors didn't run and 33.2% of training data was contaminated).
+
+        This is observability-only — data is already written, but alerts enable
+        fast response to quality issues before they contaminate training data.
+        """
+        try:
+            date_str = analysis_date.isoformat() if isinstance(analysis_date, date) else str(analysis_date)
+
+            query = f"""
+            SELECT
+                COUNT(*) as total_records,
+                COUNTIF(required_default_count > 0) as records_with_defaults,
+                ROUND(COUNTIF(required_default_count > 0) * 100.0 / NULLIF(COUNT(*), 0), 1) as pct_with_defaults,
+                ROUND(AVG(required_default_count), 2) as avg_required_defaults,
+                COUNTIF(is_quality_ready = TRUE) as quality_ready_count,
+                ROUND(COUNTIF(is_quality_ready = TRUE) * 100.0 / NULLIF(COUNT(*), 0), 1) as pct_quality_ready,
+                ROUND(AVG(default_feature_count), 2) as avg_total_defaults,
+                ROUND(AVG(matchup_quality_pct), 1) as avg_matchup_quality,
+                ROUND(AVG(feature_quality_score), 1) as avg_quality_score
+            FROM `{self.project_id}.{self.dataset_id}.{self.table_name}`
+            WHERE game_date = '{date_str}'
+            """
+
+            result = list(self.bq_client.query(query).result())
+            if not result or result[0].total_records == 0:
+                logger.warning(f"POST_WRITE_VALIDATION: No records found for {date_str} — possible write failure")
+                return
+
+            row = result[0]
+            total = row.total_records
+            pct_defaults = float(row.pct_with_defaults or 0)
+            pct_ready = float(row.pct_quality_ready or 0)
+            avg_matchup = float(row.avg_matchup_quality or 0)
+
+            # Always log quality summary for observability
+            logger.info(
+                f"POST_WRITE_VALIDATION [{date_str}]: "
+                f"{total} records, "
+                f"{pct_defaults:.1f}% with required defaults, "
+                f"{pct_ready:.1f}% quality-ready, "
+                f"avg_matchup_quality={avg_matchup:.1f}, "
+                f"avg_defaults={row.avg_total_defaults:.2f}, "
+                f"avg_quality_score={row.avg_quality_score:.1f}"
+            )
+
+            # Track in stats for run history
+            self.stats['post_write_pct_with_defaults'] = pct_defaults
+            self.stats['post_write_pct_quality_ready'] = pct_ready
+            self.stats['post_write_avg_matchup_quality'] = avg_matchup
+
+            # Alert if contamination is high (>30% indicates upstream processor failure)
+            if pct_defaults > 30:
+                logger.error(
+                    f"POST_WRITE_CONTAMINATION_ALERT [{date_str}]: "
+                    f"{pct_defaults:.1f}% of records have required defaults! "
+                    f"This indicates an upstream Phase 4 processor may not have run. "
+                    f"avg_matchup_quality={avg_matchup:.1f}, quality_ready={pct_ready:.1f}%"
+                )
+                self._send_contamination_alert(date_str, total, pct_defaults, pct_ready, avg_matchup)
+
+        except Exception as e:
+            # Non-blocking — validation failure should not prevent completion
+            logger.warning(f"POST_WRITE_VALIDATION: Failed to validate written data: {e}")
+
+    def _send_contamination_alert(self, date_str: str, total: int, pct_defaults: float,
+                                   pct_ready: float, avg_matchup: float) -> None:
+        """Send Slack alert when post-write validation detects high contamination."""
+        try:
+            webhook_url = os.environ.get('SLACK_WEBHOOK_URL')
+            if not webhook_url:
+                logger.warning("SLACK_WEBHOOK_URL not configured, skipping contamination alert")
+                return
+
+            from shared.utils.slack_retry import send_slack_webhook_with_retry
+
+            payload = {
+                "attachments": [{
+                    "color": "#FF0000",
+                    "blocks": [
+                        {
+                            "type": "header",
+                            "text": {
+                                "type": "plain_text",
+                                "text": "ML Feature Store Contamination Alert",
+                                "emoji": True
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "text": {
+                                "type": "mrkdwn",
+                                "text": f"*High default rate detected in feature store data for {date_str}!*\n"
+                                       f"This may indicate an upstream Phase 4 processor didn't run."
+                            }
+                        },
+                        {
+                            "type": "section",
+                            "fields": [
+                                {"type": "mrkdwn", "text": f"*Date:*\n{date_str}"},
+                                {"type": "mrkdwn", "text": f"*Records:*\n{total}"},
+                                {"type": "mrkdwn", "text": f"*With Defaults:*\n{pct_defaults:.1f}%"},
+                                {"type": "mrkdwn", "text": f"*Quality Ready:*\n{pct_ready:.1f}%"},
+                            ]
+                        },
+                        {
+                            "type": "context",
+                            "elements": [{
+                                "type": "mrkdwn",
+                                "text": f"Avg matchup quality: {avg_matchup:.1f}. "
+                                       f"Session 158 prevention mechanism. Check Phase 4 processor logs."
+                            }]
+                        }
+                    ]
+                }]
+            }
+
+            send_slack_webhook_with_retry(webhook_url, payload, timeout=10)
+            logger.info(f"Contamination alert sent for {date_str}")
+
+        except Exception as e:
+            logger.warning(f"Failed to send contamination alert: {e}")
+
     # ========================================================================
     # PARALLELIZATION METHODS
     # ========================================================================

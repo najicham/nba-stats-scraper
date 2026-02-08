@@ -1143,6 +1143,39 @@ python bin/monitoring/check_betting_line_sources.py --days 7
 
 **Reference**: Session 152, complements `check_vegas_line_coverage.sh`
 
+### Phase 0.487: Training Data Contamination Check (Session 158 - CRITICAL)
+
+**IMPORTANT**: Verify the V9 training window has low default contamination.
+
+**Why this matters**: Session 157 discovered 33.2% of V9 training data was contaminated with default feature values due to upstream processor failures. This silent contamination degraded model accuracy. Three prevention layers were added in Sessions 157-158.
+
+**Quick check** (< 5 seconds):
+```bash
+./bin/monitoring/check_training_data_quality.sh
+```
+
+**Expected Results**:
+| Metric | Good | Warning | Critical |
+|--------|------|---------|----------|
+| Contamination % | < 5% | 5-15% | > 15% |
+| Quality-ready % | > 60% | 40-60% | < 40% |
+| Avg defaults | < 2 | 2-5 | > 5 |
+
+**If contamination > 5%**:
+1. Check which months have highest contamination (monthly breakdown in script output)
+2. Run backfill for affected date range:
+   ```bash
+   ./bin/backfill/run_phase4_backfill.sh --start-date YYYY-MM-DD --end-date YYYY-MM-DD --no-resume
+   ```
+3. After backfill, re-run the check to verify improvement
+
+**If contamination > 15%**:
+- CRITICAL: This will significantly impact model accuracy
+- Check Phase 4 processor logs for failures
+- Verify deployment drift hasn't reintroduced old code without quality scoring
+
+**Reference**: Session 157 contamination discovery, Session 158 prevention mechanisms
+
 ### Phase 0.49: Duplicate Team Record Detection (Session 103 - CRITICAL)
 
 **IMPORTANT**: Check for duplicate team_offense_game_summary records with conflicting stats.

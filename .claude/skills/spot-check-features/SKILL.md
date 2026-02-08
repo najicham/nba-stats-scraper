@@ -1117,6 +1117,85 @@ PYTHONPATH=. python backfill_jobs/precompute/ml_feature_store/ml_feature_store_p
   --start-date YYYY-MM-DD --end-date YYYY-MM-DD --skip-preflight
 ```
 
+### 28. Training Data Contamination Check (Session 158)
+
+**CRITICAL:** Check if the V9 training window has clean data (no default contamination).
+
+**Context:** Session 157 discovered 33.2% of training data was contaminated with default values.
+Three prevention layers were added (shared loader, quality score capping, historical fix).
+This check verifies the fix is holding and catches any new contamination.
+
+**Quick script check:**
+```bash
+./bin/monitoring/check_training_data_quality.sh
+```
+
+**Detailed SQL check with monthly breakdown:**
+```sql
+-- Training data contamination by month
+SELECT
+  FORMAT_DATE('%Y-%m', game_date) as month,
+  COUNT(*) as total,
+  COUNTIF(required_default_count = 0) as clean,
+  COUNTIF(required_default_count > 0) as contaminated,
+  ROUND(COUNTIF(required_default_count > 0) * 100.0 / COUNT(*), 1) as contam_pct,
+  ROUND(COUNTIF(is_quality_ready = TRUE) * 100.0 / COUNT(*), 1) as quality_ready_pct,
+  ROUND(AVG(default_feature_count), 2) as avg_defaults,
+  ROUND(AVG(feature_quality_score), 1) as avg_quality_score
+FROM nba_predictions.ml_feature_store_v2
+WHERE game_date >= '2025-11-02'
+  AND game_date < CURRENT_DATE()
+  AND feature_count >= 37
+GROUP BY 1
+ORDER BY 1
+```
+
+**Which features are most commonly defaulted (root cause analysis):**
+```sql
+-- Top defaulted features across training window
+SELECT
+  idx as feature_index,
+  CASE idx
+    WHEN 0 THEN 'pts_avg_l5' WHEN 1 THEN 'pts_avg_l10' WHEN 2 THEN 'pts_avg_season'
+    WHEN 3 THEN 'pts_std_l10' WHEN 4 THEN 'games_7d'
+    WHEN 5 THEN 'fatigue' WHEN 6 THEN 'shot_zone_mismatch' WHEN 7 THEN 'pace' WHEN 8 THEN 'usage_spike'
+    WHEN 13 THEN 'opp_def_rating' WHEN 14 THEN 'opp_pace'
+    WHEN 25 THEN 'vegas_line' WHEN 26 THEN 'vegas_total' WHEN 27 THEN 'line_move'
+    ELSE CONCAT('feature_', CAST(idx AS STRING))
+  END as feature_name,
+  COUNT(*) as default_count,
+  ROUND(COUNT(*) * 100.0 / (
+    SELECT COUNT(*) FROM nba_predictions.ml_feature_store_v2
+    WHERE game_date >= '2025-11-02' AND game_date < CURRENT_DATE() AND feature_count >= 37
+  ), 1) as pct_of_records
+FROM nba_predictions.ml_feature_store_v2,
+UNNEST(default_feature_indices) as idx
+WHERE game_date >= '2025-11-02'
+  AND game_date < CURRENT_DATE()
+  AND feature_count >= 37
+GROUP BY 1, 2
+ORDER BY 3 DESC
+LIMIT 15
+```
+
+**Session 157 baseline comparison:**
+| Metric | Pre-Fix (Session 157) | Target (Post-Fix) |
+|--------|-----------------------|-------------------|
+| Contamination % | 33.2% | < 5% |
+| Quality-ready % | ~40% | > 60% |
+| Avg defaults | ~4.2 | < 2 |
+
+**Expected (after Session 158 backfill):**
+- November 2025: < 5% contaminated (was 33.2%)
+- December 2025+: < 5% contaminated
+- Vegas features (25-27) are expected to be commonly defaulted (sportsbook coverage)
+- Non-vegas contamination > 5%: investigate Phase 4 processors
+
+**If contamination is high:**
+1. Run `./bin/monitoring/check_training_data_quality.sh` for quick summary
+2. Check which months/features are worst (queries above)
+3. Backfill affected dates: `./bin/backfill/run_phase4_backfill.sh --start-date YYYY-MM-DD --end-date YYYY-MM-DD`
+
 ## Pre-Training Checklist
 
 Before running `/model-experiment`:
@@ -1206,4 +1285,5 @@ Status: GOOD - Ready for model training
 - **Session 115 Key Finding:** DNP players in cache is INTENTIONAL design (not a bug) - filtering happens during aggregation
 - **Session 144: Player record coverage (#24), per-feature default breakdown (#25), feature completeness dashboard (#26), gap tracking (#27)**
 - **Session 144 Key Finding:** "100% player coverage" ≠ "100% feature completeness". Vegas lines (25-27) cause 57% of defaults. Only 37-45% of records are fully complete.
+- **Session 158: Training data contamination check (#28) — prevents Session 157 33.2% contamination from recurring**
 *Part of: Data Quality & Model Experiment Infrastructure*

@@ -1,17 +1,17 @@
 """
 All Subsets Picks Exporter for Phase 6 Publishing
 
-Exports all subset groups' picks in a single file with clean API.
-Main endpoint for fetching daily picks without exposing technical details.
+Exports all subset groups' picks in a single consolidated file.
+Includes daily signal and W-L records per subset (season/month/week).
 
 Session 152: Added subset snapshot recording for history tracking.
 Session 153: Reads from materialized current_subset_picks table.
-             Falls back to on-the-fly computation for old dates.
-             Removed _record_snapshot (superseded by SubsetMaterializer).
+Session 158: Consolidated export — signal + W-L records + picks in one file.
 """
 
 import logging
 from typing import Dict, List, Any, Optional
+from datetime import date, timedelta
 
 from google.cloud import bigquery
 
@@ -24,27 +24,27 @@ logger = logging.getLogger(__name__)
 
 class AllSubsetsPicksExporter(BaseExporter):
     """
-    Export all subset picks in one combined file.
+    Export all subset picks, signal, and records in one combined file.
 
     Output file:
-    - picks/{date}.json - All groups in one file
+    - picks/{date}.json - Consolidated daily export
 
-    Session 153: Reads from materialized current_subset_picks table when available.
-    Falls back to on-the-fly computation for dates without materialized data.
+    Session 158: Single file with signal + per-subset W-L records + picks.
 
-    JSON structure (CLEAN - no technical details):
+    JSON structure:
     {
         "date": "2026-02-03",
         "generated_at": "2026-02-03T...",
         "model": "926A",
+        "signal": "favorable",
         "groups": [
             {
                 "id": "1",
                 "name": "Top Pick",
-                "stats": {
-                    "hit_rate": 81.8,
-                    "roi": 15.2,
-                    "days": 30
+                "record": {
+                    "season": {"wins": 42, "losses": 18, "pct": 70.0},
+                    "month": {"wins": 8, "losses": 3, "pct": 72.7},
+                    "week": {"wins": 3, "losses": 1, "pct": 75.0}
                 },
                 "picks": [
                     {
@@ -54,38 +54,41 @@ class AllSubsetsPicksExporter(BaseExporter):
                         "prediction": 26.1,
                         "line": 24.5,
                         "direction": "OVER"
-                    },
-                    ...
+                    }
                 ]
-            },
-            ...
+            }
         ]
     }
     """
 
     def generate_json(self, target_date: str) -> Dict[str, Any]:
         """
-        Generate combined picks JSON for all subsets.
+        Generate consolidated JSON with signal, records, and picks.
 
-        Session 153: Tries to read from materialized current_subset_picks first.
-        Falls back to on-the-fly computation if no materialized data exists.
+        Session 158: Combines signal + W-L records + picks into one export.
 
         Args:
             target_date: Date string in YYYY-MM-DD format
 
         Returns:
-            Dictionary ready for JSON serialization with clean structure
+            Dictionary ready for JSON serialization
         """
+        # Get signal for this date
+        signal = self._get_public_signal(target_date)
+
+        # Get W-L records per subset (season/month/week)
+        records = self._get_subset_records(target_date)
+
         # Try materialized table first (Session 153)
         materialized_picks = self._query_materialized_picks(target_date)
 
         if materialized_picks:
             logger.info(f"Using materialized picks for {target_date} ({len(materialized_picks)} rows)")
-            return self._build_json_from_materialized(target_date, materialized_picks)
+            return self._build_json_from_materialized(target_date, materialized_picks, signal, records)
 
         # Fallback: compute on-the-fly (for old dates without materialized data)
         logger.info(f"No materialized picks for {target_date}, computing on-the-fly")
-        return self._build_json_on_the_fly(target_date)
+        return self._build_json_on_the_fly(target_date, signal, records)
 
     def _query_materialized_picks(self, target_date: str) -> List[Dict[str, Any]]:
         """
@@ -132,6 +135,8 @@ class AllSubsetsPicksExporter(BaseExporter):
         self,
         target_date: str,
         materialized_picks: List[Dict[str, Any]],
+        signal: str = 'neutral',
+        records: Optional[Dict[str, Dict]] = None,
     ) -> Dict[str, Any]:
         """
         Build export JSON from materialized picks data.
@@ -139,12 +144,13 @@ class AllSubsetsPicksExporter(BaseExporter):
         Args:
             target_date: Date string in YYYY-MM-DD format
             materialized_picks: Rows from current_subset_picks
+            signal: Public signal string (favorable/neutral/challenging)
+            records: Per-subset W-L records by window
 
         Returns:
             Dictionary ready for JSON serialization
         """
-        # Get performance stats
-        all_performance = self._get_all_subset_performance()
+        records = records or {}
 
         # Group picks by subset_id
         picks_by_subset = {}
@@ -161,7 +167,7 @@ class AllSubsetsPicksExporter(BaseExporter):
         clean_groups = []
         for subset_id, data in picks_by_subset.items():
             public = get_public_name(subset_id)
-            stats = all_performance.get(subset_id, {'hit_rate': 0.0, 'roi': 0.0})
+            subset_record = records.get(subset_id, self._empty_record())
 
             clean_picks = []
             for pick in data['picks']:
@@ -177,11 +183,7 @@ class AllSubsetsPicksExporter(BaseExporter):
             clean_groups.append({
                 'id': public['id'],
                 'name': public['name'],
-                'stats': {
-                    'hit_rate': round(stats.get('hit_rate', 0.0), 1),
-                    'roi': round(stats.get('roi', 0.0), 1),
-                    'days': 30,
-                },
+                'record': subset_record,
                 'picks': clean_picks,
             })
 
@@ -192,25 +194,31 @@ class AllSubsetsPicksExporter(BaseExporter):
             'date': target_date,
             'generated_at': self.get_generated_at(),
             'model': get_model_codename('catboost_v9'),
+            'signal': signal,
             'groups': clean_groups,
         }
 
-    def _build_json_on_the_fly(self, target_date: str) -> Dict[str, Any]:
+    def _build_json_on_the_fly(
+        self,
+        target_date: str,
+        signal: str = 'neutral',
+        records: Optional[Dict[str, Dict]] = None,
+    ) -> Dict[str, Any]:
         """
         Fallback: compute subset picks on-the-fly (for dates without materialized data).
 
-        This preserves the original generate_json logic from before Session 153.
-
         Args:
             target_date: Date string in YYYY-MM-DD format
+            signal: Public signal string
+            records: Per-subset W-L records by window
 
         Returns:
             Dictionary ready for JSON serialization
         """
+        records = records or {}
         subsets = self._query_subset_definitions()
         predictions = self._query_all_predictions(target_date)
         daily_signal = self._query_daily_signal(target_date)
-        all_performance = self._get_all_subset_performance()
 
         clean_groups = []
         for subset in subsets:
@@ -218,7 +226,7 @@ class AllSubsetsPicksExporter(BaseExporter):
                 predictions, subset, daily_signal
             )
             public = get_public_name(subset['subset_id'])
-            stats = all_performance.get(subset['subset_id'], {'hit_rate': 0.0, 'roi': 0.0})
+            subset_record = records.get(subset['subset_id'], self._empty_record())
 
             clean_picks = []
             for pick in subset_picks:
@@ -234,11 +242,7 @@ class AllSubsetsPicksExporter(BaseExporter):
             clean_groups.append({
                 'id': public['id'],
                 'name': public['name'],
-                'stats': {
-                    'hit_rate': round(stats.get('hit_rate', 0.0), 1),
-                    'roi': round(stats.get('roi', 0.0), 1),
-                    'days': 30,
-                },
+                'record': subset_record,
                 'picks': clean_picks,
             })
 
@@ -248,6 +252,7 @@ class AllSubsetsPicksExporter(BaseExporter):
             'date': target_date,
             'generated_at': self.get_generated_at(),
             'model': get_model_codename('catboost_v9'),
+            'signal': signal,
             'groups': clean_groups,
         }
 
@@ -447,35 +452,159 @@ class AllSubsetsPicksExporter(BaseExporter):
 
         return filtered
 
-    def _get_all_subset_performance(self) -> Dict[str, Dict[str, float]]:
-        """
-        Get 30-day performance stats for ALL subsets in one query.
+    # ========================================================================
+    # SIGNAL + RECORDS (Session 158 - Consolidated Export)
+    # ========================================================================
 
-        This replaces the N+1 query pattern with a single batch query.
+    def _get_public_signal(self, target_date: str) -> str:
+        """
+        Get the public-facing signal for a date.
 
         Returns:
-            Dictionary mapping subset_id to {hit_rate, roi}
+            One of: "favorable", "neutral", "challenging"
+        """
+        signal_mapping = {
+            'GREEN': 'favorable',
+            'YELLOW': 'neutral',
+            'RED': 'challenging',
+        }
+
+        signal_data = self._query_daily_signal(target_date)
+        if not signal_data:
+            return 'neutral'
+
+        internal = signal_data.get('daily_signal', 'YELLOW')
+        return signal_mapping.get(internal, 'neutral')
+
+    def _get_subset_records(self, target_date: str) -> Dict[str, Dict]:
+        """
+        Get W-L records for all subsets across season/month/week windows.
+
+        Calendar-aligned windows:
+        - season: Nov 1 of current season through yesterday
+        - month: 1st of current month through yesterday
+        - week: Monday of current week through yesterday
+
+        Args:
+            target_date: The date we're exporting picks for
+
+        Returns:
+            Dict mapping subset_id to {season: {wins, losses, pct}, month: {...}, week: {...}}
+        """
+        target = date.fromisoformat(target_date) if isinstance(target_date, str) else target_date
+
+        # Calculate calendar-aligned window boundaries
+        # Season start: Nov 1 of current NBA season
+        season_start_year = target.year if target.month >= 11 else target.year - 1
+        season_start = date(season_start_year, 11, 1)
+
+        # Month start: 1st of current month
+        month_start = target.replace(day=1)
+
+        # Week start: Monday of current week
+        week_start = target - timedelta(days=target.weekday())
+
+        # Query all three windows in a single query
+        records = self._query_records_multi_window(
+            season_start.isoformat(),
+            month_start.isoformat(),
+            week_start.isoformat(),
+            target_date,
+        )
+
+        return records
+
+    def _query_records_multi_window(
+        self,
+        season_start: str,
+        month_start: str,
+        week_start: str,
+        end_date: str,
+    ) -> Dict[str, Dict]:
+        """
+        Query W-L records for all subsets across three windows in one query.
+
+        Returns:
+            Dict mapping subset_id to record dict with season/month/week windows
         """
         query = """
+        WITH base AS (
+          SELECT
+            subset_id,
+            game_date,
+            wins,
+            graded_picks
+          FROM `nba_predictions.v_dynamic_subset_performance`
+          WHERE game_date >= @season_start
+            AND game_date < @end_date
+        )
         SELECT
           subset_id,
-          ROUND(100.0 * SUM(wins) / NULLIF(SUM(graded_picks), 0), 1) as hit_rate,
-          ROUND(
-            100.0 * SUM(wins * 0.909 - (graded_picks - wins)) / NULLIF(SUM(graded_picks), 0),
-            1
-          ) as roi
-        FROM `nba_predictions.v_dynamic_subset_performance`
-        WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+          -- Season
+          SUM(wins) as season_wins,
+          SUM(graded_picks - wins) as season_losses,
+          ROUND(100.0 * SUM(wins) / NULLIF(SUM(graded_picks), 0), 1) as season_pct,
+          -- Month
+          SUM(CASE WHEN game_date >= @month_start THEN wins ELSE 0 END) as month_wins,
+          SUM(CASE WHEN game_date >= @month_start THEN graded_picks - wins ELSE 0 END) as month_losses,
+          ROUND(100.0 *
+            SUM(CASE WHEN game_date >= @month_start THEN wins ELSE 0 END) /
+            NULLIF(SUM(CASE WHEN game_date >= @month_start THEN graded_picks ELSE 0 END), 0),
+          1) as month_pct,
+          -- Week
+          SUM(CASE WHEN game_date >= @week_start THEN wins ELSE 0 END) as week_wins,
+          SUM(CASE WHEN game_date >= @week_start THEN graded_picks - wins ELSE 0 END) as week_losses,
+          ROUND(100.0 *
+            SUM(CASE WHEN game_date >= @week_start THEN wins ELSE 0 END) /
+            NULLIF(SUM(CASE WHEN game_date >= @week_start THEN graded_picks ELSE 0 END), 0),
+          1) as week_pct
+        FROM base
         GROUP BY subset_id
         """
 
-        results = self.query_to_list(query)
-        return {
-            r['subset_id']: {
-                'hit_rate': r.get('hit_rate') or 0.0,
-                'roi': r.get('roi') or 0.0
+        params = [
+            bigquery.ScalarQueryParameter('season_start', 'DATE', season_start),
+            bigquery.ScalarQueryParameter('month_start', 'DATE', month_start),
+            bigquery.ScalarQueryParameter('week_start', 'DATE', week_start),
+            bigquery.ScalarQueryParameter('end_date', 'DATE', end_date),
+        ]
+
+        try:
+            results = self.query_to_list(query, params)
+        except Exception as e:
+            logger.warning(f"Failed to query subset records: {e}")
+            return {}
+
+        records = {}
+        for r in results:
+            records[r['subset_id']] = {
+                'season': {
+                    'wins': int(r.get('season_wins') or 0),
+                    'losses': int(r.get('season_losses') or 0),
+                    'pct': float(r.get('season_pct') or 0),
+                },
+                'month': {
+                    'wins': int(r.get('month_wins') or 0),
+                    'losses': int(r.get('month_losses') or 0),
+                    'pct': float(r.get('month_pct') or 0),
+                },
+                'week': {
+                    'wins': int(r.get('week_wins') or 0),
+                    'losses': int(r.get('week_losses') or 0),
+                    'pct': float(r.get('week_pct') or 0),
+                },
             }
-            for r in results
+
+        return records
+
+    @staticmethod
+    def _empty_record() -> Dict:
+        """Return an empty record structure for subsets with no grading data."""
+        empty_window = {'wins': 0, 'losses': 0, 'pct': 0.0}
+        return {
+            'season': empty_window.copy(),
+            'month': empty_window.copy(),
+            'week': empty_window.copy(),
         }
 
     def export(self, target_date: str, trigger_source: str = 'unknown', batch_id: str = None) -> str:

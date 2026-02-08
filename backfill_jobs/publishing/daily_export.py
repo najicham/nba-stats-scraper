@@ -75,6 +75,8 @@ from data_processors.publishing.daily_signals_exporter import DailySignalsExport
 from data_processors.publishing.subset_performance_exporter import SubsetPerformanceExporter
 from data_processors.publishing.all_subsets_picks_exporter import AllSubsetsPicksExporter
 from data_processors.publishing.subset_materializer import SubsetMaterializer
+# Season subset picks (Session 158)
+from data_processors.publishing.season_subset_picks_exporter import SeasonSubsetPicksExporter
 
 # Configure logging
 logging.basicConfig(
@@ -97,7 +99,7 @@ EXPORT_TYPES = [
     # Live scoring for Challenge System
     'live', 'live-grading',
     # Phase 6 Subset Exports (Session 90)
-    'subset-picks', 'daily-signals', 'subset-performance', 'subset-definitions',
+    'subset-picks', 'daily-signals', 'subset-performance', 'subset-definitions', 'season-subsets',
     # Shorthand groups
     'trends-daily', 'trends-weekly', 'trends-all'
 ]
@@ -394,6 +396,17 @@ def export_date(
         except Exception as e:
             result['errors'].append(f"subset-definitions: {e}")
             logger.error(f"  Subset Definitions error: {e}")
+
+    # Season subset picks exporter (Session 158 - full season in one file)
+    if 'season-subsets' in export_types:
+        try:
+            exporter = SeasonSubsetPicksExporter()
+            path = exporter.export()
+            result['paths']['season_subsets'] = path
+            logger.info(f"  Season Subsets: {path}")
+        except Exception as e:
+            result['errors'].append(f"season-subsets: {e}")
+            logger.error(f"  Season Subsets error: {e}")
 
     if result['errors']:
         result['status'] = 'partial' if result['paths'] else 'failed'

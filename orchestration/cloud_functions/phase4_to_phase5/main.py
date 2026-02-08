@@ -587,6 +587,40 @@ def verify_phase4_data_ready(game_date: str) -> tuple:
         else:
             logger.warning(f"R-006: Data freshness check FAILED for {game_date}. Missing: {missing}")
 
+        # Session 158: Check feature quality metrics (informational — Phase 5 quality gate
+        # already blocks bad predictions, but this gives early warning at orchestration layer)
+        try:
+            quality_query = f"""
+            SELECT
+                COUNT(*) as total,
+                ROUND(AVG(required_default_count), 2) as avg_required_defaults,
+                ROUND(COUNTIF(is_quality_ready = TRUE) * 100.0 / NULLIF(COUNT(*), 0), 1) as pct_quality_ready
+            FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
+            WHERE game_date = '{game_date}'
+            """
+            quality_result = list(bq_client.query(quality_query).result())
+            if quality_result and quality_result[0].total > 0:
+                qr = quality_result[0]
+                pct_ready = float(qr.pct_quality_ready or 0)
+                avg_defaults = float(qr.avg_required_defaults or 0)
+
+                logger.info(
+                    f"R-006: Feature quality for {game_date}: "
+                    f"{qr.total} records, {pct_ready:.1f}% quality-ready, "
+                    f"avg_required_defaults={avg_defaults:.2f}"
+                )
+
+                if pct_ready < 40:
+                    logger.warning(
+                        f"R-006: LOW FEATURE QUALITY for {game_date}: "
+                        f"Only {pct_ready:.1f}% quality-ready (threshold: 40%). "
+                        f"avg_required_defaults={avg_defaults:.2f}. "
+                        f"Phase 5 quality gate will block affected predictions."
+                    )
+        except Exception as quality_error:
+            # Non-blocking — quality check failure should not prevent Phase 5 trigger
+            logger.warning(f"R-006: Feature quality check failed (non-blocking): {quality_error}")
+
         return (is_ready, missing, table_counts)
 
     except Exception as e:
