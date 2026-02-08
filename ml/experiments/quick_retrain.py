@@ -108,6 +108,7 @@ def parse_args():
 
     parser.add_argument('--dry-run', action='store_true', help='Show plan only')
     parser.add_argument('--skip-register', action='store_true', help='Skip ml_experiments')
+    parser.add_argument('--force', action='store_true', help='Force retrain even if duplicate training dates exist')
     return parser.parse_args()
 
 
@@ -204,6 +205,26 @@ def check_training_data_quality(client, start, end):
 
     return {'total': total, 'low_quality_pct': 100*low_q/total if total > 0 else 0, 'avg_quality': avg_q,
             'training_ready_pct': 100*training_ready/total if total > 0 else 0}
+
+
+def check_duplicate_model(client, train_start, train_end):
+    """
+    Check if a model with the same training dates already exists in the registry.
+
+    Session 164: Prevent accidentally retraining the same model.
+
+    Returns:
+        List of existing models with same training dates, or empty list if none found.
+    """
+    query = f"""
+    SELECT model_id, status, is_production, sha256_hash, created_at
+    FROM nba_predictions.model_registry
+    WHERE training_start_date = '{train_start}'
+      AND training_end_date = '{train_end}'
+    ORDER BY created_at DESC
+    """
+    result = client.query(query).to_dataframe()
+    return result.to_dict('records') if len(result) > 0 else []
 
 
 def load_train_data(client, start, end, min_quality_score=70):
@@ -425,6 +446,25 @@ def main():
 
     client = bigquery.Client(project=PROJECT_ID)
 
+    # Check for duplicate models (Session 164: prevent accidental retrains)
+    print("\nChecking for existing models with same training dates...")
+    existing_models = check_duplicate_model(client, dates['train_start'], dates['train_end'])
+    if existing_models:
+        print(f"⚠️  WARNING: Found {len(existing_models)} existing model(s) with same training dates:")
+        for model in existing_models:
+            status_emoji = "🟢" if model['is_production'] else "🟡" if model['status'] == 'active' else "🔴"
+            print(f"  {status_emoji} {model['model_id']} - {model['status']} (created: {model['created_at']})")
+            if model.get('sha256_hash'):
+                print(f"     SHA256: {model['sha256_hash'][:12]}...")
+        print()
+        if not args.force:
+            print("❌ ERROR: Duplicate training dates detected!")
+            print("   This model may have already been trained and evaluated.")
+            print("   Use --force to proceed anyway (not recommended)")
+            return
+        else:
+            print("--force flag provided, proceeding with retrain...")
+
     # Check training data quality BEFORE loading (Session 104)
     quality_stats = check_training_data_quality(client, dates['train_start'], dates['train_end'])
     if quality_stats['avg_quality'] < 60:
@@ -475,11 +515,12 @@ def main():
     pred_vs_vegas = np.mean(preds - lines)
     VEGAS_BIAS_LIMIT = 1.5
 
-    # Save model with standard naming
+    # Save model with standard naming (Session 164: include train start-end range in filename)
     MODEL_OUTPUT_DIR.mkdir(exist_ok=True)
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+    train_start_compact = dates['train_start'].replace('-', '')
     train_end_compact = dates['train_end'].replace('-', '')
-    model_path = MODEL_OUTPUT_DIR / f"catboost_v9_{train_end_compact}_{ts}.cbm"
+    model_path = MODEL_OUTPUT_DIR / f"catboost_v9_33f_train{train_start_compact}-{train_end_compact}_{ts}.cbm"
     model.save_model(str(model_path))
 
     # Compute SHA256 for registry

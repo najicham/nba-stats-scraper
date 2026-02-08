@@ -126,6 +126,53 @@ for service in "${!SERVICE_SOURCES[@]}"; do
 done
 
 echo ""
+echo "=== Model Registry Validation ==="
+echo "Checking if deployed model matches GCS manifest..."
+
+# Get deployed model path from prediction-worker env vars
+DEPLOYED_MODEL=$(gcloud run services describe prediction-worker \
+    --region="$REGION" \
+    --project="$PROJECT_ID" \
+    --format='value(spec.template.spec.containers[0].env)' 2>/dev/null | \
+    tr ';' '\n' | grep "CATBOOST_V9_MODEL_PATH" | grep -o "gs://[^']*" || echo "")
+
+if [ -z "$DEPLOYED_MODEL" ]; then
+    echo -e "${YELLOW}⚠️  Could not retrieve CATBOOST_V9_MODEL_PATH from prediction-worker${NC}"
+else
+    # Get production model from GCS manifest
+    MANIFEST_MODEL=$(gsutil cat gs://nba-props-platform-models/catboost/v9/manifest.json 2>/dev/null | python3 -c "
+import json, sys
+try:
+    manifest = json.load(sys.stdin)
+    prod_model = manifest.get('production_model', '')
+    if prod_model:
+        # Construct full GCS path
+        print(f'gs://nba-props-platform-models/catboost/v9/{prod_model}.cbm')
+except:
+    pass
+" || echo "")
+
+    if [ -z "$MANIFEST_MODEL" ]; then
+        echo -e "${YELLOW}⚠️  Could not retrieve production model from GCS manifest${NC}"
+    else
+        # Compare deployed vs manifest
+        if [ "$DEPLOYED_MODEL" = "$MANIFEST_MODEL" ]; then
+            echo -e "${GREEN}✓ Model deployment matches manifest${NC}"
+            echo "   Deployed: $(basename "$DEPLOYED_MODEL")"
+        else
+            echo -e "${RED}❌ MODEL DRIFT DETECTED${NC}"
+            echo "   Deployed:  $(basename "$DEPLOYED_MODEL")"
+            echo "   Manifest:  $(basename "$MANIFEST_MODEL")"
+            echo ""
+            echo "To fix, update the env var:"
+            echo "  gcloud run services update prediction-worker --region=us-west2 \\"
+            echo "    --update-env-vars=\"CATBOOST_V9_MODEL_PATH=$MANIFEST_MODEL\""
+            drift_found=$((drift_found + 1))
+        fi
+    fi
+fi
+
+echo ""
 echo "=== Summary ==="
 echo "Services checked: $total_checked"
 if [ "$drift_found" -gt 0 ]; then
