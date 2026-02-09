@@ -88,26 +88,64 @@ python backfill_jobs/publishing/daily_export.py \
   --only subset-picks
 ```
 
-## What Needs Verification (Next Session)
+## What Needs To Be Done (Next Session)
 
-### 1. Verify Backfill Completion
+### Step 1: Verify New Worker is Deployed with Correct Model
+```bash
+# Check the deployed commit matches our fix
+gcloud run services describe prediction-worker --region=us-west2 \
+  --format="value(metadata.labels.commit-sha)"
+# Should match: 87f0750d or later (the cloudbuild.yaml fix commit)
+```
+
+### Step 2: Re-trigger Backfill for Feb 3-7
+Previous backfills used old worker with wrong Docker-baked model. Now that the worker has the correct model:
+```bash
+# Use coordinator /start endpoint (more reliable than Pub/Sub for backfill)
+TOKEN=$(gcloud auth print-identity-token)
+for DATE in 2026-02-03 2026-02-04 2026-02-05 2026-02-06 2026-02-07; do
+  curl -X POST "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app/start" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{\"game_date\": \"$DATE\", \"prediction_run_mode\": \"BACKFILL\"}"
+  sleep 120  # Wait 2 min between batches
+done
+```
+
+### Step 3: Verify Correct Model Used
 ```sql
--- Check that Feb 5-7 now have correct model predictions
+-- ALL dates should show ONLY catboost_v9_33features_20260201_011018.cbm
 SELECT game_date,
   ARRAY_AGG(DISTINCT model_file_name IGNORE NULLS) as models,
   ROUND(AVG(predicted_points - current_points_line), 2) as avg_pvl
 FROM nba_predictions.player_prop_predictions
-WHERE game_date BETWEEN '2026-02-05' AND '2026-02-07'
+WHERE game_date BETWEEN '2026-02-02' AND '2026-02-07'
   AND system_id = 'catboost_v9' AND is_active = TRUE
   AND current_points_line IS NOT NULL
 GROUP BY 1 ORDER BY 1;
 ```
 
-All dates should show `catboost_v9_33features_20260201_011018.cbm` with avg_pvl near 0 (not -4 to -6).
+### Step 4: Trigger Re-grading
+```bash
+for DATE in 2026-02-02 2026-02-03 2026-02-04 2026-02-05 2026-02-06 2026-02-07; do
+  gcloud pubsub topics publish nba-grading-trigger \
+    --project=nba-props-platform \
+    --message="{\"target_date\":\"$DATE\",\"trigger_source\":\"backfill\"}"
+  sleep 2
+done
+```
 
-### 2. Verify Grading Updated
+### Step 5: Re-materialize Subsets
+After predictions and grading are confirmed:
+```bash
+python backfill_jobs/publishing/daily_export.py \
+  --start-date 2026-02-02 --end-date 2026-02-07 \
+  --only subset-picks
+```
+
+### Step 6: Verify Corrected Performance
 ```sql
--- Check that prediction_accuracy has been re-graded
+-- Edge 3+ hit rate should improve significantly for Feb 2-7
 SELECT game_date,
   ROUND(AVG(predicted_margin), 2) as avg_margin,
   COUNTIF(ABS(predicted_margin) >= 3 AND prediction_correct IS NOT NULL) as edge3_n,
@@ -120,15 +158,7 @@ WHERE system_id = 'catboost_v9'
 GROUP BY 1 ORDER BY 1;
 ```
 
-### 3. Re-materialize Subsets
-After predictions and grading are confirmed:
-```bash
-python backfill_jobs/publishing/daily_export.py \
-  --start-date 2026-02-02 --end-date 2026-02-07 \
-  --only subset-picks
-```
-
-### 4. Monitor Shadow Models
+### Step 7: Monitor Shadow Models
 Both shadow models are registered and uploaded. Monitor them against production for 1-2 weeks before making promotion decisions.
 
 ## Files Modified
