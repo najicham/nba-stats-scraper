@@ -102,9 +102,13 @@ def parse_args():
     parser.add_argument('--eval-days', type=int, default=7, help='Days of eval (default: 7)')
 
     # Line source for evaluation
+    parser.add_argument('--use-production-lines', action='store_true', default=True,
+                       help='Use production lines from prediction_accuracy (default: True)')
+    parser.add_argument('--no-production-lines', dest='use_production_lines', action='store_false',
+                       help='Use raw sportsbook lines instead of production lines')
     parser.add_argument('--line-source', choices=['draftkings', 'bettingpros', 'fanduel'],
                        default='draftkings',
-                       help='Sportsbook for eval lines (default: draftkings to match production)')
+                       help='Sportsbook for eval lines when --no-production-lines (default: draftkings)')
 
     parser.add_argument('--dry-run', action='store_true', help='Show plan only')
     parser.add_argument('--skip-register', action='store_true', help='Skip ml_experiments')
@@ -253,8 +257,53 @@ def load_train_data(client, start, end, min_quality_score=70):
     )
 
 
+def load_eval_data_from_production(client, start, end, system_id='catboost_v9'):
+    """Load eval features + production lines for apples-to-apples comparison.
+
+    Uses prediction_accuracy which has the EXACT lines production used at prediction
+    time (multi-source cascade: DK → FD → BetMGM with OddsAPI → BettingPros fallback).
+    This eliminates the mismatch between experiment eval and production performance.
+
+    Session 166: Replaces DraftKings-only eval with production line matching.
+
+    Args:
+        client: BigQuery client
+        start: Start date (YYYY-MM-DD)
+        end: End date (YYYY-MM-DD)
+        system_id: Model system ID to match (default: 'catboost_v9')
+    """
+    from shared.ml.training_data_loader import get_quality_where_clause
+    quality_clause = get_quality_where_clause("mf")
+
+    query = f"""
+    WITH production_lines AS (
+        SELECT player_lookup, game_date, line_value, actual_points,
+               prediction_correct, recommendation
+        FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+        WHERE game_date BETWEEN '{start}' AND '{end}'
+          AND system_id = '{system_id}'
+          AND recommendation IN ('OVER', 'UNDER')
+          AND prediction_correct IS NOT NULL
+          AND line_value IS NOT NULL
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY player_lookup, game_date
+            ORDER BY line_value DESC
+        ) = 1
+    )
+    SELECT mf.features, mf.feature_names,
+           CAST(pl.actual_points AS FLOAT64) as actual_points,
+           CAST(pl.line_value AS FLOAT64) as vegas_line
+    FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
+    JOIN production_lines pl
+        ON mf.player_lookup = pl.player_lookup AND mf.game_date = pl.game_date
+    WHERE mf.game_date BETWEEN '{start}' AND '{end}'
+      AND {quality_clause}
+    """
+    return client.query(query).to_dataframe()
+
+
 def load_eval_data(client, start, end, line_source='draftkings'):
-    """Load eval data with real prop lines.
+    """Load eval data with raw prop lines (fallback when no production predictions exist).
 
     Uses shared.ml.training_data_loader for enforced zero-tolerance quality gates.
     Session 157: Migrated to shared loader to prevent contamination bugs.
@@ -263,7 +312,7 @@ def load_eval_data(client, start, end, line_source='draftkings'):
         client: BigQuery client
         start: Start date (YYYY-MM-DD)
         end: End date (YYYY-MM-DD)
-        line_source: 'draftkings' (default, matches production), 'bettingpros', or 'fanduel'
+        line_source: 'draftkings' (default), 'bettingpros', or 'fanduel'
     """
     from shared.ml.training_data_loader import get_quality_where_clause
 
@@ -368,23 +417,35 @@ def compute_hit_rate(preds, actuals, lines, min_edge=1.0):
     return round(wins.sum() / graded * 100, 2) if graded > 0 else None, int(graded)
 
 
-def compute_tier_bias(preds, actuals):
+def compute_tier_bias(preds, actuals, season_avgs=None):
     """
-    Compute prediction bias by player tier (based on actual points scored).
+    Compute prediction bias by player tier based on season average (pre-game info).
 
-    Tier definitions match production analysis:
-    - Stars: 25+ points
-    - Starters: 15-24 points
-    - Role: 5-14 points
-    - Bench: <5 points
+    Session 166: Fixed to use points_avg_season (feature index 2) instead of
+    actual_points. Using actuals was hindsight bias — Session 124 proved tiers
+    should be based on what the model knows pre-game.
+
+    Tier definitions (based on season average, not actual points):
+    - Stars: 25+ ppg season avg
+    - Starters: 15-24 ppg season avg
+    - Role: 5-14 ppg season avg
+    - Bench: <5 ppg season avg
+
+    Args:
+        preds: Model predictions
+        actuals: Actual points scored (for computing bias = pred - actual)
+        season_avgs: Pre-game season averages for tier classification.
+                     Falls back to actuals if not provided (backward compat).
 
     Returns dict with bias for each tier and warning flag if any tier > ±5.
     """
+    tier_values = season_avgs if season_avgs is not None else actuals
+
     tiers = {
-        'Stars (25+)': actuals >= 25,
-        'Starters (15-24)': (actuals >= 15) & (actuals < 25),
-        'Role (5-14)': (actuals >= 5) & (actuals < 15),
-        'Bench (<5)': actuals < 5
+        'Stars (25+)': tier_values >= 25,
+        'Starters (15-24)': (tier_values >= 15) & (tier_values < 25),
+        'Role (5-14)': (tier_values >= 5) & (tier_values < 15),
+        'Bench (<5)': tier_values < 5
     }
 
     results = {}
@@ -437,7 +498,8 @@ def main():
     print("=" * 70)
     print(f"Training:   {dates['train_start']} to {dates['train_end']} ({train_days_actual} days)")
     print(f"Evaluation: {dates['eval_start']} to {dates['eval_end']} ({eval_days_actual} days)")
-    print(f"Line Source: {args.line_source}")
+    line_source_desc = "production (prediction_accuracy)" if args.use_production_lines else args.line_source
+    print(f"Line Source: {line_source_desc}")
     print()
 
     if args.dry_run:
@@ -477,7 +539,16 @@ def main():
     print(f"  {len(df_train):,} samples")
 
     print("Loading evaluation data...")
-    df_eval = load_eval_data(client, dates['eval_start'], dates['eval_end'], args.line_source)
+    if args.use_production_lines:
+        print("  Using production lines (prediction_accuracy — multi-source cascade)")
+        df_eval = load_eval_data_from_production(client, dates['eval_start'], dates['eval_end'])
+        if len(df_eval) == 0:
+            print("  WARNING: No production predictions found for eval period.")
+            print(f"  Falling back to raw {args.line_source} lines...")
+            df_eval = load_eval_data(client, dates['eval_start'], dates['eval_end'], args.line_source)
+    else:
+        print(f"  Using raw {args.line_source} lines")
+        df_eval = load_eval_data(client, dates['eval_start'], dates['eval_end'], args.line_source)
     print(f"  {len(df_eval):,} samples")
 
     if len(df_train) < 1000 or len(df_eval) < 100:
@@ -508,8 +579,10 @@ def main():
     hr_edge3, bets_edge3 = compute_hit_rate(preds, y_eval.values, lines, min_edge=3.0)
     hr_edge5, bets_edge5 = compute_hit_rate(preds, y_eval.values, lines, min_edge=5.0)
 
-    # Compute tier bias (NEW: Session 104 - catch regression-to-mean bias)
-    tier_bias = compute_tier_bias(preds, y_eval.values)
+    # Compute tier bias using pre-game season average (Session 166: fix hindsight bias)
+    # Feature index 2 = points_avg_season (from V9 contract)
+    season_avgs = X_eval['points_avg_season'].values if 'points_avg_season' in X_eval.columns else None
+    tier_bias = compute_tier_bias(preds, y_eval.values, season_avgs=season_avgs)
 
     # Vegas bias gate (Session 163 — the Feb 2 retrain had good MAE but -2.26 Vegas bias)
     pred_vs_vegas = np.mean(preds - lines)
@@ -634,7 +707,7 @@ def main():
                 'experiment_name': args.name,
                 'experiment_type': 'monthly_retrain',
                 'hypothesis': args.hypothesis or f'Monthly retrain {train_days_actual}d train, {eval_days_actual}d eval',
-                'config_json': json.dumps({'train_days': train_days_actual, 'eval_days': eval_days_actual, 'features': 33, 'line_source': args.line_source}),
+                'config_json': json.dumps({'train_days': train_days_actual, 'eval_days': eval_days_actual, 'features': 33, 'line_source': 'production' if args.use_production_lines else args.line_source}),
                 'train_period': {'start_date': dates['train_start'], 'end_date': dates['train_end'], 'samples': len(df_train)},
                 'eval_period': {'start_date': dates['eval_start'], 'end_date': dates['eval_end'], 'samples': len(df_eval)},
                 'results_json': json.dumps({
@@ -642,8 +715,8 @@ def main():
                     'hit_rate_all': hr_all, 'bets_all': bets_all,
                     'hit_rate_edge_3plus': hr_edge3, 'bets_edge_3plus': bets_edge3,
                     'hit_rate_edge_5plus': hr_edge5, 'bets_edge_5plus': bets_edge5,
-                    'tier_bias': {k: v for k, v in tier_bias.items() if k != 'has_critical_bias'},
-                    'has_critical_bias': tier_bias['has_critical_bias'],
+                    'tier_bias': {k: {sk: (bool(sv) if isinstance(sv, (bool, np.bool_)) else sv) for sk, sv in v.items()} for k, v in tier_bias.items() if k != 'has_critical_bias'},
+                    'has_critical_bias': bool(tier_bias['has_critical_bias']),
                     'pred_vs_vegas_bias': round(float(pred_vs_vegas), 4),
                     'all_gates_passed': all_passed,
                     'model_sha256': model_sha256,
