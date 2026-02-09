@@ -132,6 +132,23 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
 
         logger.info(f"Daily signals calculated: {rows_affected} system(s) for {game_date}")
 
+        # Session 171: Warn when signal calculation produced 0 rows despite predictions existing
+        if rows_affected == 0:
+            count_query = f"""
+            SELECT COUNT(*) as cnt
+            FROM `{project_id}.nba_predictions.player_prop_predictions`
+            WHERE game_date = @game_date
+              AND current_points_line IS NOT NULL
+              AND is_active = TRUE
+            """
+            count_result = list(client.query(count_query, job_config=job_config).result())
+            actual_count = count_result[0].cnt if count_result else 0
+            if actual_count > 0:
+                logger.warning(
+                    f"Signal calculation skipped: {actual_count} predictions with lines "
+                    f"exist for {game_date} but no system met the minimum threshold of 10"
+                )
+
         # Log signal summary for monitoring and send Slack alert
         if rows_affected > 0:
             summary_query = f"""

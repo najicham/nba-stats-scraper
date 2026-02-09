@@ -3435,9 +3435,11 @@ def publish_batch_summary_from_firestore(batch_id: str):
                     f"cleaned={consolidation_result.staging_tables_cleaned}"
                 )
 
-                # Step 1.4: Check batch PVL bias (Session 170)
+                # Step 1.4: Check batch PVL bias (Session 170) + skew & vegas source (Session 171)
                 try:
-                    from predictions.coordinator.quality_alerts import send_pvl_bias_alert
+                    from predictions.coordinator.quality_alerts import (
+                        send_pvl_bias_alert, send_recommendation_skew_alert, send_vegas_source_alert
+                    )
                     pvl_query = f"""
                     SELECT
                         ROUND(AVG(predicted_points - current_points_line), 2) as avg_pvl,
@@ -3457,6 +3459,14 @@ def publish_batch_summary_from_firestore(batch_id: str):
                     )
                     pvl_client = bigquery.Client(project=PROJECT_ID)
                     pvl_rows = list(pvl_client.query(pvl_query, job_config=pvl_config).result())
+
+                    # Session 171: Alert when PVL check returns empty results
+                    if not pvl_rows:
+                        logger.warning(
+                            f"PVL bias check: NO predictions with lines for {game_date} — "
+                            f"batch may be empty or all predictions lack current_points_line"
+                        )
+
                     for pvl_row in pvl_rows:
                         avg_pvl = pvl_row.avg_pvl or 0.0
                         if abs(avg_pvl) > 2.0:
@@ -3468,8 +3478,79 @@ def publish_batch_summary_from_firestore(batch_id: str):
                             )
                         else:
                             logger.info(f"PVL bias check OK: avg_pvl={avg_pvl:+.2f} ({pvl_row.prediction_run_mode})")
+
+                    # Session 171: Check recommendation distribution skew
+                    skew_query = f"""
+                    SELECT
+                        COUNTIF(recommendation = 'OVER') as overs,
+                        COUNTIF(recommendation = 'UNDER') as unders,
+                        COUNT(*) as total,
+                        prediction_run_mode
+                    FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+                    WHERE game_date = @game_date
+                      AND system_id = 'catboost_v9'
+                      AND is_active = TRUE
+                      AND current_points_line IS NOT NULL
+                    GROUP BY prediction_run_mode
+                    """
+                    skew_rows = list(pvl_client.query(skew_query, job_config=pvl_config).result())
+                    for skew_row in skew_rows:
+                        s_total = skew_row.total or 0
+                        s_overs = skew_row.overs or 0
+                        s_unders = skew_row.unders or 0
+                        if s_total >= 10:
+                            over_pct = s_overs / s_total * 100
+                            under_pct = s_unders / s_total * 100
+                            if over_pct < 15 or under_pct < 15:
+                                send_recommendation_skew_alert(
+                                    game_date=game_date,
+                                    run_mode=skew_row.prediction_run_mode or 'UNKNOWN',
+                                    overs=s_overs,
+                                    unders=s_unders,
+                                    total=s_total,
+                                )
+                            else:
+                                logger.info(
+                                    f"Recommendation skew OK: {over_pct:.0f}% OVER / {under_pct:.0f}% UNDER "
+                                    f"({skew_row.prediction_run_mode})"
+                                )
+
+                    # Session 171: Monitor vegas_source distribution (recovery_median frequency)
+                    vegas_src_query = f"""
+                    SELECT
+                        JSON_EXTRACT_SCALAR(features_snapshot, '$.vegas_source') as source,
+                        COUNT(*) as cnt
+                    FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+                    WHERE game_date = @game_date
+                      AND system_id = 'catboost_v9'
+                      AND is_active = TRUE
+                    GROUP BY 1
+                    """
+                    vegas_src_rows = list(pvl_client.query(vegas_src_query, job_config=pvl_config).result())
+                    source_counts = {}
+                    src_total = 0
+                    for vs_row in vegas_src_rows:
+                        source = vs_row.source or 'unknown'
+                        source_counts[source] = vs_row.cnt
+                        src_total += vs_row.cnt
+                    recovery_count = source_counts.get('recovery_median', 0)
+                    if src_total > 0 and recovery_count / src_total > 0.30:
+                        send_vegas_source_alert(
+                            game_date=game_date,
+                            run_mode='UNKNOWN',
+                            source_counts=source_counts,
+                            total=src_total,
+                        )
+                    elif src_total > 0:
+                        logger.info(
+                            f"Vegas source check OK: recovery_median={recovery_count}/{src_total} "
+                            f"({recovery_count/src_total*100:.0f}%)"
+                        )
+                    else:
+                        logger.info("Vegas source check: no predictions found")
+
                 except Exception as pvl_err:
-                    logger.warning(f"PVL bias check failed (non-fatal): {pvl_err}")
+                    logger.warning(f"Post-consolidation quality checks failed (non-fatal): {pvl_err}")
 
                 # Step 1.5: Calculate daily prediction signals (Session 71)
                 try:
@@ -3621,9 +3702,11 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
                     'success': True
                 }
 
-                # Step 1.4: Check batch PVL bias (Session 170)
+                # Step 1.4: Check batch PVL bias (Session 170) + skew & vegas source (Session 171)
                 try:
-                    from predictions.coordinator.quality_alerts import send_pvl_bias_alert
+                    from predictions.coordinator.quality_alerts import (
+                        send_pvl_bias_alert, send_recommendation_skew_alert, send_vegas_source_alert
+                    )
                     pvl_query = f"""
                     SELECT
                         ROUND(AVG(predicted_points - current_points_line), 2) as avg_pvl,
@@ -3643,6 +3726,14 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
                     )
                     pvl_client = bigquery.Client(project=PROJECT_ID)
                     pvl_rows = list(pvl_client.query(pvl_query, job_config=pvl_config).result())
+
+                    # Session 171: Alert when PVL check returns empty results
+                    if not pvl_rows:
+                        logger.warning(
+                            f"PVL bias check: NO predictions with lines for {game_date} — "
+                            f"batch may be empty or all predictions lack current_points_line"
+                        )
+
                     for pvl_row in pvl_rows:
                         avg_pvl = pvl_row.avg_pvl or 0.0
                         if abs(avg_pvl) > 2.0:
@@ -3654,8 +3745,79 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
                             )
                         else:
                             logger.info(f"PVL bias check OK: avg_pvl={avg_pvl:+.2f} ({pvl_row.prediction_run_mode})")
+
+                    # Session 171: Check recommendation distribution skew
+                    skew_query = f"""
+                    SELECT
+                        COUNTIF(recommendation = 'OVER') as overs,
+                        COUNTIF(recommendation = 'UNDER') as unders,
+                        COUNT(*) as total,
+                        prediction_run_mode
+                    FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+                    WHERE game_date = @game_date
+                      AND system_id = 'catboost_v9'
+                      AND is_active = TRUE
+                      AND current_points_line IS NOT NULL
+                    GROUP BY prediction_run_mode
+                    """
+                    skew_rows = list(pvl_client.query(skew_query, job_config=pvl_config).result())
+                    for skew_row in skew_rows:
+                        s_total = skew_row.total or 0
+                        s_overs = skew_row.overs or 0
+                        s_unders = skew_row.unders or 0
+                        if s_total >= 10:
+                            over_pct = s_overs / s_total * 100
+                            under_pct = s_unders / s_total * 100
+                            if over_pct < 15 or under_pct < 15:
+                                send_recommendation_skew_alert(
+                                    game_date=game_date,
+                                    run_mode=skew_row.prediction_run_mode or 'UNKNOWN',
+                                    overs=s_overs,
+                                    unders=s_unders,
+                                    total=s_total,
+                                )
+                            else:
+                                logger.info(
+                                    f"Recommendation skew OK: {over_pct:.0f}% OVER / {under_pct:.0f}% UNDER "
+                                    f"({skew_row.prediction_run_mode})"
+                                )
+
+                    # Session 171: Monitor vegas_source distribution (recovery_median frequency)
+                    vegas_src_query = f"""
+                    SELECT
+                        JSON_EXTRACT_SCALAR(features_snapshot, '$.vegas_source') as source,
+                        COUNT(*) as cnt
+                    FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+                    WHERE game_date = @game_date
+                      AND system_id = 'catboost_v9'
+                      AND is_active = TRUE
+                    GROUP BY 1
+                    """
+                    vegas_src_rows = list(pvl_client.query(vegas_src_query, job_config=pvl_config).result())
+                    source_counts = {}
+                    src_total = 0
+                    for vs_row in vegas_src_rows:
+                        source = vs_row.source or 'unknown'
+                        source_counts[source] = vs_row.cnt
+                        src_total += vs_row.cnt
+                    recovery_count = source_counts.get('recovery_median', 0)
+                    if src_total > 0 and recovery_count / src_total > 0.30:
+                        send_vegas_source_alert(
+                            game_date=game_date,
+                            run_mode='UNKNOWN',
+                            source_counts=source_counts,
+                            total=src_total,
+                        )
+                    elif src_total > 0:
+                        logger.info(
+                            f"Vegas source check OK: recovery_median={recovery_count}/{src_total} "
+                            f"({recovery_count/src_total*100:.0f}%)"
+                        )
+                    else:
+                        logger.info("Vegas source check: no predictions found")
+
                 except Exception as pvl_err:
-                    logger.warning(f"PVL bias check failed (non-fatal): {pvl_err}")
+                    logger.warning(f"Post-consolidation quality checks failed (non-fatal): {pvl_err}")
 
                 # Step 1.5: Calculate daily prediction signals (Session 71)
                 try:

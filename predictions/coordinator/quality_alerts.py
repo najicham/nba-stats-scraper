@@ -10,6 +10,8 @@ Sends alerts when prediction quality issues are detected:
 - VEGAS_COVERAGE_DEGRADED: >50% of players have no vegas line source
 - LINE_CHECK_COMPLETED: Hourly line check results (Session 152)
 - MORNING_SUMMARY: Daily morning prediction/line coverage summary (Session 152)
+- RECOMMENDATION_SKEW: >85% of recs are same direction (Session 171)
+- VEGAS_SOURCE_RECOVERY_HIGH: >30% of predictions used recovery_median (Session 171)
 """
 
 import logging
@@ -598,3 +600,171 @@ Next line check: 8 AM ET.
         logger.warning("Slack alerting not available - alert logged only")
     except Exception as e:
         logger.error(f"Failed to send MORNING_SUMMARY Slack alert: {e}")
+
+
+def send_recommendation_skew_alert(
+    game_date: date,
+    run_mode: str,
+    overs: int,
+    unders: int,
+    total: int,
+):
+    """
+    Session 171: Alert when recommendation distribution is heavily skewed.
+
+    Catches Session 169-style 89% UNDER distribution even if avg_pvl happens
+    to be within ±2.0. Fires after consolidation.
+
+    Args:
+        game_date: Date predictions are for
+        run_mode: Prediction run mode (FIRST, BACKFILL, etc.)
+        overs: Number of OVER recommendations
+        unders: Number of UNDER recommendations
+        total: Total active predictions with lines
+    """
+    over_pct = (overs / total * 100) if total > 0 else 0
+    under_pct = (unders / total * 100) if total > 0 else 0
+    dominant = "UNDER" if under_pct > over_pct else "OVER"
+    dominant_pct = max(over_pct, under_pct)
+
+    severity = "CRITICAL" if dominant_pct > 85 else "WARNING"
+    emoji = ":rotating_light:" if severity == "CRITICAL" else ":warning:"
+
+    message = f"""{emoji} *RECOMMENDATION SKEW* ({severity})
+
+*{game_date}* ({run_mode}) — {dominant_pct:.0f}% {dominant}
+
+```
+OVER:  {overs:>4} ({over_pct:.1f}%)
+UNDER: {unders:>4} ({under_pct:.1f}%)
+Total: {total:>4}
+```
+
+Threshold: alert if either direction < 15%.
+*Impact:* Lopsided recommendations suggest systematic model bias.
+*Next steps:* Check PVL bias, Vegas line coverage, feature store quality.
+"""
+
+    alert = QualityAlert(
+        alert_type="RECOMMENDATION_SKEW",
+        severity=severity,
+        message=f"{dominant_pct:.0f}% {dominant} for {game_date} ({run_mode})",
+        details={
+            'game_date': str(game_date),
+            'run_mode': run_mode,
+            'overs': overs,
+            'unders': unders,
+            'total': total,
+            'over_pct': round(over_pct, 1),
+            'under_pct': round(under_pct, 1),
+        }
+    )
+
+    log_level = logging.ERROR if severity == "CRITICAL" else logging.WARNING
+    logger.log(
+        log_level,
+        f"QUALITY_ALERT: RECOMMENDATION_SKEW - {dominant_pct:.0f}% {dominant} for {game_date}",
+        extra={
+            'alert_type': 'RECOMMENDATION_SKEW',
+            'severity': severity,
+            'details': alert.details,
+        }
+    )
+
+    try:
+        from shared.utils.slack_alerts import send_slack_alert
+        send_slack_alert(
+            message=message,
+            channel="#nba-alerts",
+            alert_type="RECOMMENDATION_SKEW",
+        )
+        logger.info("Sent RECOMMENDATION_SKEW Slack alert")
+    except ImportError:
+        logger.warning("Slack alerting not available - alert logged only")
+    except Exception as e:
+        logger.error(f"Failed to send RECOMMENDATION_SKEW Slack alert: {e}")
+
+
+def send_vegas_source_alert(
+    game_date: date,
+    run_mode: str,
+    source_counts: Dict,
+    total: int,
+):
+    """
+    Session 171: Alert when >30% of predictions used recovery_median Vegas source.
+
+    High recovery_median usage means the coordinator's actual_prop_line was NULL
+    for many players, and we fell back to median of line_values. This is a warning
+    sign that Vegas line plumbing needs investigation.
+
+    Args:
+        game_date: Date predictions are for
+        run_mode: Prediction run mode
+        source_counts: Dict mapping vegas_source to count
+        total: Total active predictions
+    """
+    recovery_count = source_counts.get('recovery_median', 0)
+    recovery_pct = (recovery_count / total * 100) if total > 0 else 0
+
+    # Build source breakdown
+    source_lines = []
+    for source, count in sorted(source_counts.items(), key=lambda x: -x[1]):
+        pct = count / total * 100 if total > 0 else 0
+        source_lines.append(f"  {source}: {count} ({pct:.0f}%)")
+    source_str = "\n".join(source_lines)
+
+    severity = "CRITICAL" if recovery_pct > 50 else "WARNING"
+    emoji = ":rotating_light:" if severity == "CRITICAL" else ":warning:"
+
+    message = f"""{emoji} *HIGH RECOVERY_MEDIAN USAGE* ({severity})
+
+*{game_date}* ({run_mode}) — {recovery_count}/{total} predictions ({recovery_pct:.0f}%) used recovery_median
+
+*Vegas source breakdown:*
+```
+{source_str}
+```
+
+Threshold: alert if recovery_median > 30%.
+*Impact:* Coordinator's actual_prop_line was NULL; fell back to median of line_values.
+*Next steps:* Check Phase 3 current_points_line population, odds scraper timing.
+"""
+
+    alert = QualityAlert(
+        alert_type="VEGAS_SOURCE_RECOVERY_HIGH",
+        severity=severity,
+        message=f"{recovery_pct:.0f}% recovery_median for {game_date} ({run_mode})",
+        details={
+            'game_date': str(game_date),
+            'run_mode': run_mode,
+            'source_counts': source_counts,
+            'recovery_count': recovery_count,
+            'recovery_pct': round(recovery_pct, 1),
+            'total': total,
+        }
+    )
+
+    log_level = logging.ERROR if severity == "CRITICAL" else logging.WARNING
+    logger.log(
+        log_level,
+        f"QUALITY_ALERT: VEGAS_SOURCE_RECOVERY_HIGH - {recovery_pct:.0f}% for {game_date}",
+        extra={
+            'alert_type': 'VEGAS_SOURCE_RECOVERY_HIGH',
+            'severity': severity,
+            'details': alert.details,
+        }
+    )
+
+    try:
+        from shared.utils.slack_alerts import send_slack_alert
+        send_slack_alert(
+            message=message,
+            channel="#nba-alerts",
+            alert_type="VEGAS_SOURCE_RECOVERY_HIGH",
+        )
+        logger.info("Sent VEGAS_SOURCE_RECOVERY_HIGH Slack alert")
+    except ImportError:
+        logger.warning("Slack alerting not available - alert logged only")
+    except Exception as e:
+        logger.error(f"Failed to send VEGAS_SOURCE_RECOVERY_HIGH Slack alert: {e}")

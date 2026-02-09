@@ -798,7 +798,13 @@ class BatchConsolidator:
                 }
 
             # Perform the deactivation
+            deactivate_start = time.time()
             deactivated = self._deactivate_older_predictions(game_date)
+            deactivate_ms = (time.time() - deactivate_start) * 1000
+            logger.info(
+                f"Cleanup deactivation: {deactivated} predictions deactivated "
+                f"for game_date={game_date} in {deactivate_ms:.1f}ms"
+            )
 
             return {
                 'duplicates_found': duplicates_found,
@@ -981,14 +987,27 @@ class BatchConsolidator:
             logger.info(
                 f"MERGE complete: {rows_affected} rows affected in {elapsed_ms:.1f}ms (batch={batch_id})"
             )
+            # Structured log for Cloud Logging parsing and metrics dashboards
+            logger.info(
+                f"CONSOLIDATION_METRICS: {rows_affected} rows merged in {elapsed_ms:.0f}ms "
+                f"for batch {batch_id}, staging_tables={len(staging_tables)}"
+            )
 
             # SESSION 13 FIX: Deactivate older predictions after MERGE
             # This ensures only the newest prediction per player/game is active,
             # handling multiple model versions and duplicate batches
+            deactivate_start = time.time()
             deactivated = self._deactivate_older_predictions(game_date)
+            deactivate_ms = (time.time() - deactivate_start) * 1000
             if deactivated > 0:
                 logger.info(
-                    f"Deactivated {deactivated} older predictions for game_date={game_date}"
+                    f"Deactivated {deactivated} older predictions for game_date={game_date} "
+                    f"in {deactivate_ms:.1f}ms"
+                )
+            else:
+                logger.debug(
+                    f"Deactivation check completed in {deactivate_ms:.1f}ms "
+                    f"(0 predictions deactivated for game_date={game_date})"
                 )
 
             # CRITICAL: Check if MERGE actually wrote data

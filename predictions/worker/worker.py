@@ -1139,15 +1139,24 @@ def process_player_predictions(
     # This was the root cause of the UNDER bias crisis: model predicted without
     # its most important feature (#25 vegas_points_line) for all FIRST-run predictions.
     if actual_prop is None and line_source_info.get('has_prop_line') and line_values:
-        sorted_lines = sorted(line_values)
-        median_line = sorted_lines[len(sorted_lines) // 2]
-        logger.info(
-            f"Vegas line recovery: actual_prop_line was None but has_prop_line=True "
-            f"with {len(line_values)} line_values. Using median line {median_line} "
-            f"(lines: {sorted_lines})"
-        )
-        actual_prop = median_line
-        features['vegas_source'] = 'recovery_median'  # Session 170: Track Vegas source
+        # Session 172: Validate line_values before median calculation
+        valid_lines = [v for v in line_values if isinstance(v, (int, float)) and v > 0]
+        if not valid_lines:
+            logger.warning(
+                f"Recovery median: line_values contained no valid numbers: {line_values}"
+            )
+            features['vegas_source'] = 'none'
+        else:
+            sorted_lines = sorted(valid_lines)
+            median_line = sorted_lines[len(sorted_lines) // 2]
+            # Session 172: Reduce noise — DEBUG per-prediction, summary logged by coordinator
+            logger.debug(
+                f"Vegas line recovery: actual_prop_line was None but has_prop_line=True "
+                f"with {len(valid_lines)} valid line_values. Using median line {median_line} "
+                f"(lines: {sorted_lines})"
+            )
+            actual_prop = median_line
+            features['vegas_source'] = 'recovery_median'  # Session 170: Track Vegas source
 
     if actual_prop is not None:
         # Vegas features (indices 25-28)
