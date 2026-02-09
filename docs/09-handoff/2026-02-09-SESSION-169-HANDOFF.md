@@ -1,7 +1,7 @@
 # Session 169 Handoff — UNDER Bias Root Cause Found & Fixed, Stale Model Cleanup
 
 **Date:** February 9, 2026
-**Commit:** TBD (pending push)
+**Commit:** `0fb76d06` (pushed and deployed to Cloud Run)
 **Status:** Critical fix — Vegas line disconnect found and fixed
 
 ## What Was Done
