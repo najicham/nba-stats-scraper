@@ -154,6 +154,14 @@ class SubsetPicksNotifier:
             AND ABS(p.predicted_points - p.current_points_line) >= COALESCE(d.min_edge, 0)
             AND (d.min_confidence IS NULL OR p.confidence_score >= d.min_confidence)
             AND p.current_points_line IS NOT NULL
+            -- Session 170: Filter to current production model to prevent stale model predictions leaking
+            AND p.model_version = (
+              SELECT model_version
+              FROM `{self.project_id}.nba_predictions.player_prop_predictions`
+              WHERE game_date = DATE('{game_date}') AND system_id = 'catboost_v9'
+                AND is_active = TRUE AND current_points_line IS NOT NULL
+              GROUP BY model_version ORDER BY COUNT(*) DESC LIMIT 1
+            )
         ),
         historical_performance AS (
           SELECT
@@ -204,6 +212,14 @@ class SubsetPicksNotifier:
               AND ABS(p.predicted_points - p.current_points_line) >= COALESCE(d.min_edge, 0)
               AND (d.min_confidence IS NULL OR p.confidence_score >= d.min_confidence)
               AND p.current_points_line IS NOT NULL
+              -- Session 170: Filter to majority model version per day to prevent stale model leakage
+              AND p.model_version = (
+                SELECT model_version
+                FROM `{self.project_id}.nba_predictions.player_prop_predictions`
+                WHERE game_date = p.game_date AND system_id = 'catboost_v9'
+                  AND is_active = TRUE AND current_points_line IS NOT NULL
+                GROUP BY model_version ORDER BY COUNT(*) DESC LIMIT 1
+              )
           )
           CROSS JOIN subset_def d
           WHERE daily_rank <= COALESCE(d.top_n, 999)

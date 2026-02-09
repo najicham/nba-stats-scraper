@@ -271,6 +271,14 @@ class SubsetMaterializer:
           AND p.current_points_line IS NOT NULL
           AND pgs.team_abbr IS NOT NULL
           AND COALESCE(f.feature_quality_score, 0) >= @min_quality
+          -- Session 170: Filter to current production model to prevent stale model predictions leaking
+          AND p.model_version = (
+            SELECT model_version
+            FROM `nba_predictions.player_prop_predictions`
+            WHERE game_date = @game_date AND system_id = 'catboost_v9'
+              AND is_active = TRUE AND current_points_line IS NOT NULL
+            GROUP BY model_version ORDER BY COUNT(*) DESC LIMIT 1
+          )
         ORDER BY composite_score DESC
         """
         job_config = bigquery.QueryJobConfig(
