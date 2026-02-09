@@ -410,6 +410,78 @@ No source:         {no_source} players ({100 * no_source / total:.0f}% of {total
         logger.error(f"Failed to send VEGAS_COVERAGE_DEGRADED Slack alert: {e}")
 
 
+def send_pvl_bias_alert(
+    game_date: date,
+    run_mode: str,
+    avg_pvl: float,
+    prediction_count: int,
+):
+    """
+    Session 170: Alert when batch avg predicted-vs-line (PVL) is outside ±2.0.
+
+    Would have caught the Session 169 UNDER bias crisis immediately (avg_pvl was -3.84).
+    Fires after consolidation for any prediction run.
+
+    Args:
+        game_date: Date predictions are for
+        run_mode: Prediction run mode (FIRST, BACKFILL, etc.)
+        avg_pvl: Average (predicted_points - current_points_line) for the batch
+        prediction_count: Number of predictions in the batch
+    """
+    severity = "CRITICAL" if abs(avg_pvl) > 3.0 else "WARNING"
+    direction = "UNDER" if avg_pvl < 0 else "OVER"
+    emoji = ":rotating_light:" if severity == "CRITICAL" else ":warning:"
+
+    message = f"""{emoji} *PVL BIAS DETECTED* ({severity})
+
+*{game_date}* ({run_mode}) — avg_pvl = *{avg_pvl:+.2f}*
+
+Model is predicting {abs(avg_pvl):.1f} points *{direction}* Vegas on average.
+Threshold: ±2.0 (WARNING), ±3.0 (CRITICAL)
+Predictions in batch: {prediction_count}
+
+*Impact:* Systematic {direction} bias causes lopsided recommendations.
+*Next steps:* Check Vegas line coverage, feature store quality, model inputs.
+"""
+
+    alert = QualityAlert(
+        alert_type="PVL_BIAS_DETECTED",
+        severity=severity,
+        message=f"avg_pvl={avg_pvl:+.2f} for {game_date} ({run_mode})",
+        details={
+            'game_date': str(game_date),
+            'run_mode': run_mode,
+            'avg_pvl': avg_pvl,
+            'direction': direction,
+            'prediction_count': prediction_count,
+        }
+    )
+
+    log_level = logging.ERROR if severity == "CRITICAL" else logging.WARNING
+    logger.log(
+        log_level,
+        f"QUALITY_ALERT: PVL_BIAS_DETECTED - avg_pvl={avg_pvl:+.2f} for {game_date}",
+        extra={
+            'alert_type': 'PVL_BIAS_DETECTED',
+            'severity': severity,
+            'details': alert.details,
+        }
+    )
+
+    try:
+        from shared.utils.slack_alerts import send_slack_alert
+        send_slack_alert(
+            message=message,
+            channel="#nba-alerts",
+            alert_type="PVL_BIAS_DETECTED",
+        )
+        logger.info("Sent PVL_BIAS_DETECTED Slack alert")
+    except ImportError:
+        logger.warning("Slack alerting not available - alert logged only")
+    except Exception as e:
+        logger.error(f"Failed to send PVL_BIAS_DETECTED Slack alert: {e}")
+
+
 def send_line_check_alert(
     game_date: date,
     new_line_players: List[str],

@@ -3428,6 +3428,42 @@ def publish_batch_summary_from_firestore(batch_id: str):
                     f"cleaned={consolidation_result.staging_tables_cleaned}"
                 )
 
+                # Step 1.4: Check batch PVL bias (Session 170)
+                try:
+                    from predictions.coordinator.quality_alerts import send_pvl_bias_alert
+                    pvl_query = f"""
+                    SELECT
+                        ROUND(AVG(predicted_points - current_points_line), 2) as avg_pvl,
+                        COUNT(*) as prediction_count,
+                        prediction_run_mode
+                    FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+                    WHERE game_date = @game_date
+                      AND system_id = 'catboost_v9'
+                      AND is_active = TRUE
+                      AND current_points_line IS NOT NULL
+                    GROUP BY prediction_run_mode
+                    """
+                    pvl_config = bigquery.QueryJobConfig(
+                        query_parameters=[
+                            bigquery.ScalarQueryParameter("game_date", "DATE", game_date)
+                        ]
+                    )
+                    pvl_client = bigquery.Client(project=PROJECT_ID)
+                    pvl_rows = list(pvl_client.query(pvl_query, job_config=pvl_config).result())
+                    for pvl_row in pvl_rows:
+                        avg_pvl = pvl_row.avg_pvl or 0.0
+                        if abs(avg_pvl) > 2.0:
+                            send_pvl_bias_alert(
+                                game_date=game_date,
+                                run_mode=pvl_row.prediction_run_mode or 'UNKNOWN',
+                                avg_pvl=avg_pvl,
+                                prediction_count=pvl_row.prediction_count,
+                            )
+                        else:
+                            logger.info(f"PVL bias check OK: avg_pvl={avg_pvl:+.2f} ({pvl_row.prediction_run_mode})")
+                except Exception as pvl_err:
+                    logger.warning(f"PVL bias check failed (non-fatal): {pvl_err}")
+
                 # Step 1.5: Calculate daily prediction signals (Session 71)
                 try:
                     logger.info(f"Calculating daily prediction signals for {game_date}...")
@@ -3577,6 +3613,42 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
                     'staging_tables_cleaned': consolidation_result.staging_tables_cleaned,
                     'success': True
                 }
+
+                # Step 1.4: Check batch PVL bias (Session 170)
+                try:
+                    from predictions.coordinator.quality_alerts import send_pvl_bias_alert
+                    pvl_query = f"""
+                    SELECT
+                        ROUND(AVG(predicted_points - current_points_line), 2) as avg_pvl,
+                        COUNT(*) as prediction_count,
+                        prediction_run_mode
+                    FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+                    WHERE game_date = @game_date
+                      AND system_id = 'catboost_v9'
+                      AND is_active = TRUE
+                      AND current_points_line IS NOT NULL
+                    GROUP BY prediction_run_mode
+                    """
+                    pvl_config = bigquery.QueryJobConfig(
+                        query_parameters=[
+                            bigquery.ScalarQueryParameter("game_date", "DATE", game_date)
+                        ]
+                    )
+                    pvl_client = bigquery.Client(project=PROJECT_ID)
+                    pvl_rows = list(pvl_client.query(pvl_query, job_config=pvl_config).result())
+                    for pvl_row in pvl_rows:
+                        avg_pvl = pvl_row.avg_pvl or 0.0
+                        if abs(avg_pvl) > 2.0:
+                            send_pvl_bias_alert(
+                                game_date=game_date,
+                                run_mode=pvl_row.prediction_run_mode or 'UNKNOWN',
+                                avg_pvl=avg_pvl,
+                                prediction_count=pvl_row.prediction_count,
+                            )
+                        else:
+                            logger.info(f"PVL bias check OK: avg_pvl={avg_pvl:+.2f} ({pvl_row.prediction_run_mode})")
+                except Exception as pvl_err:
+                    logger.warning(f"PVL bias check failed (non-fatal): {pvl_err}")
 
                 # Step 1.5: Calculate daily prediction signals (Session 71)
                 try:

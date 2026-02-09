@@ -1115,6 +1115,7 @@ def process_player_predictions(
             f"(lines: {sorted_lines})"
         )
         actual_prop = median_line
+        features['vegas_source'] = 'recovery_median'  # Session 170: Track Vegas source
 
     if actual_prop is not None:
         # Vegas features (indices 25-28)
@@ -1122,18 +1123,23 @@ def process_player_predictions(
         features['vegas_opening_line'] = actual_prop  # Use same as closing (no opening data)
         features['vegas_line_move'] = 0.0  # No line movement data available
         features['has_vegas_line'] = 1.0  # CRITICAL: Must be 1.0 when we have a line!
+        # Session 170: Track Vegas source (only set if not already set by recovery above)
+        if 'vegas_source' not in features:
+            features['vegas_source'] = 'coordinator_actual'
     elif features.get('vegas_points_line') is not None:
         # Session 168: Preserve feature store vegas values when coordinator has no line.
         # Previously this branch nulled out valid feature store data, causing
         # PRE_GAME predictions to run blind (e.g., Feb 4 -3.44 avg_pvl bug).
         logger.info(f"No actual_prop_line from coordinator, preserving feature store vegas_points_line={features.get('vegas_points_line')}")
         features['has_vegas_line'] = 1.0
+        features['vegas_source'] = 'feature_store'  # Session 170: Track Vegas source
     else:
         # No prop line from coordinator AND no line in feature store
         features['vegas_points_line'] = None
         features['vegas_opening_line'] = None
         features['vegas_line_move'] = None
         features['has_vegas_line'] = 0.0
+        features['vegas_source'] = 'none'  # Session 170: Track Vegas source
 
     # Opponent history features (indices 29-30)
     # These would require a separate query to player_game_summary.
@@ -2180,6 +2186,8 @@ def format_prediction_for_bigquery(
             # Session 169: Feature store original values (before coordinator overrides)
             'fs_vegas_points_line': features.get('_fs_original_vegas_points_line'),
             'fs_has_vegas_line': features.get('_fs_original_has_vegas_line'),
+            # Session 170: Which code path provided the Vegas feature
+            'vegas_source': features.get('vegas_source'),
             # Session 128: Breakout classifier shadow mode data
             'breakout_shadow': features.get('breakout_shadow'),
         }),
