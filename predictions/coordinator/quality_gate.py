@@ -663,5 +663,6 @@ def parse_prediction_mode(mode_str: str) -> PredictionMode:
         'OVERNIGHT': PredictionMode.RETRY,
         'SAME_DAY': PredictionMode.RETRY,
         'MORNING': PredictionMode.RETRY,
+        'PRE_GAME': PredictionMode.FIRST,  # Session 168: Explicit mapping (was falling through to RETRY)
     }
     return mode_map.get(mode_str.upper(), PredictionMode.RETRY)

@@ -2035,7 +2035,8 @@ def _mark_predictions_superseded(
         superseded = TRUE,
         superseded_at = CURRENT_TIMESTAMP(),
         superseded_reason = @reason,
-        superseded_metadata = PARSE_JSON(@metadata_json)
+        superseded_metadata = PARSE_JSON(@metadata_json),
+        is_active = FALSE
     WHERE game_date = @game_date
       AND (superseded IS NULL OR superseded = FALSE)
     """
@@ -2094,7 +2095,8 @@ def _mark_predictions_superseded_for_players(
         superseded = TRUE,
         superseded_at = CURRENT_TIMESTAMP(),
         superseded_reason = @reason,
-        superseded_metadata = PARSE_JSON(@metadata_json)
+        superseded_metadata = PARSE_JSON(@metadata_json),
+        is_active = FALSE
     WHERE game_date = @game_date
       AND player_lookup IN UNNEST(@player_lookups)
       AND (superseded IS NULL OR superseded = FALSE)

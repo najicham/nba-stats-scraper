@@ -1099,8 +1099,14 @@ def process_player_predictions(
         features['vegas_opening_line'] = actual_prop  # Use same as closing (no opening data)
         features['vegas_line_move'] = 0.0  # No line movement data available
         features['has_vegas_line'] = 1.0  # CRITICAL: Must be 1.0 when we have a line!
+    elif features.get('vegas_points_line') is not None:
+        # Session 168: Preserve feature store vegas values when coordinator has no line.
+        # Previously this branch nulled out valid feature store data, causing
+        # PRE_GAME predictions to run blind (e.g., Feb 4 -3.44 avg_pvl bug).
+        logger.info(f"No actual_prop_line from coordinator, preserving feature store vegas_points_line={features.get('vegas_points_line')}")
+        features['has_vegas_line'] = 1.0
     else:
-        # No prop line - use np.nan for Vegas features (CatBoost handles natively)
+        # No prop line from coordinator AND no line in feature store
         features['vegas_points_line'] = None
         features['vegas_opening_line'] = None
         features['vegas_line_move'] = None
