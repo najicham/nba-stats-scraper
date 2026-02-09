@@ -12,10 +12,10 @@
 
 steps:
   # Step 0: Download production model from GCS (only for prediction-worker)
-  # Downloads the PRODUCTION model specified in manifest.json.
+  # Reads manifest.json to find the production model dynamically.
   # Session 166: Fixed to download production model instead of monthly/*.cbm
-  # which contained untested models that overrode the CATBOOST_V9_MODEL_PATH env var.
-  # The worker loads local models first (before GCS), so baked-in model must be correct.
+  # Session 167: Reads from manifest.json so model promotions don't require
+  # manual cloudbuild.yaml updates.
   - name: 'gcr.io/cloud-builders/gsutil'
     entrypoint: bash
     args:
@@ -24,7 +24,23 @@ steps:
         if [ "${_SERVICE}" = "prediction-worker" ]; then
           echo "Downloading production model for prediction-worker..."
           mkdir -p models
-          gsutil cp "gs://nba-props-platform-models/catboost/v9/catboost_v9_33features_20260201_011018.cbm" models/
+          # Read production model path from manifest.json (source of truth)
+          gsutil cp "gs://nba-props-platform-models/catboost/v9/manifest.json" /tmp/manifest.json
+          MODEL_GCS_PATH=$(python3 -c "
+        import json
+        with open('/tmp/manifest.json') as f:
+            manifest = json.load(f)
+        for name, data in manifest.get('models', {}).items():
+            if data.get('status') == 'production':
+                print(data['gcs_path'])
+                break
+        ")
+          if [ -z "$MODEL_GCS_PATH" ]; then
+            echo "ERROR: No production model found in manifest.json"
+            exit 1
+          fi
+          echo "Production model from manifest: $MODEL_GCS_PATH"
+          gsutil cp "$MODEL_GCS_PATH" models/
           ls -la models/
         else
           echo "Skipping model download (not prediction-worker)"

@@ -109,15 +109,28 @@ class CatBoostV9(CatBoostV8):
         return self._model_version or "v9_unknown"
 
     def _load_model_from_default_location(self):
-        """Load V9 model from default locations (local first, then GCS)."""
+        """Load V9 model: env var first, then local files, then default GCS.
+
+        Session 167: Changed priority order. Previously local files were checked
+        first, which meant Docker-baked models silently overrode the
+        CATBOOST_V9_MODEL_PATH env var. This caused the Feb 5-7 wrong-model bug
+        where an untested monthly model (36 features) was loaded instead of the
+        production model specified by the env var.
+        """
         import catboost as cb
 
-        # Try local models directory first — match any catboost_v9*.cbm file
+        # Priority 1: CATBOOST_V9_MODEL_PATH env var (authoritative when set)
+        env_path = os.environ.get('CATBOOST_V9_MODEL_PATH')
+        if env_path:
+            logger.info(f"Loading CatBoost V9 from env var CATBOOST_V9_MODEL_PATH: {env_path}")
+            self._load_model_from_path(env_path)
+            return
+
+        # Priority 2: Local models directory — match any catboost_v9*.cbm file
         models_dir = Path(__file__).parent.parent.parent.parent / "models"
         model_files = list(models_dir.glob("catboost_v9*.cbm"))
 
         if model_files:
-            # Use most recent model file
             model_path = sorted(model_files)[-1]
             logger.info(f"Loading CatBoost V9 from local: {model_path}")
             self.model = cb.CatBoostRegressor()
@@ -132,12 +145,9 @@ class CatBoostV9(CatBoostV8):
             )
             return
 
-        # Try GCS - check for environment variable or use default path
-        gcs_path = os.environ.get('CATBOOST_V9_MODEL_PATH', DEFAULT_MODEL_GCS)
-        logger.info(f"No local V9 model found, loading from GCS: {gcs_path}")
-
-        # Load from GCS
-        self._load_model_from_path(gcs_path)
+        # Priority 3: Default GCS path
+        logger.info(f"No env var or local V9 model found, loading from default GCS: {DEFAULT_MODEL_GCS}")
+        self._load_model_from_path(DEFAULT_MODEL_GCS)
 
     def _load_model_from_path(self, model_path: str):
         """Load V9 model from explicit path (local or GCS)."""
