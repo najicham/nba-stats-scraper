@@ -57,13 +57,21 @@ Registry synced via `./bin/model-registry.sh sync` — 5 models total in registr
 
 The Feb 2 retrain (deprecated for UNDER bias -2.26) was still generating active predictions for Feb 5-7.
 
-### 6. Backfill Triggered
+### 6. Critical Bug: Cloud Build Downloads Wrong Model (`cloudbuild.yaml`)
 
-- **Feb 2-3:** Backfill completed via coordinator HTTP API
-- **Feb 5-7:** Backfill triggered via Pub/Sub (`nba-predictions-trigger`)
+**Root Cause Found:** The worker's `_load_model_from_default_location()` loads local model files BEFORE checking the `CATBOOST_V9_MODEL_PATH` env var. Cloud Build Step 0 was downloading `monthly/*.cbm` (untested `catboost_v9_2026_02.cbm` with 36 features) and baking it into the Docker image. The env var was silently ignored.
+
+**Fix:** Changed `cloudbuild.yaml` to download the specific production model (`catboost_v9_33features_20260201_011018.cbm`) instead of `monthly/*.cbm`.
+
+**Pushed to main** — auto-deploy will rebuild the worker with the correct model.
+
+### 7. Backfill Status (In Progress)
+
+- **Feb 2-3:** Backfill completed via coordinator HTTP API (correct model: `33features`)
+- **Feb 5-7:** Backfill triggered via Pub/Sub (`nba-prediction-trigger`) but used wrong baked-in model (`36features`)
 - **Feb 2-7:** Grading triggered via Pub/Sub (`nba-grading-trigger`)
 
-**Status:** Backfill and grading are running asynchronously. Verify completion in next session.
+**IMPORTANT:** Feb 5-7 backfills need to be RE-RUN after the Cloud Build deploys the fixed worker image. The current backfill used the wrong Docker-baked model.
 
 ## Subset Analysis
 
@@ -128,9 +136,22 @@ Both shadow models are registered and uploaded. Monitor them against production 
 | File | Change |
 |------|--------|
 | `ml/experiments/quick_retrain.py` | Production-line eval, tier bias fix, CLI flags |
+| `cloudbuild.yaml` | Download production model instead of monthly/*.cbm |
 
-## Commit
+## Commits
 
 ```
 a6796867 fix: Align model eval with production lines and fix tier bias hindsight
+b437d6b2 docs: Session 166 handoff — eval pipeline fix, experiments, Feb 2-7 backfill
+87f0750d fix: Cloud Build downloads production model instead of untested monthly
 ```
+
+## Architectural Lessons
+
+1. **Local-first model loading is dangerous** — The worker's `_load_model_from_default_location()` checks local files before the GCS env var. Any model baked into the Docker image overrides the env var, making `CATBOOST_V9_MODEL_PATH` a no-op. This is the root cause of the Feb 5-7 wrong-model issue.
+
+2. **Model naming matters for sorting** — `sorted(model_files)[-1]` picks alphabetically last. `36features` > `33features`, so the wrong model was selected even when both existed locally.
+
+3. **Eval pipeline must match production** — DraftKings-only eval lines gave ~63% hit rates while production showed ~71%+. The multi-source line cascade produces different (often better) lines.
+
+4. **Tier bias using actuals is hindsight** — Classifying players by what they scored (actuals) rather than what they're expected to score (season avg) distorts tier analysis.
