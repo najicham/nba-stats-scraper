@@ -1,65 +1,93 @@
-# Session 168 Handoff: Complete Feb 5-7 Backfill, Investigation & Bug Fixes
+# Session 168 Handoff: Backfill, Bug Fixes, Model UNDER Bias Crisis
 
 **Date:** 2026-02-09
-**Focus:** Backfill completion, model performance deep dive, three critical bug fixes
+**Focus:** Backfill completion, three bug fixes deployed, model performance deep dive, stale model audit
+**Commit:** `ea75d1c7` — pushed to main, Cloud Build deployed coordinator + worker at 08:22 UTC
 
 ## Summary
 
-Completed the Feb 5-7 backfill from Session 167, then conducted a comprehensive investigation into the model's performance dip from Jan 26 onward. Discovered and fixed three bugs: the supersede bug (is_active not set), the worker vegas null-out bug (PRE_GAME predictions blind to Vegas lines), and the PRE_GAME mode mapping.
+Completed the Feb 5-7 backfill from Session 167, discovered and fixed three bugs (supersede, vegas null-out, PRE_GAME mode mapping), conducted a comprehensive investigation into the model's performance dip from Jan 26 onward, and discovered additional critical issues: stale model predictions polluting the database, the broken `catboost_v9_2026_02` still config-enabled, and **the model's UNDER bias is worsening** (-3.84 avg_pvl on today's predictions despite all fixes being deployed).
+
+## URGENT: Model UNDER Bias Getting Worse
+
+**Today (Feb 9), after all bug fixes deployed, catboost_v9 predictions show avg_pvl = -3.84.**
+
+This is NOT the vegas null-out bug — today's predictions have real Vegas lines (Zion 25.5, Bam 23.5, Randle 23.5). The model genuinely predicts 4-10 points below the lines for star players. This is the same UNDER bias from the investigation, accelerating:
+
+| Week | Avg Pred vs Vegas | % OVER Recs |
+|------|-------------------|-------------|
+| Jan 12 | +1.29 | 54.9% |
+| Jan 19 | -0.07 | 50.9% |
+| Jan 26 | -0.26 | 39.1% |
+| Feb 2 | -0.94 | 15.1% |
+| **Feb 9** | **-3.84** | **~0%** |
+
+The model is completely broken for UNDER. Every prediction is an UNDER recommendation. This needs immediate attention.
 
 ## What Was Done
 
 ### 1. Backfill Feb 5-7 Predictions
 
-Triggered BACKFILL via coordinator `/start` for each date. Each batch had ~4 stuck players (known pattern), resolved via `/reset`.
-
 | Date | Active Predictions | Model | avg_pvl |
 |------|-------------------|-------|---------|
-| Feb 5 | 104 | catboost_v9_33features (correct) | -0.11 |
-| Feb 6 | 72 | catboost_v9_33features (correct) | -0.17 |
-| Feb 7 | 137 | catboost_v9_33features (correct) | -0.03 |
+| Feb 5 | 104 | v9_20260201_011018 (correct) | -0.11 |
+| Feb 6 | 72 | v9_20260201_011018 (correct) | -0.17 |
+| Feb 7 | 137 | v9_20260201_011018 (correct) | -0.03 |
 
-### 2. Re-graded Feb 2-7
+### 2. Three Bug Fixes (Committed + Deployed)
 
-Published grading triggers for all 6 dates via `nba-grading-trigger` Pub/Sub.
+| Bug | File | Fix |
+|-----|------|-----|
+| Supersede doesn't deactivate | `coordinator.py:2034-2041,2094-2102` | Added `is_active = FALSE` to both supersede functions |
+| Worker nulls out vegas features | `worker.py:1095-1113` | New `elif` preserves feature store vegas values when coordinator has no line |
+| PRE_GAME not in mode map | `quality_gate.py:666` | Added explicit `'PRE_GAME': PredictionMode.FIRST` mapping |
 
-### 3. Re-materialized Subsets
+### 3. Re-graded Feb 2-7, Re-materialized Subsets
 
-Ran `PYTHONPATH=. python backfill_jobs/publishing/daily_export.py --start-date 2026-02-02 --end-date 2026-02-07 --only subset-picks`.
+All 6 dates graded via Pub/Sub, subsets exported to GCS.
 
-### 4. Re-ran Experiment (V9_JAN31_REEVAL)
+### 4. Fixed Feb 4 Bad Predictions
 
-Retrained model on same dates (Nov 2 - Jan 31), evaluated on Feb 1-7. **GATES FAILED:**
-- MAE: 5.21 vs 5.14 baseline (slightly worse)
-- Edge 3+ hit rate: 42.86% (n=7, too small)
-- Vegas bias: -0.05 (good)
-- Tier bias: all acceptable
+Deactivated 99 PRE_GAME predictions (null vegas, -3.44 avg_pvl) via BQ UPDATE. **However:** The 17 re-activated BACKFILL predictions use wrong model `v9_36features_20260108_212239` — see Open Issues below.
 
-Head-to-head on 276 overlapping players: both at 48.9% hit rate. On 29 disagreements, production won 58.6% vs retrain's 44.8%. **No benefit from retraining.**
+### 5. Experiment: Retraining on Same Dates
 
-### 5. Fixed Regeneration Supersede Bug
+GATES FAILED. Head-to-head on 276 overlapping players: both 48.9% hit rate. No benefit from retraining.
 
-**File:** `predictions/coordinator/coordinator.py` (lines 2034-2041, 2094-2102)
+## CRITICAL: Stale Model Predictions in Database
 
-Both `_mark_predictions_superseded()` and `_mark_predictions_superseded_for_players()` now set `is_active = FALSE` alongside `superseded = TRUE`. Previously, superseded predictions remained active, blocking the quality gate from allowing regeneration.
+**11 different model/version combos have active predictions for Feb 2+:**
 
-### 6. Fixed Worker Vegas Null-Out Bug (CRITICAL)
+| system_id | model_version | Active | Status | Last Generated |
+|-----------|--------------|--------|--------|---------------|
+| **catboost_v9** | **v9_20260201_011018** | **356** | **PRODUCTION (correct)** | **Feb 9** |
+| catboost_v9 | v9_current_season | 269 | **STALE — wrong model era** | Feb 8 |
+| catboost_v9 | v9_36features_20260108_212239 | 17 | **WRONG MODEL — Feb 4 only** | Feb 8 |
+| catboost_v9_2026_02 | catboost_v9_2026_02 | 823 | **BROKEN — Session 163 UNDER bias** | Feb 8 |
+| catboost_v8 | catboost_v8 | 858 | Legacy model, still running | Feb 9 |
+| ensemble_v1 | ensemble_v1 | 865 | Non-catboost system | Feb 9 |
+| ensemble_v1_1 | ensemble_v1_1 | 865 | Non-catboost system | Feb 9 |
+| moving_average | v1 | 865 | Non-catboost system | Feb 9 |
+| similarity_balanced_v1 | v1 | 621 | Non-catboost system | Feb 9 |
+| zone_matchup_v1 | v1 | 865 | Non-catboost system | Feb 9 |
 
-**File:** `predictions/worker/worker.py` (lines 1095-1113)
+**Subsets only use `system_id = 'catboost_v9'`** — so the other models don't affect subset picks. But:
+- `v9_current_season` (269) and `v9_36features` (17) ARE under `system_id = 'catboost_v9'` and DO pollute subset calculations
+- `catboost_v9_2026_02` (823) pollutes the `prediction_accuracy` grading table
 
-**Root cause:** When the coordinator has no betting line (`actual_prop_line = None`), the worker's else branch **overwrote** valid feature store vegas values with `None`. This caused the model to predict without knowing the Vegas line.
+### Root Cause: How Stale Models Got There
 
-**Fix:** Added `elif features.get('vegas_points_line') is not None` branch that preserves the feature store's vegas values when the coordinator doesn't have a line.
+1. **`v9_current_season`** — Generated before Session 167's model loading fix. The worker was loading the wrong local model file.
+2. **`v9_36features_20260108_212239`** — Generated by Session 167's backfill runs that happened before the env var fix was deployed. The 17 Feb 4 predictions we "rescued" are actually from this wrong model.
+3. **`catboost_v9_2026_02`** — The broken Feb 2 retrain model. Lives in `catboost_monthly.py` line 55 with `"enabled": True`. Session 167 deleted the local file, so it stopped generating after Feb 8, but **the config still says enabled**.
 
-### 7. Fixed PRE_GAME Mode Mapping
+## Production Deployment State
 
-**File:** `predictions/coordinator/quality_gate.py` (line 666)
+**Worker env vars (confirmed):**
+- `CATBOOST_V9_MODEL_PATH=gs://nba-props-platform-models/catboost/v9/catboost_v9_33features_20260201_011018.cbm`
+- `BUILD_COMMIT=ea75d1c7` (Session 168 fixes)
 
-Added explicit `'PRE_GAME': PredictionMode.FIRST` mapping. Previously `PRE_GAME` fell through to `PredictionMode.RETRY` silently.
-
-### 8. Fixed Feb 4 Bad Predictions
-
-Deactivated 99 PRE_GAME predictions (null vegas, -3.44 avg_pvl) via BQ UPDATE. Re-activated 17 BACKFILL predictions (avg_pvl -0.71). Triggered new BACKFILL and re-graded.
+**Coordinator:** `BUILD_COMMIT=ea75d1c` (Session 168 fixes)
 
 ## Investigation Findings
 
@@ -71,26 +99,13 @@ Deactivated 99 PRE_GAME predictions (null vegas, -3.44 avg_pvl) via BQ UPDATE. R
 | Medium Quality (3+ edge) | 495 | **62.2%** | +18.8% |
 | All Picks (excl PASS) | 1,913 | **53.8%** | +2.7% |
 
-### Weekly Decline Trend
-
-| Week | Edge 3+ HR | Edge 5+ HR | % OVER Recs | Avg Pred vs Vegas |
-|------|-----------|-----------|------------|-------------------|
-| Jan 12 | **71.2%** | **83.8%** | 54.9% | +1.29 |
-| Jan 19 | **67.0%** | **84.6%** | 50.9% | -0.07 |
-| Jan 26 | 58.0% | 63.0% | 39.1% | -0.26 |
-| Feb 2 | **47.3%** | **54.8%** | **15.1%** | **-0.94** |
-
 ### Root Causes of the Dip
 
-1. **Systematic UNDER bias** — Model shifted from balanced to 85% UNDER recommendations. High-edge UNDER (7+ pts) collapsed from 100% to 46.7%.
-
-2. **Pre-ASB scoring bump** — Players score +0.33 to +0.55 points above rolling averages in the 2 weeks before All-Star break. Confirmed across 4 seasons. However, last season's model handled this fine (80%+ through Feb).
-
-3. **Trade deadline disruption (Feb 5)** — CHI cycled 21 players (was 11), MEM lost JJJ. Trade teams dropped to 47.2% hit rate.
-
+1. **Systematic UNDER bias** — OVER recs dropped from 55% → 15%. Model predicts increasingly below Vegas lines.
+2. **Pre-ASB scoring bump** — +0.33 to +0.55 PPG above rolling averages, confirmed across 4 seasons. But last season's V8 model handled this fine.
+3. **Trade deadline disruption (Feb 5)** — Trade teams dropped to 47.2% hit rate.
 4. **Vegas getting sharper** — Model MAE gap vs Vegas went from -0.23 (winning) to +0.54 (losing).
-
-5. **Feb 4 PRE_GAME bug** — Null vegas lines caused -3.44 avg_pvl on the highest-volume prediction day.
+5. **Feb 4 PRE_GAME bug** — Null vegas lines caused -3.44 avg_pvl (now fixed).
 
 ### PRE_GAME Bug: Full Trace
 
@@ -103,50 +118,72 @@ Cloud Scheduler fires at 23:00 UTC targeting tomorrow's games
   → Model predicts blind → -3.44 avg_pvl
 ```
 
-**Two bugs in one incident:**
-- **Timing bug:** PRE_GAME runs ~8 hours before player prop lines exist
-- **Null-out bug:** Worker destroys valid feature store data when coordinator has no line
-
-### Subset Performance
+### Subset Performance (Jan 9 - Feb 7)
 
 | Subset | Picks | Hit Rate | ROI |
 |--------|-------|----------|-----|
-| Top 5 | 9 | **100.0%** | +90.9% |
 | Green Light | 109 | **84.4%** | +61.1% |
 | High Edge OVER | 101 | **81.2%** | +55.0% |
 | Ultra High Edge | 75 | **78.7%** | +50.2% |
 | High Edge All | 177 | **74.6%** | +42.4% |
 | All Picks | 505 | **61.8%** | +17.9% |
 
-### Pre-ASB Historical Pattern
+### Model Version Naming
 
-| Season | Late Jan PPG | Early Feb PPG | Scoring Bias |
-|--------|-------------|--------------|-------------|
-| 2023-24 | 12.46 | 12.58 (+0.12) | +0.37 |
-| 2024-25 | 12.29 | 12.50 (+0.21) | +0.37 |
-| 2025-26 | 11.94 | 12.22 (+0.28) | +0.33 |
+**Convention from Session 165:** `catboost_v9_33f_train{start}-{end}_{timestamp}.cbm`
 
-Players systematically outperform rolling averages in the 2 weeks before ASB. This is structural and repeatable.
+The `model_version` column in predictions is derived from the filename by `_derive_model_version()` in `catboost_v9.py:55-68`. It strips the prefix to get something like `v9_20260201_011018`. The training date range is NOT currently in the model_version column — only the creation timestamp.
 
-## Files Modified
+### How Subsets Select Predictions
+
+- All 8 subsets are `system_id = 'catboost_v9'` (confirmed in `dynamic_subset_definitions`)
+- They filter by edge, direction, signal condition, and top N ranking
+- They do NOT filter by `model_version` — so any `catboost_v9` prediction (including stale `v9_current_season`) can leak into subsets
+
+## Open Issues for Next Session (Priority Order)
+
+### P0: Model UNDER Bias Crisis
+- Today's avg_pvl is -3.84, accelerating from -0.94 last week
+- The model is NOT usable for new picks until this is addressed
+- Options: (a) pause predictions, (b) apply a bias correction offset, (c) retrain with recent data, (d) investigate if feature store data has shifted
+
+### P1: Stale Model Cleanup
+Deactivate these via BQ UPDATE:
+```sql
+-- Deactivate v9_current_season (wrong model era)
+UPDATE nba_predictions.player_prop_predictions
+SET is_active = FALSE, superseded = TRUE, superseded_reason = 'Session 168: stale model cleanup'
+WHERE system_id = 'catboost_v9' AND model_version = 'v9_current_season' AND is_active = TRUE;
+
+-- Deactivate v9_36features (wrong model, Feb 4 only)
+UPDATE nba_predictions.player_prop_predictions
+SET is_active = FALSE, superseded = TRUE, superseded_reason = 'Session 168: wrong model file'
+WHERE system_id = 'catboost_v9' AND model_version = 'v9_36features_20260108_212239' AND is_active = TRUE;
+
+-- Deactivate catboost_v9_2026_02 (broken Feb 2 retrain)
+UPDATE nba_predictions.player_prop_predictions
+SET is_active = FALSE, superseded = TRUE, superseded_reason = 'Session 168: broken model deactivation'
+WHERE system_id = 'catboost_v9_2026_02' AND is_active = TRUE;
+```
+
+### P2: Disable Broken Monthly Model Config
+In `predictions/worker/prediction_systems/catboost_monthly.py` line 55:
+Change `"enabled": True` → `"enabled": False` for `catboost_v9_2026_02`.
+
+### P3: Re-backfill Feb 4
+After stale cleanup, Feb 4 will have 0 active catboost_v9 predictions (the 17 we rescued were from the wrong model). Need a fresh BACKFILL.
+
+### P4: Subset Leak Prevention
+Subsets should filter by `model_version` not just `system_id` to prevent stale model predictions from leaking in.
+
+### P5: Add avg_pvl Monitoring
+Alert when a batch's avg_pvl < -2.0. Would have caught Feb 4 immediately.
+
+## Files Modified This Session
 
 | File | Change |
 |------|--------|
-| `predictions/coordinator/coordinator.py` | Supersede bug fix: `is_active = FALSE` in both supersede functions |
-| `predictions/worker/worker.py` | Vegas null-out fix: preserve feature store values when coordinator has no line |
-| `predictions/coordinator/quality_gate.py` | Added explicit `PRE_GAME` → `PredictionMode.FIRST` mapping |
-
-## Recommendations for Next Session
-
-1. **Deploy all three fixes** — Push to main to trigger auto-deploy via Cloud Build
-2. **Monitor UNDER skew** — Add automated alert when % OVER drops below 25% in daily signal
-3. **Consider bias correction** — If avg_pred_vs_vegas drifts beyond +/-0.5 over 7 days, apply small correction
-4. **Investigate PRE_GAME timing** — Consider moving the scheduler to run AFTER odds data is available (~08:00 UTC), or skip PRE_GAME if no lines are found
-5. **Add prediction-level validation** — Alert when a batch has avg_pvl < -2.0 (would have caught Feb 4 immediately)
-
-## Current State
-
-- **Production model:** `catboost_v9_33features_20260201_011018.cbm` (SHA: `5b3a187b`) — still performing well at 74.7% edge 5+
-- **Feb 2-7:** All dates backfilled with correct model, graded, subsets materialized
-- **Feb 4:** Fixed from -3.44 avg_pvl (null vegas) to -0.71 avg_pvl (17 active predictions)
-- **Three bug fixes:** Committed locally, pending push to main for auto-deploy
+| `predictions/coordinator/coordinator.py` | Supersede bug fix: `is_active = FALSE` |
+| `predictions/worker/worker.py` | Vegas null-out fix: preserve feature store values |
+| `predictions/coordinator/quality_gate.py` | PRE_GAME mode mapping |
+| `docs/09-handoff/2026-02-09-SESSION-168-HANDOFF.md` | This document |

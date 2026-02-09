@@ -1,43 +1,35 @@
-# Session 158 Prompt
+# Session 169 Prompt
 
 Copy everything below this line into a new chat:
 
 ---
 
-START, then read `docs/09-handoff/2026-02-07-SESSION-157-HANDOFF.md` for full context.
+Session 169 — Model UNDER Bias Crisis + Stale Model Cleanup
 
-## Session 157 Summary
+Read the handoff: `docs/09-handoff/2026-02-09-SESSION-168-HANDOFF.md`
 
-We discovered and fixed training data contamination in the ML pipeline:
+Context: Session 168 completed Feb 5-7 backfill, deployed three bug fixes (supersede, vegas null-out, PRE_GAME mode mapping — commit `ea75d1c7`), and conducted a deep performance investigation. We found:
 
-- **33.2% of V9 training data had garbage default values** that passed the quality filter because `feature_quality_score` was a weighted average that masked individual defaults (5 defaults → score 91.9, still passing >= 70).
-- **Fixed with 3 layers:** (1) shared training data loader enforcing `required_default_count = 0`, (2) quality score now capped at 69 when defaults exist, (3) fixed 7,088 historical BigQuery records
-- **Migrated 6 active training scripts** to shared loader, archived 41 legacy scripts
-- **V9 retrain** tested but eval window too small — waiting for backfill + clean data
+1. **URGENT: Model UNDER bias is accelerating.** Today (Feb 9) the production model's avg_pvl = -3.84 (predicts 4-10 pts below Vegas for star players). This is NOT a bug — the fixes are deployed and predictions have real Vegas lines. The bias worsened weekly: +1.29 → -0.07 → -0.26 → -0.94 → -3.84 from Jan 12 to Feb 9. The model is not usable for new picks.
 
-## Priority 1: Feature Store Backfill (DO THIS FIRST)
+2. **Stale model predictions polluting the database.** Under `system_id = 'catboost_v9'`, there are 269 active predictions from `v9_current_season` (wrong model era) and 17 from `v9_36features_20260108_212239` (wrong model file). These LEAK INTO SUBSETS because subsets filter by system_id but not model_version. Additionally, 823 active `catboost_v9_2026_02` predictions (the broken Session 163 retrain) need deactivation. SQL cleanup queries are in the handoff.
 
-Re-run ML feature store processor for current season (Nov 2025 - Feb 2026) with Session 156 improvements. This will produce fewer defaults and cleaner training data for the regular end-of-month retrain.
+3. **Broken monthly model still config-enabled.** `predictions/worker/prediction_systems/catboost_monthly.py` line 55 has `catboost_v9_2026_02` with `"enabled": True`. The local model file was deleted in Session 167 but the config wasn't updated.
 
-**Before running, review and update the backfill script:**
-1. Read `scripts/regenerate_ml_feature_store.py` — this runs `MLFeatureStoreProcessor` locally for a date range
-2. Consider whether `PlayerDailyCacheProcessor` also needs re-running (Session 156 expanded its player selection with roster UNION)
-3. **Add logging for missing data** — when a feature falls back to default, log which player/date/feature was affected so we can identify data gaps to fix upstream
-4. Run the backfill:
-```bash
-PYTHONPATH=. python scripts/regenerate_ml_feature_store.py \
-  --start-date 2025-11-02 --end-date 2026-02-07
-```
+What needs to be done (in order):
 
-## Priority 2: Tier Bias Investigation
+1. **P0: Investigate UNDER bias root cause** — Compare feature distributions for today vs Jan 12 (peak performance). Check if Phase 4 precompute or feature store values have shifted. Determine if this is feature drift, data pipeline changes, or model decay 32 days past training end (Nov 2 - Jan 8). Check if last season's V8 had this issue at the same point.
 
-Both V9 and clean retrain show regression-to-mean: stars -9 pts, bench +7 pts. Investigate root cause and fix.
+2. **P1: Clean up stale predictions** — Run the BQ UPDATE queries from the handoff to deactivate v9_current_season (269), v9_36features (17), and catboost_v9_2026_02 (823).
 
-## DO NOT retrain V9 yet
+3. **P2: Disable broken monthly model** — Set `"enabled": False` in catboost_monthly.py line 55. Commit and push.
 
-V9 is performing adequately (54-56% hit rate, 65%+ at edge 3+). A clean retrain was tested in Session 157 but the eval window was too small to draw conclusions. **Wait until end of February for the regular monthly retrain** — by then the backfilled data + 2-3 weeks of new clean data will give a much better training set and enough eval data for a reliable comparison.
+4. **P3: Re-backfill Feb 4** — After stale cleanup, Feb 4 has 0 active catboost_v9 predictions. Trigger BACKFILL, re-grade, re-materialize subsets.
 
-## Feature Ideas (Later)
+5. **P4: Decide on model action** — Options: (a) pause predictions until bias is fixed, (b) apply temporary bias correction offset, (c) retrain with extended data through Jan 31, (d) investigate if the pre-ASB scoring bump (confirmed +0.33-0.55 PPG across 4 seasons) is the primary driver.
 
-- `games_missed_in_last_10` — team games missed, indicates injury/rest patterns
-- `days_on_current_team` — for recently traded players, usage may be unpredictable first 5-10 games
+Questions to answer:
+- Why does the UNDER bias accelerate? Is it feature drift or model decay?
+- Should we pause today's predictions given -3.84 avg_pvl?
+- Are the non-catboost models (ensemble, moving_average, zone_matchup, similarity) useful or should they be disabled?
+- Should subsets add a model_version filter to prevent future leaks?
