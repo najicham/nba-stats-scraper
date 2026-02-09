@@ -1,0 +1,136 @@
+# Session 166 Handoff: Model Eval Pipeline Fix + Retrain Experiments
+
+**Date:** 2026-02-08
+**Focus:** Fix model evaluation pipeline to match production, fix tier bias, run experiments, backfill Feb 2-7
+
+## What Was Done
+
+### 1. Fixed Model Evaluation Pipeline (`ml/experiments/quick_retrain.py`)
+
+**Problem:** The experiment pipeline used DraftKings-only lines from `odds_api_player_points_props`, but production uses a multi-source cascade (DK -> FD -> BetMGM with OddsAPI -> BettingPros fallback). This caused experiment hit rates to be artificially lower than production.
+
+**Fix:** Added `load_eval_data_from_production()` that queries `prediction_accuracy` for the EXACT lines production used at prediction time. This is now the default (`--use-production-lines`). The old DraftKings-only path remains as `--no-production-lines` fallback for eval periods without production predictions.
+
+**Impact:** Jan 9-15 eval hit rate went from ~63% (old DK-only) to 83.16% (production lines) — matching what we actually see in production.
+
+### 2. Fixed Tier Bias Hindsight Issue
+
+**Problem:** `compute_tier_bias()` classified players into tiers (Stars 25+, Starters 15-24, etc.) using `actual_points` — which is hindsight bias. Session 124 proved it should use `points_avg_season` (what the model knows pre-game).
+
+**Fix:** Added `season_avgs` parameter to `compute_tier_bias()`, extracted from feature index 2 (`points_avg_season`). Falls back to actuals for backward compatibility.
+
+### 3. Model Experiments
+
+| Experiment | Training | Eval | MAE | Edge 3+ HR | Vegas Bias | Gates |
+|-----------|----------|------|-----|------------|------------|-------|
+| V9_REPRODUCE_JAN8 | Nov 2 - Jan 8 | Jan 9-15 (prod lines) | 4.74 | 83.16% (n=95) | +1.42 | ALL PASS |
+| V9_JAN31_EXTEND | Nov 2 - Jan 31 | Feb 1-7 (prod lines) | 5.23 | 63.64% (n=22) | -0.39 | 2 FAIL (MAE, sample) |
+| V9_JAN8_EVAL_FEB | Nov 2 - Jan 8 | Feb 1-7 (prod lines) | 5.23 | 66.67% (n=33) | -0.63 | 2 FAIL (MAE, sample) |
+
+**Key finding:** Feb 1-7 was a harder week for BOTH models (MAE 5.23 for both). The Jan 31 extended model didn't help or hurt — sample size too low to tell (n=22 vs n=33).
+
+### 4. Models Uploaded to GCS (Shadow Mode)
+
+Both uploaded with new naming convention and registered:
+
+```
+gs://nba-props-platform-models/catboost/v9/
+├── catboost_v9_33f_train20251102-20260108_20260208_170526.cbm  # Shadow (SHA: 5a4470b9)
+├── catboost_v9_33f_train20251102-20260131_20260208_170613.cbm  # Shadow (SHA: 7908ff07)
+```
+
+Registry synced via `./bin/model-registry.sh sync` — 5 models total in registry.
+
+### 5. Critical Discovery: Feb 2-7 Used Wrong Model
+
+**Production data analysis revealed:**
+
+| Date | Model File | avg_pred_vs_line | Status |
+|------|-----------|------------------|--------|
+| Feb 1 | `catboost_v9_33features_20260201_011018.cbm` | -0.13 | Correct |
+| Feb 2 | Same (correct) | -1.03 | Correct model, original run |
+| Feb 3 | Mixed (correct + 36features) | -0.47 | Partially backfilled |
+| Feb 4 | Mixed (correct + 36features) | -2.92 | Partially backfilled |
+| **Feb 5** | **`catboost_v9_feb_02_retrain.cbm`** | **+0.04** | **WRONG MODEL** |
+| **Feb 6** | **`catboost_v9_feb_02_retrain.cbm`** | **-5.91** | **WRONG MODEL** |
+| **Feb 7** | **`catboost_v9_feb_02_retrain.cbm`** | **-3.75** | **WRONG MODEL** |
+
+The Feb 2 retrain (deprecated for UNDER bias -2.26) was still generating active predictions for Feb 5-7.
+
+### 6. Backfill Triggered
+
+- **Feb 2-3:** Backfill completed via coordinator HTTP API
+- **Feb 5-7:** Backfill triggered via Pub/Sub (`nba-predictions-trigger`)
+- **Feb 2-7:** Grading triggered via Pub/Sub (`nba-grading-trigger`)
+
+**Status:** Backfill and grading are running asynchronously. Verify completion in next session.
+
+## Subset Analysis
+
+**Key findings from deep dive:**
+- Subsets are **hardcoded** to `system_id = 'catboost_v9'` in `subset_materializer.py` and `all_subsets_picks_exporter.py`
+- Subsets don't auto-regenerate after prediction backfill — need explicit `daily_export.py --only subset-picks`
+- Overall subset performance (Jan 9+): Top 3 at 88.5%, High Edge OVER at 82.8%
+- Feb 2-7 subset performance was degraded by wrong model predictions
+
+**After backfill completes, run:**
+```bash
+python backfill_jobs/publishing/daily_export.py \
+  --start-date 2026-02-02 --end-date 2026-02-07 \
+  --only subset-picks
+```
+
+## What Needs Verification (Next Session)
+
+### 1. Verify Backfill Completion
+```sql
+-- Check that Feb 5-7 now have correct model predictions
+SELECT game_date,
+  ARRAY_AGG(DISTINCT model_file_name IGNORE NULLS) as models,
+  ROUND(AVG(predicted_points - current_points_line), 2) as avg_pvl
+FROM nba_predictions.player_prop_predictions
+WHERE game_date BETWEEN '2026-02-05' AND '2026-02-07'
+  AND system_id = 'catboost_v9' AND is_active = TRUE
+  AND current_points_line IS NOT NULL
+GROUP BY 1 ORDER BY 1;
+```
+
+All dates should show `catboost_v9_33features_20260201_011018.cbm` with avg_pvl near 0 (not -4 to -6).
+
+### 2. Verify Grading Updated
+```sql
+-- Check that prediction_accuracy has been re-graded
+SELECT game_date,
+  ROUND(AVG(predicted_margin), 2) as avg_margin,
+  COUNTIF(ABS(predicted_margin) >= 3 AND prediction_correct IS NOT NULL) as edge3_n,
+  ROUND(100.0 * COUNTIF(ABS(predicted_margin) >= 3 AND prediction_correct = TRUE) /
+    NULLIF(COUNTIF(ABS(predicted_margin) >= 3 AND prediction_correct IS NOT NULL), 0), 1) as edge3_hr
+FROM nba_predictions.prediction_accuracy
+WHERE system_id = 'catboost_v9'
+  AND game_date BETWEEN '2026-02-02' AND '2026-02-07'
+  AND prediction_correct IS NOT NULL
+GROUP BY 1 ORDER BY 1;
+```
+
+### 3. Re-materialize Subsets
+After predictions and grading are confirmed:
+```bash
+python backfill_jobs/publishing/daily_export.py \
+  --start-date 2026-02-02 --end-date 2026-02-07 \
+  --only subset-picks
+```
+
+### 4. Monitor Shadow Models
+Both shadow models are registered and uploaded. Monitor them against production for 1-2 weeks before making promotion decisions.
+
+## Files Modified
+
+| File | Change |
+|------|--------|
+| `ml/experiments/quick_retrain.py` | Production-line eval, tier bias fix, CLI flags |
+
+## Commit
+
+```
+a6796867 fix: Align model eval with production lines and fix tier bias hindsight
+```
