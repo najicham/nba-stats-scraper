@@ -185,3 +185,38 @@ b437d6b2 docs: Session 166 handoff — eval pipeline fix, experiments, Feb 2-7 b
 3. **Eval pipeline must match production** — DraftKings-only eval lines gave ~63% hit rates while production showed ~71%+. The multi-source line cascade produces different (often better) lines.
 
 4. **Tier bias using actuals is hindsight** — Classifying players by what they scored (actuals) rather than what they're expected to score (season avg) distorts tier analysis.
+
+## Recommendations
+
+### Immediate Priority: Complete Feb 2-7 Backfill (Steps 1-6 above)
+The corrected worker (commit `87f0750d`) has been deployed via Cloud Build. Follow Steps 1-6 sequentially — verify deployment, re-trigger backfill, re-grade, re-materialize subsets, verify performance. Feb 2 is already correct; Feb 3-7 need re-running.
+
+### Model Decisions
+- **Keep current production model** (`catboost_v9_33features_20260201_011018.cbm`, trained Nov 2 - Jan 8). It remains the best validated model.
+- **Both shadow models are registered in GCS and BQ** — monitor them over the next 1-2 weeks. The Jan 31 extended model needs more eval data (only n=22 at edge 3+) before any promotion decision.
+- **Don't promote either shadow model yet** — neither passed governance gates on Feb 1-7 eval, though this was partly a tough week and partly low sample size.
+
+### Prevent Model Loading Bug Recurrence
+The root cause (`_load_model_from_default_location()` prioritizing local files over GCS env var) should be addressed more durably. Two options:
+1. **Quick fix (done):** Cloud Build only downloads the production model — but this is fragile since the model filename is hardcoded in `cloudbuild.yaml` and must be updated on every model promotion.
+2. **Better fix (recommended for next session):** Change `catboost_v9.py` to check `CATBOOST_V9_MODEL_PATH` env var FIRST, only falling back to local files if env var is unset. This makes the env var authoritative and eliminates the Docker-baked model override problem.
+
+### Subset Backfill After Predictions
+Subsets are hardcoded to `system_id = 'catboost_v9'` and do NOT auto-regenerate after prediction backfill. After Step 3 confirms correct models, you MUST run Step 5 (`daily_export.py --only subset-picks`) or the subset picks will still reflect the old bad predictions.
+
+### Re-run Experiments After Backfill
+Once Feb 2-7 predictions are corrected and re-graded, re-run the Jan 31 extended model experiment to get accurate hit rates:
+```bash
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "V9_JAN31_REEVAL" \
+    --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-07 --force
+```
+With corrected production lines in `prediction_accuracy`, the n at edge 3+ should increase and give more reliable hit rate comparisons.
+
+### Cloud Build Hardcoded Model Path
+`cloudbuild.yaml` now has the production model filename hardcoded. When the production model is eventually promoted/changed, remember to update this line:
+```yaml
+gsutil cp "gs://nba-props-platform-models/catboost/v9/catboost_v9_33features_20260201_011018.cbm" models/
+```
+Consider reading the production model path from `manifest.json` dynamically in a future session.
