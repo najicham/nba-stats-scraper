@@ -26,7 +26,7 @@ steps:
           mkdir -p models
           # Read production model path from manifest.json (source of truth)
           gsutil cp "gs://nba-props-platform-models/catboost/v9/manifest.json" /tmp/manifest.json
-          MODEL_GCS_PATH=$(python3 -c "
+          MODEL_GCS_PATH=$$(python3 -c "
         import json
         with open('/tmp/manifest.json') as f:
             manifest = json.load(f)
@@ -35,12 +35,12 @@ steps:
                 print(data['gcs_path'])
                 break
         ")
-          if [ -z "$MODEL_GCS_PATH" ]; then
+          if [ -z "$$MODEL_GCS_PATH" ]; then
             echo "ERROR: No production model found in manifest.json"
             exit 1
           fi
-          echo "Production model from manifest: $MODEL_GCS_PATH"
-          gsutil cp "$MODEL_GCS_PATH" models/
+          echo "Production model from manifest: $$MODEL_GCS_PATH"
+          gsutil cp "$$MODEL_GCS_PATH" models/
           ls -la models/
         else
           echo "Skipping model download (not prediction-worker)"
