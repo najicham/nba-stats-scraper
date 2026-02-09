@@ -2,11 +2,11 @@
 
 **Date:** 2026-02-09
 **Duration:** Full session
-**Commits:** 2 (75c6218c, 6e2b3900)
+**Commits:** 3 (75c6218c, 6e2b3900, 9795ea60)
 
 ## Executive Summary
 
-Session 171 fixed 3 pipeline throughput/reliability issues: same-day BACKFILL blocking, excessive publish delay (45s to 9s), and stale Pub/Sub message infinite retries. Also added `PUBLISH_METRICS` structured logging and stale message ACKing for past-date failures across 3 worker code paths.
+Session 171 fixed 3 pipeline throughput/reliability issues: same-day BACKFILL blocking, excessive publish delay (45s to 9s), and stale Pub/Sub message infinite retries. Added `PUBLISH_METRICS` structured logging, stale message ACKing, 2 new Slack alerts (recommendation skew + vegas source recovery), consolidation metrics, and signal calculator diagnostics.
 
 ## What Was Done
 
@@ -21,6 +21,12 @@ Session 171 fixed 3 pipeline throughput/reliability issues: same-day BACKFILL bl
 | Stale message ACK for general exceptions (>1 day old) | `predictions/worker/worker.py:955-965` | `75c6218c` | LOW |
 | PUBLISH_METRICS structured logging (duration, rate, batch) | `predictions/coordinator/coordinator.py:3254,3304-3308` | `6e2b3900` | LOW |
 | Stale message ACK for transient failures (past dates) | `predictions/worker/worker.py:852-859` | `6e2b3900` | LOW |
+| **RECOMMENDATION_SKEW Slack alert** (>85% same direction) | `predictions/coordinator/quality_alerts.py:600+` | `9795ea60` | LOW |
+| **VEGAS_SOURCE_RECOVERY_HIGH Slack alert** (>30% recovery_median) | `predictions/coordinator/quality_alerts.py:695+` | `9795ea60` | LOW |
+| Recommendation skew + vegas source checks after consolidation | `predictions/coordinator/coordinator.py:3438+` | `9795ea60` | LOW |
+| CONSOLIDATION_METRICS structured logging | `predictions/shared/batch_staging_writer.py:984+` | `9795ea60` | LOW |
+| Deactivation timing logging | `predictions/shared/batch_staging_writer.py:993+` | `9795ea60` | LOW |
+| Signal calculator 0-rows diagnostic | `predictions/coordinator/signal_calculator.py:135+` | `9795ea60` | LOW |
 
 ### Deployment
 
@@ -77,7 +83,7 @@ Root cause of Feb 9 OddsAPI drop still unknown. Possible causes:
 
 ### Production
 - **Model:** `catboost_v9_33features_20260201_011018` (SHA: `5b3a187b`)
-- **Deployed commits:** `75c6218c`, `6e2b3900`
+- **Deployed commits:** `75c6218c`, `6e2b3900`, `9795ea60`
 - **Multi-line:** Disabled (Session 170)
 - **Vegas pipeline:** Fixed (Sessions 168-170)
 
