@@ -849,6 +849,14 @@ def handle_prediction_request():
                 )
                 return ('', 204)
             else:
+                # Session 171: Stale transient failures for past dates won't resolve — ACK them
+                from datetime import date as _date_type
+                if game_date < _date_type.today():
+                    logger.warning(
+                        f"STALE_MESSAGE: Transient failure for past date {game_date_str} — "
+                        f"ACKing to stop retries. Reason: {skip_reason}, Error: {error_type}"
+                    )
+                    return ('', 204)
                 # Transient failure (or unknown) - might resolve on retry
                 # Return 500 to trigger Pub/Sub retry
                 logger.error(

@@ -3251,6 +3251,7 @@ def publish_prediction_requests(
 
     published_count = 0
     failed_count = 0
+    publish_start_time = time.time()
 
     # Use heartbeat logger to track long publish operations (5-min intervals)
     with HeartbeatLogger(f"Publishing {len(requests)} prediction requests", interval=300):
@@ -3300,11 +3301,14 @@ def publish_prediction_requests(
                         "Pub/Sub publish failed after retries"
                     )
 
+    publish_duration = time.time() - publish_start_time
+    publish_rate = published_count / publish_duration if publish_duration > 0 else 0
     logger.info(
-        f"Published {published_count} requests successfully, "
-        f"{failed_count} failed"
+        f"PUBLISH_METRICS: Published {published_count} requests in {publish_duration:.1f}s "
+        f"({publish_rate:.1f} req/s), {failed_count} failed "
+        f"[batch={batch_id}, mode={prediction_run_mode}]"
     )
-    
+
     return published_count
 
 
