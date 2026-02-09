@@ -114,8 +114,11 @@ class PredictionModeConfig:
     # Quality degradation multiplier for fallback predictions
     fallback_quality_multiplier: float = 0.7
 
-    # Use multiple lines by default (pre-compute line ranges)
-    use_multiple_lines_default: bool = True
+    # Session 170: DISABLED multi-line. The dedup logic (_deactivate_older_predictions)
+    # always keeps the prediction with the latest created_at, which is always base+2
+    # (the highest line, inserted last). This adds a systematic +2.0 UNDER bias.
+    # Until dedup is fixed to keep the base line, multi-line must stay disabled.
+    use_multiple_lines_default: bool = False
 
     # Line range for multiple lines (±N points from base)
     line_range_points: float = 2.0
