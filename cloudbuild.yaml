@@ -11,18 +11,20 @@
 #     --project nba-props-platform
 
 steps:
-  # Step 0: Download model files from GCS (only for prediction-worker)
-  # Creates models/ directory with monthly model files needed by the worker Dockerfile.
-  # Skipped for non-worker services to save ~2min build time.
+  # Step 0: Download production model from GCS (only for prediction-worker)
+  # Downloads the PRODUCTION model specified in manifest.json.
+  # Session 166: Fixed to download production model instead of monthly/*.cbm
+  # which contained untested models that overrode the CATBOOST_V9_MODEL_PATH env var.
+  # The worker loads local models first (before GCS), so baked-in model must be correct.
   - name: 'gcr.io/cloud-builders/gsutil'
     entrypoint: bash
     args:
       - '-c'
       - |
         if [ "${_SERVICE}" = "prediction-worker" ]; then
-          echo "Downloading model files for prediction-worker..."
+          echo "Downloading production model for prediction-worker..."
           mkdir -p models
-          gsutil -m cp "gs://nba-props-platform-models/catboost/v9/monthly/*.cbm" models/
+          gsutil cp "gs://nba-props-platform-models/catboost/v9/catboost_v9_33features_20260201_011018.cbm" models/
           ls -la models/
         else
           echo "Skipping model download (not prediction-worker)"
