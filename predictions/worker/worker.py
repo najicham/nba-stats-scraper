@@ -173,6 +173,8 @@ PERMANENT_SKIP_REASONS = {
     'player_inactive',       # Player not active/playing
     'no_historical_data',    # No historical games for player
     'player_injury_out',     # Player listed as OUT - skip prediction, don't retry
+    'invalid_features',      # Session 171: Feature validation failed (quality score below threshold)
+    'quality_too_low',       # Session 171: Quality too low to predict — won't improve on retry
 }
 
 # Transient failures - might resolve on retry, return 500 to trigger Pub/Sub retry
@@ -804,6 +806,14 @@ def handle_prediction_request():
             validation_passed, validation_error = validate_line_quality(predictions, player_lookup, game_date_str)
             if not validation_passed:
                 logger.error(f"LINE QUALITY VALIDATION FAILED: {validation_error}", exc_info=True)
+                # Session 171: Stale messages for old dates won't improve — ACK them
+                from datetime import date as _date_type
+                if game_date < _date_type.today():
+                    logger.warning(
+                        f"STALE_MESSAGE: Line validation failed for past date {game_date_str} — "
+                        f"ACKing to stop retries"
+                    )
+                    return ('', 204)
                 # Return 500 to trigger Pub/Sub retry - this prevents data corruption
                 return ('Line quality validation failed - triggering retry', 500)
 
@@ -933,6 +943,20 @@ def handle_prediction_request():
                 error_message=str(e),
                 error_type=type(e).__name__
             )
+
+        # Session 171: Stale messages for old dates won't improve — ACK them
+        if game_date_str:
+            try:
+                from datetime import date as _date_type, timedelta
+                parsed_date = _date_type.fromisoformat(game_date_str)
+                if parsed_date < _date_type.today() - timedelta(days=1):
+                    logger.warning(
+                        f"STALE_MESSAGE: Exception for stale date {game_date_str} — "
+                        f"ACKing to stop retries. Error: {e}"
+                    )
+                    return ('', 204)
+            except (ValueError, TypeError):
+                pass
 
         return ('Internal Server Error', 500)
 

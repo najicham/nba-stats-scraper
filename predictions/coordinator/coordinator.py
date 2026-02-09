@@ -1215,11 +1215,13 @@ def start_prediction_batch():
             logger.info(f"QUALITY_GATE: Applying mode={mode.value} for {game_date}")
 
             # Session 139: BACKFILL mode validation
+            # Session 171: Changed >= to > to allow same-day BACKFILL
+            # (games may be Final on same day; only block future dates)
             if mode == PredictionMode.BACKFILL:
                 from datetime import date as date_type
-                if game_date >= date_type.today():
+                if game_date > date_type.today():
                     logger.warning(
-                        f"QUALITY_GATE: BACKFILL mode requires game_date < today, "
+                        f"QUALITY_GATE: BACKFILL mode requires game_date <= today, "
                         f"got {game_date}. Switching to RETRY mode."
                     )
                     mode = PredictionMode.RETRY
@@ -3280,9 +3282,10 @@ def publish_prediction_requests(
             if publish_with_retry(publisher, topic_path, message_bytes, player_lookup):
                 published_count += 1
 
-                # Rate limit: ~10 messages/second to avoid overwhelming workers
+                # Rate limit: ~50 messages/second to allow worker cold-start ramp-up
                 # Session 101: Added to prevent cold start auth failures
-                time.sleep(0.1)
+                # Session 171: Reduced from 0.1s to 0.02s (45s→9s for 450 players)
+                time.sleep(0.02)
 
                 # Log every 50 players (more frequent than heartbeat for progress visibility)
                 if published_count % 50 == 0:
