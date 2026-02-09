@@ -415,7 +415,10 @@ class PlayerLoader:
             # v3.2/v3.10: All-player predictions support with line source tracking
             # v3.10 FIX: has_prop_line should be based on line_source, not player's default
             'has_prop_line': line_info['line_source'] == 'ACTUAL_PROP',  # True only when we have a real line
-            'actual_prop_line': player.get('current_points_line'),  # The actual betting line (NULL if none)
+            # Session 170: Use fresh odds base_line when available, fall back to stale Phase 3 current_points_line.
+            # This eliminates the root cause of Session 169's UNDER bias: coordinator was sending NULL
+            # actual_prop_line from Phase 3's stale current_points_line while fresh odds existed in line_values.
+            'actual_prop_line': line_info.get('base_line') if line_info.get('line_source') == 'ACTUAL_PROP' else player.get('current_points_line'),
             'line_source': line_info['line_source'],  # 'ACTUAL_PROP', 'NO_PROP_LINE', or 'NEEDS_BOOTSTRAP'
             # v3.10: Always populate estimated_line_value as player's baseline (L5 avg) for reference
             # This allows tracking "did we beat the player's average?" even when we have real lines
