@@ -1,0 +1,37 @@
+# FILE: docker/cloudbuild-base.yaml
+# 
+# Cloud Build configuration for consolidated backfill base image
+# This builds the base image that all backfill jobs will extend
+
+steps:
+# Build the base image
+- name: 'gcr.io/cloud-builders/docker'
+  args: [
+    'build', 
+    '-f', 'docker/backfill.Dockerfile',
+    '-t', 'gcr.io/$PROJECT_ID/backfill-base:latest',
+    '-t', 'gcr.io/$PROJECT_ID/backfill-base:$BUILD_ID',
+    '.'
+  ]
+  
+# Push the base image with both latest and build ID tags
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'gcr.io/$PROJECT_ID/backfill-base:latest']
+  
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['push', 'gcr.io/$PROJECT_ID/backfill-base:$BUILD_ID']
+
+# Options
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'
+
+# Timeout (base image build should be quick)
+timeout: '600s'
+
+# Tags for organization
+tags: ['backfill-base', 'infrastructure']
+
+# Substitutions
+substitutions:
+  _PROJECT_ID: 'nba-props-platform'

@@ -1,0 +1,16 @@
+# Cloud Build configuration for MLB Prediction Worker
+# Builds multi-model prediction service
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-f'
+      - 'docker/mlb-prediction-worker.Dockerfile'
+      - '-t'
+      - 'gcr.io/nba-props-platform/mlb-prediction-worker:latest'
+      - '.'
+
+images:
+  - 'gcr.io/nba-props-platform/mlb-prediction-worker:latest'
+
+timeout: 900s

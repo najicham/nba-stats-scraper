@@ -1,0 +1,34 @@
+# Cloud Build configuration for Phase 4 Precompute Processors
+# Forces Docker build instead of Buildpacks
+
+steps:
+  # Build the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/nba-phase4-precompute-processors:$BUILD_ID'
+      - '-t'
+      - 'gcr.io/$PROJECT_ID/nba-phase4-precompute-processors:latest'
+      - '-f'
+      - 'docker/precompute-processor.Dockerfile'
+      - '.'
+
+  # Push the Docker image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '--all-tags'
+      - 'gcr.io/$PROJECT_ID/nba-phase4-precompute-processors'
+
+# Images to retain in Container Registry
+images:
+  - 'gcr.io/$PROJECT_ID/nba-phase4-precompute-processors'
+
+# Build options
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: 'E2_HIGHCPU_8'
+
+# Timeout for build
+timeout: '1200s'
