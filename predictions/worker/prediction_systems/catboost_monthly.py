@@ -52,8 +52,8 @@ MONTHLY_MODELS = {
         "eval_end": "2026-01-31",
         "mae": 5.0753,
         "hit_rate_overall": 50.84,
-        "enabled": True,
-        "description": "February 2026 monthly model - 84 day training window",
+        "enabled": False,  # Session 169: Disabled — 50.84% hit rate, UNDER bias (Session 163)
+        "description": "February 2026 monthly model - 84 day training window (DISABLED)",
     },
     # Add future monthly models here:
     # "catboost_v9_2026_03": {

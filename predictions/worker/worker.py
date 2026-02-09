@@ -1092,7 +1092,30 @@ def process_player_predictions(
     # This is used by the v3.8 fallback severity logging below
     original_features = set(features.keys())
 
+    # Session 169: Save feature store original Vegas values BEFORE coordinator override.
+    # This enables post-hoc investigation of the disconnect between feature store (has data)
+    # and model input (may be null after override logic).
+    features['_fs_original_vegas_points_line'] = features.get('vegas_points_line')
+    features['_fs_original_has_vegas_line'] = features.get('has_vegas_line')
+
     actual_prop = line_source_info.get('actual_prop_line')
+
+    # Session 169 FIX: Coordinator sets actual_prop_line from Phase 3's stale
+    # current_points_line (often NULL for pre-game), but sends fresh line_values
+    # from real-time odds queries. When actual_prop is None but we KNOW real lines
+    # exist (has_prop_line=True), use the median line_value as the Vegas override.
+    # This was the root cause of the UNDER bias crisis: model predicted without
+    # its most important feature (#25 vegas_points_line) for all FIRST-run predictions.
+    if actual_prop is None and line_source_info.get('has_prop_line') and line_values:
+        sorted_lines = sorted(line_values)
+        median_line = sorted_lines[len(sorted_lines) // 2]
+        logger.info(
+            f"Vegas line recovery: actual_prop_line was None but has_prop_line=True "
+            f"with {len(line_values)} line_values. Using median line {median_line} "
+            f"(lines: {sorted_lines})"
+        )
+        actual_prop = median_line
+
     if actual_prop is not None:
         # Vegas features (indices 25-28)
         features['vegas_points_line'] = actual_prop
@@ -2104,26 +2127,59 @@ def format_prediction_for_bigquery(
             'team_win_pct': features.get('team_win_pct'),
         }),
 
-        # Session 67: Full feature snapshot for ALL predictions (not just CatBoost)
-        # Enables debugging and reproducibility for any prediction system
+        # Session 169: Full 33-feature model input snapshot for debugging and reproducibility.
+        # Captures ALL features AFTER coordinator overrides, matching what the model actually sees.
+        # Previous snapshot (Session 67) only had ~17 features and missed Vegas, shot zones, etc.
         'features_snapshot': json.dumps({
+            # 0-4: Recent Performance
             'points_avg_last_5': features.get('points_avg_last_5'),
             'points_avg_last_10': features.get('points_avg_last_10'),
             'points_avg_season': features.get('points_avg_season'),
             'points_std_last_10': features.get('points_std_last_10'),
-            'vegas_points_line': features.get('vegas_points_line'),
-            'has_vegas_line': features.get('has_vegas_line'),
-            'minutes_avg_last_10': features.get('minutes_avg_last_10'),
-            'ppm_avg_last_10': features.get('ppm_avg_last_10'),
+            'games_in_last_7_days': features.get('games_in_last_7_days'),
+            # 5-8: Composite Factors
             'fatigue_score': features.get('fatigue_score'),
-            'opponent_def_rating': features.get('opponent_def_rating'),
-            'team_win_pct': features.get('team_win_pct'),
-            'back_to_back': features.get('back_to_back'),
-            'home_away': features.get('home_away'),
-            'feature_version': features.get('feature_version'),
+            'shot_zone_mismatch_score': features.get('shot_zone_mismatch_score'),
             'pace_score': features.get('pace_score'),
             'usage_spike_score': features.get('usage_spike_score'),
+            # 9-12: Derived Factors
+            'rest_advantage': features.get('rest_advantage'),
+            'injury_risk': features.get('injury_risk'),
+            'recent_trend': features.get('recent_trend'),
+            'minutes_change': features.get('minutes_change'),
+            # 13-14: Opponent Matchup
+            'opponent_def_rating': features.get('opponent_def_rating'),
+            'opponent_pace': features.get('opponent_pace'),
+            # 15-17: Game Context
+            'home_away': features.get('home_away'),
+            'back_to_back': features.get('back_to_back'),
+            'playoff_game': features.get('playoff_game'),
+            # 18-21: Shot Zones
+            'pct_paint': features.get('pct_paint'),
+            'pct_mid_range': features.get('pct_mid_range'),
+            'pct_three': features.get('pct_three'),
+            'pct_free_throw': features.get('pct_free_throw'),
+            # 22-24: Team Context
+            'team_pace': features.get('team_pace'),
+            'team_off_rating': features.get('team_off_rating'),
+            'team_win_pct': features.get('team_win_pct'),
+            # 25-28: Vegas Lines (CRITICAL — Session 169 found these were null in pre-game)
+            'vegas_points_line': features.get('vegas_points_line'),
+            'vegas_opening_line': features.get('vegas_opening_line'),
+            'vegas_line_move': features.get('vegas_line_move'),
+            'has_vegas_line': features.get('has_vegas_line'),
+            # 29-30: Opponent History
+            'avg_points_vs_opponent': features.get('avg_points_vs_opponent'),
+            'games_vs_opponent': features.get('games_vs_opponent'),
+            # 31-32: Minutes/Efficiency
+            'minutes_avg_last_10': features.get('minutes_avg_last_10'),
+            'ppm_avg_last_10': features.get('ppm_avg_last_10'),
+            # Metadata
+            'feature_version': features.get('feature_version'),
             'feature_quality_score': features.get('feature_quality_score'),
+            # Session 169: Feature store original values (before coordinator overrides)
+            'fs_vegas_points_line': features.get('_fs_original_vegas_points_line'),
+            'fs_has_vegas_line': features.get('_fs_original_has_vegas_line'),
             # Session 128: Breakout classifier shadow mode data
             'breakout_shadow': features.get('breakout_shadow'),
         }),
