@@ -266,6 +266,7 @@ def send_signal_alert_to_slack(signal_data: Dict) -> bool:
     high_edge_picks = signal_data.get('high_edge_picks', 0)
     total_picks = signal_data.get('total_picks', 0)
     explanation = signal_data.get('signal_explanation', '')
+    avg_pvl = signal_data.get('avg_pvl', 0.0)  # Session 170: Prediction bias
 
     # Choose emoji and tone based on signal
     if daily_signal == 'RED':
@@ -284,12 +285,17 @@ def send_signal_alert_to_slack(signal_data: Dict) -> bool:
         action = "\n\n:point_right: *Normal confidence - bet as usual*"
         icon = ":basketball:"
 
+    # Session 170: PVL bias indicator
+    pvl_str = f"{avg_pvl:+.2f}" if avg_pvl else "+0.00"
+    pvl_warning = " :warning:" if abs(avg_pvl or 0) > 2.0 else ""
+
     text = f"""{header}
 
 {emoji} *Signal:* {daily_signal}
 :chart_with_upwards_trend: *pct_over:* {pct_over}%
 :dart: *High-edge picks:* {high_edge_picks}
 :bar_chart: *Total picks:* {total_picks}
+:scales: *avg_pvl:* {pvl_str}{pvl_warning}
 :robot_face: *Model:* {system_id}
 
 _{explanation}_{action}"""

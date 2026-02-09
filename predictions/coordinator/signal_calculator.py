@@ -114,7 +114,10 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
           COUNTIF(recommendation = 'OVER' AND current_points_line < 12 AND ABS(predicted_points - current_points_line) >= 5) as optimal_over_count,
           COUNTIF(recommendation = 'UNDER' AND current_points_line >= 25 AND ABS(predicted_points - current_points_line) >= 3) as optimal_under_count,
           COUNTIF(recommendation = 'OVER' AND ABS(predicted_points - current_points_line) >= 7) as ultra_high_edge_count,
-          COUNTIF(recommendation = 'UNDER' AND current_points_line < 15 AND ABS(predicted_points - current_points_line) >= 3) as anti_pattern_count
+          COUNTIF(recommendation = 'UNDER' AND current_points_line < 15 AND ABS(predicted_points - current_points_line) >= 3) as anti_pattern_count,
+
+          -- Session 170: Track prediction bias (avg predicted - vegas line)
+          ROUND(AVG(predicted_points - current_points_line), 2) as avg_pvl
 
         FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
         WHERE game_date = @game_date
@@ -133,7 +136,8 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
         if rows_affected > 0:
             summary_query = f"""
             SELECT system_id, total_picks, high_edge_picks, pct_over, daily_signal, signal_explanation,
-                   optimal_over_count, optimal_under_count, ultra_high_edge_count, anti_pattern_count
+                   optimal_over_count, optimal_under_count, ultra_high_edge_count, anti_pattern_count,
+                   avg_pvl
             FROM `{SIGNALS_TABLE}`
             WHERE game_date = @game_date
             ORDER BY system_id
@@ -147,6 +151,7 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
                 logger.info(
                     f"  {row.system_id}: {row.total_picks} picks, "
                     f"pct_over={row.pct_over}%, signal={row.daily_signal}, "
+                    f"avg_pvl={row.avg_pvl or 0:+.2f}, "
                     f"optimal={optimal_total} (over={row.optimal_over_count or 0}, under={row.optimal_under_count or 0}, ultra={row.ultra_high_edge_count or 0})"
                 )
                 # Capture primary model for Slack alert
@@ -164,6 +169,8 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
                         'optimal_under_count': row.optimal_under_count or 0,
                         'ultra_high_edge_count': row.ultra_high_edge_count or 0,
                         'anti_pattern_count': row.anti_pattern_count or 0,
+                        # Session 170: Prediction bias tracking
+                        'avg_pvl': row.avg_pvl or 0.0,
                     }
 
             # Send Slack alert for primary model
