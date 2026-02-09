@@ -24,6 +24,9 @@ steps:
         if [ "${_SERVICE}" = "prediction-worker" ]; then
           echo "Downloading production model for prediction-worker..."
           mkdir -p models
+          # Remove any existing catboost_v9 models (may be git-tracked)
+          # to prevent alphabetical sort from picking the wrong model
+          rm -f models/catboost_v9*.cbm
           # Read production model path from manifest.json (source of truth)
           gsutil cp "gs://nba-props-platform-models/catboost/v9/manifest.json" /tmp/manifest.json
           MODEL_GCS_PATH=$$(python3 -c "
