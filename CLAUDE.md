@@ -230,23 +230,26 @@ PYTHONPATH=. python ml/experiments/quick_retrain.py \
 # Script outputs ALL GATES PASSED/FAILED — do NOT deploy without passing
 ```
 
-### Parallel Models (Session 177)
+### Parallel Models (Sessions 177-178)
 
 Multiple V9 challengers run in **shadow mode** alongside the champion (`catboost_v9`). Each gets its own `system_id`, is graded independently, and does NOT affect user-facing picks or alerts.
 
 **Workflow:** Train (`quick_retrain.py`) -> Upload to GCS -> Add config to `catboost_monthly.py` -> Deploy -> Monitor (`compare-model-performance.py`) -> Promote or retire
 
-**Active challengers:**
-| system_id | Training | Backtest HR 3+ | Description |
-|-----------|----------|----------------|-------------|
-| `catboost_v9_train1102_0108` | Nov 2 - Jan 8 | 87.0% (n=131) | Same dates as prod, better feature quality |
-| `catboost_v9_train1102_0208` | Nov 2 - Feb 8 | 91.8% (n=159) | Extended training, default hyperparams |
-| `catboost_v9_train1102_0208_tuned` | Nov 2 - Feb 8 | 93.0% (n=157) | Extended training, tuned hyperparams |
+**Active challengers (Session 178):**
+| system_id | Training | Hyperparams | Production HR (Feb 4-8) |
+|-----------|----------|-------------|------------------------|
+| `catboost_v9_train1102_0108` | Nov 2 - Jan 8 | defaults | 50.9% (n=269 matched) |
+| `catboost_v9_train1102_0131` | Nov 2 - Jan 31 | defaults | **56.1%** (n=269 matched) |
+| `catboost_v9_train1102_0131_tuned` | Nov 2 - Jan 31 | tuned (d=5,l2=5,lr=0.03)+recency 30d | **56.9%** (n=269 matched) |
+
+**Retired (Session 178):** `catboost_v9_train1102_0208` and `_0208_tuned` — contaminated backtests (31-day train/eval overlap).
+
+**Key finding:** More training data (91 days vs 68 days) improves HR by ~6pp and MAE by ~0.5. Champion decaying at 49.8%.
 
 **Monitor:**
 ```bash
-python bin/compare-model-performance.py catboost_v9_train1102_0108
-./bin/model-registry.sh compare catboost_v9_train1102_0108
+PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_train1102_0131 --days 7
 ```
 
 **Promote:** Update `CATBOOST_V9_MODEL_PATH` env var. **Retire:** Set `enabled: False` in config.
@@ -260,7 +263,9 @@ gs://nba-props-platform-models/catboost/v9/
 ├── catboost_v9_33features_20260201_011018.cbm       # PRODUCTION (SHA: 5b3a187b)
 ├── catboost_v9_feb_02_retrain.cbm                   # DEPRECATED (UNDER bias)
 └── monthly/
-    ├── catboost_v9_33f_train20251102-20260108_20260209_175818.cbm  # Challenger (shadow)
+    ├── catboost_v9_33f_train20251102-20260108_20260209_175818.cbm  # Challenger (Jan 8 shadow)
+    ├── catboost_v9_33f_train20251102-20260131_20260209_212708.cbm  # Challenger (Jan 31 defaults)
+    ├── catboost_v9_33f_train20251102-20260131_20260209_212715.cbm  # Challenger (Jan 31 tuned)
     └── catboost_v9_2026_02.cbm                      # DISABLED (UNDER bias)
 ```
 

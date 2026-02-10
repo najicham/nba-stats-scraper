@@ -103,8 +103,18 @@ Both models had extreme OVER bias on Jan 12, but overs hit massively. Feature qu
 ## What Still Needs Doing
 
 ### P0 (Immediate)
-1. **Commit and push** — auto-deploy will update prediction-worker with new model config
-2. **Grade Feb 9 games** once `game_status=3` — then backfill all 3 challengers for Feb 9
+1. **Push to remote** — committed but NOT pushed. `git push origin main` will trigger auto-deploy of prediction-worker with new Jan 31 model config
+2. **Grade Feb 9 games** once `game_status=3` — then backfill all 3 challengers for Feb 9:
+   ```bash
+   # Check game status
+   bq query --use_legacy_sql=false "SELECT game_status, COUNT(*) FROM nba_reference.nba_schedule WHERE game_date='2026-02-09' GROUP BY 1"
+   # Trigger grading
+   gcloud pubsub topics publish nba-grading-trigger --message='{"target_date":"2026-02-09","trigger_source":"manual"}' --project=nba-props-platform
+   # Backfill all 3 challengers for Feb 9
+   PYTHONPATH=. python bin/backfill-challenger-predictions.py --model catboost_v9_train1102_0108 --start 2026-02-09 --end 2026-02-09
+   PYTHONPATH=. python bin/backfill-challenger-predictions.py --model catboost_v9_train1102_0131 --start 2026-02-09 --end 2026-02-09
+   PYTHONPATH=. python bin/backfill-challenger-predictions.py --model catboost_v9_train1102_0131_tuned --start 2026-02-09 --end 2026-02-09
+   ```
 3. **Run subset analysis** on backfilled predictions (not yet done)
 
 ### P1 (Next Morning)
