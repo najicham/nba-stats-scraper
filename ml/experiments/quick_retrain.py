@@ -111,6 +111,14 @@ def parse_args():
                        default='draftkings',
                        help='Sportsbook for eval lines when --no-production-lines (default: draftkings)')
 
+    # New experiment features
+    parser.add_argument('--recency-weight', type=int, default=None, metavar='DAYS',
+                       help='Recency weight half-life in days (e.g., 30). Exponential decay.')
+    parser.add_argument('--walkforward', action='store_true',
+                       help='Run walk-forward validation (per-week eval breakdown)')
+    parser.add_argument('--tune', action='store_true',
+                       help='Run hyperparameter grid search before final training')
+
     parser.add_argument('--dry-run', action='store_true', help='Show plan only')
     parser.add_argument('--skip-register', action='store_true', help='Skip ml_experiments')
     parser.add_argument('--force', action='store_true', help='Force retrain even if duplicate training dates exist')
@@ -293,7 +301,8 @@ def load_eval_data_from_production(client, start, end, system_id='catboost_v9'):
     )
     SELECT mf.features, mf.feature_names,
            CAST(pl.actual_points AS FLOAT64) as actual_points,
-           CAST(pl.line_value AS FLOAT64) as vegas_line
+           CAST(pl.line_value AS FLOAT64) as vegas_line,
+           mf.game_date
     FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
     JOIN production_lines pl
         ON mf.player_lookup = pl.player_lookup AND mf.game_date = pl.game_date
@@ -341,7 +350,8 @@ def load_eval_data(client, start, end, line_source='draftkings'):
         AND game_date BETWEEN '{start}' AND '{end}'
       QUALIFY ROW_NUMBER() OVER (PARTITION BY game_date, player_lookup ORDER BY processed_at DESC) = 1
     )
-    SELECT mf.features, mf.feature_names, pgs.points as actual_points, l.line as vegas_line
+    SELECT mf.features, mf.feature_names, pgs.points as actual_points, l.line as vegas_line,
+           mf.game_date
     FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
     JOIN `{PROJECT_ID}.nba_analytics.player_game_summary` pgs
       ON mf.player_lookup = pgs.player_lookup AND mf.game_date = pgs.game_date
@@ -398,6 +408,32 @@ def prepare_features(df, contract=V9_CONTRACT):
     X = X.fillna(X.median())
     y = df['actual_points'].astype(float)
     return X, y
+
+
+def calculate_sample_weights(dates, half_life_days):
+    """
+    Calculate exponential recency weights for training samples.
+
+    More recent samples get higher weights, decaying exponentially.
+    Ported from ml/archive/experiments/train_walkforward.py.
+
+    Args:
+        dates: Series of game dates
+        half_life_days: Number of days for weight to decay by 50%
+
+    Returns:
+        Normalized weights array (mean = 1.0 to preserve effective sample size)
+    """
+    dates = pd.to_datetime(dates)
+    max_date = dates.max()
+    days_old = (max_date - dates).dt.days
+
+    decay_rate = np.log(2) / half_life_days
+    weights = np.exp(-days_old * decay_rate)
+
+    # Normalize so mean weight = 1.0
+    weights = weights / weights.mean()
+    return weights.values
 
 
 def compute_hit_rate(preds, actuals, lines, min_edge=1.0):
@@ -469,6 +505,37 @@ def compute_tier_bias(preds, actuals, season_avgs=None):
 
     results['has_critical_bias'] = has_critical_bias
     return results
+
+
+def display_feature_importance(model, feature_names, top_n=10):
+    """
+    Display and return CatBoost feature importance rankings.
+
+    Args:
+        model: Trained CatBoostRegressor
+        feature_names: List of feature names
+        top_n: Number of top features to display
+
+    Returns:
+        List of (feature_name, importance) tuples sorted descending.
+    """
+    importances = model.get_feature_importance()
+    pairs = sorted(zip(feature_names, importances), key=lambda x: -x[1])
+
+    print("\n" + "-" * 40)
+    print(f"FEATURE IMPORTANCE (top {top_n})")
+    print("-" * 40)
+    for i, (name, imp) in enumerate(pairs[:top_n], 1):
+        bar = "█" * int(imp / pairs[0][1] * 20)
+        print(f"  {i:2d}. {name:<30s} {imp:6.2f}  {bar}")
+
+    # Show bottom 5 too
+    if len(pairs) > top_n:
+        print(f"  ...")
+        for name, imp in pairs[-5:]:
+            print(f"      {name:<30s} {imp:6.2f}")
+
+    return pairs
 
 
 def compute_directional_hit_rates(preds, actuals, lines, min_edge=3.0):
@@ -554,6 +621,145 @@ def compute_directional_hit_rates(preds, actuals, lines, min_edge=3.0):
     }
 
 
+def run_walkforward_eval(model, df_eval, X_eval, y_eval, lines):
+    """
+    Run walk-forward evaluation: split eval period into weekly chunks.
+
+    Reports per-week MAE, hit rates (all, 3+, 5+), and Vegas bias so
+    we can see if model performance is stable or degrading over time.
+
+    Args:
+        model: Trained CatBoostRegressor
+        df_eval: Eval DataFrame (must have 'game_date' column)
+        X_eval: Feature matrix
+        y_eval: Target series
+        lines: Vegas lines array
+
+    Returns:
+        List of per-week result dicts.
+    """
+    preds = model.predict(X_eval)
+    game_dates = pd.to_datetime(df_eval['game_date'])
+
+    # Create weekly bins from Monday
+    week_labels = game_dates.dt.to_period('W-SUN')
+    unique_weeks = sorted(week_labels.unique())
+
+    print("\n" + "=" * 70)
+    print(" WALK-FORWARD EVALUATION (per-week)")
+    print("=" * 70)
+    print(f"{'Week':<22s} {'N':>5s} {'MAE':>6s} {'HR All':>7s} {'HR 3+':>7s} {'HR 5+':>7s} {'Bias':>7s}")
+    print("-" * 70)
+
+    week_results = []
+    for week in unique_weeks:
+        mask = (week_labels == week).values
+        w_preds = preds[mask]
+        w_actuals = y_eval.values[mask]
+        w_lines = lines[mask]
+        n = mask.sum()
+
+        w_mae = mean_absolute_error(w_actuals, w_preds)
+        w_hr_all, w_n_all = compute_hit_rate(w_preds, w_actuals, w_lines, min_edge=1.0)
+        w_hr_3, w_n_3 = compute_hit_rate(w_preds, w_actuals, w_lines, min_edge=3.0)
+        w_hr_5, w_n_5 = compute_hit_rate(w_preds, w_actuals, w_lines, min_edge=5.0)
+        w_bias = float(np.mean(w_preds - w_lines))
+
+        hr_all_s = f"{w_hr_all:.1f}%" if w_hr_all is not None else "N/A"
+        hr_3_s = f"{w_hr_3:.1f}%" if w_hr_3 is not None else "N/A"
+        hr_5_s = f"{w_hr_5:.1f}%" if w_hr_5 is not None else "N/A"
+
+        week_str = str(week)
+        print(f"  {week_str:<20s} {n:5d} {w_mae:6.2f} {hr_all_s:>7s} {hr_3_s:>7s} {hr_5_s:>7s} {w_bias:+7.2f}")
+
+        week_results.append({
+            'week': week_str,
+            'n': int(n),
+            'mae': round(w_mae, 4),
+            'hr_all': w_hr_all,
+            'hr_edge3': w_hr_3,
+            'hr_edge5': w_hr_5,
+            'bias': round(w_bias, 4),
+        })
+
+    print("-" * 70)
+    return week_results
+
+
+def run_hyperparam_search(X_train, y_train, X_val, y_val, lines_val, w_train=None):
+    """
+    Small grid search over depth × l2_leaf_reg × learning_rate.
+
+    Selects best params by edge 3+ hit rate, with MAE as tiebreaker.
+    Uses val split for evaluation (approximate lines from vegas_points_line feature).
+
+    Args:
+        X_train, y_train: Training data
+        X_val, y_val: Validation data
+        lines_val: Vegas lines for val set (approximate, from features)
+        w_train: Optional sample weights
+
+    Returns:
+        Dict of best hyperparameters.
+    """
+    grid = {
+        'depth': [5, 6, 7],
+        'l2_leaf_reg': [1.5, 3.0, 5.0],
+        'learning_rate': [0.03, 0.05],
+    }
+
+    combos = []
+    for d in grid['depth']:
+        for l2 in grid['l2_leaf_reg']:
+            for lr in grid['learning_rate']:
+                combos.append({'depth': d, 'l2_leaf_reg': l2, 'learning_rate': lr})
+
+    print(f"\n{'=' * 70}")
+    print(f" HYPERPARAMETER SEARCH ({len(combos)} combinations)")
+    print(f"{'=' * 70}")
+    print(f"{'#':>3s} {'Depth':>5s} {'L2':>5s} {'LR':>6s} {'MAE':>7s} {'HR 3+':>7s} {'N 3+':>5s}")
+    print("-" * 50)
+
+    results = []
+    for i, params in enumerate(combos, 1):
+        m = cb.CatBoostRegressor(
+            iterations=1000,
+            depth=params['depth'],
+            l2_leaf_reg=params['l2_leaf_reg'],
+            learning_rate=params['learning_rate'],
+            random_seed=42,
+            verbose=0,
+            early_stopping_rounds=50,
+        )
+        m.fit(X_train, y_train, eval_set=(X_val, y_val), sample_weight=w_train, verbose=0)
+
+        val_preds = m.predict(X_val)
+        mae = mean_absolute_error(y_val, val_preds)
+        hr_3, n_3 = compute_hit_rate(val_preds, y_val.values, lines_val, min_edge=3.0)
+
+        hr_3_s = f"{hr_3:.1f}%" if hr_3 is not None else "N/A"
+        print(f"  {i:2d}  {params['depth']:5d} {params['l2_leaf_reg']:5.1f} {params['learning_rate']:6.3f} {mae:7.4f} {hr_3_s:>7s} {n_3:5d}")
+
+        results.append({
+            'params': params,
+            'mae': mae,
+            'hr_edge3': hr_3 if hr_3 is not None else 0,
+            'n_edge3': n_3,
+        })
+
+    # Sort by: edge 3+ HR descending, then MAE ascending
+    results.sort(key=lambda r: (-r['hr_edge3'], r['mae']))
+    best = results[0]
+
+    print("-" * 50)
+    print(f"  Best: depth={best['params']['depth']}, "
+          f"l2={best['params']['l2_leaf_reg']}, "
+          f"lr={best['params']['learning_rate']} "
+          f"(HR 3+={best['hr_edge3']:.1f}%, MAE={best['mae']:.4f})")
+
+    return best['params']
+
+
 def main():
     args = parse_args()
     dates = get_dates(args)
@@ -584,10 +790,17 @@ def main():
     print(f"Evaluation: {dates['eval_start']} to {dates['eval_end']} ({eval_days_actual} days)")
     line_source_desc = "production (prediction_accuracy)" if args.use_production_lines else args.line_source
     print(f"Line Source: {line_source_desc}")
+    if args.recency_weight:
+        print(f"Recency Weight: {args.recency_weight}-day half-life")
+    if args.tune:
+        print(f"Hyperparameter Tuning: ON (18-combo grid search)")
+    if args.walkforward:
+        print(f"Walk-Forward Eval: ON (per-week breakdown)")
     print()
 
     if args.dry_run:
-        print("DRY RUN - would train on above dates and compare to V8 baseline")
+        print("DRY RUN - would train on above dates")
+        print(f"  Flags: recency_weight={args.recency_weight}, tune={args.tune}, walkforward={args.walkforward}")
         return
 
     client = bigquery.Client(project=PROJECT_ID)
@@ -639,20 +852,67 @@ def main():
         print("ERROR: Not enough data")
         return
 
-    # Prepare
+    # Prepare features
     X_train_full, y_train_full = prepare_features(df_train)
     X_eval, y_eval = prepare_features(df_eval)
     lines = df_eval['vegas_line'].values
 
-    X_train, X_val, y_train, y_val = train_test_split(X_train_full, y_train_full, test_size=0.15, random_state=42)
+    # Recency weighting (if --recency-weight)
+    w_train_full = None
+    if args.recency_weight:
+        print(f"\nCalculating recency weights (half-life: {args.recency_weight} days)...")
+        w_train_full = calculate_sample_weights(df_train['game_date'], args.recency_weight)
+        print(f"  Weight stats: min={w_train_full.min():.4f}, max={w_train_full.max():.4f}, "
+              f"mean={w_train_full.mean():.4f}, std={w_train_full.std():.4f}")
 
-    # Train
-    print("\nTraining CatBoost...")
-    model = cb.CatBoostRegressor(
-        iterations=1000, learning_rate=0.05, depth=6,
-        l2_leaf_reg=3, random_seed=42, verbose=100, early_stopping_rounds=50
-    )
-    model.fit(X_train, y_train, eval_set=(X_val, y_val), verbose=100)
+    # Train/val split (carry weights through)
+    if w_train_full is not None:
+        X_train, X_val, y_train, y_val, w_train, w_val = train_test_split(
+            X_train_full, y_train_full, w_train_full, test_size=0.15, random_state=42)
+    else:
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_train_full, y_train_full, test_size=0.15, random_state=42)
+        w_train = None
+
+    # Hyperparameter search (if --tune)
+    tuned_params = None
+    if args.tune:
+        # Use vegas_points_line feature as approximate lines for val-split hit rate
+        lines_val = X_val['vegas_points_line'].values if 'vegas_points_line' in X_val.columns else None
+        if lines_val is not None:
+            tuned_params = run_hyperparam_search(X_train, y_train, X_val, y_val, lines_val, w_train)
+        else:
+            print("\nWARNING: vegas_points_line not in features, skipping --tune")
+
+    # Build hyperparameters (tuned or default)
+    if tuned_params:
+        hp = {
+            'iterations': 1000,
+            'depth': tuned_params['depth'],
+            'l2_leaf_reg': tuned_params['l2_leaf_reg'],
+            'learning_rate': tuned_params['learning_rate'],
+            'random_seed': 42,
+            'verbose': 100,
+            'early_stopping_rounds': 50,
+        }
+        print(f"\nTraining CatBoost with TUNED params (depth={hp['depth']}, l2={hp['l2_leaf_reg']}, lr={hp['learning_rate']})...")
+    else:
+        hp = {
+            'iterations': 1000,
+            'learning_rate': 0.05,
+            'depth': 6,
+            'l2_leaf_reg': 3,
+            'random_seed': 42,
+            'verbose': 100,
+            'early_stopping_rounds': 50,
+        }
+        print("\nTraining CatBoost with default params...")
+
+    model = cb.CatBoostRegressor(**hp)
+    model.fit(X_train, y_train, eval_set=(X_val, y_val), sample_weight=w_train, verbose=100)
+
+    # Feature importance (always on)
+    feature_importance = display_feature_importance(model, FEATURES)
 
     # Evaluate
     print("\nEvaluating...")
@@ -670,6 +930,11 @@ def main():
 
     # Directional hit rates (Session 175 — Session 173 discovered OVER collapsed to 44.1%)
     directional = compute_directional_hit_rates(preds, y_eval.values, lines, min_edge=3.0)
+
+    # Walk-forward per-week breakdown (if --walkforward)
+    walkforward_results = None
+    if args.walkforward:
+        walkforward_results = run_walkforward_eval(model, df_eval, X_eval, y_eval, lines)
 
     # Vegas bias gate (Session 163 — the Feb 2 retrain had good MAE but -2.26 Vegas bias)
     pred_vs_vegas = np.mean(preds - lines)
@@ -811,7 +1076,13 @@ def main():
                 'experiment_name': args.name,
                 'experiment_type': 'monthly_retrain',
                 'hypothesis': args.hypothesis or f'Monthly retrain {train_days_actual}d train, {eval_days_actual}d eval',
-                'config_json': json.dumps({'train_days': train_days_actual, 'eval_days': eval_days_actual, 'features': 33, 'line_source': 'production' if args.use_production_lines else args.line_source}),
+                'config_json': json.dumps({
+                    'train_days': train_days_actual, 'eval_days': eval_days_actual,
+                    'features': 33, 'line_source': 'production' if args.use_production_lines else args.line_source,
+                    'recency_weight': args.recency_weight,
+                    'tuned': args.tune, 'tuned_params': tuned_params,
+                    'hyperparameters': {k: v for k, v in hp.items() if k != 'verbose'},
+                }),
                 'train_period': {'start_date': dates['train_start'], 'end_date': dates['train_end'], 'samples': len(df_train)},
                 'eval_period': {'start_date': dates['eval_start'], 'end_date': dates['eval_end'], 'samples': len(df_eval)},
                 'results_json': json.dumps({
@@ -827,10 +1098,12 @@ def main():
                         'under_hit_rate': directional['under_hit_rate'],
                         'over_graded': directional['over_graded'],
                         'under_graded': directional['under_graded'],
-                        'balance_ok': directional['directional_balance_ok'],
+                        'balance_ok': bool(directional['directional_balance_ok']),
                     },
                     'all_gates_passed': all_passed,
                     'model_sha256': model_sha256,
+                    'feature_importance': {name: round(float(imp), 2) for name, imp in feature_importance[:10]},
+                    'walkforward': walkforward_results,
                 }),
                 'model_path': str(model_path),
                 'status': 'completed',
