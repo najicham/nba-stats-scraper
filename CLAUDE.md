@@ -237,9 +237,11 @@ Multiple V9 challengers run in **shadow mode** alongside the champion (`catboost
 **Workflow:** Train (`quick_retrain.py`) -> Upload to GCS -> Add config to `catboost_monthly.py` -> Deploy -> Monitor (`compare-model-performance.py`) -> Promote or retire
 
 **Active challengers:**
-| system_id | Training | Backtest HR 3+ | Status |
-|-----------|----------|----------------|--------|
-| `catboost_v9_train1102_0108` | Nov 2 - Jan 8 | 87.0% (n=131) | Shadow |
+| system_id | Training | Backtest HR 3+ | Description |
+|-----------|----------|----------------|-------------|
+| `catboost_v9_train1102_0108` | Nov 2 - Jan 8 | 87.0% (n=131) | Same dates as prod, better feature quality |
+| `catboost_v9_train1102_0208` | Nov 2 - Feb 8 | 91.8% (n=159) | Extended training, default hyperparams |
+| `catboost_v9_train1102_0208_tuned` | Nov 2 - Feb 8 | 93.0% (n=157) | Extended training, tuned hyperparams |
 
 **Monitor:**
 ```bash

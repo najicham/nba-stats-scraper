@@ -72,18 +72,28 @@ MONTHLY_MODELS = {
         "enabled": True,
         "description": "V9_BASELINE_CLEAN — same train dates as prod, better feature quality",
     },
-    # Add future challenger models here (quick_retrain.py prints config snippets):
-    # "catboost_v9_train1102_0208": {
-    #     "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/...",
-    #     "train_start": "2025-11-02",
-    #     "train_end": "2026-02-08",
-    #     "backtest_mae": None,
-    #     "backtest_hit_rate_all": None,
-    #     "backtest_hit_rate_edge_3plus": None,
-    #     "backtest_n_edge_3plus": None,
-    #     "enabled": True,
-    #     "description": "Extended training window challenger",
-    # },
+    "catboost_v9_train1102_0208": {
+        "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_train20251102-20260208_20260209_172523.cbm",
+        "train_start": "2025-11-02",
+        "train_end": "2026-02-08",
+        "backtest_mae": 4.44,
+        "backtest_hit_rate_all": 75.37,
+        "backtest_hit_rate_edge_3plus": 91.8,
+        "backtest_n_edge_3plus": 159,
+        "enabled": True,
+        "description": "V9_FULL_FEB — extended training window (99 days), default hyperparams",
+    },
+    "catboost_v9_train1102_0208_tuned": {
+        "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_train20251102-20260208_20260209_174344.cbm",
+        "train_start": "2025-11-02",
+        "train_end": "2026-02-08",
+        "backtest_mae": 4.50,
+        "backtest_hit_rate_all": 74.79,
+        "backtest_hit_rate_edge_3plus": 93.0,
+        "backtest_n_edge_3plus": 157,
+        "enabled": True,
+        "description": "V9_TUNED_FEB — extended training (99 days), tuned hyperparams",
+    },
 }
 
 
