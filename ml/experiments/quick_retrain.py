@@ -85,6 +85,85 @@ V9_BASELINE = {
 # Use canonical feature names from contract - DO NOT DUPLICATE
 FEATURES = V9_FEATURE_NAMES
 
+# Vegas features (indices 25-28) — used by --no-vegas and --two-stage modes
+VEGAS_FEATURE_NAMES = ['vegas_points_line', 'vegas_opening_line', 'vegas_line_move', 'has_vegas_line']
+
+# Feature categories for --category-weight (Session 179)
+# Maps category name → list of feature names in that category
+FEATURE_CATEGORIES = {
+    'recent_performance': ['points_avg_last_5', 'points_avg_last_10', 'points_avg_season',
+                           'points_std_last_10', 'games_in_last_7_days'],
+    'composite': ['fatigue_score', 'shot_zone_mismatch_score', 'pace_score', 'usage_spike_score'],
+    'derived': ['rest_advantage', 'injury_risk', 'recent_trend', 'minutes_change'],
+    'matchup': ['opponent_def_rating', 'opponent_pace', 'home_away', 'back_to_back', 'playoff_game'],
+    'shot_zone': ['pct_paint', 'pct_mid_range', 'pct_three', 'pct_free_throw'],
+    'team_context': ['team_pace', 'team_off_rating', 'team_win_pct'],
+    'vegas': ['vegas_points_line', 'vegas_opening_line', 'vegas_line_move', 'has_vegas_line'],
+    'opponent_history': ['avg_points_vs_opponent', 'games_vs_opponent'],
+    'minutes_efficiency': ['minutes_avg_last_10', 'ppm_avg_last_10'],
+}
+
+
+def parse_feature_weights(feature_weights_str, category_weights_str, active_features):
+    """
+    Parse --feature-weights and --category-weight into CatBoost feature_weights dict.
+
+    Args:
+        feature_weights_str: Comma-separated 'name=weight' pairs (e.g., 'vegas_points_line=0.3,fatigue_score=0.5')
+        category_weights_str: Comma-separated 'category=weight' pairs (e.g., 'vegas=0.3,composite=0.5')
+        active_features: List of feature names in the model (order matters for CatBoost)
+
+    Returns:
+        Dict mapping feature index (in active_features) to weight, or None if no weights specified.
+        CatBoost expects: {feature_index: weight} where unspecified features default to 1.0.
+    """
+    if not feature_weights_str and not category_weights_str:
+        return None
+
+    weights = {}  # feature_name -> weight
+
+    # Apply category weights first (individual feature weights override)
+    if category_weights_str:
+        for pair in category_weights_str.split(','):
+            pair = pair.strip()
+            if '=' not in pair:
+                print(f"  WARNING: Skipping invalid category weight '{pair}' (expected 'category=weight')")
+                continue
+            cat_name, weight_str = pair.split('=', 1)
+            cat_name = cat_name.strip()
+            if cat_name not in FEATURE_CATEGORIES:
+                print(f"  WARNING: Unknown category '{cat_name}'. Available: {list(FEATURE_CATEGORIES.keys())}")
+                continue
+            weight = float(weight_str.strip())
+            for feat_name in FEATURE_CATEGORIES[cat_name]:
+                weights[feat_name] = weight
+
+    # Apply individual feature weights (override categories)
+    if feature_weights_str:
+        for pair in feature_weights_str.split(','):
+            pair = pair.strip()
+            if '=' not in pair:
+                print(f"  WARNING: Skipping invalid feature weight '{pair}' (expected 'name=weight')")
+                continue
+            feat_name, weight_str = pair.split('=', 1)
+            feat_name = feat_name.strip()
+            weight = float(weight_str.strip())
+            weights[feat_name] = weight
+
+    if not weights:
+        return None
+
+    # Convert to CatBoost format: {index: weight} for features in active_features
+    cb_weights = {}
+    for feat_name, weight in weights.items():
+        if feat_name in active_features:
+            idx = active_features.index(feat_name)
+            cb_weights[idx] = weight
+        else:
+            print(f"  WARNING: Feature '{feat_name}' not in active features (may be excluded), skipping weight")
+
+    return cb_weights if cb_weights else None
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Quick model retrain for monthly updates')
@@ -118,6 +197,41 @@ def parse_args():
                        help='Run walk-forward validation (per-week eval breakdown)')
     parser.add_argument('--tune', action='store_true',
                        help='Run hyperparameter grid search before final training')
+
+    # Alternative experiment modes (Session 179: decouple from Vegas dependency)
+    parser.add_argument('--no-vegas', action='store_true',
+                       help='Drop vegas features (25-28) from training')
+    parser.add_argument('--residual', action='store_true',
+                       help='Train on residuals (actual - vegas_line) instead of absolute points')
+    parser.add_argument('--two-stage', action='store_true',
+                       help='Train without vegas features, compute edge as pred - vegas_line at eval time')
+    parser.add_argument('--quantile-alpha', type=float, default=None, metavar='ALPHA',
+                       help='Use quantile regression with alpha (e.g., 0.55 = predict above median)')
+    parser.add_argument('--exclude-features', default=None,
+                       help='Comma-separated feature names to exclude from training')
+    parser.add_argument('--feature-weights', default=None,
+                       help='Per-feature weights as name=weight pairs (e.g., "vegas_points_line=0.3,fatigue_score=0.5")')
+    parser.add_argument('--category-weight', default=None,
+                       help='Per-category weights (e.g., "vegas=0.3,composite=0.5"). '
+                            'Categories: recent_performance, composite, derived, matchup, '
+                            'shot_zone, team_context, vegas, opponent_history, minutes_efficiency')
+
+    # Advanced CatBoost training params (Session 179)
+    parser.add_argument('--rsm', type=float, default=None,
+                       help='Feature subsampling per split (0.0-1.0). 0.5 = 50%% features per level. '
+                            'Reduces dominant feature influence. Best with --grow-policy Depthwise.')
+    parser.add_argument('--grow-policy', choices=['SymmetricTree', 'Depthwise', 'Lossguide'],
+                       default=None, help='Tree growth strategy. Depthwise unlocks rsm/min-data-in-leaf fully.')
+    parser.add_argument('--min-data-in-leaf', type=int, default=None,
+                       help='Min samples per leaf (requires --grow-policy Depthwise/Lossguide)')
+    parser.add_argument('--bootstrap', choices=['Bayesian', 'Bernoulli', 'MVS', 'No'],
+                       default=None, help='Bootstrap type. MVS = importance sampling on hard examples.')
+    parser.add_argument('--subsample', type=float, default=None,
+                       help='Row subsampling fraction (0.0-1.0). Requires --bootstrap Bernoulli/MVS.')
+    parser.add_argument('--random-strength', type=float, default=None,
+                       help='Split score noise multiplier (default 1). Higher = more split diversity.')
+    parser.add_argument('--loss-function', default=None,
+                       help='CatBoost loss function (e.g., "Huber:delta=5", "LogCosh", "RMSE", "MAE")')
 
     parser.add_argument('--dry-run', action='store_true', help='Show plan only')
     parser.add_argument('--skip-register', action='store_true', help='Skip ml_experiments')
@@ -364,21 +478,28 @@ def load_eval_data(client, start, end, line_source='draftkings'):
     return client.query(query).to_dataframe()
 
 
-def prepare_features(df, contract=V9_CONTRACT):
+def prepare_features(df, contract=V9_CONTRACT, exclude_features=None):
     """
     Prepare feature matrix using NAME-BASED extraction (not position-based).
 
     Session 107: Changed from position slicing (row[:33]) to name-based extraction.
     This is SAFE even if feature store column order changes.
 
+    Session 179: Added exclude_features to support --no-vegas, --two-stage,
+    and --exclude-features experiment modes.
+
     Args:
         df: DataFrame with 'features' and 'feature_names' columns
         contract: ModelFeatureContract defining expected features (default V9)
+        exclude_features: Optional list of feature names to exclude from the matrix
 
     Returns:
-        X: Feature DataFrame with columns in contract order
+        X: Feature DataFrame with columns in contract order (minus excluded)
         y: Target Series (actual_points)
     """
+    exclude_set = set(exclude_features or [])
+    active_features = [f for f in contract.feature_names if f not in exclude_set]
+
     rows = []
     for _, row in df.iterrows():
         feature_values = row['features']
@@ -392,9 +513,9 @@ def prepare_features(df, contract=V9_CONTRACT):
 
         features_dict = dict(zip(feature_names, feature_values))
 
-        # Extract features BY NAME in contract order
+        # Extract features BY NAME in contract order, skipping excluded
         row_data = {}
-        for name in contract.feature_names:
+        for name in active_features:
             if name in features_dict and features_dict[name] is not None:
                 row_data[name] = float(features_dict[name])
             elif name in FEATURE_DEFAULTS and FEATURE_DEFAULTS[name] is not None:
@@ -404,7 +525,7 @@ def prepare_features(df, contract=V9_CONTRACT):
 
         rows.append(row_data)
 
-    X = pd.DataFrame(rows, columns=contract.feature_names)
+    X = pd.DataFrame(rows, columns=active_features)
     X = X.fillna(X.median())
     y = df['actual_points'].astype(float)
     return X, y
@@ -796,6 +917,21 @@ def main():
         print(f"Hyperparameter Tuning: ON (18-combo grid search)")
     if args.walkforward:
         print(f"Walk-Forward Eval: ON (per-week breakdown)")
+    # Alternative experiment modes (Session 179)
+    if args.no_vegas:
+        print(f"Mode: NO-VEGAS (dropping features 25-28)")
+    if args.residual:
+        print(f"Mode: RESIDUAL (training on actual - vegas_line)")
+    if args.two_stage:
+        print(f"Mode: TWO-STAGE (train without vegas, edge = pred - vegas at eval)")
+    if args.quantile_alpha:
+        print(f"Mode: QUANTILE (alpha={args.quantile_alpha})")
+    if args.exclude_features:
+        print(f"Excluding features: {args.exclude_features}")
+    if args.feature_weights:
+        print(f"Feature Weights: {args.feature_weights}")
+    if args.category_weight:
+        print(f"Category Weights: {args.category_weight}")
     print()
 
     # DATE OVERLAP GUARD (Session 176: 90%+ hit rates were caused by training on eval data)
@@ -817,6 +953,14 @@ def main():
     if args.dry_run:
         print("DRY RUN - would train on above dates")
         print(f"  Flags: recency_weight={args.recency_weight}, tune={args.tune}, walkforward={args.walkforward}")
+        print(f"  Modes: no_vegas={args.no_vegas}, residual={args.residual}, "
+              f"two_stage={args.two_stage}, quantile_alpha={args.quantile_alpha}")
+        if args.exclude_features:
+            print(f"  Exclude: {args.exclude_features}")
+        if args.feature_weights:
+            print(f"  Feature weights: {args.feature_weights}")
+        if args.category_weight:
+            print(f"  Category weights: {args.category_weight}")
         return
 
     client = bigquery.Client(project=PROJECT_ID)
@@ -868,10 +1012,60 @@ def main():
         print("ERROR: Not enough data")
         return
 
-    # Prepare features
-    X_train_full, y_train_full = prepare_features(df_train)
-    X_eval, y_eval = prepare_features(df_eval)
+    # Determine feature exclusions (Session 179)
+    exclude_features = []
+    if args.no_vegas or args.two_stage:
+        exclude_features = VEGAS_FEATURE_NAMES.copy()
+    if args.exclude_features:
+        exclude_features.extend([f.strip() for f in args.exclude_features.split(',')])
+    # Deduplicate
+    exclude_features = list(set(exclude_features))
+
+    if exclude_features:
+        print(f"\nExcluding {len(exclude_features)} features: {exclude_features}")
+
+    # Prepare features (with exclusions for no-vegas/two-stage/custom)
+    # For residual mode, we need vegas_points_line in the feature matrix to extract it,
+    # so we prepare full features first, then handle residual target separately.
+    if args.residual:
+        # Residual needs full features (including vegas) for training
+        X_train_full, y_train_full = prepare_features(df_train)
+        X_eval_full, y_eval = prepare_features(df_eval)
+    else:
+        X_train_full, y_train_full = prepare_features(df_train, exclude_features=exclude_features)
+        X_eval_full, y_eval = prepare_features(df_eval, exclude_features=exclude_features)
+
     lines = df_eval['vegas_line'].values
+    active_feature_names = list(X_train_full.columns)
+
+    # Residual modeling: transform target to (actual - vegas_line), filter to valid vegas
+    if args.residual:
+        print("\nResidual mode: transforming target to (actual - vegas_line)...")
+        vegas_train = X_train_full['vegas_points_line'].values
+        valid_train = vegas_train > 0
+        X_train_full = X_train_full[valid_train].reset_index(drop=True)
+        y_train_full = (y_train_full[valid_train].reset_index(drop=True)
+                        - vegas_train[valid_train])
+        print(f"  Training: {valid_train.sum():,} of {len(valid_train):,} samples have vegas lines")
+
+        vegas_eval = X_eval_full['vegas_points_line'].values
+        valid_eval = vegas_eval > 0
+        X_eval_full = X_eval_full[valid_eval].reset_index(drop=True)
+        y_eval_residual = (y_eval[valid_eval].reset_index(drop=True)
+                           - vegas_eval[valid_eval])
+        y_eval_actual = y_eval[valid_eval].reset_index(drop=True)
+        lines = lines[valid_eval]
+        vegas_eval_filtered = vegas_eval[valid_eval]
+        print(f"  Eval: {valid_eval.sum():,} of {len(valid_eval):,} samples have vegas lines")
+
+        # Update df_train/df_eval for downstream (recency weights, walk-forward)
+        df_train = df_train[valid_train].reset_index(drop=True)
+        df_eval = df_eval[valid_eval].reset_index(drop=True)
+        # y_eval is kept as actual points for final metric computation
+        y_eval = y_eval_actual
+
+    # For two-stage: also prepare full-feature eval for extracting vegas line
+    X_eval = X_eval_full
 
     # Recency weighting (if --recency-weight)
     w_train_full = None
@@ -924,15 +1118,71 @@ def main():
         }
         print("\nTraining CatBoost with default params...")
 
+    # Quantile regression: override loss function (Session 179)
+    if args.quantile_alpha:
+        hp['loss_function'] = f'Quantile:alpha={args.quantile_alpha}'
+        print(f"  Quantile loss: alpha={args.quantile_alpha}")
+
+    # General loss function override (Session 179)
+    if args.loss_function:
+        hp['loss_function'] = args.loss_function
+        print(f"  Loss function: {args.loss_function}")
+
+    # Advanced CatBoost training params (Session 179)
+    if args.grow_policy:
+        hp['grow_policy'] = args.grow_policy
+        print(f"  Grow policy: {args.grow_policy}")
+    if args.rsm is not None:
+        hp['rsm'] = args.rsm
+        print(f"  RSM (feature subsampling): {args.rsm}")
+    if args.min_data_in_leaf is not None:
+        hp['min_data_in_leaf'] = args.min_data_in_leaf
+        print(f"  Min data in leaf: {args.min_data_in_leaf}")
+    if args.bootstrap:
+        hp['bootstrap_type'] = args.bootstrap
+        print(f"  Bootstrap type: {args.bootstrap}")
+    if args.subsample is not None:
+        hp['subsample'] = args.subsample
+        print(f"  Subsample: {args.subsample}")
+    if args.random_strength is not None:
+        hp['random_strength'] = args.random_strength
+        print(f"  Random strength: {args.random_strength}")
+
+    # Feature weights: dampen or boost specific features (Session 179)
+    feature_weights_map = parse_feature_weights(
+        args.feature_weights, args.category_weight, active_feature_names
+    )
+    if feature_weights_map:
+        hp['feature_weights'] = feature_weights_map
+        print(f"\n  Feature weights applied ({len(feature_weights_map)} features):")
+        for idx, weight in sorted(feature_weights_map.items()):
+            print(f"    [{idx:2d}] {active_feature_names[idx]:<30s} = {weight}")
+
     model = cb.CatBoostRegressor(**hp)
     model.fit(X_train, y_train, eval_set=(X_val, y_val), sample_weight=w_train, verbose=100)
 
     # Feature importance (always on)
-    feature_importance = display_feature_importance(model, FEATURES)
+    feature_importance = display_feature_importance(model, active_feature_names)
 
     # Evaluate
     print("\nEvaluating...")
-    preds = model.predict(X_eval)
+    raw_preds = model.predict(X_eval)
+
+    # Reconstruct absolute predictions for alternative modes (Session 179)
+    if args.residual:
+        # Model predicted residuals (actual - vegas), reconstruct absolute
+        preds = vegas_eval_filtered + raw_preds
+        print(f"  Residual mode: reconstructed {len(preds)} absolute predictions")
+        print(f"  Residual stats: mean={raw_preds.mean():.2f}, std={raw_preds.std():.2f}")
+    elif args.two_stage:
+        # Model predicts points independently; edge = pred - vegas_line
+        preds = raw_preds
+        print(f"  Two-stage mode: model predicts independently, edge = pred - vegas")
+        print(f"  Raw pred stats: mean={preds.mean():.2f}, std={preds.std():.2f}")
+        print(f"  Vegas line stats: mean={lines.mean():.2f}")
+    else:
+        preds = raw_preds
+
     mae = mean_absolute_error(y_eval, preds)
 
     hr_all, bets_all = compute_hit_rate(preds, y_eval.values, lines, min_edge=1.0)
@@ -956,12 +1206,26 @@ def main():
     pred_vs_vegas = np.mean(preds - lines)
     VEGAS_BIAS_LIMIT = 1.5
 
+    # Determine experiment mode suffix for filename (Session 179)
+    n_features = len(active_feature_names)
+    mode_suffix = ""
+    if args.no_vegas:
+        mode_suffix = "_noveg"
+    elif args.residual:
+        mode_suffix = "_resid"
+    elif args.two_stage:
+        mode_suffix = "_2stg"
+    elif args.quantile_alpha:
+        mode_suffix = f"_q{args.quantile_alpha}"
+    if feature_weights_map:
+        mode_suffix += "_wt"
+
     # Save model with standard naming (Session 164: include train start-end range in filename)
     MODEL_OUTPUT_DIR.mkdir(exist_ok=True)
     ts = datetime.now().strftime('%Y%m%d_%H%M%S')
     train_start_compact = dates['train_start'].replace('-', '')
     train_end_compact = dates['train_end'].replace('-', '')
-    model_path = MODEL_OUTPUT_DIR / f"catboost_v9_33f_train{train_start_compact}-{train_end_compact}_{ts}.cbm"
+    model_path = MODEL_OUTPUT_DIR / f"catboost_v9_{n_features}f{mode_suffix}_train{train_start_compact}-{train_end_compact}_{ts}.cbm"
     model.save_model(str(model_path))
 
     # Compute SHA256 for registry
@@ -1112,18 +1376,40 @@ def main():
 
     # Register
     if not args.skip_register:
+        # Determine experiment_type based on mode (Session 179)
+        if args.no_vegas:
+            experiment_type = 'monthly_retrain_no_vegas'
+        elif args.residual:
+            experiment_type = 'monthly_retrain_residual'
+        elif args.two_stage:
+            experiment_type = 'monthly_retrain_two_stage'
+        elif args.quantile_alpha:
+            experiment_type = 'monthly_retrain_quantile'
+        elif args.feature_weights or args.category_weight:
+            experiment_type = 'monthly_retrain_weighted'
+        else:
+            experiment_type = 'monthly_retrain'
+
         try:
             row = {
                 'experiment_id': exp_id,
                 'experiment_name': args.name,
-                'experiment_type': 'monthly_retrain',
+                'experiment_type': experiment_type,
                 'hypothesis': args.hypothesis or f'Monthly retrain {train_days_actual}d train, {eval_days_actual}d eval',
                 'config_json': json.dumps({
                     'train_days': train_days_actual, 'eval_days': eval_days_actual,
-                    'features': 33, 'line_source': 'production' if args.use_production_lines else args.line_source,
+                    'features': n_features, 'line_source': 'production' if args.use_production_lines else args.line_source,
                     'recency_weight': args.recency_weight,
                     'tuned': args.tune, 'tuned_params': tuned_params,
                     'hyperparameters': {k: v for k, v in hp.items() if k != 'verbose'},
+                    'no_vegas': args.no_vegas,
+                    'residual': args.residual,
+                    'two_stage': args.two_stage,
+                    'quantile_alpha': args.quantile_alpha,
+                    'exclude_features': exclude_features if exclude_features else None,
+                    'feature_weights': args.feature_weights,
+                    'category_weight': args.category_weight,
+                    'feature_weights_resolved': {active_feature_names[k]: v for k, v in feature_weights_map.items()} if feature_weights_map else None,
                 }),
                 'train_period': {'start_date': dates['train_start'], 'end_date': dates['train_end'], 'samples': len(df_train)},
                 'eval_period': {'start_date': dates['eval_start'], 'end_date': dates['eval_end'], 'samples': len(df_eval)},

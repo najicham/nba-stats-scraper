@@ -189,11 +189,439 @@ AND mf.feature_quality_score >= 70
 | `--force` | False | Force retrain even if duplicate training dates exist |
 | `--dry-run` | False | Show plan without executing |
 | `--skip-register` | False | Skip ml_experiments table |
+| `--no-vegas` | False | Drop vegas features (25-28) from training |
+| `--residual` | False | Train on residuals (actual - vegas_line) instead of absolute points |
+| `--two-stage` | False | Train without vegas features, compute edge as pred - vegas at eval |
+| `--quantile-alpha ALPHA` | None | Use quantile regression (e.g., 0.55 = predict above median) |
+| `--exclude-features LIST` | None | Comma-separated feature names to exclude |
+| `--feature-weights PAIRS` | None | Per-feature weights: `name=weight,...` (e.g., `vegas_points_line=0.3`) |
+| `--category-weight PAIRS` | None | Per-category weights: `cat=weight,...` (e.g., `vegas=0.3,composite=0.5`) |
+| `--rsm FLOAT` | None | Feature subsampling per split (0-1). 0.5 = 50% features per level |
+| `--grow-policy` | None | `SymmetricTree` (default), `Depthwise`, or `Lossguide` |
+| `--min-data-in-leaf INT` | None | Min samples per leaf (requires Depthwise/Lossguide) |
+| `--bootstrap` | None | `Bayesian` (default), `Bernoulli`, `MVS`, or `No` |
+| `--subsample FLOAT` | None | Row subsampling fraction (requires Bernoulli/MVS) |
+| `--random-strength FLOAT` | None | Split score noise multiplier (default 1). Higher = more diversity |
+| `--loss-function STR` | None | CatBoost loss: `Huber:delta=5`, `LogCosh`, `MAE`, `RMSE`, etc. |
 
 **Line Sources:**
 - `draftkings` (default): Matches production - uses Odds API DraftKings lines
 - `fanduel`: Uses Odds API FanDuel lines
 - `bettingpros`: Uses BettingPros Consensus lines (legacy)
+
+### Alternative Experiment Modes (Session 179)
+
+These modes address the **Vegas dependency problem**: `vegas_points_line` accounts for 29-36% of feature importance, so the model essentially learns `prediction ~ vegas + small_adjustment`. When retrained with recent data, adjustments shrink to near-zero, generating fewer edge 3+ picks.
+
+**No-Vegas Mode** (`--no-vegas`): Drops all 4 vegas features (25-28). Forces the model to predict using only player performance, matchup, and context features. Expected: higher MAE, but more independent predictions with larger edges.
+
+**Residual Mode** (`--residual`): Trains on `actual_points - vegas_line` instead of raw points. The model learns what Vegas gets wrong. Final prediction = `vegas_line + model(residual)`. Only uses samples with valid vegas lines.
+
+**Two-Stage Mode** (`--two-stage`): Like no-vegas, but evaluation computes edge as `model_prediction - vegas_line`. The model makes an independent assessment, then we compare to market. Different from no-vegas because hit rates are still evaluated against vegas lines.
+
+**Quantile Mode** (`--quantile-alpha`): Uses CatBoost quantile regression instead of mean regression. Alpha > 0.5 biases predictions upward (e.g., 0.55 predicts 55th percentile). Useful for testing whether a slight upward bias improves OVER hit rates.
+
+**Custom Exclusion** (`--exclude-features`): Drop any specific features by name. Useful for ablation studies (e.g., testing importance of composite factors).
+
+```bash
+# No-vegas experiment
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "V9_NO_VEGAS" --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 --no-vegas --walkforward --force
+
+# Residual modeling
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "V9_RESIDUAL" --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 --residual --walkforward --force
+
+# Two-stage pipeline
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "V9_TWO_STAGE" --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 --two-stage --walkforward --force
+
+# Quantile regression (predict 55th percentile)
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "V9_QUANTILE_55" --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 --quantile-alpha 0.55 --walkforward --force
+
+# Feature ablation (drop composite factors)
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "V9_NO_COMPOSITE" --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 \
+    --exclude-features "fatigue_score,shot_zone_mismatch_score,pace_score,usage_spike_score" \
+    --walkforward --force
+```
+
+**Experiment types registered in `ml_experiments`:**
+- `monthly_retrain` (default)
+- `monthly_retrain_no_vegas`
+- `monthly_retrain_residual`
+- `monthly_retrain_two_stage`
+- `monthly_retrain_quantile`
+- `monthly_retrain_weighted`
+
+### Feature Weighting (Session 179)
+
+Instead of all-or-nothing feature exclusion, **feature weighting** lets you dial down (or boost) any feature's influence during training. CatBoost's `feature_weights` parameter penalizes features during split selection — a weight of 0.3 means that feature needs 3x the information gain to be selected for a split.
+
+**Two interfaces:**
+
+1. `--feature-weights`: Target individual features by name
+   ```bash
+   --feature-weights "vegas_points_line=0.3,vegas_opening_line=0.3"
+   ```
+
+2. `--category-weight`: Target entire feature groups at once
+   ```bash
+   --category-weight "vegas=0.3,composite=0.5"
+   ```
+
+Individual weights override category weights when both are specified for the same feature.
+
+**Feature categories:**
+
+| Category | Features (indices) | Default Importance |
+|----------|-------------------|-------------------|
+| `recent_performance` | pts_avg_last_5/10/season, pts_std, games_7d (0-4) | ~25-30% |
+| `composite` | fatigue, shot_zone, pace, usage (5-8) | ~5-8% |
+| `derived` | rest, injury, trend, min_change (9-12) | ~3-5% |
+| `matchup` | opp_def, opp_pace, home_away, b2b, playoff (13-17) | ~5-8% |
+| `shot_zone` | pct_paint/mid/three/ft (18-21) | ~2-4% |
+| `team_context` | team_pace/off_rating/win_pct (22-24) | ~3-5% |
+| `vegas` | vegas_line/opening/move/has_line (25-28) | **~43-53%** |
+| `opponent_history` | avg_pts_vs_opp, games_vs_opp (29-30) | ~2-3% |
+| `minutes_efficiency` | min_avg, ppm_avg (31-32) | ~3-5% |
+
+### Systematic Feature Weight Experiment Plan
+
+The goal is to find the optimal balance between Vegas features (high accuracy anchor) and player-specific features (edge generation). This plan tests the gray area between full vegas dependence (status quo) and zero vegas (--no-vegas).
+
+**Phase 1: Vegas Dampening Sweep** (find the sweet spot for Vegas weight)
+
+```bash
+# Baseline: full vegas (weight=1.0, this is the default)
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "WT_VEGAS_100" --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 --walkforward --force
+
+# Heavy dampening: vegas barely visible
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "WT_VEGAS_10" --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 \
+    --category-weight "vegas=0.1" --walkforward --force
+
+# Medium dampening: vegas contributes but doesn't dominate
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "WT_VEGAS_30" --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 \
+    --category-weight "vegas=0.3" --walkforward --force
+
+# Light dampening: reduce vegas by half
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "WT_VEGAS_50" --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 \
+    --category-weight "vegas=0.5" --walkforward --force
+
+# Very light dampening
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "WT_VEGAS_70" --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 \
+    --category-weight "vegas=0.7" --walkforward --force
+```
+
+**Phase 2: Boost Player Signal** (amplify player features while dampening vegas)
+
+```bash
+# Boost recent performance + dampen vegas
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "WT_PERF_UP_VEG_DOWN" --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 \
+    --category-weight "vegas=0.3,recent_performance=2.0" --walkforward --force
+
+# Boost matchup context + dampen vegas
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "WT_MATCH_UP_VEG_DOWN" --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 \
+    --category-weight "vegas=0.3,matchup=2.0,derived=1.5" --walkforward --force
+
+# Kitchen sink: boost everything except vegas
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "WT_ALL_UP_VEG_DOWN" --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 \
+    --category-weight "vegas=0.3,recent_performance=2.0,matchup=1.5,composite=1.5,derived=1.5" \
+    --walkforward --force
+```
+
+**Phase 3: Surgical Feature Targeting** (fine-tune individual features)
+
+```bash
+# Only dampen vegas_points_line (the 30% monster), keep opening/move
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "WT_VPL_ONLY_10" --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 \
+    --feature-weights "vegas_points_line=0.1" --walkforward --force
+
+# Dampen both main vegas features, keep line_move (information signal)
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "WT_VPL_VOL_10" --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 \
+    --feature-weights "vegas_points_line=0.1,vegas_opening_line=0.1" --walkforward --force
+```
+
+**Phase 4: Combined Modes** (weighting + other experiment modes)
+
+```bash
+# Quantile + dampened vegas
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "WT_QUANTILE_VEG30" --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 \
+    --quantile-alpha 0.55 --category-weight "vegas=0.3" --walkforward --force
+
+# Residual + boosted player features
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "WT_RESID_PERF_UP" --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 \
+    --residual --category-weight "recent_performance=2.0,matchup=1.5" --walkforward --force
+```
+
+**What to look for in results:**
+
+| Metric | What It Tells You |
+|--------|------------------|
+| Feature importance of `vegas_points_line` | Did dampening actually reduce its dominance? |
+| Number of edge 3+ picks | More picks = model is more independent from Vegas |
+| HR at edge 3+ | Are the picks still profitable? |
+| MAE | How much accuracy did we lose? (some loss is expected/acceptable) |
+| Walk-forward stability | Is the model consistent week-to-week? |
+| Vegas bias (pred_vs_vegas) | Is the model biased toward OVER or UNDER? |
+
+**Success criteria:** An experiment that generates 50+ edge 3+ picks with >= 58% hit rate (profitable after vig) at any weight setting is a candidate for shadow testing.
+
+### Advanced CatBoost Parameters (Session 179)
+
+Beyond feature weighting, CatBoost has training parameters that fundamentally change how the model learns. These are especially relevant for reducing dependence on dominant features.
+
+**Tier 1: Highest Impact** (directly addresses vegas dominance)
+
+| Parameter | What It Does | Why It Matters |
+|-----------|-------------|----------------|
+| `--rsm 0.5-0.7` | Randomly excludes features at each tree level | With rsm=0.5, there's a 50% chance vegas is excluded from any split, forcing learning from other features |
+| `--grow-policy Depthwise` | Asymmetric trees (different branches use different features) | Default symmetric trees use same split at each level; Depthwise lets different paths specialize |
+| `--min-data-in-leaf 10-20` | Requires N samples per leaf (needs Depthwise) | Prevents overfitting to narrow player/game combos |
+| `--bootstrap MVS` | Importance sampling on hard-to-predict examples | Focuses learning on games where Vegas is wrong (the signal we want) |
+
+**Tier 2: Regularization & Diversity**
+
+| Parameter | What It Does | Why It Matters |
+|-----------|-------------|----------------|
+| `--random-strength 2-5` | Adds noise to split scores | Prevents always choosing vegas as first split; more diverse trees |
+| `--subsample 0.7-0.8` | Row subsampling per iteration | Prevents memorizing player-specific vegas relationships |
+| `--loss-function "Huber:delta=5"` | Robust to outlier games | NBA has high-variance nights; Huber ignores extreme outliers that distort learning |
+| `--loss-function LogCosh` | Smooth robust loss | Like Huber but with continuous gradients |
+
+### Master Experiment Plan (Session 179)
+
+A systematic approach from methodical parameter sweeps to exploratory random combos. All experiments use the same date range for comparability.
+
+**Common flags for all experiments:**
+```
+--train-start 2025-11-02 --train-end 2026-01-31 --eval-start 2026-02-01 --eval-end 2026-02-08 --walkforward --force
+```
+
+**Track results in a comparison table:**
+
+| # | Name | Key Settings | MAE | HR All | Edge 3+ N | Edge 3+ HR | Vegas Imp% |
+|---|------|-------------|-----|--------|-----------|------------|------------|
+| 0 | Baseline | defaults | ? | ? | ? | ? | ~30% |
+| 1 | ... | ... | | | | | |
+
+---
+
+#### A. Methodical Sweeps (isolate one variable at a time)
+
+**A1. Vegas Weight Sweep** (the core question)
+```bash
+# A1a: Baseline (no changes)
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A1a_BASELINE" [COMMON]
+
+# A1b: Vegas at 10%
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A1b_VEG10" --category-weight "vegas=0.1" [COMMON]
+
+# A1c: Vegas at 30%
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A1c_VEG30" --category-weight "vegas=0.3" [COMMON]
+
+# A1d: Vegas at 50%
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A1d_VEG50" --category-weight "vegas=0.5" [COMMON]
+
+# A1e: Vegas at 70%
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A1e_VEG70" --category-weight "vegas=0.7" [COMMON]
+
+# A1f: No vegas at all
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A1f_NO_VEG" --no-vegas [COMMON]
+```
+
+**A2. RSM Sweep** (feature dropout per split)
+```bash
+# A2a: 50% features per level
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A2a_RSM50" --rsm 0.5 [COMMON]
+
+# A2b: 60% features per level
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A2b_RSM60" --rsm 0.6 [COMMON]
+
+# A2c: 70% features per level
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A2c_RSM70" --rsm 0.7 [COMMON]
+
+# A2d: RSM with Depthwise (unlocks full RSM power)
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A2d_RSM60_DW" --rsm 0.6 --grow-policy Depthwise --min-data-in-leaf 15 [COMMON]
+```
+
+**A3. Loss Function Sweep**
+```bash
+# A3a: Huber (robust to outlier games)
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A3a_HUBER5" --loss-function "Huber:delta=5" [COMMON]
+
+# A3b: Huber wider
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A3b_HUBER8" --loss-function "Huber:delta=8" [COMMON]
+
+# A3c: LogCosh
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A3c_LOGCOSH" --loss-function "LogCosh" [COMMON]
+
+# A3d: MAE (median prediction)
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A3d_MAE" --loss-function "MAE" [COMMON]
+
+# A3e: Quantile 55th percentile
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A3e_Q55" --quantile-alpha 0.55 [COMMON]
+```
+
+**A4. Tree Structure Sweep**
+```bash
+# A4a: Depthwise (asymmetric trees)
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A4a_DEPTHWISE" --grow-policy Depthwise --min-data-in-leaf 15 [COMMON]
+
+# A4b: Lossguide (leaf-wise growth)
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A4b_LOSSGUIDE" --grow-policy Lossguide --min-data-in-leaf 15 [COMMON]
+
+# A4c: Depthwise + aggressive regularization
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A4c_DW_REG" --grow-policy Depthwise --min-data-in-leaf 30 --random-strength 5 [COMMON]
+```
+
+**A5. Bootstrap / Sampling Sweep**
+```bash
+# A5a: MVS (importance sampling)
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A5a_MVS" --bootstrap MVS --subsample 0.8 [COMMON]
+
+# A5b: Bernoulli 70%
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A5b_BERN70" --bootstrap Bernoulli --subsample 0.7 [COMMON]
+
+# A5c: High random noise
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "A5c_RAND5" --random-strength 5 [COMMON]
+```
+
+---
+
+#### B. Targeted Combos (combine winners from sweeps)
+
+Run these after Phase A identifies promising individual settings:
+
+```bash
+# B1: Depthwise + RSM + dampened vegas (the "independence combo")
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "B1_INDEP" \
+    --grow-policy Depthwise --rsm 0.6 --min-data-in-leaf 15 \
+    --category-weight "vegas=0.3" [COMMON]
+
+# B2: MVS + Huber + dampened vegas (the "robust combo")
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "B2_ROBUST" \
+    --bootstrap MVS --subsample 0.8 --loss-function "Huber:delta=5" \
+    --category-weight "vegas=0.3" [COMMON]
+
+# B3: Full kitchen sink
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "B3_KITCHEN" \
+    --grow-policy Depthwise --rsm 0.6 --min-data-in-leaf 15 \
+    --bootstrap MVS --subsample 0.8 --random-strength 3 \
+    --category-weight "vegas=0.3,recent_performance=2.0" \
+    --loss-function "Huber:delta=5" [COMMON]
+
+# B4: Residual + Depthwise + RSM (residual mode benefits most from independence)
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "B4_RESID_INDEP" \
+    --residual --grow-policy Depthwise --rsm 0.6 --min-data-in-leaf 15 [COMMON]
+
+# B5: Two-stage + boosted player features
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "B5_2STG_BOOST" \
+    --two-stage --category-weight "recent_performance=2.0,matchup=1.5" \
+    --grow-policy Depthwise --rsm 0.7 [COMMON]
+```
+
+---
+
+#### C. Random Exploration (discover unexpected combos)
+
+These intentionally use unusual/aggressive settings to explore the space. Most will fail — that's the point. We're looking for surprising wins.
+
+```bash
+# C1: Extreme feature dropout + high noise
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "C1_CHAOS" \
+    --rsm 0.3 --random-strength 10 --bootstrap Bernoulli --subsample 0.5 [COMMON]
+
+# C2: No vegas + Lossguide + aggressive subsampling
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "C2_LOSSNO" \
+    --no-vegas --grow-policy Lossguide --min-data-in-leaf 50 \
+    --bootstrap Bernoulli --subsample 0.6 [COMMON]
+
+# C3: Vegas boosted 3x (opposite of dampening — what if we lean INTO vegas?)
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "C3_VEG_BOOST" \
+    --category-weight "vegas=3.0" --rsm 0.8 [COMMON]
+
+# C4: Everything dampened except matchup
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "C4_MATCHUP_ONLY" \
+    --category-weight "recent_performance=0.3,vegas=0.3,composite=0.3,team_context=0.3,matchup=3.0" [COMMON]
+
+# C5: Quantile + MVS + Depthwise + dampened vegas (the "contrarian" model)
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "C5_CONTRARIAN" \
+    --quantile-alpha 0.55 --bootstrap MVS --subsample 0.7 \
+    --grow-policy Depthwise --rsm 0.5 --min-data-in-leaf 20 \
+    --category-weight "vegas=0.2" [COMMON]
+
+# C6: Residual + extreme feature dropout (model predicts vegas errors with minimal info)
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "C6_RESID_MINIMAL" \
+    --residual --rsm 0.4 --random-strength 8 \
+    --grow-policy Depthwise --min-data-in-leaf 25 [COMMON]
+
+# C7: LogCosh + recency weighting + all player features boosted
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "C7_RECENT_LOGCOSH" \
+    --loss-function "LogCosh" --recency-weight 21 \
+    --category-weight "recent_performance=2.5,minutes_efficiency=2.0,opponent_history=2.0,vegas=0.5" [COMMON]
+
+# C8: MAE loss + Two-stage (absolute deviation minimizer as independent predictor)
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "C8_MAE_2STG" \
+    --two-stage --loss-function "MAE" --grow-policy Depthwise --rsm 0.6 [COMMON]
+```
+
+---
+
+#### Running the Plan
+
+**Execution order:**
+1. Run all A1 experiments (Vegas weight sweep) — ~30 min total
+2. Analyze: which vegas weight gives best edge-3+ count × HR trade-off?
+3. Run A2-A5 in parallel — ~1 hour
+4. Pick best settings from each sweep for B combos
+5. Run B experiments — ~30 min
+6. Run C experiments for exploration — ~1 hour
+7. Compare all results, pick top 2-3 for shadow deployment
+
+**Quick comparison after experiments:**
+```sql
+SELECT experiment_name,
+  JSON_VALUE(config_json, '$.category_weight') as cat_weights,
+  JSON_VALUE(results_json, '$.mae') as mae,
+  JSON_VALUE(results_json, '$.hit_rate_all') as hr_all,
+  JSON_VALUE(results_json, '$.hit_rate_edge_3plus') as hr_3plus,
+  JSON_VALUE(results_json, '$.bets_edge_3plus') as n_3plus,
+  JSON_VALUE(results_json, '$.feature_importance.vegas_points_line') as vegas_imp
+FROM nba_predictions.ml_experiments
+WHERE experiment_name LIKE 'A%' OR experiment_name LIKE 'B%' OR experiment_name LIKE 'C%'
+ORDER BY created_at DESC
+```
 
 ## Breakout Classifier Options
 
@@ -502,4 +930,5 @@ The dynamic model_version (e.g., `v9_20260201_011018`) distinguishes different m
 *Updated: Session 164 - Added governance warnings, promotion checklist, deployment prevention*
 *Updated: Session 176 - New flags (--tune, --recency-weight, --walkforward), date overlap guard, survivorship bias warning*
 *Updated: Session 177 - Parallel models shadow mode, MONTHLY_MODELS config snippet output, comparison tooling*
+*Updated: Session 179 - Alternative experiment modes (--no-vegas, --residual, --two-stage, --quantile-alpha, --exclude-features)*
 *Part of: Monthly Retraining Infrastructure*
