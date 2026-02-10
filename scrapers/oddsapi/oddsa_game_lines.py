@@ -154,7 +154,7 @@ class GetOddsApiCurrentGameLines(ScraperBase, ScraperFlaskMixin):
         if not self.opts.get("markets"):
             self.opts["markets"] = "spreads,totals"  # Default to both spreads and totals
         if not self.opts.get("bookmakers"):
-            self.opts["bookmakers"] = "draftkings,fanduel"
+            self.opts["bookmakers"] = "draftkings,fanduel,betmgm,pointsbetus,williamhill_us,betrivers"
 
     # ------------------------------------------------------------------ #
     # URL & headers                                                      #

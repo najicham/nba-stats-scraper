@@ -9,7 +9,7 @@ They all inherit the same `ScraperBase` and share season‑wide defaults:
 sport      : basketball\_nba
 regions    : us
 markets    : player\_points
-bookmakers : draftkings,fanduel
+bookmakers : draftkings,fanduel,betmgm,pointsbetus,williamhill_us,betrivers
 group      : dev                # overridden by --group capture / prod
 api_key     : env ODDS\_API\_KEY   # or --api_key flag
 

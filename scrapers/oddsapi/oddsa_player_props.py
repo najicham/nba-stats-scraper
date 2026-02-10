@@ -154,7 +154,7 @@ class GetOddsApiCurrentEventOdds(ScraperBase, ScraperFlaskMixin):
         if not self.opts.get("markets"):
             self.opts["markets"] = "player_points"
         if not self.opts.get("bookmakers"):
-            self.opts["bookmakers"] = "draftkings,fanduel"
+            self.opts["bookmakers"] = "draftkings,fanduel,betmgm,pointsbetus,williamhill_us,betrivers"
 
     # ------------------------------------------------------------------ #
     # URL & headers                                                      #
