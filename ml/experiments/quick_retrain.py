@@ -18,9 +18,10 @@ Promotion Checklist (do NOT skip):
 2. High-edge (3+) hit rate >= 60%
 3. pred_vs_vegas bias within +/- 1.5
 4. No critical tier bias (> +/- 5)
-5. Register in model_registry table
-6. Upload to GCS with standard naming
-7. Shadow test for 2+ days before switching CATBOOST_V9_MODEL_PATH
+5. Directional balance: both OVER and UNDER edge 3+ hit rate >= 52.4%
+6. Register in model_registry table
+7. Upload to GCS with standard naming
+8. Shadow test for 2+ days before switching CATBOOST_V9_MODEL_PATH
 
 Usage:
     # Quick retrain with defaults (last 60 days training, last 7 days eval)
@@ -470,6 +471,89 @@ def compute_tier_bias(preds, actuals, season_avgs=None):
     return results
 
 
+def compute_directional_hit_rates(preds, actuals, lines, min_edge=3.0):
+    """
+    Compute OVER/UNDER directional hit rates for governance gate.
+
+    Session 175: Session 173 discovered OVER collapsed from 76.8% -> 44.1%
+    while overall edge 3+ only showed moderate decline. This gate catches
+    directional imbalance that the overall hit rate misses.
+
+    Args:
+        preds: Model predictions (numpy array)
+        actuals: Actual points scored (numpy array)
+        lines: Vegas lines (numpy array)
+        min_edge: Minimum edge threshold (default 3.0)
+
+    Returns:
+        dict with over_hit_rate, under_hit_rate, directional_balance_ok,
+        worst_direction, worst_rate, over_graded, under_graded.
+    """
+    BREAKEVEN = 52.4  # Breakeven at -110 odds
+
+    edges = preds - lines
+    mask = np.abs(edges) >= min_edge
+
+    # OVER: model predicts above line
+    over_mask = mask & (edges > 0)
+    under_mask = mask & (edges < 0)
+
+    over_hit_rate = None
+    under_hit_rate = None
+    over_graded = 0
+    under_graded = 0
+
+    if over_mask.sum() > 0:
+        over_actual = actuals[over_mask]
+        over_lines = lines[over_mask]
+        over_wins = over_actual > over_lines
+        over_pushes = over_actual == over_lines
+        over_graded = int(over_mask.sum() - over_pushes.sum())
+        if over_graded > 0:
+            over_hit_rate = round(over_wins.sum() / over_graded * 100, 1)
+
+    if under_mask.sum() > 0:
+        under_actual = actuals[under_mask]
+        under_lines = lines[under_mask]
+        under_wins = under_actual < under_lines
+        under_pushes = under_actual == under_lines
+        under_graded = int(under_mask.sum() - under_pushes.sum())
+        if under_graded > 0:
+            under_hit_rate = round(under_wins.sum() / under_graded * 100, 1)
+
+    # Determine balance
+    over_ok = over_hit_rate is None or over_hit_rate >= BREAKEVEN
+    under_ok = under_hit_rate is None or under_hit_rate >= BREAKEVEN
+    balance_ok = over_ok and under_ok
+
+    # Find worst direction
+    worst_direction = None
+    worst_rate = None
+    if over_hit_rate is not None and under_hit_rate is not None:
+        if over_hit_rate <= under_hit_rate:
+            worst_direction = 'OVER'
+            worst_rate = over_hit_rate
+        else:
+            worst_direction = 'UNDER'
+            worst_rate = under_hit_rate
+    elif over_hit_rate is not None:
+        worst_direction = 'OVER'
+        worst_rate = over_hit_rate
+    elif under_hit_rate is not None:
+        worst_direction = 'UNDER'
+        worst_rate = under_hit_rate
+
+    return {
+        'over_hit_rate': over_hit_rate,
+        'under_hit_rate': under_hit_rate,
+        'over_graded': over_graded,
+        'under_graded': under_graded,
+        'directional_balance_ok': balance_ok,
+        'worst_direction': worst_direction,
+        'worst_rate': worst_rate,
+    }
+
+
 def main():
     args = parse_args()
     dates = get_dates(args)
@@ -584,6 +668,9 @@ def main():
     season_avgs = X_eval['points_avg_season'].values if 'points_avg_season' in X_eval.columns else None
     tier_bias = compute_tier_bias(preds, y_eval.values, season_avgs=season_avgs)
 
+    # Directional hit rates (Session 175 — Session 173 discovered OVER collapsed to 44.1%)
+    directional = compute_directional_hit_rates(preds, y_eval.values, lines, min_edge=3.0)
+
     # Vegas bias gate (Session 163 — the Feb 2 retrain had good MAE but -2.26 Vegas bias)
     pred_vs_vegas = np.mean(preds - lines)
     VEGAS_BIAS_LIMIT = 1.5
@@ -662,6 +749,20 @@ def main():
     if abs(pred_vs_vegas) > VEGAS_BIAS_LIMIT:
         print(f"  BLOCKED: Vegas bias outside +/-{VEGAS_BIAS_LIMIT} — model is miscalibrated vs market")
 
+    # Directional Balance Analysis (Session 175 — catches OVER/UNDER collapse)
+    BREAKEVEN = 52.4
+    print("\n" + "-" * 40)
+    print("DIRECTIONAL BALANCE (OVER/UNDER edge 3+)")
+    print("-" * 40)
+    over_status = "PASS" if directional['over_hit_rate'] is None or directional['over_hit_rate'] >= BREAKEVEN else "FAIL"
+    under_status = "PASS" if directional['under_hit_rate'] is None or directional['under_hit_rate'] >= BREAKEVEN else "FAIL"
+    over_str = f"{directional['over_hit_rate']:.1f}%" if directional['over_hit_rate'] is not None else "N/A"
+    under_str = f"{directional['under_hit_rate']:.1f}%" if directional['under_hit_rate'] is not None else "N/A"
+    print(f"  OVER:  {over_str} ({directional['over_graded']} graded) [{over_status}]")
+    print(f"  UNDER: {under_str} ({directional['under_graded']} graded) [{under_status}]")
+    if not directional['directional_balance_ok']:
+        print(f"  BLOCKED: {directional['worst_direction']} at {directional['worst_rate']:.1f}% (below breakeven {BREAKEVEN}%)")
+
     # Governance Gate Summary
     print("\n" + "=" * 70)
     print(" GOVERNANCE GATES")
@@ -676,6 +777,9 @@ def main():
     gates.append(("Hit rate (3+) sample >= 50", edge3_reliable, f"n={bets_edge3}"))
     gates.append((f"Vegas bias within +/-{VEGAS_BIAS_LIMIT}", abs(pred_vs_vegas) <= VEGAS_BIAS_LIMIT, f"{pred_vs_vegas:+.2f}"))
     gates.append(("No critical tier bias", not tier_bias['has_critical_bias'], ""))
+    gates.append(("Directional balance (OVER+UNDER >= 52.4%)",
+                  directional['directional_balance_ok'],
+                  f"OVER={over_str}, UNDER={under_str}"))
 
     all_passed = True
     for gate_name, passed, detail in gates:
@@ -718,6 +822,13 @@ def main():
                     'tier_bias': {k: {sk: (bool(sv) if isinstance(sv, (bool, np.bool_)) else sv) for sk, sv in v.items()} for k, v in tier_bias.items() if k != 'has_critical_bias'},
                     'has_critical_bias': bool(tier_bias['has_critical_bias']),
                     'pred_vs_vegas_bias': round(float(pred_vs_vegas), 4),
+                    'directional_balance': {
+                        'over_hit_rate': directional['over_hit_rate'],
+                        'under_hit_rate': directional['under_hit_rate'],
+                        'over_graded': directional['over_graded'],
+                        'under_graded': directional['under_graded'],
+                        'balance_ok': directional['directional_balance_ok'],
+                    },
                     'all_gates_passed': all_passed,
                     'model_sha256': model_sha256,
                 }),

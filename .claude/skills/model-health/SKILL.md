@@ -254,6 +254,42 @@ GROUP BY system_id, confidence_bucket
 ORDER BY system_id, confidence_bucket DESC
 ```
 
+## OVER/UNDER Weekly Breakdown (Session 175)
+
+**IMPORTANT**: Directional performance can collapse while overall hit rate looks acceptable. Session 173 discovered OVER went from 76.8% to 44.1% over 4 weeks. Always check directional balance.
+
+```sql
+-- Weekly OVER/UNDER hit rate breakdown for edge 3+
+SELECT
+  DATE_TRUNC(game_date, WEEK(MONDAY)) as week_start,
+  COUNT(*) as picks,
+  ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 1) as hit_pct,
+  COUNTIF(recommendation = 'OVER') as over_picks,
+  ROUND(100.0 * COUNTIF(recommendation = 'OVER' AND prediction_correct) /
+        NULLIF(COUNTIF(recommendation = 'OVER' AND prediction_correct IS NOT NULL), 0), 1) as over_hit_pct,
+  COUNTIF(recommendation = 'UNDER') as under_picks,
+  ROUND(100.0 * COUNTIF(recommendation = 'UNDER' AND prediction_correct) /
+        NULLIF(COUNTIF(recommendation = 'UNDER' AND prediction_correct IS NOT NULL), 0), 1) as under_hit_pct,
+  ROUND(AVG(predicted_points - actual_points), 2) as bias
+FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+WHERE system_id = 'catboost_v9'
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 8 WEEK)
+  AND ABS(predicted_points - line_value) >= 3
+  AND prediction_correct IS NOT NULL
+  AND recommendation IN ('OVER', 'UNDER')
+GROUP BY week_start
+ORDER BY week_start DESC
+```
+
+**Alert Thresholds for Directional Drift**:
+
+| Direction | Healthy | Warning | Critical |
+|-----------|---------|---------|----------|
+| OVER | >= 55% | 52.4-55% | < 52.4% (below breakeven) |
+| UNDER | >= 55% | 52.4-55% | < 52.4% (below breakeven) |
+
+**If directional drift detected**: Run the full diagnosis script (see below).
+
 ## Using Python Diagnostics
 
 ```python
@@ -268,6 +304,27 @@ alert = get_alert()
 print(f"Status: {alert['level']}")
 print(f"Message: {alert['message']}")
 ```
+
+## Detailed Diagnosis Script (Session 175)
+
+For comprehensive analysis beyond quick SQL queries, use `model_diagnose.py`:
+
+```bash
+# Full diagnosis: weekly trends, PVL drift, directional balance, period comparison
+PYTHONPATH=. python ml/experiments/model_diagnose.py
+
+# Custom parameters
+PYTHONPATH=. python ml/experiments/model_diagnose.py --weeks 4 --system-id catboost_v9
+
+# JSON output for automation
+PYTHONPATH=. python ml/experiments/model_diagnose.py --json
+```
+
+**When to use the script vs quick SQL queries:**
+- **Quick SQL**: Spot-check a single metric (e.g., last 7 days hit rate)
+- **Diagnosis script**: Comprehensive analysis when you suspect drift, before deciding whether to retrain, or as part of weekly model review
+
+The script outputs a `RETRAIN_NOW` / `MONITOR` / `HEALTHY` recommendation based on trailing 2-week edge 3+ hit rate and directional balance.
 
 ## Output Format
 

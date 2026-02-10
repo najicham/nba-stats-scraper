@@ -84,6 +84,48 @@ PYTHONPATH=. python ml/experiments/train_breakout_classifier.py \
 PYTHONPATH=. python ml/experiments/train_breakout_classifier.py --name "TEST" --dry-run
 ```
 
+## Pre-Training Diagnosis (Session 175)
+
+**Before training a new model, always diagnose whether retraining is needed.**
+
+```bash
+# Run automated diagnosis (6 weeks, edge 3+)
+PYTHONPATH=. python ml/experiments/model_diagnose.py
+
+# Custom parameters
+PYTHONPATH=. python ml/experiments/model_diagnose.py --weeks 4 --edge-threshold 5.0
+
+# JSON output for downstream tools
+PYTHONPATH=. python ml/experiments/model_diagnose.py --json
+```
+
+The diagnosis script outputs a recommendation:
+
+| Trailing 2-Week Edge 3+ | Recommendation | Action |
+|--------------------------|----------------|--------|
+| < 55% | `RETRAIN_NOW` | Train immediately |
+| 55-60% | `MONITOR` | Re-check in 3-5 days |
+| >= 60% | `HEALTHY` | No action needed |
+
+It also flags **directional drift** if either OVER or UNDER hit rate falls below 52.4% (breakeven at -110 odds).
+
+**Recommended workflow:** Diagnose -> Decide -> Train -> Evaluate -> Deploy
+
+### Governance Gates (6 gates)
+
+All gates must pass before a model is eligible for shadow testing:
+
+| # | Gate | Threshold |
+|---|------|-----------|
+| 1 | MAE improvement | < V9 baseline (5.14) |
+| 2 | Hit rate (edge 3+) | >= 60% |
+| 3 | Sample size (edge 3+) | >= 50 graded bets |
+| 4 | Vegas bias | pred_vs_vegas within +/- 1.5 |
+| 5 | No critical tier bias | All tiers < +/- 5 points |
+| 6 | Directional balance | Both OVER and UNDER >= 52.4% |
+
+Gate 6 was added in Session 175 after Session 173 discovered the OVER direction collapsed from 76.8% to 44.1% without triggering any existing gate.
+
 ## Data Quality Filtering (Session 156: Zero Tolerance for Training)
 
 **CRITICAL: All training and evaluation queries MUST enforce zero tolerance for non-vegas defaults.**
@@ -340,6 +382,7 @@ ORDER BY created_at DESC LIMIT 5"
 
 | File | Purpose |
 |------|---------|
+| `ml/experiments/model_diagnose.py` | Performance diagnosis and drift detection |
 | `ml/experiments/quick_retrain.py` | Regression model retraining |
 | `ml/experiments/train_breakout_classifier.py` | Breakout classifier training |
 | `ml/experiments/evaluate_model.py` | Detailed evaluation |

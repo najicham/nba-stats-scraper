@@ -148,6 +148,8 @@ ORDER BY hit_rate DESC;
 | 5 | **Find Best Filter** | Optimize filter for current conditions |
 | 6 | Player Tier Analysis | Performance by player scoring tier |
 | 7 | **Signal Context** | Correlate with RED/GREEN pre-game signals |
+| 8-11 | Scenario Analysis | Scenario subsets, blacklists, opponent risk, today's picks |
+| 12 | **Directional Performance** | OVER/UNDER hit rate by week (drift detection) |
 
 ### Query 0: Daily Model Comparison (Quick Check)
 
@@ -919,6 +921,59 @@ ORDER BY
   END,
   ABS(predicted_points - current_points_line) DESC;
 ```
+
+### Query 12: OVER/UNDER Directional Performance by Week (Session 175)
+
+**Purpose**: Detect directional drift where one side (OVER or UNDER) collapses while overall metrics look acceptable.
+
+**Why this matters**: Session 173 discovered OVER hit rate dropped from 76.8% to 44.1% over 4 weeks, but overall edge 3+ decline was more gradual and less alarming. Directional analysis reveals the true severity.
+
+```sql
+-- Weekly OVER/UNDER directional performance for edge 3+
+SELECT
+  DATE_TRUNC(game_date, WEEK(MONDAY)) as week_start,
+  COUNT(*) as total_picks,
+  ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNTIF(prediction_correct IS NOT NULL), 0), 1) as overall_hit_pct,
+  -- OVER direction
+  COUNTIF(recommendation = 'OVER') as over_picks,
+  ROUND(100.0 * COUNTIF(recommendation = 'OVER' AND prediction_correct) /
+        NULLIF(COUNTIF(recommendation = 'OVER' AND prediction_correct IS NOT NULL), 0), 1) as over_hit_pct,
+  -- UNDER direction
+  COUNTIF(recommendation = 'UNDER') as under_picks,
+  ROUND(100.0 * COUNTIF(recommendation = 'UNDER' AND prediction_correct) /
+        NULLIF(COUNTIF(recommendation = 'UNDER' AND prediction_correct IS NOT NULL), 0), 1) as under_hit_pct,
+  -- Prediction bias
+  ROUND(AVG(predicted_points - line_value), 2) as avg_pred_vs_line,
+  ROUND(AVG(predicted_points - actual_points), 2) as avg_bias,
+  -- Direction balance
+  CASE
+    WHEN ROUND(100.0 * COUNTIF(recommendation = 'OVER' AND prediction_correct) /
+          NULLIF(COUNTIF(recommendation = 'OVER' AND prediction_correct IS NOT NULL), 0), 1) < 52.4
+    THEN 'OVER DRIFT'
+    WHEN ROUND(100.0 * COUNTIF(recommendation = 'UNDER' AND prediction_correct) /
+          NULLIF(COUNTIF(recommendation = 'UNDER' AND prediction_correct IS NOT NULL), 0), 1) < 52.4
+    THEN 'UNDER DRIFT'
+    ELSE 'BALANCED'
+  END as direction_status
+FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+WHERE system_id = 'catboost_v9'
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 8 WEEK)
+  AND ABS(predicted_points - line_value) >= 3
+  AND prediction_correct IS NOT NULL
+  AND recommendation IN ('OVER', 'UNDER')
+GROUP BY week_start
+ORDER BY week_start DESC
+```
+
+**Interpretation**:
+- **BALANCED**: Both OVER and UNDER >= 52.4% (breakeven). Model is healthy.
+- **OVER DRIFT**: OVER hit rate below breakeven. Model may be systematically over-predicting (positive bias), causing OVER bets to fail.
+- **UNDER DRIFT**: UNDER hit rate below breakeven. Model may be systematically under-predicting (negative bias), causing UNDER bets to fail.
+
+**Action Steps**:
+1. If drift persists for 2+ weeks: Run `PYTHONPATH=. python ml/experiments/model_diagnose.py` for full diagnosis
+2. If `RETRAIN_NOW` recommendation: Proceed with `quick_retrain.py`
+3. Check `avg_pred_vs_line` trend — sustained positive values predict OVER drift, negative predicts UNDER drift
 
 ### Quick Scenario Summary
 
