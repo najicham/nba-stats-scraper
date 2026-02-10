@@ -245,6 +245,17 @@ except Exception as e:
 PYEOF
     ;;
 
+  compare)
+    if [ -z "$MODEL_ID" ]; then
+      echo "Usage: ./bin/model-registry.sh compare <system_id> [--days N]"
+      echo ""
+      echo "Compare a challenger model's production performance vs backtest."
+      echo "Example: ./bin/model-registry.sh compare catboost_v9_train1102_0108"
+      exit 1
+    fi
+    PYTHONPATH="$(dirname "$0")/.." python3 "$(dirname "$0")/compare-model-performance.py" "$MODEL_ID" "${@:3}"
+    ;;
+
   claude-md)
     echo "=== Auto-Generated CLAUDE.md Model Section ==="
     echo ""
@@ -334,6 +345,7 @@ except Exception as e:
     echo "  ./bin/model-registry.sh validate          # Validate GCS paths + SHA256"
     echo "  ./bin/model-registry.sh manifest          # Show GCS manifest"
     echo "  ./bin/model-registry.sh sync              # Sync GCS manifest to BQ registry"
+    echo "  ./bin/model-registry.sh compare <system_id>  # Compare challenger vs champion"
     echo "  ./bin/model-registry.sh claude-md         # Generate CLAUDE.md model section"
     ;;
 esac

@@ -230,13 +230,36 @@ PYTHONPATH=. python ml/experiments/quick_retrain.py \
 # Script outputs ALL GATES PASSED/FAILED — do NOT deploy without passing
 ```
 
+### Parallel Models (Session 177)
+
+Multiple V9 challengers run in **shadow mode** alongside the champion (`catboost_v9`). Each gets its own `system_id`, is graded independently, and does NOT affect user-facing picks or alerts.
+
+**Workflow:** Train (`quick_retrain.py`) -> Upload to GCS -> Add config to `catboost_monthly.py` -> Deploy -> Monitor (`compare-model-performance.py`) -> Promote or retire
+
+**Active challengers:**
+| system_id | Training | Backtest HR 3+ | Status |
+|-----------|----------|----------------|--------|
+| `catboost_v9_train1102_0108` | Nov 2 - Jan 8 | 87.0% (n=131) | Shadow |
+
+**Monitor:**
+```bash
+python bin/compare-model-performance.py catboost_v9_train1102_0108
+./bin/model-registry.sh compare catboost_v9_train1102_0108
+```
+
+**Promote:** Update `CATBOOST_V9_MODEL_PATH` env var. **Retire:** Set `enabled: False` in config.
+
+**See:** `docs/08-projects/current/retrain-infrastructure/03-PARALLEL-MODELS-GUIDE.md`
+
 ### Model Files in GCS
 ```
 gs://nba-props-platform-models/catboost/v9/
 ├── manifest.json                                    # Source of truth
 ├── catboost_v9_33features_20260201_011018.cbm       # PRODUCTION (SHA: 5b3a187b)
 ├── catboost_v9_feb_02_retrain.cbm                   # DEPRECATED (UNDER bias)
-└── monthly/catboost_v9_2026_02.cbm                  # Untested
+└── monthly/
+    ├── catboost_v9_33f_train20251102-20260108_20260209_175818.cbm  # Challenger (shadow)
+    └── catboost_v9_2026_02.cbm                      # DISABLED (UNDER bias)
 ```
 
 **See:** `docs/08-projects/current/model-governance/00-PROJECT-OVERVIEW.md`

@@ -1072,10 +1072,36 @@ def main():
     print()
     if all_passed:
         print("ALL GATES PASSED — model eligible for shadow testing")
+        print()
+
+        # Generate ready-to-paste MONTHLY_MODELS config snippet (Session 177)
+        train_start_short = dates['train_start'].replace('-', '')[4:]  # MMDD
+        train_end_short = dates['train_end'].replace('-', '')[4:]      # MMDD
+        system_id_suggestion = f"catboost_v9_train{train_start_short}_{train_end_short}"
+        gcs_monthly_path = f"gs://nba-props-platform-models/catboost/v9/monthly/{model_path.name}"
+
+        print("=" * 70)
+        print(" MONTHLY_MODELS CONFIG (paste into catboost_monthly.py)")
+        print("=" * 70)
+        print(f'    "{system_id_suggestion}": {{')
+        print(f'        "model_path": "{gcs_monthly_path}",')
+        print(f'        "train_start": "{dates["train_start"]}",')
+        print(f'        "train_end": "{dates["train_end"]}",')
+        print(f'        "backtest_mae": {round(mae, 3)},')
+        print(f'        "backtest_hit_rate_all": {hr_all},')
+        print(f'        "backtest_hit_rate_edge_3plus": {hr_edge3},')
+        print(f'        "backtest_n_edge_3plus": {bets_edge3},')
+        print(f'        "enabled": True,')
+        print(f'        "description": "{args.name}",')
+        print(f'    }},')
+        print()
+
         print("Next steps:")
-        print(f"  1. Upload: gsutil cp {model_path} gs://nba-props-platform-models/catboost/v9/{model_path.name}")
-        print(f"  2. Register: ./bin/model-registry.sh  (add to BQ + manifest)")
-        print(f"  3. Shadow test 2+ days, then update CATBOOST_V9_MODEL_PATH env var")
+        print(f"  1. Upload: gsutil cp {model_path} {gcs_monthly_path}")
+        print(f"  2. Paste config above into catboost_monthly.py MONTHLY_MODELS dict")
+        print(f"  3. Deploy worker (push to main)")
+        print(f"  4. Monitor: python bin/compare-model-performance.py {system_id_suggestion}")
+        print(f"  5. After 2+ days shadow: promote or retire")
     else:
         print("GATES FAILED — do NOT deploy this model")
         print("Fix the failing gates or try different training parameters")

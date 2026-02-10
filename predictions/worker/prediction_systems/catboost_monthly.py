@@ -1,13 +1,15 @@
 # predictions/worker/prediction_systems/catboost_monthly.py
 
 """
-CatBoost Monthly Models - Configurable Monthly Retraining System
+CatBoost Monthly Models - Configurable Parallel Model System
 
 Session 68 (2026-02-01): Monthly model architecture for continuous improvement.
+Session 177 (2026-02-09): Parallel V9 models — GCS loading, SHA256 tracking,
+    training-date naming convention for running multiple challengers in shadow mode.
 
-This module provides a configurable system for running multiple monthly-retrained
-CatBoost models in parallel. Each model is trained on progressively expanding
-current-season data and identified by its month.
+This module provides a configurable system for running multiple CatBoost V9
+models in parallel. Each model gets its own system_id, runs in shadow mode
+(no impact on user-facing picks or alerts), and is graded independently.
 
 Usage:
     from predictions.worker.prediction_systems.catboost_monthly import (
@@ -21,12 +23,13 @@ Usage:
         result = model.predict(player_lookup, features, betting_line)
         # Each model produces predictions with its own system_id
 
-Adding a New Monthly Model:
-    1. Train model using quick_retrain.py
-    2. Rename to: models/catboost_v9_YYYY_MM.cbm
-    3. Add entry to MONTHLY_MODELS dict below
+Adding a New Challenger Model:
+    1. Train model using quick_retrain.py (prints MONTHLY_MODELS config snippet)
+    2. Upload to GCS: gsutil cp model.cbm gs://nba-props-platform-models/catboost/v9/monthly/
+    3. Add entry to MONTHLY_MODELS dict below with GCS path
     4. Set enabled=True
-    5. Deploy worker
+    5. Deploy worker (push to main triggers auto-deploy)
+    6. Monitor: python bin/compare-model-performance.py <system_id>
 """
 
 import logging
@@ -37,35 +40,49 @@ from predictions.worker.prediction_systems.catboost_v8 import (
     CatBoostV8,
     ModelLoadError,
 )
+from predictions.worker.prediction_systems.catboost_v9 import (
+    _compute_file_sha256,
+)
 
 logger = logging.getLogger(__name__)
 
 
-# Monthly Model Configuration
-# Add new monthly models here. Each entry defines a separate model that runs in parallel.
+# Parallel Model Configuration
+# Each entry runs as a shadow challenger alongside the production champion (catboost_v9).
+# Naming convention: catboost_v9_train{MMDD}_{MMDD} — training dates visible in every BQ query.
+# Challengers don't affect user-facing picks (subset_picks_notifier is champion-only).
 MONTHLY_MODELS = {
     "catboost_v9_2026_02": {
         "model_path": "models/catboost_v9_2026_02.cbm",
         "train_start": "2025-11-02",
         "train_end": "2026-01-24",
-        "eval_start": "2026-01-25",
-        "eval_end": "2026-01-31",
         "mae": 5.0753,
         "hit_rate_overall": 50.84,
         "enabled": False,  # Session 169: Disabled — 50.84% hit rate, UNDER bias (Session 163)
-        "description": "February 2026 monthly model - 84 day training window (DISABLED)",
+        "description": "February 2026 monthly model - DISABLED",
     },
-    # Add future monthly models here:
-    # "catboost_v9_2026_03": {
-    #     "model_path": "models/catboost_v9_2026_03.cbm",
+    "catboost_v9_train1102_0108": {
+        "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_train20251102-20260108_20260209_175818.cbm",
+        "train_start": "2025-11-02",
+        "train_end": "2026-01-08",
+        "backtest_mae": 4.784,
+        "backtest_hit_rate_all": 62.4,
+        "backtest_hit_rate_edge_3plus": 87.0,
+        "backtest_n_edge_3plus": 131,
+        "enabled": True,
+        "description": "V9_BASELINE_CLEAN — same train dates as prod, better feature quality",
+    },
+    # Add future challenger models here (quick_retrain.py prints config snippets):
+    # "catboost_v9_train1102_0208": {
+    #     "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/...",
     #     "train_start": "2025-11-02",
-    #     "train_end": "2026-02-28",
-    #     "eval_start": "2026-03-01",
-    #     "eval_end": "2026-03-07",
-    #     "mae": None,  # Fill in after training
-    #     "hit_rate_overall": None,
+    #     "train_end": "2026-02-08",
+    #     "backtest_mae": None,
+    #     "backtest_hit_rate_all": None,
+    #     "backtest_hit_rate_edge_3plus": None,
+    #     "backtest_n_edge_3plus": None,
     #     "enabled": True,
-    #     "description": "March 2026 monthly model - 118 day training window",
+    #     "description": "Extended training window challenger",
     # },
 }
 
@@ -111,6 +128,8 @@ class CatBoostMonthly(CatBoostV8):
         self.model = None
         self._load_attempts = 0
         self._last_load_error = None
+        self._model_file_name = None
+        self._model_sha256 = None
 
         # Load the specific monthly model
         model_path = self.config["model_path"]
@@ -119,27 +138,54 @@ class CatBoostMonthly(CatBoostV8):
         logger.info(
             f"CatBoost Monthly model loaded: {model_id} "
             f"(trained {self.config['train_start']} to {self.config['train_end']}, "
-            f"MAE={self.config.get('mae', 'N/A')})"
+            f"file={self._model_file_name}, sha256={self._model_sha256})"
         )
 
     def _load_model_from_path(self, model_path: str):
-        """Load monthly model from local path."""
+        """Load monthly model from local path or GCS.
+
+        Session 177: Ported GCS loading from CatBoostV9 to support cloud-stored
+        challenger models. Each model downloads to a unique /tmp path to avoid
+        collisions when multiple models load simultaneously.
+        """
         import catboost as cb
 
-        # Resolve relative path from repository root
-        if not model_path.startswith('/') and not model_path.startswith('gs://'):
-            repo_root = Path(__file__).parent.parent.parent.parent
-            model_path = str(repo_root / model_path)
-
-        if not Path(model_path).exists():
-            raise ModelLoadError(
-                f"Monthly model file not found: {model_path}. "
-                f"Expected for model_id: {self.model_id}"
-            )
-
         logger.info(f"Loading CatBoost monthly model from: {model_path}")
-        self.model = cb.CatBoostRegressor()
-        self.model.load_model(model_path)
+
+        if model_path.startswith("gs://"):
+            # Load from GCS — unique temp file per model_id to avoid collisions
+            from shared.clients import get_storage_client
+            parts = model_path.replace("gs://", "").split("/", 1)
+            bucket_name, blob_path = parts[0], parts[1]
+
+            client = get_storage_client()
+            bucket = client.bucket(bucket_name)
+            blob = bucket.blob(blob_path)
+            local_path = f"/tmp/catboost_monthly_{self.model_id}.cbm"
+            blob.download_to_filename(local_path)
+            logger.info(f"Downloaded monthly model from GCS to {local_path}")
+
+            self.model = cb.CatBoostRegressor()
+            self.model.load_model(local_path)
+            self._model_file_name = Path(blob_path).name
+            self._model_sha256 = _compute_file_sha256(local_path)
+        else:
+            # Resolve relative path from repository root
+            if not model_path.startswith('/'):
+                repo_root = Path(__file__).parent.parent.parent.parent
+                model_path = str(repo_root / model_path)
+
+            if not Path(model_path).exists():
+                raise ModelLoadError(
+                    f"Monthly model file not found: {model_path}. "
+                    f"Expected for model_id: {self.model_id}"
+                )
+
+            self.model = cb.CatBoostRegressor()
+            self.model.load_model(model_path)
+            self._model_file_name = Path(model_path).name
+            self._model_sha256 = _compute_file_sha256(model_path)
+
         self._model_path = model_path
 
     def predict(
@@ -179,7 +225,15 @@ class CatBoostMonthly(CatBoostV8):
                 f"{self.config['train_start']} to {self.config['train_end']}"
             )
             result['model_type'] = 'monthly_retrain'
-            result['training_mae'] = self.config.get('mae')
+            result['training_mae'] = self.config.get('mae') or self.config.get('backtest_mae')
+
+            # Session 177: Model attribution metadata for format_prediction_for_bigquery
+            if 'metadata' not in result:
+                result['metadata'] = {}
+            result['metadata']['model_file_name'] = self._model_file_name
+            result['metadata']['model_sha256'] = self._model_sha256
+            result['metadata']['model_version'] = self.model_id
+            result['metadata']['system_id'] = self.model_id
 
         return result
 
@@ -199,6 +253,8 @@ class CatBoostMonthly(CatBoostV8):
             "system_id": self.model_id,
             "model_version": self.model_id,
             "model_path": getattr(self, '_model_path', 'unknown'),
+            "model_file_name": self._model_file_name,
+            "model_sha256": self._model_sha256,
             "config": self.config,
             "feature_count": 33,
             "status": "loaded" if self.model is not None else "not_loaded",
