@@ -1,57 +1,59 @@
-Read docs/09-handoff/2026-02-10-SESSION-185-HANDOFF.md for full context. Session 185 deployed 3 bug fixes, cleaned up postponed games, and assessed model promotion.
+Read docs/09-handoff/2026-02-10-SESSION-186-HANDOFF.md for full context. Session 186 ran 22 experiments and discovered that **quantile regression (alpha 0.43) creates staleness-independent edge** — the first approach in 85+ experiments to break the retrain paradox.
 
 **P0 (Immediate):**
 
-1. **Verify Phase 2→3 trigger fired overnight.** Session 184 fixed name mapping typos — deployed in Session 185. Check if `_triggered: True` for last night's games:
+1. **Check if Feb 10 games have been graded:**
    ```bash
-   python3 -c "
-   from google.cloud import firestore; import datetime
-   db = firestore.Client(project='nba-props-platform')
-   yesterday = (datetime.datetime.now() - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-   doc = db.collection('phase2_completion').document(yesterday).get()
-   print(f'Phase 2 {yesterday}: _triggered={doc.to_dict().get(\"_triggered\", False)}' if doc.exists else 'No record')
-   "
+   bq query --use_legacy_sql=false "SELECT game_date, COUNT(*) as n FROM nba_predictions.prediction_accuracy WHERE game_date = '2026-02-10' GROUP BY 1"
+   ```
+   If not graded:
+   ```bash
+   gcloud pubsub topics publish nba-grading-trigger --message='{"target_date":"2026-02-10","trigger_source":"manual"}' --project=nba-props-platform
    ```
 
-2. **Check grading is caught up.** Session 185 deployed grading service (was 4 commits behind) and triggered backfill for Feb 8-9:
+2. **Run model comparison** to track champion decay and challenger performance:
    ```bash
-   bq query --use_legacy_sql=false "
-   SELECT game_date, COUNT(*) as n FROM nba_predictions.prediction_accuracy
-   WHERE game_date >= '2026-02-08' AND system_id = 'catboost_v9' GROUP BY 1 ORDER BY 1 DESC"
+   PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_train1102_0131_tuned --days 7
    ```
 
-3. **Run /validate-daily** for pipeline health.
+3. **Deploy QUANT_43 as shadow model.** This is the first model that works when fresh. Steps:
+   - Train: `PYTHONPATH=. python ml/experiments/quick_retrain.py --name "Q43_SHADOW" --quantile-alpha 0.43 --train-start 2025-11-02 --train-end 2026-01-31 --eval-start 2026-02-01 --eval-end 2026-02-10 --walkforward --force`
+   - Upload model to GCS
+   - Add config to `catboost_monthly.py` with system_id `catboost_v9_q43_train1102_0131`
+   - Deploy worker
+   - Monitor: `python bin/compare-model-performance.py catboost_v9_q43_train1102_0131 --days 7`
 
-**P1 (Model Promotion — target ~Feb 17-20):**
+**P1 (Validation — ~Feb 15-17):**
 
-Champion is at 43.7% weekly HR and decaying fast (was 59.1% three weeks prior). Jan 31 challengers have 53-54% HR All but only ~3 edge 3+ picks/week (retrain paradox). Jan 8 clean has 70.8% edge 3+ HR but only ~12/week.
-
-**NOT READY yet.** Wait for Jan 31 models to age and naturally diverge from Vegas. Reassess:
+Re-run QUANT_43 with 2+ weeks of eval data to validate the 65.8% HR finding at larger sample:
 ```bash
-PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_train1102_0131_tuned --days 14
-```
-
-Look for: Jan 31 tuned generating 10+ edge 3+ picks/week with HR >= 55%.
-
-**P2 (Extended Experiments — when 2+ weeks eval data available):**
-
-```bash
-PYTHONPATH=. python ml/experiments/quick_retrain.py --name "C1_CHAOS_EXT2" \
-  --rsm 0.3 --random-strength 10 --subsample 0.5 --bootstrap Bernoulli \
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "Q43_EXT" \
+  --quantile-alpha 0.43 \
   --train-start 2025-11-02 --train-end 2026-01-31 \
   --eval-start 2026-02-01 --eval-end 2026-02-15 --walkforward --force
 ```
+Also try alpha 0.42 and 0.44 to narrow the sweet spot.
 
-**P3 (Other Follow-ups):**
-- Fix breakout classifier feature mismatch (shadow mode, not blocking)
-- Optional: Delay overnight Phase 3/4 schedulers from 6→8 AM ET (reduces log noise)
+**P2 (Promotion — ~Feb 17-20):**
 
-**Key context from Sessions 179-185:**
-- 63+ experiments, none beat controlled staleness for betting performance
-- Retrain paradox: fresher models = fewer edge picks = less profit
-- Champion at 43.7% this week — below breakeven after vig
-- Postponed games cleaned up (Jan 8, 24, 25) — 420 predictions deactivated, schedule updated to game_status=9
-- Phase 2→3 trigger was completely broken due to name typo — now fixed and deployed
-- Grading service was 4 commits behind — now deployed with Session 170/175 fixes
+If QUANT_43 shadow validates at 55%+ HR in production (accounting for 5-10pp backtest gap):
+- Promote as new champion
+- Update governance gates for quantile models (UNDER-heavy by design, relax OVER gate)
+- Establish bi-weekly retraining cadence (staleness doesn't matter for quantile)
+
+**P3 (Research):**
+- QUANT_43 + recency weighting (--recency-weight 30)
+- UNDER-only deployment mode for quantile models
+- Quantile regression for breakout classifier
+
+**Key discovery from Session 186:**
+- QUANT_43 gets **65.8% HR 3+ when fresh** vs BASELINE's 33.3% on same data
+- QUANT_43 drops only **3.3pp** across eval windows vs BASELINE's **49.2pp** drop
+- Edge comes from systematic prediction bias (loss function), not model drift (staleness)
+- Best segments: Starters UNDER 85.7%, High Lines 76.5%, Edge [3-5) 71.4%
+- Combos (NO_VEG + quantile, CHAOS + quantile) perform WORSE — don't stack
+- Grow policy changes (Depthwise, Lossguide) = dead ends for edge generation
+
+**85 total experiments across Sessions 179-186.**
 
 Use agents in parallel where possible.
