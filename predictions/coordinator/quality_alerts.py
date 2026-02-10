@@ -12,6 +12,7 @@ Sends alerts when prediction quality issues are detected:
 - MORNING_SUMMARY: Daily morning prediction/line coverage summary (Session 152)
 - RECOMMENDATION_SKEW: >85% of recs are same direction (Session 171)
 - VEGAS_SOURCE_RECOVERY_HIGH: >30% of predictions used recovery_median (Session 171)
+- RECOMMENDATION_DIRECTION_MISMATCH: pred > line but rec = UNDER or vice versa (Session 176)
 """
 
 import logging
@@ -768,3 +769,85 @@ Threshold: alert if recovery_median > 30%.
         logger.warning("Slack alerting not available - alert logged only")
     except Exception as e:
         logger.error(f"Failed to send VEGAS_SOURCE_RECOVERY_HIGH Slack alert: {e}")
+
+
+def send_direction_mismatch_alert(
+    game_date: date,
+    run_mode: str,
+    above_but_under: int,
+    below_but_over: int,
+    total: int,
+):
+    """
+    Session 176: Alert when predictions have recommendation direction mismatches.
+
+    Catches cases where predicted > line but recommendation = UNDER (or vice versa).
+    The worker's defense-in-depth should prevent these, so any occurrence indicates
+    a bypass or regression.
+
+    Args:
+        game_date: Date predictions are for
+        run_mode: Prediction run mode
+        above_but_under: Count of pred > line marked UNDER
+        below_but_over: Count of pred < line marked OVER
+        total: Total active predictions with lines
+    """
+    mismatch_count = above_but_under + below_but_over
+    mismatch_pct = (mismatch_count / total * 100) if total > 0 else 0
+
+    severity = "CRITICAL" if mismatch_count > 0 else "INFO"
+    emoji = ":rotating_light:" if severity == "CRITICAL" else ":white_check_mark:"
+
+    message = f"""{emoji} *RECOMMENDATION DIRECTION CHECK* ({severity})
+
+*{game_date}* ({run_mode}) — {mismatch_count} mismatches out of {total} predictions
+
+```
+Above line + UNDER: {above_but_under}
+Below line + OVER:  {below_but_over}
+Total with lines:   {total}
+```
+
+*Impact:* Direction mismatches mean recommendations contradict the model's own prediction.
+*Next steps:* If non-zero, check worker.py direction validation and multi-line logic.
+"""
+
+    alert = QualityAlert(
+        alert_type="RECOMMENDATION_DIRECTION_MISMATCH",
+        severity=severity,
+        message=f"{mismatch_count} direction mismatches for {game_date} ({run_mode})",
+        details={
+            'game_date': str(game_date),
+            'run_mode': run_mode,
+            'above_but_under': above_but_under,
+            'below_but_over': below_but_over,
+            'mismatch_count': mismatch_count,
+            'total': total,
+        }
+    )
+
+    log_level = logging.ERROR if severity == "CRITICAL" else logging.INFO
+    logger.log(
+        log_level,
+        f"QUALITY_ALERT: RECOMMENDATION_DIRECTION - {mismatch_count} mismatches for {game_date}",
+        extra={
+            'alert_type': 'RECOMMENDATION_DIRECTION_MISMATCH',
+            'severity': severity,
+            'details': alert.details,
+        }
+    )
+
+    # Only send Slack alert if there are actual mismatches
+    if mismatch_count > 0:
+        try:
+            from shared.utils.slack_alerts import send_slack_alert
+            send_slack_alert(
+                message=message,
+                channel="#nba-alerts",
+                alert_type="RECOMMENDATION_DIRECTION_MISMATCH",
+            )
+            logger.info("Sent RECOMMENDATION_DIRECTION_MISMATCH Slack alert")
+        except ImportError:
+            logger.warning("Slack alerting not available - alert logged only")
+        except Exception as e:
+            logger.error(f"Failed to send RECOMMENDATION_DIRECTION_MISMATCH Slack alert: {e}")

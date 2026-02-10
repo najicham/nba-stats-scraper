@@ -1589,6 +1589,9 @@ def regenerate_with_supersede():
     """
     HTTP endpoint for prediction regeneration (authenticated).
 
+    Returns 202 Accepted immediately and processes regeneration in a background
+    thread. Use /status to poll for completion.
+
     This endpoint is for direct HTTP calls requiring API key authentication.
     For Pub/Sub-triggered regeneration, use /regenerate-pubsub.
 
@@ -1603,13 +1606,12 @@ def regenerate_with_supersede():
         }
     }
 
-    Response:
+    Response (202 Accepted):
     {
-        "status": "success",
+        "status": "accepted",
         "game_date": "2026-01-17",
-        "superseded_count": 142,
-        "regenerated_count": 145,
-        "processing_time_seconds": 12.3
+        "batch_id": "regen_2026-01-17_bdb_upgrade_1770685280",
+        "note": "Regeneration started in background. Poll /status for progress."
     }
     """
     try:
@@ -1619,13 +1621,51 @@ def regenerate_with_supersede():
         reason = data.get('reason', 'feature_upgrade')
         metadata = data.get('metadata', {})
 
-        # Call internal regeneration function
-        result = _regenerate_with_supersede_internal(game_date, reason, metadata)
+        # Validate game_date format
+        datetime.strptime(game_date, '%Y-%m-%d')
 
-        # Return appropriate status code
-        status_code = 200 if result['status'] == 'success' else 500
-        return jsonify(result), status_code
+        # Generate batch_id upfront so we can return it immediately
+        batch_id = f"regen_{game_date}_{reason}_{int(time.time())}"
 
+        # Run regeneration in background thread (Session 176)
+        def _run_regeneration():
+            try:
+                result = _regenerate_with_supersede_internal(game_date, reason, metadata)
+                if result['status'] == 'success':
+                    logger.info(
+                        f"Background regeneration completed for {game_date}: "
+                        f"{result.get('regenerated_count', 0)} predictions published"
+                    )
+                else:
+                    logger.error(
+                        f"Background regeneration failed for {game_date}: "
+                        f"{result.get('error', 'unknown')}"
+                    )
+            except Exception as e:
+                logger.error(f"Background regeneration crashed for {game_date}: {e}", exc_info=True)
+
+        thread = threading.Thread(target=_run_regeneration, daemon=True)
+        thread.start()
+
+        logger.info(f"Regeneration accepted for {game_date}, reason={reason}, processing in background")
+
+        return jsonify({
+            'status': 'accepted',
+            'game_date': game_date,
+            'batch_id': batch_id,
+            'note': 'Regeneration started in background. Poll /status for progress.'
+        }), 202
+
+    except KeyError:
+        return jsonify({
+            'status': 'error',
+            'error': 'Missing required field: game_date'
+        }), 400
+    except ValueError as e:
+        return jsonify({
+            'status': 'error',
+            'error': f'Invalid game_date format (expected YYYY-MM-DD): {e}'
+        }), 400
     except Exception as e:
         logger.error(f"Prediction regeneration failed: {e}", exc_info=True)
         return jsonify({
@@ -3445,7 +3485,8 @@ def publish_batch_summary_from_firestore(batch_id: str):
                 # Step 1.4: Check batch PVL bias (Session 170) + skew & vegas source (Session 171)
                 try:
                     from predictions.coordinator.quality_alerts import (
-                        send_pvl_bias_alert, send_recommendation_skew_alert, send_vegas_source_alert
+                        send_pvl_bias_alert, send_recommendation_skew_alert,
+                        send_vegas_source_alert, send_direction_mismatch_alert
                     )
                     pvl_query = f"""
                     SELECT
@@ -3555,6 +3596,39 @@ def publish_batch_summary_from_firestore(batch_id: str):
                         )
                     else:
                         logger.info("Vegas source check: no predictions found")
+
+                    # Session 176: Check recommendation direction alignment
+                    direction_query = f"""
+                    SELECT
+                        COUNTIF(predicted_points > current_points_line AND recommendation = 'UNDER') as above_but_under,
+                        COUNTIF(predicted_points < current_points_line AND recommendation = 'OVER') as below_but_over,
+                        COUNT(*) as total,
+                        prediction_run_mode
+                    FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+                    WHERE game_date = @game_date
+                      AND system_id = 'catboost_v9'
+                      AND is_active = TRUE
+                      AND current_points_line IS NOT NULL
+                    GROUP BY prediction_run_mode
+                    """
+                    dir_rows = list(pvl_client.query(direction_query, job_config=pvl_config).result())
+                    for dir_row in dir_rows:
+                        abu = dir_row.above_but_under or 0
+                        bbo = dir_row.below_but_over or 0
+                        d_total = dir_row.total or 0
+                        if abu + bbo > 0:
+                            send_direction_mismatch_alert(
+                                game_date=game_date,
+                                run_mode=dir_row.prediction_run_mode or 'UNKNOWN',
+                                above_but_under=abu,
+                                below_but_over=bbo,
+                                total=d_total,
+                            )
+                        else:
+                            logger.info(
+                                f"Direction alignment OK: 0 mismatches out of {d_total} "
+                                f"({dir_row.prediction_run_mode})"
+                            )
 
                 except Exception as pvl_err:
                     logger.warning(f"Post-consolidation quality checks failed (non-fatal): {pvl_err}")
@@ -3712,7 +3786,8 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
                 # Step 1.4: Check batch PVL bias (Session 170) + skew & vegas source (Session 171)
                 try:
                     from predictions.coordinator.quality_alerts import (
-                        send_pvl_bias_alert, send_recommendation_skew_alert, send_vegas_source_alert
+                        send_pvl_bias_alert, send_recommendation_skew_alert,
+                        send_vegas_source_alert, send_direction_mismatch_alert
                     )
                     pvl_query = f"""
                     SELECT
@@ -3822,6 +3897,39 @@ def publish_batch_summary(tracker: ProgressTracker, batch_id: str):
                         )
                     else:
                         logger.info("Vegas source check: no predictions found")
+
+                    # Session 176: Check recommendation direction alignment
+                    direction_query = f"""
+                    SELECT
+                        COUNTIF(predicted_points > current_points_line AND recommendation = 'UNDER') as above_but_under,
+                        COUNTIF(predicted_points < current_points_line AND recommendation = 'OVER') as below_but_over,
+                        COUNT(*) as total,
+                        prediction_run_mode
+                    FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+                    WHERE game_date = @game_date
+                      AND system_id = 'catboost_v9'
+                      AND is_active = TRUE
+                      AND current_points_line IS NOT NULL
+                    GROUP BY prediction_run_mode
+                    """
+                    dir_rows = list(pvl_client.query(direction_query, job_config=pvl_config).result())
+                    for dir_row in dir_rows:
+                        abu = dir_row.above_but_under or 0
+                        bbo = dir_row.below_but_over or 0
+                        d_total = dir_row.total or 0
+                        if abu + bbo > 0:
+                            send_direction_mismatch_alert(
+                                game_date=game_date,
+                                run_mode=dir_row.prediction_run_mode or 'UNKNOWN',
+                                above_but_under=abu,
+                                below_but_over=bbo,
+                                total=d_total,
+                            )
+                        else:
+                            logger.info(
+                                f"Direction alignment OK: 0 mismatches out of {d_total} "
+                                f"({dir_row.prediction_run_mode})"
+                            )
 
                 except Exception as pvl_err:
                     logger.warning(f"Post-consolidation quality checks failed (non-fatal): {pvl_err}")

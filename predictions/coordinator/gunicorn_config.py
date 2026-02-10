@@ -13,7 +13,7 @@ port = os.environ.get("PORT", "8080")
 bind = f"0.0.0.0:{port}"
 workers = 1
 threads = 8
-timeout = 300
+timeout = 540  # Match Cloud Run timeout (Session 176)
 worker_class = "sync"
 
 # Logging configuration
