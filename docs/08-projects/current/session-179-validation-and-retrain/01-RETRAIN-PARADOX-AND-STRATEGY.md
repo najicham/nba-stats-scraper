@@ -251,49 +251,98 @@ recommendation = OVER if edge > threshold else UNDER
 
 ---
 
-## Recommended Experiment Priority
+## Empirical Results: A1 Vegas Weight Sweep (Sessions 180, 182)
 
-| Priority | Approach | Why |
-|----------|----------|-----|
-| **1** | Feature Weighting (#7) | Explores the entire spectrum, most informative, zero risk |
-| **2** | Residual Modeling (#2) | Directly addresses the problem, code ported from archive |
-| **3** | Two-Stage Pipeline (#4) | Cleanest separation of prediction vs edge |
-| **4** | Feature Exclusion (#1) | Simplest binary test, baseline for comparison |
-| **5** | Edge Threshold Analysis (#6) | Low effort, may find quick win |
-| **6** | Controlled Staleness (#5) | Operational fallback if nothing else works |
-| **7** | Profit-Optimized Loss (#3) | Highest effort, most uncertain |
+**Status:** COMPLETE — 6 experiments run, all failed governance gates.
+
+| Experiment | Vegas Weight | Vegas Imp% | Overall HR | E3+ N | E3+ HR | MAE |
+|-----------|-------------|-----------|-----------|-------|--------|-----|
+| A1a BASELINE | 1.0 | 33.4% | 59.0% | 5 | 20.0% | 4.97 |
+| A1b VEG10 | 0.1 | 12.1% | 54.9% | 32 | 50.0% | 5.12 |
+| A1c VEG30 | 0.3 | 15.8% | 52.0% | 27 | 44.4% | 5.13 |
+| A1d VEG50 | 0.5 | 17.0% | 54.9% | 21 | 52.4% | 5.02 |
+| A1e VEG70 | 0.7 | 23.5% | 60.6% | 15 | 46.7% | 5.01 |
+| A1f NO_VEG | 0.0 | 0% | 50.0% | 54 | 51.9% | 5.36 |
+
+**Key findings:**
+1. **Volume-accuracy trade-off is smooth and linear.** Less Vegas = more edge picks but ~50% HR. No sweet spot exists.
+2. **OVER direction broken across all weights.** OVER HR capped at 37.5%. UNDER consistently profitable (50-62% HR).
+3. **Niche segments are profitable:** UNDER + High Lines (>20.5) hits 70-80% HR across models. NO_VEG model has richest niches (Starters UNDER 83.3%, Edge 7+ 83.3%).
+4. **Feature importance inflection at vegas=0.5.** Below this, player stats dominate.
+
+**Full results with segmented breakdowns:** See `03-A1-VEGAS-WEIGHT-SWEEP-RESULTS.md`
+
+## Empirical Results: Full 34-Experiment Sweep (Session 180)
+
+**Status:** COMPLETE — no experiment passed all governance gates.
+
+Session 180 ran 34 experiments across 7 groups (A1-A5, B1-B5, C1-C8). Key results:
+- **No experiment achieved 50+ edge 3+ picks AND 58%+ HR simultaneously**
+- **Two promising leads at small sample:**
+  - C4_MATCHUP_ONLY: 60.0% HR (n=25) — matchup features weighted 3x
+  - C1_CHAOS: 58.3% HR (n=12) — extreme randomization (rsm=0.3, random_strength=10)
+- **Systematic OVER weakness across all 34 experiments** (OVER HR never exceeded 54.5%)
+- **Best volume:** C8_MAE_2STG (61 picks, 50.8% HR) and B3_KITCHEN (60 picks, 51.7% HR)
+
+**Full results:** See `docs/09-handoff/2026-02-09-SESSION-180-HANDOFF.md`
+
+---
+
+## Updated Experiment Priority
+
+| Priority | Approach | Status | Result |
+|----------|----------|--------|--------|
+| ~~**1**~~ | ~~Feature Weighting (#7)~~ | **DONE (Sessions 180, 182)** | No variant passes gates. Confirms paradox. |
+| ~~**4**~~ | ~~Feature Exclusion (#1)~~ | **DONE (A1f NO_VEG)** | 54 picks at 51.9% HR. Best niche segments. |
+| **NEW 1** | Segment-Restricted Deployment | TODO | Deploy UNDER-only picks above line threshold. Needs extended eval. |
+| **NEW 2** | Extended Eval (C1, C4) | TODO (~Feb 15+) | Re-run promising experiments with 2+ weeks eval |
+| **2** | Residual Modeling (#2) | DONE (B4, C6) — FAILED | 30% HR with aggressive regularization. Retry with lighter settings. |
+| **3** | Two-Stage Pipeline (#4) | DONE (B5, C8) — Mixed | 46-61 picks at 50-52% HR. Volume but coinflip accuracy. |
+| **5** | Edge Threshold Analysis (#6) | Implicit in shadow models | Jan 31 tuned at 55.1% HR uses low edge threshold |
+| **6** | Controlled Staleness (#5) | Active (champion) | Champion's staleness IS the edge mechanism. Confirmed. |
+| **7** | Profit-Optimized Loss (#3) | Not attempted | Consider after extended eval results |
 
 ---
 
 ## Implementation Plan
 
-### Phase 1: Vegas Weight Sweep (Session 179 — READY NOW)
+### Phase 1: Vegas Weight Sweep — COMPLETE (Session 179-182)
 
-All integrated into `quick_retrain.py` with `--category-weight` and `--feature-weights`:
+All 6 experiments run with `--category-weight` and `--no-vegas`. Results in `03-A1-VEGAS-WEIGHT-SWEEP-RESULTS.md`.
 
-1. **Vegas dampening sweep** — `vegas=0.1`, `0.3`, `0.5`, `0.7` (find the sweet spot)
-2. **Feature exclusion baseline** — `--no-vegas` (binary comparison point)
-3. **Residual modeling** — `--residual` (predict where Vegas is wrong)
-4. **Two-stage pipeline** — `--two-stage` (independent prediction → edge computation)
-5. **Quantile regression** — `--quantile-alpha 0.55` (bias predictions upward)
+### Phase 2: Full Parameter Space — COMPLETE (Session 180)
 
-### Phase 2: Boost + Dampen Combos
+34 experiments across RSM, loss functions, tree structures, bootstrap methods, and creative combos. All results in `nba_predictions.ml_experiments` and `docs/09-handoff/2026-02-09-SESSION-180-HANDOFF.md`.
 
-6. **Boost player + dampen vegas** — `vegas=0.3,recent_performance=2.0`
-7. **Boost matchup + dampen vegas** — `vegas=0.3,matchup=2.0,derived=1.5`
-8. **Surgical: dampen only vegas_points_line** — `vegas_points_line=0.1` (keep opening/move)
+### Phase 3: Extended Evaluation — TODO (~Feb 15+)
 
-### Phase 3: Combined Modes
+Re-run C1_CHAOS and C4_MATCHUP_ONLY with 2+ weeks of eval data:
+```bash
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "C1_CHAOS_EXT" \
+  --rsm 0.3 --random-strength 10 --subsample 0.5 --bootstrap Bernoulli \
+  --train-start 2025-11-02 --train-end 2026-01-31 \
+  --eval-start 2026-02-01 --eval-end 2026-02-15 --walkforward --force
 
-9. **Quantile + dampened vegas** — `--quantile-alpha 0.55 --category-weight "vegas=0.3"`
-10. **Residual + boosted player** — `--residual --category-weight "recent_performance=2.0"`
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "C4_MATCHUP_EXT" \
+  --category-weight "matchup=3.0" \
+  --train-start 2025-11-02 --train-end 2026-01-31 \
+  --eval-start 2026-02-01 --eval-end 2026-02-15 --walkforward --force
+```
 
-### Phase 4: Advanced (future)
+Also re-run A1b (VEG10), A1d (VEG50), A1f (NO_VEG) with extended eval to validate niche segments.
 
-11. **Custom loss function** — CatBoost custom objective optimizing for profitability
-12. **Ensemble approaches** — combine residual + weighted + standard models
+### Phase 4: Segment-Restricted Deployment — TODO
 
-See `.claude/skills/model-experiment/SKILL.md` for ready-to-paste commands for all experiments.
+If UNDER + High Lines segment holds at 2+ weeks:
+1. Define custom actionability logic (UNDER-only, line > 20.5)
+2. Deploy NO_VEG or VEG50 model with segment filter
+3. Signal system changes for restricted picks
+
+### Phase 5: Advanced (future)
+
+- Custom loss function (CatBoost custom objective)
+- Ensemble approaches (combine NO_VEG + champion + matchup model)
+- Residual mode retry with lighter regularization
 
 ---
 
@@ -302,8 +351,10 @@ See `.claude/skills/model-experiment/SKILL.md` for ready-to-paste commands for a
 | Purpose | File |
 |---------|------|
 | Current trainer | `ml/experiments/quick_retrain.py` |
+| A1 sweep results | `docs/08-projects/current/session-179-validation-and-retrain/03-A1-VEGAS-WEIGHT-SWEEP-RESULTS.md` |
 | Archive residual code | `ml/archive/experiments/bias_fix_experiments.py` |
 | Feature contract | `shared/ml/feature_contract.py` |
 | Experiment tracking | `schemas/bigquery/nba_predictions/ml_experiments.sql` |
 | Skill definition | `.claude/skills/model-experiment/SKILL.md` |
 | Hyperparameters guide | `docs/08-projects/current/retrain-infrastructure/04-HYPERPARAMETERS-AND-TUNING.md` |
+| Full 34-experiment results | `docs/09-handoff/2026-02-09-SESSION-180-HANDOFF.md` |
