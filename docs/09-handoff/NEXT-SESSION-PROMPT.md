@@ -2,16 +2,23 @@ Read docs/09-handoff/2026-02-10-SESSION-186-HANDOFF.md for full context. Session
 
 **P0 (Immediate):**
 
-1. **Check if Feb 10 games have been graded:**
+1. **Run model landscape to check all shadows at once:**
    ```bash
-   bq query --use_legacy_sql=false "SELECT game_date, COUNT(*) as n FROM nba_predictions.prediction_accuracy WHERE game_date = '2026-02-10' GROUP BY 1"
+   PYTHONPATH=. python bin/compare-model-performance.py --all --days 7
    ```
-   If not graded:
+
+2. **Check quantile shadows with segment breakdowns:**
+   ```bash
+   PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_q43_train1102_0131 --segments --days 7
+   PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_q45_train1102_0131 --segments --days 7
+   ```
+
+3. **If no graded data yet, trigger grading:**
    ```bash
    gcloud pubsub topics publish nba-grading-trigger --message='{"target_date":"2026-02-10","trigger_source":"manual"}' --project=nba-props-platform
    ```
 
-2. **Check quantile shadows are generating predictions:**
+4. **Check quantile shadows are generating predictions:**
    ```bash
    bq query --use_legacy_sql=false "
    SELECT system_id, game_date, COUNT(*) as n
@@ -21,21 +28,15 @@ Read docs/09-handoff/2026-02-10-SESSION-186-HANDOFF.md for full context. Session
    GROUP BY 1, 2 ORDER BY 2 DESC, 1"
    ```
 
-3. **Run model comparison** across all shadows:
-   ```bash
-   PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_q43_train1102_0131 --days 7
-   PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_q45_train1102_0131 --days 7
-   ```
-
 **Active shadow roster (4 models + champion):**
 
-| system_id | Type | Purpose | Watch For |
-|-----------|------|---------|-----------|
-| `catboost_v9` (champion) | RMSE, Jan 8 | Baseline | Below breakeven (47.9% edge 3+), decaying |
-| `catboost_v9_train1102_0108` | RMSE, Jan 8, clean | Best current edge HR | 58.3% edge 3+ (n=12) |
-| `catboost_v9_train1102_0131_tuned` | RMSE, Jan 31, tuned | Same data as quantile models | 53.4% HR All but only 6 edge picks |
-| `catboost_v9_q43_train1102_0131` | **Quantile 0.43**, Jan 31 | Session 186 discovery | Expect 55-60% HR, UNDER-heavy |
-| `catboost_v9_q45_train1102_0131` | **Quantile 0.45**, Jan 31 | Less aggressive quantile | Expect similar, fewer edge picks |
+| system_id | Type | Strengths | Watch For |
+|-----------|------|-----------|-----------|
+| `catboost_v9` (champion) | RMSE, Jan 8 | All-around but decaying | Below breakeven (47.9% edge 3+) |
+| `catboost_v9_train1102_0108` | RMSE, Jan 8, clean | Best edge HR (58.3%), balanced | Sustained edge vs champion |
+| `catboost_v9_train1102_0131_tuned` | RMSE, Jan 31, tuned | RMSE baseline | Few edge picks (n=6) |
+| `catboost_v9_q43_train1102_0131` | **Quantile 0.43**, Jan 31 | UNDER specialist: Starters UNDER 85.7%, High Lines 76.5% | UNDER HR >= 60%, staleness stability |
+| `catboost_v9_q45_train1102_0131` | **Quantile 0.45**, Jan 31 | Less aggressive: Role UNDER 78.6% | UNDER HR >= 58%, pick volume |
 
 **Retired:** `_0131` defaults (redundant with `_tuned`), `_0208`/`_0208_tuned` (contaminated).
 
@@ -75,6 +76,8 @@ If either quantile shadow validates at 55%+ HR in production (accounting for 5-1
 - Combos (NO_VEG + quantile, CHAOS + quantile) perform WORSE — don't stack
 - Grow policy changes (Depthwise, Lossguide) = dead ends for edge generation
 - Champion at 47.9% edge 3+ HR (Feb 2 week), 33 days stale, below breakeven
+
+**Monitoring docs:** `docs/08-projects/current/session-179-validation-and-retrain/06-MODEL-MONITORING-STRATEGY.md`
 
 **85 total experiments across Sessions 179-186.**
 

@@ -71,6 +71,13 @@ MONTHLY_MODELS = {
         "backtest_n_edge_3plus": 131,
         "enabled": True,
         "description": "V9_BASELINE_CLEAN — same train dates as prod, better feature quality",
+        "strengths": {
+            "direction": "balanced",
+            "tiers": ["Stars", "Starters"],
+            "line_range": "Mid (12.5-20.5)",
+            "edge_bucket": "[3-5)",
+            "summary": "Best current edge 3+ HR (58.3%), balanced OVER/UNDER",
+        },
     },
     "catboost_v9_train1102_0208": {
         "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_train20251102-20260208_20260209_172523.cbm",
@@ -115,6 +122,13 @@ MONTHLY_MODELS = {
         "backtest_n_edge_3plus": 6,
         "enabled": True,
         "description": "V9_JAN31_TUNED — extended training (91 days), tuned (depth=5,l2=5,lr=0.03) + recency 30d, clean eval Feb 1-8",
+        "strengths": {
+            "direction": "balanced",
+            "tiers": [],
+            "line_range": "all",
+            "edge_bucket": "all",
+            "summary": "RMSE baseline comparison — few edge picks, 53.4% HR All",
+        },
     },
     "catboost_v9_q43_train1102_0131": {
         "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_q0.43_train20251102-20260131_20260210_094854.cbm",
@@ -126,6 +140,13 @@ MONTHLY_MODELS = {
         "backtest_n_edge_3plus": 38,
         "enabled": True,
         "description": "Q43_SHADOW — quantile alpha=0.43, staleness-independent edge (Session 186). 65.8% HR 3+ when fresh, 67.6% UNDER HR.",
+        "strengths": {
+            "direction": "UNDER",
+            "tiers": ["Starters", "Role", "Stars"],
+            "line_range": "High (>20.5)",
+            "edge_bucket": "[3-5)",
+            "summary": "UNDER specialist: Starters UNDER 85.7%, High Lines 76.5%, Edge [3-5) 71.4%",
+        },
     },
     "catboost_v9_q45_train1102_0131": {
         "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_q0.45_train20251102-20260131_20260210_103216.cbm",
@@ -137,6 +158,13 @@ MONTHLY_MODELS = {
         "backtest_n_edge_3plus": 21,
         "enabled": True,
         "description": "Q45_SHADOW — quantile alpha=0.45, less aggressive than Q43 (Session 186). 61.9% HR 3+, 65.0% UNDER HR. Vegas bias -1.34 (within limits).",
+        "strengths": {
+            "direction": "UNDER",
+            "tiers": ["Role"],
+            "line_range": "Mid (12.5-20.5)",
+            "edge_bucket": "[3-5)",
+            "summary": "Less aggressive UNDER: Role UNDER 78.6%, 65.0% UNDER HR overall",
+        },
     },
 }
 
