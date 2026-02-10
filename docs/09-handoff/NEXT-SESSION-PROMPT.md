@@ -1,26 +1,17 @@
-Read docs/09-handoff/2026-02-10-SESSION-179-HANDOFF.md and work through priorities:
+Read docs/09-handoff/2026-02-09-SESSION-179B-HANDOFF.md and work through priorities:
 
-- P0: **Grade Feb 9.** Session 179 backfilled all 3 challengers (59 each) but grading was blocked — raw data hadn't been scraped yet. Verify raw data exists now: `bq query --use_legacy_sql=false "SELECT COUNT(*) FROM nba_raw.nbac_gamebook_player_stats WHERE game_date='2026-02-09'"`. If >0, trigger grading: `gcloud pubsub topics publish nba-grading-trigger --message='{"target_date":"2026-02-09","trigger_source":"manual"}' --project=nba-props-platform`. Then run 4-way comparison with the extra day.
+- P0: **Run the experiment sweep.** Session 179B built 16 new flags into `quick_retrain.py` for breaking Vegas dependency. All code is tested (dry-run verified). Start with the A1 Vegas Weight Sweep (6 experiments) to find the sweet spot — commands are in the handoff's P0 section and in `.claude/skills/model-experiment/SKILL.md` under "Master Experiment Plan". Use `--train-start 2025-11-02 --train-end 2026-01-31 --eval-start 2026-02-01 --eval-end 2026-02-08 --walkforward --force` for all. After A1, run A2-A5 sweeps in parallel. Then B combos, then C random exploration. Compare results with the SQL query in the handoff.
 
-- P1: **Verify Feb 10 live predictions** — first overnight run with Jan 31 challengers deployed. Check all 4 models have predictions: `SELECT system_id, COUNT(*) FROM nba_predictions.player_prop_predictions WHERE game_date='2026-02-10' AND system_id LIKE 'catboost_v9%' GROUP BY 1`. If only champion appears, check prediction-worker logs for challenger errors.
+- P1: **Grade Feb 9 and verify Feb 10.** Grading was blocked in Session 179 (raw data not scraped yet). Check if raw data exists now, trigger grading, verify Feb 10 live predictions have all 4 models.
 
-- P2: **Grade Feb 10** once games complete. Backfill all 3 challengers for Feb 10:
-  ```
-  PYTHONPATH=. python bin/backfill-challenger-predictions.py --model catboost_v9_train1102_0108 --start 2026-02-10 --end 2026-02-10
-  PYTHONPATH=. python bin/backfill-challenger-predictions.py --model catboost_v9_train1102_0131 --start 2026-02-10 --end 2026-02-10
-  PYTHONPATH=. python bin/backfill-challenger-predictions.py --model catboost_v9_train1102_0131_tuned --start 2026-02-10 --end 2026-02-10
-  ```
-  Trigger grading and re-run comparison.
+- P2: **Analyze experiment results.** The key metrics: `n_3plus` > 50 (enough picks), `hr_3plus` >= 58% (profitable), walk-forward stability, vegas_points_line importance decreasing with dampening. If a weighted model beats both champion and Jan 31 defaults, consider shadow deployment.
 
-- P3: **Monitor promotion readiness.** Champion is below breakeven (49.1% overall, 47.9% edge 3+). Jan 31 defaults leads at 54.8% HR with nearly perfect Vegas bias (+0.01). When they disagree (n=257), Jan 31 wins 55.3% vs champion's 39.0%. BUT Jan 31 only has 5 days of data — need ~2 more weeks. Key metric to track: Jan 31 defaults sustained HR above 53%.
-
-Session 179 context:
-- Pushed Session 178 commits, deployed prediction-worker with Jan 31 challengers (verified commit c76ecb7)
-- Backfilled 59 predictions each for all 3 challengers for Feb 9 (grading blocked, awaiting pipeline)
-- 4-way matched comparison (Feb 4-8, n=449): Champion 49.8%, Jan 8 52.1%, Jan 31 defaults **54.8%**, Jan 31 tuned 53.9%
-- Disagreement analysis: when models disagree (n=257), Jan 31 defaults wins by +16.3pp
-- Champion weekly decay: 71.2% -> 67.0% -> 56.0% -> 47.9% edge 3+ HR over 4 weeks
-- Jan 31 models have tight predictions (stddev ~1.0 vs champion 2.23) — few edge 3+ picks. If promoted, subset thresholds and signal system need recalibration.
-- Subset analysis: only "Green Light" had enough picks (58.4% HR, n=197). Signal effectiveness degrading.
+Session 179B context:
+- Built 16 new CLI flags: --no-vegas, --residual, --two-stage, --quantile-alpha, --exclude-features, --feature-weights, --category-weight, --rsm, --grow-policy, --min-data-in-leaf, --bootstrap, --subsample, --random-strength, --loss-function
+- 9 feature categories defined for --category-weight: recent_performance, composite, derived, matchup, shot_zone, team_context, vegas, opponent_history, minutes_efficiency
+- Retrain paradox: vegas_points_line is 30%+ importance, retrained models track Vegas too closely (4-6 edge 3+ picks vs hundreds). Feature weighting explores the gray area.
+- Champion decaying (49.8% HR, below breakeven). Jan 31 defaults leads at 54.8% but only 5 days of data.
+- Bookmaker expansion: OddsAPI scrapers now query 6 sportsbooks (was 2).
+- ML training concepts guide written at docs/08-projects/current/session-179-validation-and-retrain/02-ML-TRAINING-CONCEPTS-GUIDE.md
 
 Use agents in parallel where possible.
