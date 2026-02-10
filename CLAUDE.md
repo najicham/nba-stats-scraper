@@ -620,6 +620,11 @@ GROUP BY 1 ORDER BY 2 DESC;
 | **Session 132 recurrence** | **All matchup features (5-8) at quality 40** | **PlayerCompositeFactorsProcessor didn't run - check scheduler job configuration** |
 | **Predictions skipped due to quality** | **`PREDICTIONS_SKIPPED` Slack alert** | **Check Phase 4 processor logs, BACKFILL next day: `POST /start {"game_date":"YYYY-MM-DD","prediction_run_mode":"BACKFILL"}`** |
 | **Zero tolerance blocking** | **`zero_tolerance_defaults_N` in quality gate logs** | **Normal behavior (Session 141). Fix by ensuring Phase 4 processors run for all players. Never relax the tolerance.** |
+| **Regeneration batch stalls** | **`/check-stalled` shows <100% completion** | **Quality-blocked workers didn't report completion (fixed Session 174). Use `/reset` + manual consolidation. See regeneration procedure in Session 174 handoff.** |
+| **Stale batch blocks `/start`** | **`already_running` response from `/start`** | **Check `/status`, then `/reset` the stale batch. Always check status before triggering new runs.** |
+| **Regeneration staging orphaned** | **Predictions not appearing after `/regenerate-with-supersede`** | **Manual consolidation needed: `BatchConsolidator.consolidate_batch(batch_id, game_date)`. See Session 174 handoff for full procedure.** |
+| **Signal includes superseded** | **Signal totals inflated, pct_over wrong** | **Fixed Session 174: `is_active = TRUE` filter added to signal_calculator.py** |
+| **subset_picks_notifier error** | **Correlated subquery BQ error 8+/hour** | **`shared/notifications/subset_picks_notifier.py:277` needs rewrite as JOIN (pending)** |
 
 **Full troubleshooting:** See `docs/02-operations/session-learnings.md`
 
