@@ -302,6 +302,9 @@ class ExperimentConfig:
     max_ppg: float = 16.0
     breakout_multiplier: float = 1.5
 
+    # Session 187: Regression reframe — predict actual points, derive breakout
+    regression_target: bool = False  # If True, target = actual_points (continuous)
+
     # Date ranges
     train_start: str = None
     train_end: str = None
@@ -309,6 +312,9 @@ class ExperimentConfig:
     eval_end: str = None
     train_days: int = 60
     eval_days: int = 7
+
+    # Quantile regression (Session 187)
+    quantile_alpha: float = None  # If set, use CatBoostRegressor with quantile loss
 
     # Options
     target_precision: float = 0.60
@@ -352,6 +358,8 @@ class ExperimentConfig:
             min_ppg=args.min_ppg,
             max_ppg=args.max_ppg,
             breakout_multiplier=args.breakout_multiplier,
+            quantile_alpha=args.quantile_alpha,
+            regression_target=args.regression_target,
             train_start=args.train_start,
             train_end=args.train_end,
             eval_start=args.eval_start,
@@ -925,6 +933,12 @@ def run_experiment(config: ExperimentConfig) -> Optional[ExperimentResults]:
     print(f"Hyperparameters:")
     print(f"  depth={config.depth}, iterations={config.iterations}, "
           f"lr={config.learning_rate}, l2={config.l2_reg}")
+    if config.regression_target:
+        print(f"  REGRESSION REFRAME: target=actual_points (Session 187)")
+        print(f"  Derive breakout: predicted > season_avg * {config.breakout_multiplier}")
+    if config.quantile_alpha is not None:
+        print(f"  QUANTILE REGRESSION: alpha={config.quantile_alpha} (Session 187)")
+        print(f"  Model type: CatBoostRegressor (not Classifier)")
     print()
 
     if config.dry_run:
@@ -986,6 +1000,14 @@ def run_experiment(config: ExperimentConfig) -> Optional[ExperimentResults]:
     print(f"  Training: {train_breakout_rate*100:.1f}% breakouts ({df_train['is_breakout'].sum()} of {len(df_train)})")
     print(f"  Eval:     {eval_breakout_rate*100:.1f}% breakouts ({df_eval['is_breakout'].sum()} of {len(df_eval)})")
 
+    if config.regression_target:
+        print(f"\n  REGRESSION REFRAME (Session 187):")
+        print(f"  Target = actual_points (continuous), not is_breakout (binary)")
+        print(f"  Breakout derived post-prediction: predicted > season_avg * {config.breakout_multiplier}")
+        if 'actual_points' in df_train.columns:
+            print(f"  Training points range: {df_train['actual_points'].min():.0f} - {df_train['actual_points'].max():.0f}")
+            print(f"  Training points mean: {df_train['actual_points'].mean():.1f}")
+
     # Prepare features based on mode
     if config.mode == "shared":
         print("\nPreparing features using shared module...")
@@ -996,31 +1018,79 @@ def run_experiment(config: ExperimentConfig) -> Optional[ExperimentResults]:
         X_train_full, y_train_full = prepare_features_experimental(df_train, config.feature_set)
         X_eval, y_eval = prepare_features_experimental(df_eval, config.feature_set)
 
+    # Session 187: For regression reframe, override y with actual_points
+    if config.regression_target:
+        # y from prepare_features is is_breakout (binary) — replace with actual_points
+        y_train_full = df_train.iloc[:len(X_train_full)]['actual_points'].astype(float).reset_index(drop=True)
+        y_eval = df_eval.iloc[:len(X_eval)]['actual_points'].astype(float).reset_index(drop=True)
+        # Keep breakout labels for post-prediction evaluation
+        eval_is_breakout = df_eval.iloc[:len(X_eval)]['is_breakout'].astype(int).reset_index(drop=True)
+        eval_season_avg = df_eval.iloc[:len(X_eval)]['points_avg_season'].astype(float).reset_index(drop=True)
+    else:
+        eval_is_breakout = y_eval.copy()
+        eval_season_avg = None
+
     # Split training into train/validation
-    X_train, X_val, y_train, y_val = train_test_split(
-        X_train_full, y_train_full, test_size=0.15, random_state=42, stratify=y_train_full
-    )
+    if config.regression_target:
+        # Can't stratify continuous targets
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_train_full, y_train_full, test_size=0.15, random_state=42
+        )
+    else:
+        X_train, X_val, y_train, y_val = train_test_split(
+            X_train_full, y_train_full, test_size=0.15, random_state=42, stratify=y_train_full
+        )
 
     print(f"\nDataset sizes:")
     print(f"  Train: {len(X_train):,} | Val: {len(X_val):,} | Eval: {len(X_eval):,}")
 
-    # Compute class weight for imbalance
-    class_weight = compute_class_weight(y_train)
-    print(f"  Class weight (scale_pos_weight): {class_weight:.2f}")
+    # Session 187: Choose model type
+    use_quantile = config.quantile_alpha is not None
+    use_regressor = config.regression_target or use_quantile
 
-    # Train CatBoost classifier
-    print("\nTraining CatBoost classifier...")
-    model = cb.CatBoostClassifier(
-        iterations=config.iterations,
-        learning_rate=config.learning_rate,
-        depth=config.depth,
-        l2_leaf_reg=config.l2_reg,
-        scale_pos_weight=class_weight,
-        random_seed=42,
-        verbose=100,
-        early_stopping_rounds=config.early_stopping_rounds,
-        eval_metric='AUC',
-    )
+    if use_regressor:
+        if use_quantile:
+            loss_fn = f'Quantile:alpha={config.quantile_alpha}'
+            print(f"\nTraining CatBoost QUANTILE regressor (alpha={config.quantile_alpha})...")
+            if config.regression_target:
+                print(f"  Target: actual_points (continuous)")
+                if config.quantile_alpha > 0.5:
+                    print(f"  alpha>{0.5} → predicts ABOVE median → more breakout flags")
+                elif config.quantile_alpha < 0.5:
+                    print(f"  alpha<{0.5} → predicts BELOW median → fewer breakout flags, higher precision")
+            else:
+                print(f"  Target: is_breakout (binary) — WARNING: may collapse")
+        else:
+            loss_fn = 'RMSE'
+            print(f"\nTraining CatBoost RMSE regressor...")
+            print(f"  Target: actual_points (continuous)")
+
+        model = cb.CatBoostRegressor(
+            iterations=config.iterations,
+            learning_rate=config.learning_rate,
+            depth=config.depth,
+            l2_leaf_reg=config.l2_reg,
+            loss_function=loss_fn,
+            random_seed=42,
+            verbose=100,
+            early_stopping_rounds=config.early_stopping_rounds,
+        )
+    else:
+        # Compute class weight for imbalance
+        class_weight = compute_class_weight(y_train)
+        print(f"\nTraining CatBoost classifier...")
+        print(f"  Class weight (scale_pos_weight): {class_weight:.2f}")
+        model = cb.CatBoostClassifier(
+            iterations=config.iterations,
+            learning_rate=config.learning_rate,
+            depth=config.depth,
+            l2_leaf_reg=config.l2_reg,
+            scale_pos_weight=class_weight,
+            random_seed=42,
+            verbose=100,
+            early_stopping_rounds=config.early_stopping_rounds,
+            eval_metric='AUC',
+        )
 
     model.fit(
         X_train, y_train,
@@ -1033,19 +1103,69 @@ def run_experiment(config: ExperimentConfig) -> Optional[ExperimentResults]:
     print(" EVALUATION RESULTS")
     print("=" * 70)
 
-    # Predictions
-    eval_probs = model.predict_proba(X_eval)[:, 1]
+    # Session 187: Handle regression reframe evaluation
+    if config.regression_target:
+        eval_predicted_points = model.predict(X_eval)
+        eval_mae = np.mean(np.abs(eval_predicted_points - y_eval.values))
+        eval_actual_points = y_eval.values
 
-    # Core metrics
-    eval_auc = roc_auc_score(y_eval, eval_probs) if y_eval.sum() > 0 else 0
-    eval_ap = average_precision_score(y_eval, eval_probs) if y_eval.sum() > 0 else 0
+        print(f"\nRegression Metrics:")
+        print(f"  MAE: {eval_mae:.2f} points")
+        print(f"  Predicted range: {eval_predicted_points.min():.1f} - {eval_predicted_points.max():.1f}")
+        print(f"  Predicted mean: {eval_predicted_points.mean():.1f}")
+        print(f"  Actual mean: {eval_actual_points.mean():.1f}")
+        print(f"  Bias (pred - actual): {(eval_predicted_points - eval_actual_points).mean():.2f}")
 
-    print(f"\nCore Metrics:")
+        # Derive breakout classification from predicted points
+        breakout_threshold = eval_season_avg.values * config.breakout_multiplier
+        derived_breakout = (eval_predicted_points >= breakout_threshold).astype(int)
+
+        print(f"\nDerived Breakout Classification:")
+        print(f"  Threshold: predicted >= season_avg * {config.breakout_multiplier}")
+        print(f"  Predicted breakouts: {derived_breakout.sum()} of {len(derived_breakout)} ({derived_breakout.mean()*100:.1f}%)")
+        print(f"  Actual breakouts: {eval_is_breakout.sum()} of {len(eval_is_breakout)} ({eval_is_breakout.mean()*100:.1f}%)")
+
+        # Classification metrics on derived breakout
+        tp = ((derived_breakout == 1) & (eval_is_breakout.values == 1)).sum()
+        fp = ((derived_breakout == 1) & (eval_is_breakout.values == 0)).sum()
+        fn = ((derived_breakout == 0) & (eval_is_breakout.values == 1)).sum()
+        tn = ((derived_breakout == 0) & (eval_is_breakout.values == 0)).sum()
+
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+        f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0
+
+        print(f"\n  Precision: {precision*100:.1f}% ({tp} TP / {tp+fp} flagged)")
+        print(f"  Recall: {recall*100:.1f}% ({tp} TP / {tp+fn} actual breakouts)")
+        print(f"  F1: {f1:.3f}")
+        print(f"  Confusion: TP={tp}, FP={fp}, FN={fn}, TN={tn}")
+
+        # Use margin-based scores for AUC (how far above threshold)
+        margin_scores = eval_predicted_points - breakout_threshold
+        eval_probs = 1 / (1 + np.exp(-margin_scores))  # sigmoid of margin
+        y_eval_binary = eval_is_breakout
+    elif use_quantile:
+        eval_probs = model.predict(X_eval)
+        eval_probs = np.clip(eval_probs, 0.0, 1.0)
+        print(f"\nQuantile regression output stats:")
+        print(f"  Mean: {eval_probs.mean():.4f}, Std: {eval_probs.std():.4f}")
+        print(f"  Min: {eval_probs.min():.4f}, Max: {eval_probs.max():.4f}")
+        print(f"  >0.5: {(eval_probs > 0.5).sum()} ({(eval_probs > 0.5).mean()*100:.1f}%)")
+        y_eval_binary = y_eval
+    else:
+        eval_probs = model.predict_proba(X_eval)[:, 1]
+        y_eval_binary = y_eval
+
+    # Core metrics (AUC on breakout labels)
+    eval_auc = roc_auc_score(y_eval_binary, eval_probs) if y_eval_binary.sum() > 0 else 0
+    eval_ap = average_precision_score(y_eval_binary, eval_probs) if y_eval_binary.sum() > 0 else 0
+
+    print(f"\nCore Metrics (breakout classification):")
     print(f"  AUC-ROC: {eval_auc:.4f}")
     print(f"  Average Precision: {eval_ap:.4f}")
 
     # Find optimal threshold
-    optimal = find_optimal_threshold(y_eval, eval_probs, config.target_precision)
+    optimal = find_optimal_threshold(y_eval_binary, eval_probs, config.target_precision)
     print(f"\nOptimal Threshold (target {config.target_precision*100:.0f}% precision):")
     print(f"  Threshold: {optimal['threshold']:.3f}")
     print(f"  Precision: {optimal['precision']*100:.1f}%")
@@ -1053,7 +1173,7 @@ def run_experiment(config: ExperimentConfig) -> Optional[ExperimentResults]:
     print(f"  F1: {optimal['f1']:.3f}")
 
     # Threshold analysis
-    threshold_analysis = analyze_thresholds(y_eval.values, eval_probs)
+    threshold_analysis = analyze_thresholds(y_eval_binary.values, eval_probs)
     print(f"\nThreshold Analysis:")
     for key, metrics in threshold_analysis.items():
         print(f"  {metrics['threshold']:.1f}: Precision={metrics['precision']*100:.1f}%, "
@@ -1068,7 +1188,7 @@ def run_experiment(config: ExperimentConfig) -> Optional[ExperimentResults]:
     # Classification report at optimal threshold
     eval_preds = (eval_probs >= optimal['threshold']).astype(int)
     print(f"\nClassification Report (threshold={optimal['threshold']:.3f}):")
-    print(classification_report(y_eval, eval_preds, target_names=['No Breakout', 'Breakout']))
+    print(classification_report(y_eval_binary, eval_preds, target_names=['No Breakout', 'Breakout']))
 
     # Save model
     MODEL_OUTPUT_DIR.mkdir(exist_ok=True)
@@ -1243,6 +1363,10 @@ Examples:
                         help='Breakout threshold multiplier (default: 1.5x season avg)')
     parser.add_argument('--target-precision', type=float, default=0.60,
                         help='Target precision for optimal threshold (default: 0.60)')
+    parser.add_argument('--quantile-alpha', type=float, default=None,
+                        help='Use quantile regression with this alpha (e.g. 0.57 for upward bias, 0.43 for downward bias). Session 187.')
+    parser.add_argument('--regression-target', action='store_true',
+                        help='Predict actual points (continuous) instead of binary breakout. Derive breakout from predicted > season_avg * multiplier. Session 187.')
 
     # Date ranges
     parser.add_argument('--train-start', help='Training start (YYYY-MM-DD)')

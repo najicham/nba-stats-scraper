@@ -319,19 +319,12 @@ def get_prediction_systems() -> tuple:
             catboost_system=_catboost
         )
 
-        # Session 128: Initialize breakout classifier for shadow mode
-        global _breakout_classifier
-        if _breakout_classifier is None:
-            try:
-                from prediction_systems.breakout_classifier_v1 import BreakoutClassifierV1
-                _breakout_classifier = BreakoutClassifierV1()
-                if _breakout_classifier.is_loaded:
-                    logger.info("Breakout Classifier V1 loaded for shadow mode")
-                else:
-                    logger.warning("Breakout Classifier V1 initialized but model not loaded (shadow mode will return LOW_RISK)")
-            except Exception as e:
-                logger.warning(f"Failed to initialize Breakout Classifier: {e} (shadow mode disabled)")
-                _breakout_classifier = None
+        # Session 128: Breakout classifier for shadow mode
+        # Session 187: DISABLED — V1 classifier has broken feature pipeline (points_avg_season
+        # not in pool), generates 20+ CatBoostError per prediction run. Model needs rewrite
+        # to use shared feature module (ml/features/breakout_features.py). Will re-enable
+        # after V3 experiments with quantile regression on role players.
+        # global _breakout_classifier
 
         catboost_version = "V9" if CATBOOST_VERSION == 'v9' else "V8"
         monthly_count = len(_monthly_models) if _monthly_models else 0
