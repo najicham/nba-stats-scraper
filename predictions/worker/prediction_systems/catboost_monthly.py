@@ -116,6 +116,17 @@ MONTHLY_MODELS = {
         "enabled": True,
         "description": "V9_JAN31_TUNED — extended training (91 days), tuned (depth=5,l2=5,lr=0.03) + recency 30d, clean eval Feb 1-8",
     },
+    "catboost_v9_q43_train1102_0131": {
+        "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_q0.43_train20251102-20260131_20260210_094854.cbm",
+        "train_start": "2025-11-02",
+        "train_end": "2026-01-31",
+        "backtest_mae": 5.1571,
+        "backtest_hit_rate_all": 50.0,
+        "backtest_hit_rate_edge_3plus": 65.79,
+        "backtest_n_edge_3plus": 38,
+        "enabled": True,
+        "description": "Q43_SHADOW — quantile alpha=0.43, staleness-independent edge (Session 186). 65.8% HR 3+ when fresh, 67.6% UNDER HR.",
+    },
 }
 
 
