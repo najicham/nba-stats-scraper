@@ -422,6 +422,16 @@ ORDER BY created_at DESC LIMIT 5"
 | `ml/experiments/train_breakout_classifier.py` | Breakout classifier training |
 | `ml/experiments/evaluate_model.py` | Detailed evaluation |
 | `ml/experiments/train_walkforward.py` | Walk-forward training |
+| `predictions/worker/prediction_systems/catboost_monthly.py` | Parallel model config (MONTHLY_MODELS) |
+| `bin/compare-model-performance.py` | Backtest vs production comparison |
+
+## Documentation
+
+| Doc | What It Covers |
+|-----|---------------|
+| `docs/08-projects/current/retrain-infrastructure/01-EXPERIMENT-RESULTS-REVIEW.md` | All 8 experiment results with deployment status |
+| `docs/08-projects/current/retrain-infrastructure/03-PARALLEL-MODELS-GUIDE.md` | Adding/monitoring/promoting/retiring challengers |
+| `docs/08-projects/current/retrain-infrastructure/04-HYPERPARAMETERS-AND-TUNING.md` | What hyperparameters are, tuning results, future experiments |
 
 ## Model Promotion Checklist (Post-Training)
 
@@ -433,23 +443,24 @@ Step 1: EXPERIMENT (this skill)
   - All 6 governance gates MUST pass
   - Model saved locally in models/ directory
   - Registered in ml_experiments table
+  - Script prints ready-to-paste MONTHLY_MODELS config snippet
 
-Step 2: UPLOAD + REGISTER (requires user approval)
-  - Upload to GCS: gs://nba-props-platform-models/catboost/v9/
-  - Register in manifest.json with SHA256
-  - Register in BQ model registry
-  - ./bin/model-registry.sh validate
+Step 2: SHADOW DEPLOY (requires user approval)
+  - Upload to GCS: gsutil cp model.cbm gs://nba-props-platform-models/catboost/v9/monthly/
+  - Add config snippet to catboost_monthly.py MONTHLY_MODELS dict
+  - Push to main (auto-deploys worker)
+  - Model runs in shadow mode — no impact on user-facing picks or alerts
 
-Step 3: SHADOW (requires user approval)
-  - Deploy with separate system_id (e.g., catboost_v9_shadow)
-  - Run for 2+ days alongside production model
-  - Compare shadow predictions vs production predictions
-  - Verify: hit rate, Vegas bias, tier bias, coverage
+Step 3: MONITOR (2+ days)
+  - python bin/compare-model-performance.py <system_id>
+  - ./bin/model-registry.sh compare <system_id>
+  - Compare production graded results vs backtest metrics
+  - Expect 3-5pp lower than backtest due to backtest advantage
 
 Step 4: PROMOTE (requires user approval)
-  - Update CATBOOST_V9_MODEL_PATH env var
+  - Update CATBOOST_V9_MODEL_PATH env var to point to challenger's GCS path
+  - Set enabled=False in MONTHLY_MODELS (now it's the champion via env var)
   - Backfill predictions for affected dates
-  - Update model_version in manifest as "production"
   - Monitor for 24h post-promotion
 
 Step 5: VERIFY
@@ -459,6 +470,14 @@ Step 5: VERIFY
 ```
 
 **At each step, get explicit user approval before proceeding.**
+
+### Shadow Mode Details (Session 177)
+
+Challengers run via `catboost_monthly.py` with GCS-loaded models. Each gets its own `system_id` (e.g., `catboost_v9_train1102_0208`), is graded independently, and produces its own signal row. The `subset_picks_notifier` only sends picks for the champion (`catboost_v9`), so challengers don't affect user-facing output.
+
+**Naming convention:** `catboost_v9_train{MMDD}_{MMDD}` — training dates visible in every BQ query.
+
+To retire a challenger: set `enabled: False` in MONTHLY_MODELS and deploy.
 
 ## What Constitutes a "Different Model"
 
@@ -482,4 +501,5 @@ The dynamic model_version (e.g., `v9_20260201_011018`) distinguishes different m
 *Updated: Session 156 - Zero tolerance for training data quality (required_default_count = 0)*
 *Updated: Session 164 - Added governance warnings, promotion checklist, deployment prevention*
 *Updated: Session 176 - New flags (--tune, --recency-weight, --walkforward), date overlap guard, survivorship bias warning*
+*Updated: Session 177 - Parallel models shadow mode, MONTHLY_MODELS config snippet output, comparison tooling*
 *Part of: Monthly Retraining Infrastructure*
