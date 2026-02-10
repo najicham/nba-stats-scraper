@@ -645,9 +645,9 @@ class PlayerLoader:
             logger.warning(f"LINE_SOURCE: {player_lookup} -> BettingPros ANY (no specific book found)")
             return result
 
-        # Neither source had data
+        # Neither source had data — log diagnostic details
         self._track_line_source('no_line_data', player_lookup)
-        logger.error(f"NO_LINE_DATA: No betting lines found for {player_lookup} on {game_date}", exc_info=True)
+        self._track_no_line_reason(player_lookup, game_date)
         return None
 
     def _query_odds_api_betting_line_for_book(
@@ -868,6 +868,88 @@ class PlayerLoader:
         except Exception as e:
             logger.debug(f"No Kalshi line for {player_lookup}: {e}")
             return None
+
+    def _track_no_line_reason(self, player_lookup: str, game_date: date):
+        """
+        Session 175: Diagnostic logging when no betting line found for a player.
+        Checks OddsAPI raw data to distinguish: no data at all vs player name mismatch.
+        """
+        try:
+            # Check if OddsAPI has ANY data for this player on this date
+            query = """
+            SELECT COUNT(*) as cnt
+            FROM `{project}.nba_raw.odds_api_player_points_props`
+            WHERE player_lookup = @player_lookup AND game_date = @game_date
+            """.format(project=self.project_id)
+            job_config = bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("player_lookup", "STRING", player_lookup),
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+            ])
+            result = next(self.client.query(query, job_config=job_config).result(timeout=10))
+            if result.cnt > 0:
+                logger.warning(
+                    f"NO_LINE_DIAGNOSTIC: {player_lookup} has {result.cnt} OddsAPI rows on {game_date} "
+                    f"but none matched sportsbook filters — possible bookmaker name mismatch"
+                )
+            else:
+                logger.warning(
+                    f"NO_LINE_DIAGNOSTIC: {player_lookup} has ZERO OddsAPI rows on {game_date} — "
+                    f"player not offered as prop or name format mismatch"
+                )
+        except Exception as e:
+            logger.warning(f"NO_LINE_DIAGNOSTIC: Could not diagnose {player_lookup}: {e}")
+
+    def diagnose_odds_api_coverage(self, game_date: date, player_lookups: list = None):
+        """
+        Session 175: Batch-level OddsAPI availability diagnostic.
+        Run once per batch to understand overall coverage.
+
+        Returns dict with coverage stats and logs warnings.
+        """
+        try:
+            query = """
+            SELECT
+              COUNT(DISTINCT player_lookup) as oddsapi_players,
+              COUNT(DISTINCT bookmaker) as bookmakers,
+              COUNT(*) as total_rows,
+              ARRAY_AGG(DISTINCT LOWER(bookmaker) ORDER BY LOWER(bookmaker)) as bookmaker_list
+            FROM `{project}.nba_raw.odds_api_player_points_props`
+            WHERE game_date = @game_date
+            """.format(project=self.project_id)
+            job_config = bigquery.QueryJobConfig(query_parameters=[
+                bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
+            ])
+            result = next(self.client.query(query, job_config=job_config).result(timeout=30))
+
+            coverage = {
+                'oddsapi_players': result.oddsapi_players,
+                'bookmakers': result.bookmakers,
+                'total_rows': result.total_rows,
+                'bookmaker_list': list(result.bookmaker_list) if result.bookmaker_list else [],
+            }
+
+            if player_lookups:
+                coverage['requested_players'] = len(player_lookups)
+                coverage['coverage_pct'] = round(100 * result.oddsapi_players / len(player_lookups), 1) if player_lookups else 0
+
+            logger.info(
+                f"ODDS_API_COVERAGE: {game_date} — {result.oddsapi_players} players, "
+                f"{result.bookmakers} bookmakers, {result.total_rows} rows, "
+                f"books={coverage['bookmaker_list']}"
+            )
+
+            if result.oddsapi_players == 0:
+                logger.error(f"ODDS_API_COVERAGE: ZERO players in OddsAPI for {game_date} — scraper may have failed")
+            elif player_lookups and result.oddsapi_players < len(player_lookups) * 0.3:
+                logger.warning(
+                    f"ODDS_API_COVERAGE: Only {result.oddsapi_players}/{len(player_lookups)} players "
+                    f"({coverage.get('coverage_pct', 0)}%) in OddsAPI for {game_date}"
+                )
+
+            return coverage
+        except Exception as e:
+            logger.error(f"ODDS_API_COVERAGE: Diagnostic query failed: {e}")
+            return {'error': str(e)}
 
     def _track_line_source(self, source: str, player_lookup: str):
         """

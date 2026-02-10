@@ -163,6 +163,22 @@ class SubsetPicksNotifier:
               GROUP BY model_version ORDER BY COUNT(*) DESC LIMIT 1
             )
         ),
+        -- Session 175: Majority model version per day (replaces correlated subquery that BigQuery rejects)
+        majority_model_by_date AS (
+          SELECT game_date, model_version
+          FROM (
+            SELECT game_date, model_version, COUNT(*) as cnt,
+                   ROW_NUMBER() OVER (PARTITION BY game_date ORDER BY COUNT(*) DESC) as rn
+            FROM `{self.project_id}.nba_predictions.player_prop_predictions`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 23 DAY)
+              AND game_date < CURRENT_DATE()
+              AND system_id = 'catboost_v9'
+              AND is_active = TRUE
+              AND current_points_line IS NOT NULL
+            GROUP BY game_date, model_version
+          )
+          WHERE rn = 1
+        ),
         historical_performance AS (
           SELECT
             COUNT(*) as total_picks,
@@ -204,6 +220,9 @@ class SubsetPicksNotifier:
             FROM `{self.project_id}.nba_predictions.player_prop_predictions` p
             JOIN `{self.project_id}.nba_analytics.player_game_summary` pgs
               ON p.player_lookup = pgs.player_lookup AND p.game_date = pgs.game_date
+            -- Session 175: JOIN instead of correlated subquery for model version filtering
+            JOIN majority_model_by_date mmv
+              ON p.game_date = mmv.game_date AND p.model_version = mmv.model_version
             CROSS JOIN subset_def d
             WHERE p.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 23 DAY)
               AND p.game_date < CURRENT_DATE()
@@ -212,14 +231,6 @@ class SubsetPicksNotifier:
               AND ABS(p.predicted_points - p.current_points_line) >= COALESCE(d.min_edge, 0)
               AND (d.min_confidence IS NULL OR p.confidence_score >= d.min_confidence)
               AND p.current_points_line IS NOT NULL
-              -- Session 170: Filter to majority model version per day to prevent stale model leakage
-              AND p.model_version = (
-                SELECT model_version
-                FROM `{self.project_id}.nba_predictions.player_prop_predictions`
-                WHERE game_date = p.game_date AND system_id = 'catboost_v9'
-                  AND is_active = TRUE AND current_points_line IS NOT NULL
-                GROUP BY model_version ORDER BY COUNT(*) DESC LIMIT 1
-              )
           )
           CROSS JOIN subset_def d
           WHERE daily_rank <= COALESCE(d.top_n, 999)

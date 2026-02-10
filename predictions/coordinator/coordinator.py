@@ -1040,6 +1040,13 @@ def start_prediction_batch():
         except Exception as e:
             logger.debug(f"Could not log line source stats: {e}")
 
+        # Session 175: Batch-level OddsAPI coverage diagnostic
+        try:
+            player_lookups = [r.get('player_lookup') for r in prediction_requests if r.get('player_lookup')]
+            get_player_loader().diagnose_odds_api_coverage(game_date, player_lookups)
+        except Exception as e:
+            logger.debug(f"Could not run OddsAPI coverage diagnostic: {e}")
+
         # BATCH OPTIMIZATION: Pre-load historical games for all players (331x speedup!)
         # Instead of workers querying individually (225s total for sequential queries),
         # coordinator loads once (0.68s) and passes to workers via Pub/Sub

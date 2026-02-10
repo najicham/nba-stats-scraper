@@ -2012,6 +2012,19 @@ def format_prediction_for_bigquery(
         current_points_line = None
         line_margin = None
 
+    # Session 175: Defense-in-depth — verify recommendation direction matches predicted vs line
+    # Prevents misaligned recommendations (e.g., predicted > line but recommendation = 'UNDER')
+    # which occurred with multi-line logic before Session 170 fix
+    if current_points_line is not None and recommendation in ('OVER', 'UNDER'):
+        expected_rec = 'OVER' if prediction['predicted_points'] > current_points_line else 'UNDER' if prediction['predicted_points'] < current_points_line else 'PASS'
+        if expected_rec != 'PASS' and recommendation != expected_rec:
+            logger.warning(
+                f"RECOMMENDATION_DIRECTION_MISMATCH: {player_lookup} predicted={prediction['predicted_points']:.1f} "
+                f"line={current_points_line} rec={recommendation} expected={expected_rec} — correcting"
+            )
+            recommendation = expected_rec
+            line_margin = round(prediction['predicted_points'] - current_points_line, 2)
+
     # Session 102: Additional filters for edge and model bias
     # These mark predictions as not actionable but still store them for analysis
     predicted_points = prediction['predicted_points']

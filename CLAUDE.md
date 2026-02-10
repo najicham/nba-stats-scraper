@@ -624,7 +624,9 @@ GROUP BY 1 ORDER BY 2 DESC;
 | **Stale batch blocks `/start`** | **`already_running` response from `/start`** | **Check `/status`, then `/reset` the stale batch. Always check status before triggering new runs.** |
 | **Regeneration staging orphaned** | **Predictions not appearing after `/regenerate-with-supersede`** | **Manual consolidation needed: `BatchConsolidator.consolidate_batch(batch_id, game_date)`. See Session 174 handoff for full procedure.** |
 | **Signal includes superseded** | **Signal totals inflated, pct_over wrong** | **Fixed Session 174: `is_active = TRUE` filter added to signal_calculator.py** |
-| **subset_picks_notifier error** | **Correlated subquery BQ error 8+/hour** | **`shared/notifications/subset_picks_notifier.py:277` needs rewrite as JOIN (pending)** |
+| **subset_picks_notifier error** | **Correlated subquery BQ error 8+/hour** | **FIXED Session 175: Rewrote as `majority_model_by_date` CTE + JOIN** |
+| **Recommendation direction mismatch** | **pred > line but rec = UNDER** | **FIXED Session 175: Defense-in-depth validation in worker.py corrects mismatches. Pre-Session 170 BACKFILL data (Feb 4-8) still affected — needs regeneration.** |
+| **Model decay** | **Hit rate declining weekly (71.7% → 46.5%)** | **Model trained Nov 2 - Jan 8 is decaying. Retrain with extended training data when Feb sample is large enough.** |
 
 **Full troubleshooting:** See `docs/02-operations/session-learnings.md`
 
