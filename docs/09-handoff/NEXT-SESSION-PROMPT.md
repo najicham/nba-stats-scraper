@@ -1,9 +1,21 @@
-Read docs/09-handoff/2026-02-10-SESSION-176-HANDOFF.md and work through the priority items:
+Read docs/09-handoff/2026-02-10-SESSION-177-HANDOFF.md and work through priorities:
 
-- P0: Verify Feb 10 FIRST-run predictions. Check avg_pvl within +/-1.5, OVER% >25%, zero RECOMMENDATION_DIRECTION_MISMATCH in logs. Also check for new ODDS_API_COVERAGE and NO_LINE_DIAGNOSTIC messages in prediction-worker/coordinator Cloud Run logs — these are new Session 175 diagnostics appearing for the first time.
-- P1: Check if Feb 9 games are Final (status=3) and grade them. 10 games were played on Feb 9. Trigger grading via `gcloud pubsub topics publish nba-grading-trigger --message='{"target_date":"2026-02-09","trigger_source":"manual"}' --project=nba-props-platform`.
-- P2: Model retrain with extended data. Model decay confirmed: edge 3+ hit rate dropped from 71.2% (Jan 12 week) to 47.3% (Feb 2 week). Both OVER and UNDER directions are underperforming equally — this is core model decay, not directional bias. Use /model-experiment to retrain with `--train-start 2025-11-02 --train-end 2026-01-31 --walkforward`. Follow all governance gates. Do NOT deploy without explicit approval.
-- P3: Verify `prediction_regeneration_audit` table has data after the next regeneration event. It was empty due to a JSON type mismatch bug fixed in Session 176.
-- P4: Check OddsAPI diagnostic logs after Feb 10 run. Search Cloud Run logs for ODDS_API_COVERAGE and NO_LINE_DIAGNOSTIC to understand whether low line coverage is "no data scraped" vs "player name mismatch".
+- P0: Check if grading completed for the 2,958 backfilled challenger predictions. Run: `bq query --use_legacy_sql=false "SELECT system_id, COUNT(*) as graded FROM nba_predictions.prediction_accuracy WHERE system_id = 'catboost_v9_train1102_0108' GROUP BY 1"`. If empty, re-trigger grading (Pub/Sub loop in the handoff). If graded, immediately run: `PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_train1102_0108 --days 31` — this is the money question: does the challenger beat the champion in real production conditions?
 
-Use agents in parallel where possible. Commit and push when done — Cloud Build auto-deploys on push to main.
+- P1: Grade Feb 9 games if not already done. Check game_status=3 for all Feb 9 games, then: `gcloud pubsub topics publish nba-grading-trigger --message='{"target_date":"2026-02-09","trigger_source":"manual"}' --project=nba-props-platform`. Track model decay — 47.3% hit rate last week vs 71.2% when model was fresh.
+
+- P2: Verify Feb 10 live predictions. First overnight run with challengers deployed. Check: (a) catboost_v9 predictions look normal (avg_pvl within +/-1.5, OVER% >25%); (b) all 3 challengers have predictions: `SELECT system_id, COUNT(*) FROM nba_predictions.player_prop_predictions WHERE game_date='2026-02-10' AND system_id LIKE 'catboost_v9%' GROUP BY 1`; (c) OddsAPI diagnostic logs appear in prediction-worker Cloud Run logs.
+
+- P3: Backfill Feb 8 models for Feb 9 once graded: `PYTHONPATH=. python bin/backfill-challenger-predictions.py --model catboost_v9_train1102_0208` and `--model catboost_v9_train1102_0208_tuned`.
+
+- P4: Investigate Jan 12 anomaly — backfill shows 81 actionable predictions with avg edge +7.57 on that date. Could be feature store issue or legitimate.
+
+Session 177 context:
+- Built parallel models infrastructure: GCS loading in catboost_monthly.py, comparison tooling, backfill script
+- 3 challengers deployed: catboost_v9_train1102_0108 (same dates as prod), catboost_v9_train1102_0208 (extended), catboost_v9_train1102_0208_tuned (extended+tuned)
+- New skills: /compare-models for monitoring challengers
+- New docs: 03-PARALLEL-MODELS-GUIDE.md, 04-HYPERPARAMETERS-AND-TUNING.md
+- Backtest advantage: expect 3-5pp lower hit rate in production vs backtest numbers
+- The Feb 8 model backtests are contaminated (train/eval overlap) — only trust real production graded results
+
+Use agents in parallel where possible.

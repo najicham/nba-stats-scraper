@@ -1,8 +1,19 @@
 # Retrain Infrastructure Improvements
 
-**Session:** 176
-**Status:** Complete
-**File:** `ml/experiments/quick_retrain.py`
+**Sessions:** 176-177
+**Status:** Active — 3 challengers in shadow mode, awaiting grading results
+**Files:** `ml/experiments/quick_retrain.py`, `predictions/worker/prediction_systems/catboost_monthly.py`, `bin/compare-model-performance.py`, `bin/backfill-challenger-predictions.py`
+
+## Current State (Session 177)
+
+Three challenger models running in parallel shadow mode alongside production champion. The Jan 8 model has 2,958 backfilled predictions (Jan 9 - Feb 8) awaiting grading results. The Feb 8 models will generate live predictions starting Feb 10.
+
+**Project docs:**
+- `00-PROJECT-OVERVIEW.md` — This file (infrastructure overview)
+- `01-EXPERIMENT-RESULTS-REVIEW.md` — All 8 experiment results with deployment status
+- `02-MODEL-STRATEGY-ROADMAP.md` — Long-term model strategy
+- `03-PARALLEL-MODELS-GUIDE.md` — How to add/monitor/promote/retire challengers
+- `04-HYPERPARAMETERS-AND-TUNING.md` — Hyperparameters explained, tuning results, future experiments
 
 ## Problem
 
