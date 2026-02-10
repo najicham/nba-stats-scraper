@@ -1335,8 +1335,10 @@ def normalize_confidence(confidence: float, system_id: str) -> float:
     Returns:
         float: Confidence on 0-100 percentage scale
     """
-    if system_id in ['similarity_balanced_v1', 'xgboost_v1', 'catboost_v8']:
+    if system_id in ['similarity_balanced_v1', 'xgboost_v1', 'catboost_v8'] or \
+            system_id.startswith('catboost_v9'):
         # Already 0-100 scale, keep as-is
+        # catboost_v9* covers champion + all monthly/quantile shadows (Session 189)
         return confidence
     elif system_id in ['moving_average', 'zone_matchup_v1', 'ensemble_v1', 'ensemble_v1_1']:
         # Convert 0-1 to 0-100

@@ -319,20 +319,14 @@ def get_prediction_systems() -> tuple:
             catboost_system=_catboost
         )
 
-        # Session 128: Initialize breakout classifier for shadow mode
-        # Session 188: Re-enabled after fixing feature pipeline to use shared module
-        global _breakout_classifier
-        if _breakout_classifier is None:
-            try:
-                from prediction_systems.breakout_classifier_v1 import BreakoutClassifierV1
-                _breakout_classifier = BreakoutClassifierV1()
-                if _breakout_classifier.is_loaded:
-                    logger.info("Breakout Classifier V1 loaded for shadow mode")
-                else:
-                    logger.warning("Breakout Classifier V1 initialized but model not loaded (shadow mode will return LOW_RISK)")
-            except Exception as e:
-                logger.warning(f"Failed to initialize Breakout Classifier: {e} (shadow mode disabled)")
-                _breakout_classifier = None
+        # Session 128: Breakout classifier for shadow mode
+        # Session 187: DISABLED — V1 classifier broken (8 features vs 14-feature V2 model)
+        # Session 188: Re-enabled with V1 shared module (10 features) — still suboptimal
+        # Session 189: DISABLED again — model trained with 14 V2 features, providing 10 V1
+        #   features gives misleading shadow data. Breakout needs V3 contextual features
+        #   (star_teammate_out, opponent injuries), not feature order fixes.
+        #   Re-enable after V3 model trained with proper features.
+        # global _breakout_classifier
 
         catboost_version = "V9" if CATBOOST_VERSION == 'v9' else "V8"
         monthly_count = len(_monthly_models) if _monthly_models else 0

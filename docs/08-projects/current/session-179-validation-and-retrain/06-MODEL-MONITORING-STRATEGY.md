@@ -134,10 +134,59 @@ PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_q45_train1102_0
 - Model loading errors in worker logs
 - Superseded by a promoted model of the same type
 
-## Key Lessons (Sessions 179-186)
+## Multi-Model Subset Strategy (Session 189)
+
+Current subsets are hardcoded to `catboost_v9` in 20+ locations. To properly evaluate quantile models, we need QUANT-specific subsets focused on their strengths (UNDER predictions).
+
+### Proposed QUANT Subsets
+
+| ID | Model | Edge | Direction | Signal | Top N | Rationale |
+|----|-------|------|-----------|--------|-------|-----------|
+| `q43_under_high_edge` | q43 | 7+ | UNDER | ANY | - | Core UNDER specialist, high conviction |
+| `q43_under_top5` | q43 | 5+ | UNDER | GREEN/YELLOW | 5 | Signal-filtered, ranked |
+| `q43_all` | q43 | 3+ | ANY | ANY | - | Full evaluation pool |
+| `q45_under_high_edge` | q45 | 7+ | UNDER | ANY | - | Less aggressive UNDER specialist |
+| `q45_all` | q45 | 3+ | ANY | ANY | - | Full evaluation pool |
+
+### Implementation Phases
+
+**Phase 1 — Shadow evaluation (current):** Monitor via `--all --segments`. No subset changes.
+**Phase 2 — After promotion decision (~Feb 15):** Insert QUANT subset definitions in BQ.
+**Phase 3 — Multi-model support:** Parameterize `system_id` in materializer, exporter, notifier (20+ hardcoded locations). See Session 189 handoff for full list.
+**Phase 4 — Backfill:** Materialize historical subset picks for QUANT models.
+
+### Hardcoded Locations to Update
+
+Key files with `system_id = 'catboost_v9'`:
+- `data_processors/publishing/subset_materializer.py` (4 instances)
+- `data_processors/publishing/all_subsets_picks_exporter.py` (5 instances)
+- `data_processors/publishing/subset_definitions_exporter.py` (2 instances)
+- `predictions/coordinator/signal_calculator.py` (PRIMARY_ALERT_MODEL)
+- `predictions/coordinator/coordinator.py` (8+ instances)
+- `shared/notifications/subset_picks_notifier.py` (3 instances)
+
+## Breakout Classifier Status (Session 189)
+
+**V1: DISABLED** — Feature pipeline broken (8 features vs 14-feature model). AUC 0.5708, no high-confidence predictions.
+
+**Session 187-189 Experiments — Dead Ends:**
+1. Quantile regression on binary target → Collapsed (all predictions near 0)
+2. Regression reframe (predict points, derive breakout) → Predicted range too compressed (5-20 vs actual 0-43)
+3. Q43/Q50/Q57 on continuous target → Best AUC 0.5813 but 0-2% breakout recall
+
+**V3 Roadmap (when prioritized):**
+- Add contextual features: `star_teammate_out`, `fg_pct_last_game`, opponent injuries
+- These are where the signal is — not loss function changes
+- Use `ml/features/breakout_features.py` BREAKOUT_FEATURE_ORDER_V3 (13 features)
+- Retrain model with V3 features before re-enabling in worker
+
+## Key Lessons (Sessions 179-189)
 
 1. **RMSE models decay with staleness** — champion went from 71.2% to 47.9% in 33 days
 2. **Quantile models resist staleness** — edge comes from loss function, not drift
 3. **Better MAE does NOT mean better betting** — Session 163 proved this definitively
 4. **Combos don't work** — NO_VEG + quantile, CHAOS + quantile perform WORSE
 5. **Segment monitoring catches issues early** — overall HR can hide directional collapse
+6. **Quantile regression needs continuous targets** — collapses on binary classification (Session 189)
+7. **Regression reframe doesn't help breakout detection** — predicted range compression defeats thresholds (Session 189)
+8. **Breakout needs better features, not better loss functions** — 87+ experiments confirm this

@@ -1,6 +1,8 @@
-# Subset Reference (Session 154)
+# Subset Reference (Sessions 154, 189)
 
 Quick reference for all active subset definitions. Edit these in BigQuery table `nba_predictions.dynamic_subset_definitions`.
+
+**Session 189 Update:** Multi-model subset support planned for QUANT_43/45 promotion. See "Future: Quantile Model Subsets" section below.
 
 ## Active Subsets
 
@@ -72,3 +74,48 @@ Morning grading (7:30 AM ET):
 2. **Signal 'ANY' bug fixed** — Old code treated 'ANY' as a literal signal value, filtering out all picks on signal days. Now 'ANY' and NULL both mean "no filter".
 3. **Confidence dropped** — All 3+ edge picks have 0.95+ confidence. No differentiation.
 4. **18 → 8 subsets** — Removed duplicates (6 subsets had identical filters), anti-subsets (not for website), and misleading subsets (claimed direction filtering that didn't exist).
+
+## Future: Quantile Model Subsets (Session 189)
+
+### Why Model-Specific Subsets
+
+Current subsets are all `system_id = 'catboost_v9'`. Quantile models (QUANT_43/45) specialize in UNDER predictions — they need UNDER-focused subsets to leverage their strengths.
+
+**Key insight from Session 186:** QUANT_43 hits 85.7% on Starters UNDER and 76.5% on High Lines in backtests. Current subsets filter for OVER (top_pick, top_3, high_edge_over) which would waste quantile model edge.
+
+### Proposed QUANT Subsets (Post-Promotion)
+
+| ID | Model | Edge | Direction | Signal | Top N | Expected HR |
+|----|-------|------|-----------|--------|-------|-------------|
+| `q43_under_high_edge` | catboost_v9_q43_* | 7+ | UNDER | ANY | - | ~73% |
+| `q43_under_top5` | catboost_v9_q43_* | 5+ | UNDER | GREEN/YELLOW | 5 | ~68% |
+| `q43_all` | catboost_v9_q43_* | 3+ | ANY | ANY | - | ~60% |
+| `q45_under_high_edge` | catboost_v9_q45_* | 7+ | UNDER | ANY | - | ~68% |
+| `q45_all` | catboost_v9_q45_* | 3+ | ANY | ANY | - | ~57% |
+
+### Implementation Plan
+
+1. **Insert definitions** into `dynamic_subset_definitions` with proper `system_id`
+2. **Parameterize code** — `system_id` hardcoded in 20+ files (materializer, exporter, notifier, coordinator)
+3. **Backfill materialized picks** — Run SubsetMaterializer for QUANT prediction dates
+4. **Update public names** in `shared/config/subset_public_names.py`
+
+### Backfill Strategy
+
+Once QUANT is promoted:
+```sql
+-- Find all dates with QUANT predictions
+SELECT DISTINCT game_date
+FROM nba_predictions.player_prop_predictions
+WHERE system_id = 'catboost_v9_q43_train1102_0131'
+ORDER BY game_date;
+```
+Then run materializer for each date. Only dates with predictions need backfilling.
+
+### Which Subsets Should Be Backfilled?
+
+| Subset | Backfill? | Reason |
+|--------|-----------|--------|
+| V9 subsets (top_pick, etc.) | Already materialized | Existing pipeline |
+| QUANT subsets | Yes, after promotion | Need historical grading data |
+| Retired subsets | No | Deactivated, no value |
