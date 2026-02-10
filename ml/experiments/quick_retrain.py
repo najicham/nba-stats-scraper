@@ -742,6 +742,98 @@ def compute_directional_hit_rates(preds, actuals, lines, min_edge=3.0):
     }
 
 
+def compute_segmented_hit_rates(preds, actuals, lines, season_avgs=None, min_edge=3.0):
+    """
+    Compute hit rates across multiple dimensions for experiment analysis.
+
+    Session 180: Discovered C4_MATCHUP_ONLY has 70.6% UNDER HR and C1_CHAOS has
+    71.4% UNDER HR — invisible in overall edge 3+ HR. This function breaks down
+    HR by tier, direction, tier x direction, edge bucket, and line range.
+
+    Args:
+        preds: Model predictions (numpy array)
+        actuals: Actual points scored (numpy array)
+        lines: Vegas lines (numpy array)
+        season_avgs: Pre-game season averages for tier classification (optional)
+        min_edge: Minimum edge threshold (default 3.0)
+
+    Returns:
+        dict with by_tier, by_direction, by_tier_direction, by_edge_bucket, by_line_range.
+        Each cell: {hr, n, wins} (hr=None if n=0)
+    """
+    edges = preds - lines
+    mask = np.abs(edges) >= min_edge
+
+    tier_values = season_avgs if season_avgs is not None else actuals
+
+    tier_defs = {
+        'Stars (25+)': tier_values >= 25,
+        'Starters (15-24)': (tier_values >= 15) & (tier_values < 25),
+        'Role (5-14)': (tier_values >= 5) & (tier_values < 15),
+        'Bench (<5)': tier_values < 5,
+    }
+
+    direction_defs = {
+        'OVER': edges > 0,
+        'UNDER': edges < 0,
+    }
+
+    edge_bucket_defs = {
+        '[3-5)': (np.abs(edges) >= 3) & (np.abs(edges) < 5),
+        '[5-7)': (np.abs(edges) >= 5) & (np.abs(edges) < 7),
+        '[7+)': np.abs(edges) >= 7,
+    }
+
+    line_range_defs = {
+        'Low (<12.5)': lines < 12.5,
+        'Mid (12.5-20.5)': (lines >= 12.5) & (lines <= 20.5),
+        'High (>20.5)': lines > 20.5,
+    }
+
+    def _hr_for_mask(seg_mask):
+        """Compute HR for a combined mask (must already include min_edge filter)."""
+        combined = mask & seg_mask
+        n = int(combined.sum())
+        if n == 0:
+            return {'hr': None, 'n': 0, 'wins': 0}
+        seg_actual = actuals[combined]
+        seg_lines = lines[combined]
+        seg_over = edges[combined] > 0
+        wins = int(((seg_actual > seg_lines) & seg_over).sum()
+                    + ((seg_actual < seg_lines) & ~seg_over).sum())
+        pushes = int((seg_actual == seg_lines).sum())
+        graded = n - pushes
+        if graded == 0:
+            return {'hr': None, 'n': n, 'wins': 0}
+        return {'hr': round(wins / graded * 100, 1), 'n': graded, 'wins': wins}
+
+    # By tier
+    by_tier = {name: _hr_for_mask(tmask) for name, tmask in tier_defs.items()}
+
+    # By direction
+    by_direction = {name: _hr_for_mask(dmask) for name, dmask in direction_defs.items()}
+
+    # By tier x direction (8 cells)
+    by_tier_direction = {}
+    for tname, tmask in tier_defs.items():
+        for dname, dmask in direction_defs.items():
+            by_tier_direction[f"{tname} {dname}"] = _hr_for_mask(tmask & dmask)
+
+    # By edge bucket
+    by_edge_bucket = {name: _hr_for_mask(emask) for name, emask in edge_bucket_defs.items()}
+
+    # By line range
+    by_line_range = {name: _hr_for_mask(lmask) for name, lmask in line_range_defs.items()}
+
+    return {
+        'by_tier': by_tier,
+        'by_direction': by_direction,
+        'by_tier_direction': by_tier_direction,
+        'by_edge_bucket': by_edge_bucket,
+        'by_line_range': by_line_range,
+    }
+
+
 def run_walkforward_eval(model, df_eval, X_eval, y_eval, lines):
     """
     Run walk-forward evaluation: split eval period into weekly chunks.
@@ -1197,6 +1289,9 @@ def main():
     # Directional hit rates (Session 175 — Session 173 discovered OVER collapsed to 44.1%)
     directional = compute_directional_hit_rates(preds, y_eval.values, lines, min_edge=3.0)
 
+    # Segmented hit rates (Session 180 — per-tier/direction/edge/line breakdowns)
+    segmented = compute_segmented_hit_rates(preds, y_eval.values, lines, season_avgs=season_avgs, min_edge=3.0)
+
     # Walk-forward per-week breakdown (if --walkforward)
     walkforward_results = None
     if args.walkforward:
@@ -1307,6 +1402,51 @@ def main():
     print(f"  UNDER: {under_str} ({directional['under_graded']} graded) [{under_status}]")
     if not directional['directional_balance_ok']:
         print(f"  BLOCKED: {directional['worst_direction']} at {directional['worst_rate']:.1f}% (below breakeven {BREAKEVEN}%)")
+
+    # Segmented Hit Rate Breakdown (Session 180 — find model "specialties")
+    print("\n" + "-" * 50)
+    print("SEGMENTED HIT RATES (edge 3+)")
+    print("-" * 50)
+
+    # Tier HR
+    print("\n  By Tier:")
+    print(f"    {'Tier':<20s} {'HR':>7s} {'N':>5s}")
+    for tier_name, data in segmented['by_tier'].items():
+        hr_s = f"{data['hr']:.1f}%" if data['hr'] is not None else "N/A"
+        print(f"    {tier_name:<20s} {hr_s:>7s} {data['n']:5d}")
+
+    # Direction x Tier matrix
+    print("\n  Direction x Tier:")
+    print(f"    {'Segment':<30s} {'HR':>7s} {'N':>5s}")
+    for seg_name, data in segmented['by_tier_direction'].items():
+        hr_s = f"{data['hr']:.1f}%" if data['hr'] is not None else "N/A"
+        if data['n'] > 0:
+            print(f"    {seg_name:<30s} {hr_s:>7s} {data['n']:5d}")
+
+    # Edge buckets
+    print("\n  By Edge Bucket:")
+    print(f"    {'Bucket':<20s} {'HR':>7s} {'N':>5s}")
+    for bucket_name, data in segmented['by_edge_bucket'].items():
+        hr_s = f"{data['hr']:.1f}%" if data['hr'] is not None else "N/A"
+        print(f"    {bucket_name:<20s} {hr_s:>7s} {data['n']:5d}")
+
+    # Line ranges
+    print("\n  By Line Range:")
+    print(f"    {'Range':<20s} {'HR':>7s} {'N':>5s}")
+    for range_name, data in segmented['by_line_range'].items():
+        hr_s = f"{data['hr']:.1f}%" if data['hr'] is not None else "N/A"
+        print(f"    {range_name:<20s} {hr_s:>7s} {data['n']:5d}")
+
+    # Flag best segments
+    best_segments = []
+    for section_name, section_data in segmented.items():
+        for seg_name, data in section_data.items():
+            if data['hr'] is not None and data['hr'] >= 58.0 and data['n'] >= 5:
+                best_segments.append((seg_name, data['hr'], data['n']))
+    if best_segments:
+        print("\n  ** Best segments (HR >= 58%, N >= 5):")
+        for seg_name, hr, n in sorted(best_segments, key=lambda x: -x[1]):
+            print(f"     {seg_name}: {hr:.1f}% (n={n})")
 
     # Governance Gate Summary
     print("\n" + "=" * 70)
@@ -1432,6 +1572,7 @@ def main():
                     'model_sha256': model_sha256,
                     'feature_importance': {name: round(float(imp), 2) for name, imp in feature_importance[:10]},
                     'walkforward': walkforward_results,
+                    'segmented_hit_rates': segmented,
                 }),
                 'model_path': str(model_path),
                 'status': 'completed',
