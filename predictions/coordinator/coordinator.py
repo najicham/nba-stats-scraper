@@ -2197,25 +2197,27 @@ def _log_prediction_regeneration(
     # Use streaming inserts for JSON fields (avoids schema conversion issues)
     table_id = f"{project_id}.nba_predictions.prediction_regeneration_audit"
 
+    now = datetime.now(timezone.utc)
     audit_record = {
-        'regeneration_timestamp': datetime.now(timezone.utc),
+        'regeneration_timestamp': now.isoformat(),
         'game_date': game_date,
         'reason': reason,
-        'metadata': json_module.dumps(metadata),  # JSON field needs string for insert_rows
+        'metadata': metadata,  # Session 176: Send dict directly for JSON column
         'superseded_count': results.get('superseded_count', 0),
         'regenerated_count': results.get('regenerated_count', 0),
-        'triggered_by': 'coordinator_endpoint'
+        'processing_time_seconds': results.get('processing_time_seconds', 0.0),
+        'triggered_by': 'coordinator_endpoint',
+        'created_at': now.isoformat(),
     }
 
     # Insert audit record
     try:
-        # Use insert_rows_json instead of load_table_from_json for JSON fields
         errors = client.insert_rows_json(table_id, [audit_record])
 
         if errors:
-            logger.warning(f"Errors inserting audit record: {errors}")
+            logger.error(f"Failed to insert regeneration audit record: {errors}")
         else:
-            logger.info(f"Logged regeneration event to audit table")
+            logger.info(f"Logged regeneration event to audit table for {game_date}")
 
     except Exception as e:
         logger.warning(f"Failed to log audit record: {e}")
