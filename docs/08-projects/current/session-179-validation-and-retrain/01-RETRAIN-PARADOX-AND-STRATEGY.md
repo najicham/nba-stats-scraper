@@ -266,7 +266,7 @@ recommendation = OVER if edge > threshold else UNDER
 
 **Key findings:**
 1. **Volume-accuracy trade-off is smooth and linear.** Less Vegas = more edge picks but ~50% HR. No sweet spot exists.
-2. **OVER direction broken across all weights.** OVER HR capped at 37.5%. UNDER consistently profitable (50-62% HR).
+2. **OVER direction appears broken in Feb 1-8 window** — OVER HR capped at 37.5%. **UPDATE (Session 183):** This is a temporal artifact. Champion production data (Jan 1 - Feb 9, n=1765) shows OVER 53.6% vs UNDER 53.1% — balanced. All experiments shared the same eval window.
 3. **Niche segments are profitable:** UNDER + High Lines (>20.5) hits 70-80% HR across models. NO_VEG model has richest niches (Starters UNDER 83.3%, Edge 7+ 83.3%).
 4. **Feature importance inflection at vegas=0.5.** Below this, player stats dominate.
 
@@ -281,7 +281,7 @@ Session 180 ran 34 experiments across 7 groups (A1-A5, B1-B5, C1-C8). Key result
 - **Two promising leads at small sample:**
   - C4_MATCHUP_ONLY: 60.0% HR (n=25) — matchup features weighted 3x
   - C1_CHAOS: 58.3% HR (n=12) — extreme randomization (rsm=0.3, random_strength=10)
-- **Systematic OVER weakness across all 34 experiments** (OVER HR never exceeded 54.5%)
+- **OVER weakness in Feb 1-8 eval window** (OVER HR never exceeded 54.5%) — **Session 183 showed this is temporal, not structural**
 - **Best volume:** C8_MAE_2STG (61 picks, 50.8% HR) and B3_KITCHEN (60 picks, 51.7% HR)
 
 **Full results:** See `docs/09-handoff/2026-02-09-SESSION-180-HANDOFF.md`

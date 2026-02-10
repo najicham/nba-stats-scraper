@@ -62,7 +62,9 @@ Every experiment shows the same pattern: UNDER significantly outperforms OVER at
 | A1e VEG70 | 33.3% | 6 | **55.6%** | 9 | +22.3pp |
 | A1f NO_VEG | 37.5% | 16 | **57.9%** | 38 | +20.4pp |
 
-**OVER HR never exceeds 37.5% across any experiment.** This is a systemic issue, not model-specific.
+**OVER HR never exceeds 37.5% across any experiment** within this eval window (Feb 1-8).
+
+**UPDATE (Session 183):** This OVER weakness is a **temporal artifact of the Feb 1-8 eval window**, NOT a structural model issue. Champion production data (Jan 1 - Feb 9, n=1765) shows OVER 53.6% vs UNDER 53.1% — perfectly balanced. Week of Jan 12 had OVER at 60.3%. All 40 experiments used the same eval window, so all showed the same temporal pattern. The Jan eval experiments (below) will validate this finding over 31 days of data.
 
 ---
 

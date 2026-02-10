@@ -1,27 +1,58 @@
-Read docs/09-handoff/2026-02-10-SESSION-182-HANDOFF.md and work through priorities:
+Read docs/09-handoff/2026-02-10-SESSION-183-HANDOFF.md for full context. Session 183 ran 18 cross-window experiments and proved the "staleness mechanism" — models create betting edge through natural divergence from Vegas as they age.
 
-- P0: **Grade Feb 10** once games complete. Trigger grading, then run comparison:
-  ```bash
-  gcloud pubsub topics publish nba-grading-trigger --message='{"target_date":"2026-02-10","trigger_source":"manual"}' --project=nba-props-platform
-  PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_train1102_0131_tuned --days 7
-  ```
+**P0 (Immediate):**
 
-- P1: **Commit and push Session 181+182 changes.** Session 181 added segmented hit rates to `quick_retrain.py` (uncommitted). Session 182 added docs. Stage and push:
-  ```bash
-  git add ml/experiments/quick_retrain.py docs/09-handoff/ docs/08-projects/current/session-179-validation-and-retrain/
-  ```
+1. **Commit and push all uncommitted files.** There are 7 uncommitted files — 4 docs (Session 183 analysis + OVER weakness corrections) and 3 code fixes from earlier sessions (severity enum fix, processor name typos, coordinator get_json). Check `git status` and review diffs before committing. The code changes are small bug fixes, not Session 183 work.
 
-- P2: **Re-run C1_CHAOS and C4_MATCHUP_ONLY with extended eval** (Feb 1-15+) once 2 weeks of data available. Look at segmented hit rates for segments with HR >= 58% and N >= 20+. Commands in Session 182 handoff P2.
+2. **Check if Feb 10 games have been graded** (they should auto-grade, but verify):
+   ```bash
+   bq query --use_legacy_sql=false "SELECT game_date, COUNT(*) as n FROM nba_predictions.prediction_accuracy WHERE game_date = '2026-02-10' GROUP BY 1"
+   ```
+   If not graded:
+   ```bash
+   gcloud pubsub topics publish nba-grading-trigger --message='{"target_date":"2026-02-10","trigger_source":"manual"}' --project=nba-props-platform
+   ```
 
-- P3: **Investigate systematic OVER weakness.** All 40 experiments had OVER HR below breakeven. Is this model-specific or systemic? Query OVER vs UNDER in `prediction_accuracy`.
+3. **Run model comparison** to track promotion decision:
+   ```bash
+   PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_train1102_0131_tuned --days 7
+   ```
 
-- P4: **Monitor promotion decision** (~Feb 17-20). Jan 31 tuned leads at 55.1% HR with +24pp disagreement signal. Champion decaying at 49.5%.
+**P1 (Promotion Decision — target ~Feb 17-20):**
 
-Session 182 context:
-- Re-triggered Feb 10 predictions: 222 prop lines available, 18 preds per model, 4 actionable (champion only). Challengers produce 0 actionable (avg |edge| < 1 — retrain paradox in production).
-- Re-ran A1 Vegas Weight Sweep (6 experiments) with Session 181's segmented HR code. Key finding: UNDER + High Lines (>20.5) is profitable at 70-80% HR across models. NO_VEG has richest niche segments. No experiment passes all governance gates overall.
-- Updated project docs: `docs/08-projects/current/session-179-validation-and-retrain/03-A1-VEGAS-WEIGHT-SWEEP-RESULTS.md` (new), `01-RETRAIN-PARADOX-AND-STRATEGY.md` (updated with empirical results + revised priority)
-- Session 180 (Feb 9) ran 34 experiments, none passed gates. Session 181 added segmented HR breakdowns. Session 182 (this) re-ran A1 with segmented HR + ops.
-- 4-way matched comparison (Feb 4-9, n=301): Champion 49.5%, Jan 8 50.5%, Jan 31 defaults 54.2%, **Jan 31 tuned 55.1%**
+The Jan 31 tuned model (`catboost_v9_train1102_0131_tuned`) leads at 53.4% HR All vs champion's decaying 48.8%. Champion was trained Jan 8 and follows a 4-week lifecycle — by Feb 17 it should be at ~43-44% HR. At that point, promoting the tuned model (even with few high-edge picks) is better than a decaying champion.
+
+**P2 (Extended Eval — ~Feb 15+):**
+
+Re-run the best experiments with 2+ weeks of eval data once available:
+```bash
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "C1_CHAOS_EXT2" \
+  --rsm 0.3 --random-strength 10 --subsample 0.5 --bootstrap Bernoulli \
+  --train-start 2025-11-02 --train-end 2026-01-31 \
+  --eval-start 2026-02-01 --eval-end 2026-02-15 --walkforward --force
+
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "NO_VEG_EXT2" \
+  --no-vegas \
+  --train-start 2025-11-02 --train-end 2026-01-31 \
+  --eval-start 2026-02-01 --eval-end 2026-02-15 --walkforward --force
+```
+Focus on: Is UNDER HR still ~60%+ with larger sample? Do niche segments (Starters UNDER, Edge 7+, High Lines >20.5) hold?
+
+**P3 (Strategic — Model Rotation or UNDER-Only):**
+
+Session 183 identified two strategic paths:
+- **Staleness rotation:** Train every 2-3 weeks, shadow 1 week, promote for 2-3 weeks, retire. Needs automation.
+- **UNDER-restricted NO_VEG:** Deploy a model that only makes UNDER picks (~40/week at ~60% HR). Needs custom actionability filter.
+
+Both are viable. Rotation is simpler but requires discipline. UNDER-only is more novel but needs infrastructure work.
+
+**Key context from Sessions 179-183:**
+- 63+ experiments across 5 sessions, none beat controlled staleness for overall performance
+- All architectures follow the same staleness decay curve — architecture affects volume (number of edge picks), not accuracy
+- NO_VEG generates 10x more edge picks than BASELINE/MATCHUP but at slightly lower HR
+- UNDER direction is stable (58-64% HR) across all windows; OVER swings wildly week-to-week
+- Residual mode and two-stage pipeline are dead ends — don't revisit
+- OVER weakness was a Feb 1-8 eval window artifact, not structural (champion OVER=53.6%, UNDER=53.1% over 6 weeks)
+- Backtest-to-production gap: expect 5-10pp discount from experiment results
 
 Use agents in parallel where possible.
