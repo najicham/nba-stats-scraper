@@ -798,6 +798,22 @@ def main():
         print(f"Walk-Forward Eval: ON (per-week breakdown)")
     print()
 
+    # DATE OVERLAP GUARD (Session 176: 90%+ hit rates were caused by training on eval data)
+    if train_end_dt >= eval_start_dt:
+        print("=" * 70)
+        print(" BLOCKED: TRAINING/EVAL DATE OVERLAP DETECTED")
+        print("=" * 70)
+        overlap_days = (train_end_dt - eval_start_dt).days + 1
+        print(f"  Training ends:    {dates['train_end']}")
+        print(f"  Evaluation starts: {dates['eval_start']}")
+        print(f"  Overlap: {overlap_days} days")
+        print()
+        print("  This causes inflated hit rates (87%+ instead of real 62%).")
+        print("  The model trains on the same games it evaluates on.")
+        print()
+        print(f"  Fix: Use --train-end {(eval_start_dt - timedelta(days=1)).strftime('%Y-%m-%d')} or earlier")
+        return
+
     if args.dry_run:
         print("DRY RUN - would train on above dates")
         print(f"  Flags: recency_weight={args.recency_weight}, tune={args.tune}, walkforward={args.walkforward}")

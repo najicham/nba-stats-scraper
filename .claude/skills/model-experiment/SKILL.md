@@ -14,13 +14,15 @@ Train CatBoost models on recent data. Supports two model types:
 **This skill ONLY trains and evaluates models. It does NOT deploy them.**
 
 Deploying a model is a separate, multi-step process that requires:
-1. ALL 5 governance gates passing (Vegas bias, hit rate, sample size, tier bias, MAE)
+1. ALL 6 governance gates passing (Vegas bias, hit rate, sample size, tier bias, MAE, directional balance)
 2. Model uploaded to GCS and registered in manifest
 3. 2+ days of shadow testing with a separate system_id (e.g., `catboost_v9_shadow`)
 4. User explicitly approves promotion after reviewing shadow results
 5. Backfill of predictions for dates that used the old model
 
 **Session 163 Lesson:** A retrained model with BETTER MAE crashed hit rate from 71.2% to 51.2% because it had systematic UNDER bias (-2.26 vs Vegas). Lower MAE does NOT mean better betting performance. The governance gates exist specifically to catch this.
+
+**Session 176 Lesson:** Training/eval date overlap inflated hit rates from 62% to 93%. A hard guard now blocks overlapping dates. Additionally, edge 3+ hit rate is NOT comparable across models with different edge distributions — a conservative model with few 3+ picks will show artificially high HR due to survivorship bias. Always report HR All, n(edge 3+), and avg absolute edge alongside HR 3+.
 
 **NEVER do any of the following without explicit user approval:**
 - Change `CATBOOST_V9_MODEL_PATH` env var on any Cloud Run service
@@ -43,11 +45,19 @@ Deploying a model is a separate, multi-step process that requires:
 # Default: Last 60 days training, 7 days eval, DraftKings lines
 PYTHONPATH=. python ml/experiments/quick_retrain.py --name "FEB_MONTHLY"
 
-# Custom dates
+# Custom dates with walk-forward validation (recommended)
 PYTHONPATH=. python ml/experiments/quick_retrain.py \
     --name "CUSTOM_TEST" \
     --train-start 2025-12-01 --train-end 2026-01-20 \
-    --eval-start 2026-01-21 --eval-end 2026-01-28
+    --eval-start 2026-01-21 --eval-end 2026-01-28 \
+    --walkforward
+
+# Full pipeline: tuning + recency weighting + walk-forward
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "FULL_TEST" \
+    --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-14 \
+    --tune --recency-weight 30 --walkforward
 
 # Use different line source (default is draftkings to match production)
 PYTHONPATH=. python ml/experiments/quick_retrain.py \
@@ -57,6 +67,9 @@ PYTHONPATH=. python ml/experiments/quick_retrain.py \
 # Dry run (show plan only)
 PYTHONPATH=. python ml/experiments/quick_retrain.py --name "TEST" --dry-run
 ```
+
+**WARNING: Date Overlap Guard (Session 176)**
+If `--train-end` >= `--eval-start`, the script will BLOCK with a clear error. This prevents contaminated results (training on eval data inflated HR from 62% to 93%).
 
 ### Breakout Classifier
 
@@ -109,7 +122,16 @@ The diagnosis script outputs a recommendation:
 
 It also flags **directional drift** if either OVER or UNDER hit rate falls below 52.4% (breakeven at -110 odds).
 
-**Recommended workflow:** Diagnose -> Decide -> Train -> Evaluate -> Deploy
+**Recommended workflow:**
+
+```
+1. Diagnose:  PYTHONPATH=. python ml/experiments/model_diagnose.py
+2. Train:     PYTHONPATH=. python ml/experiments/quick_retrain.py --name "NAME" --walkforward
+3. Compare:   Check HR All (not just edge 3+), volume, and walk-forward stability
+4. Gate:      All 6 governance gates must PASS
+5. Shadow:    Deploy with separate system_id for 2+ days
+6. Promote:   Only with explicit user approval
+```
 
 ### Governance Gates (6 gates)
 
@@ -161,6 +183,10 @@ AND mf.feature_quality_score >= 70
 | `--line-source` | draftkings | Sportsbook for eval lines: `draftkings`, `bettingpros`, `fanduel` |
 | `--hypothesis` | Auto | What we're testing |
 | `--tags` | "monthly" | Comma-separated tags |
+| `--tune` | False | Run 18-combo hyperparameter grid search (depth x l2 x lr) |
+| `--recency-weight DAYS` | None | Exponential recency weighting with given half-life in days |
+| `--walkforward` | False | Per-week eval breakdown to detect temporal decay |
+| `--force` | False | Force retrain even if duplicate training dates exist |
 | `--dry-run` | False | Show plan without executing |
 | `--skip-register` | False | Skip ml_experiments table |
 
@@ -333,12 +359,21 @@ Config saved: models/breakout_classifier_BREAKOUT_V1_20260201_143022_config.json
 For production monthly retraining:
 
 ```bash
-# Regression model
+# Regression model (always use --walkforward for temporal stability check)
 PYTHONPATH=. python ml/experiments/quick_retrain.py \
     --name "$(date +%b)_MONTHLY" \
     --train-days 60 \
     --eval-days 7 \
+    --walkforward \
     --tags "monthly,production"
+
+# With tuning and recency (run as a second experiment for comparison)
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "$(date +%b)_MONTHLY_FULL" \
+    --train-days 60 \
+    --eval-days 7 \
+    --tune --recency-weight 30 --walkforward \
+    --tags "monthly,production,tuned"
 
 # Breakout classifier
 PYTHONPATH=. python ml/experiments/train_breakout_classifier.py \
@@ -394,8 +429,8 @@ If a trained model passes all governance gates, the promotion process is:
 
 ```
 Step 1: EXPERIMENT (this skill)
-  - Train model with quick_retrain.py
-  - All 5 governance gates MUST pass
+  - Train model with quick_retrain.py (always use --walkforward)
+  - All 6 governance gates MUST pass
   - Model saved locally in models/ directory
   - Registered in ml_experiments table
 
@@ -446,4 +481,5 @@ The dynamic model_version (e.g., `v9_20260201_011018`) distinguishes different m
 *Updated: Session 125 - Added breakout classifier support*
 *Updated: Session 156 - Zero tolerance for training data quality (required_default_count = 0)*
 *Updated: Session 164 - Added governance warnings, promotion checklist, deployment prevention*
+*Updated: Session 176 - New flags (--tune, --recency-weight, --walkforward), date overlap guard, survivorship bias warning*
 *Part of: Monthly Retraining Infrastructure*
