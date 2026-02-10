@@ -244,7 +244,7 @@ workflows:
       game_aware: true
       window_before_game_hours: 12  # Start 12 hours before first game (was 6)
       business_hours:
-        start: 8   # 8 AM ET
+        start: 5   # 5 AM ET (was 8; moved earlier so lines are available for 2:30 AM predictions next day + early morning runs)
         end: 20    # 8 PM ET
       frequency_hours: 2  # Every 2 hours during window
     

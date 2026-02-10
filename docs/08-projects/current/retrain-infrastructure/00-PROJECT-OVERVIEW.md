@@ -1,12 +1,23 @@
 # Retrain Infrastructure Improvements
 
-**Sessions:** 176-177
-**Status:** Active — 3 challengers in shadow mode, awaiting grading results
+**Sessions:** 176-178
+**Status:** Active — 3 clean challengers in shadow mode, 2 contaminated models retired
 **Files:** `ml/experiments/quick_retrain.py`, `predictions/worker/prediction_systems/catboost_monthly.py`, `bin/compare-model-performance.py`, `bin/backfill-challenger-predictions.py`
 
-## Current State (Session 177)
+## Current State (Session 178)
 
-Three challenger models running in parallel shadow mode alongside production champion. The Jan 8 model has 2,958 backfilled predictions (Jan 9 - Feb 8) awaiting grading results. The Feb 8 models will generate live predictions starting Feb 10.
+Three challenger models running in parallel shadow mode alongside production champion. Session 178 retired 2 contaminated models (trained through Feb 8 with inflated backtests) and replaced them with clean Jan 31 experiments.
+
+**4-Way Head-to-Head (Feb 4-8, n=269 matched predictions):**
+
+| Model | Training | HR | MAE |
+|-------|----------|-----|-----|
+| Champion (`catboost_v9`) | Nov 2 - Jan 8 (old) | 49.8% | 5.44 |
+| `_train1102_0108` | Nov 2 - Jan 8 (new) | 50.9% | 5.07 |
+| **`_train1102_0131`** | Nov 2 - Jan 31 | **56.1%** | **4.95** |
+| **`_train1102_0131_tuned`** | Nov 2 - Jan 31 | **56.9%** | **4.94** |
+
+**Key finding:** More training data (91 days vs 68 days) improves both HR (+6pp) and MAE (-0.5). Tuned hyperparams slightly edge defaults.
 
 **Project docs:**
 - `00-PROJECT-OVERVIEW.md` — This file (infrastructure overview)

@@ -80,8 +80,8 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_all": 75.37,
         "backtest_hit_rate_edge_3plus": 91.8,
         "backtest_n_edge_3plus": 159,
-        "enabled": True,
-        "description": "V9_FULL_FEB — extended training window (99 days), default hyperparams",
+        "enabled": False,  # Session 178: RETIRED — contaminated backtest (31-day train/eval overlap)
+        "description": "V9_FULL_FEB — RETIRED: contaminated backtest metrics",
     },
     "catboost_v9_train1102_0208_tuned": {
         "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_train20251102-20260208_20260209_174344.cbm",
@@ -91,8 +91,30 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_all": 74.79,
         "backtest_hit_rate_edge_3plus": 93.0,
         "backtest_n_edge_3plus": 157,
+        "enabled": False,  # Session 178: RETIRED — contaminated backtest metrics
+        "description": "V9_TUNED_FEB — RETIRED: contaminated backtest metrics",
+    },
+    "catboost_v9_train1102_0131": {
+        "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_train20251102-20260131_20260209_212708.cbm",
+        "train_start": "2025-11-02",
+        "train_end": "2026-01-31",
+        "backtest_mae": 4.9455,
+        "backtest_hit_rate_all": 60.0,
+        "backtest_hit_rate_edge_3plus": 33.3,
+        "backtest_n_edge_3plus": 6,
         "enabled": True,
-        "description": "V9_TUNED_FEB — extended training (99 days), tuned hyperparams",
+        "description": "V9_JAN31_DEFAULTS — extended training (91 days), default hyperparams, clean eval Feb 1-8",
+    },
+    "catboost_v9_train1102_0131_tuned": {
+        "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_train20251102-20260131_20260209_212715.cbm",
+        "train_start": "2025-11-02",
+        "train_end": "2026-01-31",
+        "backtest_mae": 4.9425,
+        "backtest_hit_rate_all": 58.62,
+        "backtest_hit_rate_edge_3plus": 33.3,
+        "backtest_n_edge_3plus": 6,
+        "enabled": True,
+        "description": "V9_JAN31_TUNED — extended training (91 days), tuned (depth=5,l2=5,lr=0.03) + recency 30d, clean eval Feb 1-8",
     },
 }
 

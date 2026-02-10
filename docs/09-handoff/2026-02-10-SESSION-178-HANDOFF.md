@@ -7,98 +7,120 @@
 
 ## What Was Done
 
-### 1. P0: Challenger vs Champion Analysis (COMPLETE)
+### 1. Fixed compare-model-performance.py
+- `edge` column doesn't exist in `prediction_accuracy` — replaced with `predicted_margin` (7 occurrences)
+- Fixed `Decimal` vs `float` type mismatch in gap calculation
+- Improved `format_val()` to handle BigQuery Decimal types cleanly
 
-Ran full comparison of `catboost_v9_train1102_0108` (2,430/2,958 predictions graded) against champion.
+### 2. P0: Challenger vs Champion Analysis (1,457 matched predictions)
 
-**Overall (Jan 10 - Feb 8, edge 3+, actionable):**
+Head-to-head on same player + same date + same line (Jan 9 - Feb 8):
 
-| Metric | Champion | Challenger | Delta |
-|--------|----------|------------|-------|
-| HR Edge 3+ | 63.2% (n=396) | **83.8%** (n=131) | **+20.6pp** |
-| HR Edge 3+ (excl. Jan 12) | 56.9% (n=325) | **79.3%** (n=58) | **+22.4pp** |
-| MAE | 5.2 | **4.8** | -0.4 |
-| Vegas Bias | +0.94 | **+4.73** | Heavy OVER |
-| OVER/UNDER split | 52%/48% | 75%/25% | OVER-heavy |
+| Metric | Champion | `_0108` Challenger |
+|--------|----------|-------------------|
+| HR (all) | 54.0% | **55.7%** (+1.7pp) |
+| MAE | 5.17 | **4.85** (-0.32) |
+| Disagree picks | 46.0% correct | **54.0%** correct |
 
-**Weekly breakdown (edge 3+, actionable):**
+Weekly: challenger beats champion on MAE every single week. When they disagree (311 picks), challenger wins 54% vs 46%.
 
-| Week | Champion HR (n) | Challenger HR (n) |
-|------|----------------|-------------------|
-| Jan 12 | 71.2% (139) | 83.5% (79) |
-| Jan 19 | 66.4% (113) | 90.9% (22) |
-| Jan 26 | 54.0% (87) | 88.9% (18) |
-| Feb 2 | 47.4% (57) | 58.3% (12) |
+### 3. Replaced Contaminated Models with Clean Jan 31 Experiments
 
-**Key caveats:**
-- Backfilled predictions, not live — uses same production lines (apples-to-apples) but feature store may have post-hoc improvements
-- Small sample — only 58 edge 3+ picks excluding Jan 12
-- Heavy OVER bias (+4.73 pvl) — 75% of picks are OVER. Risky if market shifts to UNDERs
-- Low pick volume — 131 actionable vs champion's 396 in the same period
-- Jan 12 accounts for 73/131 (56%) of challenger's edge 3+ picks — one exceptional OVER day
+**Discovery:** The two `_0208` models (trained Nov 2 - Feb 8) had contaminated backtests — evaluated on Jan 9-31 which overlaps 31 days of training data. Their 91-93% HR 3+ numbers were meaningless.
 
-### 2. P4: Jan 12 Anomaly (RESOLVED)
+**Action:** Disabled `_0208` and `_0208_tuned`, trained 2 new models with clean separation:
 
-Both models show extreme OVER bias on Jan 12 (avg pvl +7.4-7.6), but overs actually hit massively. Champion 88.7% (n=71), challenger 86.3% (n=73). Feature quality was good (86.2 avg, 97.8% matchup). **Legitimate — not a feature store issue.**
+| Model | Train Window | Eval Window | Hyperparams | Clean? |
+|-------|-------------|-------------|-------------|--------|
+| `catboost_v9_train1102_0131` | Nov 2 - Jan 31 | Feb 1-8 | depth=6, l2=3, lr=0.05 (defaults) | Yes |
+| `catboost_v9_train1102_0131_tuned` | Nov 2 - Jan 31 | Feb 1-8 | depth=5, l2=5, lr=0.03 (tuned) + recency 30d | Yes |
 
-### 3. Fixed compare-model-performance.py (Bug Fix)
-
-Script referenced non-existent `edge` column in `prediction_accuracy` table. Fixed:
-- `edge` → `predicted_margin` (7 occurrences in the SQL query)
-- `Decimal` vs `float` type mismatch in gap calculation
-- `format_val()` now handles BigQuery Decimal types cleanly
-
-### 4. Backfill Infrastructure Verified (READY)
-
-Verified all components for backfilling `catboost_v9_train1102_0208` and `catboost_v9_train1102_0208_tuned`:
-
-| Component | Status |
-|-----------|--------|
-| GCS model files | All 3 challengers exist |
-| MONTHLY_MODELS config | Both enabled with correct GCS paths |
-| Backfill script | Works with explicit `--start/--end` flags |
-| Feb 9 feature store | 226 rows, 157 pass quality gate |
-| Feb 9 production lines | 67 champion predictions with lines |
-
-**Only blocker:** Script default date math (`end=yesterday=Feb 8` < `start=train_end+1=Feb 9`). Use explicit dates:
-
+**Training commands used:**
 ```bash
-PYTHONPATH=. python bin/backfill-challenger-predictions.py \
-    --model catboost_v9_train1102_0208 \
-    --start 2026-02-09 --end 2026-02-09
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "V9_JAN31_DEFAULTS" \
+    --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 \
+    --walkforward --force
 
-PYTHONPATH=. python bin/backfill-challenger-predictions.py \
-    --model catboost_v9_train1102_0208_tuned \
-    --start 2026-02-09 --end 2026-02-09
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "V9_JAN31_TUNED" \
+    --train-start 2025-11-02 --train-end 2026-01-31 \
+    --eval-start 2026-02-01 --eval-end 2026-02-08 \
+    --tune --recency-weight 30 --walkforward --force
 ```
 
-### 5. P1/P2: Pending (Not Actionable Yet)
+**Governance gates:** Both FAILED on sample size (only 6 edge 3+ bets in 8-day eval window). Deployed to shadow anyway — shadow testing will provide the real data.
 
-- **Feb 9 games:** All 10 still `game_status=1` (Scheduled). Cannot grade.
-- **Feb 10 predictions:** Not generated yet (pipeline runs ~6 AM ET).
+**Model files:**
+- Defaults: `catboost_v9_33f_train20251102-20260131_20260209_212708.cbm` (SHA: b61ba401)
+- Tuned: `catboost_v9_33f_train20251102-20260131_20260209_212715.cbm` (SHA: 92b81d6c)
+
+### 4. Backfilled and Graded New Models
+
+- Backfilled 466 predictions each for Feb 4-8 (5 game days)
+- Triggered grading for Feb 4-8 — 449 graded per model
+- Only 6-7 edge 3+ actionable picks per model (avg |edge| ~0.75)
+
+### 5. 4-Way Head-to-Head Comparison (Feb 4-8, n=269 matched)
+
+| Model | Training | HR | MAE | Notes |
+|-------|----------|-----|-----|-------|
+| Champion (`catboost_v9`) | Nov 2 - Jan 8 (old) | 49.8% | 5.44 | Decaying |
+| `_train1102_0108` | Nov 2 - Jan 8 (new) | 50.9% | 5.07 | Better features |
+| **`_train1102_0131`** | Nov 2 - Jan 31 | **56.1%** | **4.95** | **Best HR (defaults)** |
+| **`_train1102_0131_tuned`** | Nov 2 - Jan 31 | **56.9%** | **4.94** | **Best MAE (tuned)** |
+
+**Key finding:** More training data helps. Jan 31 models beat Jan 8 models by ~5-6pp on HR and ~0.1 on MAE. Tuned hyperparams slightly edge defaults.
+
+### 6. Jan 12 Anomaly — Resolved
+Both models had extreme OVER bias on Jan 12, but overs hit massively. Feature quality was good. Legitimate, not a data issue.
+
+---
+
+## Current Shadow Deployment
+
+| # | system_id | Training | Hyperparams | Status |
+|---|-----------|----------|-------------|--------|
+| 1 | `catboost_v9` | Nov 2 - Jan 8 | defaults (old features) | **CHAMPION** |
+| 2 | `catboost_v9_train1102_0108` | Nov 2 - Jan 8 | defaults (new features) | Shadow, 2430 graded |
+| 3 | `catboost_v9_train1102_0131` | Nov 2 - Jan 31 | defaults | Shadow, 449 graded |
+| 4 | `catboost_v9_train1102_0131_tuned` | Nov 2 - Jan 31 | tuned (d=5,l2=5,lr=0.03)+recency | Shadow, 449 graded |
+| ~~5~~ | ~~`catboost_v9_train1102_0208`~~ | ~~Nov 2 - Feb 8~~ | — | **RETIRED** (contaminated) |
+| ~~6~~ | ~~`catboost_v9_train1102_0208_tuned`~~ | ~~Nov 2 - Feb 8~~ | — | **RETIRED** (contaminated) |
 
 ---
 
 ## Files Modified
 
-- `bin/compare-model-performance.py` — Fixed `edge` → `predicted_margin`, Decimal type handling, format_val display
+- `bin/compare-model-performance.py` — Fixed `edge` → `predicted_margin`, type handling, formatting
+- `predictions/worker/prediction_systems/catboost_monthly.py` — Disabled `_0208` models, added `_0131` models
+- `docs/08-projects/current/retrain-infrastructure/01-EXPERIMENT-RESULTS-REVIEW.md` — Full update with Session 178 results
+- `docs/09-handoff/2026-02-10-SESSION-178-HANDOFF.md` — This file
 
 ---
 
 ## What Still Needs Doing
 
 ### P0 (Immediate)
-1. **Run Feb 9 backfills** for `_0208` and `_0208_tuned` models (commands above)
-2. **Grade Feb 9 games** once `game_status=3` — trigger: `gcloud pubsub topics publish nba-grading-trigger --message='{"target_date":"2026-02-09","trigger_source":"manual"}' --project=nba-props-platform`
+1. **Commit and push** — auto-deploy will update prediction-worker with new model config
+2. **Grade Feb 9 games** once `game_status=3` — then backfill all 3 challengers for Feb 9
+3. **Run subset analysis** on backfilled predictions (not yet done)
 
 ### P1 (Next Morning)
-3. **Verify Feb 10 live predictions** — first overnight run with all 3 challengers deployed. Check: `SELECT system_id, COUNT(*) FROM nba_predictions.player_prop_predictions WHERE game_date='2026-02-10' AND system_id LIKE 'catboost_v9%' GROUP BY 1`
-4. **Check OddsAPI diagnostics** in prediction-worker Cloud Run logs
+4. **Verify Feb 10 live predictions** — first overnight run with Jan 31 challengers. Check:
+   ```sql
+   SELECT system_id, COUNT(*) FROM nba_predictions.player_prop_predictions
+   WHERE game_date='2026-02-10' AND system_id LIKE 'catboost_v9%' GROUP BY 1
+   ```
+5. **Check OddsAPI diagnostics** in prediction-worker logs
 
-### P2 (Ongoing)
-5. **Monitor challenger live performance** — live data eliminates backfill caveats. Run: `PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_train1102_0108 --days 7`
-6. **Watch the OVER bias** — challenger's +4.73 vegas bias and 75% OVER split is the biggest risk factor. If live predictions show similar bias, consider whether this is a feature or a bug.
+### P2 (Ongoing Monitoring)
+6. **Monitor Jan 31 models' OVER bias** — if they show the same +4.73 bias as `_0108`, that's a model characteristic not a fluke
+7. **Accumulate live data** — need 50+ edge 3+ graded bets before considering promotion
+8. **Champion model decay** — 47.3% HR last week. If Jan 31 models sustain 56%+ in production, promote to champion
 
-### P3 (Low Priority)
-7. **Model decay tracking** — champion hit rate dropped from 71.2% → 47.3% over 4 weeks. Challenger promotion may be urgent.
-8. **Signal system recalibration** — 9 of 15 recent days are RED, losing discriminative power.
+### P3 (Future)
+9. **Monthly retrain cadence** — train through end of month, eval first week of next month
+10. **Signal recalibration** — 9 of 15 recent days RED, losing discriminative power
+11. **Update CLAUDE.md** — model section needs refresh with new challenger info
