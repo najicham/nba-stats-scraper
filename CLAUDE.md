@@ -240,11 +240,11 @@ Multiple V9 challengers run in **shadow mode** alongside the champion (`catboost
 | system_id | Training | Hyperparams | Production HR All (Feb 4-9) |
 |-----------|----------|-------------|------------------------|
 | `catboost_v9_train1102_0108` | Nov 2 - Jan 8 | defaults | 52.2% |
-| `catboost_v9_train1102_0131` | Nov 2 - Jan 31 | defaults | 53.6% |
 | `catboost_v9_train1102_0131_tuned` | Nov 2 - Jan 31 | tuned (d=5,l2=5,lr=0.03)+recency 30d | 53.4% |
-| `catboost_v9_q43_train1102_0131` | Nov 2 - Jan 31 | **quantile alpha=0.43** | NEW (deployed Session 186) |
+| `catboost_v9_q43_train1102_0131` | Nov 2 - Jan 31 | **quantile alpha=0.43** | NEW (Session 186) |
+| `catboost_v9_q45_train1102_0131` | Nov 2 - Jan 31 | **quantile alpha=0.45** | NEW (Session 186) |
 
-**Retired (Session 178):** `catboost_v9_train1102_0208` and `_0208_tuned` — contaminated backtests (31-day train/eval overlap).
+**Retired:** `_0208`, `_0208_tuned` (contaminated backtests), `_0131` defaults (redundant with `_tuned`).
 
 **Key findings:**
 - Champion decaying: 71.2% edge 3+ (Jan 12) -> 47.9% (Feb 2). Now 33 days stale, below breakeven.
@@ -305,6 +305,7 @@ gs://nba-props-platform-models/catboost/v9/
     ├── catboost_v9_33f_train20251102-20260131_20260209_212708.cbm  # Challenger (Jan 31 defaults)
     ├── catboost_v9_33f_train20251102-20260131_20260209_212715.cbm  # Challenger (Jan 31 tuned)
     ├── catboost_v9_33f_q0.43_train20251102-20260131_20260210_094854.cbm  # QUANT_43 shadow (Session 186)
+    ├── catboost_v9_33f_q0.45_train20251102-20260131_20260210_103216.cbm  # QUANT_45 shadow (Session 186)
     └── catboost_v9_2026_02.cbm                      # DISABLED (UNDER bias)
 ```
 

@@ -102,8 +102,8 @@ MONTHLY_MODELS = {
         "backtest_hit_rate_all": 60.0,
         "backtest_hit_rate_edge_3plus": 33.3,
         "backtest_n_edge_3plus": 6,
-        "enabled": True,
-        "description": "V9_JAN31_DEFAULTS — extended training (91 days), default hyperparams, clean eval Feb 1-8",
+        "enabled": False,  # Session 186: RETIRED — identical to _tuned in production (53.6% vs 53.4%), redundant
+        "description": "V9_JAN31_DEFAULTS — RETIRED: redundant with _tuned",
     },
     "catboost_v9_train1102_0131_tuned": {
         "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_train20251102-20260131_20260209_212715.cbm",
@@ -126,6 +126,17 @@ MONTHLY_MODELS = {
         "backtest_n_edge_3plus": 38,
         "enabled": True,
         "description": "Q43_SHADOW — quantile alpha=0.43, staleness-independent edge (Session 186). 65.8% HR 3+ when fresh, 67.6% UNDER HR.",
+    },
+    "catboost_v9_q45_train1102_0131": {
+        "model_path": "gs://nba-props-platform-models/catboost/v9/monthly/catboost_v9_33f_q0.45_train20251102-20260131_20260210_103216.cbm",
+        "train_start": "2025-11-02",
+        "train_end": "2026-01-31",
+        "backtest_mae": 5.0871,
+        "backtest_hit_rate_all": 50.0,
+        "backtest_hit_rate_edge_3plus": 61.9,
+        "backtest_n_edge_3plus": 21,
+        "enabled": True,
+        "description": "Q45_SHADOW — quantile alpha=0.45, less aggressive than Q43 (Session 186). 61.9% HR 3+, 65.0% UNDER HR. Vegas bias -1.34 (within limits).",
     },
 }
 
