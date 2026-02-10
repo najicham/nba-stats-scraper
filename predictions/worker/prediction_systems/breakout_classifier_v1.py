@@ -13,7 +13,7 @@ Purpose:
 Model Performance (EXP_COMBINED_BEST):
 - Optimal threshold: 0.769 for 60% precision
 - Training: Nov 2025 - Jan 2026 (current season)
-- Features: 8 features capturing volatility, cold streaks, and matchup context
+- Features: 10 V1 features from shared module (ml/features/breakout_features.py)
 
 Shadow Mode Integration:
 - This classifier runs in SHADOW MODE alongside main predictions
@@ -47,6 +47,8 @@ from pathlib import Path
 from typing import Dict, Optional, Any
 
 import numpy as np
+
+from ml.features.breakout_features import BREAKOUT_FEATURE_ORDER_V1, FEATURE_DEFAULTS
 
 logger = logging.getLogger(__name__)
 
@@ -97,17 +99,8 @@ class ModelLoadError(Exception):
         return base
 
 
-# Feature names in exact order required by the model
-BREAKOUT_FEATURES = [
-    "cv_ratio",               # Coefficient of variation ratio (recent vs season)
-    "cold_streak_indicator",  # Binary: 1 if below season avg last 3 games
-    "pts_vs_season_zscore",   # Z-score: how far below season avg
-    "opponent_def_rating",    # Opponent defensive efficiency
-    "explosion_ratio",        # Ratio of max game / avg (ceiling capacity)
-    "days_since_breakout",    # Days since last breakout game
-    "minutes_avg_last_10",    # Recent playing time
-    "points_avg_season",      # Season scoring average
-]
+# Feature names in exact order required by the V1 model (from shared module)
+BREAKOUT_FEATURES = BREAKOUT_FEATURE_ORDER_V1
 
 
 class BreakoutClassifierV1:
@@ -438,52 +431,58 @@ class BreakoutClassifierV1:
         """
         Prepare feature vector for classification.
 
-        Extracts the 8 features in the exact order required by the model.
-        Uses reasonable defaults for missing features.
+        Builds the 10 V1 features in the exact order from BREAKOUT_FEATURE_ORDER_V1
+        (shared module). Uses FEATURE_DEFAULTS for missing values.
         """
-        # Calculate derived features with defaults
-        points_std = features.get('points_std_last_10', 5.0)
+        # Extract base values needed for derived features
         points_avg_last_5 = features.get('points_avg_last_5', points_avg_season)
-        points_avg_last_10 = features.get('points_avg_last_10', points_avg_season)
+        points_std = features.get('points_std_last_10', FEATURE_DEFAULTS['points_std_last_10'])
 
-        # CV ratio: coefficient of variation ratio (recent volatility vs season)
-        cv_season = points_std / points_avg_season if points_avg_season > 0 else 0.5
-        cv_recent = points_std / points_avg_last_10 if points_avg_last_10 > 0 else 0.5
-        cv_ratio = cv_recent / cv_season if cv_season > 0 else 1.0
+        # Feature 1: pts_vs_season_zscore — derived from worker features
+        pts_vs_season_zscore = (
+            (points_avg_last_5 - points_avg_season) / points_std
+            if points_std > 0 else FEATURE_DEFAULTS['pts_vs_season_zscore']
+        )
 
-        # Cold streak indicator: 1 if last 3 games below season avg
-        # Use points_avg_last_5 as proxy (closer to recent performance)
-        cold_streak_indicator = 1.0 if points_avg_last_5 < points_avg_season else 0.0
+        # Feature 2: points_std_last_10
+        points_std_last_10 = float(points_std)
 
-        # Z-score: how far below season average
-        pts_vs_season_zscore = (points_avg_last_5 - points_avg_season) / points_std if points_std > 0 else 0.0
+        # Feature 3: explosion_ratio
+        explosion_ratio = features.get('explosion_ratio', FEATURE_DEFAULTS['explosion_ratio'])
 
-        # Opponent defensive rating (higher = worse defense = easier to score)
-        opponent_def_rating = features.get('opponent_def_rating', 112.0)
+        # Feature 4: days_since_breakout
+        days_since_breakout = features.get('days_since_breakout', FEATURE_DEFAULTS['days_since_breakout'])
 
-        # Explosion ratio: max game / avg (from features or estimate)
-        # This captures "ceiling" - how high can they go
-        explosion_ratio = features.get('explosion_ratio', 1.5)
-        if explosion_ratio == 1.5 and 'points_max_season' in features:
-            points_max = features['points_max_season']
-            explosion_ratio = points_max / points_avg_season if points_avg_season > 0 else 1.5
+        # Feature 5: opponent_def_rating
+        opponent_def_rating = features.get('opponent_def_rating', FEATURE_DEFAULTS['opponent_def_rating'])
 
-        # Days since breakout: from features or default to 30 (about a month)
-        days_since_breakout = features.get('days_since_breakout', 30.0)
+        # Feature 6: home_away
+        home_away = features.get('home_away', FEATURE_DEFAULTS['home_away'])
 
-        # Minutes avg last 10
-        minutes_avg_last_10 = features.get('minutes_avg_last_10', 25.0)
+        # Feature 7: back_to_back
+        back_to_back = features.get('back_to_back', FEATURE_DEFAULTS['back_to_back'])
 
-        # Build feature vector in exact order
+        # Feature 8: points_avg_last_5
+        points_avg_last_5_val = float(points_avg_last_5)
+
+        # Feature 9: points_avg_season
+        points_avg_season_val = float(points_avg_season)
+
+        # Feature 10: minutes_avg_last_10
+        minutes_avg_last_10 = features.get('minutes_avg_last_10', FEATURE_DEFAULTS['minutes_avg_last_10'])
+
+        # Build feature vector in exact BREAKOUT_FEATURE_ORDER_V1 order
         vector = np.array([
-            cv_ratio,
-            cold_streak_indicator,
             pts_vs_season_zscore,
-            opponent_def_rating,
+            points_std_last_10,
             explosion_ratio,
             days_since_breakout,
+            opponent_def_rating,
+            home_away,
+            back_to_back,
+            points_avg_last_5_val,
+            points_avg_season_val,
             minutes_avg_last_10,
-            points_avg_season,
         ]).reshape(1, -1)
 
         # Validate - no NaN or Inf
