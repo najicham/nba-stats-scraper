@@ -856,7 +856,7 @@ def start_prediction_batch():
 
     try:
         # Parse request
-        request_data = request.get_json() or {}
+        request_data = request.get_json(force=True, silent=True) or {}
 
         # Get game date (default to today)
         # Supports: specific date (YYYY-MM-DD), "TODAY", "TOMORROW"
@@ -1698,7 +1698,7 @@ def check_lines():
         from zoneinfo import ZoneInfo
         from predictions.coordinator.quality_alerts import send_line_check_alert
 
-        data = request.get_json() or {}
+        data = request.get_json(force=True, silent=True) or {}
 
         # Resolve game date
         game_date_str = data.get('game_date')
@@ -1858,7 +1858,7 @@ def morning_summary():
         from google.cloud import bigquery as bq
         from predictions.coordinator.quality_alerts import send_morning_line_summary
 
-        data = request.get_json() or {}
+        data = request.get_json(force=True, silent=True) or {}
 
         game_date_str = data.get('game_date')
         if game_date_str and game_date_str != 'TODAY':
@@ -2818,7 +2818,7 @@ def check_stalled_batches():
         JSON with results of stall check
     """
     try:
-        request_data = request.get_json() or {}
+        request_data = request.get_json(force=True, silent=True) or {}
         batch_id = request_data.get('batch_id')
         stall_threshold = request_data.get('stall_threshold_minutes', 10)
         min_completion = request_data.get('min_completion_pct', 95.0)
@@ -2905,7 +2905,7 @@ def reset_batch():
     global current_tracker, current_batch_id, current_game_date
 
     try:
-        request_data = request.get_json() or {}
+        request_data = request.get_json(force=True, silent=True) or {}
         batch_id = request_data.get('batch_id')
         game_date = request_data.get('game_date')
 
@@ -2993,7 +2993,7 @@ def cleanup_duplicate_predictions():
         200 OK with cleanup results
     """
     try:
-        request_data = request.get_json() or {}
+        request_data = request.get_json(force=True, silent=True) or {}
         game_date_str = request_data.get('game_date')
         dry_run = request_data.get('dry_run', False)
 
@@ -3089,7 +3089,7 @@ def check_prediction_signal():
     from zoneinfo import ZoneInfo
 
     try:
-        request_data = request.get_json() or {}
+        request_data = request.get_json(force=True, silent=True) or {}
         game_date_str = request_data.get('game_date', 'TODAY')
         send_alert = request_data.get('send_alert', True)
 
@@ -3194,7 +3194,7 @@ def cleanup_staging_tables():
         200 OK with cleanup results
     """
     try:
-        request_data = request.get_json() or {}
+        request_data = request.get_json(force=True, silent=True) or {}
         max_age_hours = request_data.get('max_age_hours', 24)
         dry_run = request_data.get('dry_run', False)
 

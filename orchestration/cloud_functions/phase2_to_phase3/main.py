@@ -159,9 +159,10 @@ def normalize_processor_name(raw_name: str, output_table: Optional[str] = None) 
         # NBA.com processors
         'NbacScheduleProcessor': 'p2_nbacom_schedule',
         'NbacomScheduleProcessor': 'p2_nbacom_schedule',
-        'NbacGambookProcessor': 'p2_nbacom_gamebook_pdf',
-        'NbacGamébookProcessor': 'p2_nbacom_gamebook_pdf',
-        'NbacGamébookPlayerStatsProcessor': 'p2_nbacom_gamebook_pdf',
+        'NbacGamebookProcessor': 'p2_nbacom_gamebook_pdf',
+        'NbacGamebookPlayerStatsProcessor': 'p2_nbacom_gamebook_pdf',
+        'NbacGambookProcessor': 'p2_nbacom_gamebook_pdf',  # Legacy typo variant
+        'NbacGamébookProcessor': 'p2_nbacom_gamebook_pdf',  # Legacy typo variant
         # Basketball Reference processors
         'BrRosterProcessor': 'p2_br_season_roster',
         'BrRostersProcessor': 'p2_br_season_roster',

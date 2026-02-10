@@ -832,7 +832,7 @@ class PlayerGameSummaryProcessor(
             # Track the issue for monitoring
             self.track_source_coverage_event(
                 event_type=SourceCoverageEventType.DEPENDENCY_STALE,
-                severity=SourceCoverageSeverity.ERROR,  # Elevated to ERROR (was WARNING)
+                severity=SourceCoverageSeverity.CRITICAL,  # Elevated to CRITICAL (was WARNING). Note: .ERROR does not exist in this enum.
                 source='team_offense_game_summary',
                 message=validation_msg,
                 details=validation_details
