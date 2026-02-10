@@ -60,7 +60,7 @@ def query_production_performance(client, system_id, days):
             line_value,
             prediction_correct,
             recommendation,
-            edge
+            predicted_margin
         FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
         WHERE system_id = '{system_id}'
           AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY)
@@ -76,22 +76,22 @@ def query_production_performance(client, system_id, days):
         ROUND(AVG(ABS(predicted_points - actual_points)), 3) as mae,
         ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate_all,
         -- Edge 3+
-        COUNTIF(ABS(edge) >= 3) as n_edge_3plus,
-        ROUND(100.0 * COUNTIF(prediction_correct AND ABS(edge) >= 3)
-            / NULLIF(COUNTIF(ABS(edge) >= 3), 0), 1) as hit_rate_edge_3plus,
+        COUNTIF(ABS(predicted_margin) >= 3) as n_edge_3plus,
+        ROUND(100.0 * COUNTIF(prediction_correct AND ABS(predicted_margin) >= 3)
+            / NULLIF(COUNTIF(ABS(predicted_margin) >= 3), 0), 1) as hit_rate_edge_3plus,
         -- Edge 5+
-        COUNTIF(ABS(edge) >= 5) as n_edge_5plus,
-        ROUND(100.0 * COUNTIF(prediction_correct AND ABS(edge) >= 5)
-            / NULLIF(COUNTIF(ABS(edge) >= 5), 0), 1) as hit_rate_edge_5plus,
+        COUNTIF(ABS(predicted_margin) >= 5) as n_edge_5plus,
+        ROUND(100.0 * COUNTIF(prediction_correct AND ABS(predicted_margin) >= 5)
+            / NULLIF(COUNTIF(ABS(predicted_margin) >= 5), 0), 1) as hit_rate_edge_5plus,
         -- Vegas bias
         ROUND(AVG(predicted_points - line_value), 2) as vegas_bias,
         -- Directional
-        ROUND(100.0 * COUNTIF(prediction_correct AND recommendation = 'OVER' AND ABS(edge) >= 3)
-            / NULLIF(COUNTIF(recommendation = 'OVER' AND ABS(edge) >= 3), 0), 1) as over_hr_3plus,
-        COUNTIF(recommendation = 'OVER' AND ABS(edge) >= 3) as over_n_3plus,
-        ROUND(100.0 * COUNTIF(prediction_correct AND recommendation = 'UNDER' AND ABS(edge) >= 3)
-            / NULLIF(COUNTIF(recommendation = 'UNDER' AND ABS(edge) >= 3), 0), 1) as under_hr_3plus,
-        COUNTIF(recommendation = 'UNDER' AND ABS(edge) >= 3) as under_n_3plus,
+        ROUND(100.0 * COUNTIF(prediction_correct AND recommendation = 'OVER' AND ABS(predicted_margin) >= 3)
+            / NULLIF(COUNTIF(recommendation = 'OVER' AND ABS(predicted_margin) >= 3), 0), 1) as over_hr_3plus,
+        COUNTIF(recommendation = 'OVER' AND ABS(predicted_margin) >= 3) as over_n_3plus,
+        ROUND(100.0 * COUNTIF(prediction_correct AND recommendation = 'UNDER' AND ABS(predicted_margin) >= 3)
+            / NULLIF(COUNTIF(recommendation = 'UNDER' AND ABS(predicted_margin) >= 3), 0), 1) as under_hr_3plus,
+        COUNTIF(recommendation = 'UNDER' AND ABS(predicted_margin) >= 3) as under_n_3plus,
     FROM graded
     """
     result = client.query(query).to_dataframe()
@@ -104,7 +104,12 @@ def format_val(val, suffix='', na='N/A'):
     """Format a value with suffix, handling None/NaN."""
     if val is None or (isinstance(val, float) and val != val):  # NaN check
         return na
-    return f"{val}{suffix}"
+    # Convert Decimal types to float for clean display
+    v = float(val) if hasattr(val, 'as_tuple') else val
+    if isinstance(v, float):
+        # Use appropriate precision
+        return f"{v:.1f}{suffix}" if abs(v) >= 1 else f"{v:.3f}{suffix}"
+    return f"{v}{suffix}"
 
 
 def main():
@@ -165,7 +170,7 @@ def main():
         bt = format_val(backtest_val, suffix)
         pr = format_val(prod_val, suffix)
         if backtest_val is not None and prod_val is not None:
-            gap = prod_val - backtest_val
+            gap = float(prod_val) - float(backtest_val)
             direction = "+" if gap > 0 else ""
             gap_str = f"{direction}{gap:.1f}{suffix}"
         else:
