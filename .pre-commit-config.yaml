@@ -111,6 +111,15 @@ repos:
         types: [python, sql]
         verbose: true
 
+      - id: validate-pipeline-patterns
+        name: Validate pipeline patterns (Session 185)
+        description: Catches invalid enum usage, processor name mapping gaps, unsafe get_json() calls
+        entry: python .pre-commit-hooks/validate_pipeline_patterns.py
+        language: python
+        pass_filenames: false
+        always_run: true
+        verbose: true
+
   # Standard pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
