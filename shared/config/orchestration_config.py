@@ -23,13 +23,13 @@ class PhaseTransitionConfig:
     # directly via Pub/Sub subscription (nba-phase3-analytics-sub).
     # This list is used for tracking completeness in Firestore.
     phase2_expected_processors: List[str] = field(default_factory=lambda: [
-        # Core daily processors that reliably publish completion messages
-        # NOTE: These must match the processor_name values in config/workflows.yaml
-        'p2_bigdataball_pbp',         # Per-game play-by-play
-        'p2_odds_game_lines',         # Per-game odds
-        'p2_nbacom_schedule',         # Schedule updates
-        'p2_nbacom_gamebook_pdf',     # Post-game player stats
-        'p2_br_season_roster',        # Basketball-ref rosters
+        # Core daily processors that reliably publish completion for each game_date
+        # NOTE: These must match normalize_processor_name() output in phase2_to_phase3/main.py
+        'p2_bigdataball_pbp',         # BigDataBallPbpProcessor
+        'p2_odds_game_lines',         # OddsApiGameLinesBatchProcessor
+        'p2_odds_player_props',       # OddsApiPropsBatchProcessor
+        'p2_nbacom_gamebook_pdf',     # NbacGamebookProcessor
+        'p2_nbacom_boxscores',        # NbacPlayerBoxscoreProcessor
     ])
 
     # Phase 2: Required vs Optional Processors
@@ -37,13 +37,13 @@ class PhaseTransitionConfig:
     # Optional: Nice to have, but won't block Phase 3
     phase2_required_processors: List[str] = field(default_factory=lambda: [
         'p2_odds_game_lines',         # Critical for betting lines
-        'p2_nbacom_schedule',         # Critical for game schedule
         'p2_nbacom_gamebook_pdf',     # Critical for post-game stats
+        'p2_nbacom_boxscores',        # Critical for player boxscores
     ])
 
     phase2_optional_processors: List[str] = field(default_factory=lambda: [
         'p2_bigdataball_pbp',         # External dependency, may fail
-        'p2_br_season_roster',        # Only runs on roster changes
+        'p2_odds_player_props',       # Player prop lines
     ])
 
     # Phase 3 -> Phase 4: List of expected processors

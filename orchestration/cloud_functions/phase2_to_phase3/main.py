@@ -100,13 +100,13 @@ except ImportError:
     # NOTE: In monitoring mode, this is used for tracking completeness
     logger.warning("Could not import orchestration_config, using fallback list")
     EXPECTED_PROCESSORS: List[str] = [
-        # Core daily processors - names must match normalize_processor_name() output
-        'p2_bdl_box_scores',          # Daily box scores from balldontlie
-        'p2_bigdataball_pbp',         # Per-game play-by-play
-        'p2_odds_game_lines',         # Per-game odds
-        'p2_nbacom_schedule',         # Schedule updates
-        'p2_nbacom_gamebook_pdf',     # Post-game player stats
-        'p2_br_season_roster',        # Basketball-ref rosters
+        # Core daily processors that reliably publish completion for each game_date
+        # Names must match normalize_processor_name() output
+        'p2_bigdataball_pbp',         # BigDataBallPbpProcessor
+        'p2_odds_game_lines',         # OddsApiGameLinesBatchProcessor
+        'p2_odds_player_props',       # OddsApiPropsBatchProcessor
+        'p2_nbacom_gamebook_pdf',     # NbacGamebookProcessor
+        'p2_nbacom_boxscores',        # NbacPlayerBoxscoreProcessor
     ]
     EXPECTED_PROCESSOR_COUNT: int = len(EXPECTED_PROCESSORS)
     EXPECTED_PROCESSOR_SET: Set[str] = set(EXPECTED_PROCESSORS)
@@ -156,13 +156,16 @@ def normalize_processor_name(raw_name: str, output_table: Optional[str] = None) 
         # Odds API processors
         'OddsGameLinesProcessor': 'p2_odds_game_lines',
         'OddsApiGameLinesProcessor': 'p2_odds_game_lines',
+        'OddsApiGameLinesBatchProcessor': 'p2_odds_game_lines',
+        'OddsApiPropsProcessor': 'p2_odds_player_props',
+        'OddsApiPropsBatchProcessor': 'p2_odds_player_props',
         # NBA.com processors
         'NbacScheduleProcessor': 'p2_nbacom_schedule',
         'NbacomScheduleProcessor': 'p2_nbacom_schedule',
         'NbacGamebookProcessor': 'p2_nbacom_gamebook_pdf',
         'NbacGamebookPlayerStatsProcessor': 'p2_nbacom_gamebook_pdf',
-        'NbacGambookProcessor': 'p2_nbacom_gamebook_pdf',  # Legacy typo variant
-        'NbacGamébookProcessor': 'p2_nbacom_gamebook_pdf',  # Legacy typo variant
+        'NbacPlayerBoxscoreProcessor': 'p2_nbacom_boxscores',
+        'NbacTeamBoxscoreProcessor': 'p2_nbacom_boxscores',
         # Basketball Reference processors
         'BrRosterProcessor': 'p2_br_season_roster',
         'BrRostersProcessor': 'p2_br_season_roster',
