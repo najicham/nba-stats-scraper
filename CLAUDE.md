@@ -230,31 +230,69 @@ PYTHONPATH=. python ml/experiments/quick_retrain.py \
 # Script outputs ALL GATES PASSED/FAILED — do NOT deploy without passing
 ```
 
-### Parallel Models (Sessions 177-178)
+### Parallel Models (Sessions 177-178, updated Session 186)
 
 Multiple V9 challengers run in **shadow mode** alongside the champion (`catboost_v9`). Each gets its own `system_id`, is graded independently, and does NOT affect user-facing picks or alerts.
 
 **Workflow:** Train (`quick_retrain.py`) -> Upload to GCS -> Add config to `catboost_monthly.py` -> Deploy -> Monitor (`compare-model-performance.py`) -> Promote or retire
 
-**Active challengers (Session 178):**
-| system_id | Training | Hyperparams | Production HR (Feb 4-8) |
+**Active challengers (Session 186):**
+| system_id | Training | Hyperparams | Production HR All (Feb 4-9) |
 |-----------|----------|-------------|------------------------|
-| `catboost_v9_train1102_0108` | Nov 2 - Jan 8 | defaults | 50.9% (n=269 matched) |
-| `catboost_v9_train1102_0131` | Nov 2 - Jan 31 | defaults | **56.1%** (n=269 matched) |
-| `catboost_v9_train1102_0131_tuned` | Nov 2 - Jan 31 | tuned (d=5,l2=5,lr=0.03)+recency 30d | **56.9%** (n=269 matched) |
+| `catboost_v9_train1102_0108` | Nov 2 - Jan 8 | defaults | 52.2% |
+| `catboost_v9_train1102_0131` | Nov 2 - Jan 31 | defaults | 53.6% |
+| `catboost_v9_train1102_0131_tuned` | Nov 2 - Jan 31 | tuned (d=5,l2=5,lr=0.03)+recency 30d | 53.4% |
+| `catboost_v9_q43_train1102_0131` | Nov 2 - Jan 31 | **quantile alpha=0.43** | NEW (deployed Session 186) |
 
 **Retired (Session 178):** `catboost_v9_train1102_0208` and `_0208_tuned` — contaminated backtests (31-day train/eval overlap).
 
-**Key finding:** More training data (91 days vs 68 days) improves HR by ~6pp and MAE by ~0.5. Champion decaying at 49.8%.
+**Key findings:**
+- Champion decaying: 71.2% edge 3+ (Jan 12) -> 47.9% (Feb 2). Now 33 days stale, below breakeven.
+- Session 186: Quantile alpha=0.43 generates 65.8% HR 3+ when fresh (vs BASELINE 33.3%). First model to solve retrain paradox.
+- Combos (NO_VEG + quantile, CHAOS + quantile) perform worse — don't stack.
 
 **Monitor:**
 ```bash
-PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_train1102_0131 --days 7
+PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_q43_train1102_0131 --days 7
 ```
 
 **Promote:** Update `CATBOOST_V9_MODEL_PATH` env var. **Retire:** Set `enabled: False` in config.
 
 **See:** `docs/08-projects/current/retrain-infrastructure/03-PARALLEL-MODELS-GUIDE.md`
+
+### Quantile Regression Discovery (Session 186)
+
+**85 experiments across Sessions 179-186** proved that standard architectures create edge through model staleness (drift from Vegas). Quantile regression creates edge through **systematic prediction bias** — built into the loss function, doesn't decay.
+
+**Key results (Jan 31 train, Feb 1-9 eval):**
+
+| Model | HR 3+ (N) | UNDER HR | Vegas Bias | Notes |
+|-------|-----------|----------|-----------|-------|
+| BASELINE (alpha=0.50) | 33.3% (6) | 33.3% | -0.09 | No edge when fresh |
+| **QUANT_43 (alpha=0.43)** | **65.8% (38)** | **67.6%** | **-1.62** | **Best fresh HR ever** |
+| QUANT_45 (alpha=0.45) | 61.9% (21) | 65.0% | -1.28 | Good but fewer picks |
+| QUANT_40 (alpha=0.40) | 55.6% (63) | 56.5% | -2.06 FAIL | Too much bias |
+
+**Staleness stability:** BASELINE drops 49.2pp across eval windows. QUANT_43 drops only 3.3pp.
+
+**Dead ends (don't revisit):**
+- Grow policy (Depthwise, Lossguide) — best MAE but zero edge picks
+- NO_VEG + quantile — double low-bias, too aggressive
+- CHAOS + quantile — randomization dilutes precision
+- Residual mode — collapses with CatBoost (Session 183)
+- Two-stage pipeline — identical to NO_VEG (Session 183)
+
+**Train a quantile model:**
+```bash
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "Q43_RETRAIN" \
+    --quantile-alpha 0.43 \
+    --train-start 2025-11-02 \
+    --train-end 2026-01-31 \
+    --walkforward --force
+```
+
+**See:** `docs/08-projects/current/session-179-validation-and-retrain/05-SESSION-186-QUANTILE-DISCOVERY.md`
 
 ### Model Files in GCS
 ```
@@ -266,6 +304,7 @@ gs://nba-props-platform-models/catboost/v9/
     ├── catboost_v9_33f_train20251102-20260108_20260209_175818.cbm  # Challenger (Jan 8 shadow)
     ├── catboost_v9_33f_train20251102-20260131_20260209_212708.cbm  # Challenger (Jan 31 defaults)
     ├── catboost_v9_33f_train20251102-20260131_20260209_212715.cbm  # Challenger (Jan 31 tuned)
+    ├── catboost_v9_33f_q0.43_train20251102-20260131_20260210_094854.cbm  # QUANT_43 shadow (Session 186)
     └── catboost_v9_2026_02.cbm                      # DISABLED (UNDER bias)
 ```
 
@@ -656,7 +695,7 @@ GROUP BY 1 ORDER BY 2 DESC;
 | **Signal includes superseded** | **Signal totals inflated, pct_over wrong** | **Fixed Session 174: `is_active = TRUE` filter added to signal_calculator.py** |
 | **subset_picks_notifier error** | **Correlated subquery BQ error 8+/hour** | **FIXED Session 175: Rewrote as `majority_model_by_date` CTE + JOIN** |
 | **Recommendation direction mismatch** | **pred > line but rec = UNDER** | **FIXED Session 175: Defense-in-depth validation in worker.py corrects mismatches. Pre-Session 170 BACKFILL data (Feb 4-8) still affected — needs regeneration.** |
-| **Model decay** | **Hit rate declining weekly (71.7% → 46.5%)** | **Model trained Nov 2 - Jan 8 is decaying. Retrain with extended training data when Feb sample is large enough.** |
+| **Model decay** | **Hit rate declining weekly (71.2% → 47.9%)** | **Champion 33 days stale, below breakeven. QUANT_43 shadow deployed (Session 186) — first model to work when fresh. Monitor shadow, promote when validated.** |
 
 **Full troubleshooting:** See `docs/02-operations/session-learnings.md`
 
