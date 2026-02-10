@@ -122,6 +122,7 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
         FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
         WHERE game_date = @game_date
           AND current_points_line IS NOT NULL
+          AND is_active = TRUE  -- Session 174: Only count active predictions, not superseded ones
         GROUP BY system_id
         HAVING COUNT(*) >= 10  -- Only calculate signals if we have enough predictions
         """

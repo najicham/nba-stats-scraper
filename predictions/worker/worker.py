@@ -847,6 +847,15 @@ def handle_prediction_request():
                     f"PERMANENT failure for {player_lookup} on {game_date_str} - "
                     f"acknowledging message (no retry). Reason: {skip_reason}"
                 )
+                # Session 174: Report completion even for skipped players so the
+                # coordinator's batch tracker doesn't stall waiting for them.
+                # Without this, regeneration batches stall at <100% completion and
+                # require manual /reset + consolidation.
+                if batch_id:
+                    publish_completion_event(
+                        player_lookup, game_date_str, 0,
+                        batch_id=batch_id, correlation_id=correlation_id
+                    )
                 return ('', 204)
             else:
                 # Session 171: Stale transient failures for past dates won't resolve — ACK them
@@ -856,6 +865,12 @@ def handle_prediction_request():
                         f"STALE_MESSAGE: Transient failure for past date {game_date_str} — "
                         f"ACKing to stop retries. Reason: {skip_reason}, Error: {error_type}"
                     )
+                    # Session 174: Report completion for stale messages too
+                    if batch_id:
+                        publish_completion_event(
+                            player_lookup, game_date_str, 0,
+                            batch_id=batch_id, correlation_id=correlation_id
+                        )
                     return ('', 204)
                 # Transient failure (or unknown) - might resolve on retry
                 # Return 500 to trigger Pub/Sub retry
