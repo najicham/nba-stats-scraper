@@ -1219,6 +1219,19 @@ class PlayerGameSummaryProcessor(
             if not self.raw_data.empty:
                 source_counts = self.raw_data['primary_source'].value_counts()
                 logger.info(f"Source distribution: {dict(source_counts)}")
+
+                # Monitor prop match rate (Session 201: observability for props join)
+                prop_matched = self.raw_data['points_line'].notna().sum()
+                total = len(self.raw_data)
+                match_rate = 100 * prop_matched / total if total > 0 else 0
+                logger.info(f"📊 Props match rate: {prop_matched}/{total} ({match_rate:.1f}%)")
+
+                # Alert on unusually low prop coverage (< 15% suggests data issue)
+                if total > 0 and match_rate < 15:
+                    logger.warning(
+                        f"⚠️ Low prop match rate: {prop_matched}/{total} ({match_rate:.1f}%) - "
+                        "Expected 30-40% for dates with betting lines. Check odds_api_player_points_props data."
+                    )
             else:
                 logger.warning(f"⚠️ No data extracted for {start_date} to {end_date}")
                 try:
@@ -2420,7 +2433,7 @@ class PlayerGameSummaryProcessor(
                         bookmaker
                 ) as rn
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE game_date = (SELECT DISTINCT game_date FROM deduplicated_combined)
+            WHERE game_date IN (SELECT DISTINCT game_date FROM deduplicated_combined)
         ),
 
         with_props AS (
@@ -2542,6 +2555,19 @@ class PlayerGameSummaryProcessor(
                 self._clean_numeric_columns()
                 source_counts = self.raw_data['primary_source'].value_counts()
                 logger.info(f"Source distribution: {dict(source_counts)}")
+
+                # Monitor prop match rate (Session 201: observability for props join)
+                prop_matched = self.raw_data['points_line'].notna().sum()
+                total = len(self.raw_data)
+                match_rate = 100 * prop_matched / total if total > 0 else 0
+                logger.info(f"📊 Props match rate: {prop_matched}/{total} ({match_rate:.1f}%)")
+
+                # Alert on unusually low prop coverage (< 15% suggests data issue)
+                if total > 0 and match_rate < 15:
+                    logger.warning(
+                        f"⚠️ Low prop match rate: {prop_matched}/{total} ({match_rate:.1f}%) - "
+                        "Expected 30-40% for dates with betting lines. Check odds_api_player_points_props data."
+                    )
 
         except Exception as e:
             logger.error(f"BigQuery extraction failed for game {game_id}: {e}")

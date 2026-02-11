@@ -41,6 +41,10 @@ class PropCalculator:
             - margin: Difference between actual and line, or None
         """
         if pd.notna(points) and pd.notna(points_line):
+            # NOTE: Using >= means pushes (points == line) are counted as OVER.
+            # In real betting, pushes typically result in a refund (neither over nor under).
+            # This simplification is acceptable for accuracy tracking but may slightly
+            # inflate OVER hit rate when there are many pushes.
             over_under_result = 'OVER' if points >= points_line else 'UNDER'
             margin = float(points) - float(points_line)
             return over_under_result, round(margin, 2)
