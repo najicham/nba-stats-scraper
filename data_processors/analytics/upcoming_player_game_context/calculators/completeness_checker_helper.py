@@ -85,7 +85,7 @@ class CompletenessCheckerHelper:
                 entity_ids=list(player_lookups),
                 entity_type='player',
                 analysis_date=target_date,
-                upstream_table='nba_raw.bdl_player_boxscores',
+                upstream_table='nba_raw.nbac_gamebook_player_stats',
                 upstream_entity_field='player_lookup',
                 lookback_window=lookback,
                 window_type=window_type,

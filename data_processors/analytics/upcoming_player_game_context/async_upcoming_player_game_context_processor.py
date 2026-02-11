@@ -449,7 +449,7 @@ class AsyncUpcomingPlayerGameContextProcessor(
             three_pointers_attempted,
             free_throws_made,
             free_throws_attempted
-        FROM `{self.project_id}.nba_raw.bdl_player_boxscores`
+        FROM `{self.project_id}.nba_raw.nbac_gamebook_player_stats`
         WHERE player_lookup IN UNNEST(@player_lookups)
           AND game_date >= @start_date
           AND game_date < @target_date
