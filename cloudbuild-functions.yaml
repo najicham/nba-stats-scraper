@@ -34,6 +34,7 @@ steps:
         cp -r data_processors /workspace/deploy_pkg/
         cp -r shared /workspace/deploy_pkg/
         cp -r predictions /workspace/deploy_pkg/
+        cp -r backfill_jobs /workspace/deploy_pkg/
         # NOTE: Do NOT copy orchestration/ — it contains other Cloud Functions
         # with syntax errors that cause gcloud compile checks to fail.
 
