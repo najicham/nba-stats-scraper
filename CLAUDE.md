@@ -700,8 +700,12 @@ GROUP BY 1 ORDER BY 2 DESC;
 | **QUANT barely producing** | **Q43/Q45 only 2-3 predictions per day** | **FIXED Session 192: Quality gate hardcoded champion system_id, blocking shadow models. Now per-system gate. Verify post-deploy.** |
 | **Materializer 0 picks pre-game** | **picks/{date}.json empty for today** | **FIXED Session 193: Materializer only joined `player_game_summary` (empty pre-game). Now falls back to `upcoming_player_game_context` via UNION ALL.** |
 | **Phase 6 scheduler broken** | **Morning/pregame exports not firing** | **Two Cloud Scheduler jobs publish to non-existent `nba-phase6-export` topic. Should be `nba-phase6-export-trigger`. Needs fix.** |
+| **Orchestrator not triggering** | **Phase 2 complete but `_triggered=False`** | **CRITICAL (Session 197): Check Firestore `phase2_completion` for `_triggered` field. Manual trigger: `gcloud scheduler jobs run same-day-phase3`. See `docs/02-operations/ORCHESTRATOR-HEALTH.md`** |
+| **BDL scraper not running** | **0 BDL boxscore records** | **EXPECTED: BDL is intentionally disabled (unreliable). 60-70% minutes coverage is normal. NOT a bug.** |
 
 **Full troubleshooting:** See `docs/02-operations/session-learnings.md`
+
+**BDL Status (Session 197):** Ball Don't Lie (BDL) scrapers are **intentionally disabled** due to unreliability (Sessions 41, 94). The system operates normally with only NBA.com data. Orchestrators must NOT wait for BDL processors. Minutes coverage of 60-70% is expected and acceptable.
 
 ## Prevention Mechanisms
 

@@ -224,6 +224,9 @@ def verify_boxscore_completeness(game_date: str, project_id: str) -> dict:
 
     This prevents incomplete analytics when some games haven't been scraped yet.
 
+    NOTE (Session 198): Uses NBA.com gamebook data, NOT BDL (BDL is disabled).
+    Checks for nbac_gamebook_player_stats records instead of bdl_player_boxscores.
+
     Args:
         game_date: The date to verify (YYYY-MM-DD)
         project_id: GCP project ID
@@ -276,13 +279,14 @@ def verify_boxscore_completeness(game_date: str, project_id: str) -> dict:
         scheduled_games = {row.game_id: (row.home_team_tricode, row.away_team_tricode) for row in scheduled_result}
         expected_count = len(scheduled_games)
 
-        # Q2: How many games have boxscores? (Use BDL format: YYYYMMDD_AWAY_HOME)
-        # Note: BDL uses different game ID format than NBA.com schedule
+        # Q2: How many games have boxscores? (Use NBA.com gamebook)
+        # NOTE (Session 198): Changed from BDL to NBA.com gamebook (BDL is disabled)
         # Use parameterized query to prevent SQL injection
         boxscore_query = f"""
         SELECT DISTINCT game_id
-        FROM `{project_id}.nba_raw.bdl_player_boxscores`
+        FROM `{project_id}.nba_raw.nbac_gamebook_player_stats`
         WHERE game_date = @game_date
+          AND player_status = 'active'
         """
 
         job_config_boxscore = bigquery.QueryJobConfig(
@@ -296,17 +300,13 @@ def verify_boxscore_completeness(game_date: str, project_id: str) -> dict:
         actual_count = len(boxscore_game_ids)
 
         # Q3: Which games are missing?
-        # Convert NBA.com game IDs to expected BDL format for comparison
-        # BDL format: YYYYMMDD_AWAY_HOME (e.g., 20260118_BKN_CHI)
+        # NBA.com uses consistent game_id format across schedule and gamebook
         missing_games = []
-        date_part = game_date.replace('-', '')  # 2026-01-18 -> 20260118
 
         for nba_game_id, (home, away) in scheduled_games.items():
-            bdl_game_id = f"{date_part}_{away}_{home}"
-            if bdl_game_id not in boxscore_game_ids:
+            if nba_game_id not in boxscore_game_ids:
                 missing_games.append({
-                    "game_id_nba": nba_game_id,
-                    "game_id_bdl": bdl_game_id,
+                    "game_id": nba_game_id,
                     "home_team": home,
                     "away_team": away
                 })
@@ -369,10 +369,9 @@ def verify_boxscore_completeness(game_date: str, project_id: str) -> dict:
 
 def trigger_missing_boxscore_scrapes(missing_games: list, game_date: str) -> int:
     """
-    Trigger BDL boxscore scraper for the entire date (will catch all missing games).
+    Trigger NBA.com gamebook scraper for the entire date (will catch all missing games).
 
-    Note: BDL box_scores scraper operates on full dates, not individual games.
-    This is simpler and ensures we don't miss any games.
+    NOTE (Session 198): Changed from BDL to NBA.com gamebook (BDL is disabled).
 
     Args:
         missing_games: List of missing game dictionaries
@@ -387,9 +386,9 @@ def trigger_missing_boxscore_scrapes(missing_games: list, game_date: str) -> int
         publisher = get_pubsub_publisher()
         topic_path = publisher.topic_path(get_project_id(), 'nba-scraper-trigger')
 
-        # Trigger BDL box scores scraper for the entire date
+        # Trigger NBA.com gamebook scraper for the entire date
         message_data = {
-            "scraper_name": "bdl_box_scores",
+            "scraper_name": "nbac_gamebook",
             "date": game_date,
             "retry_count": 0,
             "reason": "incomplete_boxscore_coverage_detected",
@@ -403,7 +402,7 @@ def trigger_missing_boxscore_scrapes(missing_games: list, game_date: str) -> int
         message_id = future.result(timeout=10)
 
         logger.info(
-            f"🔄 Triggered BDL box scores re-scrape for {game_date} "
+            f"🔄 Triggered NBA.com gamebook re-scrape for {game_date} "
             f"(missing {len(missing_games)} games, message_id={message_id})"
         )
 
@@ -857,10 +856,11 @@ def process_analytics():
             logger.info(f"🔄 BACKFILL MODE enabled for {game_date} - skipping completeness and freshness checks")
 
         # Phase 1.2: Boxscore completeness pre-flight check
-        # Only run this check when triggered by bdl_player_boxscores completion
+        # NOTE (Session 198): Changed from bdl_player_boxscores to nbac_gamebook_player_stats (BDL is disabled)
+        # Only run this check when triggered by NBA.com gamebook completion
         # This ensures all scheduled games have boxscores before analytics run
         # Skip this check in backfill mode (data is historical, incompleteness is expected)
-        if source_table == 'bdl_player_boxscores' and game_date and not opts.get('backfill_mode', False):
+        if source_table == 'nbac_gamebook_player_stats' and game_date and not opts.get('backfill_mode', False):
             logger.info(f"🔍 Running boxscore completeness check for {game_date}")
             completeness = verify_boxscore_completeness(game_date, opts['project_id'])
 

@@ -194,8 +194,8 @@ def normalize_processor_name(raw_name: str, output_table: Optional[str] = None) 
 
 # R-007: Data freshness validation for Phase 2 raw data tables
 # Required Phase 2 tables that must have data before Phase 3 can proceed
+# NOTE: BDL is intentionally disabled (unreliable) - do NOT include bdl_player_boxscores
 REQUIRED_PHASE2_TABLES = [
-    ('nba_raw', 'bdl_player_boxscores', 'game_date'),
     ('nba_raw', 'nbac_gamebook_player_stats', 'game_date'),
     ('nba_raw', 'nbac_team_boxscore', 'game_date'),
     ('nba_raw', 'odds_api_game_lines', 'game_date'),
