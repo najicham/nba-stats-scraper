@@ -1089,7 +1089,7 @@ class UpcomingPlayerGameContextProcessor(
                     'category': 'CIRCUIT_BREAKER_ACTIVE'
                 })
 
-            # Check if ALL windows are production-ready (skip if not, unless in bootstrap mode)
+            # Check if ALL windows are production-ready
             all_windows_ready = (
                 completeness_l5['is_production_ready'] and
                 completeness_l10['is_production_ready'] and
@@ -1098,12 +1098,11 @@ class UpcomingPlayerGameContextProcessor(
                 completeness_l30d['is_production_ready']
             )
 
-            # RECOVERY MODE: Skip completeness checks via environment variable
-            skip_completeness = os.environ.get('SKIP_COMPLETENESS_CHECK', 'false').lower() == 'true'
-
-            # Allow processing during bootstrap mode OR season boundary (early season dates)
-            if not all_windows_ready and not is_bootstrap and not is_season_boundary and not skip_completeness:
-                # Calculate average completeness across all windows
+            # Completeness is LOG-ONLY for upcoming player context (non-blocking).
+            # Rationale: Pre-game context naturally has gaps (missed games, delayed data).
+            # The real quality gate is Phase 5 (zero tolerance on feature defaults).
+            # Blocking here just trips circuit breakers and reduces coverage.
+            if not all_windows_ready and not is_bootstrap and not is_season_boundary:
                 avg_completeness = (
                     completeness_l5['completeness_pct'] +
                     completeness_l10['completeness_pct'] +
@@ -1111,19 +1110,9 @@ class UpcomingPlayerGameContextProcessor(
                     completeness_l14d['completeness_pct'] +
                     completeness_l30d['completeness_pct']
                 ) / 5.0
-
-                # Track reprocessing attempt
-                self._increment_reprocess_count(
-                    player_lookup, self.target_date,
-                    avg_completeness, 'incomplete_multi_window_data'
+                logger.debug(
+                    f"{player_lookup}: completeness {avg_completeness:.1f}% (non-blocking)"
                 )
-
-                return (False, {
-                    'player_lookup': player_lookup,
-                    'game_id': game_id,
-                    'reason': f"Multi-window completeness {avg_completeness:.1f}%",
-                    'category': 'INCOMPLETE_DATA_SKIPPED'
-                })
 
             # Calculate context (existing function - thread-safe)
             context = self._calculate_player_context(
