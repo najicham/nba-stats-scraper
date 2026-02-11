@@ -1041,13 +1041,24 @@ class UpcomingPlayerGameContextProcessor(
         if self.registry_failures:
             logger.info(f"Registry failures tracked: {len(self.registry_failures)} players with NULL universal_player_id")
 
-        # Final timing summary
+        # Final timing summary with failure category breakdown
         total_time = time.time() - loop_start
         logger.info(
             f"Completed {len(results)} players in {total_time:.1f}s "
             f"(avg {total_time/len(results) if results else 0:.2f}s/player) "
             f"| {len(failures)} failed"
         )
+
+        if failures:
+            # Log failure breakdown by category
+            from collections import Counter
+            category_counts = Counter(f.get('category', 'UNKNOWN') for f in failures)
+            logger.warning(f"Failure breakdown: {dict(category_counts)}")
+            # Log first 5 failures with details
+            for f in failures[:5]:
+                logger.warning(
+                    f"  FAILED: {f.get('player_lookup')} | category={f.get('category')} | reason={f.get('reason')}"
+                )
 
     def _process_single_player(self, player_info: Dict, comp_l5: Dict, comp_l10: Dict,
                                comp_l7d: Dict, comp_l14d: Dict, comp_l30d: Dict,
@@ -1211,7 +1222,7 @@ class UpcomingPlayerGameContextProcessor(
         # Get game info
         game_info = self.schedule_data.get(game_id)
         if not game_info:
-            logger.warning(f"No schedule data for game {game_id}")
+            logger.warning(f"No schedule data for game {game_id} (player={player_lookup}, schedule_keys_sample={list(self.schedule_data.keys())[:3]})")
             return None
 
         # Determine player's team (use player_info which has team_abbr from gamebook)
