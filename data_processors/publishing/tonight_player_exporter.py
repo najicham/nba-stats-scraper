@@ -267,7 +267,7 @@ class TonightPlayerExporter(BaseExporter):
                 'ft': f"{r['ft_makes']}/{r['ft_attempts']}" if r['ft_attempts'] else None,
                 'over_under': r['over_under_result'],
                 'line': safe_float(r['points_line']),
-                'margin': int(r['points'] - r['points_line']) if r['points_line'] else None
+                'margin': int(r['points'] - r['points_line']) if (r['points'] is not None and r['points_line']) else None
             })
 
         return formatted
@@ -517,7 +517,7 @@ class TonightPlayerExporter(BaseExporter):
             b2b_ppg = splits.get('b2b_ppg')
             non_b2b_ppg = splits.get('non_b2b_ppg')
             b2b_vs_line = splits.get('b2b_vs_line_pct')
-            if b2b_ppg and non_b2b_ppg:
+            if b2b_ppg is not None and non_b2b_ppg is not None:
                 impact = round(b2b_ppg - non_b2b_ppg, 1)
                 desc = f"B2B: averages {b2b_ppg} vs {non_b2b_ppg} normally ({impact:+.1f})"
                 if b2b_vs_line is not None:

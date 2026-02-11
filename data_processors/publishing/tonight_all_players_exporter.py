@@ -13,7 +13,7 @@ from collections import defaultdict
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
-from .exporter_utils import safe_float
+from .exporter_utils import safe_float, safe_int
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,8 @@ class TonightAllPlayersExporter(BaseExporter):
                 "away_team": "LAL",
                 "game_time": "19:30",
                 "game_status": "scheduled",
+                "home_score": null,
+                "away_score": null,
                 "players": [...]
             }
         ]
@@ -104,7 +106,10 @@ class TonightAllPlayersExporter(BaseExporter):
             game_status,
             -- Format game time as "7:30 PM ET" for frontend lock time calculation
             FORMAT_TIMESTAMP('%l:%M %p ET', game_date_est, 'America/New_York') as game_time,
-            game_date_est
+            game_date_est,
+            -- Scores (only for final games)
+            CASE WHEN game_status = 3 THEN home_team_score ELSE NULL END as home_team_score,
+            CASE WHEN game_status = 3 THEN away_team_score ELSE NULL END as away_team_score
         FROM `nba-props-platform.nba_raw.nbac_schedule`
         WHERE game_date = @target_date
         ORDER BY game_date_est, game_id
@@ -429,12 +434,24 @@ class TonightAllPlayersExporter(BaseExporter):
             status_map = {1: 'scheduled', 2: 'in_progress', 3: 'final'}
             game_status = status_map.get(game.get('game_status'), 'scheduled')
 
+            # Get scores with type safety
+            home_score = safe_int(game.get('home_team_score'))
+            away_score = safe_int(game.get('away_team_score'))
+
+            # Warn on final games with missing scores (postponement or data anomaly)
+            if game_status == 'final' and (home_score is None or away_score is None):
+                logger.warning(
+                    f"Final game {game_id} has NULL scores - possible postponement or data gap"
+                )
+
             games_data.append({
                 'game_id': game_id,
                 'home_team': game.get('home_team_abbr'),
                 'away_team': game.get('away_team_abbr'),
                 'game_time': game.get('game_time'),
                 'game_status': game_status,
+                'home_score': home_score,
+                'away_score': away_score,
                 'player_count': len(formatted_players),
                 'players': formatted_players
             })

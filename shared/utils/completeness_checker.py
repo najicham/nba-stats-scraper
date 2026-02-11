@@ -542,11 +542,13 @@ class CompletenessChecker:
 
         Returns DataFrame with columns: entity_id, count
         """
-        # Build date filter (same logic as expected games)
+        # Build date filter
         if window_type == 'games':
-            date_filter = f"game_date <= DATE('{analysis_date}')"
-            if season_start_date:
-                date_filter += f" AND game_date >= DATE('{season_start_date}')"
+            # For game-count windows, use a date range that covers roughly 2x the games needed
+            # NBA teams play ~3.5 games/week, so N games ≈ N*2 days is a safe upper bound
+            approx_days = max(lookback_window * 3, 30)
+            start_date = analysis_date - timedelta(days=approx_days)
+            date_filter = f"game_date >= DATE('{start_date}') AND game_date < DATE('{analysis_date}')"
         else:  # 'days'
             start_date = analysis_date - timedelta(days=lookback_window)
             date_filter = f"game_date BETWEEN DATE('{start_date}') AND DATE('{analysis_date}')"

@@ -193,25 +193,37 @@ def props_cte(project_id: str) -> str:
     Returns:
         SQL CTE fragment for player prop lines
     """
-    return f"""props AS (
-            -- Check which players have prop lines (from either source)
-            SELECT DISTINCT
+    return f"""all_props AS (
+            -- Gather prop lines from all sources
+            SELECT
                 player_lookup,
                 points_line,
-                'odds_api' as prop_source
+                'odds_api' as prop_source,
+                ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY points_line DESC) as rn
             FROM `{project_id}.nba_raw.odds_api_player_points_props`
             WHERE game_date = @game_date
               AND player_lookup IS NOT NULL
-            UNION DISTINCT
-            SELECT DISTINCT
+            UNION ALL
+            SELECT
                 player_lookup,
                 points_line,
-                'bettingpros' as prop_source
+                'bettingpros' as prop_source,
+                ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY points_line DESC) as rn
             FROM `{project_id}.nba_raw.bettingpros_player_points_props`
             WHERE game_date = @game_date
               AND market_type = 'points'
               AND is_active = TRUE
               AND player_lookup IS NOT NULL
+        ),
+        props AS (
+            -- Deduplicate to one line per player (prefer odds_api, take first line)
+            SELECT player_lookup, points_line, prop_source
+            FROM (
+                SELECT player_lookup, points_line, prop_source,
+                       ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY prop_source, points_line) as rn
+                FROM all_props
+            )
+            WHERE rn = 1
         )"""
 
 
