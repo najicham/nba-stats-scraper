@@ -703,10 +703,44 @@ class TonightPlayerExporter(BaseExporter):
         players = self.query_to_list(query, params)
 
         paths = []
+        failures = []
         for i, p in enumerate(players):
             player_lookup = p['player_lookup']
-            logger.info(f"[{i+1}/{len(players)}] Exporting {player_lookup}")
-            path = self.export(player_lookup, target_date)
-            paths.append(path)
+            try:
+                logger.info(f"[{i+1}/{len(players)}] Exporting {player_lookup}")
+                path = self.export(player_lookup, target_date)
+                paths.append(path)
+            except Exception as e:
+                logger.error(
+                    f"[{i+1}/{len(players)}] Failed to export {player_lookup}: {e}",
+                    exc_info=True
+                )
+                failures.append({'player': player_lookup, 'error': str(e)})
+
+        # Log summary
+        total = len(players)
+        success_count = len(paths)
+        failure_count = len(failures)
+        logger.info(
+            f"Tonight players export complete: "
+            f"{success_count}/{total} succeeded, {failure_count} failed"
+        )
+
+        # Log individual failures for debugging
+        if failures:
+            logger.warning(
+                f"Failed players ({failure_count}): "
+                f"{', '.join(f['player'] for f in failures[:10])}"
+                f"{'...' if failure_count > 10 else ''}"
+            )
+
+        # Raise if catastrophic failure (>20% of players failed)
+        failure_pct = (failure_count / total * 100) if total > 0 else 0
+        if failure_pct > 20:
+            raise RuntimeError(
+                f"Tonight players export catastrophic failure: "
+                f"{failure_count}/{total} ({failure_pct:.1f}%) players failed. "
+                f"First errors: {failures[:3]}"
+            )
 
         return paths
