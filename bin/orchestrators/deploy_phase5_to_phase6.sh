@@ -155,7 +155,7 @@ gcloud functions deploy $FUNCTION_NAME \
     --source $BUILD_DIR \
     --entry-point $ENTRY_POINT \
     --trigger-topic $TRIGGER_TOPIC \
-    --set-env-vars GCP_PROJECT=$PROJECT_ID \
+    --update-env-vars GCP_PROJECT=$PROJECT_ID \
     --memory $MEMORY \
     --timeout $TIMEOUT \
     --max-instances $MAX_INSTANCES \
@@ -173,7 +173,18 @@ gcloud run services add-iam-policy-binding $FUNCTION_NAME \
     --role="roles/run.invoker" \
     --project=$PROJECT_ID
 
-echo -e "${GREEN}✓ IAM permissions configured${NC}"
+# Session 206: Verify IAM binding was applied successfully
+echo -e "${YELLOW}Verifying IAM binding...${NC}"
+IAM_POLICY=$(gcloud run services get-iam-policy $FUNCTION_NAME \
+    --region=$REGION --project=$PROJECT_ID --format=json 2>/dev/null)
+
+if echo "$IAM_POLICY" | grep -q "roles/run.invoker"; then
+    echo -e "${GREEN}✓ IAM binding verified successfully${NC}"
+else
+    echo -e "${RED}CRITICAL: IAM binding verification FAILED${NC}"
+    echo -e "${RED}Orchestrator will not be able to receive Pub/Sub messages!${NC}"
+    exit 1
+fi
 echo ""
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Deployment Complete!${NC}"
