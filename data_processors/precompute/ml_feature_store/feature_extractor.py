@@ -187,6 +187,14 @@ class FeatureExtractor:
             logger.info(f"[BACKFILL MODE - HISTORICAL] Querying actual played roster for {game_date}")
         else:
             # For real-time: use expected players from upcoming_player_game_context
+            # Session 195: Apply coordinator filters to reduce wasted computation (63% → ~10%)
+            # Only process players who could potentially receive predictions based on
+            # minutes threshold, injury status, and production readiness.
+            #
+            # These filters MUST match coordinator's player_loader.py filters (lines 322-324):
+            # 1. (avg_minutes >= 15 OR has_prop_line = TRUE) - skip bench players without lines
+            # 2. (status NOT IN ('OUT', 'DOUBTFUL')) - skip injured players
+            # 3. (is_production_ready = TRUE OR has_prop_line = TRUE) - skip incomplete data
             query = f"""
             SELECT
                 player_lookup,
@@ -201,9 +209,16 @@ class FeatureExtractor:
                 current_points_line  -- v3.2: Pass through for estimated lines
             FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
             WHERE game_date = '{game_date}'
+              -- Session 195 optimization: Apply coordinator filters early (reduce ~80 → ~30 players)
+              AND (COALESCE(avg_minutes_per_game_last_7, 0) >= 15 OR has_prop_line = TRUE)
+              AND (player_status IS NULL OR player_status NOT IN ('OUT', 'DOUBTFUL'))
+              AND (is_production_ready = TRUE OR has_prop_line = TRUE)
             ORDER BY player_lookup
             """
-            logger.debug(f"Querying expected players with games on {game_date}")
+            logger.info(
+                f"Querying coordinator-eligible players for {game_date} "
+                f"(filters: minutes>=15 OR has_line, NOT out/doubtful, production_ready OR has_line)"
+            )
 
         result: pd.DataFrame = self._safe_query(query, f"get_players_with_games({game_date})")
 
@@ -213,6 +228,29 @@ class FeatureExtractor:
 
         logger.info(f"Found {len(result)} players with games on {game_date}" +
                    (" [BACKFILL MODE]" if backfill_mode else ""))
+
+        # Session 195: Log filter effectiveness (coordinator-eligible vs total roster)
+        if not use_backfill_query:
+            # Query total roster for comparison (only in real-time mode)
+            try:
+                total_query = f"""
+                SELECT COUNT(*) as total_players
+                FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
+                WHERE game_date = '{game_date}'
+                """
+                total_result = self._safe_query(total_query, f"get_total_players({game_date})")
+                if not total_result.empty:
+                    total_players = int(total_result.iloc[0]['total_players'])
+                    filtered_count = total_players - len(result)
+                    if filtered_count > 0:
+                        logger.info(
+                            f"📊 Phase 4 optimization: Filtered {filtered_count}/{total_players} players "
+                            f"({100*filtered_count/total_players:.0f}% reduction) - "
+                            f"processing {len(result)} coordinator-eligible players"
+                        )
+            except Exception as e:
+                logger.debug(f"Could not query total roster count: {e}")
+
         return result.to_dict('records')
 
     # ========================================================================
