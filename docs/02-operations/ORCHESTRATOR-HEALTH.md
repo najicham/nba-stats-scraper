@@ -20,7 +20,8 @@ The orchestrators (Phase 2→3, 3→4, 4→5, 5→6) are Cloud Functions that tr
 **Duration:** Feb 9-11, 2026 (at least 3 days)
 **Impact:** Phase 2→3 orchestrator failed to trigger Phase 3 for 3 consecutive days
 **Detection:** Morning validation on Feb 11
-**Root Cause:** TBD (under investigation)
+**Root Cause:** BDL (Ball Don't Lie) dependencies in orchestrator and Phase 3 analytics
+**Fix:** Session 198 (Feb 11, 2026) - Removed BDL dependencies, deployed successfully
 
 **Failure Pattern:**
 ```
@@ -93,8 +94,10 @@ If 0: Phase 3 didn't run (orchestrator failure)
 
 **Phase 2 (Raw Processing):**
 - **Expected:** 5 processors (BDL is disabled)
-- **Critical:** `p2_nbacom_gamebook_pdf`, `p2_nbacom_boxscores`, `OddsApiPropsBatchProcessor`, `OddsApiGameLinesBatchProcessor`, `p2_bigdataball_pbp`
+- **Critical:** `p2_nbacom_gamebook_pdf`, `p2_nbacom_boxscores`, `p2_odds_game_lines`, `p2_odds_player_props`, `p2_bigdataball_pbp`
 - **NOT Expected:** `bdl_player_boxscores` (disabled due to unreliability)
+
+**NOTE (Session 198):** Fixed orchestrator and Phase 3 analytics to NOT wait for BDL data. System now uses NBA.com gamebook exclusively for completeness checks.
 
 **Phase 3 (Analytics):**
 - **Expected:** 5 processors
@@ -300,3 +303,53 @@ def check_and_heal_orchestrators():
 - Detection time: < 30 minutes
 - Auto-heal time: < 1 hour
 - Manual intervention: < 1% of days
+
+---
+
+## Session 198 Fix (Feb 11, 2026)
+
+### Root Cause Identified
+
+The orchestrator and Phase 3 analytics were waiting for BDL (Ball Don't Lie) data that would never arrive:
+
+1. **Phase 2→3 Orchestrator:** `REQUIRED_PHASE2_TABLES` included `bdl_player_boxscores`
+2. **Phase 3 Analytics:** `verify_boxscore_completeness()` queried `bdl_player_boxscores` table
+3. **BDL Status:** Intentionally DISABLED since Sessions 41/94 due to unreliability
+4. **Impact:** System waited indefinitely for BDL processors that never completed
+
+### Changes Made
+
+**1. orchestration/cloud_functions/phase2_to_phase3/main.py**
+- Removed `('nba_raw', 'bdl_player_boxscores', 'game_date')` from `REQUIRED_PHASE2_TABLES`
+- Added comment explaining BDL is disabled
+
+**2. data_processors/analytics/main_analytics_service.py**
+- Updated `verify_boxscore_completeness()` to use `nbac_gamebook_player_stats` instead of `bdl_player_boxscores`
+- Changed trigger condition from `source_table == 'bdl_player_boxscores'` to `source_table == 'nbac_gamebook_player_stats'`
+- Updated `trigger_missing_boxscore_scrapes()` to use `nbac_gamebook` scraper instead of `bdl_box_scores`
+
+**3. CLAUDE.md**
+- Added troubleshooting entry for orchestrator failures
+- Documented BDL disabled status as expected behavior
+
+### Deployment
+
+**Commit:** 2acc368a
+**Deployed:** Feb 11, 2026 16:05 UTC
+**Method:** Auto-deploy via Cloud Build triggers (push to main)
+**Services Updated:**
+- Phase 2→3 orchestrator Cloud Function
+- Phase 3 analytics Cloud Run service
+
+### Verification
+
+**Next Steps:**
+1. Monitor tonight's Phase 2 completion (check Firestore `phase2_completion` for `_triggered=True`)
+2. Verify Phase 3 triggers automatically without manual intervention
+3. Confirm analytics processors run successfully
+
+**Expected Behavior:**
+- Phase 2 completes with 5 processors (no BDL)
+- Orchestrator sets `_triggered=True` when all 5 complete
+- Phase 3 triggers automatically via Pub/Sub subscription
+- No waiting for BDL data
