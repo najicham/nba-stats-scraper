@@ -1688,6 +1688,180 @@ ORDER BY p1.game_date DESC, gap_minutes DESC"
   - Phase 4→5: 15-30 minutes
 - Action: Investigate Cloud Function performance, check for processor deadlocks
 
+#### Check 4: Firestore Trigger Status (Session 198 - CRITICAL)
+
+**MANDATORY CHECK**: Detects silent orchestrator failures where processors complete but orchestrator never triggers.
+
+**The Problem**: Session 198 discovered Phase 2→3 orchestrator failure went undetected for 3 days. All processors completed (`_complete: true`) but orchestrator never set `_triggered: true` in Firestore, blocking all downstream data flow.
+
+**What to check**:
+
+```bash
+python3 << 'EOF'
+from google.cloud import firestore
+from datetime import datetime, timedelta
+import sys
+
+db = firestore.Client(project='nba-props-platform')
+yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+today = datetime.now().strftime('%Y-%m-%d')
+
+critical_issues = []
+
+# Check Phase 2→3 orchestrator (yesterday's data)
+print(f"\n=== Phase 2→3 Orchestrator ({yesterday}) ===")
+doc = db.collection('phase2_completion').document(yesterday).get()
+
+if doc.exists:
+    data = doc.to_dict()
+    processors_complete = len([k for k in data.keys() if not k.startswith('_')])
+    triggered = data.get('_triggered', False)
+    trigger_reason = data.get('_trigger_reason', 'N/A')
+
+    print(f"  Processors complete: {processors_complete}/6")
+    print(f"  Triggered: {triggered}")
+    print(f"  Trigger reason: {trigger_reason}")
+
+    # CRITICAL: All processors complete but not triggered
+    if processors_complete >= 5 and not triggered:
+        critical_issues.append({
+            'phase': 'Phase 2→3',
+            'date': yesterday,
+            'processors': processors_complete,
+            'triggered': triggered
+        })
+        print(f"  🔴 P0 CRITICAL: Orchestrator stuck!")
+        print(f"     {processors_complete}/6 processors complete but _triggered=False")
+        print(f"     Manual trigger: gcloud scheduler jobs run same-day-phase3")
+    elif triggered:
+        print(f"  ✅ Orchestrator triggered successfully")
+    else:
+        print(f"  ⏳ Waiting for processors ({processors_complete}/6)")
+else:
+    print("  ⚠️  No completion record found")
+    print("     This may indicate:")
+    print("     - No games yesterday")
+    print("     - Firestore collection issue")
+    print("     - All Phase 2 processors failed")
+
+# Check Phase 3→4 orchestrator (today's processing date)
+print(f"\n=== Phase 3→4 Orchestrator ({today}) ===")
+doc = db.collection('phase3_completion').document(today).get()
+
+if doc.exists:
+    data = doc.to_dict()
+    processors_complete = len([k for k in data.keys() if not k.startswith('_')])
+    triggered = data.get('_triggered', False)
+    trigger_reason = data.get('_trigger_reason', 'N/A')
+
+    print(f"  Processors complete: {processors_complete}/5")
+    print(f"  Triggered: {triggered}")
+    print(f"  Trigger reason: {trigger_reason}")
+
+    # CRITICAL: All processors complete but not triggered
+    if processors_complete >= 5 and not triggered:
+        critical_issues.append({
+            'phase': 'Phase 3→4',
+            'date': today,
+            'processors': processors_complete,
+            'triggered': triggered
+        })
+        print(f"  🔴 P0 CRITICAL: Orchestrator stuck!")
+        print(f"     {processors_complete}/5 processors complete but _triggered=False")
+        print(f"     Manual trigger: gcloud scheduler jobs run phase3-to-phase4")
+    elif triggered:
+        print(f"  ✅ Orchestrator triggered successfully")
+    else:
+        print(f"  ⏳ Waiting for processors ({processors_complete}/5)")
+else:
+    print("  ⚠️  No completion record found")
+
+# Report critical issues
+if critical_issues:
+    print("\n" + "="*60)
+    print("🚨 ORCHESTRATOR FAILURES DETECTED 🚨")
+    print("="*60)
+    for issue in critical_issues:
+        print(f"\nPhase: {issue['phase']}")
+        print(f"Date: {issue['date']}")
+        print(f"Status: {issue['processors']} processors complete, NOT TRIGGERED")
+        print(f"Impact: Downstream data pipeline BLOCKED")
+        if issue['phase'] == 'Phase 2→3':
+            print(f"Action: gcloud scheduler jobs run same-day-phase3 --location=us-west2")
+        elif issue['phase'] == 'Phase 3→4':
+            print(f"Action: gcloud scheduler jobs run phase3-to-phase4 --location=us-west2")
+    print("\nRefer to: docs/02-operations/ORCHESTRATOR-HEALTH.md")
+    sys.exit(1)
+else:
+    print("\n✅ All orchestrator trigger checks passed")
+
+EOF
+
+if [ $? -ne 0 ]; then
+    echo ""
+    echo "🔴 P0 CRITICAL: Orchestrator Health Check FAILED"
+    echo "See output above for manual trigger commands"
+    exit 1
+fi
+```
+
+**Expected Output**:
+```
+=== Phase 2→3 Orchestrator (2026-02-10) ===
+  Processors complete: 6/6
+  Triggered: True
+  Trigger reason: all_processors_complete
+  ✅ Orchestrator triggered successfully
+
+=== Phase 3→4 Orchestrator (2026-02-11) ===
+  Processors complete: 5/5
+  Triggered: True
+  Trigger reason: all_processors_complete
+  ✅ Orchestrator triggered successfully
+
+✅ All orchestrator trigger checks passed
+```
+
+**If orchestrator stuck** (Session 198 scenario):
+```
+=== Phase 2→3 Orchestrator (2026-02-09) ===
+  Processors complete: 6/6
+  Triggered: False
+  Trigger reason: N/A
+  🔴 P0 CRITICAL: Orchestrator stuck!
+     6/6 processors complete but _triggered=False
+     Manual trigger: gcloud scheduler jobs run same-day-phase3
+
+🚨 ORCHESTRATOR FAILURES DETECTED 🚨
+============================================================
+
+Phase: Phase 2→3
+Date: 2026-02-09
+Status: 6 processors complete, NOT TRIGGERED
+Impact: Downstream data pipeline BLOCKED
+Action: gcloud scheduler jobs run same-day-phase3 --location=us-west2
+```
+
+**Critical thresholds**:
+- Phase 2→3: Alert if processors >= 5 and `_triggered=False`
+- Phase 3→4: Alert if processors >= 5 and `_triggered=False`
+
+**Why 5 processors instead of 6**:
+- Provides early warning even if one processor hasn't reported yet
+- Session 198 had 6/6 complete but still failed, so we want to catch it early
+
+**Manual trigger commands**:
+```bash
+# Phase 2→3 (same-day analytics)
+gcloud scheduler jobs run same-day-phase3 --location=us-west2
+
+# Phase 3→4 (precompute)
+gcloud scheduler jobs run phase3-to-phase4 --location=us-west2
+
+# Phase 4→5 (predictions)
+gcloud scheduler jobs run phase4-to-phase5 --location=us-west2
+```
+
 **Firestore Completion State** (Optional Deep Dive):
 
 If orchestrator issues detected, check Firestore completion tracking:
