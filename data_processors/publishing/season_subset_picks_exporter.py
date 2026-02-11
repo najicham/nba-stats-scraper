@@ -171,13 +171,17 @@ class SeasonSubsetPicksExporter(BaseExporter):
           ROUND(csp.predicted_points, 1) as predicted_points,
           ROUND(csp.current_points_line, 1) as current_points_line,
           csp.recommendation,
-          pgs.points as actual_points
+          pgs.points as actual_points,
+          p.created_at as prediction_created_at
         FROM `nba_predictions.current_subset_picks` csp
         JOIN latest_versions lv
           ON csp.game_date = lv.game_date AND csp.version_id = lv.version_id
         LEFT JOIN `nba_analytics.player_game_summary` pgs
           ON csp.player_lookup = pgs.player_lookup
           AND csp.game_date = pgs.game_date
+        LEFT JOIN `nba_predictions.player_prop_predictions` p
+          ON csp.prediction_id = p.prediction_id
+          AND csp.game_date = p.game_date
         WHERE csp.game_date >= @start_date
           AND csp.game_date < @end_date
         ORDER BY csp.game_date DESC, csp.system_id, csp.subset_id, csp.composite_score DESC
@@ -359,6 +363,12 @@ class SeasonSubsetPicksExporter(BaseExporter):
                 'line': float(pick['current_points_line']),
                 'direction': direction,
             }
+
+            created_at = pick.get('prediction_created_at')
+            if created_at and hasattr(created_at, 'isoformat'):
+                clean_pick['created_at'] = created_at.isoformat()
+            elif created_at:
+                clean_pick['created_at'] = str(created_at)
 
             # Only include actual/result for graded games
             if actual is not None:

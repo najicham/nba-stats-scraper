@@ -104,24 +104,28 @@ class AllSubsetsPicksExporter(BaseExporter):
         """
         query = """
         SELECT
-          subset_id,
-          subset_name,
-          system_id,
-          player_name,
-          team,
-          opponent,
-          predicted_points,
-          current_points_line,
-          recommendation,
-          composite_score
-        FROM `nba_predictions.current_subset_picks`
-        WHERE game_date = @target_date
-          AND version_id = (
+          csp.subset_id,
+          csp.subset_name,
+          csp.system_id,
+          csp.player_name,
+          csp.team,
+          csp.opponent,
+          csp.predicted_points,
+          csp.current_points_line,
+          csp.recommendation,
+          csp.composite_score,
+          p.created_at as prediction_created_at
+        FROM `nba_predictions.current_subset_picks` csp
+        LEFT JOIN `nba_predictions.player_prop_predictions` p
+          ON csp.prediction_id = p.prediction_id
+          AND csp.game_date = p.game_date
+        WHERE csp.game_date = @target_date
+          AND csp.version_id = (
             SELECT MAX(version_id)
             FROM `nba_predictions.current_subset_picks`
             WHERE game_date = @target_date
           )
-        ORDER BY system_id, subset_id, composite_score DESC
+        ORDER BY csp.system_id, csp.subset_id, csp.composite_score DESC
         """
         params = [
             bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
@@ -175,14 +179,20 @@ class AllSubsetsPicksExporter(BaseExporter):
 
                 clean_picks = []
                 for pick in picks:
-                    clean_picks.append({
+                    pick_data = {
                         'player': pick['player_name'],
                         'team': pick['team'],
                         'opponent': pick['opponent'],
                         'prediction': round(pick['predicted_points'], 1),
                         'line': round(pick['current_points_line'], 1),
                         'direction': pick['recommendation'],
-                    })
+                    }
+                    created_at = pick.get('prediction_created_at')
+                    if created_at and hasattr(created_at, 'isoformat'):
+                        pick_data['created_at'] = created_at.isoformat()
+                    elif created_at:
+                        pick_data['created_at'] = str(created_at)
+                    clean_picks.append(pick_data)
 
                 clean_subsets.append({
                     'id': public['id'],
@@ -257,14 +267,20 @@ class AllSubsetsPicksExporter(BaseExporter):
 
                 clean_picks = []
                 for pick in subset_picks:
-                    clean_picks.append({
+                    pick_data = {
                         'player': pick['player_name'],
                         'team': pick['team'],
                         'opponent': pick['opponent'],
                         'prediction': round(pick['predicted_points'], 1),
                         'line': round(pick['current_points_line'], 1),
                         'direction': pick['recommendation'],
-                    })
+                    }
+                    created_at = pick.get('prediction_created_at')
+                    if created_at and hasattr(created_at, 'isoformat'):
+                        pick_data['created_at'] = created_at.isoformat()
+                    elif created_at:
+                        pick_data['created_at'] = str(created_at)
+                    clean_picks.append(pick_data)
 
                 clean_subsets.append({
                     'id': public['id'],
@@ -357,7 +373,8 @@ class AllSubsetsPicksExporter(BaseExporter):
           p.confidence_score,
           ABS(p.predicted_points - p.current_points_line) as edge,
           (ABS(p.predicted_points - p.current_points_line) * 10) + (p.confidence_score * 0.5) as composite_score,
-          COALESCE(f.feature_quality_score, 0) as feature_quality_score
+          COALESCE(f.feature_quality_score, 0) as feature_quality_score,
+          p.created_at as prediction_created_at
         FROM `nba_predictions.player_prop_predictions` p
         LEFT JOIN player_names pn
           ON p.player_lookup = pn.player_lookup
