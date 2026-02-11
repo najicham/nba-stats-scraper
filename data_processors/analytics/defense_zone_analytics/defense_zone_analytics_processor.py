@@ -193,7 +193,7 @@ class DefenseZoneAnalyticsProcessor(
 
         # Player boxscore sources - RELEVANT (defensive actions)
         'nbac_gamebook_player_stats': True,
-        'bdl_player_boxscores': True,
+        'bdl_player_boxscores': False,  # DISABLED - BDL intentionally disabled (Sessions 41, 94, 197)
 
         # Player prop sources - NOT RELEVANT
         'odds_api_player_points_props': False,

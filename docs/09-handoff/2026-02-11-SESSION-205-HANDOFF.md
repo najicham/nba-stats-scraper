@@ -80,14 +80,22 @@ After deployment, re-trigger Phase 6 to pick up the changes:
 gcloud scheduler jobs run phase6-tonight-picks-morning --location=us-west2 --project=nba-props-platform
 ```
 
+### 5. BDL Dependency Flag Cleanup
+
+Fixed 3 team processors that still had `'bdl_player_boxscores': True` in their dependency configs. BDL has been intentionally disabled since Sessions 41/94/197 but these processors were still waiting for BDL data before processing.
+
+**Files fixed:**
+- `data_processors/analytics/team_offense_game_summary/team_offense_game_summary_processor.py` — `True` → `False`
+- `data_processors/analytics/team_defense_game_summary/team_defense_game_summary_processor.py` — `True` → `False`
+- `data_processors/analytics/defense_zone_analytics/defense_zone_analytics_processor.py` — `True` → `False`
+
+**Remaining BDL references (62 total across 30 files):** Most are already disabled (`False`), comments, or inactive code paths. Full cleanup would be a larger refactor — the current fix addresses the only active dependency flags.
+
 ## Priority Fixes for Next Session
 
-### From Session 204 (remaining)
-1. **Clean up BDL references** (P3, 30 min) - 3 team processors still reference `bdl_player_boxscores`
-
 ### Ongoing
-2. **Monitor QUANT_43 shadow model** (P1) - Champion decaying (41.8% last week), quantile model deployed as shadow
-3. **Model promotion decision** - If QUANT_43 validates, promote to champion
+1. **Monitor QUANT_43 shadow model** (P1) - Champion decaying (41.8% last week), quantile model deployed as shadow. Only 1 graded prediction so far — need 3-5 game days.
+2. **Model promotion decision** - If QUANT_43 validates, promote to champion
 
 ## Key Learnings
 
