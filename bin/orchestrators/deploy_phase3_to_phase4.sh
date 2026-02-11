@@ -149,6 +149,18 @@ gcloud functions deploy $FUNCTION_NAME \
     --project $PROJECT_ID
 
 echo ""
+echo -e "${YELLOW}Setting IAM permissions for Pub/Sub invocation...${NC}"
+# Session 205: Ensure service account can invoke the Cloud Function
+# Without this, Pub/Sub cannot deliver messages to the function
+SERVICE_ACCOUNT="756957797294-compute@developer.gserviceaccount.com"
+gcloud run services add-iam-policy-binding $FUNCTION_NAME \
+    --region=$REGION \
+    --member="serviceAccount:$SERVICE_ACCOUNT" \
+    --role="roles/run.invoker" \
+    --project=$PROJECT_ID
+
+echo -e "${GREEN}✓ IAM permissions configured${NC}"
+echo ""
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Deployment Complete!${NC}"
 echo -e "${GREEN}========================================${NC}"
