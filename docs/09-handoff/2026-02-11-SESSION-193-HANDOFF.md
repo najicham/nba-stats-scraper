@@ -97,7 +97,7 @@
 
 ---
 
-## Quick Start for Next Session
+## Quick Start for Session 195
 
 ```bash
 # 1. Read this handoff
