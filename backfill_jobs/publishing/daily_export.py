@@ -143,6 +143,12 @@ def export_date(
         'errors': []
     }
 
+    # === FAST EXPORTS FIRST ===
+    # Run quick single-query exports before the slow tonight-players exporter
+    # (which processes 200+ individual player files and can take 8+ minutes).
+    # This ensures subset-picks, daily-signals, and other critical exports
+    # complete even if the function approaches its timeout.
+
     # Results exporter
     if 'results' in export_types:
         try:
@@ -198,17 +204,6 @@ def export_date(
             result['errors'].append(f"tonight: {e}")
             logger.error(f"  Tonight All Players error: {e}")
 
-    # Tonight individual player exporters (website player detail)
-    if 'tonight-players' in export_types:
-        try:
-            exporter = TonightPlayerExporter()
-            paths = exporter.export_all_for_date(target_date)
-            result['paths']['tonight_players'] = paths
-            logger.info(f"  Tonight Players: {len(paths)} exported")
-        except Exception as e:
-            result['errors'].append(f"tonight-players: {e}")
-            logger.error(f"  Tonight Players error: {e}")
-
     # Streaks exporter (players on OVER/UNDER streaks)
     if 'streaks' in export_types:
         try:
@@ -219,6 +214,96 @@ def export_date(
         except Exception as e:
             result['errors'].append(f"streaks: {e}")
             logger.error(f"  Streaks error: {e}")
+
+    # === PHASE 6 SUBSET EXPORTS (Session 90) ===
+    # Moved before tonight-players to ensure these fast, critical exports
+    # complete before the slow per-player exporter consumes remaining time.
+
+    # Subset picks exporter (all groups in one file)
+    # Session 153: Materialize subsets to BigQuery first, then export to GCS
+    if 'subset-picks' in export_types:
+        try:
+            # Step 1: Materialize subsets to BigQuery (creates queryable entity)
+            materializer = SubsetMaterializer()
+            mat_result = materializer.materialize(target_date, trigger_source='export')
+            logger.info(
+                f"  Subset Materialization: {mat_result.get('total_picks', 0)} picks "
+                f"across {len(mat_result.get('subsets', {}))} subsets "
+                f"(version={mat_result.get('version_id')})"
+            )
+        except Exception as e:
+            # Non-fatal: if materialization fails, export will use fallback
+            logger.warning(f"  Subset Materialization failed (export will use fallback): {e}")
+
+        try:
+            # Step 2: Export to GCS (reads from materialized table or falls back)
+            exporter = AllSubsetsPicksExporter()
+            path = exporter.export(target_date)
+            result['paths']['subset_picks'] = path
+            logger.info(f"  Subset Picks: {path}")
+        except Exception as e:
+            result['errors'].append(f"subset-picks: {e}")
+            logger.error(f"  Subset Picks error: {e}")
+
+    # Daily signals exporter
+    if 'daily-signals' in export_types:
+        try:
+            exporter = DailySignalsExporter()
+            path = exporter.export(target_date)
+            result['paths']['daily_signals'] = path
+            logger.info(f"  Daily Signals: {path}")
+        except Exception as e:
+            result['errors'].append(f"daily-signals: {e}")
+            logger.error(f"  Daily Signals error: {e}")
+
+    # Subset performance exporter
+    if 'subset-performance' in export_types:
+        try:
+            exporter = SubsetPerformanceExporter()
+            path = exporter.export()
+            result['paths']['subset_performance'] = path
+            logger.info(f"  Subset Performance: {path}")
+        except Exception as e:
+            result['errors'].append(f"subset-performance: {e}")
+            logger.error(f"  Subset Performance error: {e}")
+
+    # Subset definitions exporter
+    if 'subset-definitions' in export_types:
+        try:
+            exporter = SubsetDefinitionsExporter()
+            path = exporter.export()
+            result['paths']['subset_definitions'] = path
+            logger.info(f"  Subset Definitions: {path}")
+        except Exception as e:
+            result['errors'].append(f"subset-definitions: {e}")
+            logger.error(f"  Subset Definitions error: {e}")
+
+    # Season subset picks exporter (Session 158 - full season in one file)
+    if 'season-subsets' in export_types:
+        try:
+            exporter = SeasonSubsetPicksExporter()
+            path = exporter.export()
+            result['paths']['season_subsets'] = path
+            logger.info(f"  Season Subsets: {path}")
+        except Exception as e:
+            result['errors'].append(f"season-subsets: {e}")
+            logger.error(f"  Season Subsets error: {e}")
+
+    # === SLOW EXPORTS (tonight-players processes 200+ individual files) ===
+
+    # Tonight individual player exporters (website player detail)
+    # WARNING: This is the slowest exporter — processes each player individually
+    # with a separate BQ query + GCS upload (~2-3s per player, 200+ players).
+    # Must run AFTER all critical exports to avoid timeout starvation.
+    if 'tonight-players' in export_types:
+        try:
+            exporter = TonightPlayerExporter()
+            paths = exporter.export_all_for_date(target_date)
+            result['paths']['tonight_players'] = paths
+            logger.info(f"  Tonight Players: {len(paths)} exported")
+        except Exception as e:
+            result['errors'].append(f"tonight-players: {e}")
+            logger.error(f"  Tonight Players error: {e}")
 
     # === TRENDS V2 EXPORTERS ===
 
@@ -335,78 +420,6 @@ def export_date(
         except Exception as e:
             result['errors'].append(f"live-grading: {e}")
             logger.error(f"  Live Grading error: {e}")
-
-    # === PHASE 6 SUBSET EXPORTS (Session 90) ===
-
-    # Subset picks exporter (all groups in one file)
-    # Session 153: Materialize subsets to BigQuery first, then export to GCS
-    if 'subset-picks' in export_types:
-        try:
-            # Step 1: Materialize subsets to BigQuery (creates queryable entity)
-            materializer = SubsetMaterializer()
-            mat_result = materializer.materialize(target_date, trigger_source='export')
-            logger.info(
-                f"  Subset Materialization: {mat_result.get('total_picks', 0)} picks "
-                f"across {len(mat_result.get('subsets', {}))} subsets "
-                f"(version={mat_result.get('version_id')})"
-            )
-        except Exception as e:
-            # Non-fatal: if materialization fails, export will use fallback
-            logger.warning(f"  Subset Materialization failed (export will use fallback): {e}")
-
-        try:
-            # Step 2: Export to GCS (reads from materialized table or falls back)
-            exporter = AllSubsetsPicksExporter()
-            path = exporter.export(target_date)
-            result['paths']['subset_picks'] = path
-            logger.info(f"  Subset Picks: {path}")
-        except Exception as e:
-            result['errors'].append(f"subset-picks: {e}")
-            logger.error(f"  Subset Picks error: {e}")
-
-    # Daily signals exporter
-    if 'daily-signals' in export_types:
-        try:
-            exporter = DailySignalsExporter()
-            path = exporter.export(target_date)
-            result['paths']['daily_signals'] = path
-            logger.info(f"  Daily Signals: {path}")
-        except Exception as e:
-            result['errors'].append(f"daily-signals: {e}")
-            logger.error(f"  Daily Signals error: {e}")
-
-    # Subset performance exporter
-    if 'subset-performance' in export_types:
-        try:
-            exporter = SubsetPerformanceExporter()
-            path = exporter.export()
-            result['paths']['subset_performance'] = path
-            logger.info(f"  Subset Performance: {path}")
-        except Exception as e:
-            result['errors'].append(f"subset-performance: {e}")
-            logger.error(f"  Subset Performance error: {e}")
-
-    # Subset definitions exporter
-    if 'subset-definitions' in export_types:
-        try:
-            exporter = SubsetDefinitionsExporter()
-            path = exporter.export()
-            result['paths']['subset_definitions'] = path
-            logger.info(f"  Subset Definitions: {path}")
-        except Exception as e:
-            result['errors'].append(f"subset-definitions: {e}")
-            logger.error(f"  Subset Definitions error: {e}")
-
-    # Season subset picks exporter (Session 158 - full season in one file)
-    if 'season-subsets' in export_types:
-        try:
-            exporter = SeasonSubsetPicksExporter()
-            path = exporter.export()
-            result['paths']['season_subsets'] = path
-            logger.info(f"  Season Subsets: {path}")
-        except Exception as e:
-            result['errors'].append(f"season-subsets: {e}")
-            logger.error(f"  Season Subsets error: {e}")
 
     if result['errors']:
         result['status'] = 'partial' if result['paths'] else 'failed'
