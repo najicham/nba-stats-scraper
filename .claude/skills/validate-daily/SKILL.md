@@ -1927,6 +1927,93 @@ curl -X POST "$SLACK_WEBHOOK_URL_ERROR" \
 - Critical errors: `SLACK_WEBHOOK_URL_ERROR` → #app-error-alerts ⚠️ **Use this for Phase 0.6 failures**
 - Warnings: `SLACK_WEBHOOK_URL_WARNING` → #nba-alerts
 
+#### Check 5: Orchestrator IAM Permissions (Session 205 - CRITICAL)
+
+**MANDATORY CHECK**: Verify all orchestrators have required IAM permissions to be invoked by Pub/Sub.
+
+**The Problem**: Session 205 discovered all 4 orchestrators lacked `roles/run.invoker` permission, causing 7+ days of silent failures. Pub/Sub published messages but Cloud Run rejected invocations due to missing permissions. Orchestrators tracked completions in Firestore but never set `_triggered=True`, blocking the pipeline.
+
+**Root Cause**: `gcloud functions deploy` does not preserve IAM policies. Redeployments can wipe IAM bindings.
+
+**What to check**:
+
+```bash
+# Check all 4 orchestrators for IAM permissions
+python3 << 'EOF'
+import subprocess
+import sys
+
+orchestrators = [
+    'phase2-to-phase3-orchestrator',
+    'phase3-to-phase4-orchestrator',
+    'phase4-to-phase5-orchestrator',
+    'phase5-to-phase6-orchestrator'
+]
+
+missing_permissions = []
+service_account = '756957797294-compute@developer.gserviceaccount.com'
+
+print("\n=== Orchestrator IAM Permission Check ===\n")
+
+for orch in orchestrators:
+    try:
+        result = subprocess.run(
+            ['gcloud', 'run', 'services', 'get-iam-policy', orch,
+             '--region=us-west2', '--project=nba-props-platform',
+             '--format=json'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
+        if result.returncode != 0:
+            print(f"  ❌ {orch}: Failed to get IAM policy")
+            missing_permissions.append(orch)
+            continue
+
+        # Check if roles/run.invoker exists for service account
+        if 'roles/run.invoker' in result.stdout and service_account in result.stdout:
+            print(f"  ✅ {orch}: IAM permissions OK")
+        else:
+            print(f"  🔴 {orch}: MISSING roles/run.invoker permission!")
+            missing_permissions.append(orch)
+
+    except Exception as e:
+        print(f"  ❌ {orch}: Error checking IAM - {e}")
+        missing_permissions.append(orch)
+
+if missing_permissions:
+    print(f"\n🔴 P0 CRITICAL: {len(missing_permissions)} orchestrator(s) missing IAM permissions!")
+    print(f"   Affected: {', '.join(missing_permissions)}")
+    print(f"\n   Impact: Pub/Sub cannot invoke these orchestrators")
+    print(f"           Pipeline will stall when processors complete")
+    print(f"\n   Fix command:")
+    for orch in missing_permissions:
+        print(f"   gcloud run services add-iam-policy-binding {orch} \\")
+        print(f"     --region=us-west2 \\")
+        print(f"     --member='serviceAccount:{service_account}' \\")
+        print(f"     --role='roles/run.invoker' \\")
+        print(f"     --project=nba-props-platform")
+        print()
+    sys.exit(1)
+else:
+    print(f"\n✅ All orchestrators have correct IAM permissions")
+    sys.exit(0)
+EOF
+```
+
+**Expected Result**: All 4 orchestrators show `✅ IAM permissions OK`
+
+**If MISSING**:
+- 🔴 P0 CRITICAL: Orchestrators cannot be invoked by Pub/Sub
+- Impact: Silent pipeline failures - processors complete but orchestrators never trigger
+- Symptoms: Firestore shows processors complete but `_triggered=False`
+- Action: Run fix command above immediately
+
+**Prevention**: Deployment scripts now auto-set IAM permissions (Session 205 fix), but verify after any manual deployments.
+
+**Reference**: Session 205 handoff - `docs/09-handoff/2026-02-12-SESSION-205-HANDOFF.md`
+
 **If ALL Phase 0.6 checks pass**: Continue to Phase 0.7
 
 **If ANY Phase 0.6 check fails**: STOP, report issue with P1 CRITICAL severity, do NOT continue to Phase 1
