@@ -220,20 +220,21 @@ gcloud logging read "resource.labels.function_name=phase2-to-phase3-orchestrator
 While fixing Session 197's orchestrator issue, discovered **two additional Session 195 issues:**
 
 ### Issue 1: Phase 3 Data Quality
-- **Status:** Not yet fixed
+- **Status:** Not yet fixed - delegated to separate chat
 - **Problem:** Phase 3 running but missing 9 players with betting lines
 - **Impact:** Only 7/12 players with lines got predictions
 - **Root cause:** Unknown - requires investigation
 
 ### Issue 2: Scheduler Date Bug
-- **Status:** Not yet fixed
-- **Problem:** `ml-feature-store-7am-et` processes yesterday instead of today
+- **Status:** ✅ **FIXED IN SESSION 198**
+- **Problem:** `ml-feature-store-7am-et` processed yesterday instead of today
 - **Impact:** 84% coverage loss (18 vs ~113 predictions)
-- **Root cause:** "TODAY" resolves to wrong date (timezone issue)
+- **Root cause:** Docker image missing `tzdata` package → timezone fallback to UTC
+- **Fix:** Installed `tzdata` in Phase 4 Dockerfile (commit 25ab9834)
 
 **See:**
 - `docs/09-handoff/2026-02-11-SESSION-195-HANDOFF.md` - Phase 3 data quality
-- `docs/09-handoff/2026-02-11-SESSION-195-SCHEDULER-BUG-HANDOFF.md` - Scheduler bug
+- `docs/09-handoff/2026-02-11-SESSION-198-SCHEDULER-FIX-HANDOFF.md` - Scheduler fix details
 
 ---
 
