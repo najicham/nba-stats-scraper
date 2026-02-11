@@ -90,6 +90,9 @@ from shared.endpoints.health import create_health_blueprint, HealthChecker
 from shared.utils.postponement_detector import PostponementDetector
 from predictions.coordinator.signal_calculator import calculate_daily_signals
 
+# Session 191: Per-system quality gate - import shadow model config
+from predictions.worker.prediction_systems.catboost_monthly import MONTHLY_MODELS
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -602,6 +605,26 @@ logger.info(
     f"Coordinator initialized successfully "
     f"(multi_instance={ENABLE_MULTI_INSTANCE}, heavy clients will lazy-load on first request)"
 )
+
+
+def get_active_system_ids() -> List[str]:
+    """
+    Get list of active system IDs for per-system quality gate.
+
+    Session 191: Returns champion + enabled shadow models.
+
+    Returns:
+        List of system_ids: ['catboost_v9', 'catboost_v9_q43_train1102_0131', ...]
+    """
+    active_systems = ['catboost_v9']  # Champion always active
+
+    # Add enabled shadow models from MONTHLY_MODELS
+    for model_id, config in MONTHLY_MODELS.items():
+        if config.get('enabled', False):
+            active_systems.append(model_id)
+
+    logger.info(f"Active systems for quality gate: {active_systems}")
+    return active_systems
 
 
 @app.route('/', methods=['GET'])
@@ -1240,12 +1263,42 @@ def start_prediction_batch():
             player_lookups = [r.get('player_lookup') for r in requests if r.get('player_lookup')]
 
             if player_lookups:
-                # Apply quality gate
-                gate_results, summary = quality_gate.apply_quality_gate(
-                    game_date=game_date,
-                    player_lookups=player_lookups,
-                    mode=mode
-                )
+                # Session 191: Per-system quality gate for parallel shadow models
+                # Run quality gate separately for each active system (champion + shadows)
+                # Aggregate viable players across all systems (union)
+                active_systems = get_active_system_ids()
+                logger.info(f"QUALITY_GATE: Running for {len(active_systems)} systems: {active_systems}")
+
+                per_system_results = {}  # system_id -> (gate_results, summary)
+                all_viable_players = set()  # Union of all viable players across systems
+
+                for system_id in active_systems:
+                    logger.info(f"QUALITY_GATE: Applying for system_id={system_id}")
+
+                    gate_results, summary = quality_gate.apply_quality_gate(
+                        game_date=game_date,
+                        player_lookups=player_lookups,
+                        mode=mode,
+                        system_id=system_id
+                    )
+
+                    per_system_results[system_id] = (gate_results, summary)
+
+                    # Collect viable players for this system
+                    viable_for_system = {
+                        r.player_lookup for r in gate_results if r.should_predict
+                    }
+                    all_viable_players.update(viable_for_system)
+
+                    logger.info(
+                        f"QUALITY_GATE [{system_id}]: {len(viable_for_system)}/{len(player_lookups)} "
+                        f"players viable (skipped_existing={summary.players_skipped_existing}, "
+                        f"skipped_low_quality={summary.players_skipped_low_quality}, "
+                        f"hard_blocked={summary.players_hard_blocked})"
+                    )
+
+                # Use champion results for healing/alerting (don't heal per shadow model)
+                gate_results, summary = per_system_results['catboost_v9']
 
                 # Session 139: Self-heal if players are hard-blocked and mode >= RETRY
                 heal_attempted = False
@@ -1300,24 +1353,26 @@ def start_prediction_batch():
                     except Exception as e:
                         logger.error(f"QUALITY_HEALER: Self-heal failed: {e}", exc_info=True)
 
-                # Build lookup for results
+                # Build lookup for champion results (for quality flags)
                 quality_gate_results = {r.player_lookup: r for r in gate_results}
 
-                # Filter requests and add quality flags
+                # Session 191: Filter using aggregated viable players across ALL systems
+                # A player is viable if ANY system wants to predict on them
                 for pred_request in requests:
                     player_lookup = pred_request.get('player_lookup')
-                    gate_result = quality_gate_results.get(player_lookup)
 
-                    if gate_result and gate_result.should_predict:
-                        # Add quality flags to request
-                        pred_request['feature_quality_score'] = gate_result.feature_quality_score
-                        pred_request['low_quality_flag'] = gate_result.low_quality_flag
-                        pred_request['forced_prediction'] = gate_result.forced_prediction
-                        pred_request['prediction_attempt'] = gate_result.prediction_attempt
+                    if player_lookup in all_viable_players:
+                        # Use champion results for quality flags (baseline metrics)
+                        gate_result = quality_gate_results.get(player_lookup)
+                        if gate_result:
+                            pred_request['feature_quality_score'] = gate_result.feature_quality_score
+                            pred_request['low_quality_flag'] = gate_result.low_quality_flag
+                            pred_request['forced_prediction'] = gate_result.forced_prediction
+                            pred_request['prediction_attempt'] = gate_result.prediction_attempt
                         viable_requests.append(pred_request)
-                    elif gate_result:
+                    else:
                         logger.debug(
-                            f"QUALITY_GATE: Skipping {player_lookup} - {gate_result.reason}"
+                            f"QUALITY_GATE: Skipping {player_lookup} - blocked by all systems"
                         )
 
                 # Log quality metrics for monitoring
@@ -1362,7 +1417,8 @@ def start_prediction_batch():
 
                 logger.info(
                     f"QUALITY_GATE: {len(viable_requests)}/{len(requests)} players will get predictions "
-                    f"(skipped_existing={summary.players_skipped_existing}, "
+                    f"(aggregated across {len(active_systems)} systems) "
+                    f"champion_stats: skipped_existing={summary.players_skipped_existing}, "
                     f"skipped_low_quality={summary.players_skipped_low_quality}, "
                     f"hard_blocked={summary.players_hard_blocked})"
                 )

@@ -111,13 +111,14 @@ class QualityGate:
             self._bq_client = get_bigquery_client(self.project_id)
         return self._bq_client
 
-    def get_existing_predictions(self, game_date: date, player_lookups: List[str]) -> Dict[str, bool]:
+    def get_existing_predictions(self, game_date: date, player_lookups: List[str], system_id: str = 'catboost_v9') -> Dict[str, bool]:
         """
-        Check which players already have predictions for the given date.
+        Check which players already have predictions for the given date and system.
 
         Args:
             game_date: Date to check predictions for
             player_lookups: List of player lookups to check
+            system_id: System ID to check predictions for (default: 'catboost_v9' for backward compat)
 
         Returns:
             Dict mapping player_lookup to bool (True if prediction exists)
@@ -133,20 +134,21 @@ class QualityGate:
             WHERE game_date = @game_date
               AND player_lookup IN UNNEST(@player_lookups)
               AND is_active = TRUE
-              AND system_id = 'catboost_v9'
+              AND system_id = @system_id
         """
 
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ScalarQueryParameter("game_date", "DATE", game_date),
                 bigquery.ArrayQueryParameter("player_lookups", "STRING", player_lookups),
+                bigquery.ScalarQueryParameter("system_id", "STRING", system_id),
             ]
         )
 
         try:
             result = self.bq_client.query(query, job_config=job_config).result()
             existing = {row.player_lookup: True for row in result}
-            logger.info(f"Found {len(existing)} existing predictions for {game_date}")
+            logger.info(f"Found {len(existing)} existing {system_id} predictions for {game_date}")
             return existing
         except Exception as e:
             logger.error(f"Error checking existing predictions: {e}")
@@ -218,10 +220,11 @@ class QualityGate:
         self,
         game_date: date,
         player_lookups: List[str],
-        mode: PredictionMode
+        mode: PredictionMode,
+        system_id: str = 'catboost_v9'
     ) -> Tuple[List[QualityGateResult], QualityGateSummary]:
         """
-        Apply quality gate to a batch of players.
+        Apply quality gate to a batch of players for a specific system.
 
         Session 139 overhaul:
         - Hard floor: NEVER predict with red alerts or matchup_quality < 50% (any mode)
@@ -229,20 +232,25 @@ class QualityGate:
         - Diagnoses missing processors for self-healing
         - No more forced_no_features or forced_last_call escape hatches
 
+        Session 191: Per-system quality gate
+        - Each system (champion, shadow models) checks for its own existing predictions
+        - Enables parallel shadow models to predict on same players as champion
+
         Args:
             game_date: Date to make predictions for
             player_lookups: List of player lookups
             mode: Prediction mode (determines threshold)
+            system_id: System ID to check existing predictions for (default: 'catboost_v9')
 
         Returns:
             Tuple of (list of QualityGateResult, QualityGateSummary)
         """
         threshold = QUALITY_THRESHOLDS.get(mode, 85.0)
 
-        logger.info(f"Applying quality gate: mode={mode.value}, threshold={threshold}%, players={len(player_lookups)}")
+        logger.info(f"Applying quality gate: system_id={system_id}, mode={mode.value}, threshold={threshold}%, players={len(player_lookups)}")
 
         # Get existing predictions and quality scores
-        existing_predictions = self.get_existing_predictions(game_date, player_lookups)
+        existing_predictions = self.get_existing_predictions(game_date, player_lookups, system_id)
         quality_scores = self.get_feature_quality_scores(game_date, player_lookups)
 
         results = []
