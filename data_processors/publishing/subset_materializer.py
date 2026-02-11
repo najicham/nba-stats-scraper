@@ -241,14 +241,24 @@ class SubsetMaterializer:
           SELECT player_lookup, player_name
           FROM `nba_reference.nba_players_registry`
           QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY season DESC) = 1
+        ),
+        -- Session 191: Fall back to upcoming_player_game_context for pre-game dates
+        team_info AS (
+          SELECT player_lookup, team_abbr, opponent_team_abbr, game_date
+          FROM `nba_analytics.player_game_summary`
+          WHERE game_date = @game_date
+          UNION ALL
+          SELECT player_lookup, team_abbr, opponent_team_abbr, game_date
+          FROM `nba_analytics.upcoming_player_game_context`
+          WHERE game_date = @game_date
         )
         SELECT
           p.prediction_id,
           p.game_id,
           p.player_lookup,
           COALESCE(pn.player_name, p.player_lookup) as player_name,
-          pgs.team_abbr as team,
-          pgs.opponent_team_abbr as opponent,
+          ti.team_abbr as team,
+          ti.opponent_team_abbr as opponent,
           p.predicted_points,
           p.current_points_line,
           p.recommendation,
@@ -265,9 +275,9 @@ class SubsetMaterializer:
         FROM `nba_predictions.player_prop_predictions` p
         LEFT JOIN player_names pn
           ON p.player_lookup = pn.player_lookup
-        LEFT JOIN `nba_analytics.player_game_summary` pgs
-          ON p.player_lookup = pgs.player_lookup
-          AND p.game_date = pgs.game_date
+        LEFT JOIN team_info ti
+          ON p.player_lookup = ti.player_lookup
+          AND p.game_date = ti.game_date
         LEFT JOIN `nba_predictions.ml_feature_store_v2` f
           ON p.player_lookup = f.player_lookup
           AND p.game_date = f.game_date
@@ -276,7 +286,7 @@ class SubsetMaterializer:
           AND p.is_active = TRUE
           AND p.recommendation IN ('OVER', 'UNDER')
           AND p.current_points_line IS NOT NULL
-          AND pgs.team_abbr IS NOT NULL
+          AND ti.team_abbr IS NOT NULL
           AND COALESCE(f.feature_quality_score, 0) >= @min_quality
           -- Session 170: Filter to current model_version to prevent stale predictions leaking
           AND p.model_version = (
