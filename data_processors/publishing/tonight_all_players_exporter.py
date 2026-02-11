@@ -91,7 +91,14 @@ class TonightAllPlayersExporter(BaseExporter):
         """Query games scheduled for the date."""
         query = """
         SELECT DISTINCT
-            game_id,  -- Use native NBA game_id to match upcoming_player_game_context
+            -- Construct date-based game_id to match upcoming_player_game_context format
+            CONCAT(
+                FORMAT_DATE('%Y%m%d', game_date),
+                '_',
+                away_team_tricode,
+                '_',
+                home_team_tricode
+            ) as game_id,
             home_team_tricode as home_team_abbr,
             away_team_tricode as away_team_abbr,
             game_status,
@@ -111,7 +118,7 @@ class TonightAllPlayersExporter(BaseExporter):
         """Query all players for tonight's games with predictions, fatigue, and injury data."""
         query = """
         WITH predictions AS (
-            -- Get predictions for players (primary ensemble system)
+            -- Get predictions for players (production CatBoost V9 system)
             -- Use ROW_NUMBER to deduplicate in case of multiple rows per player/game
             SELECT
                 pp.player_lookup,
@@ -123,7 +130,7 @@ class TonightAllPlayersExporter(BaseExporter):
                 pp.current_points_line
             FROM `nba-props-platform.nba_predictions.player_prop_predictions` pp
             WHERE pp.game_date = @target_date
-              AND pp.system_id = 'catboost_v8'
+              AND pp.system_id = 'catboost_v9'
             QUALIFY ROW_NUMBER() OVER (
                 PARTITION BY pp.player_lookup, pp.game_id
                 ORDER BY pp.created_at DESC
