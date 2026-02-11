@@ -110,10 +110,122 @@
 
 ---
 
-## Next Session Priorities
+## Outstanding Issues (Session 191 ran out of context)
 
-1. **Verify grading completed** for Feb 1-3 (check `prediction_accuracy` table)
-2. **Investigate QUANT barely producing** — check worker dispatch logic, logs, and whether shadow models get same player list as champion
-3. **Monitor Cloud Build** — verify auto-deploy completed for phase6 service
-4. **Run full export cycle** — trigger Phase 6 to regenerate all JSON files with updated exporters
-5. **Consider V8 grading**: The ~44% ungraded V8 predictions are by design (no real lines), but Feb 1 has 199/336 (59%) ungraded — some of those may have real lines that failed to grade for another reason
+### Issue 1: QUANT Models Barely Producing (HIGH PRIORITY)
+**Problem:** Aurora (Q43) and Summit (Q45) produce only ~2 predictions per game day. Champion (Phoenix) produces 50-80+.
+
+**What we know:**
+- Models ARE enabled in `catboost_monthly.py` (lines 133-168)
+- Worker dispatches them (`worker.py:1805`)
+- NOT a quality gate issue — the 2 predictions they made had 0 default features
+- Models simply aren't being invoked for most players
+
+**Investigation needed:**
+- Check worker logs for shadow model dispatch: `gcloud logging read 'resource.type="cloud_run_revision" AND resource.labels.service_name="prediction-worker" AND "q43"' --project=nba-props-platform --limit=50`
+- Check if `catboost_monthly.py` limits which players get shadow predictions
+- Check if `worker.py` quality gate treats shadow models differently from champion
+- Files to examine: `predictions/worker/worker.py` (search for `shadow`, `challenger`, `monthly`), `predictions/shared/catboost_monthly.py`
+
+### Issue 2: Materialized Subset Picks Missing Feb 8-10
+**Problem:** `current_subset_picks` has no rows for Feb 8-10. The materializer needs to run for these dates.
+
+**Fix:**
+```sql
+-- Check current state
+SELECT game_date, COUNT(*) FROM nba_predictions.current_subset_picks
+WHERE game_date >= '2026-02-07' GROUP BY 1 ORDER BY 1;
+```
+Then trigger materializer for missing dates. The materializer runs as part of Phase 6 — may need manual trigger or backfill.
+
+### Issue 3: system_id NULL on Historical Subset Picks
+**Problem:** All `current_subset_picks` rows before Session 190 have `system_id = NULL`. They're all from `catboost_v9`.
+
+**Fix:**
+```sql
+-- Backfill system_id for historical rows
+UPDATE nba_predictions.current_subset_picks
+SET system_id = 'catboost_v9'
+WHERE system_id IS NULL;
+```
+
+### Issue 4: Verify Feb 1-3 V9 Grading
+**Problem:** We reactivated 1,026 Feb 1-3 predictions and sent Pub/Sub grading triggers. However, the first trigger graded V8/ensemble/etc but NOT V9 (predictions were still inactive when grader ran). A second round of triggers was sent just before context loss.
+
+**Verify:**
+```sql
+SELECT game_date, system_id, COUNT(*) as graded
+FROM nba_predictions.prediction_accuracy
+WHERE game_date BETWEEN '2026-02-01' AND '2026-02-03'
+  AND system_id = 'catboost_v9'
+GROUP BY 1, 2 ORDER BY 1;
+```
+If zero V9 rows, re-trigger grading:
+```bash
+for d in 2026-02-01 2026-02-02 2026-02-03; do
+  gcloud pubsub topics publish nba-grading-trigger \
+    --project=nba-props-platform \
+    --message="{\"game_date\": \"$d\", \"trigger_source\": \"manual_backfill\"}"
+done
+```
+
+### Issue 5: Phase 6 Export Backfill & Monitoring
+**Problem:** User requested ensuring Phase 6 exports are running properly, backfilled for past month, and monitored.
+
+**What we know:**
+- GCS bucket: `gs://nba-props-platform-api/v1/`
+- All 15 export directories exist (picks, signals, subsets, systems, tonight, trends, etc.)
+- Phase 6 runs as part of `phase5-to-phase6-orchestrator` Cloud Function
+- Test script: `PYTHONPATH=. python bin/test-phase6-exporters.py` — all 5 tests pass
+- No dedicated Phase 6 monitoring/alerting exists beyond the general canary system
+
+**Needs:**
+- Audit GCS files: which dates have exports, which are missing
+- Backfill missing exports (at least past 30 days)
+- Consider adding Phase 6 canary query to `bin/monitoring/pipeline_canary_queries.py`
+- Validate export JSON structure for historical dates
+
+### Issue 6: Champion Model Decay (INFO — documented)
+- Champion hit rate: 21-36% over last 6 days (Feb 4-9). 39+ days stale.
+- QUANT_43 (Aurora) was the best fresh model at 65.8% HR 3+ in backtests, but barely producing in production (Issue 1).
+- No action needed beyond fixing QUANT production issue (Issue 1) and monitoring.
+
+---
+
+## Next Session Priorities (Ordered)
+
+1. **Fix QUANT barely producing** (Issue 1) — Biggest functional gap. Investigate worker dispatch for shadow models. If fixed, Aurora/Summit start generating real picks and can be evaluated.
+2. **Backfill materialized subset picks** (Issue 2) — Run materializer for Feb 8-10+ so season exporter has data.
+3. **Backfill system_id on historical subset picks** (Issue 3) — Quick UPDATE query.
+4. **Verify Feb 1-3 V9 grading** (Issue 4) — Check if re-trigger worked. If not, trigger again.
+5. **Phase 6 export audit & backfill** (Issue 5) — Audit GCS, backfill missing dates, add monitoring.
+6. **Consider Phase 6 canary** — Add export freshness check to monitoring pipeline.
+
+## Quick Start for Next Session
+
+```bash
+# 1. Read this handoff
+cat docs/09-handoff/2026-02-10-SESSION-191-HANDOFF.md
+
+# 2. Check QUANT prediction counts
+bq query --use_legacy_sql=false "
+SELECT system_id, game_date, COUNT(*) as preds
+FROM nba_predictions.player_prop_predictions
+WHERE system_id LIKE '%q4%' AND game_date >= '2026-02-08'
+GROUP BY 1, 2 ORDER BY 2 DESC, 1"
+
+# 3. Check materialization gaps
+bq query --use_legacy_sql=false "
+SELECT game_date, COUNT(*) FROM nba_predictions.current_subset_picks
+WHERE game_date >= '2026-02-01' GROUP BY 1 ORDER BY 1"
+
+# 4. Check Feb 1-3 V9 grading
+bq query --use_legacy_sql=false "
+SELECT game_date, system_id, COUNT(*)
+FROM nba_predictions.prediction_accuracy
+WHERE game_date BETWEEN '2026-02-01' AND '2026-02-03' AND system_id = 'catboost_v9'
+GROUP BY 1, 2 ORDER BY 1"
+
+# 5. Run daily validation
+/validate-daily
+```
