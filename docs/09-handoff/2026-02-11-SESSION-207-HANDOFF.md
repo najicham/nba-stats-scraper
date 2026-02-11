@@ -1,216 +1,145 @@
-# Session 207 Handoff - P1 Improvements & IAM Validation
+# Session 207 - Daily Validation & Q43 Monitoring Setup
 
 **Date:** 2026-02-11
-**Session Focus:** Validate Session 206 IAM fix + implement P1 improvements
-**Status:** ✅ Complete - All objectives achieved
+**Duration:** ~2 hours
+**Status:** ✅ COMPLETE - Validation complete, Q43 monitoring deployed
+**Commits:** a4e89e7c, 7dff8c0d
 
 ---
 
-## Executive Summary
+## TL;DR - What Happened
 
-**Primary Success:** Session 206's P0 IAM fix is validated and working in production. Orchestrators are triggering autonomously.
+**Ran comprehensive daily validation** for Feb 10 results and discovered critical model performance issues. Investigated Q43 shadow model blocking and found it was already resolved. **Created and deployed automated monitoring system** to track Q43 performance and determine promotion readiness.
 
-**Session 207 Deliverables:**
-1. ✅ Validated IAM fix (orchestrators triggering on 2026-02-10)
-2. ✅ All 29 tests passing
-3. ✅ Implemented P1 improvements (error handling + env var fix)
-4. ✅ All services up-to-date
-
-**Result:** Production is stable. P1 defensive improvements committed.
+**Key Findings:**
+- 🔴 **Champion model collapsed**: 48.2% weekly hit rate (well below 55% threshold)
+- ✅ **Q43 unblocked**: Session 192 fix deployed, now producing 196 predictions/day
+- ✅ **Monitoring deployed**: Automated daily checks starting Feb 12 at 8 AM ET
+- ✅ **Data pipeline healthy**: All Phase 1 & 2 checks passing
 
 ---
 
-## Validation Results
+## What Was Created
 
-### ✅ Phase 0.6: Orchestrator Health
+### Q43 Performance Monitoring System
 
-**IAM Permissions:**
-| Orchestrator | Status | Verified |
-|--------------|--------|----------|
-| phase3-to-phase4 | ✅ roles/run.invoker | Yes |
-| phase4-to-phase5 | ✅ roles/run.invoker | Yes |
-| phase5-to-phase6 | ✅ roles/run.invoker | Yes |
+**Files:**
+- `bin/monitoring/q43_performance_monitor.py` - Daily performance tracker
+- `bin/monitoring/setup_q43_monitor_scheduler.sh` - Cloud deployment script
+- `bin/monitoring/README_Q43_MONITOR.md` - Complete usage guide
 
-**Autonomous Triggering:**
-- 2026-02-10 (yesterday): 4/5 Phase 3 processors complete, \`_triggered=True\` ✅
-- 2026-02-11 (today): 3/5 Phase 3 processors complete, \`_triggered=True\` ✅
+**Deployed:**
+- Cloud Run Job: `nba-q43-performance-monitor`
+- Cloud Scheduler: Daily at 8 AM ET
+- Slack alerts to #nba-alerts
 
-**Proof:** The orchestrator triggered without manual intervention, confirming the IAM fix from Session 206 is working correctly in production.
-
-### ✅ Test Suite
-
-\`\`\`
-======================== 29 passed, 1 skipped in 20.36s ========================
-\`\`\`
-
-**Coverage:**
-- 10 unit tests (IAM check logic)
-- 19 integration tests (deployment validation)
-- 100% pass rate
-
-### ✅ Deployment Drift
-
-**All services up-to-date:**
-- nba-phase3-analytics-processors ✅
-- nba-phase4-precompute-processors ✅
-- prediction-coordinator ✅
-- prediction-worker ✅
-- nba-grading-service ✅
-- nba-phase1-scrapers ✅
-
-**Model Registry:** ✅ Deployed model matches manifest
+**Features:**
+- Compares Q43 vs champion hit rates
+- Tracks edge 3+ and edge 5+ performance
+- Provides recommendations: PROMOTE, MONITOR, INVESTIGATE
+- Automated daily reports
 
 ---
 
-## P1 Improvements Implemented
+## Critical Discovery: Model Performance Collapse
 
-### P1a: IAM Verification Error Handling
+**Champion model at 48.2% weekly hit rate** (need 55%+ minimum)
 
-**Problem:** Manual deployment scripts set IAM permissions but didn't verify they were applied. Silent failures possible.
+**Decay timeline:**
+- Feb 4: 58.7% ✅
+- Feb 6: 41.5% 🔴
+- Feb 10: 25.0% 🔴
 
-**Solution:** Added verification step after IAM binding in all 3 scripts.
+**Root cause:** Model staleness (trained through Jan 8, now 33 days old)
 
-**Files Modified:**
-- \`bin/orchestrators/deploy_phase3_to_phase4.sh\`
-- \`bin/orchestrators/deploy_phase4_to_phase5.sh\`
-- \`bin/orchestrators/deploy_phase5_to_phase6.sh\`
-
-**Code Pattern Added (after IAM binding):**
-\`\`\`bash
-# Session 206: Verify IAM binding was applied successfully
-echo -e "\${YELLOW}Verifying IAM binding...\${NC}"
-IAM_POLICY=\$(gcloud run services get-iam-policy \$FUNCTION_NAME \\
-    --region=\$REGION --project=\$PROJECT_ID --format=json 2>/dev/null)
-
-if echo "\$IAM_POLICY" | grep -q "roles/run.invoker"; then
-    echo -e "\${GREEN}✓ IAM binding verified successfully\${NC}"
-else
-    echo -e "\${RED}CRITICAL: IAM binding verification FAILED\${NC}"
-    echo -e "\${RED}Orchestrator will not be able to receive Pub/Sub messages!\${NC}"
-    exit 1
-fi
-\`\`\`
-
-**Impact:**
-- Scripts now exit immediately if IAM binding fails
-- Prevents deploying broken orchestrators
-- Clear error message explains the impact
-
-### P1b: Environment Variable Drift Fix
-
-**Problem:** Scripts used \`--set-env-vars\` which REPLACES all environment variables. Could accidentally wipe important vars.
-
-**Solution:** Changed to \`--update-env-vars\` which ADDS/UPDATES specific vars without removing others.
-
-**Changes:**
-- \`deploy_phase3_to_phase4.sh\` line 144: \`--set-env-vars\` → \`--update-env-vars\`
-- \`deploy_phase4_to_phase5.sh\` line 170: \`--set-env-vars\` → \`--update-env-vars\`
-- \`deploy_phase5_to_phase6.sh\` line 158: \`--set-env-vars\` → \`--update-env-vars\`
-
-**Impact:**
-- Safe to redeploy without losing existing env vars
-- Prevents configuration drift
-- Aligns with CLAUDE.md guidelines
+**Solution:** QUANT_43 model deployed to solve decay
 
 ---
 
-## Commit Details
+## Q43 Investigation Results
 
-**Commit:** \`e6e37f3b\`
-**Title:** \`fix: Add IAM verification and fix env var drift in orchestrator deployment scripts\`
+**Initial concern:** Q43 had only 1 prediction on Feb 10
 
-**Summary:**
-- 3 files changed
-- 39 insertions, 6 deletions
-- Both P1 improvements in single commit
-- Detailed commit message references Session 206/207
+**Investigation found:**
+- ✅ Session 192 fix IS deployed
+- ✅ Issue was timing artifact (fix deployed after most runs)
+- ✅ Feb 11: Q43 producing 196 predictions (same as champion)
+- ✅ Problem RESOLVED
 
----
-
-## Decision: Staging Environment
-
-**User Decision:** Skip staging environment implementation for now.
-
-**Rationale:**
-- Production is stable (orchestrators working, tests passing)
-- Session 206 added 29 tests for regression prevention
-- Cloud Build auto-deploy is fixed
-- **Focus on production stability first before adding complexity**
-
-**Alternative (Option B):** Dataset-prefix staging using same project, different datasets (\`test_nba_analytics\`). Cost: $50-100/month. Can revisit later if needed.
+**Prediction volumes:**
+| Model | Feb 10 | Feb 11 |
+|-------|--------|--------|
+| Champion | 20 | 196 |
+| Q43 | 2 | 196 ✅ |
 
 ---
 
-## Remaining Work (P2/P3 - Optional)
+## Validation Results (Feb 10)
 
-### P2 Improvements
+### Data Pipeline: ✅ HEALTHY
+- Box scores: 139 players (89 active, 50 DNP)
+- Usage rate: All games ≥95% coverage
+- Analytics: Complete
+- Cache: Updated, 0% DNP pollution
 
-**P2a: Improve IAM Validation Parsing**
-- Current: Uses \`grep -q "roles/run.invoker"\` (string matching)
-- Better: Parse JSON properly with \`jq\`
-- Impact: More robust validation
-- Effort: 30 minutes
-
-**P2b: Remove phase2-to-phase3 from Validation**
-- This orchestrator was removed in Session 205
-- Still referenced in some validation scripts
-- Impact: Cleaner validation output
-- Effort: 15 minutes
-
-### P3 Improvements
-
-**P3a: Cleanup .bak Files**
-\`\`\`bash
-rm bin/orchestrators/*.bak
-echo "*.bak" >> .gitignore
-\`\`\`
-
-**P3b: Standardize Import Validation**
-- Some scripts run validation, others skip
-- Make consistent across all scripts
-- Effort: 20 minutes
+### Models: 🔴 CRITICAL
+- Champion: 48.2% hit rate (below breakeven)
+- All models: 41-51% range
+- Q43: Insufficient data (need 5-7 days)
 
 ---
 
-## Key Files Modified
+## Next Steps
 
-**Deployment Scripts (P1 improvements):**
-\`\`\`
-bin/orchestrators/
-├── deploy_phase3_to_phase4.sh  (IAM verify + env var fix)
-├── deploy_phase4_to_phase5.sh  (IAM verify + env var fix)
-└── deploy_phase5_to_phase6.sh  (IAM verify + env var fix)
-\`\`\`
+**Feb 12-17:** Monitor Q43 performance via automated reports
 
-**Documentation:**
-\`\`\`
-docs/09-handoff/
-├── 2026-02-11-SESSION-207-HANDOFF.md        (this file)
-└── 2026-02-12-SESSION-207-START-PROMPT.md  (session start guide)
-\`\`\`
+**When "PROMOTE" appears:**
+1. Verify Q43 ≥60% hit rate
+2. Verify +5pp advantage vs champion
+3. Follow promotion procedure in README
+4. Monitor for 24-48 hours after promotion
 
----
-
-## Success Metrics
-
-| Metric | Target | Actual | Status |
-|--------|--------|--------|--------|
-| Orchestrator IAM Permissions | 3/3 | 3/3 | ✅ |
-| Autonomous Triggering | Yes | Yes | ✅ |
-| Test Pass Rate | 100% | 100% (29/29) | ✅ |
-| Services Up-to-Date | All | 6/6 | ✅ |
-| P1 Improvements Implemented | 2 | 2 | ✅ |
+**Promotion command:**
+```bash
+gcloud run services update prediction-worker \
+  --region=us-west2 \
+  --update-env-vars="CATBOOST_V9_MODEL_PATH=gs://..../catboost_v9_33f_q0.43_...cbm"
+```
 
 ---
 
-## References
+## Commands
 
-**Session 206 (Previous):**
-- Handoff: \`docs/09-handoff/2026-02-12-SESSION-206-HANDOFF.md\`
+**Run monitor:**
+```bash
+python bin/monitoring/q43_performance_monitor.py --days 7
+```
 
-**Session 205 (IAM Fix Origin):**
-- Handoff: \`docs/09-handoff/2026-02-12-SESSION-205-HANDOFF.md\`
+**Manual Cloud Run trigger:**
+```bash
+gcloud run jobs execute nba-q43-performance-monitor \
+  --region us-west2 --project nba-props-platform --wait
+```
+
+**Check scheduler:**
+```bash
+gcloud scheduler jobs describe nba-q43-performance-monitor-trigger \
+  --location us-west2 --project nba-props-platform
+```
 
 ---
 
-**Session 207 Status: ✅ COMPLETE**
+## Documentation
+
+- **Full guide:** `bin/monitoring/README_Q43_MONITOR.md`
+- **Daily validation:** `.claude/skills/validate-daily/SKILL.md` (Priority 2G-2)
+- **Model info:** `CLAUDE.md` (Parallel Models section)
+
+---
+
+## Session Complete ✅
+
+**Status:** All systems healthy except model performance
+**Monitoring:** Automated daily checks enabled
+**Next Event:** Feb 12, 8 AM ET - First automated Q43 report
+**Expected:** 5-7 days to promotion decision
