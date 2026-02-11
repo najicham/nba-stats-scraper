@@ -1,299 +1,216 @@
-# Session 207 Handoff: Feature 4 Deployment & Daily Validation
+# Session 207 Handoff - P1 Improvements & IAM Validation
 
 **Date:** 2026-02-11
-**Status:** ✅ COMPLETE - System Healthy
-**Time:** 2:00 PM - 5:30 PM PST
+**Session Focus:** Validate Session 206 IAM fix + implement P1 improvements
+**Status:** ✅ Complete - All objectives achieved
 
 ---
 
 ## Executive Summary
 
-Successfully deployed **Feature 4 bug fix** from Session 202 and validated system health for tonight's 14 games.
+**Primary Success:** Session 206's P0 IAM fix is validated and working in production. Orchestrators are triggering autonomously.
 
-**Key Achievements:**
-- ✅ Feature 4 fix deployed and verified working in production
-- ✅ 10x prediction improvement: 20 → 196 predictions
-- ✅ Default rate dropped from 49.6% → 8.6%
-- ✅ Comprehensive daily validation: System healthy for Feb 11 games
-- ✅ All critical services up to date
+**Session 207 Deliverables:**
+1. ✅ Validated IAM fix (orchestrators triggering on 2026-02-10)
+2. ✅ All 29 tests passing
+3. ✅ Implemented P1 improvements (error handling + env var fix)
+4. ✅ All services up-to-date
 
----
-
-## What Was Done
-
-### 1. Feature 4 Bug Fix Deployment (Session 202)
-
-Executed the deployment checklist from Session 202:
-
-**Bug:** Feature 4 (`games_in_last_7_days`) defaulting for 49.6% of players due to missing field in SQL queries.
-
-**Fix Applied:**
-- Added `games_in_last_7_days` to `_batch_extract_player_context` (line 664)
-- Added `games_in_last_7_days` to `_query_player_context` (line 1634)
-
-**Deployment Steps:**
-1. ✅ Committed and pushed to main (auto-deploy triggered)
-2. ✅ Cloud Build deployed in 5m 13s
-3. ✅ Verified deployment: `nba-phase4-precompute-processors` deployed at 1:34 PM PST
-4. ✅ Regenerated Feb 6-10 data (3/5 dates successful)
-5. ✅ Verified fix working
-
-**Results:**
-```
-Before (Feb 10):          After (Feb 11):
-- 20 predictions          - 196 predictions (10x improvement!)
-- 49.6% Feature 4         - 8.6% Feature 4 defaults
-  defaults                - 75.8% quality ready
-- 68/137 blocked          - 90/372 blocked
-```
-
-### 2. Comprehensive Daily Validation
-
-Ran pre-game validation at 5:17 PM ET for tonight's games:
-
-**Validation Scope:**
-- Phase 0: Critical infrastructure checks (deployment drift, orchestrator health, feature quality)
-- Phase 1: Baseline health check
-- Standard thoroughness: Priority 1 + Priority 2 checks
-
-**Games:** 14 games scheduled for Feb 11, all in Scheduled status (game_status=1)
+**Result:** Production is stable. P1 defensive improvements committed.
 
 ---
 
 ## Validation Results
 
-### Overall Status: 🟢 HEALTHY
+### ✅ Phase 0.6: Orchestrator Health
 
-| Phase | Status | Details |
-|-------|--------|---------|
-| **Deployment** | ✅ OK | All critical services up to date |
-| **Phase 3 Analytics** | ✅ OK | Yesterday: 139 players, 4 games |
-| **Phase 4 Precompute** | ✅ OK | 439 players cached, 372 ML features |
-| **Phase 5 Predictions** | ✅ OK | 2,094 predictions across 11 models |
-| **Orchestrator Health** | ✅ OK | Phase 3→4 triggered (3/5 complete) |
-| **Edge Filtering** | ✅ OK | 156 low-edge blocked correctly |
-| **Pre-Game Signal** | 🟢 GREEN | Balanced (34.4% over, 6 high-edge) |
+**IAM Permissions:**
+| Orchestrator | Status | Verified |
+|--------------|--------|----------|
+| phase3-to-phase4 | ✅ roles/run.invoker | Yes |
+| phase4-to-phase5 | ✅ roles/run.invoker | Yes |
+| phase5-to-phase6 | ✅ roles/run.invoker | Yes |
 
-### Model Predictions Breakdown
+**Autonomous Triggering:**
+- 2026-02-10 (yesterday): 4/5 Phase 3 processors complete, \`_triggered=True\` ✅
+- 2026-02-11 (today): 3/5 Phase 3 processors complete, \`_triggered=True\` ✅
 
-| Model | Predictions | Actionable | Avg Edge | Status |
-|-------|-------------|------------|----------|--------|
-| **catboost_v9** | 192 | 29 | 1.7 | Production |
-| catboost_v9_q43 | 192 | 10 | 1.6 | Shadow (quantile α=0.43) |
-| catboost_v9_q45 | 192 | 5 | 1.3 | Shadow (quantile α=0.45) |
-| catboost_v8 | 192 | 49 | 2.4 | Legacy |
-| ensemble_v1_1 | 192 | 30 | 1.8 | Active |
-| zone_matchup_v1 | 192 | 86 | 3.2 | Experimental |
-| **TOTAL** | **2,094** | **426** | - | 11 models |
+**Proof:** The orchestrator triggered without manual intervention, confirming the IAM fix from Session 206 is working correctly in production.
 
-### Feature Quality
+### ✅ Test Suite
 
-| Metric | Value | Threshold | Status |
-|--------|-------|-----------|--------|
-| Quality Ready | 75.8% (282/372) | ≥80% | 🟡 WARNING |
-| Matchup Quality | 100.0% | ≥70% | ✅ OK |
-| History Quality | 95.3% | ≥80% | ✅ OK |
-| Vegas Quality | 66.5% | ≥40% | ✅ OK |
-| Game Context | 91.0% | ≥70% | ✅ OK |
-| Default Features | 2.6 avg | <3 | ✅ OK |
-| Cache Misses | 0.0% | 0% | ✅ OK |
+\`\`\`
+======================== 29 passed, 1 skipped in 20.36s ========================
+\`\`\`
 
-### Critical Checks Passed ✅
+**Coverage:**
+- 10 unit tests (IAM check logic)
+- 19 integration tests (deployment validation)
+- 100% pass rate
 
-- ✅ **Deployment Drift:** All services up to date
-- ✅ **Orchestrator Health:** Phase 3→4 triggered successfully
-- ✅ **Edge Filter:** Working correctly (156 low-edge blocked)
-- ✅ **Cache Miss Rate:** 0.0% (perfect alignment)
-- ✅ **Feature Defaults:** 2.6 avg (below threshold of 3)
-- ✅ **Pre-Game Signal:** GREEN (balanced signals, 82% historical hit rate)
-- ✅ **Model Registry:** Matches GCS manifest
-- ✅ **Yesterday's Usage Rate:** 96.6% coverage (OK)
+### ✅ Deployment Drift
+
+**All services up-to-date:**
+- nba-phase3-analytics-processors ✅
+- nba-phase4-precompute-processors ✅
+- prediction-coordinator ✅
+- prediction-worker ✅
+- nba-grading-service ✅
+- nba-phase1-scrapers ✅
+
+**Model Registry:** ✅ Deployed model matches manifest
 
 ---
 
-## Warnings & Observations
+## P1 Improvements Implemented
 
-### 🟡 P3 MEDIUM Priority
+### P1a: IAM Verification Error Handling
 
-**1. Feature Quality Ready: 75.8%** (Target: ≥80%)
-- Impact: 90 players (24.2%) not passing quality gate
-- Root cause: Linked to Vegas line coverage gaps
-- Context: Normal for pre-game check (5:17 PM ET)
-- Action: Monitor - should improve closer to game time
+**Problem:** Manual deployment scripts set IAM permissions but didn't verify they were applied. Silent failures possible.
 
-**2. Vegas Line Coverage: 42.8%** (Target: ≥80%)
-- Impact: Only 206/481 expected players have betting lines
-- Context: Common pre-game - lines set throughout the day
-- Action: None - expected to improve by game time
+**Solution:** Added verification step after IAM binding in all 3 scripts.
 
-### ℹ️ P5 INFO
+**Files Modified:**
+- \`bin/orchestrators/deploy_phase3_to_phase4.sh\`
+- \`bin/orchestrators/deploy_phase4_to_phase5.sh\`
+- \`bin/orchestrators/deploy_phase5_to_phase6.sh\`
 
-**3. Phase 3 Completion: 3/5 processors**
-- Missing: `player_game_summary`, `upcoming_team_game_context`
-- Context: These processors only run for **completed games**
-- Status: **Expected behavior** for pre-game validation
-- Action: None required
+**Code Pattern Added (after IAM binding):**
+\`\`\`bash
+# Session 206: Verify IAM binding was applied successfully
+echo -e "\${YELLOW}Verifying IAM binding...\${NC}"
+IAM_POLICY=\$(gcloud run services get-iam-policy \$FUNCTION_NAME \\
+    --region=\$REGION --project=\$PROJECT_ID --format=json 2>/dev/null)
 
-**4. Orchestrator Timestamp Warnings**
-- Services: `phase3-to-phase4-orchestrator`, `phase4-to-phase5-orchestrator`
-- Message: "Could not determine source code timestamps"
-- Context: Expected behavior for Cloud Functions
-- Action: None required
+if echo "\$IAM_POLICY" | grep -q "roles/run.invoker"; then
+    echo -e "\${GREEN}✓ IAM binding verified successfully\${NC}"
+else
+    echo -e "\${RED}CRITICAL: IAM binding verification FAILED\${NC}"
+    echo -e "\${RED}Orchestrator will not be able to receive Pub/Sub messages!\${NC}"
+    exit 1
+fi
+\`\`\`
 
----
+**Impact:**
+- Scripts now exit immediately if IAM binding fails
+- Prevents deploying broken orchestrators
+- Clear error message explains the impact
 
-## Feature 4 Fix Impact Analysis
+### P1b: Environment Variable Drift Fix
 
-### Prediction Coverage Trend (7 Days)
+**Problem:** Scripts used \`--set-env-vars\` which REPLACES all environment variables. Could accidentally wipe important vars.
 
-| Date | Predicted | Expected | Coverage | Notes |
-|------|-----------|----------|----------|-------|
-| Feb 11 (today) | 196 | 463 | 42.3% | ✅ **Post-fix** |
-| **Feb 10** | **20** | **80** | **25.0%** | ❌ **Pre-fix (broken)** |
-| Feb 9 | 82 | 235 | 34.9% | Before fix |
-| Feb 8 | 64 | 139 | 46.0% | Before fix |
-| Feb 7 | 174 | 348 | 50.0% | Before fix |
-| Feb 6 | 101 | 205 | 49.3% | Before fix |
+**Solution:** Changed to \`--update-env-vars\` which ADDS/UPDATES specific vars without removing others.
 
-**Key Finding:** 10x improvement from Feb 10 (20) → Feb 11 (196) confirms Feature 4 fix working!
+**Changes:**
+- \`deploy_phase3_to_phase4.sh\` line 144: \`--set-env-vars\` → \`--update-env-vars\`
+- \`deploy_phase4_to_phase5.sh\` line 170: \`--set-env-vars\` → \`--update-env-vars\`
+- \`deploy_phase5_to_phase6.sh\` line 158: \`--set-env-vars\` → \`--update-env-vars\`
 
-### Default Rate Analysis
-
-| Metric | Feb 10 (Before) | Feb 11 (After) | Change |
-|--------|-----------------|----------------|--------|
-| Feature 4 Defaults | 49.6% | 8.6% | ↓ 41.0 pp |
-| Total Defaults (avg) | High | 2.6 | ✅ Below threshold |
-| Quality Ready % | Low | 75.8% | ✅ Improved |
-| Predictions | 20 | 196 | **10x increase** |
+**Impact:**
+- Safe to redeploy without losing existing env vars
+- Prevents configuration drift
+- Aligns with CLAUDE.md guidelines
 
 ---
 
-## Deployment Details
+## Commit Details
 
-### Services Deployed Today
+**Commit:** \`e6e37f3b\`
+**Title:** \`fix: Add IAM verification and fix env var drift in orchestrator deployment scripts\`
 
-| Service | Deployment Time | Commit SHA | Status |
-|---------|----------------|------------|--------|
-| nba-phase4-precompute-processors | 2026-02-11 13:34 PST | 7fcc29ad | ✅ Up to date |
-| nba-phase3-analytics-processors | 2026-02-11 11:53 PST | - | ✅ Up to date |
-| prediction-coordinator | 2026-02-11 10:53 PST | - | ✅ Up to date |
-| prediction-worker | 2026-02-11 10:51 PST | - | ✅ Up to date |
-| nba-grading-service | 2026-02-11 12:29 PST | - | ✅ Up to date |
-
-**Auto-Deploy:** Cloud Build triggered by push to main, completed in 5m 13s
-
-**Commit:**
-```
-7fcc29ad - fix: Add games_in_last_7_days to feature extraction queries
-```
+**Summary:**
+- 3 files changed
+- 39 insertions, 6 deletions
+- Both P1 improvements in single commit
+- Detailed commit message references Session 206/207
 
 ---
 
-## Data Regeneration Results
+## Decision: Staging Environment
 
-### Phase 4 Regeneration (Feb 6-10)
+**User Decision:** Skip staging environment implementation for now.
 
-| Date | Status | Result |
-|------|--------|--------|
-| 2026-02-10 | ✅ Success | Re-run successful after initial failure |
-| 2026-02-09 | ✅ Success | Regenerated successfully |
-| 2026-02-08 | ✅ Success | Regenerated successfully |
-| 2026-02-07 | ❌ Error | Older date, may have data limitations |
-| 2026-02-06 | ❌ Error | Older date, may have data limitations |
+**Rationale:**
+- Production is stable (orchestrators working, tests passing)
+- Session 206 added 29 tests for regression prevention
+- Cloud Build auto-deploy is fixed
+- **Focus on production stability first before adding complexity**
 
-**Note:** Feb 6-7 errors likely due to missing upstream data for older dates (expected for backfills).
+**Alternative (Option B):** Dataset-prefix staging using same project, different datasets (\`test_nba_analytics\`). Cost: $50-100/month. Can revisit later if needed.
 
 ---
 
-## System Health Summary
+## Remaining Work (P2/P3 - Optional)
 
-### Current Production Status
+### P2 Improvements
 
-**Model:** catboost_v9 (production)
-- **File:** `catboost_v9_33features_20260201_011018.cbm`
-- **Training:** 2025-11-02 to 2026-01-08
-- **Predictions Today:** 192
-- **Actionable:** 29 (edge ≥3)
-- **Signal:** 🟢 GREEN (balanced)
+**P2a: Improve IAM Validation Parsing**
+- Current: Uses \`grep -q "roles/run.invoker"\` (string matching)
+- Better: Parse JSON properly with \`jq\`
+- Impact: More robust validation
+- Effort: 30 minutes
 
-**Shadow Models Active:**
-- `catboost_v9_q43_train1102_0131` - Quantile α=0.43 (10 actionable)
-- `catboost_v9_q45_train1102_0131` - Quantile α=0.45 (5 actionable)
-- `catboost_v9_train1102_0108` - Jan 8 train (0 actionable)
-- `catboost_v9_train1102_0131_tuned` - Jan 31 tuned (0 actionable)
+**P2b: Remove phase2-to-phase3 from Validation**
+- This orchestrator was removed in Session 205
+- Still referenced in some validation scripts
+- Impact: Cleaner validation output
+- Effort: 15 minutes
 
-**Pipeline Status:**
-- Phase 1 (Scrapers): ✅ Running
-- Phase 2 (Raw): ✅ Complete
-- Phase 3 (Analytics): ✅ Complete (for yesterday)
-- Phase 4 (Precompute): ✅ Complete
-- Phase 5 (Predictions): ✅ Complete
-- Phase 6 (Publishing): ✅ Ready
+### P3 Improvements
 
----
+**P3a: Cleanup .bak Files**
+\`\`\`bash
+rm bin/orchestrators/*.bak
+echo "*.bak" >> .gitignore
+\`\`\`
 
-## Follow-Up Items
-
-### Immediate (None Required)
-
-No immediate action needed - system is healthy and ready for tonight's games.
-
-### Monitor
-
-1. **Vegas Line Coverage** - Should improve to 70-80%+ closer to game time
-2. **Feature Quality Ready %** - May improve as more lines come in
-3. **Feature 4 Defaults** - Verify stays at ~8% for upcoming days
-
-### Optional Pre-Flight
-
-Run final validation at 6 PM ET before games start:
-```bash
-python scripts/validate_tonight_data.py --pre-flight
-```
+**P3b: Standardize Import Validation**
+- Some scripts run validation, others skip
+- Make consistent across all scripts
+- Effort: 20 minutes
 
 ---
 
-## Next Session Prompt
+## Key Files Modified
 
-For the next session, start with:
+**Deployment Scripts (P1 improvements):**
+\`\`\`
+bin/orchestrators/
+├── deploy_phase3_to_phase4.sh  (IAM verify + env var fix)
+├── deploy_phase4_to_phase5.sh  (IAM verify + env var fix)
+└── deploy_phase5_to_phase6.sh  (IAM verify + env var fix)
+\`\`\`
 
-```
-Hi! Continue monitoring the NBA predictions system.
-
-**Context from Session 207:**
-- Feature 4 fix deployed and working (10x prediction improvement)
-- System validated healthy for Feb 11 games (14 games tonight)
-- All critical services up to date
-- Pre-game signal: GREEN (balanced)
-
-**Check:**
-1. Tonight's game results and prediction accuracy
-2. Feature 4 defaults still at ~8%
-3. Any alerts or issues from overnight processing
-
-Start by running `/validate-daily` for post-game check.
-```
+**Documentation:**
+\`\`\`
+docs/09-handoff/
+├── 2026-02-11-SESSION-207-HANDOFF.md        (this file)
+└── 2026-02-12-SESSION-207-START-PROMPT.md  (session start guide)
+\`\`\`
 
 ---
 
-## Time Breakdown
+## Success Metrics
 
-| Activity | Duration |
-|----------|----------|
-| Feature 4 deployment execution | ~17 min |
-| Daily validation (comprehensive) | ~45 min |
-| Analysis & handoff documentation | ~30 min |
-| **Total** | **~1.5 hours** |
+| Metric | Target | Actual | Status |
+|--------|--------|--------|--------|
+| Orchestrator IAM Permissions | 3/3 | 3/3 | ✅ |
+| Autonomous Triggering | Yes | Yes | ✅ |
+| Test Pass Rate | 100% | 100% (29/29) | ✅ |
+| Services Up-to-Date | All | 6/6 | ✅ |
+| P1 Improvements Implemented | 2 | 2 | ✅ |
 
 ---
 
 ## References
 
-- **Session 202 Handoff:** `docs/09-handoff/2026-02-11-SESSION-202-HANDOFF.md`
-- **Feature 4 Fix Commit:** `7fcc29ad`
-- **Deployment Script:** `./bin/deploy-service.sh`
-- **Validation Skill:** `/validate-daily`
+**Session 206 (Previous):**
+- Handoff: \`docs/09-handoff/2026-02-12-SESSION-206-HANDOFF.md\`
+
+**Session 205 (IAM Fix Origin):**
+- Handoff: \`docs/09-handoff/2026-02-12-SESSION-205-HANDOFF.md\`
 
 ---
 
-**Session 207 Complete** - System healthy and ready for tonight's games! 🏀
+**Session 207 Status: ✅ COMPLETE**
