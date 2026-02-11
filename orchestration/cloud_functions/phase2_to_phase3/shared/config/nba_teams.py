@@ -1,1 +1,0 @@
-../../../../../shared/config/nba_teams.py

@@ -10,7 +10,7 @@ Architecture:
 - Sends: Email/Slack alerts via notification system
 
 Stall Detection Logic:
-- Phase 2→3: Check phase2_completion collection for dates with incomplete processors
+- Phase 2→3: REMOVED (event-driven via direct Pub/Sub subscription, no orchestrator monitoring needed)
 - Phase 3→4: Check phase3_completion collection for dates with incomplete processors
 - Alert if waiting > STALL_THRESHOLD_MINUTES without all processors complete
 
@@ -36,12 +36,8 @@ STALL_THRESHOLD_MINUTES = int(os.environ.get('STALL_THRESHOLD_MINUTES', '30'))
 
 # Phase configuration
 PHASE_CONFIG = {
-    'phase2_completion': {
-        'waiting_phase': 'Phase 3',
-        'blocked_by_phase': 'Phase 2',
-        'expected_count': 21,
-        'collection': 'phase2_completion'
-    },
+    # 'phase2_completion': REMOVED - Phase 2→3 is event-driven (direct Pub/Sub),
+    # doesn't use orchestrator pattern, so stall detection not applicable
     'phase3_completion': {
         'waiting_phase': 'Phase 4',
         'blocked_by_phase': 'Phase 3',

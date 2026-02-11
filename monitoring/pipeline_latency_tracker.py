@@ -73,10 +73,10 @@ THRESHOLDS = {
 }
 
 # Firestore collections for each phase completion
-# Note: phase1_completion may not exist in some setups - we use earliest
-# phase2_completion processor timestamp as a proxy for Phase 1 end time.
+# Note: Phase 2→3 orchestrator removed (Session 204) - use BigQuery phase_completions table instead
+# phase1_completion may not exist - use BigQuery for Phase 2 data as proxy for Phase 1 end time.
 PHASE_COLLECTIONS = {
-    'phase2': 'phase2_completion',
+    # 'phase2': Use BigQuery nba_orchestration.phase_completions instead of Firestore
     'phase3': 'phase3_completion',
     'phase4': 'phase4_completion',
     'phase5': 'phase5_completion',

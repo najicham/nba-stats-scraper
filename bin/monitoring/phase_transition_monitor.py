@@ -236,32 +236,14 @@ class PhaseTransitionMonitor:
         """Check phase transitions for a specific date."""
         print(f"\n   Checking {game_date}:")
 
-        # Check Phase 2 → Phase 3
-        p2_status = self._get_phase_status("phase2_completion", game_date)
+        # NOTE: Phase 2→3 is event-driven (direct Pub/Sub subscription)
+        # and doesn't use the orchestrator trigger pattern. Skip monitoring it.
+        # Only check Phase 3→4 and Phase 4→5 which use functional orchestrators.
+
         p3_status = self._get_phase_status("phase3_completion", game_date)
         p4_status = self._get_phase_status("phase4_completion", game_date)
 
-        # Phase 2 → 3 transition
-        if p2_status.get('_triggered') and not p3_status:
-            # Phase 2 complete but Phase 3 not started
-            triggered_at = p2_status.get('_first_completion_at')
-            if triggered_at:
-                minutes_waiting = self._minutes_since(triggered_at)
-                if minutes_waiting > PHASE_TRANSITION_DELAY_CRITICAL:
-                    self._add_alert(
-                        f"phase_transition_{game_date}",
-                        Severity.CRITICAL,
-                        f"Phase 2→3 STUCK for {game_date}: {minutes_waiting} min waiting",
-                        {
-                            "game_date": game_date,
-                            "phase": "2→3",
-                            "minutes_waiting": minutes_waiting
-                        }
-                    )
-                elif minutes_waiting > PHASE_TRANSITION_DELAY_WARNING:
-                    self._add_alert(
-                        f"phase_transition_{game_date}",
-                        Severity.WARNING,
+        # Phase 3 → 4 transition (removed Phase 2→3 check)
                         f"Phase 2→3 delayed for {game_date}: {minutes_waiting} min",
                         {
                             "game_date": game_date,

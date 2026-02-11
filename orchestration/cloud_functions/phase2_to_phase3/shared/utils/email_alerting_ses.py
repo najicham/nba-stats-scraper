@@ -1,1 +1,0 @@
-../../../../../shared/utils/email_alerting_ses.py

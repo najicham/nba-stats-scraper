@@ -1,1 +1,0 @@
-../../../../../../shared/processors/patterns/quality_mixin.py

@@ -1,1 +1,0 @@
-../../../../../shared/config/pubsub_topics.py

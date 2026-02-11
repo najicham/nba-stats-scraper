@@ -855,18 +855,26 @@ db = firestore.Client(project='nba-props-platform')
 yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
 today = datetime.now().strftime('%Y-%m-%d')
 
-# Check Phase 2 → Phase 3 trigger
-print(f"Phase 2 Completion for {yesterday}:")
-doc = db.collection('phase2_completion').document(yesterday).get()
-if doc.exists:
-    data = doc.to_dict()
-    completed = len([k for k in data.keys() if not k.startswith('_')])
-    triggered = data.get('_triggered', False)
-    print(f"  Processors: {completed}, Phase 3 triggered: {triggered}")
-    if completed >= 5 and not triggered:
-        print(f"  🔴 BUG: Phase 2 complete but Phase 3 NOT triggered!")
+# Check Phase 3 Analytics Output (validates Phase 2→3 transition)
+print(f"Phase 3 Analytics Output for {yesterday}:")
+# Direct validation: Check if Phase 3 actually generated data
+query = f"""
+SELECT COUNT(*) as players, COUNT(DISTINCT game_id) as games
+FROM nba_analytics.player_game_summary
+WHERE game_date = '{yesterday}'
+"""
+result = list(bq_client.query(query))
+if result:
+    players = result[0]['players']
+    games = result[0]['games']
+    print(f"  Players: {players}, Games: {games}")
+    if games == 0:
+        print(f"  🔴 P0 CRITICAL: No Phase 3 analytics data for {yesterday}!")
+        print(f"  Action: Check Phase 3 service logs, may need manual trigger")
+    elif players < 50:
+        print(f"  ⚠️  WARNING: Low player count (expected 100+)")
 else:
-    print("  No record found")
+    print(f"  🔴 P0 CRITICAL: Unable to query Phase 3 analytics!")
 
 # Check Phase 3 → Phase 4 trigger
 print(f"\nPhase 3 Completion for {today}:")

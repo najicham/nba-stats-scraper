@@ -1,1 +1,0 @@
-../../../../../../shared/processors/patterns/__init__.py
