@@ -97,6 +97,37 @@ steps:
       - '--project'
       - 'nba-props-platform'
 
+  # Step 3: Set IAM permissions for Pub/Sub invocation (Session 205/206 - CRITICAL)
+  # Without this, Pub/Sub cannot deliver messages to the Cloud Function.
+  # Session 205 discovered all orchestrators lacked roles/run.invoker permission,
+  # causing 7+ days of silent failures. This step prevents recurrence.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: bash
+    args:
+      - '-c'
+      - |
+        echo "Setting IAM permissions for Pub/Sub invocation..."
+        SERVICE_ACCOUNT="756957797294-compute@developer.gserviceaccount.com"
+
+        # Add IAM binding to allow Pub/Sub to invoke the function
+        gcloud run services add-iam-policy-binding ${_FUNCTION_NAME} \
+          --region=us-west2 \
+          --member="serviceAccount:$$SERVICE_ACCOUNT" \
+          --role="roles/run.invoker" \
+          --project=nba-props-platform
+
+        # Verify the binding was applied
+        echo "Verifying IAM binding..."
+        IAM_POLICY=$$(gcloud run services get-iam-policy ${_FUNCTION_NAME} \
+          --region=us-west2 --project=nba-props-platform --format=json 2>/dev/null)
+
+        if echo "$$IAM_POLICY" | grep -q "roles/run.invoker"; then
+          echo "✓ IAM binding verified successfully"
+        else
+          echo "ERROR: IAM binding verification FAILED"
+          exit 1
+        fi
+
 substitutions:
   _FUNCTION_NAME: ''
   _ENTRY_POINT: 'main'

@@ -1700,7 +1700,9 @@ ORDER BY p1.game_date DESC, gap_minutes DESC"
 
 **MANDATORY CHECK**: Detects silent orchestrator failures where processors complete but orchestrator never triggers.
 
-**The Problem**: Session 198 discovered Phase 2→3 orchestrator failure went undetected for 3 days. All processors completed (`_complete: true`) but orchestrator never set `_triggered: true` in Firestore, blocking all downstream data flow.
+**Note (Session 205):** The phase2-to-phase3-orchestrator has been REMOVED. Phase 2→3 transitions via direct Pub/Sub subscription (`nba-phase3-analytics-sub`), no orchestrator needed. Only Phase 3→4, 4→5, and 5→6 orchestrators remain.
+
+**The Problem**: Session 198 discovered orchestrator failure went undetected for 3 days. All processors completed but orchestrator never set `_triggered: true` in Firestore, blocking downstream data flow.
 
 **What to check**:
 
@@ -1716,41 +1718,33 @@ today = datetime.now().strftime('%Y-%m-%d')
 
 critical_issues = []
 
-# Check Phase 2→3 orchestrator (yesterday's data)
-print(f"\n=== Phase 2→3 Orchestrator ({yesterday}) ===")
-doc = db.collection('phase2_completion').document(yesterday).get()
+# NOTE: Phase 2→3 orchestrator has been REMOVED (Session 205).
+# Phase 3 is triggered directly by Pub/Sub subscription, not an orchestrator.
+# We only check Phase 3→4 orchestrator (the first FUNCTIONAL orchestrator).
 
-if doc.exists:
-    data = doc.to_dict()
-    processors_complete = len([k for k in data.keys() if not k.startswith('_')])
-    triggered = data.get('_triggered', False)
-    trigger_reason = data.get('_trigger_reason', 'N/A')
-
-    print(f"  Processors complete: {processors_complete}/6")
-    print(f"  Triggered: {triggered}")
-    print(f"  Trigger reason: {trigger_reason}")
-
-    # CRITICAL: All processors complete but not triggered
-    if processors_complete >= 5 and not triggered:
-        critical_issues.append({
-            'phase': 'Phase 2→3',
-            'date': yesterday,
-            'processors': processors_complete,
-            'triggered': triggered
-        })
-        print(f"  🔴 P0 CRITICAL: Orchestrator stuck!")
-        print(f"     {processors_complete}/6 processors complete but _triggered=False")
-        print(f"     Manual trigger: gcloud scheduler jobs run same-day-phase3")
-    elif triggered:
-        print(f"  ✅ Orchestrator triggered successfully")
-    else:
-        print(f"  ⏳ Waiting for processors ({processors_complete}/6)")
+print(f"\n=== Phase 2→3 Transition ({yesterday}) ===")
+print(f"  ℹ️  No orchestrator (direct Pub/Sub). Checking Phase 3 data instead...")
+# Verify Phase 3 actually ran by checking for data
+from google.cloud import bigquery
+bq = bigquery.Client(project='nba-props-platform')
+result = list(bq.query(f"""
+    SELECT COUNT(DISTINCT player_lookup) as players, COUNT(DISTINCT game_id) as games
+    FROM nba_analytics.player_game_summary
+    WHERE game_date = '{yesterday}'
+""").result())
+if result and result[0].players > 0:
+    print(f"  ✅ Phase 3 ran: {result[0].players} players, {result[0].games} games")
 else:
-    print("  ⚠️  No completion record found")
-    print("     This may indicate:")
-    print("     - No games yesterday")
-    print("     - Firestore collection issue")
-    print("     - All Phase 2 processors failed")
+    # Check if there were games yesterday
+    sched = list(bq.query(f"""
+        SELECT COUNT(*) as games FROM nba_reference.nba_schedule
+        WHERE game_date = '{yesterday}' AND game_status = 3
+    """).result())
+    if sched and sched[0].games == 0:
+        print(f"  ℹ️  No completed games yesterday - Phase 3 data not expected")
+    else:
+        print(f"  ⚠️  WARNING: No Phase 3 data for {yesterday} but games were played!")
+        print(f"     Check Phase 3 service logs for errors")
 
 # Check Phase 3→4 orchestrator (today's processing date)
 print(f"\n=== Phase 3→4 Orchestrator ({today}) ===")
@@ -1794,10 +1788,7 @@ if critical_issues:
         print(f"Date: {issue['date']}")
         print(f"Status: {issue['processors']} processors complete, NOT TRIGGERED")
         print(f"Impact: Downstream data pipeline BLOCKED")
-        if issue['phase'] == 'Phase 2→3':
-            print(f"Action: gcloud scheduler jobs run same-day-phase3 --location=us-west2")
-        elif issue['phase'] == 'Phase 3→4':
-            print(f"Action: gcloud scheduler jobs run phase3-to-phase4 --location=us-west2")
+        print(f"Action: gcloud scheduler jobs run phase3-to-phase4 --location=us-west2")
     print("\nRefer to: docs/02-operations/ORCHESTRATOR-HEALTH.md")
     sys.exit(1)
 else:
@@ -1815,11 +1806,9 @@ fi
 
 **Expected Output**:
 ```
-=== Phase 2→3 Orchestrator (2026-02-10) ===
-  Processors complete: 6/6
-  Triggered: True
-  Trigger reason: all_processors_complete
-  ✅ Orchestrator triggered successfully
+=== Phase 2→3 Transition (2026-02-10) ===
+  ℹ️  No orchestrator (direct Pub/Sub). Checking Phase 3 data instead...
+  ✅ Phase 3 ran: 280 players, 6 games
 
 === Phase 3→4 Orchestrator (2026-02-11) ===
   Processors complete: 5/5
@@ -1832,8 +1821,8 @@ fi
 
 **If orchestrator stuck** (Session 198 scenario):
 ```
-=== Phase 2→3 Orchestrator (2026-02-09) ===
-  Processors complete: 6/6
+=== Phase 3→4 Orchestrator (2026-02-09) ===
+  Processors complete: 5/5
   Triggered: False
   Trigger reason: N/A
   🔴 P0 CRITICAL: Orchestrator stuck!
@@ -1888,11 +1877,11 @@ print(f"\nPhase 2 Completion ({game_date}):")
 doc = db.collection('phase2_completion').document(game_date).get()
 if doc.exists:
     data = doc.to_dict()
-    print(f"  Triggered: {data.get('_triggered', False)}")
-    print(f"  Trigger reason: {data.get('_trigger_reason', 'N/A')}")
-    print(f"  Processors complete: {len([k for k in data.keys() if not k.startswith('_')])}/6")
+    procs = len([k for k in data.keys() if not k.startswith('_')])
+    print(f"  Processors complete: {procs}")
+    print(f"  Note: Phase 2→3 orchestrator REMOVED (Session 205). _triggered not expected.")
 else:
-    print("  ❌ No completion record found")
+    print("  ℹ️  No completion record found (may be normal)")
 
 print(f"\nPhase 3 Completion ({processing_date}):")
 doc = db.collection('phase3_completion').document(processing_date).get()
@@ -1939,20 +1928,21 @@ curl -X POST "$SLACK_WEBHOOK_URL_ERROR" \
 
 **MANDATORY CHECK**: Verify all orchestrators have required IAM permissions to be invoked by Pub/Sub.
 
-**The Problem**: Session 205 discovered all 4 orchestrators lacked `roles/run.invoker` permission, causing 7+ days of silent failures. Pub/Sub published messages but Cloud Run rejected invocations due to missing permissions. Orchestrators tracked completions in Firestore but never set `_triggered=True`, blocking the pipeline.
+**Note (Session 205):** The phase2-to-phase3-orchestrator has been REMOVED. Only 3 orchestrators remain.
+
+**The Problem**: Session 205 discovered orchestrators lacked `roles/run.invoker` permission, causing 7+ days of silent failures. Pub/Sub published messages but Cloud Run rejected invocations due to missing permissions.
 
 **Root Cause**: `gcloud functions deploy` does not preserve IAM policies. Redeployments can wipe IAM bindings.
 
 **What to check**:
 
 ```bash
-# Check all 4 orchestrators for IAM permissions
+# Check all 3 remaining orchestrators for IAM permissions
 python3 << 'EOF'
 import subprocess
 import sys
 
 orchestrators = [
-    'phase2-to-phase3-orchestrator',
     'phase3-to-phase4-orchestrator',
     'phase4-to-phase5-orchestrator',
     'phase5-to-phase6-orchestrator'
@@ -2010,7 +2000,7 @@ else:
 EOF
 ```
 
-**Expected Result**: All 4 orchestrators show `✅ IAM permissions OK`
+**Expected Result**: All 3 orchestrators show `✅ IAM permissions OK`
 
 **If MISSING**:
 - 🔴 P0 CRITICAL: Orchestrators cannot be invoked by Pub/Sub
@@ -2020,7 +2010,9 @@ EOF
 
 **Prevention**: Deployment scripts now auto-set IAM permissions (Session 205 fix), but verify after any manual deployments.
 
-**Reference**: Session 205 handoff - `docs/09-handoff/2026-02-12-SESSION-205-HANDOFF.md`
+**Note**: phase2-to-phase3-orchestrator was REMOVED in Session 205 (was monitoring-only, not needed).
+
+**Reference**: Session 205 handoff
 
 **If ALL Phase 0.6 checks pass**: Continue to Phase 0.7
 

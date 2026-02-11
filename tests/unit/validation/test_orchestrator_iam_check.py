@@ -10,8 +10,10 @@ Reference: .claude/skills/validate-daily/SKILL.md - Check 5: Orchestrator IAM Pe
 import pytest
 import json
 import subprocess
-from unittest.mock import patch, MagicMock, call
-from typing import Dict, List
+import sys
+from io import StringIO
+from unittest.mock import patch, MagicMock
+from typing import Dict, List, Tuple
 
 
 class TestOrchestratorIAMCheck:
@@ -101,6 +103,73 @@ class TestOrchestratorIAMCheck:
         result.stderr = stderr
         return result
 
+    def run_validation_logic(self, mock_subprocess_run) -> Tuple[int, str]:
+        """
+        Execute the validation logic with mocked subprocess.
+
+        Returns:
+            Tuple of (exit_code, stdout_output)
+        """
+        orchestrators = self.ORCHESTRATORS
+        missing_permissions = []
+        service_account = self.SERVICE_ACCOUNT
+
+        # Capture stdout
+        captured_output = StringIO()
+
+        with patch('sys.stdout', captured_output):
+            print("\n=== Orchestrator IAM Permission Check ===\n")
+
+            for orch in orchestrators:
+                try:
+                    result = mock_subprocess_run(
+                        ['gcloud', 'run', 'services', 'get-iam-policy', orch,
+                         '--region=us-west2', '--project=nba-props-platform',
+                         '--format=json'],
+                        capture_output=True,
+                        text=True,
+                        timeout=10
+                    )
+
+                    if result.returncode != 0:
+                        print(f"  ❌ {orch}: Failed to get IAM policy")
+                        missing_permissions.append(orch)
+                        continue
+
+                    # Check if roles/run.invoker exists for service account
+                    if 'roles/run.invoker' in result.stdout and service_account in result.stdout:
+                        print(f"  ✅ {orch}: IAM permissions OK")
+                    else:
+                        print(f"  🔴 {orch}: MISSING roles/run.invoker permission!")
+                        missing_permissions.append(orch)
+
+                except subprocess.TimeoutExpired as e:
+                    print(f"  ❌ {orch}: Error checking IAM - {e}")
+                    missing_permissions.append(orch)
+                except Exception as e:
+                    print(f"  ❌ {orch}: Error checking IAM - {e}")
+                    missing_permissions.append(orch)
+
+            if missing_permissions:
+                print(f"\n🔴 P0 CRITICAL: {len(missing_permissions)} orchestrator(s) missing IAM permissions!")
+                print(f"   Affected: {', '.join(missing_permissions)}")
+                print(f"\n   Impact: Pub/Sub cannot invoke these orchestrators")
+                print(f"           Pipeline will stall when processors complete")
+                print(f"\n   Fix command:")
+                for orch in missing_permissions:
+                    print(f"   gcloud run services add-iam-policy-binding {orch} \\")
+                    print(f"     --region=us-west2 \\")
+                    print(f"     --member='serviceAccount:{service_account}' \\")
+                    print(f"     --role='roles/run.invoker' \\")
+                    print(f"     --project=nba-props-platform")
+                    print()
+                exit_code = 1
+            else:
+                print(f"\n✅ All orchestrators have correct IAM permissions")
+                exit_code = 0
+
+        return exit_code, captured_output.getvalue()
+
     def test_all_orchestrators_have_correct_permissions(self):
         """
         Test success scenario: All 4 orchestrators have correct IAM permissions.
@@ -110,15 +179,15 @@ class TestOrchestratorIAMCheck:
         - All orchestrators show "✅ IAM permissions OK"
         - No missing permissions reported
         """
-        # Mock successful IAM policy responses for all orchestrators
         with patch('subprocess.run') as mock_run:
+            # Mock successful IAM policy responses for all orchestrators
             mock_run.return_value = self.create_subprocess_result(
                 returncode=0,
                 stdout=self.mock_iam_policy_success("dummy")
             )
 
-            # Execute the validation logic directly
-            exit_code, output = self._run_validation_script(mock_run)
+            # Execute validation
+            exit_code, output = self.run_validation_logic(mock_run)
 
             # Verify success
             assert exit_code == 0, f"Expected success but got exit code {exit_code}"
@@ -131,6 +200,9 @@ class TestOrchestratorIAMCheck:
             # Verify no critical errors
             assert "🔴 P0 CRITICAL" not in output
             assert "MISSING roles/run.invoker" not in output
+
+            # Verify gcloud was called 4 times (once per orchestrator)
+            assert mock_run.call_count == 4
 
     def test_single_orchestrator_missing_permission(self):
         """
@@ -161,29 +233,24 @@ class TestOrchestratorIAMCheck:
 
             mock_run.side_effect = side_effect
 
-            # Execute the validation script
-            result = subprocess.run(
-                ['python3', '-c', self._get_validation_script()],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+            # Execute validation
+            exit_code, output = self.run_validation_logic(mock_run)
 
             # Verify failure
-            assert result.returncode == 1, f"Expected failure but got exit code {result.returncode}"
+            assert exit_code == 1, f"Expected failure but got exit code {exit_code}"
 
             # Verify error messaging
-            assert "🔴 P0 CRITICAL" in result.stdout
-            assert "1 orchestrator(s) missing IAM permissions" in result.stdout
-            assert "phase2-to-phase3-orchestrator" in result.stdout
+            assert "🔴 P0 CRITICAL" in output
+            assert "1 orchestrator(s) missing IAM permissions" in output
+            assert "phase2-to-phase3-orchestrator" in output
 
             # Verify fix command is provided
-            assert "Fix command:" in result.stdout
-            assert "gcloud run services add-iam-policy-binding" in result.stdout
-            assert "--role='roles/run.invoker'" in result.stdout
+            assert "Fix command:" in output
+            assert "gcloud run services add-iam-policy-binding" in output
+            assert "--role='roles/run.invoker'" in output
 
             # Verify impact description
-            assert "Pub/Sub cannot invoke these orchestrators" in result.stdout
+            assert "Pub/Sub cannot invoke these orchestrators" in output
 
     def test_all_orchestrators_missing_permissions(self):
         """
@@ -205,25 +272,20 @@ class TestOrchestratorIAMCheck:
                 stdout=self.mock_iam_policy_empty()
             )
 
-            # Execute the validation script
-            result = subprocess.run(
-                ['python3', '-c', self._get_validation_script()],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+            # Execute validation
+            exit_code, output = self.run_validation_logic(mock_run)
 
             # Verify failure
-            assert result.returncode == 1
+            assert exit_code == 1
 
             # Verify all orchestrators are identified as missing
-            assert "4 orchestrator(s) missing IAM permissions" in result.stdout
+            assert "4 orchestrator(s) missing IAM permissions" in output
             for orch in self.ORCHESTRATORS:
-                assert orch in result.stdout
-                assert f"🔴 {orch}: MISSING roles/run.invoker permission!" in result.stdout
+                assert orch in output
+                assert f"🔴 {orch}: MISSING roles/run.invoker permission!" in output
 
             # Verify fix commands for all orchestrators
-            assert result.stdout.count("gcloud run services add-iam-policy-binding") == 4
+            assert output.count("gcloud run services add-iam-policy-binding") == 4
 
     def test_gcloud_command_fails(self):
         """
@@ -258,24 +320,19 @@ class TestOrchestratorIAMCheck:
 
             mock_run.side_effect = side_effect
 
-            # Execute the validation script
-            result = subprocess.run(
-                ['python3', '-c', self._get_validation_script()],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+            # Execute validation
+            exit_code, output = self.run_validation_logic(mock_run)
 
             # Verify failure
-            assert result.returncode == 1
+            assert exit_code == 1
 
             # Verify error reported for failed orchestrator
-            assert "❌ phase3-to-phase4-orchestrator: Failed to get IAM policy" in result.stdout
+            assert "❌ phase3-to-phase4-orchestrator: Failed to get IAM policy" in output
 
             # Verify other orchestrators show success
-            assert "✅ phase2-to-phase3-orchestrator: IAM permissions OK" in result.stdout
-            assert "✅ phase4-to-phase5-orchestrator: IAM permissions OK" in result.stdout
-            assert "✅ phase5-to-phase6-orchestrator: IAM permissions OK" in result.stdout
+            assert "✅ phase2-to-phase3-orchestrator: IAM permissions OK" in output
+            assert "✅ phase4-to-phase5-orchestrator: IAM permissions OK" in output
+            assert "✅ phase5-to-phase6-orchestrator: IAM permissions OK" in output
 
     def test_timeout_error(self):
         """
@@ -301,20 +358,15 @@ class TestOrchestratorIAMCheck:
 
             mock_run.side_effect = side_effect
 
-            # Execute the validation script
-            result = subprocess.run(
-                ['python3', '-c', self._get_validation_script()],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+            # Execute validation
+            exit_code, output = self.run_validation_logic(mock_run)
 
             # Verify failure
-            assert result.returncode == 1
+            assert exit_code == 1
 
             # Verify timeout error reported
-            assert "❌ phase4-to-phase5-orchestrator: Error checking IAM" in result.stdout
-            assert "phase4-to-phase5-orchestrator" in result.stdout
+            assert "❌ phase4-to-phase5-orchestrator: Error checking IAM" in output
+            assert "phase4-to-phase5-orchestrator" in output
 
     def test_wrong_service_account_has_permission(self):
         """
@@ -332,20 +384,15 @@ class TestOrchestratorIAMCheck:
                 stdout=self.mock_iam_policy_wrong_service_account("dummy")
             )
 
-            # Execute the validation script
-            result = subprocess.run(
-                ['python3', '-c', self._get_validation_script()],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+            # Execute validation
+            exit_code, output = self.run_validation_logic(mock_run)
 
             # Verify failure
-            assert result.returncode == 1
+            assert exit_code == 1
 
             # All orchestrators should be marked as missing (wrong service account)
             for orch in self.ORCHESTRATORS:
-                assert f"🔴 {orch}: MISSING roles/run.invoker permission!" in result.stdout
+                assert f"🔴 {orch}: MISSING roles/run.invoker permission!" in output
 
     def test_mixed_permissions(self):
         """
@@ -378,27 +425,22 @@ class TestOrchestratorIAMCheck:
 
             mock_run.side_effect = side_effect
 
-            # Execute the validation script
-            result = subprocess.run(
-                ['python3', '-c', self._get_validation_script()],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+            # Execute validation
+            exit_code, output = self.run_validation_logic(mock_run)
 
             # Verify failure
-            assert result.returncode == 1
+            assert exit_code == 1
 
             # Verify count
-            assert "2 orchestrator(s) missing IAM permissions" in result.stdout
+            assert "2 orchestrator(s) missing IAM permissions" in output
 
             # Verify correct orchestrators identified
-            assert "phase3-to-phase4-orchestrator" in result.stdout
-            assert "phase5-to-phase6-orchestrator" in result.stdout
+            assert "phase3-to-phase4-orchestrator" in output
+            assert "phase5-to-phase6-orchestrator" in output
 
             # Verify successful orchestrators shown as OK
-            assert "✅ phase2-to-phase3-orchestrator: IAM permissions OK" in result.stdout
-            assert "✅ phase4-to-phase5-orchestrator: IAM permissions OK" in result.stdout
+            assert "✅ phase2-to-phase3-orchestrator: IAM permissions OK" in output
+            assert "✅ phase4-to-phase5-orchestrator: IAM permissions OK" in output
 
     def test_json_parsing_error(self):
         """
@@ -416,22 +458,17 @@ class TestOrchestratorIAMCheck:
                 stdout="{ invalid json"
             )
 
-            # Execute the validation script
-            result = subprocess.run(
-                ['python3', '-c', self._get_validation_script()],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+            # Execute validation
+            exit_code, output = self.run_validation_logic(mock_run)
 
             # Verify failure
-            assert result.returncode == 1
+            assert exit_code == 1
 
             # All orchestrators should fail to parse
             for orch in self.ORCHESTRATORS:
                 # The script checks for role and service account in stdout,
                 # so invalid JSON will be treated as missing permission
-                assert f"🔴 {orch}: MISSING roles/run.invoker permission!" in result.stdout
+                assert f"🔴 {orch}: MISSING roles/run.invoker permission!" in output
 
     def test_gcloud_command_structure(self):
         """
@@ -449,26 +486,22 @@ class TestOrchestratorIAMCheck:
                 stdout=self.mock_iam_policy_success("dummy")
             )
 
-            # Execute the validation script
-            subprocess.run(
-                ['python3', '-c', self._get_validation_script()],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+            # Execute validation
+            self.run_validation_logic(mock_run)
 
             # Verify gcloud was called for each orchestrator
             assert mock_run.call_count == 4
 
-            # Verify command structure for first call
-            first_call_args = mock_run.call_args_list[0][0][0]
-            assert 'gcloud' in first_call_args
-            assert 'run' in first_call_args
-            assert 'services' in first_call_args
-            assert 'get-iam-policy' in first_call_args
-            assert '--region=us-west2' in first_call_args
-            assert '--project=nba-props-platform' in first_call_args
-            assert '--format=json' in first_call_args
+            # Verify command structure for all calls
+            for call_args in mock_run.call_args_list:
+                args = call_args[0][0]
+                assert 'gcloud' in args
+                assert 'run' in args
+                assert 'services' in args
+                assert 'get-iam-policy' in args
+                assert '--region=us-west2' in args
+                assert '--project=nba-props-platform' in args
+                assert '--format=json' in args
 
     def test_error_message_includes_impact_and_fix(self):
         """
@@ -488,33 +521,40 @@ class TestOrchestratorIAMCheck:
                 stdout=self.mock_iam_policy_empty()
             )
 
-            # Execute the validation script
-            result = subprocess.run(
-                ['python3', '-c', self._get_validation_script()],
-                capture_output=True,
-                text=True,
-                timeout=30
-            )
+            # Execute validation
+            exit_code, output = self.run_validation_logic(mock_run)
 
             # Verify comprehensive error message
-            assert "🔴 P0 CRITICAL" in result.stdout
-            assert "Impact: Pub/Sub cannot invoke these orchestrators" in result.stdout
-            assert "Pipeline will stall when processors complete" in result.stdout
+            assert "🔴 P0 CRITICAL" in output
+            assert "Impact: Pub/Sub cannot invoke these orchestrators" in output
+            assert "Pipeline will stall when processors complete" in output
 
             # Verify fix commands are complete
-            assert "Fix command:" in result.stdout
-            assert f"--member='serviceAccount:{self.SERVICE_ACCOUNT}'" in result.stdout
-            assert "--role='roles/run.invoker'" in result.stdout
-            assert f"--project={self.PROJECT}" in result.stdout
+            assert "Fix command:" in output
+            assert f"--member='serviceAccount:{self.SERVICE_ACCOUNT}'" in output
+            assert "--role='roles/run.invoker'" in output
+            assert f"--project={self.PROJECT}" in output
 
-    @staticmethod
-    def _get_validation_script() -> str:
-        """
-        Return the actual validation script from SKILL.md.
 
-        This is the script that runs in production as part of /validate-daily.
+class TestOrchestratorIAMCheckIntegration:
+    """
+    Integration tests that verify the script works with actual gcloud commands.
+
+    These tests are skipped by default and only run when explicitly requested
+    with: pytest -m integration
+    """
+
+    @pytest.mark.integration
+    @pytest.mark.skip(reason="Requires actual gcloud authentication")
+    def test_real_gcloud_command(self):
         """
-        return """
+        Test with real gcloud command (requires authentication).
+
+        This test is skipped by default. To run:
+        1. Ensure gcloud is authenticated: gcloud auth login
+        2. Run: pytest tests/unit/validation/test_orchestrator_iam_check.py -v -m integration
+        """
+        validation_script = """
 import subprocess
 import sys
 
@@ -559,45 +599,14 @@ for orch in orchestrators:
 
 if missing_permissions:
     print(f"\\n🔴 P0 CRITICAL: {len(missing_permissions)} orchestrator(s) missing IAM permissions!")
-    print(f"   Affected: {', '.join(missing_permissions)}")
-    print(f"\\n   Impact: Pub/Sub cannot invoke these orchestrators")
-    print(f"           Pipeline will stall when processors complete")
-    print(f"\\n   Fix command:")
-    for orch in missing_permissions:
-        print(f"   gcloud run services add-iam-policy-binding {orch} \\\\")
-        print(f"     --region=us-west2 \\\\")
-        print(f"     --member='serviceAccount:{service_account}' \\\\")
-        print(f"     --role='roles/run.invoker' \\\\")
-        print(f"     --project=nba-props-platform")
-        print()
     sys.exit(1)
 else:
     print(f"\\n✅ All orchestrators have correct IAM permissions")
     sys.exit(0)
 """
-
-
-class TestOrchestratorIAMCheckIntegration:
-    """
-    Integration tests that verify the script works with actual gcloud commands.
-
-    These tests are skipped by default and only run when explicitly requested
-    with: pytest -m integration
-    """
-
-    @pytest.mark.integration
-    @pytest.mark.skipif(True, reason="Requires actual gcloud authentication")
-    def test_real_gcloud_command(self):
-        """
-        Test with real gcloud command (requires authentication).
-
-        This test is skipped by default. To run:
-        1. Ensure gcloud is authenticated: gcloud auth login
-        2. Run: pytest tests/unit/validation/test_orchestrator_iam_check.py -v -m integration
-        """
         # Execute the actual validation script
         result = subprocess.run(
-            ['python3', '-c', TestOrchestratorIAMCheck._get_validation_script()],
+            ['python3', '-c', validation_script],
             capture_output=True,
             text=True,
             timeout=60

@@ -25,7 +25,7 @@ Phases connected via **Pub/Sub event triggers**. Daily workflow starts ~6 AM ET.
 **Phase 2 → Phase 3 (Event-Driven + Scheduled):**
 - **PRIMARY:** Direct Pub/Sub subscription (`nba-phase3-analytics-sub`) pushes to Phase 3 `/process` endpoint
 - **BACKUP:** Cloud Scheduler (`same-day-phase3`) triggers at 10:30 AM ET daily
-- **MONITORING:** phase2-to-phase3-orchestrator tracks completion in Firestore (MONITORING-ONLY, does NOT trigger Phase 3)
+- **MONITORING:** phase2-to-phase3-orchestrator was monitoring-only and has been REMOVED (Session 205)
 - Each Phase 2 processor completion triggers Phase 3 processors immediately (per-event, not batched)
 
 **Phase 3 → Phase 4 (Orchestrated):**
@@ -41,7 +41,7 @@ Phases connected via **Pub/Sub event triggers**. Daily workflow starts ~6 AM ET.
 - Phase 5→6 orchestrator is FUNCTIONAL
 - Triggers publishing after predictions complete
 
-**Key Insight (Session 204):** The phase2-to-phase3-orchestrator is monitoring-only and does NOT trigger Phase 3. Phase 3 runs via direct Pub/Sub subscription. The pipeline works perfectly even if the orchestrator is broken (proven during 7-day outage Feb 5-11, 2026).
+**Key Insight (Sessions 204-205):** The phase2-to-phase3-orchestrator was monitoring-only and has been REMOVED. Phase 3 runs via direct Pub/Sub subscription. The pipeline works perfectly without it (proven during 7-day outage Feb 5-11, 2026).
 
 ## Core Principles
 
@@ -458,7 +458,7 @@ Cloud Build triggers watch GitHub for pushes to `main` and auto-deploy only the 
 | Trigger | Watches | Cloud Build Trigger | Notes |
 |---------|---------|---------------------|-------|
 | phase5b-grading | `orchestration/cloud_functions/grading/**`, `data_processors/grading/**`, `shared/**` | `deploy-phase5b-grading` | |
-| phase2-to-phase3-orchestrator | `orchestration/cloud_functions/phase2_to_phase3/**`, `shared/**` | `deploy-phase2-to-phase3-orchestrator` | ⚠️ MONITORING-ONLY (does NOT trigger Phase 3) |
+| ~~phase2-to-phase3-orchestrator~~ | REMOVED (Session 205) | N/A | Was monitoring-only, not needed |
 | phase3-to-phase4-orchestrator | `orchestration/cloud_functions/phase3_to_phase4/**`, `shared/**` | `deploy-phase3-to-phase4-orchestrator` | ✅ FUNCTIONAL (triggers Phase 4) |
 | phase4-to-phase5-orchestrator | `orchestration/cloud_functions/phase4_to_phase5/**`, `shared/**` | `deploy-phase4-to-phase5-orchestrator` | ✅ FUNCTIONAL (triggers Phase 5) |
 | phase5-to-phase6-orchestrator | `orchestration/cloud_functions/phase5_to_phase6/**`, `shared/**` | `deploy-phase5-to-phase6-orchestrator` | ✅ FUNCTIONAL (triggers Phase 6) |
@@ -724,8 +724,7 @@ GROUP BY 1 ORDER BY 2 DESC;
 | **Model decay** | **Hit rate declining weekly (71.2% → 47.9%)** | **Champion 33 days stale, below breakeven. QUANT_43 shadow deployed (Session 186) — first model to work when fresh. Monitor shadow, promote when validated.** |
 | **QUANT barely producing** | **Q43/Q45 only 2-3 predictions per day** | **FIXED Session 192: Quality gate hardcoded champion system_id, blocking shadow models. Now per-system gate. Verify post-deploy.** |
 | **Materializer 0 picks pre-game** | **picks/{date}.json empty for today** | **FIXED Session 193: Materializer only joined `player_game_summary` (empty pre-game). Now falls back to `upcoming_player_game_context` via UNION ALL.** |
-| **Phase 6 scheduler broken** | **Morning/pregame exports not firing** | **STALE ENTRY - Session 203 confirmed all schedulers correctly target `nba-phase6-export-trigger` topic. Not broken.** |
-| **Orchestrator not triggering** | **Phase 2 complete but `_triggered=False`** | **NOT A PIPELINE ISSUE (Session 204): The phase2-to-phase3-orchestrator is MONITORING-ONLY and does NOT trigger Phase 3. Phase 3 is triggered by direct Pub/Sub subscription (`nba-phase3-analytics-sub`). `_triggered=False` means orchestrator monitoring is broken (Session 205: missing IAM `roles/run.invoker`), but pipeline works perfectly. Proven: 7-day orchestrator outage (Feb 5-11) with zero pipeline impact. Fix orchestrator IAM if monitoring is desired, or remove entirely (Session 204 recommendation).** |
+| **Orchestrator not triggering** | **Phase 2 complete but `_triggered=False`** | **NOT A PIPELINE ISSUE (Session 204): The phase2-to-phase3-orchestrator was MONITORING-ONLY and has been REMOVED (Session 205). Phase 3 is triggered by direct Pub/Sub subscription (`nba-phase3-analytics-sub`). The remaining orchestrators (phase3→4, phase4→5, phase5→6) are FUNCTIONAL and have correct IAM permissions. Proven: 7-day orchestrator outage (Feb 5-11) with zero pipeline impact.** |
 | **BDL scraper not running** | **0 BDL boxscore records** | **EXPECTED: BDL is intentionally disabled (unreliable). 60-70% minutes coverage is normal. NOT a bug.** |
 | **Phase 6 export failing** | **`cannot import name 'firestore'` or `ModuleNotFoundError: backfill_jobs`** | **FIXED Session 201: Add `google-cloud-firestore` to requirements.txt, ensure `backfill_jobs/` in Cloud Build deployment package. See `docs/08-projects/current/phase6-export-fix/`** |
 | **Phase 6 timeout** | **picks/{date}.json or signals/{date}.json not created, exports at exactly 540s** | **FIXED Session 201: Reordered exports (fast first, tonight-players last). Consider increasing timeout to 900s. See `docs/08-projects/current/phase6-export-fix/01-TECHNICAL-DETAILS.md`** |
