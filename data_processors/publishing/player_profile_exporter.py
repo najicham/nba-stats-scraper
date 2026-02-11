@@ -315,7 +315,7 @@ class PlayerProfileExporter(BaseExporter):
             g.over_under_result,
             -- Derive home_game from game_id format: YYYYMMDD_AWAY_HOME
             CASE
-                WHEN SPLIT(g.game_id, '_')[OFFSET(2)] = g.team_abbr THEN TRUE
+                WHEN SPLIT(g.game_id, '_')[SAFE_OFFSET(2)] = g.team_abbr THEN TRUE
                 ELSE FALSE
             END as home_game,
             CASE
