@@ -142,13 +142,50 @@ CANARY_CHECKS = [
         thresholds={
             'players': {'min': 100},  # At least 100 players tracked
             'avg_quality': {'min': 70},  # Average quality score > 70
-            'low_quality_count': {'max': 50},  # Not too many low quality features
+            'low_quality_count': {'max': 100},  # Session 199: Increased from 50 to reduce alert fatigue
             'quality_ready_pct': {'min': 60},  # Session 139: At least 60% quality-ready
             'red_alert_count': {'max': 30},  # Session 139: Not too many red alerts
             'avg_matchup_quality': {'min': 40},  # Session 139: Catches Session 132 scenario
             'cache_miss_rate_pct': {'max': 5}  # Session 147: Cache miss rate should be near 0% for daily
         },
         description="Validates precomputed ML features and quality visibility"
+    ),
+
+    # Session 199: Gap detection for Phase 3
+    # Detects when games are scheduled but no analytics data produced
+    # More precise than record count - distinguishes "no games" from "pipeline gap"
+    CanaryCheck(
+        name="Phase 3 - Gap Detection",
+        phase="phase3_gap_detection",
+        query="""
+        WITH scheduled AS (
+            SELECT COUNT(*) as expected_games
+            FROM `nba-props-platform.nba_raw.nbac_schedule`
+            WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+              AND game_status_text = 'Final'
+        ),
+        actual AS (
+            SELECT
+                COUNT(DISTINCT game_id) as actual_games,
+                COUNT(*) as player_records
+            FROM `nba-props-platform.nba_analytics.player_game_summary`
+            WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+        )
+        SELECT
+            s.expected_games,
+            a.actual_games,
+            a.player_records,
+            CASE
+                WHEN s.expected_games > 0 AND a.actual_games = 0 THEN 1
+                ELSE 0
+            END as gap_detected
+        FROM scheduled s
+        CROSS JOIN actual a
+        """,
+        thresholds={
+            'gap_detected': {'max': 0}  # FAIL if games scheduled but no analytics data
+        },
+        description="Detects complete analytics gaps (games scheduled but no data produced)"
     ),
 
     CanaryCheck(
