@@ -290,6 +290,7 @@ class TonightAllPlayersExporter(BaseExporter):
             FROM `nba-props-platform.nba_analytics.player_game_summary`
             WHERE game_date < @before_date
               AND player_lookup IN UNNEST(@player_lookups)
+              AND is_active = TRUE
             QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) <= 10
         )
         SELECT
@@ -400,6 +401,23 @@ class TonightAllPlayersExporter(BaseExporter):
                 # Add props array with betting line (frontend expected structure)
                 # Add last_10_points for ALL players (frontend requested for sparklines)
                 player_data['last_10_points'] = last_10.get('points', [])
+
+                # Add last_10_vs_avg for ALL players (O/U vs season average)
+                season_ppg = p.get('season_ppg')
+                last_10_pts = last_10.get('points', [])
+                if season_ppg and last_10_pts:
+                    vs_avg = []
+                    for pts in last_10_pts:
+                        if pts > season_ppg:
+                            vs_avg.append('O')
+                        elif pts < season_ppg:
+                            vs_avg.append('U')
+                        else:
+                            vs_avg.append('P')
+                    avg_overs = vs_avg.count('O')
+                    avg_unders = vs_avg.count('U')
+                    player_data['last_10_vs_avg'] = vs_avg
+                    player_data['last_10_avg_record'] = f"{avg_overs}-{avg_unders}"
 
                 if p.get('has_line'):
                     line_value = safe_float(p.get('current_points_line'))

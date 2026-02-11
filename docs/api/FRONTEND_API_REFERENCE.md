@@ -93,7 +93,9 @@ Complete list of all players with predictions for tonight's games. This is the m
             "recommendation": "PASS"
           },
           "last_10_results": ["O", "O", "U", "-", "-", "-", "-", "-", "-", "-"],
-          "last_10_record": "2-1"
+          "last_10_record": "2-1",
+          "last_10_vs_avg": ["O", "U", "U", "O", "O", "O", "U", "O", "U", "O"],
+          "last_10_avg_record": "5-5"
         }
       ]
     }
@@ -118,6 +120,11 @@ Complete list of all players with predictions for tonight's games. This is the m
 | `last_5_ppg` | float | Last 5 games PPG |
 | `games_played` | int | Total games played this season |
 | `limited_data` | boolean | True if <10 games played (predictions less reliable) |
+| `last_10_points` | int[] | Points scored in last 10 games (most recent first). Available for ALL players. |
+| `last_10_results` | string[] | O/U vs real sportsbook line per game. `"O"`, `"U"`, or `"-"` (no line). Only for players with `has_line`. ~35% coverage per game. |
+| `last_10_record` | string | Win-loss record vs real sportsbook lines (e.g., `"3-2"`). Only for players with `has_line`. |
+| `last_10_vs_avg` | string[] | O/U vs player's season average per game. `"O"`, `"U"`, or `"P"` (push). Available for ALL players. 100% coverage. |
+| `last_10_avg_record` | string | Win-loss record vs season average (e.g., `"6-4"`). Available for ALL players. |
 
 #### Props Object
 | Field | Type | Description |

@@ -83,6 +83,19 @@ class TonightPlayerExporter(BaseExporter):
         # Build tonight's factors (only relevant ones)
         tonights_factors = self._build_tonights_factors(context, fatigue, splits, defense_tier)
 
+        # Enrich recent_form with vs_avg (O/U vs season average)
+        season_ppg = quick_numbers.get('season_ppg')
+        if season_ppg and recent_form:
+            for game in recent_form:
+                pts = game.get('points')
+                if pts is not None:
+                    if pts > season_ppg:
+                        game['vs_avg'] = 'O'
+                    elif pts < season_ppg:
+                        game['vs_avg'] = 'U'
+                    else:
+                        game['vs_avg'] = 'P'
+
         games_played = quick_numbers.get('games_played') or 0
         return {
             'player_lookup': player_lookup,
@@ -240,6 +253,7 @@ class TonightPlayerExporter(BaseExporter):
         FROM `nba-props-platform.nba_analytics.player_game_summary`
         WHERE player_lookup = @player_lookup
           AND game_date < @before_date
+          AND is_active = TRUE
         ORDER BY game_date DESC
         LIMIT 10
         """
