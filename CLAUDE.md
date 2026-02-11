@@ -697,6 +697,9 @@ GROUP BY 1 ORDER BY 2 DESC;
 | **subset_picks_notifier error** | **Correlated subquery BQ error 8+/hour** | **FIXED Session 175: Rewrote as `majority_model_by_date` CTE + JOIN** |
 | **Recommendation direction mismatch** | **pred > line but rec = UNDER** | **FIXED Session 175: Defense-in-depth validation in worker.py corrects mismatches. Pre-Session 170 BACKFILL data (Feb 4-8) still affected — needs regeneration.** |
 | **Model decay** | **Hit rate declining weekly (71.2% → 47.9%)** | **Champion 33 days stale, below breakeven. QUANT_43 shadow deployed (Session 186) — first model to work when fresh. Monitor shadow, promote when validated.** |
+| **QUANT barely producing** | **Q43/Q45 only 2-3 predictions per day** | **FIXED Session 192: Quality gate hardcoded champion system_id, blocking shadow models. Now per-system gate. Verify post-deploy.** |
+| **Materializer 0 picks pre-game** | **picks/{date}.json empty for today** | **FIXED Session 193: Materializer only joined `player_game_summary` (empty pre-game). Now falls back to `upcoming_player_game_context` via UNION ALL.** |
+| **Phase 6 scheduler broken** | **Morning/pregame exports not firing** | **Two Cloud Scheduler jobs publish to non-existent `nba-phase6-export` topic. Should be `nba-phase6-export-trigger`. Needs fix.** |
 
 **Full troubleshooting:** See `docs/02-operations/session-learnings.md`
 
@@ -801,6 +804,9 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 | Region | us-west2 |
 | Registry | us-west2-docker.pkg.dev/nba-props-platform/nba-props |
 | Datasets | nba_predictions, nba_analytics, nba_raw, nba_orchestration |
+| GCS API Bucket | `gs://nba-props-platform-api/v1/` (frontend JSON exports) |
+| GCS API Base URL | `https://storage.googleapis.com/nba-props-platform-api/v1/` |
+| Frontend Domain | `playerprops.io` |
 
 ## Documentation Index [Keyword: DOCS]
 
