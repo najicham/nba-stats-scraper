@@ -1,6 +1,6 @@
 # Phase 6: Publishing & Exports
 
-**Last Updated:** 2025-12-28
+**Last Updated:** 2026-02-11 (Session 202: Added game scores to tonight exporter)
 **Status:** Production
 **Location:** `data_processors/publishing/`
 
@@ -29,7 +29,7 @@ Phase 6 exports predictions, results, and live scoring data to GCS for website c
 
 | Exporter | Output Path | Schedule | Description |
 |----------|-------------|----------|-------------|
-| `tonight_all_players_exporter.py` | `tonight/all.json` | Hourly | All players summary cards |
+| `tonight_all_players_exporter.py` | `tonight/all-players.json` | Hourly | All players summary cards **+ game scores** (added Session 202) |
 | `tonight_player_exporter.py` | `tonight/player/{lookup}.json` | Hourly | Individual player details (~300 files) |
 | `tonight_trend_plays_exporter.py` | `trends/tonight-trend-plays.json` | Hourly | Trending plays for today |
 
