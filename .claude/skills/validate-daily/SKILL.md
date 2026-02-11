@@ -3537,6 +3537,62 @@ ORDER BY pa.system_id, week DESC"
 - `our_edge` < 0 for 2+ consecutive weeks → Model no longer competitive
 - `our_edge` trending downward → Model drift in progress
 
+### Priority 2G-2: Q43 Shadow Model Performance (Session 186+)
+
+**Purpose**: Track the QUANT_43 shadow model's production performance vs the champion.
+
+**When to run**: Daily (especially after overnight grading)
+
+**Why this matters**: Session 186 discovered quantile regression creates staleness-independent edge. Q43 is the top candidate to replace the decaying champion. This check determines when it's ready.
+
+#### Quick Check (automated script)
+
+```bash
+# Standard 7-day comparison
+PYTHONPATH=. python bin/monitoring/q43_performance_monitor.py
+
+# 14-day view for more statistical confidence
+PYTHONPATH=. python bin/monitoring/q43_performance_monitor.py --days 14
+
+# Include Q45 comparison
+PYTHONPATH=. python bin/monitoring/q43_performance_monitor.py --include-q45
+```
+
+#### Manual Verification Query
+
+```bash
+bq query --use_legacy_sql=false "
+-- Q43 vs Champion daily comparison (last 7 days)
+SELECT
+  system_id,
+  game_date,
+  COUNT(*) as total,
+  COUNTIF(ABS(predicted_margin) >= 3) as edge_3plus,
+  ROUND(100.0 * COUNTIF(prediction_correct AND ABS(predicted_margin) >= 3)
+      / NULLIF(COUNTIF(ABS(predicted_margin) >= 3), 0), 1) as hr_edge_3plus,
+  ROUND(AVG(predicted_points - line_value), 2) as vegas_bias
+FROM nba_predictions.prediction_accuracy
+WHERE system_id IN ('catboost_v9', 'catboost_v9_q43_train1102_0131')
+  AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+  AND prediction_correct IS NOT NULL
+GROUP BY 1, 2
+ORDER BY game_date DESC, system_id"
+```
+
+**What to look for**:
+- **Q43 edge 3+ HR >= 60%**: Ready for promotion consideration
+- **Q43 beating champion by 5+pp**: Strong promote signal
+- **Q43 producing 0 picks**: Model deployment issue (check Session 192 quality gate fix)
+- **Vegas bias outside -1.0 to -2.5**: Quantile bias may be too aggressive or too weak
+
+**Alert Thresholds**:
+- **Q43 HR 3+ >= 60% AND beats champion by 5+pp**: PROMOTE candidate
+- **Q43 HR 3+ < 52.4%**: Below breakeven, investigate
+- **Q43 HR 3+ < 45%**: Critical, check for deployment/data issues
+- **Q43 0 predictions for 2+ days**: Model not running
+
+**Documentation**: See `bin/monitoring/README_Q43_MONITOR.md` for full details.
+
 ### Priority 2H: Scraper Health Monitoring (Session 70 - NEW)
 
 **Purpose**: Detect stale scrapers, failed scheduler jobs, and missing data sources.
