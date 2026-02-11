@@ -387,7 +387,7 @@ class PlayerGameReportExporter(BaseExporter):
         FROM `nba-props-platform.nba_predictions.prediction_accuracy`
         WHERE player_lookup = @player_lookup
           AND game_date = @game_date
-          AND system_id = 'catboost_v8'
+          AND system_id = 'catboost_v9'
         LIMIT 1
         """
 

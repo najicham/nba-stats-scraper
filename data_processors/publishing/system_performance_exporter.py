@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 # System metadata for display
 SYSTEM_METADATA = {
-    'catboost_v8': {
+    'catboost_v9': {
         'display_name': 'CatBoost V8',
         'description': 'CatBoost gradient boosting with 33 features and real Vegas lines',
         'is_primary': True,
