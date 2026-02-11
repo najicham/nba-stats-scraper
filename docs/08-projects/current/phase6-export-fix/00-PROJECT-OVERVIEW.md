@@ -220,6 +220,55 @@ print(f'Predictions: {d.get(\"total_predictions\")}')
 
 ---
 
+## Session 203-204 Additional Fixes (Phase 3/4 Coverage)
+
+Session 203-204 discovered that Phase 6 exports only had 200/481 players due to upstream pipeline issues. Three cascading failures:
+
+### Phase 3 Fixes (Session 203)
+1. **BDL dependency `critical: True`** - `bdl_player_boxscores` was 97h stale (BDL intentionally disabled), blocking all `/process-date-range` calls. Changed to `nbac_gamebook_player_stats` (commit `922b8c16`).
+2. **474 circuit breakers tripped** - From previous failed runs, locking out players for 24h. Cleared records.
+3. **Completeness check too aggressive** - Required all 5 windows at 70%+. Made non-blocking (log-only) since Phase 5 has the real quality gate (commit `2d1570d9`).
+
+**Result:** Phase 3 coverage 200 → 481 players.
+
+### Phase 4 Fix (Session 204)
+4. **Phase 4 ran before Phase 3 fix** - Composite factors had only 200 players. Manual re-trigger got 481.
+
+**Result:** Feature store 192 → 372, quality-ready 114 → 282.
+
+### Coverage Funnel (Feb 11, post-fix)
+
+| Stage | Players | Notes |
+|-------|---------|-------|
+| upcoming_context (Phase 3) | 481 | Fixed Session 203 |
+| shot_zone (Phase 4) | 460 | 21 players lack shot data |
+| daily_cache (Phase 4) | 439 | 42 players lack game history |
+| composite_factors (Phase 4) | 481 | Fixed Session 204 |
+| feature_store (Phase 4) | 372 | Bounded by shot_zone/daily_cache |
+| quality_ready | 282 | 90 with only-Vegas defaults pass |
+| predictions (Phase 5) | 208 | Quality-ready WITH betting lines |
+
+### Zero Tolerance Verified
+- 192 players: zero defaults
+- 90 players: only Vegas defaults (features 25-27, correctly optional)
+- 90 players: non-Vegas defaults (legitimate data gaps - blocked)
+
+### Player Profile Fix
+- SAFE_OFFSET fix deployed (commit `a564cbcb`) - was crashing on game_id split
+- 93/514 profiles regenerated successfully
+
+### Frontend Review Findings
+
+| Issue | Priority | Status |
+|-------|----------|--------|
+| last_10_results mostly dashes | P0 | O/U only computed with Odds API line (~35% coverage is normal). Needs fallback strategy. |
+| Player profiles 62d stale | P1 | FIXED - regenerated |
+| tonight/2026-02-11.json 404 | P1 | By design - only `tonight/all-players.json` exists |
+| Confidence scale 87-95 | P2 | By design - 0-100 percentage scale |
+| Null scores final games | P2 | Working - scores populate on game completion |
+
+---
+
 ## Remaining Recommendations (Deferred)
 
 1. **Increase timeout from 540s to 900s** - tonight-players takes 400-600s, too close to limit
@@ -228,12 +277,14 @@ print(f'Predictions: {d.get(\"total_predictions\")}')
 4. **Canary monitoring for picks/{date}.json** - Alert if missing
 5. **Pin google-cloud-firestore version** - Use requirements-lock.txt pattern
 6. **Add Cloud Functions to deployment drift checker** - Currently only checks Cloud Run
+7. **Improve last_10_results O/U coverage** - Retroactive line comparison or season avg fallback
+8. **Date-specific tonight file** - Add `tonight/{date}.json` if frontend needs it
 
 ---
 
 ## Success Metrics
 
-- [x] All 8 issues resolved
+- [x] All 8 original issues resolved
 - [x] Zero import errors
 - [x] All schedulers configured correctly
 - [x] All exporters using catboost_v9
@@ -241,21 +292,27 @@ print(f'Predictions: {d.get(\"total_predictions\")}')
 - [x] Feb 3-11 backfilled with correct model
 - [x] Frontend API serving accurate data
 - [x] Full documentation created
+- [x] Phase 3 coverage restored (481 players)
+- [x] Phase 4 coverage restored (372 feature store, 282 quality-ready)
+- [x] Zero tolerance verified (no non-Vegas defaults in predictions)
+- [x] Player profiles regenerated (93/514)
 
 ---
 
 ## Next Steps
 
 **Immediate:**
-- Monitor tomorrow's scheduled exports for stability
-- Verify pregame scheduler (5 PM ET) runs successfully
+- Verify REGENERATE prediction run completed (208 requests published)
+- Re-trigger Phase 6 exports after predictions complete
 
 **Short-term:**
-- Consider increasing Cloud Function timeout to 900s
-- Add alerting if picks/{date}.json not created
+- Improve last_10_results O/U coverage (discuss fallback strategy with frontend)
+- Fix `bdl_games` validation reference in orchestrator
+- Add orchestrator health check to `/validate-daily`
 
 **Long-term:**
 - Implement per-player error isolation
 - Split tonight-players into dedicated function
 - Add canary checks for critical export files
+- Implement self-healing orchestrator auto-trigger
 
