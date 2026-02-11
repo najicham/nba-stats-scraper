@@ -286,17 +286,17 @@ class TonightAllPlayersExporter(BaseExporter):
                 player_lookup,
                 game_date,
                 over_under_result,
-                points
+                points,
+                is_dnp
             FROM `nba-props-platform.nba_analytics.player_game_summary`
             WHERE game_date < @before_date
               AND player_lookup IN UNNEST(@player_lookups)
-              AND is_active = TRUE
             QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) <= 10
         )
         SELECT
             player_lookup,
             ARRAY_AGG(
-                STRUCT(over_under_result, points)
+                STRUCT(over_under_result, points, is_dnp)
                 ORDER BY game_date DESC
             ) as last_10
         FROM recent_games
@@ -314,29 +314,33 @@ class TonightAllPlayersExporter(BaseExporter):
             player = r['player_lookup']
             games = r.get('last_10', [])
 
-            # Extract O/U results
+            # Extract O/U results (DNP games marked as null/DNP for graph gaps)
             results_list = []
             points_list = []
             for g in games:
                 if isinstance(g, dict):
                     ou = g.get('over_under_result')
                     pts = g.get('points')
+                    dnp = g.get('is_dnp', False)
                 else:
-                    # Handle if it's a different structure
                     ou = getattr(g, 'over_under_result', None)
                     pts = getattr(g, 'points', None)
+                    dnp = getattr(g, 'is_dnp', False)
 
-                if ou == 'OVER':
+                if dnp:
+                    results_list.append('DNP')
+                    points_list.append(None)
+                elif ou == 'OVER':
                     results_list.append('O')
+                    points_list.append(int(pts) if pts is not None else None)
                 elif ou == 'UNDER':
                     results_list.append('U')
+                    points_list.append(int(pts) if pts is not None else None)
                 else:
                     results_list.append('-')
+                    points_list.append(int(pts) if pts is not None else None)
 
-                if pts is not None:
-                    points_list.append(int(pts))
-
-            # Calculate record
+            # Calculate record (only O/U count, not DNP or -)
             overs = results_list.count('O')
             unders = results_list.count('U')
 
@@ -398,17 +402,27 @@ class TonightAllPlayersExporter(BaseExporter):
                     'limited_data': games_played < 10,
                 }
 
-                # Add props array with betting line (frontend expected structure)
-                # Add last_10_points for ALL players (frontend requested for sparklines)
+                # Add last_10_points for ALL players (null = DNP gap in sparkline)
                 player_data['last_10_points'] = last_10.get('points', [])
+
+                # Add last_10_results (vs line) for ALL players
+                player_data['last_10_results'] = last_10.get('results', [])
+                player_data['last_10_record'] = last_10.get('record')
 
                 # Add last_10_vs_avg for ALL players (O/U vs season average)
                 season_ppg = p.get('season_ppg')
                 last_10_pts = last_10.get('points', [])
+                last_10_res = last_10.get('results', [])
                 if season_ppg and last_10_pts:
                     vs_avg = []
-                    for pts in last_10_pts:
-                        if pts > season_ppg:
+                    for i_game, pts in enumerate(last_10_pts):
+                        # Preserve DNP markers from results
+                        is_dnp = (i_game < len(last_10_res) and last_10_res[i_game] == 'DNP')
+                        if is_dnp:
+                            vs_avg.append('DNP')
+                        elif pts is None:
+                            vs_avg.append('-')
+                        elif pts > season_ppg:
                             vs_avg.append('O')
                         elif pts < season_ppg:
                             vs_avg.append('U')
@@ -424,17 +438,14 @@ class TonightAllPlayersExporter(BaseExporter):
                     player_data['props'] = [{
                         'stat_type': 'points',
                         'line': line_value,
-                        'over_odds': p.get('over_odds'),  # Will be None until odds query added
-                        'under_odds': p.get('under_odds'),  # Will be None until odds query added
+                        'over_odds': p.get('over_odds'),
+                        'under_odds': p.get('under_odds'),
                     }]
-                    # Keep prediction data for our analytics (not in frontend spec but useful)
                     player_data['prediction'] = {
                         'predicted': safe_float(p.get('predicted_points')),
                         'confidence': safe_float(p.get('confidence_score')),
                         'recommendation': p.get('recommendation'),
                     }
-                    player_data['last_10_results'] = last_10.get('results', [])
-                    player_data['last_10_record'] = last_10.get('record')
 
                 formatted_players.append(player_data)
 

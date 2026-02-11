@@ -87,14 +87,17 @@ class TonightPlayerExporter(BaseExporter):
         season_ppg = quick_numbers.get('season_ppg')
         if season_ppg and recent_form:
             for game in recent_form:
-                pts = game.get('points')
-                if pts is not None:
-                    if pts > season_ppg:
-                        game['vs_avg'] = 'O'
-                    elif pts < season_ppg:
-                        game['vs_avg'] = 'U'
-                    else:
-                        game['vs_avg'] = 'P'
+                if game.get('is_dnp'):
+                    game['vs_avg'] = 'DNP'
+                else:
+                    pts = game.get('points')
+                    if pts is not None:
+                        if pts > season_ppg:
+                            game['vs_avg'] = 'O'
+                        elif pts < season_ppg:
+                            game['vs_avg'] = 'U'
+                        else:
+                            game['vs_avg'] = 'P'
 
         games_played = quick_numbers.get('games_played') or 0
         return {
@@ -249,11 +252,11 @@ class TonightPlayerExporter(BaseExporter):
             ft_makes,
             ft_attempts,
             over_under_result,
-            points_line
+            points_line,
+            is_dnp
         FROM `nba-props-platform.nba_analytics.player_game_summary`
         WHERE player_lookup = @player_lookup
           AND game_date < @before_date
-          AND is_active = TRUE
         ORDER BY game_date DESC
         LIMIT 10
         """
@@ -269,20 +272,39 @@ class TonightPlayerExporter(BaseExporter):
             game_id = r.get('game_id', '')
             team_abbr = r.get('team_abbr', '')
             is_home = game_id.endswith(f'_{team_abbr}') if game_id and team_abbr else None
+            is_dnp = r.get('is_dnp', False)
 
-            formatted.append({
-                'game_date': str(r['game_date']),
-                'opponent': r['opponent_team_abbr'],
-                'home_game': is_home,
-                'points': r['points'],
-                'minutes': safe_float(r['minutes_played']),
-                'fg': f"{r['fg_makes']}/{r['fg_attempts']}" if r['fg_attempts'] else None,
-                'three': f"{r['three_pt_makes']}/{r['three_pt_attempts']}" if r['three_pt_attempts'] else None,
-                'ft': f"{r['ft_makes']}/{r['ft_attempts']}" if r['ft_attempts'] else None,
-                'over_under': r['over_under_result'],
-                'line': safe_float(r['points_line']),
-                'margin': int(r['points'] - r['points_line']) if (r['points'] is not None and r['points_line']) else None
-            })
+            if is_dnp:
+                # DNP games: null stats, visible marker for graph gaps
+                formatted.append({
+                    'game_date': str(r['game_date']),
+                    'opponent': r['opponent_team_abbr'],
+                    'home_game': is_home,
+                    'is_dnp': True,
+                    'points': None,
+                    'minutes': None,
+                    'fg': None,
+                    'three': None,
+                    'ft': None,
+                    'over_under': 'DNP',
+                    'line': safe_float(r['points_line']),
+                    'margin': None
+                })
+            else:
+                formatted.append({
+                    'game_date': str(r['game_date']),
+                    'opponent': r['opponent_team_abbr'],
+                    'home_game': is_home,
+                    'is_dnp': False,
+                    'points': r['points'],
+                    'minutes': safe_float(r['minutes_played']),
+                    'fg': f"{r['fg_makes']}/{r['fg_attempts']}" if r['fg_attempts'] else None,
+                    'three': f"{r['three_pt_makes']}/{r['three_pt_attempts']}" if r['three_pt_attempts'] else None,
+                    'ft': f"{r['ft_makes']}/{r['ft_attempts']}" if r['ft_attempts'] else None,
+                    'over_under': r['over_under_result'],
+                    'line': safe_float(r['points_line']),
+                    'margin': int(r['points'] - r['points_line']) if (r['points'] is not None and r['points_line']) else None
+                })
 
         return formatted
 
