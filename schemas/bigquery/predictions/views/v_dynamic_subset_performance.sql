@@ -38,7 +38,6 @@ base_predictions AS (
     ON p.game_date = s.game_date AND p.system_id = s.system_id
   WHERE p.is_active = TRUE
     AND p.current_points_line IS NOT NULL
-    AND p.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)  -- Last 30 days
 ),
 
 ranked_predictions AS (

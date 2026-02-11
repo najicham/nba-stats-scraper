@@ -3,15 +3,18 @@ Subset Definitions Exporter for Phase 6 Publishing
 
 Exports available subset groups with clean, non-revealing names.
 Shows what prediction groups are available without exposing technical details.
+
+Session 188: Multi-model support — model_groups structure.
 """
 
 import logging
+from collections import defaultdict
 from typing import Dict, List, Any
 
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
-from shared.config.model_codenames import get_model_codename
+from shared.config.model_codenames import get_model_codename, get_model_display_info, CHAMPION_CODENAME
 from shared.config.subset_public_names import get_public_name
 
 logger = logging.getLogger(__name__)
@@ -24,63 +27,78 @@ class SubsetDefinitionsExporter(BaseExporter):
     Output file:
     - systems/subsets.json - List of available groups
 
-    JSON structure (CLEAN - no technical details):
+    Session 188: model_groups structure with subsets per model.
+
+    JSON structure (v2):
     {
-        "generated_at": "2026-02-03T...",
-        "model": "926A",
-        "groups": [
+        "generated_at": "2026-02-10T...",
+        "version": 2,
+        "model_groups": [
             {
-                "id": "1",
-                "name": "Top Pick",
-                "description": "Single best pick"
-            },
-            {
-                "id": "2",
-                "name": "Top 5",
-                "description": "Top 5 picks"
-            },
-            ...
+                "model_id": "926A",
+                "model_name": "V9 Champion",
+                "model_type": "standard",
+                "description": "Primary prediction model",
+                "subsets": [
+                    {"id": "1", "name": "Top Pick", "description": "Single best pick"},
+                    ...
+                ]
+            }
         ]
     }
     """
 
     def generate_json(self) -> Dict[str, Any]:
         """
-        Generate subset definitions JSON.
+        Generate subset definitions JSON grouped by model.
 
         Returns:
             Dictionary ready for JSON serialization with clean public names
         """
-        # Query active subsets from database
         subsets = self._query_active_subsets()
 
-        # Build clean output without technical details
-        clean_groups = []
+        # Group by system_id
+        subsets_by_model = defaultdict(list)
         for subset in subsets:
-            # Get public name mapping
-            public = get_public_name(subset['subset_id'])
+            subsets_by_model[subset['system_id']].append(subset)
 
-            # Get clean description (use subset_id for lookup)
-            description = self._clean_description(subset['subset_id'])
+        model_groups = []
+        for system_id, model_subsets in subsets_by_model.items():
+            display = get_model_display_info(system_id)
 
-            clean_groups.append({
-                'id': public['id'],
-                'name': public['name'],
-                'description': description
+            clean_subsets = []
+            for subset in model_subsets:
+                public = get_public_name(subset['subset_id'])
+                description = self._clean_description(subset['subset_id'])
+
+                clean_subsets.append({
+                    'id': public['id'],
+                    'name': public['name'],
+                    'description': description,
+                })
+
+            clean_subsets.sort(key=lambda x: int(x['id']) if x['id'].isdigit() else 999)
+
+            model_groups.append({
+                'model_id': display['codename'],
+                'model_name': display['display_name'],
+                'model_type': display['model_type'],
+                'description': display['description'],
+                'subsets': clean_subsets,
             })
 
-        # Sort by ID for consistent ordering
-        clean_groups.sort(key=lambda x: int(x['id']))
+        # Sort: champion first, then by codename
+        model_groups.sort(key=lambda x: (0 if x['model_id'] == CHAMPION_CODENAME else 1, x['model_id']))
 
         return {
             'generated_at': self.get_generated_at(),
-            'model': get_model_codename('catboost_v9'),  # '926A'
-            'groups': clean_groups
+            'version': 2,
+            'model_groups': model_groups,
         }
 
     def _query_active_subsets(self) -> List[Dict[str, Any]]:
         """
-        Query active subset definitions from BigQuery.
+        Query active subset definitions from BigQuery (all models).
 
         Returns:
             List of subset dictionaries with internal details
@@ -94,8 +112,7 @@ class SubsetDefinitionsExporter(BaseExporter):
           is_active
         FROM `nba_predictions.dynamic_subset_definitions`
         WHERE is_active = TRUE
-          AND system_id = 'catboost_v9'
-        ORDER BY subset_id
+        ORDER BY system_id, subset_id
         """
 
         return self.query_to_list(query)
@@ -112,9 +129,8 @@ class SubsetDefinitionsExporter(BaseExporter):
         Returns:
             Cleaned description suitable for public API
         """
-        # Always use generic descriptions - never expose database descriptions
-        # which may contain technical details like edge thresholds
         generic_descriptions = {
+            # Champion V9 subsets
             'v9_high_edge_top1': 'Single best pick',
             'v9_high_edge_top3': 'Top 3 picks',
             'v9_high_edge_top5': 'Top 5 picks',
@@ -124,9 +140,15 @@ class SubsetDefinitionsExporter(BaseExporter):
             'v9_premium_safe': 'Premium selection',
             'v9_high_edge_warning': 'Alternative picks',
             'v9_high_edge_top5_balanced': 'Best value top 5',
+            # QUANT Q43 subsets (Session 188)
+            'q43_under_top3': 'Top 3 UNDER picks',
+            'q43_under_all': 'All UNDER picks',
+            'q43_all_picks': 'All picks',
+            # QUANT Q45 subsets (Session 188)
+            'q45_under_top3': 'Top 3 UNDER picks',
+            'q45_all_picks': 'All picks',
         }
 
-        # Return generic description
         return generic_descriptions.get(subset_id, 'Curated selection')
 
     def export(self) -> str:
@@ -145,9 +167,13 @@ class SubsetDefinitionsExporter(BaseExporter):
             cache_control='public, max-age=86400'  # 24 hours
         )
 
+        total_subsets = sum(
+            len(mg.get('subsets', []))
+            for mg in json_data.get('model_groups', [])
+        )
         logger.info(
-            f"Exported {len(json_data.get('groups', []))} subset definitions "
-            f"to {gcs_path}"
+            f"Exported {total_subsets} subset definitions across "
+            f"{len(json_data.get('model_groups', []))} models to {gcs_path}"
         )
 
         return gcs_path

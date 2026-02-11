@@ -7,19 +7,24 @@ Includes daily signal and W-L records per subset (season/month/week).
 Session 152: Added subset snapshot recording for history tracking.
 Session 153: Reads from materialized current_subset_picks table.
 Session 158: Consolidated export — signal + W-L records + picks in one file.
+Session 188: Multi-model support — model_groups structure, QUANT subsets.
 """
 
 import logging
+from collections import defaultdict
 from typing import Dict, List, Any, Optional
 from datetime import date, timedelta
 
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
-from shared.config.model_codenames import get_model_codename
+from shared.config.model_codenames import get_model_codename, get_model_display_info, CHAMPION_CODENAME
 from shared.config.subset_public_names import get_public_name
 
 logger = logging.getLogger(__name__)
+
+# Champion model — used for signal and as fallback
+CHAMPION_SYSTEM_ID = 'catboost_v9'
 
 
 class AllSubsetsPicksExporter(BaseExporter):
@@ -29,31 +34,26 @@ class AllSubsetsPicksExporter(BaseExporter):
     Output file:
     - picks/{date}.json - Consolidated daily export
 
-    Session 158: Single file with signal + per-subset W-L records + picks.
+    Session 188: model_groups structure with nested subsets per model.
 
-    JSON structure:
+    JSON structure (v2):
     {
-        "date": "2026-02-03",
-        "generated_at": "2026-02-03T...",
-        "model": "926A",
-        "signal": "favorable",
-        "groups": [
+        "date": "2026-02-10",
+        "generated_at": "...",
+        "version": 2,
+        "model_groups": [
             {
-                "id": "1",
-                "name": "Top Pick",
-                "record": {
-                    "season": {"wins": 42, "losses": 18, "pct": 70.0},
-                    "month": {"wins": 8, "losses": 3, "pct": 72.7},
-                    "week": {"wins": 3, "losses": 1, "pct": 75.0}
-                },
-                "picks": [
+                "model_id": "926A",
+                "model_name": "V9 Champion",
+                "model_type": "standard",
+                "description": "Primary prediction model",
+                "signal": "favorable",
+                "subsets": [
                     {
-                        "player": "LeBron James",
-                        "team": "LAL",
-                        "opponent": "BOS",
-                        "prediction": 26.1,
-                        "line": 24.5,
-                        "direction": "OVER"
+                        "id": "1",
+                        "name": "Top Pick",
+                        "record": {"season": {...}, "month": {...}, "week": {...}},
+                        "picks": [{"player": "...", "team": "...", ...}]
                     }
                 ]
             }
@@ -65,7 +65,7 @@ class AllSubsetsPicksExporter(BaseExporter):
         """
         Generate consolidated JSON with signal, records, and picks.
 
-        Session 158: Combines signal + W-L records + picks into one export.
+        Session 188: Multi-model model_groups structure.
 
         Args:
             target_date: Date string in YYYY-MM-DD format
@@ -73,7 +73,7 @@ class AllSubsetsPicksExporter(BaseExporter):
         Returns:
             Dictionary ready for JSON serialization
         """
-        # Get signal for this date
+        # Get signal for this date (champion model — signal is market-level)
         signal = self._get_public_signal(target_date)
 
         # Get W-L records per subset (season/month/week)
@@ -92,7 +92,7 @@ class AllSubsetsPicksExporter(BaseExporter):
 
     def _query_materialized_picks(self, target_date: str) -> List[Dict[str, Any]]:
         """
-        Query materialized subset picks from current_subset_picks table.
+        Query materialized subset picks from current_subset_picks table (all models).
 
         Uses the latest version_id for the date (append-only design, no is_current flag).
 
@@ -106,6 +106,7 @@ class AllSubsetsPicksExporter(BaseExporter):
         SELECT
           subset_id,
           subset_name,
+          system_id,
           player_name,
           team,
           opponent,
@@ -120,7 +121,7 @@ class AllSubsetsPicksExporter(BaseExporter):
             FROM `nba_predictions.current_subset_picks`
             WHERE game_date = @target_date
           )
-        ORDER BY subset_id, composite_score DESC
+        ORDER BY system_id, subset_id, composite_score DESC
         """
         params = [
             bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
@@ -141,6 +142,8 @@ class AllSubsetsPicksExporter(BaseExporter):
         """
         Build export JSON from materialized picks data.
 
+        Session 188: Groups picks by model, then by subset within each model.
+
         Args:
             target_date: Date string in YYYY-MM-DD format
             materialized_picks: Rows from current_subset_picks
@@ -152,50 +155,61 @@ class AllSubsetsPicksExporter(BaseExporter):
         """
         records = records or {}
 
-        # Group picks by subset_id
-        picks_by_subset = {}
+        # Group picks by system_id -> subset_id
+        picks_by_model = defaultdict(lambda: defaultdict(list))
         for pick in materialized_picks:
-            sid = pick['subset_id']
-            if sid not in picks_by_subset:
-                picks_by_subset[sid] = {
-                    'subset_name': pick['subset_name'],
-                    'picks': [],
-                }
-            picks_by_subset[sid]['picks'].append(pick)
+            system_id = pick.get('system_id') or CHAMPION_SYSTEM_ID
+            picks_by_model[system_id][pick['subset_id']].append(pick)
 
-        # Build clean groups
-        clean_groups = []
-        for subset_id, data in picks_by_subset.items():
-            public = get_public_name(subset_id)
-            subset_record = records.get(subset_id, self._empty_record())
+        # Build model_groups
+        model_groups = []
+        for system_id, subsets_data in picks_by_model.items():
+            display = get_model_display_info(system_id)
 
-            clean_picks = []
-            for pick in data['picks']:
-                clean_picks.append({
-                    'player': pick['player_name'],
-                    'team': pick['team'],
-                    'opponent': pick['opponent'],
-                    'prediction': round(pick['predicted_points'], 1),
-                    'line': round(pick['current_points_line'], 1),
-                    'direction': pick['recommendation'],
+            clean_subsets = []
+            for subset_id, picks in subsets_data.items():
+                public = get_public_name(subset_id)
+                subset_record = records.get(subset_id)
+                if subset_record is None:
+                    subset_record = None  # New models: null record -> website shows "New"
+
+                clean_picks = []
+                for pick in picks:
+                    clean_picks.append({
+                        'player': pick['player_name'],
+                        'team': pick['team'],
+                        'opponent': pick['opponent'],
+                        'prediction': round(pick['predicted_points'], 1),
+                        'line': round(pick['current_points_line'], 1),
+                        'direction': pick['recommendation'],
+                    })
+
+                clean_subsets.append({
+                    'id': public['id'],
+                    'name': public['name'],
+                    'record': subset_record,
+                    'picks': clean_picks,
                 })
 
-            clean_groups.append({
-                'id': public['id'],
-                'name': public['name'],
-                'record': subset_record,
-                'picks': clean_picks,
+            clean_subsets.sort(key=lambda x: int(x['id']) if x['id'].isdigit() else 999)
+
+            model_groups.append({
+                'model_id': display['codename'],
+                'model_name': display['display_name'],
+                'model_type': display['model_type'],
+                'description': display['description'],
+                'signal': signal,
+                'subsets': clean_subsets,
             })
 
-        # Sort by ID
-        clean_groups.sort(key=lambda x: int(x['id']) if x['id'].isdigit() else 999)
+        # Sort: champion first, then by codename
+        model_groups.sort(key=lambda x: (0 if x['model_id'] == CHAMPION_CODENAME else 1, x['model_id']))
 
         return {
             'date': target_date,
             'generated_at': self.get_generated_at(),
-            'model': get_model_codename('catboost_v9'),
-            'signal': signal,
-            'groups': clean_groups,
+            'version': 2,
+            'model_groups': model_groups,
         }
 
     def _build_json_on_the_fly(
@@ -207,6 +221,8 @@ class AllSubsetsPicksExporter(BaseExporter):
         """
         Fallback: compute subset picks on-the-fly (for dates without materialized data).
 
+        Session 188: Multi-model support. Groups subsets by model.
+
         Args:
             target_date: Date string in YYYY-MM-DD format
             signal: Public signal string
@@ -217,48 +233,69 @@ class AllSubsetsPicksExporter(BaseExporter):
         """
         records = records or {}
         subsets = self._query_subset_definitions()
-        predictions = self._query_all_predictions(target_date)
         daily_signal = self._query_daily_signal(target_date)
 
-        clean_groups = []
+        # Group definitions by system_id
+        subsets_by_model = defaultdict(list)
         for subset in subsets:
-            subset_picks = self._filter_picks_for_subset(
-                predictions, subset, daily_signal
-            )
-            public = get_public_name(subset['subset_id'])
-            subset_record = records.get(subset['subset_id'], self._empty_record())
+            subsets_by_model[subset['system_id']].append(subset)
 
-            clean_picks = []
-            for pick in subset_picks:
-                clean_picks.append({
-                    'player': pick['player_name'],
-                    'team': pick['team'],
-                    'opponent': pick['opponent'],
-                    'prediction': round(pick['predicted_points'], 1),
-                    'line': round(pick['current_points_line'], 1),
-                    'direction': pick['recommendation'],
+        model_groups = []
+        for system_id, model_subsets in subsets_by_model.items():
+            predictions = self._query_all_predictions(target_date, system_id)
+            display = get_model_display_info(system_id)
+
+            clean_subsets = []
+            for subset in model_subsets:
+                subset_picks = self._filter_picks_for_subset(
+                    predictions, subset, daily_signal
+                )
+                public = get_public_name(subset['subset_id'])
+                subset_record = records.get(subset['subset_id'])
+                if subset_record is None:
+                    subset_record = None
+
+                clean_picks = []
+                for pick in subset_picks:
+                    clean_picks.append({
+                        'player': pick['player_name'],
+                        'team': pick['team'],
+                        'opponent': pick['opponent'],
+                        'prediction': round(pick['predicted_points'], 1),
+                        'line': round(pick['current_points_line'], 1),
+                        'direction': pick['recommendation'],
+                    })
+
+                clean_subsets.append({
+                    'id': public['id'],
+                    'name': public['name'],
+                    'record': subset_record,
+                    'picks': clean_picks,
                 })
 
-            clean_groups.append({
-                'id': public['id'],
-                'name': public['name'],
-                'record': subset_record,
-                'picks': clean_picks,
+            clean_subsets.sort(key=lambda x: int(x['id']) if x['id'].isdigit() else 999)
+
+            model_groups.append({
+                'model_id': display['codename'],
+                'model_name': display['display_name'],
+                'model_type': display['model_type'],
+                'description': display['description'],
+                'signal': signal,
+                'subsets': clean_subsets,
             })
 
-        clean_groups.sort(key=lambda x: int(x['id']) if x['id'].isdigit() else 999)
+        model_groups.sort(key=lambda x: (0 if x['model_id'] == CHAMPION_CODENAME else 1, x['model_id']))
 
         return {
             'date': target_date,
             'generated_at': self.get_generated_at(),
-            'model': get_model_codename('catboost_v9'),
-            'signal': signal,
-            'groups': clean_groups,
+            'version': 2,
+            'model_groups': model_groups,
         }
 
     def _query_subset_definitions(self) -> List[Dict[str, Any]]:
         """
-        Query all active subset definitions.
+        Query all active subset definitions (all models).
 
         Returns:
             List of subset definition dictionaries
@@ -280,8 +317,7 @@ class AllSubsetsPicksExporter(BaseExporter):
           is_active
         FROM `nba_predictions.dynamic_subset_definitions`
         WHERE is_active = TRUE
-          AND system_id = 'catboost_v9'
-        ORDER BY subset_id
+        ORDER BY system_id, subset_id
         """
 
         return self.query_to_list(query)
@@ -291,12 +327,13 @@ class AllSubsetsPicksExporter(BaseExporter):
     # and hit at 51.9% vs 56.8% for high quality (85%+)
     MIN_FEATURE_QUALITY_SCORE = 85.0
 
-    def _query_all_predictions(self, target_date: str) -> List[Dict[str, Any]]:
+    def _query_all_predictions(self, target_date: str, system_id: str = CHAMPION_SYSTEM_ID) -> List[Dict[str, Any]]:
         """
-        Query all predictions for a specific date (fallback path).
+        Query all predictions for a specific date and model (fallback path).
 
         Args:
             target_date: Date string in YYYY-MM-DD format
+            system_id: Model system_id to query
 
         Returns:
             List of prediction dictionaries
@@ -320,7 +357,6 @@ class AllSubsetsPicksExporter(BaseExporter):
           p.confidence_score,
           ABS(p.predicted_points - p.current_points_line) as edge,
           (ABS(p.predicted_points - p.current_points_line) * 10) + (p.confidence_score * 0.5) as composite_score,
-          -- Session 94: Include feature quality for filtering
           COALESCE(f.feature_quality_score, 0) as feature_quality_score
         FROM `nba_predictions.player_prop_predictions` p
         LEFT JOIN player_names pn
@@ -328,32 +364,30 @@ class AllSubsetsPicksExporter(BaseExporter):
         LEFT JOIN `nba_analytics.player_game_summary` pgs
           ON p.player_lookup = pgs.player_lookup
           AND p.game_date = pgs.game_date
-        -- Session 94: Join feature store to get quality score
         LEFT JOIN `nba_predictions.ml_feature_store_v2` f
           ON p.player_lookup = f.player_lookup
           AND p.game_date = f.game_date
         WHERE p.game_date = @target_date
-          AND p.system_id = 'catboost_v9'
+          AND p.system_id = @system_id
           AND p.is_active = TRUE
-          AND p.recommendation IN ('OVER', 'UNDER')  -- Exclude PASS (non-bets)
+          AND p.recommendation IN ('OVER', 'UNDER')
           AND p.current_points_line IS NOT NULL
-          AND pgs.team_abbr IS NOT NULL  -- Only include picks with complete context
-          -- Session 94: Filter out low-quality predictions (missing BDB data etc.)
-          -- Players with quality < 85% have 51.9% hit rate vs 56.8% for 85%+
+          AND pgs.team_abbr IS NOT NULL
           AND COALESCE(f.feature_quality_score, 0) >= @min_quality
         ORDER BY composite_score DESC
         """
 
         params = [
             bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
-            bigquery.ScalarQueryParameter('min_quality', 'FLOAT64', self.MIN_FEATURE_QUALITY_SCORE)
+            bigquery.ScalarQueryParameter('system_id', 'STRING', system_id),
+            bigquery.ScalarQueryParameter('min_quality', 'FLOAT64', self.MIN_FEATURE_QUALITY_SCORE),
         ]
 
         return self.query_to_list(query, params)
 
     def _query_daily_signal(self, target_date: str) -> Optional[Dict[str, Any]]:
         """
-        Query daily signal for filtering (fallback path).
+        Query daily signal from champion model (signal reflects market conditions).
 
         Args:
             target_date: Date string in YYYY-MM-DD format
@@ -368,12 +402,13 @@ class AllSubsetsPicksExporter(BaseExporter):
           pct_over
         FROM `nba_predictions.daily_prediction_signals`
         WHERE game_date = @target_date
-          AND system_id = 'catboost_v9'
+          AND system_id = @system_id
         LIMIT 1
         """
 
         params = [
-            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date)
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+            bigquery.ScalarQueryParameter('system_id', 'STRING', CHAMPION_SYSTEM_ID),
         ]
 
         results = self.query_to_list(query, params)
@@ -628,9 +663,14 @@ class AllSubsetsPicksExporter(BaseExporter):
             cache_control='public, max-age=300'  # 5 minutes
         )
 
-        total_picks = sum(len(g['picks']) for g in json_data.get('groups', []))
+        total_picks = sum(
+            len(p) for mg in json_data.get('model_groups', [])
+            for s in mg.get('subsets', [])
+            for p in [s.get('picks', [])]
+        )
+        total_models = len(json_data.get('model_groups', []))
         logger.info(
-            f"Exported {len(json_data.get('groups', []))} groups "
+            f"Exported {total_models} model groups "
             f"with {total_picks} total picks for {target_date} to {gcs_path}"
         )
 

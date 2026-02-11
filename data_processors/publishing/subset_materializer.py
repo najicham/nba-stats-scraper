@@ -12,9 +12,11 @@ Design: APPEND-ONLY
   so each creates a new version. Consumers select the version they need.
 
 Session 153: Created to materialize subsets at prediction time.
+Session 188: Multi-model support — queries all active models, writes system_id per row.
 """
 
 import logging
+from collections import defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Dict, List, Any, Optional
@@ -26,6 +28,9 @@ from shared.config.gcp_config import get_project_id
 from shared.config.subset_public_names import get_public_name
 
 logger = logging.getLogger(__name__)
+
+# Champion model — used as fallback for daily signal
+CHAMPION_SYSTEM_ID = 'catboost_v9'
 
 # Minimum feature quality score for picks to be included
 # Session 94: Players with quality < 85% have 51.9% hit rate vs 56.8% for 85%+
@@ -74,7 +79,7 @@ class SubsetMaterializer:
             f"(version={version_id}, trigger={trigger_source})"
         )
 
-        # 1. Load subset definitions
+        # 1. Load subset definitions (all active models)
         subsets = self._query_subset_definitions()
         if not subsets:
             logger.warning(f"No active subset definitions found")
@@ -86,78 +91,81 @@ class SubsetMaterializer:
                 'status': 'no_definitions',
             }
 
-        # 2. Load predictions with full provenance
-        predictions = self._query_all_predictions(game_date)
-        if not predictions:
-            logger.warning(f"No predictions found for {game_date}")
-            return {
-                'version_id': version_id,
-                'game_date': game_date,
-                'total_picks': 0,
-                'subsets': {},
-                'status': 'no_predictions',
-            }
+        # 2. Group definitions by system_id
+        subsets_by_model = defaultdict(list)
+        for subset in subsets:
+            subsets_by_model[subset['system_id']].append(subset)
 
-        # 3. Load daily signal for subset filtering + version-level context
+        # 3. Load daily signal (champion model — signal is about market conditions)
         daily_signal = self._query_daily_signal(game_date)
         signal_value = daily_signal.get('daily_signal') if daily_signal else None
         pct_over_value = daily_signal.get('pct_over') if daily_signal else None
 
-        # 4. Compute and build rows for each subset (append-only, no updates)
+        # 4. Process each model's subsets
         rows = []
         subsets_summary = {}
-        total_predictions_available = len(predictions)
+        total_predictions_available = 0
 
-        for subset in subsets:
-            subset_id = subset['subset_id']
-            filtered = self._filter_picks_for_subset(predictions, subset, daily_signal)
+        for system_id, model_subsets in subsets_by_model.items():
+            predictions = self._query_all_predictions(game_date, system_id)
+            if not predictions:
+                logger.info(f"No predictions for {game_date} from {system_id}")
+                continue
 
-            public = get_public_name(subset_id)
+            total_predictions_available += len(predictions)
 
-            for pick in filtered:
-                rows.append({
-                    'game_date': game_date,
-                    'subset_id': subset_id,
-                    'player_lookup': pick['player_lookup'],
-                    'prediction_id': pick.get('prediction_id'),
-                    'game_id': pick.get('game_id'),
-                    'rank_in_subset': pick.get('rank_in_subset'),
-                    'version_id': version_id,
-                    'computed_at': computed_at.isoformat(),
-                    'trigger_source': trigger_source,
-                    'batch_id': batch_id,
-                    # Denormalized pick data
-                    'player_name': pick['player_name'],
-                    'team': pick['team'],
-                    'opponent': pick['opponent'],
-                    'predicted_points': pick['predicted_points'],
-                    'current_points_line': pick['current_points_line'],
-                    'recommendation': pick['recommendation'],
-                    'confidence_score': pick['confidence_score'],
-                    'edge': pick['edge'],
-                    'composite_score': pick['composite_score'],
-                    # Data quality provenance
-                    'feature_quality_score': pick['feature_quality_score'],
-                    'default_feature_count': pick.get('default_feature_count'),
-                    'line_source': pick.get('line_source'),
-                    'prediction_run_mode': pick.get('prediction_run_mode'),
-                    'prediction_made_before_game': pick.get('prediction_made_before_game'),
-                    'quality_alert_level': pick.get('quality_alert_level'),
-                    # Subset metadata
-                    'subset_name': public['name'],
-                    'min_edge': float(subset['min_edge']) if subset.get('min_edge') else None,
-                    'min_confidence': float(subset['min_confidence']) if subset.get('min_confidence') else None,
-                    'top_n': int(subset['top_n']) if subset.get('top_n') else None,
-                    # Version-level context
-                    'daily_signal': signal_value,
-                    'pct_over': pct_over_value,
-                    'total_predictions_available': total_predictions_available,
-                })
+            for subset in model_subsets:
+                subset_id = subset['subset_id']
+                filtered = self._filter_picks_for_subset(predictions, subset, daily_signal)
 
-            subsets_summary[subset_id] = {
-                'name': public['name'],
-                'picks': len(filtered),
-            }
+                public = get_public_name(subset_id)
+
+                for pick in filtered:
+                    rows.append({
+                        'game_date': game_date,
+                        'subset_id': subset_id,
+                        'player_lookup': pick['player_lookup'],
+                        'prediction_id': pick.get('prediction_id'),
+                        'game_id': pick.get('game_id'),
+                        'rank_in_subset': pick.get('rank_in_subset'),
+                        'system_id': system_id,
+                        'version_id': version_id,
+                        'computed_at': computed_at.isoformat(),
+                        'trigger_source': trigger_source,
+                        'batch_id': batch_id,
+                        # Denormalized pick data
+                        'player_name': pick['player_name'],
+                        'team': pick['team'],
+                        'opponent': pick['opponent'],
+                        'predicted_points': pick['predicted_points'],
+                        'current_points_line': pick['current_points_line'],
+                        'recommendation': pick['recommendation'],
+                        'confidence_score': pick['confidence_score'],
+                        'edge': pick['edge'],
+                        'composite_score': pick['composite_score'],
+                        # Data quality provenance
+                        'feature_quality_score': pick['feature_quality_score'],
+                        'default_feature_count': pick.get('default_feature_count'),
+                        'line_source': pick.get('line_source'),
+                        'prediction_run_mode': pick.get('prediction_run_mode'),
+                        'prediction_made_before_game': pick.get('prediction_made_before_game'),
+                        'quality_alert_level': pick.get('quality_alert_level'),
+                        # Subset metadata
+                        'subset_name': public['name'],
+                        'min_edge': float(subset['min_edge']) if subset.get('min_edge') else None,
+                        'min_confidence': float(subset['min_confidence']) if subset.get('min_confidence') else None,
+                        'top_n': int(subset['top_n']) if subset.get('top_n') else None,
+                        # Version-level context
+                        'daily_signal': signal_value,
+                        'pct_over': pct_over_value,
+                        'total_predictions_available': len(predictions),
+                    })
+
+                subsets_summary[subset_id] = {
+                    'name': public['name'],
+                    'picks': len(filtered),
+                    'system_id': system_id,
+                }
 
         # 5. Write to BigQuery (append-only, no deletes or updates)
         if rows:
@@ -166,7 +174,7 @@ class SubsetMaterializer:
         total_picks = len(rows)
         logger.info(
             f"Materialized {total_picks} picks across {len(subsets_summary)} subsets "
-            f"for {game_date} (version={version_id}, "
+            f"({len(subsets_by_model)} models) for {game_date} (version={version_id}, "
             f"predictions_available={total_predictions_available}, "
             f"signal={signal_value})"
         )
@@ -198,7 +206,7 @@ class SubsetMaterializer:
         logger.info(f"Inserted {len(cleaned_rows)} rows to {self.table_id}")
 
     def _query_subset_definitions(self) -> List[Dict[str, Any]]:
-        """Query all active subset definitions."""
+        """Query all active subset definitions (all models)."""
         query = """
         SELECT
           subset_id,
@@ -216,16 +224,15 @@ class SubsetMaterializer:
           is_active
         FROM `nba_predictions.dynamic_subset_definitions`
         WHERE is_active = TRUE
-          AND system_id = 'catboost_v9'
-        ORDER BY subset_id
+        ORDER BY system_id, subset_id
         """
         job_config = bigquery.QueryJobConfig()
         result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
         return [dict(row) for row in result]
 
-    def _query_all_predictions(self, game_date: str) -> List[Dict[str, Any]]:
+    def _query_all_predictions(self, game_date: str, system_id: str = CHAMPION_SYSTEM_ID) -> List[Dict[str, Any]]:
         """
-        Query all active predictions for a date with full provenance.
+        Query all active predictions for a date and model with full provenance.
 
         Includes data quality fields from predictions for subset-level tracking.
         """
@@ -265,17 +272,17 @@ class SubsetMaterializer:
           ON p.player_lookup = f.player_lookup
           AND p.game_date = f.game_date
         WHERE p.game_date = @game_date
-          AND p.system_id = 'catboost_v9'
+          AND p.system_id = @system_id
           AND p.is_active = TRUE
           AND p.recommendation IN ('OVER', 'UNDER')
           AND p.current_points_line IS NOT NULL
           AND pgs.team_abbr IS NOT NULL
           AND COALESCE(f.feature_quality_score, 0) >= @min_quality
-          -- Session 170: Filter to current production model to prevent stale model predictions leaking
+          -- Session 170: Filter to current model_version to prevent stale predictions leaking
           AND p.model_version = (
             SELECT model_version
             FROM `nba_predictions.player_prop_predictions`
-            WHERE game_date = @game_date AND system_id = 'catboost_v9'
+            WHERE game_date = @game_date AND system_id = @system_id
               AND is_active = TRUE AND current_points_line IS NOT NULL
             GROUP BY model_version ORDER BY COUNT(*) DESC LIMIT 1
           )
@@ -284,6 +291,7 @@ class SubsetMaterializer:
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ScalarQueryParameter('game_date', 'DATE', game_date),
+                bigquery.ScalarQueryParameter('system_id', 'STRING', system_id),
                 bigquery.ScalarQueryParameter('min_quality', 'FLOAT64', MIN_FEATURE_QUALITY_SCORE),
             ]
         )
@@ -291,17 +299,18 @@ class SubsetMaterializer:
         return [dict(row) for row in result]
 
     def _query_daily_signal(self, game_date: str) -> Optional[Dict[str, Any]]:
-        """Query daily signal for filtering."""
+        """Query daily signal from champion model (signal reflects market conditions, not model-specific)."""
         query = """
         SELECT game_date, daily_signal, pct_over
         FROM `nba_predictions.daily_prediction_signals`
         WHERE game_date = @game_date
-          AND system_id = 'catboost_v9'
+          AND system_id = @system_id
         LIMIT 1
         """
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
                 bigquery.ScalarQueryParameter('game_date', 'DATE', game_date),
+                bigquery.ScalarQueryParameter('system_id', 'STRING', CHAMPION_SYSTEM_ID),
             ]
         )
         result = self.bq_client.query(query, job_config=job_config).result(timeout=60)

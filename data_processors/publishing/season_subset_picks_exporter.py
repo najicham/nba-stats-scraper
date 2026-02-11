@@ -5,44 +5,52 @@ Exports full-season subset picks in a single file for instant tab/date switching
 Includes W-L records per subset (season/month/week) and per-pick results.
 
 Session 158: Created for new subset picks page with tabs per subset.
+Session 191: Multi-model v2 — model_groups structure with per-model picks and records.
 """
 
 import logging
+from collections import defaultdict
 from typing import Dict, List, Any, Optional
 from datetime import date, timedelta
 
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
-from shared.config.model_codenames import get_model_codename
+from shared.config.model_codenames import get_model_display_info, CHAMPION_CODENAME
 from shared.config.subset_public_names import get_public_name
 
 logger = logging.getLogger(__name__)
 
-# Signal mapping: internal → public
+# Signal mapping: internal -> public
 SIGNAL_MAP = {
     'GREEN': 'favorable',
     'YELLOW': 'neutral',
     'RED': 'challenging',
 }
 
+# Champion model — used for signal queries
+CHAMPION_SYSTEM_ID = 'catboost_v9'
+
 
 class SeasonSubsetPicksExporter(BaseExporter):
     """
-    Export full-season subset picks in one file.
+    Export full-season subset picks in one file, grouped by model.
 
     Output file:
     - subsets/season.json
 
-    JSON structure:
+    Session 191: v2 multi-model structure.
+
+    JSON structure (v2):
     {
-        "generated_at": "2026-02-08T...",
-        "model": "926A",
+        "generated_at": "2026-02-10T...",
+        "version": 2,
         "season": "2025-26",
-        "groups": [
+        "model_groups": [
             {
-                "id": "1",
-                "name": "Top Pick",
+                "model_id": "phoenix",
+                "model_name": "Phoenix",
+                "model_type": "primary",
                 "record": {
                     "season": {"wins": 42, "losses": 18, "pct": 70.0},
                     "month": {"wins": 8, "losses": 3, "pct": 72.7},
@@ -80,30 +88,38 @@ class SeasonSubsetPicksExporter(BaseExporter):
         return season_start, season_label
 
     def generate_json(self, **kwargs) -> Dict[str, Any]:
-        """Generate full-season subset picks JSON."""
+        """Generate full-season subset picks JSON with multi-model support."""
         today = date.today()
         season_start, season_label = self._get_season_bounds(today)
 
-        # Get all picks with results for the season
+        # Get all picks with results for the season (all models)
         all_picks = self._query_season_picks(season_start.isoformat(), today.isoformat())
 
         # Get daily signals for the season
         signals = self._query_season_signals(season_start.isoformat(), today.isoformat())
 
-        # Get W-L records per subset
+        # Get W-L records per subset (uses performance view)
         records = self._query_records(season_start, today)
 
-        # Build grouped structure: subset → date → picks
-        groups_data = self._group_picks(all_picks, signals)
+        # Group picks: system_id -> subset_id -> date -> picks
+        picks_by_model = self._group_picks_by_model(all_picks, signals)
 
-        # Build clean output
-        clean_groups = []
-        for subset_id in sorted(groups_data.keys()):
-            dates_data = groups_data[subset_id]
-            public = get_public_name(subset_id)
-            subset_record = records.get(subset_id, _empty_record())
+        # Get subset definitions to know which model owns which subset
+        subset_defs = self._query_subset_definitions()
+        model_subsets = defaultdict(set)
+        for d in subset_defs:
+            model_subsets[d['system_id']].add(d['subset_id'])
 
-            # Build dates array (newest first)
+        # Build model_groups
+        model_groups = []
+        for system_id, subset_ids in model_subsets.items():
+            display = get_model_display_info(system_id)
+
+            # Aggregate records across this model's subsets
+            model_record = self._aggregate_records(records, subset_ids, season_start, today)
+
+            # Build dates array from picks
+            dates_data = picks_by_model.get(system_id, {})
             clean_dates = []
             for game_date in sorted(dates_data.keys(), reverse=True):
                 day_data = dates_data[game_date]
@@ -113,26 +129,27 @@ class SeasonSubsetPicksExporter(BaseExporter):
                     'picks': day_data['picks'],
                 })
 
-            clean_groups.append({
-                'id': public['id'],
-                'name': public['name'],
-                'record': subset_record,
+            model_groups.append({
+                'model_id': display['codename'],
+                'model_name': display['display_name'],
+                'model_type': display['model_type'],
+                'record': model_record,
                 'dates': clean_dates,
             })
 
-        # Sort groups by ID
-        clean_groups.sort(key=lambda x: int(x['id']) if x['id'].isdigit() else 999)
+        # Sort: champion first, then by codename
+        model_groups.sort(key=lambda x: (0 if x['model_id'] == CHAMPION_CODENAME else 1, x['model_id']))
 
         return {
             'generated_at': self.get_generated_at(),
-            'model': get_model_codename('catboost_v9'),
+            'version': 2,
             'season': season_label,
-            'groups': clean_groups,
+            'model_groups': model_groups,
         }
 
     def _query_season_picks(self, start_date: str, end_date: str) -> List[Dict]:
         """
-        Query all subset picks with actual results for the season.
+        Query all subset picks with actual results for the season (all models).
 
         Joins current_subset_picks with player_game_summary for actuals.
         Uses latest version_id per date.
@@ -146,6 +163,7 @@ class SeasonSubsetPicksExporter(BaseExporter):
         )
         SELECT
           csp.subset_id,
+          csp.system_id,
           csp.game_date,
           csp.player_name,
           csp.team,
@@ -162,7 +180,7 @@ class SeasonSubsetPicksExporter(BaseExporter):
           AND csp.game_date = pgs.game_date
         WHERE csp.game_date >= @start_date
           AND csp.game_date < @end_date
-        ORDER BY csp.game_date DESC, csp.subset_id, csp.composite_score DESC
+        ORDER BY csp.game_date DESC, csp.system_id, csp.subset_id, csp.composite_score DESC
         """
 
         params = [
@@ -177,18 +195,19 @@ class SeasonSubsetPicksExporter(BaseExporter):
             return []
 
     def _query_season_signals(self, start_date: str, end_date: str) -> Dict[str, str]:
-        """Query daily signals for the season, return date → public signal mapping."""
+        """Query daily signals for the season, return date -> public signal mapping."""
         query = """
         SELECT game_date, daily_signal
         FROM `nba_predictions.daily_prediction_signals`
         WHERE game_date >= @start_date
           AND game_date < @end_date
-          AND system_id = 'catboost_v9'
+          AND system_id = @system_id
         """
 
         params = [
             bigquery.ScalarQueryParameter('start_date', 'DATE', start_date),
             bigquery.ScalarQueryParameter('end_date', 'DATE', end_date),
+            bigquery.ScalarQueryParameter('system_id', 'STRING', CHAMPION_SYSTEM_ID),
         ]
 
         try:
@@ -200,6 +219,16 @@ class SeasonSubsetPicksExporter(BaseExporter):
         except Exception as e:
             logger.warning(f"Failed to query season signals: {e}")
             return {}
+
+    def _query_subset_definitions(self) -> List[Dict]:
+        """Query active subset definitions to discover models."""
+        query = """
+        SELECT subset_id, system_id
+        FROM `nba_predictions.dynamic_subset_definitions`
+        WHERE is_active = TRUE
+        ORDER BY system_id, subset_id
+        """
+        return self.query_to_list(query)
 
     def _query_records(self, season_start: date, today: date) -> Dict[str, Dict]:
         """Query W-L records for all subsets across season/month/week windows."""
@@ -267,31 +296,48 @@ class SeasonSubsetPicksExporter(BaseExporter):
             }
         return records
 
-    def _group_picks(
+    def _aggregate_records(
+        self,
+        records: Dict[str, Dict],
+        subset_ids: set,
+        season_start: date,
+        today: date,
+    ) -> Optional[Dict]:
+        """
+        Aggregate W-L records across a model's subsets.
+
+        Uses the model's 'all picks' subset if available, otherwise sums across subsets.
+        Returns None if no grading data exists (new model -> website shows "New" badge).
+        """
+        # Find the best representative subset for this model's overall record
+        # Prefer the broadest subset (all picks / high_edge_all)
+        broad_subsets = [sid for sid in subset_ids if 'all' in sid]
+        representative = broad_subsets[0] if broad_subsets else (list(subset_ids)[0] if subset_ids else None)
+
+        if representative and representative in records:
+            return records[representative]
+
+        # No grading data — return None so frontend shows "New" badge
+        return None
+
+    def _group_picks_by_model(
         self,
         all_picks: List[Dict],
         signals: Dict[str, str],
     ) -> Dict[str, Dict[str, Dict]]:
         """
-        Group flat pick rows into subset → date → picks structure.
+        Group flat pick rows into system_id -> date -> picks structure.
 
         Returns:
-            {subset_id: {date_str: {'signal': str, 'picks': [...]}}
+            {system_id: {date_str: {'signal': str, 'picks': [...]}}}
         """
-        groups = {}
+        groups = defaultdict(lambda: defaultdict(lambda: {'signal': 'neutral', 'picks': []}))
 
         for pick in all_picks:
-            subset_id = pick['subset_id']
+            system_id = pick.get('system_id') or CHAMPION_SYSTEM_ID
             game_date = str(pick['game_date'])
 
-            if subset_id not in groups:
-                groups[subset_id] = {}
-
-            if game_date not in groups[subset_id]:
-                groups[subset_id][game_date] = {
-                    'signal': signals.get(game_date, 'neutral'),
-                    'picks': [],
-                }
+            groups[system_id][game_date]['signal'] = signals.get(game_date, 'neutral')
 
             # Determine result
             actual = pick.get('actual_points')
@@ -322,9 +368,9 @@ class SeasonSubsetPicksExporter(BaseExporter):
                 clean_pick['actual'] = None
                 clean_pick['result'] = None
 
-            groups[subset_id][game_date]['picks'].append(clean_pick)
+            groups[system_id][game_date]['picks'].append(clean_pick)
 
-        return groups
+        return dict(groups)
 
     def export(self, **kwargs) -> str:
         """Generate and upload season subset picks to GCS."""
@@ -336,10 +382,10 @@ class SeasonSubsetPicksExporter(BaseExporter):
             cache_control='public, max-age=3600'  # 1 hour cache
         )
 
-        total_groups = len(json_data.get('groups', []))
-        total_dates = sum(len(g.get('dates', [])) for g in json_data.get('groups', []))
+        total_groups = len(json_data.get('model_groups', []))
+        total_dates = sum(len(g.get('dates', [])) for g in json_data.get('model_groups', []))
         logger.info(
-            f"Exported season subset picks: {total_groups} groups, "
+            f"Exported season subset picks: {total_groups} model groups, "
             f"{total_dates} total date entries to {gcs_path}"
         )
 

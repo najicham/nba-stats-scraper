@@ -19,6 +19,13 @@ SUBSET_PUBLIC_NAMES = {
     'ultra_high_edge': {'id': '6', 'name': 'Ultra High Edge'},
     'green_light': {'id': '7', 'name': 'Green Light'},
     'all_picks': {'id': '8', 'name': 'All Picks'},
+    # QUANT Q43 subsets (Session 188)
+    'q43_under_top3': {'id': '9', 'name': 'UNDER Top 3'},
+    'q43_under_all': {'id': '10', 'name': 'UNDER All'},
+    'q43_all_picks': {'id': '11', 'name': 'Q43 All Picks'},
+    # QUANT Q45 subsets (Session 188)
+    'q45_under_top3': {'id': '12', 'name': 'Q45 UNDER Top 3'},
+    'q45_all_picks': {'id': '13', 'name': 'Q45 All Picks'},
 }
 
 # Reverse lookup

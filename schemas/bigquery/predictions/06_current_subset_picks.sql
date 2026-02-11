@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS nba_predictions.current_subset_picks (
     game_date DATE NOT NULL,
     subset_id STRING NOT NULL,
     player_lookup STRING NOT NULL,
+    system_id STRING,                   -- Model that produced this pick (e.g., 'catboost_v9', 'catboost_v9_q43_train1102_0131')
     prediction_id STRING,               -- FK to player_prop_predictions
     game_id STRING,                     -- FK to nba_schedule for per-game analysis
     rank_in_subset INT64,               -- Position within subset (1=best, 2=second, etc.)
