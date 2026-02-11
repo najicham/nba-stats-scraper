@@ -438,6 +438,11 @@ def main(cloud_event):
 
         else:
             # Default: run full daily export for yesterday
+            # Log warning for unrecognized message format
+            logger.warning(
+                f"[{correlation_id}] Unrecognized message format, falling back to daily export: "
+                f"{json.dumps(message_data)}"
+            )
             export_type = 'daily'
             target_date = get_target_date('yesterday')
             result = run_daily_export(
