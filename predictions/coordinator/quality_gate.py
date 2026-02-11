@@ -207,7 +207,7 @@ class QualityGate:
                     'quality_alert_level': row.quality_alert_level,
                     'matchup_quality_pct': float(row.matchup_quality_pct or 0),
                     'default_feature_count': int(row.default_feature_count or 0),
-                    'required_default_count': int(row.required_default_count or row.default_feature_count or 0),
+                    'required_default_count': int(row.required_default_count if row.required_default_count is not None else (row.default_feature_count or 0)),
                 }
             logger.info(f"Got quality scores for {len(scores)} players for {game_date}")
             return scores
