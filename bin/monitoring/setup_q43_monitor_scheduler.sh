@@ -56,9 +56,7 @@ gcloud run jobs create $JOB_NAME \
     --project $PROJECT_ID \
     --max-retries 2 \
     --task-timeout 5m \
-    --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID" \
-    --update-env-vars \
-        SLACK_WEBHOOK_URL_WARNING=$(gcloud secrets versions access latest --secret="slack-webhook-warning" --project=$PROJECT_ID 2>/dev/null || echo "") \
+    --set-env-vars "GCP_PROJECT_ID=$PROJECT_ID,SLACK_WEBHOOK_URL_WARNING=$(gcloud secrets versions access latest --secret="slack-webhook-warning" --project=$PROJECT_ID 2>/dev/null || echo "")" \
     || echo "Job may already exist, updating..."
 
 # Update if exists
