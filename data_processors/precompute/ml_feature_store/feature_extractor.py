@@ -660,7 +660,8 @@ class FeatureExtractor:
             season_phase,
             days_rest,
             player_status,
-            opponent_days_rest
+            opponent_days_rest,
+            games_in_last_7_days
         FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
         WHERE game_date = '{game_date}'
         """
@@ -1621,16 +1622,17 @@ class FeatureExtractor:
             game_id,
             team_abbr,
             opponent_team_abbr,
-            
+
             -- Features 15-17: Game Context
             home_game,
             back_to_back,
             season_phase,
-            
+
             -- For calculated features
             days_rest,
             player_status,
-            opponent_days_rest
+            opponent_days_rest,
+            games_in_last_7_days
         FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
         WHERE player_lookup = '{player_lookup}'
           AND game_date = '{game_date}'
