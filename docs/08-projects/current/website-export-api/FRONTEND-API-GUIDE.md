@@ -9,10 +9,14 @@ All data is served as pre-computed JSON files from Google Cloud Storage via CDN.
 ## Base URL
 
 ```
-https://storage.googleapis.com/nba-props-exports/
+https://storage.googleapis.com/nba-props-platform-api/v1/
 ```
 
-All paths below are relative to this base. Example: `picks/2026-02-10.json` fetches from `https://storage.googleapis.com/nba-props-exports/picks/2026-02-10.json`.
+All paths below are relative to this base. Example: `picks/2026-02-10.json` fetches from `https://storage.googleapis.com/nba-props-platform-api/v1/picks/2026-02-10.json`.
+
+### CORS
+
+CORS is configured for: `https://nbaprops.com`, `http://localhost:3000`, `http://localhost:5173`
 
 ---
 
