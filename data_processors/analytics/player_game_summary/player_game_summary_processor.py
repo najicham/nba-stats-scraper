@@ -1066,13 +1066,14 @@ class PlayerGameSummaryProcessor(
         deduplicated_props AS (
             SELECT
                 game_id,
+                game_date,
                 player_lookup,
                 points_line,
                 over_price_american,
                 under_price_american,
                 bookmaker,
                 ROW_NUMBER() OVER (
-                    PARTITION BY game_id, player_lookup
+                    PARTITION BY game_date, player_lookup
                     ORDER BY
                         CASE bookmaker
                             WHEN 'draftkings' THEN 1
@@ -1082,7 +1083,7 @@ class PlayerGameSummaryProcessor(
                         bookmaker
                 ) as rn
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE game_id IN (SELECT DISTINCT game_id FROM deduplicated_combined)
+            WHERE game_date IN (SELECT DISTINCT game_date FROM deduplicated_combined)
         ),
 
         -- Add props context
@@ -1095,7 +1096,7 @@ class PlayerGameSummaryProcessor(
                 p.bookmaker as points_line_source
             FROM deduplicated_combined c
             LEFT JOIN deduplicated_props p
-                ON c.game_id = p.game_id
+                ON c.game_date = p.game_date
                 AND c.player_lookup = p.player_lookup
                 AND p.rn = 1
         ),
@@ -2402,13 +2403,14 @@ class PlayerGameSummaryProcessor(
         deduplicated_props AS (
             SELECT
                 game_id,
+                game_date,
                 player_lookup,
                 points_line,
                 over_price_american,
                 under_price_american,
                 bookmaker,
                 ROW_NUMBER() OVER (
-                    PARTITION BY game_id, player_lookup
+                    PARTITION BY game_date, player_lookup
                     ORDER BY
                         CASE bookmaker
                             WHEN 'draftkings' THEN 1
@@ -2418,7 +2420,7 @@ class PlayerGameSummaryProcessor(
                         bookmaker
                 ) as rn
             FROM `{self.project_id}.nba_raw.odds_api_player_points_props`
-            WHERE game_id = @game_id
+            WHERE game_date = (SELECT DISTINCT game_date FROM deduplicated_combined)
         ),
 
         with_props AS (
@@ -2430,7 +2432,7 @@ class PlayerGameSummaryProcessor(
                 p.bookmaker as points_line_source
             FROM deduplicated_combined c
             LEFT JOIN deduplicated_props p
-                ON c.game_id = p.game_id
+                ON c.game_date = p.game_date
                 AND c.player_lookup = p.player_lookup
                 AND p.rn = 1
         ),
