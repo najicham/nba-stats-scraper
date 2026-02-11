@@ -171,6 +171,74 @@ git log -1 --format="%h"  # Compare
 
 ---
 
+### Timeout Cascade - Bug Fix Reveals Performance Issue (Session 201)
+
+**Symptom**: After fixing a crash bug, system starts timing out at exactly 540 seconds. Files that were previously created (due to fast crash) are now missing.
+
+**Real Example**: Phase 6 export - Fixed NoneType crash in `tonight_player_exporter.py`. Instead of crashing at 1 second, it now successfully processes all 200+ players, taking 400-600 seconds and consuming the entire 540s Cloud Function timeout BEFORE reaching critical exports (subset-picks, daily-signals).
+
+**Evidence**:
+```
+18:55 execution: latency=540.000711350s (exact timeout)
+19:03 execution: latency=540.001498303s (exact timeout)
+```
+
+**Root Cause Pattern**:
+1. Code has crash bug that fails fast (1-5s)
+2. Crash is caught by try/except, execution continues to later exports
+3. Fix the crash bug → now processes successfully but slowly (400-600s)
+4. Slow processing consumes timeout before reaching later exports
+5. Later exports silently never execute (no error, just timeout cutoff)
+
+**Why It's Hard to Detect**:
+- Logs don't show "timeout" error - just silent cutoff
+- Earlier exports succeed, creating false sense of health
+- Latency is EXACTLY the timeout value (540.000s), not an error code
+
+**Solution Pattern - Reorder by Performance**:
+```python
+# BEFORE (crash at step 2, steps 3+ still run)
+step1_fast()    # 5s
+step2_crashes() # 1s (crash, caught by try/except)
+step3_critical()# Never reached due to crash, BUT try/except lets it run
+step4_slow()    # Never runs due to crash
+
+# AFTER FIX (step 2 now slow, step 3+ never reached due to timeout)
+step1_fast()    # 5s
+step2_fixed()   # 500s (now works but slow) ← CONSUMES TIMEOUT
+step3_critical()# NEVER REACHED (timeout at 540s)
+step4_slow()    # NEVER REACHED
+
+# SOLUTION (reorder by speed, critical first)
+step1_fast()    # 5s ✅
+step3_critical()# 20s ✅ (MOVED UP)
+step2_fixed()   # 500s (may timeout, but critical exports already done) ⚠️
+step4_slow()    # May not run, but less critical
+```
+
+**Detection**:
+```bash
+# Check Cloud Run latencies for exact timeout
+gcloud logging read \
+  'resource.type="cloud_run_revision"
+   AND resource.labels.service_name="FUNCTION_NAME"' \
+  --limit=20 \
+  --format="value(timestamp,httpRequest.latency)" \
+  | grep "540\\..*s"  # Exact 540s = timeout
+```
+
+**Prevention**:
+1. **Order exports by criticality AND speed** - Fast critical exports first
+2. **Increase timeout** - If slow export is unavoidable, increase timeout (e.g., 540s → 900s)
+3. **Split slow exports** - Separate Cloud Function/scheduler for slow operations
+4. **Monitor latencies** - Alert if approaching timeout threshold (>80% of limit)
+
+**Key Lesson**: Fixing a crash bug can reveal a hidden performance issue. When exports that previously "worked" (via fast crash + try/except) suddenly stop after a fix, check for timeout cascade.
+
+**See**: `docs/08-projects/current/phase6-export-fix/` for full details (Session 201)
+
+---
+
 ## Deployment Issues
 
 ### Deployment Drift (Session 58)

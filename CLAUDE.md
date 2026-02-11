@@ -702,6 +702,9 @@ GROUP BY 1 ORDER BY 2 DESC;
 | **Phase 6 scheduler broken** | **Morning/pregame exports not firing** | **Two Cloud Scheduler jobs publish to non-existent `nba-phase6-export` topic. Should be `nba-phase6-export-trigger`. Needs fix.** |
 | **Orchestrator not triggering** | **Phase 2 complete but `_triggered=False`** | **CRITICAL (Session 197): Check Firestore `phase2_completion` for `_triggered` field. Manual trigger: `gcloud scheduler jobs run same-day-phase3`. See `docs/02-operations/ORCHESTRATOR-HEALTH.md`** |
 | **BDL scraper not running** | **0 BDL boxscore records** | **EXPECTED: BDL is intentionally disabled (unreliable). 60-70% minutes coverage is normal. NOT a bug.** |
+| **Phase 6 export failing** | **`cannot import name 'firestore'` or `ModuleNotFoundError: backfill_jobs`** | **FIXED Session 201: Add `google-cloud-firestore` to requirements.txt, ensure `backfill_jobs/` in Cloud Build deployment package. See `docs/08-projects/current/phase6-export-fix/`** |
+| **Phase 6 timeout** | **picks/{date}.json or signals/{date}.json not created, exports at exactly 540s** | **FIXED Session 201: Reordered exports (fast first, tonight-players last). Consider increasing timeout to 900s. See `docs/08-projects/current/phase6-export-fix/01-TECHNICAL-DETAILS.md`** |
+| **Phase 6 wrong model** | **Exports showing catboost_v8 predictions instead of catboost_v9** | **FIXED Session 201: Updated 10 exporter files to query `system_id = 'catboost_v9'`. Backfill historical dates using CLI: `PYTHONPATH=. python backfill_jobs/publishing/daily_export.py --date YYYY-MM-DD --only subset-picks,daily-signals,predictions,best-bets`** |
 
 **Full troubleshooting:** See `docs/02-operations/session-learnings.md`
 
