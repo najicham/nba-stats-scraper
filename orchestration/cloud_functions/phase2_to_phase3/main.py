@@ -877,6 +877,12 @@ def orchestrate_phase2_to_phase3(cloud_event):
         # Update completion state with atomic transaction
         doc_ref = db.collection('phase2_completion').document(game_date)
 
+        # Checkpoint 1: Log before transaction
+        logger.info(
+            f"CHECKPOINT_PRE_TRANSACTION: processor={processor_name}, "
+            f"game_date={game_date}, correlation_id={correlation_id}"
+        )
+
         # Create transaction and execute atomic update
         transaction = db.transaction()
         should_trigger, deadline_exceeded = update_completion_atomic(
@@ -890,6 +896,15 @@ def orchestrate_phase2_to_phase3(cloud_event):
                 'record_count': message_data.get('record_count', 0),
                 'execution_id': message_data.get('execution_id')
             }
+        )
+
+        # Checkpoint 2: Log after transaction
+        doc_snapshot = doc_ref.get()
+        current = doc_snapshot.to_dict() if doc_snapshot.exists else {}
+        completed_count = len([k for k in current.keys() if not k.startswith('_')])
+        logger.info(
+            f"CHECKPOINT_POST_TRANSACTION: should_trigger={should_trigger}, "
+            f"completed={completed_count}/{EXPECTED_PROCESSOR_COUNT}, game_date={game_date}"
         )
 
         # Week 1: Check if completion deadline has been exceeded
@@ -965,6 +980,13 @@ def orchestrate_phase2_to_phase3(cloud_event):
             logger.info(
                 f"✅ MONITORING: All {EXPECTED_PROCESSOR_COUNT} expected Phase 2 processors "
                 f"complete for {game_date} (correlation_id={correlation_id})"
+            )
+
+            # Checkpoint 3: Log when all processors complete
+            logger.info(
+                f"CHECKPOINT_TRIGGER_SET: All {EXPECTED_PROCESSOR_COUNT} processors complete, "
+                f"_triggered=True written to Firestore, game_date={game_date}, "
+                f"processors={list(EXPECTED_PROCESSOR_SET)}"
             )
 
             # Update BigQuery aggregate status (non-blocking)
@@ -1089,7 +1111,17 @@ def orchestrate_phase2_to_phase3(cloud_event):
                 logger.error(f"Phase boundary validation error: {validation_error}", exc_info=True)
         else:
             # Still waiting for more processors (and deadline not exceeded)
-            logger.info(f"MONITORING: Registered {processor_name} completion, waiting for others")
+            # Checkpoint 4: Log detailed waiting state
+            doc_snapshot = doc_ref.get()
+            current = doc_snapshot.to_dict() if doc_snapshot.exists else {}
+            completed_processors = [k for k in current.keys() if not k.startswith('_')]
+            completed_count = len(completed_processors)
+            missing_processors = list(EXPECTED_PROCESSOR_SET - set(completed_processors))
+            logger.info(
+                f"CHECKPOINT_WAITING: Registered {processor_name}, "
+                f"completed={completed_count}/{EXPECTED_PROCESSOR_COUNT}, "
+                f"missing={missing_processors}, game_date={game_date}"
+            )
 
     except Exception as e:
         logger.error(f"Error in Phase 2→3 orchestrator: {e}", exc_info=True)
