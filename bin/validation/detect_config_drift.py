@@ -31,7 +31,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Expected configurations for Cloud Functions
-EXPECTED_CLOUD_FUNCTIONS = {
+EXPECTED_CLOUD_FUNCTIONS = {# REMOVED Session 204: phase2-to-phase3-orchestrator (monitoring-only, no functional value)
+    # 
     'phase2-to-phase3-orchestrator': {
         'memory': '512Mi',
         'timeout': '60s',

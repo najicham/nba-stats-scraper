@@ -115,17 +115,7 @@ verify_pubsub_topics() {
 verify_cloud_functions() {
     log_section "Cloud Functions (Orchestrators)"
 
-    # Phase 2→3 Orchestrator
-    check_item
-    if gcloud functions describe phase2-to-phase3-orchestrator \
-        --region $REGION \
-        --gen2 \
-        --project $PROJECT_ID \
-        --format="value(state)" 2>/dev/null | grep -q "ACTIVE"; then
-        log_success "Phase 2→3 orchestrator: ACTIVE"
-    else
-        log_fail "Phase 2→3 orchestrator: NOT FOUND or INACTIVE"
-    fi
+    # Phase 2→3 check REMOVED Session 204 (orchestrator deleted)
 
     # Phase 3→4 Orchestrator
     check_item
@@ -241,7 +231,7 @@ show_test_commands() {
 
     echo -e "${YELLOW}2. View Orchestrator Logs:${NC}"
     echo "   ${BLUE}# Phase 2→3${NC}"
-    echo "   ${BLUE}gcloud functions logs read phase2-to-phase3-orchestrator \\${NC}"
+    # echo "   ${BLUE}gcloud functions logs read phase2-to-phase3-orchestrator \\${NC}"
     echo "   ${BLUE}     --region $REGION --limit 50${NC}"
     echo ""
     echo "   ${BLUE}# Phase 3→4${NC}"

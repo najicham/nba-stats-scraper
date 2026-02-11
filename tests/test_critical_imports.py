@@ -121,15 +121,9 @@ class TestSharedModuleImports:
 class TestOrchestratorImports:
     """Test orchestrator function imports."""
 
-    def test_phase2_to_phase3_imports(self):
-        """Test Phase 2→3 orchestrator imports."""
-        # Add orchestration directory to path
-        sys.path.insert(0, str(Path(__file__).parent.parent / "orchestration" / "cloud_functions" / "phase2_to_phase3"))
-        try:
-            import main as phase2_main
-            assert hasattr(phase2_main, 'orchestrate_phase2_to_phase3')
-        finally:
-            sys.path.pop(0)
+    # test_phase2_to_phase3_imports: REMOVED (Session 204)
+    # Phase 2→3 orchestrator deleted - was monitoring-only with no functional value
+    # Phase 3 triggers via direct Pub/Sub subscription, not orchestrator
 
     def test_phase3_to_phase4_imports(self):
         """Test Phase 3→4 orchestrator imports."""

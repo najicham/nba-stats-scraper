@@ -10,7 +10,7 @@
 #   ./bin/monitoring/check_cloud_resources.sh --check-logs  # Also check for OOM warnings
 #
 # Created: 2026-01-25
-# Reason: Memory limit exceeded error in phase2-to-phase3-orchestrator (256MB -> 253MB used)
+# Reason: Memory limit exceeded error in # phase2-to-phase3-orchestrator  # REMOVED Session 204 (256MB -> 253MB used)
 
 set -e
 
@@ -117,7 +117,7 @@ if [[ "$1" == "--check-logs" ]]; then
 
     # List of orchestrators to check
     orchestrators=(
-        "phase2-to-phase3-orchestrator"
+        "# phase2-to-phase3-orchestrator  # REMOVED Session 204"
         "phase3-to-phase4-orchestrator"
         "phase4-to-phase5-orchestrator"
         "phase5-to-phase6-orchestrator"

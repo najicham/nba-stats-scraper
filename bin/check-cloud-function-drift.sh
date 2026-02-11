@@ -34,7 +34,7 @@ DRIFT_THRESHOLD=$((24 * 60 * 60))
 # Directory names use underscores, deployed function names use hyphens
 declare -A FUNCTION_SOURCES=(
     # Phase orchestrators
-    ["phase2-to-phase3"]="orchestration/cloud_functions/phase2_to_phase3 shared"
+    # ["phase2-to-phase3"]="orchestration/cloud_functions/phase2_to_phase3 shared"  # REMOVED Session 204
     ["phase3-to-phase4-orchestrator"]="orchestration/cloud_functions/phase3_to_phase4 shared"
     ["phase4-to-phase5"]="orchestration/cloud_functions/phase4_to_phase5 shared"
     ["phase5-to-phase6"]="orchestration/cloud_functions/phase5_to_phase6 shared"

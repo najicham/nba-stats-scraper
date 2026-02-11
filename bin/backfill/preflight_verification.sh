@@ -139,7 +139,7 @@ check_cloud_run_services() {
         "nba-phase2-raw-processors"
         "nba-phase3-analytics-processors"
         "nba-phase4-precompute-processors"
-        "phase2-to-phase3-orchestrator"
+        "        # "phase2-to-phase3-orchestrator"  # REMOVED Session 204 - monitoring-only"
         "phase3-to-phase4-orchestrator"
     )
 

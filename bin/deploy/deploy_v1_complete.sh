@@ -134,7 +134,7 @@ check_prerequisites() {
     fi
 
     # Check if we're in project root
-    if [ ! -f "$PROJECT_ROOT/orchestration/cloud_functions/phase2_to_phase3/main.py" ]; then
+    if [ ! -f "$PROJECT_ROOT/orchestration/cloud_functions/phase3_to_phase4/main.py" ]; then
         log_error "Not in project root directory. Run from: nba-stats-scraper/"
         exit 1
     fi
@@ -176,26 +176,7 @@ deploy_infrastructure() {
     fi
 }
 
-deploy_phase2_to_phase3_orchestrator() {
-    if [ "$SKIP_ORCHESTRATORS" = true ]; then
-        log_warning "Skipping orchestrator deployment (--skip-orchestrators)"
-        return
-    fi
-
-    log_section "Step 2: Deploy Phase 2→3 Orchestrator"
-
-    cd "$PROJECT_ROOT"
-
-    if [ ! -f "bin/orchestrators/deploy_phase2_to_phase3.sh" ]; then
-        log_error "Deployment script not found: bin/orchestrators/deploy_phase2_to_phase3.sh"
-        exit 1
-    fi
-
-    log "Deploying Phase 2→3 orchestrator Cloud Function..."
-    bash bin/orchestrators/deploy_phase2_to_phase3.sh
-
-    log_success "Phase 2→3 orchestrator deployed"
-}
+# deploy_phase2_to_phase3_orchestrator function REMOVED Session 204
 
 deploy_phase3_to_phase4_orchestrator() {
     if [ "$SKIP_ORCHESTRATORS" = true ]; then
@@ -243,15 +224,7 @@ verify_deployments() {
     log_section "Step 5: Verify Deployments"
 
     log "Checking Phase 2→3 orchestrator..."
-    if gcloud functions describe phase2-to-phase3-orchestrator \
-        --region $REGION \
-        --gen2 \
-        --project $PROJECT_ID \
-        --format="value(state)" 2>/dev/null | grep -q "ACTIVE"; then
-        log_success "Phase 2→3 orchestrator is ACTIVE"
-    else
-        log_warning "Phase 2→3 orchestrator not found or not active"
-    fi
+    # Phase 2→3 verification REMOVED Session 204
 
     log "Checking Phase 3→4 orchestrator..."
     if gcloud functions describe phase3-to-phase4-orchestrator \
@@ -372,7 +345,7 @@ main() {
     # Run deployment steps
     check_prerequisites
     deploy_infrastructure
-    deploy_phase2_to_phase3_orchestrator
+    # deploy_phase2_to_phase3_orchestrator  # REMOVED Session 204
     deploy_phase3_to_phase4_orchestrator
     deploy_phase5_coordinator
     verify_deployments
