@@ -124,11 +124,41 @@ Set `enabled: False` in `MONTHLY_MODELS` and deploy:
 - **Latency:** Each model adds ~50ms per player prediction
 - **GCS downloads:** Once at worker startup, cached in /tmp
 
+## Cross-Model Monitoring (Session 210)
+
+**Problem:** Session 209 discovered Q43/Q45 had **zero predictions** for 2 days (Feb 8-9) with no alert. Total count looked fine because the champion was producing normally.
+
+**Root cause:** Quality gate was hardcoded to champion `system_id`, blocking shadow models (fixed Session 192).
+
+**Prevention:** Three layers now catch shadow model gaps:
+
+| Layer | Location | Frequency | Action |
+|-------|----------|-----------|--------|
+| Pipeline canary | `bin/monitoring/pipeline_canary_queries.py` | Every 30 min (automated) | Auto-triggers BACKFILL when gap detected |
+| `validate-daily` | Phase 0.486 in skill | Manual (pre-game check) | Alerts with backfill command |
+| `reconcile-yesterday` | Phase 9 in skill | Manual (next-day check) | Alerts with backfill command + identifies missing models |
+
+**Auto-backfill is safe:** `/start` with BACKFILL mode only generates predictions for models that are missing. Existing champion predictions are never touched.
+
+**If auto-heal fails:**
+```bash
+COORDINATOR_URL="https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app"
+TOKEN=$(gcloud auth print-identity-token)
+curl -X POST "${COORDINATOR_URL}/start" \
+  -H "Authorization: Bearer ${TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"game_date":"YYYY-MM-DD","prediction_run_mode":"BACKFILL","skip_completeness_check":true}'
+```
+
+**Do NOT use `/regenerate-with-supersede`** — that supersedes existing champion predictions.
+
 ## Troubleshooting
 
 | Issue | Fix |
 |-------|-----|
 | No predictions for challenger | Check `enabled: True` and model file exists in GCS |
+| Shadow model 0 predictions for 1+ days | Auto-healed by canary. If not, manual BACKFILL (see above). Check quality gate logs for blocking. |
 | GCS download fails | Verify path: `gsutil ls gs://nba-props-platform-models/catboost/v9/monthly/` |
 | Model loads wrong features | All V9 models use same 33 features — check CatBoostV8 base class |
 | compare script shows no data | Games need to be graded first (next day after games complete) |
+| Quality gate blocking shadow models | Check `predictions/coordinator/quality_gate.py` — must run per-system (Session 192 fix) |

@@ -169,7 +169,8 @@ PYTHONPATH=. python ml/experiments/quick_retrain.py \
 Shadow challengers run alongside champion. Each gets own `system_id`, graded independently, no user-facing impact.
 
 **Active challengers:** `catboost_v9_train1102_0108`, `_0131_tuned`, `_q43_train1102_0131`, `_q45_train1102_0131`
-**Key finding:** Quantile alpha=0.43 achieves 65.8% HR 3+ when fresh (vs 33.3% baseline). First model to solve retrain paradox. Champion decaying (71.2% → 47.9%, 33 days stale).
+**Key finding:** Quantile alpha=0.43 achieves 65.8% HR 3+ when fresh (vs 33.3% baseline). First model to solve retrain paradox. Champion decaying (71.2% → 47.9%, 33+ days stale).
+**Session 210 results (Feb 8-10):** Q43 60.0% edge 3+ HR (10 picks), Q45 60.0% (5 picks), vs champion 38.1% (21 picks). Awaiting 50+ edge 3+ graded for promotion decision.
 
 **Dead ends (don't revisit):** Grow policy, NO_VEG+quantile, CHAOS+quantile, residual mode, two-stage pipeline.
 
@@ -177,6 +178,11 @@ Shadow challengers run alongside champion. Each gets own `system_id`, graded ind
 PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_q43_train1102_0131 --days 7  # Monitor
 PYTHONPATH=. python ml/experiments/quick_retrain.py --name "Q43" --quantile-alpha 0.43 --train-start 2025-11-02 --train-end 2026-01-31 --walkforward --force  # Train quantile
 ```
+
+**Cross-model monitoring (Session 210):** 3 layers prevent shadow models from silently failing:
+1. `reconcile-yesterday` Phase 9 — next-day gap detection
+2. `validate-daily` Phase 0.486 — same-day early warning
+3. Pipeline canary auto-heal (`pipeline_canary_queries.py`) — automated detection every 30 min + auto-triggers BACKFILL
 
 **Promote:** Update `CATBOOST_V9_MODEL_PATH` env var. **Retire:** Set `enabled: False` in config.
 **See:** `docs/08-projects/current/retrain-infrastructure/03-PARALLEL-MODELS-GUIDE.md`, `docs/08-projects/current/session-179-validation-and-retrain/05-SESSION-186-QUANTILE-DISCOVERY.md`
@@ -325,7 +331,8 @@ GROUP BY 1 ORDER BY 1 DESC;
 | Low feature quality | `matchup_quality_pct < 50` | Check which processor didn't run via `missing_processors` field |
 | Zero tolerance blocking | `zero_tolerance_defaults_N` in logs | Normal. Fix by ensuring Phase 4 processors run. Never relax. |
 | Stale batch blocks `/start` | `already_running` response | Check `/status`, then `/reset` the stale batch |
-| Model decay | Hit rate declining weekly | Monitor QUANT_43 shadow, promote when validated |
+| Model decay | Hit rate declining weekly | Monitor QUANT_43 shadow, promote when validated. Q43 60% edge 3+ on Feb 8-10. |
+| Shadow model gap | Shadow model 0 predictions | **Auto-healed by pipeline canary** (Session 210). Also detected by `reconcile-yesterday` Phase 9 and `validate-daily` Phase 0.486. If auto-heal fails, manual: `/start` with BACKFILL mode. |
 | BDL scraper not running | 0 BDL records | EXPECTED: BDL intentionally disabled. 60-70% minutes coverage is normal. |
 | Orchestrator not triggering | Phase 2 complete, `_triggered=False` | NOT a bug. Phase 3 uses direct Pub/Sub, not orchestrator. |
 
