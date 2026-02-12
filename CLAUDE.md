@@ -18,39 +18,20 @@ Build profitable NBA player props prediction system (55%+ accuracy on over/under
 
 Phases connected via **Pub/Sub event triggers**. Daily workflow starts ~6 AM ET.
 
-### Phase Triggering Mechanisms (Session 204 Investigation)
+### Phase Triggering
 
-**IMPORTANT:** Phase transition orchestrators have different roles - some are functional, others are monitoring-only.
-
-**Phase 2 → Phase 3 (Event-Driven + Scheduled):**
-- **PRIMARY:** Direct Pub/Sub subscription (`nba-phase3-analytics-sub`) pushes to Phase 3 `/process` endpoint
-- **BACKUP:** Cloud Scheduler (`same-day-phase3`) triggers at 10:30 AM ET daily
-- **MONITORING:** phase2-to-phase3-orchestrator was monitoring-only and has been REMOVED (Session 205)
-- Each Phase 2 processor completion triggers Phase 3 processors immediately (per-event, not batched)
-
-**Phase 3 → Phase 4 (Orchestrated):**
-- Phase 3→4 orchestrator is FUNCTIONAL (actually publishes to `nba-phase4-trigger`)
-- Performs quality checks that GATE the transition
-- Phase 4 depends on this orchestrator to know when to start
-
-**Phase 4 → Phase 5 (Orchestrated):**
-- Phase 4→5 orchestrator is FUNCTIONAL
-- Gates Phase 5 behind Phase 4 completion
-
-**Phase 5 → Phase 6 (Orchestrated):**
-- Phase 5→6 orchestrator is FUNCTIONAL
-- Triggers publishing after predictions complete
-
-**Key Insight (Sessions 204-205):** The phase2-to-phase3-orchestrator was monitoring-only and has been REMOVED. Phase 3 runs via direct Pub/Sub subscription. The pipeline works perfectly without it (proven during 7-day outage Feb 5-11, 2026).
+- **Phase 2 → 3:** Direct Pub/Sub (`nba-phase3-analytics-sub`), backup Cloud Scheduler at 10:30 AM ET. No orchestrator needed (removed Session 205).
+- **Phase 3 → 4:** Orchestrator FUNCTIONAL (quality gates, publishes to `nba-phase4-trigger`)
+- **Phase 4 → 5:** Orchestrator FUNCTIONAL (gates Phase 5 behind Phase 4)
+- **Phase 5 → 6:** Orchestrator FUNCTIONAL (triggers publishing)
 
 ## Core Principles
 
 - **Data quality first** - Discovery queries before assumptions
-- **Zero tolerance for defaults** - Never predict with fabricated feature values (Session 141)
+- **Zero tolerance for defaults** - Never predict with fabricated feature values
 - **Always filter partitions** - Massive BigQuery performance gains
 - **Batch over streaming** - Avoid 90-min DML locks
 - **One small thing at a time** - With comprehensive testing
-- **99.2% player name resolution** - Via universal registry
 
 ## Session Philosophy
 
@@ -62,86 +43,31 @@ Phases connected via **Pub/Sub event triggers**. Daily workflow starts ~6 AM ET.
 
 ## Documentation Procedure [Keyword: DOC]
 
-**When creating session documentation:**
 - **Location:** `docs/08-projects/current/<project-name>/`
 - Use existing project directory if work relates to ongoing project
 - Create new subdirectory for new projects/investigations
-- See "Documentation Index" section below for other doc locations
-
-**Shorthand:** When you say "doc this" or "use doc procedure", Claude will follow this pattern.
+- **Shorthand:** "doc this" or "use doc procedure" triggers this pattern
 
 ## Quick Start [Keyword: START]
 
-### 1. Read the Latest Handoff
 ```bash
-ls -la docs/09-handoff/ | tail -5
-```
-
-### 2. Run Daily Validation
-```bash
-/validate-daily
-```
-
-### 3. Check Deployment Drift
-```bash
-./bin/check-deployment-drift.sh --verbose
+ls -la docs/09-handoff/ | tail -5          # 1. Read latest handoff
+/validate-daily                             # 2. Run daily validation
+./bin/check-deployment-drift.sh --verbose   # 3. Check deployment drift
 ```
 
 ## Monitoring & Self-Healing [Keyword: MONITOR]
 
-**Session 135** - Six-layer resilience system with full observability
-
-### Layer 1: Deployment Drift (2-hour detection)
 ```bash
-# Manual check
-python bin/monitoring/deployment_drift_alerter.py
-
-# Automated: Runs every 2 hours, alerts to #deployment-alerts
-# Detects services with stale code, provides deploy commands
+python bin/monitoring/deployment_drift_alerter.py   # Deployment drift (auto: every 2h)
+python bin/monitoring/pipeline_canary_queries.py     # Pipeline canaries (auto: every 30min)
+python bin/monitoring/analyze_healing_patterns.py    # Self-healing audit (auto: every 15min)
 ```
 
-### Layer 2: Pipeline Canaries (30-minute validation)
-```bash
-# Manual check
-python bin/monitoring/pipeline_canary_queries.py
+- Auto-heals stalled batches (>90% complete, stalled 15+ min), tracks root cause
+- Quality gates block bad data at Phase 2→3 transition (`shared.validation.phase2_quality_gate`)
 
-# Automated: Runs every 30 minutes, alerts to #canary-alerts
-# Validates all 6 phases with real data quality checks
-```
-
-### Layer 3: Quality Gates
-```python
-# Phase 2→3 gate validates raw data before analytics
-from shared.validation.phase2_quality_gate import Phase2QualityGate
-gate = Phase2QualityGate(bq_client, project_id)
-result = gate.check_raw_data_quality(game_date)
-# Blocks bad data (NULL rates, missing games, stale data)
-```
-
-### Auto-Batch Cleanup (Self-Healing)
-```bash
-# Check recent healing events
-python bin/monitoring/analyze_healing_patterns.py
-
-# Automated: Runs every 15 minutes
-# Auto-heals stalled batches (>90% complete, stalled 15+ min)
-# Tracks everything: root cause, before/after state, success rate
-# Alerts if healing too frequent (indicates systemic issue)
-```
-
-**Key Principle:** "Auto-heal, but track everything so we can prevent"
-
-**Healing Workflow:**
-1. System auto-heals issue (e.g., completes stalled batch)
-2. Records full audit trail (why, what, before/after)
-3. Pattern detection alerts if too frequent
-4. Human analyzes root causes → implements prevention
-5. Healing frequency decreases over time
-
-**Slack Channels:**
-- `#deployment-alerts` - Stale deployments (every 2h)
-- `#canary-alerts` - Pipeline failures (every 30min)
-- `#nba-alerts` - Self-healing events (when triggered)
+**Slack:** `#deployment-alerts` (2h), `#canary-alerts` (30min), `#nba-alerts` (self-healing)
 
 ## Using Agents [Keyword: AGENTS]
 
@@ -176,25 +102,20 @@ nba-stats-scraper/
 
 | Data Type | Primary Source | BigQuery Table | Notes |
 |-----------|----------------|----------------|-------|
-| **Injuries** | `nbac_injury_report` (NBA.com) ⭐ | `nba_raw.nbac_injury_report` | Official PDFs, 15-min updates |
-| | `bdl_injuries` (Ball Don't Lie) | `nba_raw.bdl_injuries` | Fallback only |
+| **Injuries** | `nbac_injury_report` (NBA.com) | `nba_raw.nbac_injury_report` | Official PDFs, 15-min updates |
 | **Schedule** | `nbac_schedule` (NBA.com) | `nba_raw.nbac_schedule` | 100% coverage |
 | **Player Stats** | `nbac_gamebook_player_stats` | `nba_raw.nbac_gamebook_player_stats` | Official stats |
 | **Betting Lines** | `odds_api_*` (The Odds API) | `nba_raw.odds_api_*` | 10+ sportsbooks |
 | **Play-by-Play** | `nbac_play_by_play` | `nba_raw.nbac_play_by_play` | Every possession |
 
-**Table Naming Conventions:**
-- `nbac_*` = NBA.com official sources
-- `bdl_*` = Ball Don't Lie API
-- `odds_api_*` = The Odds API
-- `bettingpros_*` = BettingPros
+**Naming:** `nbac_*` = NBA.com, `bdl_*` = Ball Don't Lie (disabled), `odds_api_*` = The Odds API, `bettingpros_*` = BettingPros
 
 ## ML Model - CatBoost V9 [Keyword: MODEL]
 
 | Property | Value |
 |----------|-------|
 | System ID | `catboost_v9` |
-| Production Model | `catboost_v9_33features_20260201_011018` (Session 163) |
+| Production Model | `catboost_v9_33features_20260201_011018` |
 | Training | 2025-11-02 to 2026-01-08 |
 | **Medium Quality (3+ edge)** | **71.2% hit rate** |
 | **High Quality (5+ edge)** | **79.0% hit rate, +50.9% ROI** |
@@ -204,44 +125,32 @@ nba-stats-scraper/
 
 **CRITICAL:** Use edge >= 3 filter. 73% of predictions have edge < 3 and lose money.
 
-**Notes:** Evaluated on Jan 9-31 holdout. Backfill grading shows 71.2% on Jan 12 week.
-
-### Model Governance (Sessions 163-164)
+### Model Governance
 
 **NEVER deploy a retrained model without passing ALL governance gates.**
 **NEVER deploy a model without explicit user approval at each step.**
+**Training is NOT deploying.** Use `/model-experiment` to train. Deployment requires separate user sign-off.
 
-**Training a model is NOT deploying it.** Use `/model-experiment` to train and evaluate. Deployment is a separate multi-step process requiring user sign-off. See the skill's "Model Promotion Checklist" for the full process.
-
-**Session 163 Lesson:** A retrained model with BETTER MAE (4.12 vs 4.82) crashed hit rate from 71.2% to 51.2% because it had systematic UNDER bias (-2.26 vs Vegas). The model predicted points lower than Vegas lines, causing 87% UNDER recommendations. Lower MAE does NOT mean better betting performance.
-
-Session 163 discovered that the Feb 2 retrain crashed hit rate from 71.2% to 51.2% despite having better MAE. The retrain had systematic UNDER bias (-2.26 avg pred_vs_vegas).
+**Key lesson:** Lower MAE does NOT mean better betting. A retrain with better MAE (4.12) crashed hit rate to 51.2% due to systematic UNDER bias.
 
 **Governance gates** (enforced in `quick_retrain.py`):
-1. **Duplicate check:** Blocks if same training dates exist (Session 165)
+1. Duplicate check: blocks if same training dates exist
 2. Vegas bias: pred_vs_vegas within +/- 1.5
 3. High-edge (3+) hit rate >= 60%
 4. Sample size >= 50 graded edge 3+ bets
 5. No critical tier bias (> +/- 5 points)
 6. MAE improvement vs baseline
 
-**Promotion process:** Train -> Gates pass -> Upload to GCS -> Register -> Shadow 2+ days -> Promote
-
+**Process:** Train -> Gates pass -> Upload to GCS -> Register -> Shadow 2+ days -> Promote
 **Rollback:** `gcloud run services update prediction-worker --region=us-west2 --update-env-vars="CATBOOST_V9_MODEL_PATH=gs://..."`
+**Naming:** `catboost_v9_33f_train{start}-{end}_{timestamp}.cbm`
 
-**Model Naming Convention (Session 165):**
-- Format: `catboost_v9_33f_train{start}-{end}_{timestamp}.cbm`
-- Example: `catboost_v9_33f_train20251102-20260108_20260208_144749.cbm`
-- Training range now visible in filename (start and end dates)
-
-### Model Registry (Session 165: Governance Sync)
+### Model Registry
 ```bash
 ./bin/model-registry.sh list              # List all models with SHA256
 ./bin/model-registry.sh production        # Show production model
 ./bin/model-registry.sh validate          # Verify GCS paths + SHA256 integrity
-./bin/model-registry.sh manifest          # Show GCS manifest (source of truth)
 ./bin/model-registry.sh sync              # Sync GCS manifest → BQ registry
-./bin/model-registry.sh claude-md         # Generate CLAUDE.md model section
 ```
 
 **IMPORTANT:** After updating `manifest.json` in GCS, run `./bin/model-registry.sh sync` to update BigQuery registry.
@@ -255,261 +164,45 @@ PYTHONPATH=. python ml/experiments/quick_retrain.py \
 # Script outputs ALL GATES PASSED/FAILED — do NOT deploy without passing
 ```
 
-### Parallel Models (Sessions 177-178, updated Session 186)
+### Parallel Models & Quantile Discovery
 
-Multiple V9 challengers run in **shadow mode** alongside the champion (`catboost_v9`). Each gets its own `system_id`, is graded independently, and does NOT affect user-facing picks or alerts.
+Shadow challengers run alongside champion. Each gets own `system_id`, graded independently, no user-facing impact.
 
-**Workflow:** Train (`quick_retrain.py`) -> Upload to GCS -> Add config to `catboost_monthly.py` -> Deploy -> Monitor (`compare-model-performance.py`) -> Promote or retire
+**Active challengers:** `catboost_v9_train1102_0108`, `_0131_tuned`, `_q43_train1102_0131`, `_q45_train1102_0131`
+**Key finding:** Quantile alpha=0.43 achieves 65.8% HR 3+ when fresh (vs 33.3% baseline). First model to solve retrain paradox. Champion decaying (71.2% → 47.9%, 33 days stale).
 
-**Active challengers (Session 186):**
-| system_id | Training | Hyperparams | Production HR All (Feb 4-9) |
-|-----------|----------|-------------|------------------------|
-| `catboost_v9_train1102_0108` | Nov 2 - Jan 8 | defaults | 52.2% |
-| `catboost_v9_train1102_0131_tuned` | Nov 2 - Jan 31 | tuned (d=5,l2=5,lr=0.03)+recency 30d | 53.4% |
-| `catboost_v9_q43_train1102_0131` | Nov 2 - Jan 31 | **quantile alpha=0.43** | NEW (Session 186) |
-| `catboost_v9_q45_train1102_0131` | Nov 2 - Jan 31 | **quantile alpha=0.45** | NEW (Session 186) |
+**Dead ends (don't revisit):** Grow policy, NO_VEG+quantile, CHAOS+quantile, residual mode, two-stage pipeline.
 
-**Retired:** `_0208`, `_0208_tuned` (contaminated backtests), `_0131` defaults (redundant with `_tuned`).
-
-**Key findings:**
-- Champion decaying: 71.2% edge 3+ (Jan 12) -> 47.9% (Feb 2). Now 33 days stale, below breakeven.
-- Session 186: Quantile alpha=0.43 generates 65.8% HR 3+ when fresh (vs BASELINE 33.3%). First model to solve retrain paradox.
-- Combos (NO_VEG + quantile, CHAOS + quantile) perform worse — don't stack.
-
-**Monitor:**
 ```bash
-PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_q43_train1102_0131 --days 7
+PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_q43_train1102_0131 --days 7  # Monitor
+PYTHONPATH=. python ml/experiments/quick_retrain.py --name "Q43" --quantile-alpha 0.43 --train-start 2025-11-02 --train-end 2026-01-31 --walkforward --force  # Train quantile
 ```
 
 **Promote:** Update `CATBOOST_V9_MODEL_PATH` env var. **Retire:** Set `enabled: False` in config.
-
-**See:** `docs/08-projects/current/retrain-infrastructure/03-PARALLEL-MODELS-GUIDE.md`
-
-### Quantile Regression Discovery (Session 186)
-
-**85 experiments across Sessions 179-186** proved that standard architectures create edge through model staleness (drift from Vegas). Quantile regression creates edge through **systematic prediction bias** — built into the loss function, doesn't decay.
-
-**Key results (Jan 31 train, Feb 1-9 eval):**
-
-| Model | HR 3+ (N) | UNDER HR | Vegas Bias | Notes |
-|-------|-----------|----------|-----------|-------|
-| BASELINE (alpha=0.50) | 33.3% (6) | 33.3% | -0.09 | No edge when fresh |
-| **QUANT_43 (alpha=0.43)** | **65.8% (38)** | **67.6%** | **-1.62** | **Best fresh HR ever** |
-| QUANT_45 (alpha=0.45) | 61.9% (21) | 65.0% | -1.28 | Good but fewer picks |
-| QUANT_40 (alpha=0.40) | 55.6% (63) | 56.5% | -2.06 FAIL | Too much bias |
-
-**Staleness stability:** BASELINE drops 49.2pp across eval windows. QUANT_43 drops only 3.3pp.
-
-**Dead ends (don't revisit):**
-- Grow policy (Depthwise, Lossguide) — best MAE but zero edge picks
-- NO_VEG + quantile — double low-bias, too aggressive
-- CHAOS + quantile — randomization dilutes precision
-- Residual mode — collapses with CatBoost (Session 183)
-- Two-stage pipeline — identical to NO_VEG (Session 183)
-
-**Train a quantile model:**
-```bash
-PYTHONPATH=. python ml/experiments/quick_retrain.py \
-    --name "Q43_RETRAIN" \
-    --quantile-alpha 0.43 \
-    --train-start 2025-11-02 \
-    --train-end 2026-01-31 \
-    --walkforward --force
-```
-
-**See:** `docs/08-projects/current/session-179-validation-and-retrain/05-SESSION-186-QUANTILE-DISCOVERY.md`
-
-### Model Files in GCS
-```
-gs://nba-props-platform-models/catboost/v9/
-├── manifest.json                                    # Source of truth
-├── catboost_v9_33features_20260201_011018.cbm       # PRODUCTION (SHA: 5b3a187b)
-├── catboost_v9_feb_02_retrain.cbm                   # DEPRECATED (UNDER bias)
-└── monthly/
-    ├── catboost_v9_33f_train20251102-20260108_20260209_175818.cbm  # Challenger (Jan 8 shadow)
-    ├── catboost_v9_33f_train20251102-20260131_20260209_212708.cbm  # Challenger (Jan 31 defaults)
-    ├── catboost_v9_33f_train20251102-20260131_20260209_212715.cbm  # Challenger (Jan 31 tuned)
-    ├── catboost_v9_33f_q0.43_train20251102-20260131_20260210_094854.cbm  # QUANT_43 shadow (Session 186)
-    ├── catboost_v9_33f_q0.45_train20251102-20260131_20260210_103216.cbm  # QUANT_45 shadow (Session 186)
-    └── catboost_v9_2026_02.cbm                      # DISABLED (UNDER bias)
-```
-
-**See:** `docs/08-projects/current/model-governance/00-PROJECT-OVERVIEW.md`
+**See:** `docs/08-projects/current/retrain-infrastructure/03-PARALLEL-MODELS-GUIDE.md`, `docs/08-projects/current/session-179-validation-and-retrain/05-SESSION-186-QUANTILE-DISCOVERY.md`
 
 ## Breakout Classifier [Keyword: BREAKOUT]
 
-**Status:** Shadow mode (no production impact) - V3 development in progress
+**Status:** Shadow mode, V2 model (AUC 0.5708, 14 features). Not production-ready (no high-confidence predictions, max <0.6).
 
-The breakout classifier identifies role players (8-16 PPG) at risk of "breakout" games (1.5x season average). Currently using V2 model with 14 features (AUC 0.5708).
+**CRITICAL:** Always use `ml/features/breakout_features.py` for feature computation (train/eval consistency).
 
-**Critical Issue (Session 135):** No high-confidence predictions (max <0.6, need 0.769+). V3 development focuses on contextual features to unlock high-confidence signals.
-
-### Shared Feature Module (Sessions 134b, 135)
-
-**CRITICAL:** Always use `ml/features/breakout_features.py` for feature computation to ensure train/eval consistency.
-
-```python
-from ml.features.breakout_features import (
-    get_training_data_query,
-    prepare_feature_vector,
-    validate_feature_distributions
-)
-```
-
-**Why this matters:** Session 134b discovered that training with one feature pipeline and evaluating with another caused AUC to drop from 0.62 to 0.47 (worse than random). Using the shared module fixed this.
-
-### Training & Evaluation
-
-**Production Training (recommended):**
 ```bash
-# Use shared mode for production consistency
-PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py \
-  --name "PROD_V2" \
-  --mode shared \
-  --train-start 2025-11-02 \
-  --train-end 2026-01-31 \
-  --eval-start 2026-02-01 \
-  --eval-end 2026-02-05
+# Production training
+PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py --name "PROD_V2" --mode shared --train-start 2025-11-02 --train-end 2026-01-31 --eval-start 2026-02-01 --eval-end 2026-02-05
 ```
 
-**Experimental Research:**
-```bash
-# Test new features before promoting to shared module
-PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py \
-  --name "EXP_CV_RATIO" \
-  --mode experimental \
-  --features "cv_ratio,cold_streak_indicator,pts_vs_season_zscore" \
-  --train-start 2025-11-02 \
-  --train-end 2026-01-31 \
-  --eval-start 2026-02-01 \
-  --eval-end 2026-02-05
-```
-
-**Quick Evaluation:**
-```bash
-# Train with shared features and evaluate on holdout
-PYTHONPATH=. python ml/experiments/train_and_evaluate_breakout.py \
-  --train-end 2026-01-31 \
-  --eval-start 2026-02-01 \
-  --eval-end 2026-02-05
-```
-
-### V2 Performance (Session 135)
-
-**Current Production Model:** `breakout_shared_v1_20251102_20260205.cbm`
-- **AUC:** 0.5708 (14 features)
-- **Precision@0.5:** 23.9%
-- **Critical Issue:** No high-confidence predictions (max <0.6)
-- **Best Feature:** `minutes_increase_pct` (16.9% importance)
-
-**Why V2 Isn't Production-Ready:**
-- Target: 60% precision at 0.769 threshold
-- Actual: No predictions above 0.6 confidence
-- Root cause: Statistical features plateau, need contextual features
-
-### V3 Roadmap (Next Priority)
-
-**High-Impact Features to Add:**
-1. `star_teammate_out` - Star teammates OUT (+0.04-0.07 AUC expected)
-2. `fg_pct_last_game` - Hot shooting rhythm
-3. `points_last_4q` - 4Q performance signal
-4. `opponent_key_injuries` - Weakened defense
-
-**Infrastructure Ready:**
-- Injury integration: `predictions/shared/injury_integration.py`
-- Shared feature module: `ml/features/breakout_features.py`
-- Dual-mode experiment runner
-
-### Models in GCS
-
-```
-gs://nba-props-platform-models/breakout/v1/
-├── breakout_shared_v1_20251102_20260205.cbm  # V2 Production (AUC 0.5708)
-├── breakout_v2_14features.cbm                # V2 Experimental
-└── breakout_v1_20251102_20260115.cbm         # V1 Backup
-```
-
-**See:**
-- `docs/09-handoff/2026-02-05-SESSION-135-HANDOFF.md` - V3 roadmap and quick start
-- `docs/09-handoff/2026-02-05-SESSION-135-BREAKOUT-V2-AND-V3-PLAN.md` - Full session details
-- `docs/09-handoff/NEXT-SESSION-PROMPT.md` - Copy-paste prompt for Session 136
+**V3 roadmap:** Add `star_teammate_out`, `fg_pct_last_game`, `points_last_4q`, `opponent_key_injuries`.
+**See:** `docs/09-handoff/2026-02-05-SESSION-135-HANDOFF.md`
 
 ## Deployment [Keyword: DEPLOY]
 
-### Auto-Deploy via Cloud Build Triggers (Sessions 147, 160)
+### Auto-Deploy via Cloud Build Triggers
 
-**Primary method: Push to main auto-deploys changed services.**
+**Primary method: Push to main auto-deploys changed services.** Each trigger also watches `shared/`.
 
-Cloud Build triggers watch GitHub for pushes to `main` and auto-deploy only the services whose files changed. Each trigger also watches `shared/` so shared code changes deploy all services.
+**Cloud Run Services:**
 
-**Cloud Run Services (7 triggers, `cloudbuild.yaml`):**
-
-| Trigger | Watches | Cloud Build Trigger |
-|---------|---------|---------------------|
-| prediction-coordinator | `predictions/coordinator/**`, `predictions/shared/**`, `shared/**` | `deploy-prediction-coordinator` |
-| prediction-worker | `predictions/worker/**`, `predictions/shared/**`, `shared/**` | `deploy-prediction-worker` |
-| nba-phase3-analytics-processors | `data_processors/analytics/**`, `shared/**` | `deploy-nba-phase3-analytics-processors` |
-| nba-phase4-precompute-processors | `data_processors/precompute/**`, `shared/**` | `deploy-nba-phase4-precompute-processors` |
-| nba-phase2-raw-processors | `data_processors/raw/**`, `shared/**` | `deploy-nba-phase2-raw-processors` |
-| nba-scrapers | `scrapers/**`, `shared/**` | `deploy-nba-scrapers` |
-
-**Cloud Functions (5 triggers, `cloudbuild-functions.yaml`):**
-
-| Trigger | Watches | Cloud Build Trigger | Notes |
-|---------|---------|---------------------|-------|
-| phase5b-grading | `orchestration/cloud_functions/grading/**`, `data_processors/grading/**`, `shared/**` | `deploy-phase5b-grading` | |
-| ~~phase2-to-phase3-orchestrator~~ | REMOVED (Session 205) | N/A | Was monitoring-only, not needed |
-| phase3-to-phase4-orchestrator | `orchestration/cloud_functions/phase3_to_phase4/**`, `shared/**` | `deploy-phase3-to-phase4-orchestrator` | ✅ FUNCTIONAL (triggers Phase 4) |
-| phase4-to-phase5-orchestrator | `orchestration/cloud_functions/phase4_to_phase5/**`, `shared/**` | `deploy-phase4-to-phase5-orchestrator` | ✅ FUNCTIONAL (triggers Phase 5) |
-| phase5-to-phase6-orchestrator | `orchestration/cloud_functions/phase5_to_phase6/**`, `shared/**` | `deploy-phase5-to-phase6-orchestrator` | ✅ FUNCTIONAL (triggers Phase 6) |
-
-**How it works:**
-1. Push to `main` triggers Cloud Build via GitHub webhook
-2. **Cloud Run services:** Cloud Build builds Docker image and deploys to Cloud Run
-3. **Cloud Functions:** Cloud Build packages source and deploys via `gcloud functions deploy` (uses `cloudbuild-functions.yaml`)
-4. Labels deployment with commit SHA for drift detection
-
-**Monitor triggers:**
-```bash
-# List triggers
-gcloud builds triggers list --region=us-west2 --project=nba-props-platform
-
-# Check recent builds
-gcloud builds list --region=us-west2 --project=nba-props-platform --limit=5
-
-# View build logs
-gcloud builds log BUILD_ID --region=us-west2 --project=nba-props-platform
-```
-
-### Manual Deploy Options
-
-For cases where auto-deploy isn't suitable (debugging, hotfixes before push):
-
-**Standard deploy** (full validation, ~8-10 min):
-```bash
-./bin/deploy-service.sh SERVICE
-```
-
-**Hot-deploy** (skips non-essential checks, ~5-6 min):
-```bash
-./bin/hot-deploy.sh SERVICE
-```
-
-**GitHub Actions** (manual trigger from UI):
-```bash
-gh workflow run "CD - Auto Deploy on Main" -f service=prediction-coordinator
-```
-
-### CRITICAL: Always deploy from repo root
-```bash
-# Correct
-./bin/deploy-service.sh prediction-worker
-
-# Wrong - will fail
-cd predictions/worker && gcloud run deploy --source .
-```
-
-### Services
 | Service | Dockerfile |
 |---------|------------|
 | prediction-coordinator | predictions/coordinator/Dockerfile |
@@ -519,30 +212,37 @@ cd predictions/worker && gcloud run deploy --source .
 | nba-phase2-raw-processors | data_processors/raw/Dockerfile |
 | nba-scrapers | scrapers/Dockerfile |
 
+**Cloud Functions:** phase5b-grading, phase3-to-phase4-orchestrator, phase4-to-phase5-orchestrator, phase5-to-phase6-orchestrator (all FUNCTIONAL). phase2-to-phase3-orchestrator REMOVED (Session 205).
+
+```bash
+gcloud builds list --region=us-west2 --project=nba-props-platform --limit=5  # Check recent builds
+gcloud builds log BUILD_ID --region=us-west2 --project=nba-props-platform    # View build logs
+```
+
+### Manual Deploy Options
+```bash
+./bin/deploy-service.sh SERVICE   # Standard (8-10 min)
+./bin/hot-deploy.sh SERVICE       # Hot-deploy (5-6 min)
+```
+
+### CRITICAL: Always deploy from repo root
+```bash
+./bin/deploy-service.sh prediction-worker   # Correct
+# cd predictions/worker && gcloud run deploy  # WRONG - will fail
+```
+
 ### Check Deployment Status
 ```bash
-# Check deployed commit
-gcloud run services describe SERVICE --region=us-west2 \
-  --format="value(metadata.labels.commit-sha)"
-
-# Compare to latest
-git log -1 --format="%h"
-
-# Full drift check
+gcloud run services describe SERVICE --region=us-west2 --format="value(metadata.labels.commit-sha)"
 ./bin/check-deployment-drift.sh --verbose
 ```
 
 ## Key Tables [Keyword: TABLES]
 
-### Grading
-| Table | Use For |
-|-------|---------|
-| `prediction_accuracy` | **All grading queries** (419K+ records) |
-| `prediction_grades` | DEPRECATED - do not use |
-
-### Schedule
 | Table | Notes |
 |-------|-------|
+| `prediction_accuracy` | **All grading queries** (419K+ records) |
+| `prediction_grades` | DEPRECATED - do not use |
 | `nba_reference.nba_schedule` | Clean view, use for queries |
 | `nba_raw.nbac_schedule` | Requires partition filter |
 
@@ -550,104 +250,34 @@ git log -1 --format="%h"
 
 ## ML Feature Quality [Keyword: QUALITY]
 
-**Status:** Session 141 - Zero tolerance for default features
+**Zero tolerance:** Predictions blocked for ANY player with `default_feature_count > 0`. Three enforcement layers: Phase 4 quality_scorer, coordinator quality_gate (`HARD_FLOOR_MAX_DEFAULTS = 0`), worker defense-in-depth.
 
-The ML feature store has comprehensive per-feature quality tracking:
-- **122 fields total:** 74 per-feature columns (37 quality + 37 source) + 48 aggregate/JSON fields
-- **37 features tracked** across 5 categories: matchup(6), player_history(13), team_context(3), vegas(4), game_context(11)
-- **Detection time:** <5 seconds for quality issues (vs 2+ hours manual)
-- **Zero tolerance (Session 141):** Predictions blocked for ANY player with `default_feature_count > 0`
-
-### Quick Quality Checks
+**Impact:** Coverage drops from ~180 to ~75 predictions per game day. Intentional (accuracy > coverage). To increase coverage, fix upstream data pipeline, never relax the tolerance.
 
 ```sql
--- Check overall quality (includes quality gate readiness)
+-- Quick quality check
 SELECT game_date, AVG(feature_quality_score) as avg_quality,
        COUNTIF(quality_alert_level = 'red') as red_count,
-       COUNTIF(is_quality_ready) as quality_ready_count,
-       COUNT(*) as total
+       COUNTIF(is_quality_ready) as quality_ready_count, COUNT(*) as total
 FROM nba_predictions.ml_feature_store_v2
 WHERE game_date >= CURRENT_DATE() - 7
 GROUP BY 1 ORDER BY 1 DESC;
-
--- Check category quality
-SELECT game_date,
-       ROUND(AVG(matchup_quality_pct), 1) as matchup,
-       ROUND(AVG(player_history_quality_pct), 1) as history,
-       ROUND(AVG(game_context_quality_pct), 1) as context
-FROM nba_predictions.ml_feature_store_v2
-WHERE game_date >= CURRENT_DATE() - 7
-GROUP BY 1 ORDER BY 1 DESC;
-
--- Find bad features (direct columns - FAST)
-SELECT player_lookup, feature_5_quality, feature_6_quality, feature_7_quality, feature_8_quality
-FROM nba_predictions.ml_feature_store_v2
-WHERE game_date = CURRENT_DATE()
-  AND (feature_5_quality < 50 OR feature_6_quality < 50 OR feature_7_quality < 50 OR feature_8_quality < 50);
 ```
 
-**Note (Session 139):** The `prediction_made_before_game` field in `player_prop_predictions` tracks whether a prediction was generated before game start time, enabling accurate grading of pre-game vs backfill predictions.
+**37 features** across 5 categories: matchup(5-8,13-14), player_history(0-4,29-36), team_context(22-24), vegas(25-28), game_context(9-12,15-21). Each has `feature_N_quality` (0-100) and `feature_N_source` columns.
 
-### Zero Tolerance Policy (Session 141)
-
-**CRITICAL:** Predictions are blocked for any player with `default_feature_count > 0`. Three enforcement layers:
-1. **Phase 4 (quality_scorer.py):** `is_quality_ready=false` when any defaults exist
-2. **Coordinator (quality_gate.py):** `HARD_FLOOR_MAX_DEFAULTS = 0` hard floor blocks all modes
-3. **Worker (worker.py):** Defense-in-depth sets `is_actionable=false`
-
-**Impact:** Coverage drops from ~180 to ~75 predictions per game day. This is intentional -- accuracy > coverage. To increase coverage, fix the data pipeline (Phase 4 processors, vegas line coverage), never relax the tolerance.
-
-**Audit:** `default_feature_count` and `default_feature_indices` are written to `player_prop_predictions` for every prediction.
-
-**Feature Completeness (Session 142):** `default_feature_indices ARRAY<INT64>` tracks exactly which feature indices used defaults. See `shared/ml/feature_contract.py` for `FEATURE_SOURCE_MAP` mapping indices to pipeline components. See `docs/08-projects/current/feature-completeness/00-PROJECT-OVERVIEW.md` for gap analysis.
-
-### Per-Feature Quality Fields
-
-Each of 37 features has:
-- `feature_N_quality` - Quality score 0-100 (direct column)
-- `feature_N_source` - Source type: 'phase4', 'phase3', 'calculated', 'default' (direct column)
-
-**Critical features to monitor:**
-- Features 5-8: Composite factors (fatigue, shot zone, pace, usage)
-- Features 13-14: Opponent defense (def rating, pace)
-
-### Category Definitions
-
-| Category | Features | Critical? |
-|----------|----------|-----------|
-| **matchup** | 5-8, 13-14 (6 total) | ✅ Yes - Session 132 issue |
-| **player_history** | 0-4, 29-36 (13 total) | No |
-| **team_context** | 22-24 (3 total) | No |
-| **vegas** | 25-28 (4 total) | No |
-| **game_context** | 9-12, 15-21 (11 total) | No |
-
-### Common Issues
-
-| Issue | Detection | Fix |
-|-------|-----------|-----|
-| All matchup features defaulted | `matchup_quality_pct = 0` | Check PlayerCompositeFactorsProcessor ran |
-| Any defaults present | `default_feature_count > 0` | Prediction blocked (Session 141 zero tolerance). Fix upstream data gaps. |
-| Low training quality | `training_quality_feature_count < 30` | Investigate per-feature quality scores |
-
-### Documentation
-
-**Project docs:** `docs/08-projects/current/feature-quality-visibility/`
-- 00-PROJECT-OVERVIEW.md - Problem analysis and solution
-- 07-FINAL-HYBRID-SCHEMA.md - Complete schema design
-- Session 134 handoff: `docs/09-handoff/2026-02-05-SESSION-134-START-HERE.md`
-
-**Key insight:** "The aggregate feature_quality_score is a lie" - it masks component failures. Always check category-level quality (matchup, history, context, vegas, game_context) for root cause.
-
-**Session 141:** Zero tolerance project docs at `docs/08-projects/current/zero-tolerance-defaults/`
+**Key insight:** The aggregate `feature_quality_score` masks component failures. Always check category-level quality for root cause.
+**Audit:** `default_feature_count` and `default_feature_indices` in `player_prop_predictions`. See `shared/ml/feature_contract.py` for `FEATURE_SOURCE_MAP`.
+**See:** `docs/08-projects/current/feature-quality-visibility/`, `docs/08-projects/current/zero-tolerance-defaults/`
 
 ## Phase 3 Health Check [Keyword: PHASE3]
 
 ```bash
-./bin/monitoring/phase3_health_check.sh  # Daily health check
-python bin/maintenance/reconcile_phase3_completion.py --days 7 --fix  # Fix tracking issues
+./bin/monitoring/phase3_health_check.sh
+python bin/maintenance/reconcile_phase3_completion.py --days 7 --fix
 ```
 
-**See:** `docs/02-operations/runbooks/phase3-orchestration.md` for full details
+**See:** `docs/02-operations/runbooks/phase3-orchestration.md`
 
 ## Essential Queries [Keyword: QUERIES]
 
@@ -661,19 +291,11 @@ SELECT daily_signal, pct_over, high_edge_picks
 FROM nba_predictions.daily_prediction_signals
 WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v9'
 
--- Check games status (1=Scheduled, 2=In Progress, 3=Final)
+-- Check games status
 SELECT game_id, away_team_tricode, home_team_tricode, game_status
 FROM nba_reference.nba_schedule WHERE game_date = CURRENT_DATE()
 
--- Check quality-blocked predictions (Session 139)
-SELECT game_date, COUNT(*) as blocked,
-       ARRAY_AGG(DISTINCT quality_alert_level) as alert_levels
-FROM nba_predictions.ml_feature_store_v2
-WHERE game_date >= CURRENT_DATE() - 3
-  AND quality_alert_level = 'red'
-GROUP BY 1 ORDER BY 1 DESC;
-
--- Session 141: Check zero tolerance impact (defaults vs clean)
+-- Check zero tolerance impact
 SELECT game_date,
        COUNTIF(default_feature_count = 0) as clean_players,
        COUNTIF(default_feature_count > 0) as blocked_players,
@@ -681,13 +303,6 @@ SELECT game_date,
 FROM nba_predictions.ml_feature_store_v2
 WHERE game_date >= CURRENT_DATE() - 3
 GROUP BY 1 ORDER BY 1 DESC;
-
--- Session 142: Diagnose which features are most commonly defaulted
-SELECT idx, COUNT(*) as default_count
-FROM nba_predictions.ml_feature_store_v2,
-UNNEST(default_feature_indices) as idx
-WHERE game_date >= CURRENT_DATE() - 7
-GROUP BY 1 ORDER BY 2 DESC;
 ```
 
 **Full query library:** See `docs/02-operations/useful-queries.md`
@@ -696,43 +311,25 @@ GROUP BY 1 ORDER BY 2 DESC;
 
 | Issue | Symptom | Fix |
 |-------|---------|-----|
-| Deployment drift | Old bugs recurring | `./bin/deploy-service.sh SERVICE` (See Session 128 prevention plan) |
-| Vegas line coverage low | <40% line coverage in feature store | NORMAL - threshold is 45%, not 80% (Session 128) |
+| Deployment drift | Old bugs recurring | `./bin/deploy-service.sh SERVICE` |
 | **Env var drift** | **Missing env vars, service crashes** | **NEVER use `--set-env-vars` (wipes all vars), ALWAYS use `--update-env-vars`** |
+| Vegas line coverage low | <40% line coverage | NORMAL - threshold is 45%, not 80% |
 | Schema mismatch | "Invalid field" error | `python .pre-commit-hooks/validate_schema_fields.py` |
 | Partition filter | 400 error on query | Add `WHERE game_date >= ...` |
 | Silent BQ write fail | 0 records written | Use `{project}.{dataset}.{table}` pattern |
 | Quota exceeded | Rate limit error | Use `BigQueryBatchWriter` |
-| CloudFront blocking | 403 on rapid requests | Enable proxy rotation, throttle requests |
-| game_id mismatch | JOIN failures between tables | Use game_id_reversed for reversed format tables |
-| REPEATED field NULL | JSON parsing error | Use `field or []` instead of allowing None |
+| game_id mismatch | JOIN failures | Use `game_id_reversed` for reversed format tables |
 | Cloud Function imports | ModuleNotFoundError | Run symlink validation, fix shared/ paths |
-| Orphan superseded predictions | Players missing active predictions after regen | Re-run regeneration (Session 102 auto-skips edge filter) |
-| Feature cache stale | Wrong predicted values, low hit rate | Regenerate predictions for affected dates |
-| **Silent service failure** | **Service running but requests fail** | **Check `/health/deep` endpoint - missing module or broken dependency (Session 129)** |
-| **ML train/eval mismatch** | **Model has poor holdout performance despite good training metrics** | **Use shared feature module (`ml/features/`) for both training and evaluation (Session 134b)** |
-| **Low feature quality** | **`matchup_quality_pct < 50` or `default_feature_count > 0`** | **Check which processor didn't run: query `missing_processors` field or check phase_completions table** |
-| **Session 132 recurrence** | **All matchup features (5-8) at quality 40** | **PlayerCompositeFactorsProcessor didn't run - check scheduler job configuration** |
-| **Predictions skipped due to quality** | **`PREDICTIONS_SKIPPED` Slack alert** | **Check Phase 4 processor logs, BACKFILL next day: `POST /start {"game_date":"YYYY-MM-DD","prediction_run_mode":"BACKFILL"}`** |
-| **Zero tolerance blocking** | **`zero_tolerance_defaults_N` in quality gate logs** | **Normal behavior (Session 141). Fix by ensuring Phase 4 processors run for all players. Never relax the tolerance.** |
-| **Regeneration batch stalls** | **`/check-stalled` shows <100% completion** | **Quality-blocked workers didn't report completion (fixed Session 174). Use `/reset` + manual consolidation. See regeneration procedure in Session 174 handoff.** |
-| **Stale batch blocks `/start`** | **`already_running` response from `/start`** | **Check `/status`, then `/reset` the stale batch. Always check status before triggering new runs.** |
-| **Regeneration staging orphaned** | **Predictions not appearing after `/regenerate-with-supersede`** | **Manual consolidation needed: `BatchConsolidator.consolidate_batch(batch_id, game_date)`. See Session 174 handoff for full procedure.** |
-| **Signal includes superseded** | **Signal totals inflated, pct_over wrong** | **Fixed Session 174: `is_active = TRUE` filter added to signal_calculator.py** |
-| **subset_picks_notifier error** | **Correlated subquery BQ error 8+/hour** | **FIXED Session 175: Rewrote as `majority_model_by_date` CTE + JOIN** |
-| **Recommendation direction mismatch** | **pred > line but rec = UNDER** | **FIXED Session 175: Defense-in-depth validation in worker.py corrects mismatches. Pre-Session 170 BACKFILL data (Feb 4-8) still affected — needs regeneration.** |
-| **Model decay** | **Hit rate declining weekly (71.2% → 47.9%)** | **Champion 33 days stale, below breakeven. QUANT_43 shadow deployed (Session 186) — first model to work when fresh. Monitor shadow, promote when validated.** |
-| **QUANT barely producing** | **Q43/Q45 only 2-3 predictions per day** | **FIXED Session 192: Quality gate hardcoded champion system_id, blocking shadow models. Now per-system gate. Verify post-deploy.** |
-| **Materializer 0 picks pre-game** | **picks/{date}.json empty for today** | **FIXED Session 193: Materializer only joined `player_game_summary` (empty pre-game). Now falls back to `upcoming_player_game_context` via UNION ALL.** |
-| **Orchestrator not triggering** | **Phase 2 complete but `_triggered=False`** | **NOT A PIPELINE ISSUE (Session 204): The phase2-to-phase3-orchestrator was MONITORING-ONLY and has been REMOVED (Session 205). Phase 3 is triggered by direct Pub/Sub subscription (`nba-phase3-analytics-sub`). The remaining orchestrators (phase3→4, phase4→5, phase5→6) are FUNCTIONAL and have correct IAM permissions. Proven: 7-day orchestrator outage (Feb 5-11) with zero pipeline impact.** |
-| **BDL scraper not running** | **0 BDL boxscore records** | **EXPECTED: BDL is intentionally disabled (unreliable). 60-70% minutes coverage is normal. NOT a bug.** |
-| **Phase 6 export failing** | **`cannot import name 'firestore'` or `ModuleNotFoundError: backfill_jobs`** | **FIXED Session 201: Add `google-cloud-firestore` to requirements.txt, ensure `backfill_jobs/` in Cloud Build deployment package. See `docs/08-projects/current/phase6-export-fix/`** |
-| **Phase 6 timeout** | **picks/{date}.json or signals/{date}.json not created, exports at exactly 540s** | **FIXED Session 201: Reordered exports (fast first, tonight-players last). Consider increasing timeout to 900s. See `docs/08-projects/current/phase6-export-fix/01-TECHNICAL-DETAILS.md`** |
-| **Phase 6 wrong model** | **Exports showing catboost_v8 predictions instead of catboost_v9** | **FIXED Session 201: Updated 10 exporter files to query `system_id = 'catboost_v9'`. Backfill historical dates using CLI: `PYTHONPATH=. python backfill_jobs/publishing/daily_export.py --date YYYY-MM-DD --only subset-picks,daily-signals,predictions,best-bets`** |
+| Silent service failure | Service running but requests fail | Check `/health/deep` endpoint |
+| ML train/eval mismatch | Poor holdout despite good training | Use shared feature module (`ml/features/`) for both |
+| Low feature quality | `matchup_quality_pct < 50` | Check which processor didn't run via `missing_processors` field |
+| Zero tolerance blocking | `zero_tolerance_defaults_N` in logs | Normal. Fix by ensuring Phase 4 processors run. Never relax. |
+| Stale batch blocks `/start` | `already_running` response | Check `/status`, then `/reset` the stale batch |
+| Model decay | Hit rate declining weekly | Monitor QUANT_43 shadow, promote when validated |
+| BDL scraper not running | 0 BDL records | EXPECTED: BDL intentionally disabled. 60-70% minutes coverage is normal. |
+| Orchestrator not triggering | Phase 2 complete, `_triggered=False` | NOT a bug. Phase 3 uses direct Pub/Sub, not orchestrator. |
 
 **Full troubleshooting:** See `docs/02-operations/session-learnings.md`
-
-**BDL Status (Session 197):** Ball Don't Lie (BDL) scrapers are **intentionally disabled** due to unreliability (Sessions 41, 94). The system operates normally with only NBA.com data. Orchestrators must NOT wait for BDL processors. Minutes coverage of 60-70% is expected and acceptable.
 
 ## Prevention Mechanisms
 
@@ -742,34 +339,18 @@ GROUP BY 1 ORDER BY 2 DESC;
   entry: python .pre-commit-hooks/validate_schema_fields.py
 ```
 
-### Dependency Lock Files (Session 133)
-**Ensures deterministic builds** and prevents version drift issues
-
-All services use `requirements-lock.txt` for pinned dependencies:
-- **Faster builds:** Saves 1-2 min per build (no pip dependency resolution)
-- **Deterministic:** Same package versions every time
-- **Prevents drift:** Eliminates version conflict bugs (e.g., db-dtypes)
-
-**Update lock files when dependencies change:**
+### Dependency Lock Files
+All services use `requirements-lock.txt` for pinned, deterministic builds. Update when dependencies change:
 ```bash
 cd <service-dir>
 docker run --rm -v $(pwd):/app -w /app python:3.11-slim bash -c \
-  "pip install --quiet --upgrade pip && \
-   pip install --quiet -r requirements.txt && \
-   pip freeze > requirements-lock.txt"
+  "pip install --quiet --upgrade pip && pip install --quiet -r requirements.txt && pip freeze > requirements-lock.txt"
 ```
 
-**Note:** Keep `requirements.txt` for documentation, use `requirements-lock.txt` for builds.
-
-### Health Checks & Smoke Tests (Sessions 129-132)
-**Prevents silent service failures** (e.g., missing modules, broken dependencies)
-
-- **Deep health checks:** `/health/deep` endpoint validates critical imports and connectivity
-- **Deployment smoke tests:** Automatically verify service functionality after deployment
-- **Drift monitoring:** Slack alerts for stale deployments (every 2 hours)
-- **Defense-in-depth:** 6 layers of validation from build to recovery
-
-**See:** `docs/05-development/health-checks-and-smoke-tests.md` for implementation guide
+### Health Checks
+- `/health/deep` endpoint validates critical imports and connectivity
+- Deployment smoke tests auto-verify after deploy
+- **See:** `docs/05-development/health-checks-and-smoke-tests.md`
 
 ### Batching Pattern
 ```python
@@ -780,37 +361,19 @@ writer.add_record(record)  # Auto-batches
 
 ## Handoff Template [Keyword: HANDOFF]
 
-Create at `docs/09-handoff/YYYY-MM-DD-SESSION-N-HANDOFF.md`
-
-**Template:** See `docs/09-handoff/HANDOFF-TEMPLATE.md`
+Create at `docs/09-handoff/YYYY-MM-DD-SESSION-N-HANDOFF.md`. **Template:** See `docs/09-handoff/HANDOFF-TEMPLATE.md`
 
 ## End of Session Checklist [Keyword: ENDSESSION]
 
-**CRITICAL:** Before ending any session where code was changed:
-
 ```bash
-# 1. Commit and push (auto-deploy triggers on push to main)
-git push origin main
-
-# 2. Verify Cloud Build triggers fired (if service code changed)
-gcloud builds list --region=us-west2 --project=nba-props-platform --limit=5
-
-# 3. If auto-deploy didn't trigger (non-service changes), check drift
-./bin/check-deployment-drift.sh --verbose
-
-# 4. If model governance changes made, sync and validate
-./bin/model-registry.sh sync                    # Sync GCS manifest to BQ
-./bin/check-deployment-drift.sh                 # Validates model deployment
-
+git push origin main                                                          # 1. Push (auto-deploys)
+gcloud builds list --region=us-west2 --project=nba-props-platform --limit=5   # 2. Verify builds
+./bin/check-deployment-drift.sh --verbose                                     # 3. Check drift
+./bin/model-registry.sh sync                                                  # 4. If model changes
 # 5. Create handoff document
 ```
 
-**Session 147:** Cloud Build triggers now auto-deploy on push to main. Manual deploys are only needed for debugging or when auto-deploy fails. See DEPLOY section for details.
-
-**Fallback** (if auto-deploy fails or for urgent hotfixes):
-```bash
-./bin/hot-deploy.sh <service-name>
-```
+**Fallback:** `./bin/hot-deploy.sh <service-name>`
 
 ## Conventions
 
@@ -823,9 +386,7 @@ Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>
 Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 
 ### Code Style
-- Python 3.11+
-- Type hints for public APIs
-- Docstrings for classes and complex functions
+- Python 3.11+, type hints for public APIs, docstrings for classes and complex functions
 
 ## GCP Resources
 
@@ -835,7 +396,7 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 | Region | us-west2 |
 | Registry | us-west2-docker.pkg.dev/nba-props-platform/nba-props |
 | Datasets | nba_predictions, nba_analytics, nba_raw, nba_orchestration |
-| GCS API Bucket | `gs://nba-props-platform-api/v1/` (frontend JSON exports) |
+| GCS API Bucket | `gs://nba-props-platform-api/v1/` |
 | GCS API Base URL | `https://storage.googleapis.com/nba-props-platform-api/v1/` |
 | Frontend Domain | `playerprops.io` |
 
@@ -851,15 +412,8 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 | Architecture | `docs/01-architecture/` |
 | Runbooks | `docs/02-operations/runbooks/` |
 | Development guides | `docs/05-development/` |
-
-**Monthly Summaries:** `docs/08-projects/summaries/` - 70+ sessions/month, anti-patterns, and lessons learned
+| Monthly summaries | `docs/08-projects/summaries/` |
 
 ## Feature References
 
-For detailed documentation on these features, see `docs/02-operations/system-features.md`:
-
-- **Heartbeat System** - Firestore-based processor health tracking
-- **Evening Analytics** - Same-night game processing (6 PM, 10 PM, 1 AM ET)
-- **Early Predictions** - 2:30 AM predictions with REAL_LINES_ONLY mode
-- **Model Attribution** - Track which model file generated predictions
-- **Signal System** - GREEN/YELLOW/RED daily prediction signals
+See `docs/02-operations/system-features.md` for: Heartbeat System, Evening Analytics, Early Predictions, Model Attribution, Signal System.
