@@ -1,15 +1,16 @@
 # Next Session Start Prompt — 2026-02-13
 
-## What Happened (Sessions 215–219B on Feb 12)
+## What Happened (Sessions 215–220 on Feb 12)
 
-Seven sessions of infrastructure recovery and scheduler cleanup:
+Eight sessions of infrastructure recovery, scheduler cleanup, and pipeline fixes:
 
 - **Session 215**: Recovered Feb 11 pipeline (14 games stuck due to SAS@GSW status bug)
 - **Session 216**: Fixed enrichment-trigger + daily-health-check Cloud Functions
 - **Session 216B**: Found and fixed **23 Cloud Run services missing IAM**
 - **Session 217**: Fixed game_id format mismatch in boxscore completeness check
-- **Session 218**: Morning checklist, discovered scheduler failures were service-level bugs
+- **Session 218/218B**: Rewrote bigquery-daily-backup in Python (CLI tools not in CF runtime), migrated live-export Gen1→Gen2, fixed scheduler 500→200 responses
 - **Session 219/219B**: **Fixed ALL 15 failing scheduler jobs → 0 failures.** Key patterns: reporter 400/500 returns, missing shared/, Gen2 entry point immutability, Functions Framework path routing.
+- **Session 220**: Fixed Phase 4 same-day bypass (defensive checks blocked unplayed games), auto-retry endpoint + infinite loop, Docker cache busting. Recovered Feb 12 to 337 predictions. Champion model confirmed in severe decay (39.9% edge 3+ HR).
 
 ## Morning Checklist
 
@@ -76,7 +77,9 @@ bq query --nouse_legacy_sql "SELECT game_date, COUNT(*) as graded FROM nba_predi
 
 ## Session Handoffs
 
+- `docs/09-handoff/2026-02-12-SESSION-220-HANDOFF.md` — Pipeline recovery, Phase 4 fixes, model decay
 - `docs/09-handoff/2026-02-12-SESSION-219-HANDOFF.md` — Scheduler job triage (15→0)
+- `docs/09-handoff/2026-02-12-SESSION-218B-HANDOFF.md` — Backup rewrite, live-export Gen2
 - `docs/09-handoff/2026-02-12-SESSION-218-HANDOFF.md` — Morning checklist + scheduler audit
 - `docs/09-handoff/2026-02-12-SESSION-217-HANDOFF.md` — game_id format mismatch fix
 - `docs/09-handoff/2026-02-12-SESSION-216B-HANDOFF.md` — IAM sweep + Cloud Function deploys
