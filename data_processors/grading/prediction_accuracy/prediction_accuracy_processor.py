@@ -375,10 +375,11 @@ class PredictionAccuracyProcessor:
 
     def detect_dnp_voiding(
         self,
-        actual_points: int,
+        actual_points: Optional[int],
         minutes_played: Optional[float],
         player_lookup: str,
         game_date: date,
+        is_dnp: bool = False,
         captured_injury_status: Optional[str] = None,
         captured_injury_flag: Optional[bool] = None,
         captured_injury_reason: Optional[str] = None
@@ -389,11 +390,14 @@ class PredictionAccuracyProcessor:
         Like sportsbooks, we void bets when a player doesn't play.
         This prevents DNP games from counting against prediction accuracy.
 
+        Session 212: Updated to accept is_dnp flag directly and handle actual_points = None.
+
         Args:
-            actual_points: Points scored (0 for DNP)
+            actual_points: Points scored (0 for DNP, None if DNP with no boxscore)
             minutes_played: Minutes played (0 or None for DNP)
             player_lookup: Player identifier
             game_date: Game date for injury lookup
+            is_dnp: DNP flag from player_game_summary (Session 212)
             captured_injury_status: Injury status captured at prediction time (v3.4)
             captured_injury_flag: Injury flag captured at prediction time (v3.4)
             captured_injury_reason: Injury reason captured at prediction time (v3.4)
@@ -415,10 +419,15 @@ class PredictionAccuracyProcessor:
             'injury_confirmed_postgame': False
         }
 
-        # Check for DNP: 0 points AND (0 minutes or no minutes data)
-        is_dnp = (actual_points == 0) and (minutes_played is None or minutes_played == 0)
+        # Session 212: Check for DNP using is_dnp flag (preferred) or infer from points/minutes
+        # DNP if: explicit is_dnp flag OR (0 points AND no minutes) OR (None points - missing boxscore)
+        dnp_detected = (
+            is_dnp or
+            (actual_points == 0 and (minutes_played is None or minutes_played == 0)) or
+            actual_points is None
+        )
 
-        if not is_dnp:
+        if not dnp_detected:
             return result
 
         # Player DNP'd - determine injury status
@@ -576,7 +585,7 @@ class PredictionAccuracyProcessor:
         """
         Load actual game data for all players on a game date.
 
-        Returns dict mapping player_lookup -> {actual_points, team_abbr, opponent_team_abbr, minutes_played}
+        Returns dict mapping player_lookup -> {actual_points, team_abbr, opponent_team_abbr, minutes_played, is_dnp}
         """
         query = f"""
         SELECT
@@ -584,7 +593,8 @@ class PredictionAccuracyProcessor:
             points as actual_points,
             team_abbr,
             opponent_team_abbr,
-            minutes_played
+            minutes_played,
+            is_dnp
         FROM `{self.actuals_table}`
         WHERE game_date = '{game_date}'
         """
@@ -603,7 +613,8 @@ class PredictionAccuracyProcessor:
                         'actual_points': int(row['actual_points']) if pd.notna(row['actual_points']) else None,
                         'team_abbr': row['team_abbr'] if pd.notna(row['team_abbr']) else None,
                         'opponent_team_abbr': row['opponent_team_abbr'] if pd.notna(row['opponent_team_abbr']) else None,
-                        'minutes_played': self._safe_float(row['minutes_played'])
+                        'minutes_played': self._safe_float(row['minutes_played']),
+                        'is_dnp': bool(row['is_dnp']) if pd.notna(row['is_dnp']) else False
                     }
                     for _, row in result.iterrows()
                 }
@@ -684,12 +695,13 @@ class PredictionAccuracyProcessor:
         Returns:
             Dict ready for insertion into prediction_accuracy table
         """
-        actual_points = actual_data['actual_points']
+        actual_points = actual_data.get('actual_points')  # Session 212: Can be None for DNP
         predicted_points = prediction.get('predicted_points')
         line_value = prediction.get('line_value')
         recommendation = prediction.get('recommendation')
         confidence_score = prediction.get('confidence_score')
         minutes_played = actual_data.get('minutes_played')
+        is_dnp = actual_data.get('is_dnp', False)  # Session 212: Get DNP flag
         player_lookup = prediction['player_lookup']
 
         # v3.4: Get captured injury status from prediction (if available)
@@ -698,11 +710,13 @@ class PredictionAccuracyProcessor:
         captured_injury_reason = prediction.get('injury_reason_at_prediction')
 
         # Detect DNP voiding (v4) - uses captured injury status if available
+        # Session 212: Pass is_dnp flag and handle actual_points = None
         voiding_info = self.detect_dnp_voiding(
             actual_points=actual_points,
             minutes_played=minutes_played,
             player_lookup=player_lookup,
             game_date=game_date,
+            is_dnp=is_dnp,
             captured_injury_status=captured_injury_status,
             captured_injury_flag=captured_injury_flag,
             captured_injury_reason=captured_injury_reason
@@ -1185,10 +1199,12 @@ class PredictionAccuracyProcessor:
                 missing_actuals += 1
                 continue
 
-            # Skip if actual_points is None (can't grade without points data)
+            # Session 212: Grade ALL predictions, even DNP (actual_points = None)
+            # DNP predictions will be marked as is_voided=True by detect_dnp_voiding
+            # This gives us complete audit trail like sportsbooks (void the bet, track it)
             if actual_data.get('actual_points') is None:
                 null_actuals += 1
-                continue
+                # Continue grading - will be voided, but we want the record
 
             graded = self.grade_prediction(pred, actual_data, game_date)
             graded_results.append(graded)
