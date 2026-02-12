@@ -220,7 +220,18 @@ PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py --name "PROD_V2
 | nba-phase2-raw-processors | data_processors/raw/Dockerfile |
 | nba-scrapers | scrapers/Dockerfile |
 
-**Cloud Functions:** phase5b-grading, phase3-to-phase4-orchestrator, phase4-to-phase5-orchestrator, phase5-to-phase6-orchestrator (all FUNCTIONAL). phase2-to-phase3-orchestrator REMOVED (Session 205).
+**Cloud Functions (all auto-deploy via `cloudbuild-functions.yaml`):**
+
+| Function | Trigger | Notes |
+|----------|---------|-------|
+| phase5b-grading | Pub/Sub: `nba-grading-trigger` | Grading orchestrator |
+| phase6-export | Pub/Sub: `nba-phase6-export-trigger` | Publishing/export |
+| grading-gap-detector | HTTP (Cloud Scheduler 9 AM ET) | Daily gap detection |
+| phase3-to-phase4-orchestrator | Pub/Sub: `nba-phase3-analytics-complete` | Phase transition |
+| phase4-to-phase5-orchestrator | Pub/Sub: `nba-phase4-precompute-complete` | Phase transition |
+| phase5-to-phase6-orchestrator | Pub/Sub: `nba-phase5-predictions-complete` | Phase transition |
+
+phase2-to-phase3-orchestrator REMOVED (Session 205).
 
 ```bash
 gcloud builds list --region=us-west2 --project=nba-props-platform --limit=5  # Check recent builds

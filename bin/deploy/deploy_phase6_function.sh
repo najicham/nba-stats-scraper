@@ -116,7 +116,7 @@ gcloud functions deploy $FUNCTION_NAME \
     --timeout=$TIMEOUT \
     --memory=$MEMORY \
     --max-instances=$MAX_INSTANCES \
-    --set-env-vars="GCP_PROJECT=$PROJECT_ID,GCS_BUCKET=nba-props-platform-api" \
+    --update-env-vars="GCP_PROJECT=$PROJECT_ID,GCS_BUCKET=nba-props-platform-api" \
     --source="$DEPLOY_DIR"
 
 # Cleanup

@@ -5,13 +5,14 @@
 # deploy source code directly. This config prepares the deployment package
 # and deploys using gcloud functions deploy.
 #
-# Used by: phase5b-grading, phase2→3/3→4/4→5/5→6 orchestrators
+# Used by: phase5b-grading, phase6-export, grading-gap-detector, phase3→4/4→5/5→6 orchestrators
 #
 # Substitution variables:
 #   _FUNCTION_NAME: Cloud Function name (e.g., phase5b-grading)
 #   _ENTRY_POINT: Function entry point (e.g., main)
 #   _SOURCE_DIR: Source directory relative to repo root (e.g., orchestration/cloud_functions/grading)
-#   _TRIGGER_TOPIC: Pub/Sub trigger topic (e.g., nba-grading-trigger)
+#   _TRIGGER_TYPE: 'topic' (default) or 'http' - determines trigger mechanism
+#   _TRIGGER_TOPIC: Pub/Sub trigger topic (required when _TRIGGER_TYPE=topic)
 #   _MEMORY: Memory allocation (default: 1Gi)
 #   _TIMEOUT: Function timeout (default: 300s)
 
@@ -35,6 +36,7 @@ steps:
         cp -r shared /workspace/deploy_pkg/
         cp -r predictions /workspace/deploy_pkg/
         cp -r backfill_jobs /workspace/deploy_pkg/
+        cp -r bin /workspace/deploy_pkg/
         # NOTE: Do NOT copy orchestration/ — it contains other Cloud Functions
         # with syntax errors that cause gcloud compile checks to fail.
 
@@ -66,38 +68,36 @@ steps:
         "
 
   # Step 2: Deploy Cloud Function
+  # Supports both Pub/Sub-triggered (_TRIGGER_TYPE=topic) and HTTP-triggered (_TRIGGER_TYPE=http) functions
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
-    entrypoint: gcloud
+    entrypoint: bash
     args:
-      - 'functions'
-      - 'deploy'
-      - '${_FUNCTION_NAME}'
-      - '--gen2'
-      - '--runtime'
-      - 'python311'
-      - '--region'
-      - 'us-west2'
-      - '--source'
-      - '/workspace/deploy_pkg'
-      - '--entry-point'
-      - '${_ENTRY_POINT}'
-      - '--trigger-topic'
-      - '${_TRIGGER_TOPIC}'
-      - '--service-account=756957797294-compute@developer.gserviceaccount.com'
-      - '--update-env-vars'
-      - 'GCP_PROJECT=nba-props-platform,BUILD_COMMIT=${SHORT_SHA},BUILD_TIMESTAMP=${_BUILD_TIMESTAMP}'
-      - '--update-labels'
-      - 'commit-sha=${SHORT_SHA}'
-      - '--memory'
-      - '${_MEMORY}'
-      - '--timeout'
-      - '${_TIMEOUT}'
-      - '--max-instances'
-      - '3'
-      - '--min-instances'
-      - '0'
-      - '--project'
-      - 'nba-props-platform'
+      - '-c'
+      - |
+        TRIGGER_ARGS=""
+        if [ "${_TRIGGER_TYPE}" = "http" ]; then
+          echo "Deploying HTTP-triggered function: ${_FUNCTION_NAME}"
+          TRIGGER_ARGS="--trigger-http --no-allow-unauthenticated"
+        else
+          echo "Deploying Pub/Sub-triggered function: ${_FUNCTION_NAME} (topic: ${_TRIGGER_TOPIC})"
+          TRIGGER_ARGS="--trigger-topic ${_TRIGGER_TOPIC}"
+        fi
+
+        gcloud functions deploy ${_FUNCTION_NAME} \
+          --gen2 \
+          --runtime python311 \
+          --region us-west2 \
+          --source /workspace/deploy_pkg \
+          --entry-point ${_ENTRY_POINT} \
+          $$TRIGGER_ARGS \
+          --service-account=756957797294-compute@developer.gserviceaccount.com \
+          --update-env-vars "GCP_PROJECT=nba-props-platform,BUILD_COMMIT=${SHORT_SHA},BUILD_TIMESTAMP=${_BUILD_TIMESTAMP}" \
+          --update-labels "commit-sha=${SHORT_SHA}" \
+          --memory ${_MEMORY} \
+          --timeout ${_TIMEOUT} \
+          --max-instances 3 \
+          --min-instances 0 \
+          --project nba-props-platform
 
   # Step 3: Set IAM permissions for Pub/Sub invocation (Session 205/206 - CRITICAL)
   # Without this, Pub/Sub cannot deliver messages to the Cloud Function.
@@ -134,6 +134,7 @@ substitutions:
   _FUNCTION_NAME: ''
   _ENTRY_POINT: 'main'
   _SOURCE_DIR: ''
+  _TRIGGER_TYPE: 'topic'  # 'topic' for Pub/Sub, 'http' for HTTP-triggered
   _TRIGGER_TOPIC: ''
   _MEMORY: '1Gi'
   _TIMEOUT: '300s'
