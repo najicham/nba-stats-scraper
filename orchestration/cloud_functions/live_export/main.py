@@ -36,17 +36,31 @@ GCS_BUCKET = os.environ.get('GCS_BUCKET', 'nba-props-platform-api')
 
 
 def get_today_date() -> str:
-    """Get today's date in ET timezone (DST-aware)."""
+    """
+    Get the current game-day date in Pacific time with a 1 AM cutover.
+
+    Between midnight and 1 AM PT, returns yesterday's date so that late
+    west-coast games are still treated as "tonight." After 1 AM PT, returns
+    today's date.
+    """
+    from datetime import timedelta
+
     try:
         from zoneinfo import ZoneInfo
-        et_tz = ZoneInfo('America/New_York')
+        pt_tz = ZoneInfo('America/Los_Angeles')
     except ImportError:
-        # Fallback for older Python versions
         import pytz
-        et_tz = pytz.timezone('America/New_York')
+        pt_tz = pytz.timezone('America/Los_Angeles')
 
-    et_now = datetime.now(et_tz)
-    return et_now.strftime('%Y-%m-%d')
+    pt_now = datetime.now(pt_tz)
+
+    # Before 1 AM PT: still last night's games
+    if pt_now.hour < 1:
+        game_date = pt_now.date() - timedelta(days=1)
+    else:
+        game_date = pt_now.date()
+
+    return game_date.isoformat()
 
 
 def run_live_export(target_date: str, include_grading: bool = True, include_status: bool = True) -> dict:
