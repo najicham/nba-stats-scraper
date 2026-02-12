@@ -379,6 +379,8 @@ ORDER BY 1 DESC;
 | Orchestrator not triggering | Phase 2 complete, `_triggered=False` | NOT a bug. Phase 3 uses direct Pub/Sub, not orchestrator. |
 | Cloud Build trigger stale | Trigger deploys old commit SHA | Delete and recreate trigger (`gcloud builds triggers delete/create`). Session 213 fix. |
 | Scheduler jobs failing | Jobs return non-SUCCESS status | Run `validate-daily` Phase 0.67. Session 213: deleted 4 BDL, paused 9 MLB, fixed 2 validation auth. |
+| game_id format mismatch | "Missing: N games" but 100% coverage | Schedule uses numeric game_ids, gamebook/analytics use `YYYYMMDD_AWAY_HOME`. Match by team pairs. Session 217. |
+| Cloud Build Docker cache | Old code deployed despite new commit | Use `./bin/hot-deploy.sh SERVICE` to force fresh build without Docker layer cache. Session 217. |
 
 **Full troubleshooting:** See `docs/02-operations/session-learnings.md`
 
