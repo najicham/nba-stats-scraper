@@ -231,13 +231,15 @@ class MissingPredictionDetector:
 
         players_text = "\n".join(player_lines)
 
+        high_value_line = f"🌟 *{high_value} high-value players* (≥20 PPG) missing\n" if high_value > 0 else ""
+
         # Build full message
         text = f"""{severity_emoji} *MISSING PREDICTIONS ALERT - {game_date}*
 
 *Coverage: {predicted}/{eligible} players ({coverage}%)*
 
 {missing_count} players with betting lines did NOT receive predictions:
-{'' if high_value == 0 else f'🌟 *{high_value} high-value players* (≥20 PPG) missing\n'}
+{high_value_line}
 *Missing Players:*
 {players_text}
 
