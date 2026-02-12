@@ -287,7 +287,8 @@ class TonightAllPlayersExporter(BaseExporter):
                 game_date,
                 over_under_result,
                 points,
-                is_dnp
+                is_dnp,
+                points_line
             FROM `nba-props-platform.nba_analytics.player_game_summary`
             WHERE game_date < @before_date
               AND player_lookup IN UNNEST(@player_lookups)
@@ -296,7 +297,7 @@ class TonightAllPlayersExporter(BaseExporter):
         SELECT
             player_lookup,
             ARRAY_AGG(
-                STRUCT(over_under_result, points, is_dnp)
+                STRUCT(over_under_result, points, is_dnp, points_line)
                 ORDER BY game_date DESC
             ) as last_10
         FROM recent_games
@@ -317,28 +318,35 @@ class TonightAllPlayersExporter(BaseExporter):
             # Extract O/U results (DNP games marked as null/DNP for graph gaps)
             results_list = []
             points_list = []
+            lines_list = []
             for g in games:
                 if isinstance(g, dict):
                     ou = g.get('over_under_result')
                     pts = g.get('points')
                     dnp = g.get('is_dnp', False)
+                    line = g.get('points_line')
                 else:
                     ou = getattr(g, 'over_under_result', None)
                     pts = getattr(g, 'points', None)
                     dnp = getattr(g, 'is_dnp', False)
+                    line = getattr(g, 'points_line', None)
 
                 if dnp:
                     results_list.append('DNP')
                     points_list.append(None)
+                    lines_list.append(None)
                 elif ou == 'OVER':
                     results_list.append('O')
                     points_list.append(int(pts) if pts is not None else None)
+                    lines_list.append(float(line) if line is not None else None)
                 elif ou == 'UNDER':
                     results_list.append('U')
                     points_list.append(int(pts) if pts is not None else None)
+                    lines_list.append(float(line) if line is not None else None)
                 else:
                     results_list.append('-')
                     points_list.append(int(pts) if pts is not None else None)
+                    lines_list.append(float(line) if line is not None else None)
 
             # Calculate record (only O/U count, not DNP or -)
             overs = results_list.count('O')
@@ -347,6 +355,7 @@ class TonightAllPlayersExporter(BaseExporter):
             last_10_map[player] = {
                 'results': results_list,
                 'points': points_list,
+                'lines': lines_list,
                 'record': f"{overs}-{unders}" if (overs + unders) > 0 else None
             }
 
@@ -419,6 +428,9 @@ class TonightAllPlayersExporter(BaseExporter):
 
                 # Add last_10_points for ALL players (null = DNP gap in sparkline)
                 player_data['last_10_points'] = last_10.get('points', [])
+
+                # Add last_10_lines for ALL players (null where line was missing)
+                player_data['last_10_lines'] = last_10.get('lines', [])
 
                 # Add last_10_results (vs line) for ALL players
                 player_data['last_10_results'] = last_10.get('results', [])
