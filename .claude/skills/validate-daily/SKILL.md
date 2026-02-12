@@ -2708,6 +2708,118 @@ EOF
 
 **Reference**: Session 212 (discovered 30/129 jobs failing silently), Session 213 (deleted 4 BDL, paused 9 MLB, fixed 2 validation auth)
 
+### Phase 0.675: Scheduler Job Regression Detector (Session 219 - NEW)
+
+**IMPORTANT**: Quick count-based check to detect regressions in Cloud Scheduler health. Session 219 fixed 15 failing jobs down to 0. This phase ensures we catch any new failures immediately via simple thresholds.
+
+**Why this matters**: Phase 0.67 classifies failures by severity type (PERMISSION_DENIED, INTERNAL, etc.), but doesn't provide a simple pass/fail threshold based on failure count. After a cleanup session, you need a regression detector that alerts when the total number of failing jobs creeps back up. This is the "canary" check -- fast, simple, count-based.
+
+**What to check**:
+
+```bash
+# Scheduler job regression detector — count-based thresholds
+python3 << 'EOF'
+import subprocess
+import json
+import sys
+
+RPC_CODES = {
+    0: 'OK', 1: 'CANCELLED', 2: 'UNKNOWN', 3: 'INVALID_ARGUMENT',
+    4: 'DEADLINE_EXCEEDED', 5: 'NOT_FOUND', 7: 'PERMISSION_DENIED',
+    8: 'RESOURCE_EXHAUSTED', 13: 'INTERNAL', 14: 'UNAVAILABLE',
+    16: 'UNAUTHENTICATED'
+}
+
+print("\n=== Scheduler Job Regression Detector ===\n")
+
+result = subprocess.run(
+    ['gcloud', 'scheduler', 'jobs', 'list',
+     '--project=nba-props-platform', '--location=us-west2', '--format=json'],
+    capture_output=True, text=True, timeout=30)
+
+if result.returncode != 0:
+    print("CRITICAL: Failed to list scheduler jobs")
+    print(f"  stderr: {result.stderr[:200]}")
+    sys.exit(1)
+
+jobs = json.loads(result.stdout)
+
+enabled = []
+paused = []
+passing = []
+failing = []
+
+for j in jobs:
+    name = j.get('name', '').split('/')[-1]
+    state = j.get('state', '?')
+
+    if state != 'ENABLED':
+        paused.append(name)
+        continue
+
+    enabled.append(name)
+    status = j.get('status', {})
+    code = status.get('code', 0)
+
+    if code == 0:
+        passing.append(name)
+    else:
+        last = j.get('lastAttemptTime', 'NEVER')
+        if last != 'NEVER':
+            last = last[:19]
+        code_name = RPC_CODES.get(code, f'CODE_{code}')
+        failing.append((name, code, code_name, last))
+
+# Report summary counts
+total = len(enabled) + len(paused)
+print(f"  Total jobs:   {total}")
+print(f"  Enabled:      {len(enabled)}")
+print(f"  Passing:      {len(passing)}")
+print(f"  Failing:      {len(failing)}")
+print(f"  Paused:       {len(paused)}")
+print()
+
+# List failing jobs if any
+if failing:
+    print("  Failing jobs:")
+    for name, code, code_name, last in sorted(failing, key=lambda x: x[1], reverse=True):
+        print(f"    - {name}: {code_name} (code={code}, last attempt: {last})")
+    print()
+
+# Apply thresholds
+fail_count = len(failing)
+if fail_count == 0:
+    print(f"PASS: All {len(passing)} enabled scheduler jobs are healthy")
+    sys.exit(0)
+elif fail_count <= 3:
+    print(f"WARNING: {fail_count} failing scheduler job(s) detected")
+    print(f"  Baseline after Session 219 cleanup: 0 failing")
+    print(f"  Investigate with: gcloud scheduler jobs describe JOB_NAME --project=nba-props-platform --location=us-west2")
+    sys.exit(0)
+else:
+    print(f"CRITICAL: {fail_count} failing scheduler job(s) detected (threshold: 4+)")
+    print(f"  Baseline after Session 219 cleanup: 0 failing")
+    print(f"  This indicates a significant regression in scheduler health.")
+    print(f"  Run Phase 0.67 for detailed severity breakdown.")
+    print(f"  Quick triage: gcloud scheduler jobs list --project=nba-props-platform --location=us-west2 --format='table(name.basename(),state,status.code,lastAttemptTime)'")
+    sys.exit(1)
+EOF
+```
+
+**Expected Result**: PASS with 0 failing jobs (baseline established Session 219)
+
+**Thresholds**:
+
+| Failing Count | Verdict | Action |
+|---------------|---------|--------|
+| 0 | PASS | No action needed |
+| 1-3 | WARNING | Investigate individual jobs, may be transient |
+| 4+ | CRITICAL | Regression detected, run Phase 0.67 for severity breakdown |
+
+**Relationship to Phase 0.67**: Phase 0.67 provides detailed severity classification (IAM vs service errors vs timeouts). This phase provides a quick count-based regression check. Run this first as a fast gate; only dig into Phase 0.67 details if this phase flags issues.
+
+**Reference**: Session 219 (fixed 15 failing jobs to 0, established baseline)
+
 ### Phase 0.68: Zero-Invocation Detection (Session 212 - NEW)
 
 **IMPORTANT**: Detect Cloud Run services that are targets of Pub/Sub push subscriptions but received **zero requests** in the last 24 hours. This catches the gap between "IAM is correct" (Phase 0.6 Check 5) and "service actually receives traffic."

@@ -1,7 +1,7 @@
 """
 Grading Readiness Monitor Cloud Function
 
-Polls for boxscore completeness and triggers grading when all games are final.
+Polls for game completion and triggers grading when all games are final.
 This enables event-driven grading within ~15 minutes of the last game ending,
 instead of waiting for the next scheduled grading run.
 
@@ -9,8 +9,8 @@ Trigger: Cloud Scheduler (every 15 min from 10 PM - 3 AM ET)
 Schedule: */15 22-23,0-2 * * * (America/New_York)
 
 Logic:
-1. Check how many games were scheduled for yesterday
-2. Check how many games have final boxscores
+1. Check how many games were scheduled for yesterday (nbac_schedule)
+2. Check how many games have game_status=3 (Final)
 3. Check if grading has already been done
 4. If all games complete AND not graded -> trigger grading via Pub/Sub
 
@@ -18,20 +18,20 @@ Safety:
 - Scheduled grading jobs (2:30 AM, 6:30 AM, 11 AM ET) remain as fallback
 - This monitor is additive, not a replacement
 
-Version: 1.0
+Version: 1.1
+Updated: 2026-02-12 - Fix BDL->NBAC migration, fix pubsub import
 Created: 2026-01-15
 """
 
 import json
 import logging
 import os
-from datetime import datetime, timedelta, timezone, date
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Optional, Tuple
 
 import functions_framework
 from flask import Request
-from google.cloud import bigquery
-from shared.clients.bigquery_pool import get_bigquery_client, pubsub_v1
+from google.cloud import bigquery, pubsub_v1
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -50,7 +50,7 @@ def get_bq_client():
     """Get or create BigQuery client."""
     global _bq_client
     if _bq_client is None:
-        _bq_client = get_bigquery_client(project_id=PROJECT_ID)
+        _bq_client = bigquery.Client(project=PROJECT_ID)
     return _bq_client
 
 
@@ -72,59 +72,36 @@ def get_yesterday_date() -> str:
     return yesterday.strftime('%Y-%m-%d')
 
 
-def check_scheduled_games(target_date: str) -> int:
+def check_final_games(target_date: str) -> Tuple[int, int]:
     """
-    Check how many games were scheduled for a date.
+    Check how many games are final (game_status=3) using nbac_schedule.
+
+    Uses the official NBA.com schedule data which is always available,
+    unlike BDL boxscores which were disabled.
 
     Args:
         target_date: Date to check (YYYY-MM-DD format)
 
     Returns:
-        Number of scheduled games
+        Tuple of (final_games, total_games)
     """
     bq_client = get_bq_client()
 
     query = f"""
-    SELECT COUNT(DISTINCT game_id) as game_count
+    SELECT
+        COUNT(DISTINCT game_id) as total_games,
+        COUNTIF(game_status = 3) as final_games
     FROM `{PROJECT_ID}.nba_raw.nbac_schedule`
     WHERE game_date = '{target_date}'
     """
 
     try:
         result = list(bq_client.query(query).result())
-        return result[0].game_count if result else 0
-    except Exception as e:
-        logger.error(f"Error checking scheduled games: {e}", exc_info=True)
-        return 0
-
-
-def check_final_boxscores(target_date: str) -> Tuple[int, int]:
-    """
-    Check how many games have final boxscores.
-
-    Args:
-        target_date: Date to check (YYYY-MM-DD format)
-
-    Returns:
-        Tuple of (games_with_boxscores, total_player_records)
-    """
-    bq_client = get_bq_client()
-
-    query = f"""
-    SELECT
-        COUNT(DISTINCT game_id) as games_with_boxscores,
-        COUNT(*) as player_records
-    FROM `{PROJECT_ID}.nba_raw.bdl_player_boxscores`
-    WHERE game_date = '{target_date}'
-    """
-
-    try:
-        result = list(bq_client.query(query).result())
         if result:
-            return result[0].games_with_boxscores, result[0].player_records
+            return result[0].final_games, result[0].total_games
         return 0, 0
     except Exception as e:
-        logger.error(f"Error checking final boxscores: {e}", exc_info=True)
+        logger.error(f"Error checking final games: {e}", exc_info=True)
         return 0, 0
 
 
@@ -229,8 +206,7 @@ def assess_readiness(target_date: str) -> Dict:
         Assessment dictionary with decision and metadata
     """
     # Check all conditions
-    scheduled_games = check_scheduled_games(target_date)
-    games_with_boxscores, player_records = check_final_boxscores(target_date)
+    final_games, total_games = check_final_games(target_date)
     already_graded = check_already_graded(target_date)
     predictions_exist = check_predictions_exist(target_date)
 
@@ -238,9 +214,8 @@ def assess_readiness(target_date: str) -> Dict:
     assessment = {
         'target_date': target_date,
         'checked_at': datetime.now(timezone.utc).isoformat(),
-        'scheduled_games': scheduled_games,
-        'games_with_boxscores': games_with_boxscores,
-        'player_records': player_records,
+        'scheduled_games': total_games,
+        'final_games': final_games,
         'already_graded': already_graded,
         'predictions_exist': predictions_exist > 0,
         'prediction_count': predictions_exist,
@@ -253,7 +228,7 @@ def assess_readiness(target_date: str) -> Dict:
         assessment['decision'] = 'skip'
         assessment['reason'] = 'already_graded'
 
-    elif scheduled_games == 0:
+    elif total_games == 0:
         assessment['decision'] = 'skip'
         assessment['reason'] = 'no_games_scheduled'
 
@@ -261,9 +236,9 @@ def assess_readiness(target_date: str) -> Dict:
         assessment['decision'] = 'skip'
         assessment['reason'] = 'no_predictions'
 
-    elif games_with_boxscores < scheduled_games:
+    elif final_games < total_games:
         assessment['decision'] = 'wait'
-        assessment['reason'] = f'incomplete_boxscores_{games_with_boxscores}/{scheduled_games}'
+        assessment['reason'] = f'games_not_final_{final_games}/{total_games}'
 
     else:
         # All conditions met - ready to grade!
@@ -304,7 +279,7 @@ def main(request: Request):
 
         if assessment['decision'] == 'trigger':
             logger.info(
-                f"All {assessment['scheduled_games']} games complete for {target_date}. "
+                f"All {assessment['scheduled_games']} games final for {target_date}. "
                 f"Triggering grading..."
             )
             message_id = trigger_grading(target_date)
@@ -312,8 +287,8 @@ def main(request: Request):
 
         elif assessment['decision'] == 'wait':
             logger.info(
-                f"Waiting for boxscores: {assessment['games_with_boxscores']}/"
-                f"{assessment['scheduled_games']} games complete for {target_date}"
+                f"Waiting for games to finish: {assessment['final_games']}/"
+                f"{assessment['scheduled_games']} games final for {target_date}"
             )
             action_taken = 'waiting'
 

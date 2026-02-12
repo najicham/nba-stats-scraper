@@ -158,8 +158,7 @@ def check_processor_health() -> dict:
     """
     try:
         from google.cloud import bigquery
-from shared.clients.bigquery_pool import get_bigquery_client
-        bq_client = get_bigquery_client(project_id=PROJECT_ID)
+        bq_client = bigquery.Client(project=PROJECT_ID)
 
         # Check last successful run of BdlLiveBoxscoresProcessor
         query = """

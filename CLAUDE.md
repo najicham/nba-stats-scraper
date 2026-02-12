@@ -232,8 +232,16 @@ PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py --name "PROD_V2
 | phase5-to-phase6-orchestrator | Pub/Sub: `nba-phase5-predictions-complete` | Phase transition |
 | enrichment-trigger | HTTP (Cloud Scheduler 18:40 UTC) | Enriches predictions with prop lines |
 | daily-health-check | HTTP (Cloud Scheduler 9 AM ET) | Daily pipeline health check + Slack alerts |
+| transition-monitor | HTTP (Cloud Scheduler) | Phase transition health monitoring |
+| pipeline-health-summary | HTTP (Cloud Scheduler 6 AM PT) | Daily pipeline health email summary |
+| nba-grading-alerts | HTTP (Cloud Scheduler) | Grading coverage/accuracy Slack alerts |
+| live-freshness-monitor | HTTP (Cloud Scheduler) | Live game data freshness monitoring |
+| self-heal-predictions | HTTP (Cloud Scheduler) | Auto-heal stalled/missing predictions |
+| grading-readiness-monitor | HTTP (Cloud Scheduler) | Post-game grading readiness monitor |
 
 phase2-to-phase3-orchestrator REMOVED (Session 205).
+
+Monitoring function triggers created via `./bin/infrastructure/create_monitoring_function_triggers.sh`.
 
 ```bash
 gcloud builds list --region=us-west2 --project=nba-props-platform --limit=5  # Check recent builds
