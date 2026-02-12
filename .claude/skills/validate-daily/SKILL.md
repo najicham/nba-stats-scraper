@@ -2041,95 +2041,166 @@ curl -X POST "$SLACK_WEBHOOK_URL_ERROR" \
 - Critical errors: `SLACK_WEBHOOK_URL_ERROR` → #app-error-alerts ⚠️ **Use this for Phase 0.6 failures**
 - Warnings: `SLACK_WEBHOOK_URL_WARNING` → #nba-alerts
 
-#### Check 5: Orchestrator IAM Permissions (Session 205 - CRITICAL)
+#### Check 5: Comprehensive Pub/Sub IAM Permissions (Session 205, upgraded Session 212)
 
-**MANDATORY CHECK**: Verify all orchestrators have required IAM permissions to be invoked by Pub/Sub.
+**MANDATORY CHECK**: Verify ALL Cloud Run services invoked by Pub/Sub have `roles/run.invoker`.
 
-**Note (Session 205):** The phase2-to-phase3-orchestrator has been REMOVED. Only 3 orchestrators remain.
+**History**: Session 205 discovered orchestrators lacked IAM (7+ days of silent failures). Session 212 discovered the same issue on grading services AND 6 more services — because Check 5 only checked a hardcoded list of 3 orchestrators. This upgraded check **dynamically discovers** every service that Pub/Sub pushes to, so new services are automatically covered.
 
-**The Problem**: Session 205 discovered orchestrators lacked `roles/run.invoker` permission, causing 7+ days of silent failures. Pub/Sub published messages but Cloud Run rejected invocations due to missing permissions.
-
-**Root Cause**: `gcloud functions deploy` does not preserve IAM policies. Redeployments can wipe IAM bindings.
+**Root Cause**: `gcloud functions deploy` with Eventarc does not preserve IAM policies. Redeployments can wipe IAM bindings. This can silently break any Pub/Sub-invoked service.
 
 **What to check**:
 
 ```bash
-# Check all 3 remaining orchestrators for IAM permissions
+# Dynamically find ALL Cloud Run services invoked by Pub/Sub and verify IAM
 python3 << 'EOF'
 import subprocess
+import json
 import sys
+import re
 
-orchestrators = [
-    'phase3-to-phase4-orchestrator',
-    'phase4-to-phase5-orchestrator',
-    'phase5-to-phase6-orchestrator'
-]
-
-missing_permissions = []
 service_account = '756957797294-compute@developer.gserviceaccount.com'
 
-print("\n=== Orchestrator IAM Permission Check ===\n")
+print("\n=== Comprehensive Pub/Sub → Cloud Run IAM Check ===\n")
 
-for orch in orchestrators:
+# Step 1: Find all push subscriptions and extract target Cloud Run services
+result = subprocess.run(
+    ['gcloud', 'pubsub', 'subscriptions', 'list',
+     '--project=nba-props-platform', '--format=json'],
+    capture_output=True, text=True, timeout=30)
+
+if result.returncode != 0:
+    print("❌ Failed to list Pub/Sub subscriptions")
+    sys.exit(1)
+
+subs = json.loads(result.stdout)
+
+# Extract unique Cloud Run service names from push endpoints
+# Endpoint format: https://SERVICE_NAME-HASH.REGION.run.app/...
+pubsub_targets = {}  # service_name -> list of (topic, sub_name)
+for sub in subs:
+    endpoint = sub.get('pushConfig', {}).get('pushEndpoint', '')
+    if not endpoint:
+        continue
+    topic = sub.get('topic', '').split('/')[-1]
+    sub_name = sub.get('name', '').split('/')[-1]
+    # Extract service name from Cloud Run URL
+    match = re.match(r'https://([a-z0-9-]+)-[a-z0-9]+-[a-z]+\.a\.run\.app', endpoint)
+    if match:
+        svc = match.group(1)
+        if svc not in pubsub_targets:
+            pubsub_targets[svc] = []
+        pubsub_targets[svc].append((topic, sub_name))
+
+print(f"Found {len(pubsub_targets)} Cloud Run services with Pub/Sub push subscriptions\n")
+
+# Step 2: Check IAM on each target service
+missing = []
+ok_count = 0
+
+for svc in sorted(pubsub_targets.keys()):
+    topics = [t[0] for t in pubsub_targets[svc]]
     try:
         result = subprocess.run(
-            ['gcloud', 'run', 'services', 'get-iam-policy', orch,
+            ['gcloud', 'run', 'services', 'get-iam-policy', svc,
              '--region=us-west2', '--project=nba-props-platform',
              '--format=json'],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
+            capture_output=True, text=True, timeout=10)
 
         if result.returncode != 0:
-            print(f"  ❌ {orch}: Failed to get IAM policy")
-            missing_permissions.append(orch)
+            print(f"  ❌ {svc}: Failed to get IAM policy (topics: {', '.join(topics)})")
+            missing.append((svc, topics))
             continue
 
-        # Check if roles/run.invoker exists for service account
         if 'roles/run.invoker' in result.stdout and service_account in result.stdout:
-            print(f"  ✅ {orch}: IAM permissions OK")
+            print(f"  ✅ {svc}")
+            ok_count += 1
         else:
-            print(f"  🔴 {orch}: MISSING roles/run.invoker permission!")
-            missing_permissions.append(orch)
+            print(f"  🔴 {svc}: MISSING roles/run.invoker! (topics: {', '.join(topics)})")
+            missing.append((svc, topics))
 
     except Exception as e:
-        print(f"  ❌ {orch}: Error checking IAM - {e}")
-        missing_permissions.append(orch)
+        print(f"  ❌ {svc}: Error - {e}")
+        missing.append((svc, topics))
 
-if missing_permissions:
-    print(f"\n🔴 P0 CRITICAL: {len(missing_permissions)} orchestrator(s) missing IAM permissions!")
-    print(f"   Affected: {', '.join(missing_permissions)}")
-    print(f"\n   Impact: Pub/Sub cannot invoke these orchestrators")
-    print(f"           Pipeline will stall when processors complete")
-    print(f"\n   Fix command:")
-    for orch in missing_permissions:
-        print(f"   gcloud run services add-iam-policy-binding {orch} \\")
+# Step 3: Also check Cloud Scheduler HTTP targets (not via Pub/Sub)
+result = subprocess.run(
+    ['gcloud', 'scheduler', 'jobs', 'list',
+     '--project=nba-props-platform', '--location=us-west2', '--format=json'],
+    capture_output=True, text=True, timeout=15)
+
+scheduler_targets = {}
+if result.returncode == 0:
+    jobs = json.loads(result.stdout)
+    for job in jobs:
+        uri = job.get('httpTarget', {}).get('uri', '')
+        if not uri:
+            continue
+        match = re.match(r'https://([a-z0-9-]+)-[a-z0-9]+-[a-z]+\.a\.run\.app', uri)
+        if match:
+            svc = match.group(1)
+            if svc not in pubsub_targets:  # Don't double-check
+                job_name = job.get('name', '').split('/')[-1]
+                if svc not in scheduler_targets:
+                    scheduler_targets[svc] = []
+                scheduler_targets[svc].append(job_name)
+
+    if scheduler_targets:
+        print(f"\n  --- Cloud Scheduler HTTP targets ({len(scheduler_targets)} additional) ---\n")
+        for svc in sorted(scheduler_targets.keys()):
+            jobs = scheduler_targets[svc]
+            try:
+                result = subprocess.run(
+                    ['gcloud', 'run', 'services', 'get-iam-policy', svc,
+                     '--region=us-west2', '--project=nba-props-platform',
+                     '--format=json'],
+                    capture_output=True, text=True, timeout=10)
+
+                if result.returncode != 0 or ('roles/run.invoker' not in result.stdout or service_account not in result.stdout):
+                    print(f"  🔴 {svc}: MISSING roles/run.invoker! (scheduler: {', '.join(jobs)})")
+                    missing.append((svc, [f"scheduler:{j}" for j in jobs]))
+                else:
+                    print(f"  ✅ {svc}")
+                    ok_count += 1
+            except Exception as e:
+                print(f"  ❌ {svc}: Error - {e}")
+                missing.append((svc, [f"scheduler:{j}" for j in jobs]))
+
+# Summary
+print(f"\n{'='*50}")
+if missing:
+    print(f"🔴 P0 CRITICAL: {len(missing)} service(s) missing roles/run.invoker!")
+    print(f"   {ok_count} OK, {len(missing)} BROKEN\n")
+    print(f"   Impact: Pub/Sub/Scheduler cannot invoke these services.")
+    print(f"           They are SILENTLY failing — no errors in the service logs,")
+    print(f"           only 403s in Pub/Sub dead-letter or Scheduler logs.\n")
+    print(f"   Fix commands:")
+    for svc, topics in missing:
+        print(f"   gcloud run services add-iam-policy-binding {svc} \\")
         print(f"     --region=us-west2 \\")
         print(f"     --member='serviceAccount:{service_account}' \\")
         print(f"     --role='roles/run.invoker' \\")
         print(f"     --project=nba-props-platform")
+        print(f"     # Invoked by: {', '.join(topics)}")
         print()
     sys.exit(1)
 else:
-    print(f"\n✅ All orchestrators have correct IAM permissions")
+    print(f"✅ All {ok_count} Pub/Sub/Scheduler-invoked services have correct IAM permissions")
     sys.exit(0)
 EOF
 ```
 
-**Expected Result**: All 3 orchestrators show `✅ IAM permissions OK`
+**Expected Result**: All services show `✅` — no missing IAM
 
 **If MISSING**:
-- 🔴 P0 CRITICAL: Orchestrators cannot be invoked by Pub/Sub
-- Impact: Silent pipeline failures - processors complete but orchestrators never trigger
-- Symptoms: Firestore shows processors complete but `_triggered=False`
-- Action: Run fix command above immediately
+- 🔴 P0 CRITICAL: Pub/Sub/Scheduler cannot invoke the service
+- Impact: Silent failures — the service never receives requests, no errors in service logs
+- Symptoms: Pub/Sub messages accumulate in dead-letter, Scheduler shows 403 errors
+- Action: Run fix commands above immediately
 
-**Prevention**: Deployment scripts now auto-set IAM permissions (Session 205 fix), but verify after any manual deployments.
+**Why this is better than the old check**: Old Check 5 only verified 3 hardcoded orchestrators. Session 212 found 8 additional services with missing IAM because they weren't in the list. This dynamic check discovers services automatically from Pub/Sub subscriptions and Scheduler jobs — new services are covered without updating the check.
 
-**Note**: phase2-to-phase3-orchestrator was REMOVED in Session 205 (was monitoring-only, not needed).
-
-**Reference**: Session 205 handoff
+**Reference**: Session 205 (original discovery), Session 212 (systemic audit, upgraded to dynamic)
 
 **If ALL Phase 0.6 checks pass**: Continue to Phase 0.65
 
@@ -2235,82 +2306,11 @@ gcloud eventarc triggers delete TRIGGER_NAME --location=LOCATION --project=nba-p
 
 **IMPORTANT**: Verify grading pipeline infrastructure is functional. Session 212 discovered `phase3-to-grading` and `grading-coverage-monitor` had empty IAM policies, breaking event-driven grading. Grading limped along via backup mechanisms (polling + scheduled query), causing partial gaps like Feb 10's 12/29 ungraded predictions.
 
-**Why this matters**: Unlike orchestrator IAM (Phase 0.6 Check 5), grading IAM failures don't cause total pipeline stalls — backup mechanisms partially compensate. This makes the failure **silent and partial**, harder to detect than a full outage.
+**Why this matters**: Unlike orchestrator IAM failures which cause total pipeline stalls, grading IAM failures are **silent and partial** — backup mechanisms partially compensate, making them harder to detect.
 
-#### Check 1: Grading Service IAM Permissions
+**Note**: Grading IAM permissions are now covered by the comprehensive **Phase 0.6 Check 5** (dynamic Pub/Sub IAM check). The checks below cover grading-specific health beyond IAM.
 
-```bash
-# Check grading-related Cloud Run services for IAM permissions
-python3 << 'EOF'
-import subprocess
-import sys
-
-grading_services = [
-    'phase3-to-grading',
-    'phase5b-grading',
-    'grading-coverage-monitor'
-]
-
-missing_permissions = []
-service_account = '756957797294-compute@developer.gserviceaccount.com'
-
-print("\n=== Grading Service IAM Permission Check ===\n")
-
-for svc in grading_services:
-    try:
-        result = subprocess.run(
-            ['gcloud', 'run', 'services', 'get-iam-policy', svc,
-             '--region=us-west2', '--project=nba-props-platform',
-             '--format=json'],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-
-        if result.returncode != 0:
-            print(f"  ❌ {svc}: Failed to get IAM policy")
-            missing_permissions.append(svc)
-            continue
-
-        # Check if roles/run.invoker exists for service account
-        if 'roles/run.invoker' in result.stdout and service_account in result.stdout:
-            print(f"  ✅ {svc}: IAM permissions OK")
-        else:
-            print(f"  🔴 {svc}: MISSING roles/run.invoker permission!")
-            missing_permissions.append(svc)
-
-    except Exception as e:
-        print(f"  ❌ {svc}: Error checking IAM - {e}")
-        missing_permissions.append(svc)
-
-if missing_permissions:
-    print(f"\n🔴 P1 CRITICAL: {len(missing_permissions)} grading service(s) missing IAM permissions!")
-    print(f"   Affected: {', '.join(missing_permissions)}")
-    print(f"\n   Impact: Event-driven grading broken; backup mechanisms may partially compensate")
-    print(f"           but will cause incomplete grading (Session 212: 12/29 predictions ungraded)")
-    print(f"\n   Fix command:")
-    for svc in missing_permissions:
-        print(f"   gcloud run services add-iam-policy-binding {svc} \\")
-        print(f"     --region=us-west2 \\")
-        print(f"     --member='serviceAccount:{service_account}' \\")
-        print(f"     --role='roles/run.invoker' \\")
-        print(f"     --project=nba-props-platform")
-        print()
-    sys.exit(1)
-else:
-    print(f"\n✅ All grading services have correct IAM permissions")
-    sys.exit(0)
-EOF
-```
-
-**Expected Result**: All 3 grading services show `✅ IAM permissions OK`
-
-**If MISSING**:
-- 🔴 P1 CRITICAL: Pub/Sub cannot invoke grading services
-- Impact: Event-driven grading silently breaks; backup mechanisms partially compensate but cause gaps
-- Action: Run fix command above immediately
-
-#### Check 2: Per-Day Grading Completeness (Most Recent Game Date)
+#### Check 1: Per-Day Grading Completeness (Most Recent Game Date)
 
 ```bash
 # Check grading completeness for the most recent completed game date, per model
@@ -2364,7 +2364,7 @@ curl -X POST "https://phase5b-grading-756957797294.us-west2.run.app/grade" \
   -d '{"game_date": "YYYY-MM-DD", "mode": "BACKFILL"}'
 ```
 
-#### Check 3: Grading Cloud Function Deployment State
+#### Check 2: Grading Cloud Function Deployment State
 
 ```bash
 # Check grading-related Cloud Functions are ACTIVE
