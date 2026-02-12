@@ -289,7 +289,6 @@ def check_phase4_completeness(bq_client, target_date):
 
     Checks tables:
     - nba_predictions.ml_feature_store_v2
-    - nba_predictions.player_daily_cache
     - nba_precompute.player_composite_factors
 
     Returns:
@@ -300,7 +299,6 @@ def check_phase4_completeness(bq_client, target_date):
     """
     EXPECTED_TABLES = {
         'ml_feature_store_v2': ('nba_predictions', 'ml_feature_store_v2', 'game_date'),
-        'player_daily_cache': ('nba_predictions', 'player_daily_cache', 'game_date'),
         'player_composite_factors': ('nba_precompute', 'player_composite_factors', 'analysis_date')
     }
 
@@ -1128,6 +1126,10 @@ def health(request):
         'status': 'healthy',
         'function': 'self_heal'
     }), 200
+
+
+# Alias for Cloud Functions framework (Gen2 entry point is hardcoded to "main")
+main = self_heal_check
 
 
 # For local testing

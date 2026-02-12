@@ -247,8 +247,8 @@ def check_player_game_summary_for_yesterday() -> Dict:
         WHERE game_date = '{yesterday}'
         """
 
-        result = bq_client.query(query).to_dataframe()
-        row_count = int(result.iloc[0]['cnt'])
+        result = list(bq_client.query(query).result(timeout=60))
+        row_count = int(result[0].cnt) if result else 0
 
         # Also check if there were games yesterday
         games_query = f"""
@@ -257,8 +257,8 @@ def check_player_game_summary_for_yesterday() -> Dict:
         WHERE game_date = '{yesterday}'
           AND game_status_text = 'Final'
         """
-        games_result = bq_client.query(games_query).to_dataframe()
-        game_count = int(games_result.iloc[0]['game_count'])
+        games_result = list(bq_client.query(games_query).result(timeout=60))
+        game_count = int(games_result[0].game_count) if games_result else 0
 
         if game_count == 0:
             # No games yesterday, so no data expected
@@ -320,10 +320,15 @@ def monitor_transitions(request):
     Monitor all phase transitions for stuck states.
 
     Called by Cloud Scheduler (hourly recommended).
+    Routes /cleanup requests to cleanup_firestore_documents.
 
     Returns:
         JSON response with monitoring results
     """
+    # Route /cleanup requests to the cleanup handler
+    if request.path == '/cleanup':
+        return cleanup_firestore_documents(request)
+
     logger.info("=" * 60)
     logger.info("🔍 Phase Transition Monitor Starting")
     logger.info("=" * 60)
@@ -1071,3 +1076,6 @@ Examples:
         # Run full monitor
         result, status_code, _ = monitor_transitions(FakeRequest())
         print(result)
+
+# Alias for Cloud Functions framework (Gen2 entry point may be hardcoded to "main")
+main = monitor_transitions

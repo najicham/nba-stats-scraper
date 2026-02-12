@@ -429,7 +429,8 @@ def main(request):
         severity="error"
     )
 
-    return jsonify(result), 500
+    # Always return 200: reporter, not gatekeeper. Findings are in the response body.
+    return jsonify(result), 200
 
 
 # ============================================================================
