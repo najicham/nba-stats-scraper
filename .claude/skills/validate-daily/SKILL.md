@@ -2179,6 +2179,8 @@ for sub in subs:
 KNOWN_MULTI = {
     'nba-phase3-analytics-complete': 2,  # orchestrator + phase3-to-grading
     'nba-phase2-raw-complete': 2,  # phase3-analytics + realtime-completeness-checker
+    # Note: nba-grading-trigger and nba-grading-complete should each have exactly 1 push subscription
+    # If they show >1, investigate for orphan Eventarc triggers (same pattern as Session 211)
 }
 
 issues = []
@@ -2228,6 +2230,199 @@ gcloud eventarc triggers delete TRIGGER_NAME --location=LOCATION --project=nba-p
 - `nba-phase2-raw-complete`: 2 subs (nba-phase3-analytics-sub + realtime-completeness-checker)
 
 **Reference**: Session 210 (Phase 5→6 duplicate fix), Session 211 (full audit, 4 orphans cleaned)
+
+### Phase 0.66: Grading Infrastructure Health (Session 212 - NEW)
+
+**IMPORTANT**: Verify grading pipeline infrastructure is functional. Session 212 discovered `phase3-to-grading` and `grading-coverage-monitor` had empty IAM policies, breaking event-driven grading. Grading limped along via backup mechanisms (polling + scheduled query), causing partial gaps like Feb 10's 12/29 ungraded predictions.
+
+**Why this matters**: Unlike orchestrator IAM (Phase 0.6 Check 5), grading IAM failures don't cause total pipeline stalls — backup mechanisms partially compensate. This makes the failure **silent and partial**, harder to detect than a full outage.
+
+#### Check 1: Grading Service IAM Permissions
+
+```bash
+# Check grading-related Cloud Run services for IAM permissions
+python3 << 'EOF'
+import subprocess
+import sys
+
+grading_services = [
+    'phase3-to-grading',
+    'phase5b-grading',
+    'grading-coverage-monitor'
+]
+
+missing_permissions = []
+service_account = '756957797294-compute@developer.gserviceaccount.com'
+
+print("\n=== Grading Service IAM Permission Check ===\n")
+
+for svc in grading_services:
+    try:
+        result = subprocess.run(
+            ['gcloud', 'run', 'services', 'get-iam-policy', svc,
+             '--region=us-west2', '--project=nba-props-platform',
+             '--format=json'],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+
+        if result.returncode != 0:
+            print(f"  ❌ {svc}: Failed to get IAM policy")
+            missing_permissions.append(svc)
+            continue
+
+        # Check if roles/run.invoker exists for service account
+        if 'roles/run.invoker' in result.stdout and service_account in result.stdout:
+            print(f"  ✅ {svc}: IAM permissions OK")
+        else:
+            print(f"  🔴 {svc}: MISSING roles/run.invoker permission!")
+            missing_permissions.append(svc)
+
+    except Exception as e:
+        print(f"  ❌ {svc}: Error checking IAM - {e}")
+        missing_permissions.append(svc)
+
+if missing_permissions:
+    print(f"\n🔴 P1 CRITICAL: {len(missing_permissions)} grading service(s) missing IAM permissions!")
+    print(f"   Affected: {', '.join(missing_permissions)}")
+    print(f"\n   Impact: Event-driven grading broken; backup mechanisms may partially compensate")
+    print(f"           but will cause incomplete grading (Session 212: 12/29 predictions ungraded)")
+    print(f"\n   Fix command:")
+    for svc in missing_permissions:
+        print(f"   gcloud run services add-iam-policy-binding {svc} \\")
+        print(f"     --region=us-west2 \\")
+        print(f"     --member='serviceAccount:{service_account}' \\")
+        print(f"     --role='roles/run.invoker' \\")
+        print(f"     --project=nba-props-platform")
+        print()
+    sys.exit(1)
+else:
+    print(f"\n✅ All grading services have correct IAM permissions")
+    sys.exit(0)
+EOF
+```
+
+**Expected Result**: All 3 grading services show `✅ IAM permissions OK`
+
+**If MISSING**:
+- 🔴 P1 CRITICAL: Pub/Sub cannot invoke grading services
+- Impact: Event-driven grading silently breaks; backup mechanisms partially compensate but cause gaps
+- Action: Run fix command above immediately
+
+#### Check 2: Per-Day Grading Completeness (Most Recent Game Date)
+
+```bash
+# Check grading completeness for the most recent completed game date, per model
+bq query --nouse_legacy_sql --format=prettyjson << 'EOF'
+WITH recent_game AS (
+  SELECT MAX(game_date) as latest_date
+  FROM `nba_predictions.player_prop_predictions`
+  WHERE game_date >= CURRENT_DATE() - 7
+    AND game_date < CURRENT_DATE()
+),
+predictions AS (
+  SELECT
+    p.system_id,
+    COUNT(*) as total_predictions,
+    COUNTIF(p.actual_value IS NOT NULL) as graded,
+    COUNTIF(p.actual_value IS NULL) as ungraded
+  FROM `nba_predictions.player_prop_predictions` p
+  CROSS JOIN recent_game r
+  WHERE p.game_date = r.latest_date
+  GROUP BY p.system_id
+)
+SELECT
+  r.latest_date as game_date,
+  p.system_id,
+  p.total_predictions,
+  p.graded,
+  p.ungraded,
+  ROUND(SAFE_DIVIDE(p.graded, p.total_predictions) * 100, 1) as graded_pct
+FROM predictions p
+CROSS JOIN recent_game r
+ORDER BY p.system_id
+EOF
+```
+
+**Expected Result**: `graded_pct` >= 80% for all models on the most recent game date
+
+**Thresholds**:
+
+| Graded % | Status | Action |
+|----------|--------|--------|
+| >= 80% | ✅ OK | Normal |
+| 50-80% | ⚠️ WARNING | Partial grading gap — check grading logs |
+| < 50% | 🔴 CRITICAL | Grading pipeline likely broken |
+
+**If grading gap found**:
+```bash
+# Trigger manual grading backfill for the affected date
+curl -X POST "https://phase5b-grading-756957797294.us-west2.run.app/grade" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -H "Content-Type: application/json" \
+  -d '{"game_date": "YYYY-MM-DD", "mode": "BACKFILL"}'
+```
+
+#### Check 3: Grading Cloud Function Deployment State
+
+```bash
+# Check grading-related Cloud Functions are ACTIVE
+python3 << 'EOF'
+import subprocess
+import json
+import sys
+
+print("\n=== Grading Cloud Function Deployment State ===\n")
+
+result = subprocess.run(
+    ['gcloud', 'functions', 'list',
+     '--project=nba-props-platform', '--format=json'],
+    capture_output=True, text=True, timeout=15
+)
+
+if result.returncode != 0:
+    print("❌ Failed to list Cloud Functions")
+    sys.exit(1)
+
+functions = json.loads(result.stdout)
+
+grading_keywords = ['grading', 'grade']
+grading_functions = []
+issues = []
+
+for fn in functions:
+    name = fn.get('name', '').split('/')[-1]
+    if any(kw in name.lower() for kw in grading_keywords):
+        state = fn.get('state', 'UNKNOWN')
+        grading_functions.append((name, state))
+        if state != 'ACTIVE':
+            issues.append((name, state))
+        print(f"  {'✅' if state == 'ACTIVE' else '🔴'} {name}: {state}")
+
+if not grading_functions:
+    print("  ⚠️ No grading-related Cloud Functions found")
+    print("  (This may be OK if grading runs as Cloud Run services only)")
+elif issues:
+    print(f"\n🔴 P1 CRITICAL: {len(issues)} grading function(s) not ACTIVE!")
+    for name, state in issues:
+        print(f"   - {name}: {state}")
+    print(f"\n   Fix: Redeploy affected function(s)")
+    sys.exit(1)
+else:
+    print(f"\n✅ All {len(grading_functions)} grading function(s) are ACTIVE")
+    sys.exit(0)
+EOF
+```
+
+**Expected Result**: All grading Cloud Functions show `ACTIVE` state
+
+**If non-ACTIVE**:
+- 🔴 P1 CRITICAL: Grading function is FAILED or UNKNOWN
+- Impact: Event-driven grading broken at function level
+- Action: Redeploy the affected function
+
+**Reference**: Session 212 (grading IAM discovery, infrastructure validation)
 
 ### Phase 0.7: Vegas Line Coverage Check (Session 77)
 

@@ -77,22 +77,24 @@ def detect_grading_gaps(
         HAVING COUNT(*) = COUNTIF(game_status = 3)
     ),
     predictions AS (
+        -- Count ALL active predictions across ALL models
         SELECT
             p.game_date,
-            COUNT(*) as total_predictions
+            COUNT(*) as total_predictions,
+            COUNT(DISTINCT system_id) as models_with_predictions
         FROM `nba-props-platform.nba_predictions.player_prop_predictions` p
         JOIN completed_dates c ON p.game_date = c.game_date
-        WHERE p.system_id = 'catboost_v9'
-          AND p.is_active = TRUE
+        WHERE p.is_active = TRUE
         GROUP BY p.game_date
     ),
     graded AS (
+        -- Count ALL graded predictions across ALL models
         SELECT
             game_date,
-            COUNT(*) as graded_predictions
+            COUNT(*) as graded_predictions,
+            COUNT(DISTINCT system_id) as models_graded
         FROM `nba-props-platform.nba_predictions.prediction_accuracy`
         WHERE game_date IN (SELECT game_date FROM completed_dates)
-          AND system_id = 'catboost_v9'
         GROUP BY game_date
     )
     SELECT
@@ -100,6 +102,8 @@ def detect_grading_gaps(
         p.total_predictions as predicted,
         COALESCE(g.graded_predictions, 0) as graded,
         ROUND(100.0 * COALESCE(g.graded_predictions, 0) / p.total_predictions, 1) as grading_pct,
+        p.models_with_predictions,
+        COALESCE(g.models_graded, 0) as models_graded,
         CASE
             WHEN COALESCE(g.graded_predictions, 0) = 0 THEN 'missing'
             WHEN 100.0 * COALESCE(g.graded_predictions, 0) / p.total_predictions < {GRADING_THRESHOLD * 100} THEN 'gap'
@@ -121,6 +125,8 @@ def detect_grading_gaps(
             'predicted': row.predicted,
             'graded': row.graded,
             'grading_pct': float(row.grading_pct),
+            'models_with_predictions': row.models_with_predictions,
+            'models_graded': row.models_graded,
             'status': row.status
         })
 
@@ -246,7 +252,8 @@ def main():
     for gap in gaps:
         logger.warning(
             f"  {gap['game_date']}: {gap['graded']}/{gap['predicted']} "
-            f"({gap['grading_pct']:.1f}%) - {gap['status']}"
+            f"({gap['grading_pct']:.1f}%) - {gap['status']} "
+            f"[{gap['models_graded']}/{gap['models_with_predictions']} models]"
         )
 
     # Trigger backfills
