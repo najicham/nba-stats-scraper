@@ -120,6 +120,15 @@ repos:
         always_run: true
         verbose: true
 
+      - id: validate-view-filters
+        name: Validate BigQuery view quality filters (Session 209)
+        description: Ensures views querying prediction tables have quality filter annotations (prevents contaminated metrics)
+        entry: python .pre-commit-hooks/validate_view_filters.py
+        language: python
+        pass_filenames: false
+        files: ^schemas/bigquery/predictions/.*\.sql$
+        verbose: true
+
   # Standard pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0
