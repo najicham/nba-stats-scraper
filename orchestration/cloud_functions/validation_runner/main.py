@@ -71,13 +71,10 @@ def run_validation(request):
             'timestamp': datetime.utcnow().isoformat(),
         }
 
-        # Return appropriate status code
-        if result.status.value == 'CRITICAL':
-            return jsonify(response), 500
-        elif result.status.value == 'WARNING':
-            return jsonify(response), 200  # Still success, just with warnings
-        else:
-            return jsonify(response), 200
+        # Always return 200: this function reports validation results, not failures.
+        # Scheduler interprets non-200 as job failure, which is misleading for
+        # a reporter that found data quality issues (vs a runtime error).
+        return jsonify(response), 200
 
     except Exception as e:
         logger.error(f"Validation failed with error: {e}", exc_info=True)

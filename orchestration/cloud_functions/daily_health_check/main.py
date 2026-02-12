@@ -617,7 +617,7 @@ def daily_health_check(request):
         'critical': results.critical,
         'checks': results.checks,
         'timestamp': datetime.now(timezone.utc).isoformat()
-    }, 200 if results.critical == 0 else 500
+    }, 200  # Always return 200: this is a reporter, not a gatekeeper
 
 
 @functions_framework.http
