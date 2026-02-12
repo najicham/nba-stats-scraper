@@ -258,4 +258,13 @@ echo ""
 echo "3. Check export status:"
 echo "   ${BLUE}gsutil ls gs://nba-props-platform-api/v1/tonight/${NC}"
 echo ""
+# Session 211: Post-deploy duplicate subscription check
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}Checking for Duplicate Subscriptions...${NC}"
+echo -e "${BLUE}========================================${NC}"
+./bin/orchestrators/check_duplicate_subscriptions.sh "$TRIGGER_TOPIC" 1 || \
+    echo -e "${YELLOW}⚠️  Duplicate subscriptions detected — see above for cleanup commands${NC}"
+
+echo ""
 echo -e "${GREEN}✓ Orchestrator deployed successfully!${NC}"

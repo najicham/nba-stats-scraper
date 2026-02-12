@@ -290,4 +290,14 @@ echo ""
 echo "4. Check graded data:"
 echo "   ${BLUE}bq query --use_legacy_sql=false 'SELECT MAX(game_date) FROM nba_predictions.prediction_accuracy'${NC}"
 echo ""
+# Session 211: Post-deploy duplicate subscription check
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}Checking for Duplicate Subscriptions...${NC}"
+echo -e "${BLUE}========================================${NC}"
+cd "$PROJECT_ROOT"
+./bin/orchestrators/check_duplicate_subscriptions.sh "$TRIGGER_TOPIC" 1 || \
+    echo -e "${YELLOW}⚠️  Duplicate subscriptions detected — see above for cleanup commands${NC}"
+
+echo ""
 echo -e "${GREEN}✓ Grading infrastructure deployed successfully!${NC}"

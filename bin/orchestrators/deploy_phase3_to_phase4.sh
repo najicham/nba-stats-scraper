@@ -232,4 +232,14 @@ echo ""
 echo "3. Monitor Firestore:"
 echo "   ${BLUE}https://console.firebase.google.com/project/$PROJECT_ID/firestore/data/phase3_completion${NC}"
 echo ""
+# Session 211: Post-deploy duplicate subscription check
+# Phase 3 topic legitimately has 2 push subs: orchestrator + phase3-to-grading
+echo ""
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}Checking for Duplicate Subscriptions...${NC}"
+echo -e "${BLUE}========================================${NC}"
+./bin/orchestrators/check_duplicate_subscriptions.sh "$TRIGGER_TOPIC" 2 || \
+    echo -e "${YELLOW}⚠️  Duplicate subscriptions detected — see above for cleanup commands${NC}"
+
+echo ""
 echo -e "${GREEN}✓ Orchestrator deployed successfully!${NC}"
