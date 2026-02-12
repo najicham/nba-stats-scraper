@@ -42,11 +42,19 @@ declare -A SERVICE_SOURCES=(
     # Grading
     ["nba-grading-service"]="data_processors/grading/nba shared predictions/shared"
 
-    # Cloud Functions (Session 209: fixed source paths)
+    # Cloud Functions - Orchestrators (Session 209: fixed source paths)
     ["phase3-to-phase4-orchestrator"]="orchestration/cloud_functions/phase3_to_phase4"
     ["phase4-to-phase5-orchestrator"]="orchestration/cloud_functions/phase4_to_phase5"
     ["phase5-to-phase6-orchestrator"]="orchestration/cloud_functions/phase5_to_phase6"
     ["phase5b-grading"]="orchestration/cloud_functions/grading"
+
+    # Cloud Functions - Monitoring & Validation (Session 219: added after scheduler job audit)
+    ["grading-gap-detector"]="orchestration/cloud_functions/grading-gap-detector"
+    ["daily-health-check"]="orchestration/cloud_functions/daily_health_check shared"
+    ["validation-runner"]="orchestration/cloud_functions/validation_runner shared"
+    ["reconcile"]="orchestration/cloud_functions/prediction_monitoring"
+    ["validate-freshness"]="orchestration/cloud_functions/prediction_monitoring"
+    ["pipeline-health-summary"]="monitoring/health_summary shared"
 
     # Admin
     ["nba-admin-dashboard"]="admin_dashboard"
@@ -67,11 +75,15 @@ total_checked=0
 for service in "${!SERVICE_SOURCES[@]}"; do
     source_dirs="${SERVICE_SOURCES[$service]}"
 
-    # Session 209: Detect if this is a Cloud Function (has "orchestrator" or "grading" in name)
+    # Detect if this is a Cloud Function (not a Cloud Run service)
+    # Session 219: Extended to cover monitoring/validation functions
     is_function=false
-    if [[ "$service" == *"orchestrator"* ]] || [[ "$service" == *"grading"* ]]; then
-        is_function=true
-    fi
+    case "$service" in
+        *orchestrator*|phase5b-grading|grading-gap-detector|daily-health-check|\
+        validation-runner|reconcile|validate-freshness|pipeline-health-summary)
+            is_function=true
+            ;;
+    esac
 
     # Get deployment info (different for Cloud Run vs Cloud Function)
     if [ "$is_function" = true ]; then
