@@ -62,12 +62,14 @@ ls -la docs/09-handoff/ | tail -5          # 1. Read latest handoff
 python bin/monitoring/deployment_drift_alerter.py   # Deployment drift (auto: every 2h)
 python bin/monitoring/pipeline_canary_queries.py     # Pipeline canaries (auto: every 30min)
 python bin/monitoring/analyze_healing_patterns.py    # Self-healing audit (auto: every 15min)
+python bin/monitoring/grading_gap_detector.py        # Grading gaps (auto: daily 9 AM ET)
 ```
 
 - Auto-heals stalled batches (>90% complete, stalled 15+ min), tracks root cause
 - Quality gates block bad data at Phase 2→3 transition (`shared.validation.phase2_quality_gate`)
+- Grading gap detector checks gradable predictions only (excludes NO_PROP_LINE)
 
-**Slack:** `#deployment-alerts` (2h), `#canary-alerts` (30min), `#nba-alerts` (self-healing)
+**Slack:** `#deployment-alerts` (2h), `#canary-alerts` (30min), `#nba-alerts` (self-healing, grading gaps)
 
 ## Using Agents [Keyword: AGENTS]
 
@@ -309,6 +311,32 @@ SELECT game_date,
 FROM nba_predictions.ml_feature_store_v2
 WHERE game_date >= CURRENT_DATE() - 3
 GROUP BY 1 ORDER BY 1 DESC;
+
+-- Check grading coverage (Session 212)
+WITH gradable AS (
+  SELECT game_date,
+    COUNT(*) as total_predictions,
+    COUNTIF(line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')) as gradable_predictions
+  FROM nba_predictions.player_prop_predictions
+  WHERE game_date >= CURRENT_DATE() - 3 AND is_active = TRUE
+  GROUP BY 1
+),
+graded AS (
+  SELECT game_date, COUNT(*) as graded_count
+  FROM nba_predictions.prediction_accuracy
+  WHERE game_date >= CURRENT_DATE() - 3
+  GROUP BY 1
+)
+SELECT
+  g.game_date,
+  g.total_predictions,
+  g.gradable_predictions,
+  COALESCE(gr.graded_count, 0) as graded,
+  ROUND(100.0 * COALESCE(gr.graded_count, 0) / g.gradable_predictions, 1) as grading_pct
+FROM gradable g
+LEFT JOIN graded gr USING (game_date)
+ORDER BY 1 DESC;
+-- Expected: 95%+ grading_pct (graded / gradable, not graded / total)
 ```
 
 **Full query library:** See `docs/02-operations/useful-queries.md`
@@ -320,6 +348,7 @@ GROUP BY 1 ORDER BY 1 DESC;
 | Deployment drift | Old bugs recurring | `./bin/deploy-service.sh SERVICE` |
 | **Env var drift** | **Missing env vars, service crashes** | **NEVER use `--set-env-vars` (wipes all vars), ALWAYS use `--update-env-vars`** |
 | Vegas line coverage low | <40% line coverage | NORMAL - threshold is 45%, not 80% |
+| **Grading coverage 60-80%** | **Only 60-80% of predictions graded** | **NORMAL - NO_PROP_LINE predictions intentionally excluded from grading. Expected: 95%+ of gradable predictions (those with real prop lines).** |
 | Schema mismatch | "Invalid field" error | `python .pre-commit-hooks/validate_schema_fields.py` |
 | Partition filter | 400 error on query | Add `WHERE game_date >= ...` |
 | Silent BQ write fail | 0 records written | Use `{project}.{dataset}.{table}` pattern |

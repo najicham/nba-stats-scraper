@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 """
-Grading Gap Detector (Session 209)
+Grading Gap Detector (Session 209, updated Session 212)
 
-Detects incomplete grading (<80% of predictions) and auto-triggers backfills.
+Detects incomplete grading (<80% of GRADABLE predictions) and auto-triggers backfills.
 Runs daily at 9 AM ET after grading runs complete.
 
-Critical finding (Session 209): Four dates with significant grading gaps:
-- 2026-02-03: 146/171 (85.4%)
-- 2026-01-31: 102/209 (48.8%)
-- 2026-01-30: 130/351 (37.0%)
-- 2026-01-29: 117/282 (41.5%)
+Session 212 Fix: Now correctly distinguishes between:
+- Total predictions (all active predictions, including NO_PROP_LINE)
+- Gradable predictions (only those with real prop lines for betting)
+- Graded predictions (successfully graded)
+
+Expected grading rate: 95%+ of gradable predictions (60-80% of total is normal due to NO_PROP_LINE)
+
+Previous findings were validation blind spots, not real gaps:
+- Grading service grades ALL active models (8-14 models)
+- Validation was only checking champion model
+- Appeared as gaps when aggregating across all models
 
 Usage:
     python bin/monitoring/grading_gap_detector.py [--dry-run] [--days N]
@@ -41,8 +47,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 PROJECT_ID = os.environ.get("PROJECT_ID", "nba-props-platform")
-GRADING_THRESHOLD = 0.80  # Trigger backfill if <80% graded
+GRADING_THRESHOLD = 0.80  # Trigger backfill if <80% of GRADABLE predictions graded
 COORDINATOR_URL = "https://prediction-coordinator-qgppybjaja-uw.a.run.app"
+
+# Valid line sources for gradable predictions (matches grading processor filter)
+GRADABLE_LINE_SOURCES = ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
 
 
 def detect_grading_gaps(
@@ -50,20 +59,27 @@ def detect_grading_gaps(
     lookback_days: int = 14
 ) -> List[Dict]:
     """
-    Find dates where graded < 80% of predictions.
+    Find dates where graded < 80% of GRADABLE predictions.
+
+    Session 212: Now correctly filters for gradable predictions (those with real prop lines).
+    NO_PROP_LINE predictions are excluded from expected grading count.
 
     Returns list of gap records:
     [
         {
             'game_date': '2026-01-30',
-            'predicted': 351,
-            'graded': 130,
-            'grading_pct': 37.0,
-            'status': 'gap'
+            'total_predictions': 351,      # All active predictions
+            'gradable_predictions': 180,   # Only those with real prop lines
+            'graded': 170,                 # Successfully graded
+            'grading_pct': 94.4,           # graded / gradable (not graded / total!)
+            'status': 'ok'
         }
     ]
     """
     logger.info(f"Checking for grading gaps in last {lookback_days} days")
+
+    # Build IN clause for gradable line sources
+    line_sources_str = ", ".join(f"'{src}'" for src in GRADABLE_LINE_SOURCES)
 
     query = f"""
     WITH completed_dates AS (
@@ -76,8 +92,8 @@ def detect_grading_gaps(
         GROUP BY game_date
         HAVING COUNT(*) = COUNTIF(game_status = 3)
     ),
-    predictions AS (
-        -- Count ALL active predictions across ALL models
+    all_predictions AS (
+        -- Count ALL active predictions across ALL models (including NO_PROP_LINE)
         SELECT
             p.game_date,
             COUNT(*) as total_predictions,
@@ -85,6 +101,21 @@ def detect_grading_gaps(
         FROM `nba-props-platform.nba_predictions.player_prop_predictions` p
         JOIN completed_dates c ON p.game_date = c.game_date
         WHERE p.is_active = TRUE
+        GROUP BY p.game_date
+    ),
+    gradable_predictions AS (
+        -- Count only GRADABLE predictions (those with real prop lines)
+        -- This matches the grading processor filter exactly
+        SELECT
+            p.game_date,
+            COUNT(*) as gradable_count
+        FROM `nba-props-platform.nba_predictions.player_prop_predictions` p
+        JOIN completed_dates c ON p.game_date = c.game_date
+        WHERE p.is_active = TRUE
+          AND p.current_points_line IS NOT NULL
+          AND p.current_points_line != 20.0  -- Exclude placeholder lines
+          AND p.line_source IN ({line_sources_str})
+          AND p.invalidation_reason IS NULL
         GROUP BY p.game_date
     ),
     graded AS (
@@ -98,21 +129,26 @@ def detect_grading_gaps(
         GROUP BY game_date
     )
     SELECT
-        p.game_date,
-        p.total_predictions as predicted,
+        a.game_date,
+        a.total_predictions,
+        COALESCE(grad.gradable_count, 0) as gradable_predictions,
         COALESCE(g.graded_predictions, 0) as graded,
-        ROUND(100.0 * COALESCE(g.graded_predictions, 0) / p.total_predictions, 1) as grading_pct,
-        p.models_with_predictions,
+        -- Grading % = graded / gradable (NOT graded / total)
+        ROUND(100.0 * COALESCE(g.graded_predictions, 0) / NULLIF(COALESCE(grad.gradable_count, 0), 0), 1) as grading_pct,
+        a.models_with_predictions,
         COALESCE(g.models_graded, 0) as models_graded,
         CASE
+            WHEN COALESCE(grad.gradable_count, 0) = 0 THEN 'no_gradable'
             WHEN COALESCE(g.graded_predictions, 0) = 0 THEN 'missing'
-            WHEN 100.0 * COALESCE(g.graded_predictions, 0) / p.total_predictions < {GRADING_THRESHOLD * 100} THEN 'gap'
+            WHEN 100.0 * COALESCE(g.graded_predictions, 0) / COALESCE(grad.gradable_count, 1) < {GRADING_THRESHOLD * 100} THEN 'gap'
             ELSE 'ok'
         END as status
-    FROM predictions p
-    LEFT JOIN graded g ON p.game_date = g.game_date
-    WHERE COALESCE(g.graded_predictions, 0) < p.total_predictions * {GRADING_THRESHOLD}
-    ORDER BY p.game_date DESC
+    FROM all_predictions a
+    LEFT JOIN gradable_predictions grad ON a.game_date = grad.game_date
+    LEFT JOIN graded g ON a.game_date = g.game_date
+    -- Only flag as gap if graded < 80% of GRADABLE predictions
+    WHERE COALESCE(g.graded_predictions, 0) < COALESCE(grad.gradable_count, 0) * {GRADING_THRESHOLD}
+    ORDER BY a.game_date DESC
     """
 
     query_job = client.query(query)
@@ -122,9 +158,10 @@ def detect_grading_gaps(
     for row in results:
         gaps.append({
             'game_date': str(row.game_date),
-            'predicted': row.predicted,
+            'total_predictions': row.total_predictions,
+            'gradable_predictions': row.gradable_predictions,
             'graded': row.graded,
-            'grading_pct': float(row.grading_pct),
+            'grading_pct': float(row.grading_pct) if row.grading_pct is not None else 0.0,
             'models_with_predictions': row.models_with_predictions,
             'models_graded': row.models_graded,
             'status': row.status
@@ -217,10 +254,19 @@ def format_slack_alert(
     ]
 
     for gap in gaps:
+        # Show breakdown: graded/gradable (total predictions)
         lines.append(
-            f"• `{gap['game_date']}`: {gap['graded']}/{gap['predicted']} "
-            f"({gap['grading_pct']:.1f}%) - {gap['status'].upper()}"
+            f"• `{gap['game_date']}`: {gap['graded']}/{gap['gradable_predictions']} "
+            f"({gap['grading_pct']:.1f}%) gradable - {gap['status'].upper()} "
+            f"[{gap['models_graded']}/{gap['models_with_predictions']} models]"
         )
+        # Show total predictions if different from gradable
+        if gap['total_predictions'] != gap['gradable_predictions']:
+            no_line_count = gap['total_predictions'] - gap['gradable_predictions']
+            lines.append(
+                f"  └─ {gap['total_predictions']} total predictions "
+                f"({no_line_count} NO_PROP_LINE excluded)"
+            )
 
     if backfill_results and not dry_run:
         lines.append("\n*Backfill Results:*")
@@ -251,9 +297,10 @@ def main():
     logger.warning(f"Found {len(gaps)} grading gaps:")
     for gap in gaps:
         logger.warning(
-            f"  {gap['game_date']}: {gap['graded']}/{gap['predicted']} "
-            f"({gap['grading_pct']:.1f}%) - {gap['status']} "
-            f"[{gap['models_graded']}/{gap['models_with_predictions']} models]"
+            f"  {gap['game_date']}: {gap['graded']}/{gap['gradable_predictions']} "
+            f"({gap['grading_pct']:.1f}%) gradable - {gap['status']} "
+            f"[{gap['models_graded']}/{gap['models_with_predictions']} models] "
+            f"({gap['total_predictions']} total)"
         )
 
     # Trigger backfills
