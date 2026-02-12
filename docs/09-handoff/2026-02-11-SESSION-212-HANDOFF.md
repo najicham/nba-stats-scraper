@@ -14,10 +14,32 @@ Two-part session:
 ## Part 1: Grading Coverage Investigation
 
 ### Root Cause
-All "ungraded" predictions have `line_source = 'NO_PROP_LINE'` — predictions for players without prop lines, made for research purposes. Intentionally excluded by grading processor. Actual grading coverage is **88-90%** of gradable predictions.
+All "ungraded" predictions have `line_source = 'NO_PROP_LINE'` — predictions for players without prop lines, made for research purposes. Intentionally excluded by grading processor.
 
-### Fix
-Updated `grading_gap_detector.py` to calculate `graded / gradable_predictions` instead of `graded / total_predictions`.
+**Further investigation:** The 88-90% coverage was from DNP predictions being skipped instead of voided.
+
+### Fix Part A: grading_gap_detector.py
+Updated to calculate `graded / gradable_predictions` instead of `graded / total_predictions`.
+
+### Fix Part B: DNP Voiding (CRITICAL)
+**DNP predictions now get graded as `is_voided=True`** instead of being skipped entirely.
+
+**Before:**
+- DNP predictions skipped (no record written)
+- Coverage: 289/325 = 88.9%
+- No audit trail for DNP predictions
+
+**After:**
+- DNP predictions graded with `is_voided=True, void_reason='dnp_*'`
+- Coverage: 325/325 = **100%** (289 active + 36 voided)
+- Complete audit trail with `graded_at` timestamp
+- Matches sportsbook behavior (void the bet, track it)
+
+**Changes to `prediction_accuracy_processor.py`:**
+- `get_actuals_for_date()` - Include `is_dnp` field from boxscore
+- `detect_dnp_voiding()` - Handle `actual_points=None`, accept `is_dnp` parameter
+- `grade_prediction()` - Pass `is_dnp` flag to voiding detector
+- `process_date()` - Remove skip for DNP, grade as voided instead
 
 ## Part 2: IAM Audit & Systemic Fix (NEW)
 
@@ -59,8 +81,10 @@ All 8 services had `roles/run.invoker` added for `756957797294-compute@developer
 
 ### Code Changes
 ```
-.claude/skills/validate-daily/SKILL.md     # Dynamic IAM check, Phase 0.66, Phase 0.65 comments
-bin/monitoring/grading_gap_detector.py      # Fixed grading % calculation
+.claude/skills/validate-daily/SKILL.md                                 # Dynamic IAM check, Phase 0.66, Phase 0.65 comments
+bin/monitoring/grading_gap_detector.py                                  # Fixed grading % calculation
+data_processors/grading/prediction_accuracy/prediction_accuracy_processor.py  # Grade DNP as voided (100% coverage)
+docs/08-projects/current/session-212-grading-coverage/ROOT-CAUSE-ANALYSIS.md # Updated with DNP fix
 ```
 
 ### Infrastructure Changes
@@ -72,7 +96,9 @@ bin/monitoring/grading_gap_detector.py      # Fixed grading % calculation
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| Grading coverage (gradable) | **88-90%** | Excellent |
+| Grading coverage (all predictions) | **100%** | 289 active + 36 voided = 325 total ✅ |
+| Grading coverage (non-DNP) | **100%** | Every player who played gets graded ✅ |
+| Voided predictions (DNP) | **10-12%** | Normal DNP rate, now tracked |
 | Services with broken IAM | 8 → 0 | All fixed |
 | Services now auto-monitored | **All** Pub/Sub targets | Dynamic discovery |
 

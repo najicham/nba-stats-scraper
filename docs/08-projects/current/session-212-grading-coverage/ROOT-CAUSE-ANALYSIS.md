@@ -91,11 +91,34 @@ The ~20% difference between total and graded is mostly NO_PROP_LINE exclusions (
 - Added grading coverage query to Essential Queries
 - Updated monitoring section with grading_gap_detector info
 
-### 3. Outcome
+### 3. Fixed grading processor to grade DNP as voided
+**CRITICAL IMPROVEMENT:** DNP predictions now get written as `is_voided=True` instead of being skipped.
+
+**Before:**
+- DNP predictions skipped entirely (no record written)
+- Coverage: 289/325 = 88.9% (36 predictions "missing")
+- No audit trail for DNP predictions
+
+**After:**
+- DNP predictions graded with `is_voided=True, void_reason='dnp_*'`
+- Coverage: 325/325 = **100%** (289 active + 36 voided)
+- Complete audit trail (matches sportsbook behavior)
+
+**Changes:**
+- `get_actuals_for_date()` - Include `is_dnp` field
+- `detect_dnp_voiding()` - Handle `actual_points=None`, accept `is_dnp` flag
+- `process_date()` - Remove skip for DNP, grade as voided instead
+
+### 4. Outcome
 Running `grading_gap_detector.py --dry-run --days 7`:
 ```
 ✅ No grading gaps found in last 7 days
 ```
+
+**Grading coverage:**
+- **100% of predictions** (all get a grading record)
+- **88-90% active** (non-voided predictions)
+- **10-12% voided** (DNP players, like sportsbook voids)
 
 ## Lessons Learned
 
