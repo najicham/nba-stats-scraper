@@ -162,6 +162,11 @@ class BestBetsExporter(BaseExporter):
         Query predictions using tiered selection based on VALIDATED analysis.
 
         CRITICAL: Updated 2026-01-14 per CRITICAL-DATA-AUDIT-2026-01-14.md
+        CRITICAL: Updated 2026-02-11 for Sprint 2C - Date-based table selection
+
+        Table Selection:
+        - Current/Future dates (>= today): Use player_prop_predictions table
+        - Historical dates (< today): Use prediction_accuracy table
 
         Filtering:
         - catboost_v8 ONLY (other systems hit 21-26%)
@@ -174,65 +179,150 @@ class BestBetsExporter(BaseExporter):
         - Strong: 3-5 edge (74-79% hit rate)
         - Value: <3 edge (63-69% hit rate)
         """
-        query = """
-        WITH player_history AS (
-            -- Pre-compute player historical accuracy (UNDER only for consistency)
-            SELECT
-                player_lookup,
-                COUNT(*) as sample_size,
-                ROUND(AVG(CASE WHEN prediction_correct THEN 1.0 ELSE 0.0 END), 3) as historical_accuracy
-            FROM `nba-props-platform.nba_predictions.prediction_accuracy`
-            WHERE system_id = 'catboost_v9'
-              AND game_date < @target_date
-              AND recommendation = 'UNDER'
-            GROUP BY player_lookup
-        ),
-        player_names AS (
-            -- Get player full names from registry
-            SELECT player_lookup, player_name
-            FROM `nba-props-platform.nba_reference.nba_players_registry`
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY season DESC) = 1
-        ),
-        fatigue_data AS (
-            -- Get fatigue scores for the date
-            SELECT
-                player_lookup,
-                fatigue_score
-            FROM `nba-props-platform.nba_precompute.player_composite_factors`
-            WHERE game_date = @target_date
-        ),
-        predictions AS (
-            SELECT
-                p.player_lookup,
-                COALESCE(pn.player_name, p.player_lookup) as player_full_name,
-                p.game_id,
-                p.team_abbr,
-                p.opponent_team_abbr,
-                p.predicted_points,
-                p.actual_points,
-                p.line_value,
-                p.recommendation,
-                p.prediction_correct,
-                p.confidence_score,
-                p.absolute_error,
-                p.signed_error,
-                ABS(p.predicted_points - p.line_value) as edge,
-                h.historical_accuracy as player_historical_accuracy,
-                h.sample_size as player_sample_size,
-                f.fatigue_score
-            FROM `nba-props-platform.nba_predictions.prediction_accuracy` p
-            LEFT JOIN player_history h ON p.player_lookup = h.player_lookup
-            LEFT JOIN player_names pn ON p.player_lookup = pn.player_lookup
-            LEFT JOIN fatigue_data f ON p.player_lookup = f.player_lookup
-            WHERE p.game_date = @target_date
-              AND p.system_id = 'catboost_v9'  -- CRITICAL: Only catboost_v8 (other systems hit 21-26%)
-              -- VALIDATED FILTERS per CRITICAL-DATA-AUDIT-2026-01-14.md:
-              AND p.recommendation IN ('UNDER', 'OVER')  -- Both allowed: UNDER 88%, OVER 84% with 5+ edge
-              AND p.predicted_points < 25     -- Stars less predictable
-              AND NOT (p.confidence_score >= 0.88 AND p.confidence_score < 0.90)  -- Exclude broken tier
-              AND p.line_value IS NOT NULL    -- Must have real betting line
-              AND p.line_value != 20          -- Exclude fake line=20 data from pre-v3.2 worker
-        ),
+        from datetime import datetime
+        target = datetime.strptime(target_date, '%Y-%m-%d').date()
+        today = datetime.now().date()
+
+        # Explicit boolean flag for table selection (Opus: not string matching)
+        use_predictions_table = target >= today
+
+        # Build query based on table selection
+        if use_predictions_table:
+            # Current/Future: Use active predictions
+            query = """
+            WITH player_history AS (
+                -- Pre-compute player historical accuracy (UNDER only for consistency)
+                SELECT
+                    player_lookup,
+                    COUNT(*) as sample_size,
+                    ROUND(AVG(CASE WHEN prediction_correct THEN 1.0 ELSE 0.0 END), 3) as historical_accuracy
+                FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+                WHERE system_id = 'catboost_v9'
+                  AND game_date < @target_date
+                  AND recommendation = 'UNDER'
+                GROUP BY player_lookup
+            ),
+            player_names AS (
+                -- Get player full names from registry
+                SELECT player_lookup, player_name
+                FROM `nba-props-platform.nba_reference.nba_players_registry`
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY season DESC) = 1
+            ),
+            fatigue_data AS (
+                -- Get fatigue scores for the date
+                SELECT
+                    player_lookup,
+                    fatigue_score
+                FROM `nba-props-platform.nba_precompute.player_composite_factors`
+                WHERE game_date = @target_date
+            ),
+            game_context AS (
+                -- Get team context for current/future dates
+                SELECT
+                    player_lookup,
+                    game_id,
+                    team_abbr,
+                    opponent_team_abbr
+                FROM `nba-props-platform.nba_analytics.upcoming_player_game_context`
+                WHERE game_date = @target_date
+            ),
+            predictions AS (
+                SELECT
+                    p.player_lookup,
+                    COALESCE(pn.player_name, p.player_lookup) as player_full_name,
+                    p.game_id,
+                    gc.team_abbr,
+                    gc.opponent_team_abbr,
+                    p.predicted_points,
+                    NULL as actual_points,  -- Not graded yet
+                    p.current_points_line as line_value,
+                    p.recommendation,
+                    NULL as prediction_correct,  -- Not graded yet
+                    p.confidence_score,
+                    NULL as absolute_error,  -- Not graded yet
+                    NULL as signed_error,  -- Not graded yet
+                    ABS(p.predicted_points - p.current_points_line) as edge,
+                    h.historical_accuracy as player_historical_accuracy,
+                    h.sample_size as player_sample_size,
+                    f.fatigue_score
+                FROM `nba-props-platform.nba_predictions.player_prop_predictions` p
+                LEFT JOIN player_history h ON p.player_lookup = h.player_lookup
+                LEFT JOIN player_names pn ON p.player_lookup = pn.player_lookup
+                LEFT JOIN fatigue_data f ON p.player_lookup = f.player_lookup
+                LEFT JOIN game_context gc ON p.player_lookup = gc.player_lookup AND p.game_id = gc.game_id
+                WHERE p.game_date = @target_date
+                  AND p.system_id = 'catboost_v9'  -- CRITICAL: Only catboost_v9
+                  AND p.is_active = TRUE  -- Only active predictions
+                  -- VALIDATED FILTERS per CRITICAL-DATA-AUDIT-2026-01-14.md:
+                  AND p.recommendation IN ('UNDER', 'OVER')  -- Both allowed: UNDER 88%, OVER 84% with 5+ edge
+                  AND p.predicted_points < 25     -- Stars less predictable
+                  AND NOT (p.confidence_score >= 0.88 AND p.confidence_score < 0.90)  -- Exclude broken tier
+                  AND p.current_points_line IS NOT NULL    -- Must have real betting line
+            ),"""
+        else:
+            # Historical: Use graded predictions
+            query = """
+            WITH player_history AS (
+                -- Pre-compute player historical accuracy (UNDER only for consistency)
+                SELECT
+                    player_lookup,
+                    COUNT(*) as sample_size,
+                    ROUND(AVG(CASE WHEN prediction_correct THEN 1.0 ELSE 0.0 END), 3) as historical_accuracy
+                FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+                WHERE system_id = 'catboost_v9'
+                  AND game_date < @target_date
+                  AND recommendation = 'UNDER'
+                GROUP BY player_lookup
+            ),
+            player_names AS (
+                -- Get player full names from registry
+                SELECT player_lookup, player_name
+                FROM `nba-props-platform.nba_reference.nba_players_registry`
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY season DESC) = 1
+            ),
+            fatigue_data AS (
+                -- Get fatigue scores for the date
+                SELECT
+                    player_lookup,
+                    fatigue_score
+                FROM `nba-props-platform.nba_precompute.player_composite_factors`
+                WHERE game_date = @target_date
+            ),
+            predictions AS (
+                SELECT
+                    p.player_lookup,
+                    COALESCE(pn.player_name, p.player_lookup) as player_full_name,
+                    p.game_id,
+                    p.team_abbr,
+                    p.opponent_team_abbr,
+                    p.predicted_points,
+                    p.actual_points,
+                    p.line_value,
+                    p.recommendation,
+                    p.prediction_correct,
+                    p.confidence_score,
+                    p.absolute_error,
+                    p.signed_error,
+                    ABS(p.predicted_points - p.line_value) as edge,
+                    h.historical_accuracy as player_historical_accuracy,
+                    h.sample_size as player_sample_size,
+                    f.fatigue_score
+                FROM `nba-props-platform.nba_predictions.prediction_accuracy` p
+                LEFT JOIN player_history h ON p.player_lookup = h.player_lookup
+                LEFT JOIN player_names pn ON p.player_lookup = pn.player_lookup
+                LEFT JOIN fatigue_data f ON p.player_lookup = f.player_lookup
+                WHERE p.game_date = @target_date
+                  AND p.system_id = 'catboost_v9'  -- CRITICAL: Only catboost_v9
+                  -- VALIDATED FILTERS per CRITICAL-DATA-AUDIT-2026-01-14.md:
+                  AND p.recommendation IN ('UNDER', 'OVER')  -- Both allowed: UNDER 88%, OVER 84% with 5+ edge
+                  AND p.predicted_points < 25     -- Stars less predictable
+                  AND NOT (p.confidence_score >= 0.88 AND p.confidence_score < 0.90)  -- Exclude broken tier
+                  AND p.line_value IS NOT NULL    -- Must have real betting line
+                  AND p.line_value != 20          -- Exclude fake line=20 data from pre-v3.2 worker
+            ),"""
+
+        # Append shared scoring/ranking CTEs (same for both branches)
+        query += """
         scored AS (
             SELECT
                 *,
