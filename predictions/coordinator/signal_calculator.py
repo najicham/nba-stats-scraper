@@ -92,6 +92,7 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
           END as volume_category,
 
           CASE
+            WHEN gs.slate_size <= 4 THEN 'RED'
             WHEN ROUND(100.0 * COUNTIF(recommendation = 'OVER') / COUNT(*), 1) < 25 THEN 'RED'
             WHEN COUNTIF(ABS(predicted_points - current_points_line) >= 5) < 3 THEN 'YELLOW'
             WHEN ROUND(100.0 * COUNTIF(recommendation = 'OVER') / COUNT(*), 1) > 45 THEN 'YELLOW'
@@ -99,6 +100,8 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
           END as daily_signal,
 
           CASE
+            WHEN gs.slate_size <= 4
+              THEN CONCAT('Light slate (', CAST(gs.slate_size AS STRING), ' games) - 20.6% HR historically, skip day')
             WHEN ROUND(100.0 * COUNTIF(recommendation = 'OVER') / COUNT(*), 1) < 25
               THEN 'Heavy UNDER skew - historically 54% hit rate vs 82% on balanced days'
             WHEN COUNTIF(ABS(predicted_points - current_points_line) >= 5) < 3
@@ -117,13 +120,21 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
           COUNTIF(recommendation = 'UNDER' AND current_points_line < 15 AND ABS(predicted_points - current_points_line) >= 3) as anti_pattern_count,
 
           -- Session 170: Track prediction bias (avg predicted - vegas line)
-          ROUND(AVG(predicted_points - current_points_line), 2) as avg_pvl
+          ROUND(AVG(predicted_points - current_points_line), 2) as avg_pvl,
+
+          -- Session 211: Slate size for light-slate RED override
+          gs.slate_size
 
         FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+        CROSS JOIN (
+          SELECT COUNT(*) as slate_size
+          FROM `{PROJECT_ID}.nba_reference.nba_schedule`
+          WHERE game_date = @game_date
+        ) gs
         WHERE game_date = @game_date
           AND current_points_line IS NOT NULL
           AND is_active = TRUE  -- Session 174: Only count active predictions, not superseded ones
-        GROUP BY system_id
+        GROUP BY system_id, gs.slate_size
         HAVING COUNT(*) >= 10  -- Only calculate signals if we have enough predictions
         """
 
@@ -155,7 +166,7 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
             summary_query = f"""
             SELECT system_id, total_picks, high_edge_picks, pct_over, daily_signal, signal_explanation,
                    optimal_over_count, optimal_under_count, ultra_high_edge_count, anti_pattern_count,
-                   avg_pvl
+                   avg_pvl, slate_size
             FROM `{SIGNALS_TABLE}`
             WHERE game_date = @game_date
             ORDER BY system_id
@@ -169,6 +180,7 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
                 logger.info(
                     f"  {row.system_id}: {row.total_picks} picks, "
                     f"pct_over={row.pct_over}%, signal={row.daily_signal}, "
+                    f"slate_size={row.slate_size}, "
                     f"avg_pvl={row.avg_pvl or 0:+.2f}, "
                     f"optimal={optimal_total} (over={row.optimal_over_count or 0}, under={row.optimal_under_count or 0}, ultra={row.ultra_high_edge_count or 0})"
                 )
@@ -189,6 +201,8 @@ def calculate_daily_signals(game_date: str, project_id: str = PROJECT_ID) -> dic
                         'anti_pattern_count': row.anti_pattern_count or 0,
                         # Session 170: Prediction bias tracking
                         'avg_pvl': row.avg_pvl or 0.0,
+                        # Session 211: Slate size for light-slate detection
+                        'slate_size': row.slate_size,
                     }
 
             # Send Slack alert for primary model

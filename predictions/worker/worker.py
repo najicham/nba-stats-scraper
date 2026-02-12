@@ -2032,10 +2032,23 @@ def format_prediction_for_bigquery(
             is_actionable = False
             filter_reason = 'low_edge'
 
+        # Session 211: Champion UNDER dampening — stale model UNDER collapse
+        # Champion UNDER edge 3-5 collapsed to 27.5% HR (Feb 1 week)
+        # Raises effective UNDER threshold to 5 for champion only
+        # Does NOT affect Q43/Q45 (different system_ids) or OVER picks
+        if is_actionable and system_id == CATBOOST_SYSTEM_ID and recommendation == 'UNDER' and edge < 5:
+            is_actionable = False
+            filter_reason = 'stale_model_under_dampening'
+            logger.info(
+                f"Filtered champion UNDER for {player_lookup}: "
+                f"edge={edge:.1f} < 5 (champion UNDER dampening)"
+            )
+
         # Star UNDER bias filter: Model under-predicts stars by ~9 pts
         # High-edge UNDERs on stars are systematically wrong (Feb 2: 0/7)
         season_avg = features.get('points_avg_season', 0)
-        if season_avg >= 25 and recommendation == 'UNDER' and edge >= 5:
+        if (season_avg >= 25 and recommendation == 'UNDER' and edge >= 5
+                and '_q4' not in system_id):
             is_actionable = False
             filter_reason = 'star_under_bias_suspect'
             logger.info(
