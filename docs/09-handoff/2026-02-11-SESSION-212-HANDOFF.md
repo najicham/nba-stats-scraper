@@ -1,168 +1,108 @@
-# Session 212 Handoff - Grading Coverage Investigation
+# Session 212 Handoff - Grading Coverage Investigation + IAM Audit
 
 **Date:** 2026-02-11
 **Session:** 212
-**Duration:** ~2 hours
+**Duration:** ~3 hours
 **Status:** ✅ Complete
 
 ## Summary
 
-Investigated "grading gaps" (62-72% coverage) and discovered they're **NOT bugs** - NO_PROP_LINE predictions are intentionally excluded from grading. Fixed grading_gap_detector to calculate coverage correctly.
+Two-part session:
+1. Investigated "grading gaps" (62-72% coverage) — discovered they're **NOT bugs** (NO_PROP_LINE excluded from grading). Fixed grading_gap_detector.
+2. **Discovered and fixed systemic IAM failures** across 8 Cloud Run services, then upgraded validate-daily to prevent recurrence with dynamic Pub/Sub IAM discovery.
 
-**Key Finding:** Grading is working excellently at **88-90% of gradable predictions**. The 60-80% total coverage is normal due to NO_PROP_LINE exclusions.
+## Part 1: Grading Coverage Investigation
 
-## What Was Completed
+### Root Cause
+All "ungraded" predictions have `line_source = 'NO_PROP_LINE'` — predictions for players without prop lines, made for research purposes. Intentionally excluded by grading processor. Actual grading coverage is **88-90%** of gradable predictions.
 
-### 1. Root Cause Investigation ✅
+### Fix
+Updated `grading_gap_detector.py` to calculate `graded / gradable_predictions` instead of `graded / total_predictions`.
 
-Discovered that all "ungraded" predictions have `line_source = 'NO_PROP_LINE'`:
-- These are predictions for players without prop lines (fringe players)
-- Made for research purposes, not for betting
-- Intentionally excluded by grading processor (can't grade OVER/UNDER recommendation without a line)
+## Part 2: IAM Audit & Systemic Fix (NEW)
 
-### 2. Fixed grading_gap_detector.py ✅
+### Discovery
+While fixing grading IAM (`phase3-to-grading`, `grading-coverage-monitor`), performed a full audit of all 70+ Cloud Run services. Found **8 services** with missing `roles/run.invoker`:
 
-**Before:**
-```python
-grading_pct = graded / total_predictions  # WRONG - includes NO_PROP_LINE
-```
+| Service | Invoked By | Impact |
+|---------|-----------|--------|
+| `phase3-to-grading` | Pub/Sub (`nba-phase3-analytics-complete`) | Event-driven grading broken |
+| `grading-coverage-monitor` | Pub/Sub | Grading monitoring broken |
+| `realtime-completeness-checker` | Pub/Sub (`nba-phase2-raw-complete`) | Phase 2 completeness monitoring broken |
+| `backfill-trigger` | Pub/Sub (`boxscore-gaps-detected`) | Auto-backfill on gap detection broken |
+| `auto-retry-processor` | Scheduler → Pub/Sub (`auto-retry-trigger`) | Auto-retry broken |
+| `deployment-drift-monitor` | Scheduler → Pub/Sub (`deployment-drift-check`) | Drift monitoring broken |
+| `scraper-availability-monitor` | Scheduler → direct HTTP | Scraper monitoring broken |
+| `bdb-retry-processor` | Scheduler → Pub/Sub (`bdb-retry-trigger`) | Low impact (BDL disabled) |
 
-**After:**
-```python
-grading_pct = graded / gradable_predictions  # CORRECT - only real prop lines
-# Where gradable = line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
-```
+### Fix Applied
+All 8 services had `roles/run.invoker` added for `756957797294-compute@developer.gserviceaccount.com`.
 
-**Result:** Running `--dry-run --days 7` now shows:
-```
-✅ No grading gaps found in last 7 days
-```
+### Root Cause
+`gcloud functions deploy` with Eventarc does NOT preserve IAM policies. Redeployments silently wipe IAM bindings. The old validate-daily check only verified 3 hardcoded orchestrator names, so the other services were invisible.
 
-### 3. Updated Documentation ✅
+### Validation Upgrade
+**Phase 0.6 Check 5** upgraded from hardcoded 3-service list to **dynamic Pub/Sub discovery**:
+- Enumerates ALL Pub/Sub push subscriptions → extracts target Cloud Run service names
+- Enumerates ALL Cloud Scheduler HTTP targets → extracts target service names
+- Checks `roles/run.invoker` on every discovered target
+- New services are automatically covered without updating the check
 
-**CLAUDE.md changes:**
-- Added Common Issues entry: "Grading coverage 60-80%" → NORMAL
-- Added grading coverage query to Essential Queries
-- Updated monitoring section with grading_gap_detector
+**Phase 0.66** (Grading Infrastructure Health):
+- IAM check consolidated into Check 5 (no longer duplicated)
+- Check 1: Per-day grading completeness (per model, most recent game date)
+- Check 2: Grading Cloud Function deployment state (ACTIVE check)
 
-### 4. Created Project Documentation ✅
-
-- `docs/08-projects/current/session-212-grading-coverage/ROOT-CAUSE-ANALYSIS.md`
-- Full investigation details, queries, and lessons learned
-
-## Key Metrics
-
-| Metric | Value | Notes |
-|--------|-------|-------|
-| Grading coverage (Feb 10) | **88.9%** of gradable | Excellent ✅ |
-| Grading coverage (Feb 9) | **90.0%** of gradable | Excellent ✅ |
-| NO_PROP_LINE exclusions | ~9% of total | Expected for fringe players |
-| Real grading gaps | ~5-10% | DNP scratches, late changes |
+**Phase 0.65** updated with comments about expected grading subscription counts.
 
 ## What Changed
 
 ### Code Changes
 ```
-bin/monitoring/grading_gap_detector.py  # Fixed grading % calculation
-CLAUDE.md                                # Added grading documentation
+.claude/skills/validate-daily/SKILL.md     # Dynamic IAM check, Phase 0.66, Phase 0.65 comments
+bin/monitoring/grading_gap_detector.py      # Fixed grading % calculation
 ```
 
-### Deployment Status
-- ✅ Changes committed to main
-- ⏳ Auto-deploy not needed (detector is a standalone script)
-- ⏳ Next step: Deploy as Cloud Function (Cloud Scheduler job already exists at 9 AM ET)
+### Infrastructure Changes
+```
+8 Cloud Run services: added roles/run.invoker IAM binding
+```
+
+## Key Metrics
+
+| Metric | Value | Notes |
+|--------|-------|-------|
+| Grading coverage (gradable) | **88-90%** | Excellent |
+| Services with broken IAM | 8 → 0 | All fixed |
+| Services now auto-monitored | **All** Pub/Sub targets | Dynamic discovery |
 
 ## Outstanding Work
 
-### High Priority
-1. **Deploy grading_gap_detector as Cloud Function** (10 min)
-   - Cloud Scheduler job already exists: `nba-grading-gap-detector` (9 AM ET daily)
-   - Just needs function deployment to activate automated monitoring
-
-### Medium Priority
-2. **Verify Phase 6 Publishing Auto-Deploy** (5 min)
-   - Check if Session 211 quality filtering changes deployed successfully
-   - Smoke test: Verify today's best_bets export has 100% green quality
+### Investigate (Future Session)
+1. **`auto-backfill-orchestrator`** — no Pub/Sub subscription found but exists as Cloud Function. May be unused/legacy. Verify.
+2. **`unified-dashboard`** — no Pub/Sub subscription. Likely manual-only dashboard. Low priority.
 
 ### Low Priority
-3. **Add grading audit trail** (future)
-   - Create `grading_audit_log` table for debugging
-   - Log: date, system_id, attempted, succeeded, failed, reason
+3. **Deploy grading_gap_detector as Cloud Function** — Scheduler job exists, just needs deployment
+4. **Verify Phase 6 quality filtering deployment** from Session 211
 
 ## Key Learnings
 
-1. **Understand the denominator** - Always ensure you're dividing by the right baseline
-   - `graded / total` is wrong (includes non-gradable predictions)
-   - `graded / gradable` is correct (only real prop lines)
+1. **Hardcoded service lists drift** — The old Check 5 only verified 3 orchestrators. When new services were deployed, they weren't added to the check. Dynamic discovery solves this permanently.
 
-2. **Filter consistency** - Validation queries must match processor filters exactly
-   - Grading processor: `line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')`
-   - Gap detector now uses same filter
+2. **IAM failures are silent** — No errors in the target service logs. Pub/Sub gets 403s that go to dead-letter queues. Scheduler shows failures in its logs, but nobody checks those daily. The services appear healthy via `/health` checks since they're running fine — they just never receive requests.
 
-3. **NO_PROP_LINE is for research** - Not all predictions are meant to be graded
-   - Used to understand model behavior on fringe players
-   - Cannot be graded for betting accuracy (no line to compare against)
+3. **Backup mechanisms mask failures** — Grading had backup polling + scheduled queries, so IAM failure caused partial gaps (12/29 ungraded) instead of total failure. This made the problem look like a minor data quality issue rather than an infrastructure break.
 
-## How to Use New Grading Coverage Query
-
-```sql
-WITH gradable AS (
-  SELECT game_date,
-    COUNT(*) as total_predictions,
-    COUNTIF(line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')) as gradable_predictions
-  FROM nba_predictions.player_prop_predictions
-  WHERE game_date >= CURRENT_DATE() - 3 AND is_active = TRUE
-  GROUP BY 1
-),
-graded AS (
-  SELECT game_date, COUNT(*) as graded_count
-  FROM nba_predictions.prediction_accuracy
-  WHERE game_date >= CURRENT_DATE() - 3
-  GROUP BY 1
-)
-SELECT
-  g.game_date,
-  g.total_predictions,
-  g.gradable_predictions,
-  COALESCE(gr.graded_count, 0) as graded,
-  ROUND(100.0 * COALESCE(gr.graded_count, 0) / g.gradable_predictions, 1) as grading_pct
-FROM gradable g
-LEFT JOIN graded gr USING (game_date)
-ORDER BY 1 DESC;
-```
-
-**Expected:** 95%+ grading_pct
-
-## Testing Performed
-
-1. ✅ Tested grading_gap_detector with `--dry-run --days 7` → No gaps found
-2. ✅ Tested grading coverage query → Shows 88-90% coverage
-3. ✅ Verified NO_PROP_LINE predictions are excluded from grading processor
+4. **Audit broadly, fix surgically** — When you find one instance of a systemic issue, check ALL instances before fixing. The initial plan was to fix 2 grading services; the audit revealed 6 more.
 
 ## Related Documentation
 
-- `docs/08-projects/current/session-212-grading-coverage/ROOT-CAUSE-ANALYSIS.md` - Full investigation
-- `docs/08-projects/current/session-209-grading-gaps/` - Original quality filtering work
-- `docs/09-handoff/2026-02-11-SESSION-211-HANDOFF.md` - Multi-model validation fix
-- `CLAUDE.md` - Updated grading documentation
-
-## Deployment Checklist
-
-- [x] Code changes committed to main
-- [x] Documentation updated
-- [ ] Deploy grading_gap_detector as Cloud Function (next session)
-- [ ] Verify Phase 6 publishing changes deployed (next session)
-- [ ] Create handoff document (this file)
-
-## Questions for Next Session
-
-**None** - Investigation complete. Grading is working as expected.
-
-**Optional follow-up:**
-- Deploy grading_gap_detector as Cloud Function to enable daily automated monitoring
-- Verify Phase 6 quality filtering deployment from Session 211
+- `docs/08-projects/current/session-212-grading-coverage/ROOT-CAUSE-ANALYSIS.md`
+- `docs/09-handoff/2026-02-11-SESSION-211-HANDOFF.md` (orphan Eventarc cleanup)
+- `docs/09-handoff/2026-02-11-SESSION-205-HANDOFF.md` (original orchestrator IAM discovery)
 
 ---
 
 **Session completed:** 2026-02-11
-**Next session:** Deploy grading_gap_detector as Cloud Function (optional, low priority)
+**Next session:** Monitor that fixed services are now receiving invocations. Check `auto-backfill-orchestrator` usage.
