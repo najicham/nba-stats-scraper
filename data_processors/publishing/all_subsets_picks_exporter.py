@@ -107,6 +107,7 @@ class AllSubsetsPicksExporter(BaseExporter):
           csp.subset_id,
           csp.subset_name,
           csp.system_id,
+          csp.player_lookup,
           csp.player_name,
           csp.team,
           csp.opponent,
@@ -180,6 +181,7 @@ class AllSubsetsPicksExporter(BaseExporter):
                 clean_picks = []
                 for pick in picks:
                     pick_data = {
+                        'player_lookup': pick['player_lookup'],
                         'player': pick['player_name'],
                         'team': pick['team'],
                         'opponent': pick['opponent'],
@@ -268,6 +270,7 @@ class AllSubsetsPicksExporter(BaseExporter):
                 clean_picks = []
                 for pick in subset_picks:
                     pick_data = {
+                        'player_lookup': pick['player_lookup'],
                         'player': pick['player_name'],
                         'team': pick['team'],
                         'opponent': pick['opponent'],

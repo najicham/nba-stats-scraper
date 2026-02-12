@@ -73,6 +73,40 @@ def safe_int(value: Any, default: Optional[int] = None) -> Optional[int]:
         return default
 
 
+def safe_odds(value: Any) -> Optional[int]:
+    """
+    Safely convert odds value to int, handling None and invalid values.
+
+    Validates American odds format (must be outside [-100, 100] range).
+
+    Args:
+        value: Odds value to convert
+
+    Returns:
+        Integer odds value or None if invalid
+
+    Examples:
+        >>> safe_odds(-110)
+        -110
+        >>> safe_odds(150)
+        150
+        >>> safe_odds(0)
+        None
+        >>> safe_odds(-50)
+        None
+    """
+    if value is None:
+        return None
+    try:
+        odds_int = int(value)
+        # American odds must be outside [-100, 100] range
+        if -100 < odds_int < 100:
+            return None
+        return odds_int
+    except (TypeError, ValueError):
+        return None
+
+
 def format_float_dict(data: Dict[str, Any], keys: List[str], precision: int = 2) -> Dict[str, Any]:
     """
     Format specific keys in a dictionary as floats.

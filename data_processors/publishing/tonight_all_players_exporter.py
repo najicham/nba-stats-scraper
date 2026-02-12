@@ -13,7 +13,7 @@ from collections import defaultdict
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
-from .exporter_utils import safe_float, safe_int
+from .exporter_utils import safe_float, safe_int, safe_odds
 
 logger = logging.getLogger(__name__)
 
@@ -105,7 +105,7 @@ class TonightAllPlayersExporter(BaseExporter):
             away_team_tricode as away_team_abbr,
             game_status,
             -- Format game time as "7:30 PM ET" for frontend lock time calculation
-            FORMAT_TIMESTAMP('%l:%M %p ET', game_date_est, 'America/New_York') as game_time,
+            LTRIM(FORMAT_TIMESTAMP('%I:%M %p ET', game_date_est, 'America/New_York')) as game_time,
             game_date_est,
             -- Scores (only for final games)
             CASE WHEN game_status = 3 THEN home_team_score ELSE NULL END as home_team_score,
@@ -395,12 +395,27 @@ class TonightAllPlayersExporter(BaseExporter):
                     # Season stats
                     'season_ppg': safe_float(p.get('season_ppg')),
                     'season_mpg': safe_float(p.get('season_mpg')),
+                    'minutes_avg': safe_float(p.get('season_mpg')),
                     'last_5_ppg': safe_float(p.get('last_5_ppg')),
                     'games_played': games_played,
 
                     # Edge case flags
                     'limited_data': games_played < 10,
                 }
+
+                # Calculate recent_form (Hot/Cold/Neutral based on last 5 vs season avg)
+                last_5_ppg = p.get('last_5_ppg')
+                season_ppg = p.get('season_ppg')
+                if last_5_ppg and season_ppg:
+                    diff = last_5_ppg - season_ppg
+                    if diff >= 3:
+                        player_data['recent_form'] = 'Hot'
+                    elif diff <= -3:
+                        player_data['recent_form'] = 'Cold'
+                    else:
+                        player_data['recent_form'] = 'Neutral'
+                else:
+                    player_data['recent_form'] = None
 
                 # Add last_10_points for ALL players (null = DNP gap in sparkline)
                 player_data['last_10_points'] = last_10.get('points', [])
@@ -438,8 +453,8 @@ class TonightAllPlayersExporter(BaseExporter):
                     player_data['props'] = [{
                         'stat_type': 'points',
                         'line': line_value,
-                        'over_odds': p.get('over_odds'),
-                        'under_odds': p.get('under_odds'),
+                        'over_odds': safe_odds(p.get('over_odds')),
+                        'under_odds': safe_odds(p.get('under_odds')),
                     }]
                     player_data['prediction'] = {
                         'predicted': safe_float(p.get('predicted_points')),
