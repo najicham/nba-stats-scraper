@@ -206,6 +206,21 @@ class TonightAllPlayersExporter(BaseExporter):
             FROM `nba-props-platform.nba_analytics.upcoming_player_game_context`
             WHERE game_date = @target_date
         ),
+        feature_data AS (
+            -- Get feature store data for matchup quality
+            SELECT
+                player_lookup,
+                game_date,
+                -- Matchup features
+                matchup_quality_pct,
+                feature_13_value as opponent_def_rating,
+                feature_14_value as opponent_pace,
+                -- Quality tracking
+                feature_quality_score,
+                default_feature_count
+            FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+            WHERE game_date = @target_date
+        ),
         best_odds AS (
             -- Get best over/under odds from BettingPros
             SELECT
@@ -257,7 +272,12 @@ class TonightAllPlayersExporter(BaseExporter):
 
             -- Betting odds (for props array)
             bo.over_odds,
-            bo.under_odds
+            bo.under_odds,
+
+            -- Feature data
+            fd.opponent_def_rating,
+            fd.opponent_pace,
+            fd.matchup_quality_pct
 
         FROM game_context gc
         LEFT JOIN predictions p ON gc.player_lookup = p.player_lookup AND gc.game_id = p.game_id
@@ -268,6 +288,7 @@ class TonightAllPlayersExporter(BaseExporter):
         LEFT JOIN last_5_stats l5 ON gc.player_lookup = l5.player_lookup
         LEFT JOIN best_odds bo ON gc.player_lookup = bo.player_lookup
             AND ROUND(p.current_points_line, 1) = ROUND(bo.points_line, 1)
+        LEFT JOIN feature_data fd ON gc.player_lookup = fd.player_lookup
         ORDER BY gc.game_id, COALESCE(ss.season_ppg, 0) DESC
         """
         params = [
@@ -360,6 +381,86 @@ class TonightAllPlayersExporter(BaseExporter):
             }
 
         return last_10_map
+
+    def _build_prediction_factors(
+        self,
+        player_data: Dict,
+        feature_data: Dict,
+        last_10_record: Optional[str]
+    ) -> List[str]:
+        """
+        Build up to 4 DIRECTIONAL factors supporting the recommendation.
+
+        CRITICAL: Factors must support the recommendation, not contradict it.
+        Opus Priority: Edge > Matchup > Trend > Fatigue > Form
+
+        Edge is always included if >= 3 (inherently directional).
+        """
+        factors = []
+        rec = player_data.get('recommendation')
+
+        if not rec:
+            return []
+
+        # 1. EDGE FIRST - Always include if >= 3 (Opus: don't gate on rec)
+        predicted = player_data.get('predicted_points')
+        line = player_data.get('current_points_line')
+        if predicted is not None and line is not None:  # Null-safe (Opus Issue #3)
+            edge = abs(predicted - line)
+            if edge >= 5:
+                factors.append(f"Strong model conviction ({edge:.1f} point edge)")
+            elif edge >= 3:
+                factors.append(f"Solid model edge ({edge:.1f} points)")
+
+        # 2. MATCHUP - Only if supports recommendation
+        opp_def_rating = feature_data.get('opponent_def_rating')
+        if opp_def_rating:
+            if opp_def_rating > 115 and rec == 'OVER':
+                factors.append("Weak opposing defense favors scoring")
+            elif opp_def_rating < 105 and rec == 'UNDER':
+                factors.append("Elite opposing defense limits scoring")
+
+        # 3. HISTORICAL TREND - Only if supports
+        if last_10_record:
+            try:
+                overs, unders = map(int, last_10_record.split('-'))
+                total = overs + unders
+                if total >= 5:
+                    if overs >= 7 and rec == 'OVER':
+                        factors.append(f"Hot over streak: {overs}-{unders} last 10")
+                    elif unders >= 7 and rec == 'UNDER':
+                        factors.append(f"Cold under streak: {overs}-{unders} last 10")
+                    elif overs >= 5 and rec == 'OVER':
+                        factors.append(f"Trending over: {overs}-{unders} last 10")
+                    elif unders >= 5 and rec == 'UNDER':
+                        factors.append(f"Trending under: {overs}-{unders} last 10")
+            except (ValueError, AttributeError):
+                pass
+
+        # 4. FATIGUE - Only if supports
+        fatigue_level = player_data.get('fatigue_level')
+        days_rest = player_data.get('days_rest')
+        if (fatigue_level == 'fresh' or (days_rest and days_rest >= 3)) and rec == 'OVER':
+            factors.append("Well-rested, favors performance")
+        elif (fatigue_level == 'tired' or (days_rest is not None and days_rest == 0)) and rec == 'UNDER':
+            factors.append("Back-to-back fatigue risk")
+
+        # 5. RECENT FORM - Only if supports
+        recent_form = player_data.get('recent_form')
+        if recent_form == 'Hot' and rec == 'OVER':
+            last_5 = player_data.get('last_5_ppg')
+            season = player_data.get('season_ppg')
+            if last_5 and season:
+                diff = last_5 - season
+                factors.append(f"Scoring surge: +{diff:.1f} vs season avg")
+        elif recent_form == 'Cold' and rec == 'UNDER':
+            last_5 = player_data.get('last_5_ppg')
+            season = player_data.get('season_ppg')
+            if last_5 and season:
+                diff = abs(last_5 - season)
+                factors.append(f"Recent slump: -{diff:.1f} vs season avg")
+
+        return factors[:4]  # Max 4 factors
 
     def _build_games_data(
         self,
@@ -468,10 +569,35 @@ class TonightAllPlayersExporter(BaseExporter):
                         'over_odds': safe_odds(p.get('over_odds')),
                         'under_odds': safe_odds(p.get('under_odds')),
                     }]
+
+                    # Build feature data dict
+                    player_feature_data = {
+                        'opponent_def_rating': p.get('opponent_def_rating'),
+                        'opponent_pace': p.get('opponent_pace'),
+                        'matchup_quality_pct': p.get('matchup_quality_pct'),
+                    }
+
+                    # Build directional factors
+                    factors = self._build_prediction_factors(
+                        player_data={
+                            'recommendation': p.get('recommendation'),
+                            'predicted_points': p.get('predicted_points'),
+                            'current_points_line': p.get('current_points_line'),
+                            'fatigue_level': player_data.get('fatigue_level'),
+                            'days_rest': player_data.get('days_rest'),
+                            'recent_form': player_data.get('recent_form'),
+                            'last_5_ppg': player_data.get('last_5_ppg'),
+                            'season_ppg': player_data.get('season_ppg'),
+                        },
+                        feature_data=player_feature_data,
+                        last_10_record=last_10.get('record')
+                    )
+
                     player_data['prediction'] = {
                         'predicted': safe_float(p.get('predicted_points')),
                         'confidence': safe_float(p.get('confidence_score')),
                         'recommendation': p.get('recommendation'),
+                        'factors': factors
                     }
 
                 formatted_players.append(player_data)
