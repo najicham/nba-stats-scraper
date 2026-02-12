@@ -46,9 +46,13 @@ def validate_freshness(request: Request):
 
         # Parse game_date
         if game_date_str:
-            # Handle special keyword "TOMORROW"
+            # Handle special date keywords
             if game_date_str.upper() == "TOMORROW":
                 game_date = date.today() + timedelta(days=1)
+            elif game_date_str.upper() == "TODAY":
+                game_date = date.today()
+            elif game_date_str.upper() == "YESTERDAY":
+                game_date = date.today() - timedelta(days=1)
             else:
                 game_date = date.fromisoformat(game_date_str)
         else:
@@ -103,9 +107,13 @@ def check_missing(request: Request):
 
         # Parse game_date
         if game_date_str:
-            # Handle special keyword "TOMORROW"
+            # Handle special date keywords
             if game_date_str.upper() == "TOMORROW":
                 game_date = date.today() + timedelta(days=1)
+            elif game_date_str.upper() == "TODAY":
+                game_date = date.today()
+            elif game_date_str.upper() == "YESTERDAY":
+                game_date = date.today() - timedelta(days=1)
             else:
                 game_date = date.fromisoformat(game_date_str)
         else:
@@ -151,9 +159,13 @@ def reconcile(request: Request):
 
         # Parse game_date
         if game_date_str:
-            # Handle special keyword "TOMORROW"
+            # Handle special date keywords
             if game_date_str.upper() == "TOMORROW":
                 game_date = date.today() + timedelta(days=1)
+            elif game_date_str.upper() == "TODAY":
+                game_date = date.today()
+            elif game_date_str.upper() == "YESTERDAY":
+                game_date = date.today() - timedelta(days=1)
             else:
                 game_date = date.fromisoformat(game_date_str)
         else:

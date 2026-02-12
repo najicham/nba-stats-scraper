@@ -23,8 +23,12 @@ Created: 2026-01-14
 import json
 import logging
 import os
+import sys
 from datetime import date, datetime, timedelta, timezone
 from typing import Dict, Optional
+
+# Ensure deployed package root is in Python path (Cloud Functions runtime fix)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import functions_framework
 
