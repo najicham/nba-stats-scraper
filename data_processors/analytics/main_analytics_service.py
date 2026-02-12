@@ -300,11 +300,20 @@ def verify_boxscore_completeness(game_date: str, project_id: str) -> dict:
         actual_count = len(boxscore_game_ids)
 
         # Q3: Which games are missing?
-        # NBA.com uses consistent game_id format across schedule and gamebook
+        # Schedule uses numeric game_ids (e.g. "0022500775") while gamebook uses
+        # date_AWAY_HOME format (e.g. "20260211_MIL_ORL"). Match by team pairs.
+        # Build set of (away, home) team pairs from gamebook game_ids.
+        boxscore_team_pairs = set()
+        for gid in boxscore_game_ids:
+            # Format: YYYYMMDD_AWAY_HOME
+            parts = gid.split('_')
+            if len(parts) == 3:
+                boxscore_team_pairs.add((parts[1], parts[2]))
+
         missing_games = []
 
         for nba_game_id, (home, away) in scheduled_games.items():
-            if nba_game_id not in boxscore_game_ids:
+            if (away, home) not in boxscore_team_pairs:
                 missing_games.append({
                     "game_id": nba_game_id,
                     "home_team": home,

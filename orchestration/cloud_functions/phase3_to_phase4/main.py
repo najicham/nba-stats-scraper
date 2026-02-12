@@ -458,26 +458,32 @@ def check_data_coverage(game_date: str) -> tuple:
         bq_client = get_bigquery_client(project_id=PROJECT_ID)
 
         # Query to compare schedule vs actual analytics data
+        # Schedule uses numeric game_ids (e.g. "0022500775") while analytics
+        # uses YYYYMMDD_AWAY_HOME (e.g. "20260211_MIL_ORL"). Compare by team pairs.
         query = f"""
         WITH scheduled_games AS (
-            SELECT DISTINCT game_id
+            SELECT DISTINCT game_id, away_team_tricode, home_team_tricode
             FROM `{PROJECT_ID}.nba_raw.v_nbac_schedule_latest`
             WHERE game_date = '{game_date}'
               AND game_status_text NOT IN ('Postponed', 'Cancelled')
         ),
-        games_with_analytics AS (
-            -- Check player_game_summary as the canonical Phase 3 table
-            SELECT DISTINCT game_id
+        analytics_team_pairs AS (
+            -- Extract team pairs from analytics game_id (format: YYYYMMDD_AWAY_HOME)
+            SELECT DISTINCT
+                game_id,
+                SPLIT(game_id, '_')[SAFE_OFFSET(1)] as away_team,
+                SPLIT(game_id, '_')[SAFE_OFFSET(2)] as home_team
             FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
             WHERE game_date = '{game_date}'
         )
         SELECT
             (SELECT COUNT(*) FROM scheduled_games) as expected_games,
-            (SELECT COUNT(*) FROM games_with_analytics) as actual_games,
+            (SELECT COUNT(*) FROM analytics_team_pairs) as actual_games,
             ARRAY(
-                SELECT game_id FROM scheduled_games
-                EXCEPT DISTINCT
-                SELECT game_id FROM games_with_analytics
+                SELECT s.game_id FROM scheduled_games s
+                LEFT JOIN analytics_team_pairs a
+                  ON s.away_team_tricode = a.away_team AND s.home_team_tricode = a.home_team
+                WHERE a.game_id IS NULL
             ) as missing_game_ids
         """
 
