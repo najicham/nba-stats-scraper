@@ -1927,49 +1927,47 @@ def trigger_phase4(game_date: str, correlation_id: str, doc_ref, upstream_messag
 
         topic_path = publisher.topic_path(PROJECT_ID, PHASE4_TRIGGER_TOPIC)
 
-        # Build trigger message
-        message = {
-            'game_date': game_date,
+        # Session 215 fix: Publish one message per Phase 3 source_table.
+        # Phase 4's /process endpoint expects per-table messages with 'source_table'
+        # and 'analysis_date' fields. Previously we sent one combined message
+        # without source_table, causing 400 errors.
+        shared_metadata = {
             'correlation_id': correlation_id,
             'trigger_source': 'orchestrator',
             'triggered_by': 'phase3_to_phase4_orchestrator',
-            'upstream_processors_count': EXPECTED_PROCESSOR_COUNT,
-            'expected_processors': EXPECTED_PROCESSORS,  # Include list for debugging
             'timestamp': datetime.now(timezone.utc).isoformat(),
-
-            # Selective processing metadata
             'entities_changed': combined_entities,
             'is_incremental': any_incremental,
-
-            # Mode-aware orchestration metadata
-            'mode': mode,  # overnight, same_day, or tomorrow
-            'trigger_reason': trigger_reason,  # all_complete, critical_plus_majority_XX, etc.
-
-            # R-008: Include data freshness verification results
+            'mode': mode,
+            'trigger_reason': trigger_reason,
             'data_freshness_verified': is_ready,
-            'missing_tables': missing_tables if not is_ready else [],
-            'table_row_counts': table_counts,
-
-            # Minutes coverage validation results
             'minutes_coverage_pct': minutes_coverage_pct,
-            'minutes_coverage_alert': minutes_should_alert,
-            'players_missing_minutes': minutes_details.get('players_missing_minutes', 0),
-
-            # Optional metadata from upstream
             'parent_execution_id': upstream_message.get('execution_id'),
             'parent_processor': 'Phase3Orchestrator'
         }
 
-        # Publish to Pub/Sub
-        future = publisher.publish(
-            topic_path,
-            data=json.dumps(message).encode('utf-8')
-        )
-        message_id = future.result(timeout=10.0)
+        published_ids = []
+        for source_table_name in EXPECTED_PROCESSORS:
+            message = {
+                'source_table': source_table_name,
+                'analysis_date': game_date,
+                'game_date': game_date,
+                'success': True,
+                **shared_metadata
+            }
+            future = publisher.publish(
+                topic_path,
+                data=json.dumps(message).encode('utf-8')
+            )
+            msg_id = future.result(timeout=10.0)
+            published_ids.append(msg_id)
+
+        message_id = published_ids[-1] if published_ids else 'none'
 
         logger.info(
-            f"Published Phase 4 trigger: message_id={message_id}, game_date={game_date}, "
-            f"incremental={any_incremental}, players_changed={len(all_player_changes)}"
+            f"Published {len(published_ids)} Phase 4 triggers: game_date={game_date}, "
+            f"tables={EXPECTED_PROCESSORS}, incremental={any_incremental}, "
+            f"players_changed={len(all_player_changes)}"
         )
 
         # Log phase execution for latency tracking and monitoring

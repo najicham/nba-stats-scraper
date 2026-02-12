@@ -692,6 +692,30 @@ ANALYTICS_TRIGGER_GROUPS = {
             'description': 'Player stats - requires team possessions from offense stats'
         }
     ],
+    # FALLBACK: nbac_player_boxscores triggers same sequence as gamebook (Session 215)
+    # When gamebook scraper fails/delays, boxscore data can still drive Phase 3.
+    # Same sequential execution to prevent race condition (team stats before player stats).
+    'nbac_player_boxscores': [
+        {
+            'level': 1,
+            'processors': [
+                TeamOffenseGameSummaryProcessor,
+                TeamDefenseGameSummaryProcessor
+            ],
+            'parallel': True,
+            'dependencies': [],
+            'description': 'Team stats from boxscores - fallback when gamebook unavailable'
+        },
+        {
+            'level': 2,
+            'processors': [
+                PlayerGameSummaryProcessor
+            ],
+            'parallel': False,
+            'dependencies': ['TeamOffenseGameSummaryProcessor'],
+            'description': 'Player stats from boxscores - fallback path'
+        }
+    ],
     # Simple list format for triggers that don't need sequential execution
     # These will be auto-converted to single-level groups
     'nbac_scoreboard_v2': [TeamOffenseGameSummaryProcessor, TeamDefenseGameSummaryProcessor, UpcomingTeamGameContextProcessor],
@@ -1138,36 +1162,52 @@ def process_date_range():
         if skip_downstream:
             logger.info(f"⏸️  Downstream triggers DISABLED - Phase 4 will not auto-trigger")
 
-        # Execute processors in PARALLEL for faster manual runs
-        logger.info(f"🚀 Running {len(processors_to_run)} analytics processors in PARALLEL for {start_date} to {end_date}")
-        results = []
-        with ThreadPoolExecutor(max_workers=5) as executor:
-            # Submit all processors for parallel execution
-            futures = {
-                executor.submit(run_single_analytics_processor, processor_class, opts): processor_class
-                for processor_class in processors_to_run
-            }
+        # Execute processors with dependency awareness (Session 215 fix)
+        # PlayerGameSummaryProcessor depends on team stats, so team processors
+        # must complete before player processor starts.
+        team_processors = {TeamOffenseGameSummaryProcessor, TeamDefenseGameSummaryProcessor}
+        dependent_processors = {PlayerGameSummaryProcessor}  # Depends on team stats
+        independent_processors = {UpcomingPlayerGameContextProcessor, UpcomingTeamGameContextProcessor}
 
-            # Collect results as they complete
-            for future in as_completed(futures):
-                processor_class = futures[future]
-                try:
-                    result = future.result(timeout=600)  # 10 min timeout per processor
-                    results.append(result)
-                except TimeoutError:
-                    logger.error(f"⏱️ Processor {processor_class.__name__} timed out after 10 minutes")
-                    results.append({
-                        "processor": processor_class.__name__,
-                        "status": "timeout"
-                    })
-                except Exception as e:
-                    logger.error(f"❌ Failed to get result from {processor_class.__name__}: {e}")
-                    results.append({
-                        "processor": processor_class.__name__,
-                        "status": "exception",
-                        "error": str(e)
-                    })
-        
+        # Split into groups
+        level1 = [p for p in processors_to_run if p in team_processors]
+        level2 = [p for p in processors_to_run if p in dependent_processors]
+        independent = [p for p in processors_to_run if p in independent_processors]
+
+        logger.info(
+            f"Running {len(processors_to_run)} analytics processors for {start_date} to {end_date} "
+            f"(level1={len(level1)}, level2={len(level2)}, independent={len(independent)})"
+        )
+
+        results = []
+
+        def run_batch(batch, label, timeout_secs=600):
+            if not batch:
+                return
+            logger.info(f"Running {label}: {[p.__name__ for p in batch]}")
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                futures = {
+                    executor.submit(run_single_analytics_processor, p, opts): p
+                    for p in batch
+                }
+                for future in as_completed(futures):
+                    processor_class = futures[future]
+                    try:
+                        result = future.result(timeout=timeout_secs)
+                        results.append(result)
+                    except TimeoutError:
+                        logger.error(f"Processor {processor_class.__name__} timed out")
+                        results.append({"processor": processor_class.__name__, "status": "timeout"})
+                    except Exception as e:
+                        logger.error(f"Processor {processor_class.__name__} failed: {e}")
+                        results.append({"processor": processor_class.__name__, "status": "error", "error": str(e)})
+
+        # Level 1: Team processors + independent processors (parallel)
+        run_batch(level1 + independent, "level1+independent")
+
+        # Level 2: Dependent processors (after team stats are committed)
+        run_batch(level2, "level2-dependent")
+
         return jsonify({
             "status": "completed",
             "date_range": f"{start_date} to {end_date}",

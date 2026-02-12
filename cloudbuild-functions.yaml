@@ -78,7 +78,11 @@ steps:
         TRIGGER_ARGS=""
         if [ "${_TRIGGER_TYPE}" = "http" ]; then
           echo "Deploying HTTP-triggered function: ${_FUNCTION_NAME}"
-          TRIGGER_ARGS="--trigger-http --no-allow-unauthenticated"
+          if [ "${_ALLOW_UNAUTHENTICATED}" = "true" ]; then
+            TRIGGER_ARGS="--trigger-http --allow-unauthenticated"
+          else
+            TRIGGER_ARGS="--trigger-http --no-allow-unauthenticated"
+          fi
         else
           echo "Deploying Pub/Sub-triggered function: ${_FUNCTION_NAME} (topic: ${_TRIGGER_TOPIC})"
           TRIGGER_ARGS="--trigger-topic ${_TRIGGER_TOPIC}"
@@ -137,6 +141,7 @@ substitutions:
   _SOURCE_DIR: ''
   _TRIGGER_TYPE: 'topic'  # 'topic' for Pub/Sub, 'http' for HTTP-triggered
   _TRIGGER_TOPIC: ''
+  _ALLOW_UNAUTHENTICATED: 'false'  # Set to 'true' for HTTP functions called by Cloud Scheduler without OIDC
   _MEMORY: '1Gi'
   _TIMEOUT: '300s'
   _BUILD_TIMESTAMP: '${BUILD_TIMESTAMP:-unknown}'  # Set by Cloud Build trigger
