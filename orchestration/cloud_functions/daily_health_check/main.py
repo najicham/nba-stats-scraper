@@ -194,7 +194,7 @@ def check_predictions(game_date: str) -> Tuple[str, str]:
     try:
         query = f"""
             SELECT COUNT(*) as count
-            FROM `{PROJECT_ID}.nba_predictions.predictions`
+            FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
             WHERE game_date = '{game_date}'
         """
 

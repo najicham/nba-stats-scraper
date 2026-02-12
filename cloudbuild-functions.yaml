@@ -5,7 +5,8 @@
 # deploy source code directly. This config prepares the deployment package
 # and deploys using gcloud functions deploy.
 #
-# Used by: phase5b-grading, phase6-export, grading-gap-detector, phase3→4/4→5/5→6 orchestrators
+# Used by: phase5b-grading, phase6-export, grading-gap-detector, phase3→4/4→5/5→6 orchestrators,
+#          enrichment-trigger, daily-health-check, deploy-live-export
 #
 # Substitution variables:
 #   _FUNCTION_NAME: Cloud Function name (e.g., phase5b-grading)
