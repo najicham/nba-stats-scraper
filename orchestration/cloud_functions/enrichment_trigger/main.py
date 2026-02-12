@@ -122,6 +122,13 @@ def trigger_enrichment(request):
                 dry_run=dry_run
             )
 
+            # Session 218: Injury recheck — deactivate predictions for OUT players
+            # Runs after enrichment so OUT players don't appear in API exports
+            injury_result = processor.recheck_injuries(
+                game_date=target_date,
+                dry_run=dry_run
+            )
+
             result = {
                 'status': 'success',
                 'game_date': str(target_date),
@@ -131,6 +138,11 @@ def trigger_enrichment(request):
                 'props_available': enrichment_result.get('props_available', 0),
                 'predictions_enriched': enrichment_result.get('predictions_enriched', 0),
                 'predictions_still_missing': enrichment_result.get('predictions_still_missing', 0),
+                'injury_recheck': {
+                    'out_players': injury_result.get('out_players', 0),
+                    'predictions_deactivated': injury_result.get('predictions_deactivated', 0),
+                    'deactivated_players': injury_result.get('deactivated_players', [])
+                },
                 'timestamp': datetime.now(timezone.utc).isoformat()
             }
 

@@ -3110,6 +3110,134 @@ curl -s "https://enrichment-trigger-f7p3g7f6ya-wl.a.run.app/?date=YYYY-MM-DD" | 
 
 **Reference**: Session 216 (enrichment-trigger failing since Feb 7, fixed requirements), Session 217 (added this check)
 
+### Phase 0.715: UPCG Prop Coverage Check — Game Level (Session 218 - NEW)
+
+**Purpose**: Verify all scheduled games today have at least some players with prop lines in the UPCG table and predictions.
+
+**Why this matters**: Session 218 discovered a race condition where UPCG ran before BettingPros lines arrived, causing 2 of 3 games to have ZERO predictions. The UPCG blocking check (also Session 218) should prevent this, but this validation catches any slip-through.
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+WITH scheduled_games AS (
+  SELECT DISTINCT game_id, game_date, away_team_tricode, home_team_tricode
+  FROM nba_reference.nba_schedule
+  WHERE game_date = CURRENT_DATE()
+    AND game_status IN (1, 2, 3)
+),
+prediction_coverage AS (
+  SELECT game_id,
+    COUNT(*) as total_predictions,
+    COUNTIF(has_prop_line = TRUE) as with_lines,
+    COUNTIF(is_active = TRUE) as active_predictions
+  FROM nba_predictions.player_prop_predictions
+  WHERE game_date = CURRENT_DATE()
+    AND system_id = 'catboost_v9'
+  GROUP BY game_id
+)
+SELECT
+  sg.away_team_tricode || '@' || sg.home_team_tricode as matchup,
+  sg.game_id,
+  COALESCE(pc.total_predictions, 0) as total_predictions,
+  COALESCE(pc.with_lines, 0) as with_lines,
+  COALESCE(pc.active_predictions, 0) as active,
+  CASE
+    WHEN pc.game_id IS NULL THEN '🔴 NO PREDICTIONS'
+    WHEN pc.with_lines = 0 THEN '🔴 NO PROP LINES'
+    WHEN pc.active_predictions = 0 THEN '🟡 ALL DEACTIVATED'
+    ELSE '✅ OK'
+  END as status
+FROM scheduled_games sg
+LEFT JOIN prediction_coverage pc ON sg.game_id = pc.game_id
+ORDER BY sg.away_team_tricode
+"
+```
+
+**Expected result**:
+- All games show ✅ OK
+- Each game has 5+ active predictions with prop lines
+
+**Alert thresholds**:
+- Any game with 🔴 NO PREDICTIONS: 🔴 CRITICAL — UPCG blocking check may have failed, re-trigger pipeline
+- Any game with 🔴 NO PROP LINES: 🔴 CRITICAL — enrichment didn't run or props not scraped
+- All games ✅ OK: ✅ PASS
+
+**If issues detected**:
+
+| Issue | Severity | Action |
+|-------|----------|--------|
+| Game has 0 predictions | P1 | Re-run UPCG for today, then Phase 4 + Phase 5 |
+| Game has predictions but 0 lines | P2 | Manually trigger enrichment: `curl enrichment-trigger?date=YYYY-MM-DD` |
+| All predictions deactivated | P2 | Check if injury recheck was too aggressive |
+
+**Reference**: Session 218 (UPCG race condition: BettingPros lines arrive after UPCG runs)
+
+### Phase 0.72: Injury Status vs Active Predictions Check (Session 218 - NEW)
+
+**Purpose**: Verify no "Out" players have active predictions that should have been deactivated.
+
+**Why this matters**: Session 218 added injury recheck to the enrichment trigger. This validation catches cases where: (a) enrichment hasn't run yet, (b) injury status changed after enrichment, (c) the recheck failed.
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+WITH out_players AS (
+  SELECT DISTINCT
+    LOWER(REGEXP_REPLACE(player_name, r'[^a-zA-Z]', '')) as player_lookup,
+    player_name,
+    injury_status
+  FROM nba_raw.nbac_injury_report
+  WHERE game_date = CURRENT_DATE()
+    AND UPPER(injury_status) = 'OUT'
+),
+active_preds AS (
+  SELECT player_lookup, COUNT(*) as prediction_count
+  FROM nba_predictions.player_prop_predictions
+  WHERE game_date = CURRENT_DATE()
+    AND system_id = 'catboost_v9'
+    AND is_active = TRUE
+  GROUP BY player_lookup
+)
+SELECT
+  op.player_name,
+  op.injury_status,
+  ap.prediction_count,
+  '⚠️ OUT player has active predictions' as alert
+FROM out_players op
+JOIN active_preds ap ON op.player_lookup = ap.player_lookup
+ORDER BY op.player_name
+"
+```
+
+**Expected result**:
+- Zero rows (no OUT players with active predictions)
+- After enrichment trigger runs at 18:40 UTC, all OUT players should be deactivated
+
+**Alert thresholds**:
+- 0 results: ✅ OK
+- 1-3 results before 18:40 UTC: 🟡 WARNING (enrichment hasn't run yet, expected)
+- Any results after 18:40 UTC: 🔴 CRITICAL (injury recheck in enrichment failed)
+- >5 results at any time: 🔴 CRITICAL (systematic failure)
+
+**If issues detected**:
+
+| Issue | Severity | Action |
+|-------|----------|--------|
+| OUT players active before enrichment | P3 | Expected — enrichment will fix at 18:40 UTC |
+| OUT players active after enrichment | P1 | Check enrichment-trigger logs for injury recheck errors |
+| >5 OUT players with predictions | P1 | Manual deactivation needed |
+
+**Investigation**:
+```bash
+# Check enrichment trigger logs for injury recheck
+gcloud logging read 'resource.labels.function_name="enrichment-trigger" AND textPayload=~"injury recheck"' \
+  --limit=10 --freshness=6h --project=nba-props-platform
+```
+
+**Reference**: Session 218 (injury recheck added to enrichment trigger)
+
 ### Phase 0.8: Grading Completeness Check (Session 77)
 
 **Purpose**: Ensure predictions are being graded consistently across all models.
@@ -3321,6 +3449,71 @@ ORDER BY 1 DESC"
    - Reference: `predictions/worker/worker.py:1815-1834`
 
 **Fix reference**: Commit `4ada201f` - Access nested `catboost_result.get('metadata', {})` for model attribution fields.
+
+### Phase 0.975: Tonight Export Completeness Check (Session 218 - NEW)
+
+**Purpose**: Verify all scheduled games for today appear in the tonight/all-players.json export with active predictions.
+
+**Why this matters**: Session 218 found 2 of 3 games had zero predictions in the export due to a UPCG race condition. This check catches export gaps where games are scheduled but have no predictions in the API.
+
+**What to check**:
+
+```bash
+GAME_DATE=$(date +%Y-%m-%d)
+
+bq query --use_legacy_sql=false "
+WITH scheduled_games AS (
+  SELECT DISTINCT game_id, away_team_tricode, home_team_tricode
+  FROM nba_reference.nba_schedule
+  WHERE game_date = '${GAME_DATE}'
+    AND game_status IN (1, 2, 3)
+),
+export_ready AS (
+  SELECT game_id,
+    COUNT(*) as total,
+    COUNTIF(is_active = TRUE) as active,
+    COUNTIF(is_active = TRUE AND has_prop_line = TRUE) as active_with_lines,
+    COUNTIF(is_active = TRUE AND recommendation IN ('OVER','UNDER') AND ABS(predicted_points - current_points_line) >= 3) as edge_3_plus
+  FROM nba_predictions.player_prop_predictions
+  WHERE game_date = '${GAME_DATE}' AND system_id = 'catboost_v9'
+  GROUP BY game_id
+)
+SELECT
+  sg.away_team_tricode || '@' || sg.home_team_tricode as matchup,
+  COALESCE(er.active, 0) as active_predictions,
+  COALESCE(er.active_with_lines, 0) as with_lines,
+  COALESCE(er.edge_3_plus, 0) as edge_3_picks,
+  CASE
+    WHEN er.game_id IS NULL THEN '🔴 MISSING'
+    WHEN er.active = 0 THEN '🔴 ALL INACTIVE'
+    WHEN er.active_with_lines = 0 THEN '🟡 NO LINES'
+    ELSE '✅ OK (' || CAST(er.active_with_lines AS STRING) || ' picks)'
+  END as export_status
+FROM scheduled_games sg
+LEFT JOIN export_ready er ON sg.game_id = er.game_id
+ORDER BY sg.away_team_tricode
+"
+```
+
+**Expected result**:
+- All games show ✅ OK with 5+ active predictions with lines
+- Edge 3+ picks available for each game
+
+**Alert thresholds**:
+- All games ✅ OK: ✅ PASS
+- Any game 🟡 NO LINES before 18:40 UTC: 🟡 WARNING (enrichment hasn't run)
+- Any game 🔴 MISSING or ALL INACTIVE: 🔴 CRITICAL
+
+**If issues detected**:
+
+| Issue | Severity | Action |
+|-------|----------|--------|
+| Game missing entirely | P1 | Re-run UPCG → Phase 4 → Phase 5 for today |
+| All predictions inactive | P2 | Check if injury recheck deactivated too many players |
+| No lines (before enrichment) | P3 | Wait for enrichment at 18:40 UTC |
+| No lines (after enrichment) | P1 | Manual enrichment trigger, check prop scraper health |
+
+**Reference**: Session 218 (UPCG race condition caused 2/3 games missing from tonight export)
 
 ### Phase 0.97: Phase 6 Export Health (Session 91)
 

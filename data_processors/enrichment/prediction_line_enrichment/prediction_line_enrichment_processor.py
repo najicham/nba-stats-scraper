@@ -305,6 +305,94 @@ class PredictionLineEnrichmentProcessor:
             logger.error(f"Error fixing recommendations: {e}")
             raise
 
+    def recheck_injuries(self, game_date: date, dry_run: bool = False) -> Dict:
+        """
+        Recheck injury status for active predictions and deactivate OUT players.
+
+        Runs after enrichment to catch players whose status changed to OUT
+        after predictions were created. Sets is_active = FALSE for OUT players.
+
+        Session 218: Added to prevent "Out" players from appearing in API exports.
+        """
+        logger.info(f"Starting injury recheck for {game_date} (dry_run={dry_run})")
+
+        # Query current injury report for OUT players
+        injury_query = f"""
+        SELECT DISTINCT
+            LOWER(REGEXP_REPLACE(player_name, r'[^a-zA-Z]', '')) as player_lookup,
+            player_name,
+            injury_status,
+            injury_reason
+        FROM `{self.project_id}.nba_raw.nbac_injury_report`
+        WHERE game_date = '{game_date}'
+          AND UPPER(injury_status) = 'OUT'
+        """
+
+        # Query active predictions for today
+        predictions_query = f"""
+        SELECT DISTINCT player_lookup
+        FROM `{self.predictions_table}`
+        WHERE game_date = '{game_date}'
+          AND is_active = TRUE
+        """
+
+        try:
+            out_players_df = self.bq_client.query(injury_query).to_dataframe()
+            active_players_df = self.bq_client.query(predictions_query).to_dataframe()
+
+            out_lookups = set(out_players_df['player_lookup'].tolist()) if len(out_players_df) > 0 else set()
+            active_lookups = set(active_players_df['player_lookup'].tolist()) if len(active_players_df) > 0 else set()
+
+            # Find overlap: active predictions for OUT players
+            to_deactivate = out_lookups & active_lookups
+
+            logger.info(
+                f"Injury recheck: {len(out_lookups)} OUT players, "
+                f"{len(active_lookups)} active predictions, "
+                f"{len(to_deactivate)} to deactivate"
+            )
+
+            deactivated_count = 0
+            if to_deactivate and not dry_run:
+                # Build parameterized deactivation query
+                lookups_str = ", ".join(f"'{p}'" for p in to_deactivate)
+                deactivation_query = f"""
+                UPDATE `{self.predictions_table}`
+                SET is_active = FALSE,
+                    invalidation_reason = 'player_injured_out',
+                    invalidated_at = CURRENT_TIMESTAMP(),
+                    updated_at = CURRENT_TIMESTAMP()
+                WHERE game_date = '{game_date}'
+                  AND is_active = TRUE
+                  AND player_lookup IN ({lookups_str})
+                """
+                job = self.bq_client.query(deactivation_query)
+                job.result()
+                deactivated_count = job.num_dml_affected_rows or 0
+                logger.info(f"Deactivated {deactivated_count} predictions for OUT players: {to_deactivate}")
+            elif to_deactivate and dry_run:
+                deactivated_count = len(to_deactivate)
+                logger.info(f"DRY RUN: Would deactivate predictions for {to_deactivate}")
+
+            return {
+                'game_date': str(game_date),
+                'out_players': len(out_lookups),
+                'active_predictions_checked': len(active_lookups),
+                'players_deactivated': len(to_deactivate),
+                'predictions_deactivated': deactivated_count,
+                'deactivated_players': sorted(to_deactivate),
+                'dry_run': dry_run
+            }
+
+        except Exception as e:
+            logger.error(f"Error during injury recheck: {e}", exc_info=True)
+            return {
+                'game_date': str(game_date),
+                'error': str(e),
+                'predictions_deactivated': 0,
+                'dry_run': dry_run
+            }
+
     def enrich_date_range(
         self,
         start_date: date,

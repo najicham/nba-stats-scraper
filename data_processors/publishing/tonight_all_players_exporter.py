@@ -136,6 +136,7 @@ class TonightAllPlayersExporter(BaseExporter):
             FROM `nba-props-platform.nba_predictions.player_prop_predictions` pp
             WHERE pp.game_date = @target_date
               AND pp.system_id = 'catboost_v9'
+              AND pp.is_active = TRUE
             QUALIFY ROW_NUMBER() OVER (
                 PARTITION BY pp.player_lookup, pp.game_id
                 ORDER BY pp.created_at DESC

@@ -381,6 +381,9 @@ ORDER BY 1 DESC;
 | Scheduler jobs failing | Jobs return non-SUCCESS status | Run `validate-daily` Phase 0.67. Session 213: deleted 4 BDL, paused 9 MLB, fixed 2 validation auth. |
 | game_id format mismatch | "Missing: N games" but 100% coverage | Schedule uses numeric game_ids, gamebook/analytics use `YYYYMMDD_AWAY_HOME`. Match by team pairs. Session 217. |
 | Cloud Build Docker cache | Old code deployed despite new commit | Use `./bin/hot-deploy.sh SERVICE` to force fresh build without Docker layer cache. Session 217. |
+| UPCG race condition | Games with 0 predictions/lines | UPCG props readiness check now BLOCKING (raises 500, Pub/Sub retries). Validate with Phase 0.715. Session 218. |
+| Out players with predictions | Injured-out players shown in API | Enrichment trigger (18:40 UTC) now rechecks injuries and deactivates. Validate with Phase 0.72. Session 218. |
+| Tonight export incomplete | Some games missing from export | Check `is_active = TRUE` filter (Session 218), then UPCG prop coverage. Validate with Phase 0.975. |
 
 **Full troubleshooting:** See `docs/02-operations/session-learnings.md`
 

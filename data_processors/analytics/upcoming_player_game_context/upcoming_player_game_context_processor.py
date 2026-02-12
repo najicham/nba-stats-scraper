@@ -526,11 +526,21 @@ class UpcomingPlayerGameContextProcessor(
 
         # PRE-FLIGHT CHECK: Verify props are available (2026-01-09 timing fix)
         # This prevents 0% prop coverage issues when UPGC runs before props are scraped
+        # Session 218: Made BLOCKING for future dates (not backfill). Returns 500 → Pub/Sub retry.
         props_check = self._check_props_readiness(self.target_date)
         if not props_check['ready']:
-            logger.warning(f"PROPS PRE-FLIGHT: {props_check['message']}")
-            # Don't fail - continue processing but log warning
-            # The 0% coverage alert at the end will catch actual problems
+            is_future_date = self.target_date >= date.today()
+            if is_future_date and not getattr(self, '_backfill_mode', False):
+                logger.error(
+                    f"PROPS PRE-FLIGHT BLOCKED: {props_check['message']}. "
+                    f"Raising error to trigger Pub/Sub retry (props not yet available)."
+                )
+                raise ValueError(
+                    f"Props not ready for {self.target_date}: {props_check['message']}. "
+                    f"Will retry when BettingPros lines arrive."
+                )
+            else:
+                logger.warning(f"PROPS PRE-FLIGHT: {props_check['message']} (backfill/historical - continuing)")
         else:
             logger.info(f"PROPS PRE-FLIGHT: {props_check['message']}")
 

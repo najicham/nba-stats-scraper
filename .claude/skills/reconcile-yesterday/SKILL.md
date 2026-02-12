@@ -235,6 +235,52 @@ curl -s "https://enrichment-trigger-f7p3g7f6ya-wl.a.run.app/?date=${RECON_DATE}"
 
 ---
 
+## Phase 6.75: Prop Coverage Audit — Game Level (Session 218)
+
+Check if all games yesterday had adequate prop line coverage. Catches the UPCG race condition where games get predictions but no prop lines.
+
+```bash
+bq query --use_legacy_sql=false "
+WITH game_coverage AS (
+  SELECT
+    game_id,
+    COUNT(*) as total_predictions,
+    COUNTIF(has_prop_line = TRUE) as with_lines,
+    COUNTIF(line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')) as enriched,
+    COUNTIF(is_active = TRUE) as active
+  FROM nba_predictions.player_prop_predictions
+  WHERE game_date = '${RECON_DATE}' AND system_id = 'catboost_v9'
+  GROUP BY game_id
+),
+scheduled AS (
+  SELECT game_id, away_team_tricode, home_team_tricode
+  FROM nba_reference.nba_schedule
+  WHERE game_date = '${RECON_DATE}' AND game_status = 3
+)
+SELECT
+  s.away_team_tricode || '@' || s.home_team_tricode as matchup,
+  COALESCE(gc.total_predictions, 0) as predictions,
+  COALESCE(gc.with_lines, 0) as with_lines,
+  COALESCE(gc.enriched, 0) as enriched,
+  ROUND(SAFE_DIVIDE(gc.with_lines, gc.total_predictions) * 100, 1) as line_pct,
+  CASE
+    WHEN gc.game_id IS NULL THEN '🔴 NO PREDICTIONS'
+    WHEN gc.with_lines = 0 THEN '🔴 NO LINES'
+    WHEN SAFE_DIVIDE(gc.with_lines, gc.total_predictions) < 0.4 THEN '🟡 LOW COVERAGE'
+    ELSE '✅ OK'
+  END as status
+FROM scheduled s
+LEFT JOIN game_coverage gc ON s.game_id = gc.game_id
+ORDER BY s.away_team_tricode
+"
+```
+
+**Expected**: All games ✅ OK with line_pct >= 40%.
+**If any game 🔴 NO PREDICTIONS**: UPCG likely missed this game (race condition). Check if UPCG re-run was triggered.
+**If any game 🔴 NO LINES**: Enrichment failed or props were never scraped for this game.
+
+---
+
 ## Phase 7: Gap Identification - Who Was Missed?
 
 **Only run this if Phase 3 shows gaps > expected thresholds.**
@@ -411,6 +457,60 @@ Backfill command (generates predictions for models that are missing, does NOT su
 
 ---
 
+## Phase 10: Injury Deactivation Audit (Session 218)
+
+**Purpose**: Check if any "Out" players had active predictions yesterday that should have been deactivated by the enrichment trigger's injury recheck.
+
+**Why this matters**: Session 218 added injury recheck to the enrichment trigger. This phase validates that it worked correctly and catches any failures.
+
+```bash
+bq query --use_legacy_sql=false "
+-- Check OUT players who had active predictions that went ungraded/voided
+WITH out_injuries AS (
+  SELECT DISTINCT
+    LOWER(REGEXP_REPLACE(player_name, r'[^a-zA-Z]', '')) as player_lookup,
+    player_name,
+    injury_status
+  FROM nba_raw.nbac_injury_report
+  WHERE game_date = '${RECON_DATE}'
+    AND UPPER(injury_status) = 'OUT'
+),
+predictions_for_out AS (
+  SELECT
+    p.player_lookup,
+    p.is_active,
+    p.invalidation_reason,
+    p.recommendation,
+    COUNT(*) as pred_count
+  FROM nba_predictions.player_prop_predictions p
+  JOIN out_injuries oi ON p.player_lookup = oi.player_lookup
+  WHERE p.game_date = '${RECON_DATE}'
+    AND p.system_id = 'catboost_v9'
+  GROUP BY 1, 2, 3, 4
+)
+SELECT
+  player_lookup,
+  is_active,
+  invalidation_reason,
+  recommendation,
+  pred_count,
+  CASE
+    WHEN is_active = FALSE AND invalidation_reason = 'player_injured_out' THEN '✅ Correctly deactivated'
+    WHEN is_active = FALSE THEN '✅ Deactivated (other reason)'
+    WHEN is_active = TRUE THEN '⚠️ Still active — injury recheck missed'
+    ELSE '❓ Unknown'
+  END as status
+FROM predictions_for_out
+ORDER BY is_active DESC, player_lookup
+"
+```
+
+**Expected**: All OUT players show `is_active = FALSE` with `invalidation_reason = 'player_injured_out'`.
+**If any show `is_active = TRUE`**: Injury recheck in enrichment trigger failed or ran before status changed. These predictions were likely voided post-game by grading, but the frontend showed them as active picks during the game.
+**Action**: Check enrichment-trigger logs for the injury recheck step. If systematic failure, investigate the recheck query in `prediction_line_enrichment_processor.py:recheck_injuries()`.
+
+---
+
 ## Output Format
 
 Present results as a summary table:
@@ -424,6 +524,8 @@ Cache:        [OK/GAP] X players cached, X miss rate
 Features:     [OK/GAP] X featured, X% quality-ready
 Predictions:  [OK/GAP] X active, X actionable
 Enrichment:   [OK/GAP] X% enriched, X actual_prop, X odds_api
+Prop Coverage: [OK/GAP] X/X games with lines
+Injury Audit: [OK/GAP] X OUT players, X correctly deactivated
 Cross-Model:  [OK/GAP] X models checked, X below 80%
 ==========================================
 Gaps Found:   X players played but not predicted
