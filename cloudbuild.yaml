@@ -51,9 +51,11 @@ steps:
         fi
 
   # Step 1: Build the Docker image
+  # --no-cache ensures fresh source code is always picked up (Session 217/218 fix)
   - name: 'gcr.io/cloud-builders/docker'
     args:
       - 'build'
+      - '--no-cache'
       - '-f'
       - '${_DOCKERFILE}'
       - '-t'

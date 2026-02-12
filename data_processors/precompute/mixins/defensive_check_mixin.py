@@ -68,6 +68,12 @@ class DefensiveCheckMixin:
         Only runs when:
         - strict_mode=True (default)
         - is_backfill_mode=False (checks bypassed during backfills)
+        - analysis_date is in the past (not today or future)
+
+        For same-day/future processing (upcoming game predictions), defensive
+        checks are skipped because Phase 4 uses historical data to compute
+        features -- today's game summaries don't exist yet since the games
+        haven't been played.
 
         Checks:
         1. Upstream processor status: Did upstream Phase 3 processor succeed yesterday?
@@ -93,6 +99,21 @@ class DefensiveCheckMixin:
         # Skip if strict mode disabled
         if not strict_mode:
             logger.info("⏭️  STRICT MODE DISABLED: Skipping defensive checks")
+            return
+
+        # Skip defensive checks for same-day or future dates (upcoming game predictions).
+        # Phase 4 uses historical data to compute features for upcoming games.
+        # Today's game summaries don't exist yet because the games haven't been played.
+        # Checking upstream coverage for today/tomorrow would always fail with 0%.
+        check_date = analysis_date
+        if isinstance(check_date, str):
+            check_date = datetime.strptime(check_date, '%Y-%m-%d').date()
+        today = date.today()
+        if check_date >= today:
+            logger.info(
+                f"⏭️  SAME-DAY/FUTURE DATE: Skipping defensive checks for {check_date} "
+                f"(today={today}). Phase 4 uses historical data for upcoming game predictions."
+            )
             return
 
         # Use soft dependency checking if enabled (added after Jan 23 incident)

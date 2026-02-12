@@ -49,7 +49,7 @@ DRY_RUN = os.environ.get('DRY_RUN', 'false').lower() == 'true'
 PHASE_HTTP_ENDPOINTS = {
     'phase_2': f'{get_service_url(Services.PHASE2_PROCESSORS)}/process',
     'phase_3': f'{get_service_url(Services.PHASE3_ANALYTICS)}/process',
-    'phase_4': f'{get_service_url(Services.PHASE4_PRECOMPUTE)}/process',
+    'phase_4': f'{get_service_url(Services.PHASE4_PRECOMPUTE)}/process-date',
     'phase_5': f'{get_service_url(Services.PREDICTION_COORDINATOR)}/predict',
 }
 
@@ -117,7 +117,7 @@ def publish_retry_message(
     game_date: str,
     correlation_id: Optional[str] = None,
     retry_count: int = 0
-) -> bool:
+) -> str:
     """
     Trigger retry via direct HTTP call to Cloud Run endpoint.
 
@@ -129,16 +129,17 @@ def publish_retry_message(
         retry_count: Current retry attempt
 
     Returns:
-        bool: True if triggered successfully
+        str: 'success', 'client_error' (4xx - permanent, don't retry),
+             or 'failed' (transient, can retry)
     """
     endpoint = PHASE_HTTP_ENDPOINTS.get(phase)
     if not endpoint:
         logger.warning(f"Unknown phase '{phase}', cannot determine retry endpoint")
-        return False
+        return 'failed'
 
     if DRY_RUN:
         logger.info(f"DRY RUN: Would POST to {endpoint} for {processor_name} on {game_date}")
-        return True
+        return 'success'
 
     try:
         import google.auth.transport.requests
@@ -153,57 +154,78 @@ def publish_retry_message(
             'Content-Type': 'application/json'
         }
 
-        # Different phases expect different message formats wrapped in Pub/Sub envelope
-        if phase in ['phase_2', 'phase_3', 'phase_4']:
-            # Raw, analytics, and precompute processors expect: {"game_date": "...", "output_table": "..."}
-            message_data = {
-                'game_date': game_date,
-                'output_table': processor_name,
-                'status': 'success',
-                'triggered_by': 'auto_retry',
-                'retry_count': retry_count + 1,
+        # Phase 4 uses /process-date which expects raw JSON (not Pub/Sub envelope)
+        if phase == 'phase_4':
+            # /process-date expects: {"analysis_date": "...", "backfill_mode": true, ...}
+            payload = {
+                'analysis_date': game_date,
+                'backfill_mode': True,
+                'strict_mode': False,
+                'skip_dependency_check': True,
             }
-        elif phase == 'phase_5':
-            # Prediction coordinator expects: {"game_date": "...", "action": "predict"}
-            message_data = {
-                'game_date': game_date,
-                'action': 'predict',
-            }
+
+            response = requests.post(endpoint, json=payload, headers=headers, timeout=30)
         else:
-            # Fallback to generic format
-            message_data = {
-                'action': 'retry',
-                'processor_name': processor_name,
-                'game_date': game_date,
-                'correlation_id': correlation_id or f"retry-{datetime.now().strftime('%Y%m%d%H%M%S')}",
-                'retry_count': retry_count + 1,
-                'trigger_source': 'auto_retry',
-                'timestamp': datetime.now(timezone.utc).isoformat(),
-            }
-
-        # Wrap in Pub/Sub envelope format (Cloud Run services expect this)
-        message_json = json.dumps(message_data)
-        message_b64 = base64.b64encode(message_json.encode('utf-8')).decode('utf-8')
-
-        pubsub_envelope = {
-            'message': {
-                'data': message_b64,
-                'attributes': {
-                    'retry_attempt': str(retry_count + 1),
+            # Other phases expect Pub/Sub envelope format
+            if phase in ['phase_2', 'phase_3']:
+                # Raw and analytics processors expect: {"game_date": "...", "source_table": "..."}
+                message_data = {
+                    'game_date': game_date,
+                    'source_table': processor_name,
+                    'status': 'success',
+                    'triggered_by': 'auto_retry',
+                    'retry_count': retry_count + 1,
+                }
+            elif phase == 'phase_5':
+                # Prediction coordinator expects: {"game_date": "...", "action": "predict"}
+                message_data = {
+                    'game_date': game_date,
+                    'action': 'predict',
+                }
+            else:
+                # Fallback to generic format
+                message_data = {
+                    'action': 'retry',
+                    'processor_name': processor_name,
+                    'game_date': game_date,
+                    'correlation_id': correlation_id or f"retry-{datetime.now().strftime('%Y%m%d%H%M%S')}",
+                    'retry_count': retry_count + 1,
                     'trigger_source': 'auto_retry',
+                    'timestamp': datetime.now(timezone.utc).isoformat(),
+                }
+
+            # Wrap in Pub/Sub envelope format (Cloud Run services expect this)
+            message_json = json.dumps(message_data)
+            message_b64 = base64.b64encode(message_json.encode('utf-8')).decode('utf-8')
+
+            pubsub_envelope = {
+                'message': {
+                    'data': message_b64,
+                    'attributes': {
+                        'retry_attempt': str(retry_count + 1),
+                        'trigger_source': 'auto_retry',
+                    }
                 }
             }
-        }
 
-        response = requests.post(endpoint, json=pubsub_envelope, headers=headers, timeout=30)
+            response = requests.post(endpoint, json=pubsub_envelope, headers=headers, timeout=30)
+        if response.status_code >= 400 and response.status_code < 500:
+            # 4xx = client error (bad request format, wrong endpoint, etc.)
+            # These won't succeed on retry, so mark as permanent failure
+            logger.error(
+                f"HTTP {response.status_code} from {endpoint} for {processor_name} "
+                f"on {game_date}: {response.text[:500]}"
+            )
+            return 'client_error'
+
         response.raise_for_status()
 
         logger.info(f"Triggered retry via HTTP to {endpoint}: {response.status_code}")
-        return True
+        return 'success'
 
     except Exception as e:
         logger.error(f"Failed to trigger retry via HTTP: {e}", exc_info=True)
-        return False
+        return 'failed'
 
 
 def update_retry_status(
@@ -364,7 +386,7 @@ def process_retry(retry: Dict[str, Any]) -> Dict[str, Any]:
         }
 
     # Publish retry message
-    success = publish_retry_message(
+    result = publish_retry_message(
         phase=phase,
         processor_name=processor_name,
         game_date=game_date,
@@ -372,7 +394,7 @@ def process_retry(retry: Dict[str, Any]) -> Dict[str, Any]:
         retry_count=retry_count
     )
 
-    if success:
+    if result == 'success':
         # Calculate next retry time with exponential backoff
         delay_minutes = BASE_DELAY_MINUTES * (BACKOFF_MULTIPLIER ** retry_count)
         next_retry = datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)
@@ -391,12 +413,35 @@ def process_retry(retry: Dict[str, Any]) -> Dict[str, Any]:
             'result': 'retry_triggered',
             'next_retry_at': next_retry.isoformat()
         }
+    elif result == 'client_error':
+        # 4xx errors won't succeed on retry - mark as permanent failure immediately
+        logger.warning(
+            f"{processor_name} got 4xx client error, marking as failed_permanent "
+            f"(won't succeed on retry)"
+        )
+        update_retry_status(queue_id, 'failed_permanent', retry_count + 1)
+
+        send_permanent_failure_alert(
+            processor_name=processor_name,
+            phase=phase,
+            game_date=game_date,
+            error_message=f"HTTP 4xx client error from retry endpoint. Original: {retry['error_message']}",
+            retry_count=retry_count + 1,
+            first_failure_at=retry['first_failure_at']
+        )
+
+        return {
+            'id': queue_id,
+            'processor_name': processor_name,
+            'result': 'failed_permanent',
+            'reason': 'client_error_4xx'
+        }
     else:
         return {
             'id': queue_id,
             'processor_name': processor_name,
             'result': 'failed_to_publish',
-            'reason': 'pubsub_error'
+            'reason': 'http_error'
         }
 
 

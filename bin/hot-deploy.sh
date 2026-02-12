@@ -97,7 +97,7 @@ echo "=============================================="
 # [1/4] Build
 echo ""
 echo "[1/4] Building..."
-docker build -q \
+docker build -q --no-cache \
     -t "$REGISTRY/$SERVICE:latest" \
     -t "$REGISTRY/$SERVICE:$BUILD_COMMIT" \
     --build-arg BUILD_COMMIT="$BUILD_COMMIT" \
