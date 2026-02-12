@@ -79,7 +79,7 @@ def validate_freshness(request: Request):
             return jsonify(response), 200
         else:
             logger.warning(f"⚠️ Stale data detected for {game_date}: {errors}")
-            return jsonify(response), 400  # Bad request - data not fresh
+            return jsonify(response), 200  # Always 200: reporter, not gatekeeper
 
     except Exception as e:
         logger.error(f"Error validating freshness: {e}", exc_info=True)
@@ -207,9 +207,9 @@ def reconcile(request: Request):
             logger.warning(f"Freshness errors: {freshness_errors}")
             logger.warning(f"Missing predictions: {missing_result.get('missing_count', 0)}")
 
-        status_code = 200 if report['overall_status'] == 'PASS' else 400
-
-        return jsonify(report), status_code
+        # Always return 200: this is a reporter, not a gatekeeper.
+        # Data quality issues are in the response body, not the HTTP status.
+        return jsonify(report), 200
 
     except Exception as e:
         logger.error(f"Error during reconciliation: {e}", exc_info=True)

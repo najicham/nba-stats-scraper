@@ -111,8 +111,8 @@ def pipeline_health_summary(request):
             logger.info(f"✅ Pipeline health summary sent for {date_str}")
             return {'status': 'success', 'date': date_str, 'email_sent': True}, 200
         else:
-            logger.error(f"Failed to send health summary email for {date_str}")
-            return {'status': 'error', 'date': date_str, 'email_sent': False, 'error': 'Email send failed'}, 500
+            logger.warning(f"Failed to send health summary email for {date_str}")
+            return {'status': 'partial', 'date': date_str, 'email_sent': False}, 200  # Reporter, not gatekeeper
 
     except Exception as e:
         logger.error(f"Error generating pipeline health summary: {e}", exc_info=True)
