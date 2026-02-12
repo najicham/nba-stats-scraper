@@ -118,7 +118,7 @@ export_table() {
 EOF
 
         # Upload metadata
-        gsutil cp /tmp/export_metadata_${table_name}.json "${export_path}/_metadata.json"
+        gcloud storage cp /tmp/export_metadata_${table_name}.json "${export_path}/_metadata.json"
 
         return 0
     else
@@ -129,11 +129,11 @@ EOF
 
 create_backup_bucket() {
     # Check if bucket exists
-    if gsutil ls "$BACKUP_BUCKET" >/dev/null 2>&1; then
+    if gcloud storage ls "$BACKUP_BUCKET" >/dev/null 2>&1; then
         log "Backup bucket exists: $BACKUP_BUCKET"
     else
         log "Creating backup bucket: $BACKUP_BUCKET"
-        gsutil mb -l US -p "$PROJECT_ID" "$BACKUP_BUCKET"
+        gcloud storage buckets create "$BACKUP_BUCKET" --location=US --project="$PROJECT_ID"
 
         # Set lifecycle policy (delete after 90 days)
         cat > /tmp/lifecycle.json <<EOF
@@ -148,7 +148,7 @@ create_backup_bucket() {
   }
 }
 EOF
-        gsutil lifecycle set /tmp/lifecycle.json "$BACKUP_BUCKET"
+        gcloud storage buckets update "$BACKUP_BUCKET" --lifecycle-file=/tmp/lifecycle.json
         log "Lifecycle policy set: delete after 90 days"
     fi
 }
@@ -241,13 +241,13 @@ To restore from this backup:
       ${export_base_path}/phase3/player_game_summary/*.avro
 
     # List all backups:
-    gsutil ls ${BACKUP_BUCKET}/${BACKUP_TYPE}/
+    gcloud storage ls ${BACKUP_BUCKET}/${BACKUP_TYPE}/
 
 For complete recovery procedures, see:
     docs/02-operations/disaster-recovery-runbook.md
 EOF
 
-    gsutil cp /tmp/backup_index.txt "${export_base_path}/_BACKUP_INDEX.txt"
+    gcloud storage cp /tmp/backup_index.txt "${export_base_path}/_BACKUP_INDEX.txt"
 
     if [[ $failure_count -eq 0 ]]; then
         log "✓ All exports completed successfully"
