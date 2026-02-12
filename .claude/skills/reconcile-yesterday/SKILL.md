@@ -57,35 +57,42 @@ GROUP BY 1
 
 ## Phase 2: Boxscore Arrival Check
 
+**NOTE**: Schedule uses numeric game_id (`0022500775`), analytics uses date format (`20260211_MIL_ORL`). Join on team pairs, not game_id (Session 216 fix).
+
 ```bash
 bq query --use_legacy_sql=false "
 -- Check: Did boxscores arrive for all games?
+-- Uses team pair matching (not game_id which has format mismatch)
 WITH scheduled AS (
   SELECT game_id, away_team_tricode, home_team_tricode
   FROM nba_reference.nba_schedule
   WHERE game_date = '${RECON_DATE}' AND game_status = 3
 ),
 boxscored AS (
-  SELECT DISTINCT game_id
+  SELECT DISTINCT
+    SPLIT(game_id, '_')[SAFE_OFFSET(1)] as away_team,
+    SPLIT(game_id, '_')[SAFE_OFFSET(2)] as home_team
   FROM nba_analytics.player_game_summary
   WHERE game_date = '${RECON_DATE}'
 )
 SELECT
   COUNT(DISTINCT s.game_id) as games_scheduled,
-  COUNT(DISTINCT b.game_id) as games_with_boxscores,
-  COUNT(DISTINCT s.game_id) - COUNT(DISTINCT b.game_id) as games_missing_boxscores,
+  COUNTIF(b.away_team IS NOT NULL) as games_with_analytics,
+  COUNTIF(b.away_team IS NULL) as games_missing_analytics,
   ARRAY_AGG(
-    CASE WHEN b.game_id IS NULL
+    CASE WHEN b.away_team IS NULL
     THEN CONCAT(s.away_team_tricode, ' @ ', s.home_team_tricode)
     END IGNORE NULLS
   ) as missing_games
 FROM scheduled s
-LEFT JOIN boxscored b ON s.game_id = b.game_id
+LEFT JOIN boxscored b
+  ON s.away_team_tricode = b.away_team
+  AND s.home_team_tricode = b.home_team
 "
 ```
 
-**Expected**: 0 games missing boxscores.
-**If missing**: Phase 2/3 pipeline failed for those games. Check scraper logs.
+**Expected**: 0 games missing analytics.
+**If missing**: Phase 2/3 pipeline failed for those games. Check if boxscore fallback was available (Phase 0.477 in validate-daily).
 
 ---
 
@@ -192,6 +199,38 @@ SELECT
 FROM nba_predictions.player_prop_predictions
 WHERE game_date = '${RECON_DATE}'
 "
+```
+
+**Key metric**: `has_line` vs `active_predictions`. If `has_line` is much lower than `active_predictions`, enrichment may have failed.
+
+---
+
+## Phase 6.5: Enrichment Completeness (Session 217)
+
+**Purpose**: Verify predictions were enriched with actual prop lines after props were scraped. Enrichment runs at 18:40 UTC daily.
+
+```bash
+bq query --use_legacy_sql=false "
+-- Check enrichment: how many active predictions got prop lines?
+SELECT
+  COUNTIF(is_active) as active_predictions,
+  COUNTIF(is_active AND current_points_line IS NOT NULL) as enriched,
+  COUNTIF(is_active AND current_points_line IS NULL) as not_enriched,
+  ROUND(COUNTIF(is_active AND current_points_line IS NOT NULL) * 100.0 /
+    NULLIF(COUNTIF(is_active), 0), 1) as enrichment_pct,
+  COUNTIF(line_source = 'ACTUAL_PROP') as actual_prop,
+  COUNTIF(line_source = 'ODDS_API') as odds_api,
+  COUNTIF(line_source = 'NO_PROP_LINE') as no_prop
+FROM nba_predictions.player_prop_predictions
+WHERE game_date = '${RECON_DATE}'
+"
+```
+
+**Expected**: `enrichment_pct >= 60%` on a normal game day.
+**If < 40%**: Enrichment pipeline likely failed. Check `enrichment-trigger` Cloud Function logs and scheduler.
+**If 0%**: CRITICAL — enrichment has not run at all. Manual trigger:
+```
+curl -s "https://enrichment-trigger-f7p3g7f6ya-wl.a.run.app/?date=${RECON_DATE}" | python3 -m json.tool
 ```
 
 ---
@@ -384,6 +423,7 @@ Boxscores:    [OK/GAP] X/X games
 Cache:        [OK/GAP] X players cached, X miss rate
 Features:     [OK/GAP] X featured, X% quality-ready
 Predictions:  [OK/GAP] X active, X actionable
+Enrichment:   [OK/GAP] X% enriched, X actual_prop, X odds_api
 Cross-Model:  [OK/GAP] X models checked, X below 80%
 ==========================================
 Gaps Found:   X players played but not predicted

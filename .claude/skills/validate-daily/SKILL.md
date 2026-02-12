@@ -970,6 +970,135 @@ LIMIT 10"
 **If bdl_missing = true**:
 - This is a real data gap - investigate BDL scraper
 
+### Phase 0.477: Boxscore Trigger Fallback Validation (Session 215/217 - NEW)
+
+**IMPORTANT**: Verify that Phase 3 analytics can trigger from boxscores when gamebook is unavailable.
+
+**Why this matters**: Session 215 discovered that when a game gets stuck at game_status=2 (in-progress), the gamebook scraper never runs. Before Session 215, this blocked Phase 3 entirely. Now `nbac_player_boxscores` is registered as a fallback trigger in `ANALYTICS_TRIGGER_GROUPS`, but we need to verify it works.
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Check if yesterday's Phase 3 used boxscore fallback
+-- The primary_source_used field indicates which data source was used
+SELECT
+  game_date,
+  COUNT(*) as total_records,
+  COUNTIF(primary_source_used = 'nbac_gamebook') as from_gamebook,
+  COUNTIF(primary_source_used = 'nbac_boxscores') as from_boxscores,
+  COUNTIF(primary_source_used IS NULL) as null_source
+FROM \`nba-props-platform.nba_analytics.player_game_summary\`
+WHERE game_date >= CURRENT_DATE() - 3
+GROUP BY 1
+ORDER BY 1 DESC"
+```
+
+**Expected Result**:
+- Most records should be `from_gamebook` (normal path)
+- `from_boxscores > 0` is OK — means fallback worked when needed
+- `null_source > 0`: Investigate — may indicate processor ran before Session 215 fix
+
+**Cross-check boxscore data availability**:
+```bash
+bq query --use_legacy_sql=false "
+-- Verify boxscore data exists for yesterday's games
+SELECT
+  s.game_date,
+  s.away_team_tricode || '@' || s.home_team_tricode as matchup,
+  s.game_status,
+  COALESCE(gb.gamebook_rows, 0) as gamebook_rows,
+  COALESCE(bs.boxscore_rows, 0) as boxscore_rows,
+  CASE
+    WHEN COALESCE(gb.gamebook_rows, 0) > 0 THEN 'GAMEBOOK'
+    WHEN COALESCE(bs.boxscore_rows, 0) > 0 THEN 'BOXSCORE_FALLBACK'
+    ELSE 'NO_DATA'
+  END as data_source
+FROM \`nba-props-platform.nba_reference.nba_schedule\` s
+LEFT JOIN (
+  SELECT game_date, COUNT(*) as gamebook_rows
+  FROM \`nba-props-platform.nba_raw.nbac_gamebook_player_stats\`
+  WHERE game_date >= CURRENT_DATE() - 2
+  GROUP BY 1
+) gb ON s.game_date = gb.game_date
+LEFT JOIN (
+  SELECT game_date, COUNT(*) as boxscore_rows
+  FROM \`nba-props-platform.nba_raw.nbac_player_boxscores\`
+  WHERE game_date >= CURRENT_DATE() - 2
+  GROUP BY 1
+) bs ON s.game_date = bs.game_date
+WHERE s.game_date >= CURRENT_DATE() - 2
+  AND s.game_status = 3
+ORDER BY s.game_date DESC"
+```
+
+**Alert thresholds**:
+- `NO_DATA` for any completed game: **CRITICAL** — Phase 3 will be blocked
+- `BOXSCORE_FALLBACK` only (no gamebook): **WARNING** — gamebook scraper may have issues
+- All `GAMEBOOK`: **OK** — normal operation
+
+**If boxscore fallback needed but blocked**:
+```bash
+# Manual Phase 3 trigger from boxscores
+curl -X POST "https://nba-phase3-analytics-processors-756957797294.us-west2.run.app/process" \
+  -H "Content-Type: application/json" \
+  -d '{"source_table": "nbac_player_boxscores", "game_date": "YYYY-MM-DD"}'
+```
+
+**Reference**: Session 215 (SAS@GSW stuck at game_status=2, boxscore fallback added)
+
+### Phase 0.478: Phase 3→4 Message Format Validation (Session 215/217 - NEW)
+
+**IMPORTANT**: Verify Phase 3→4 orchestrator publishes 5 separate per-table messages with `source_table` field.
+
+**Why this matters**: Session 215 discovered that the Phase 3→4 orchestrator was sending ONE combined message without `source_table`. Phase 4 returns 400 for messages missing `source_table`. The fix publishes 5 separate messages (one per Phase 3 output table).
+
+**What to check**:
+
+```bash
+# Check Phase 3→4 orchestrator Firestore tracking for recent triggers
+bq query --use_legacy_sql=false "
+-- Verify Phase 4 received properly formatted messages (no 400 errors)
+-- Check execution logs for Phase 4 processing
+SELECT
+  game_date,
+  triggered_by as source_table,
+  status,
+  COUNT(*) as invocations
+FROM \`nba-props-platform.nba_orchestration.execution_log\`
+WHERE phase = 'phase_4_precompute'
+  AND game_date >= CURRENT_DATE() - 3
+GROUP BY 1, 2, 3
+ORDER BY 1 DESC, 2"
+```
+
+**Expected Result**: 5 rows per game_date, one per source table:
+- `player_game_summary` → success
+- `team_defense_game_summary` → success
+- `team_offense_game_summary` → success
+- `upcoming_player_game_context` → success
+- `upcoming_team_game_context` → success
+
+**If fewer than 5 source tables per day**:
+```bash
+# Check Phase 3→4 orchestrator logs for publishing errors
+gcloud logging read 'resource.labels.function_name="phase3-to-phase4-orchestrator"
+  AND severity>=WARNING' \
+  --limit=20 --format="table(timestamp,textPayload)" --freshness=24h
+```
+
+**If Phase 4 returning 400 errors**:
+```bash
+# Check Phase 4 service logs for message format issues
+gcloud logging read 'resource.labels.service_name="nba-phase4-precompute-processors"
+  AND textPayload=~"Missing source_table"' \
+  --limit=10 --format="table(timestamp,textPayload)" --freshness=24h
+```
+
+**Known issue**: If orchestrator is at a pre-Session-215 commit, it sends a single message. Fix: redeploy orchestrator or check deployment drift.
+
+**Reference**: Session 215 (Phase 4 rejected orchestrator messages, required per-table format)
+
 ### Phase 0.48: Feature Quality Visibility Check (Sessions 99, 139)
 
 **IMPORTANT**: Verify feature data quality using the per-category quality fields (Session 139 upgrade).
@@ -2911,6 +3040,75 @@ gcloud logging read 'resource.type="cloud_run_revision"
   AND jsonPayload.scraper="bettingpros"' \
   --limit=20 --format=json
 ```
+
+### Phase 0.71: Enrichment Pipeline Health Check (Session 217 - NEW)
+
+**IMPORTANT**: Verify that predictions are getting enriched with actual prop lines after props are scraped.
+
+**Why this matters**: The enrichment-trigger Cloud Function runs at 18:40 UTC daily to backfill betting lines into predictions that were generated the night before (when props don't exist yet). Without enrichment, predictions have NULL `current_points_line` values, which means no edge calculation and no actionable picks. Session 216 discovered it had been failing since ~Feb 7 due to missing dependencies.
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Check enrichment status: how many predictions have prop lines?
+SELECT
+  game_date,
+  COUNT(*) as total_predictions,
+  COUNTIF(current_points_line IS NOT NULL) as has_line,
+  COUNTIF(current_points_line IS NULL AND is_active = TRUE) as active_missing_line,
+  ROUND(COUNTIF(current_points_line IS NOT NULL) * 100.0 / NULLIF(COUNT(*), 0), 1) as enrichment_pct,
+  COUNTIF(line_source = 'ACTUAL_PROP') as actual_prop_lines,
+  COUNTIF(line_source = 'ODDS_API') as odds_api_lines,
+  COUNTIF(line_source = 'NO_PROP_LINE') as no_prop_lines
+FROM \`nba-props-platform.nba_predictions.player_prop_predictions\`
+WHERE game_date >= CURRENT_DATE() - 3
+  AND is_active = TRUE
+GROUP BY 1
+ORDER BY 1 DESC"
+```
+
+**Expected Result**:
+- `enrichment_pct >= 60%` for game days with props scraped
+- `actual_prop_lines > 0` for game days (shows BettingPros data is flowing)
+- `odds_api_lines > 0` for game days (shows Odds API data is flowing)
+
+**Alert thresholds**:
+- `enrichment_pct < 40%` after 18:40 UTC on a game day: **CRITICAL** — enrichment not running
+- `enrichment_pct 40-60%`: **WARNING** — partial enrichment, some sources may be missing
+- `active_missing_line > 0` but `enrichment_pct >= 60%`: **OK** — some players naturally have no props
+
+**Test enrichment-trigger directly**:
+```bash
+# Dry run (safe, just reports what would be updated)
+curl -s "https://enrichment-trigger-f7p3g7f6ya-wl.a.run.app/?date=$(date +%Y-%m-%d)&dry_run=true" | python3 -m json.tool
+```
+
+**Expected dry_run result**:
+- `predictions_missing_lines`: How many predictions need lines
+- `props_available`: How many prop lines exist to match
+- `predictions_enriched`: How many would be updated (dry_run shows 0)
+
+**If enrichment is broken**:
+```bash
+# Check enrichment-trigger Cloud Function logs
+gcloud logging read 'resource.labels.function_name="enrichment-trigger" OR resource.labels.service_name="enrichment-trigger"' \
+  --limit=20 --format="table(timestamp,severity,textPayload)" --freshness=24h
+
+# Check scheduler job status
+gcloud scheduler jobs describe enrichment-daily --location=us-west2 --project=nba-props-platform --format="yaml(state,lastAttemptTime,status)"
+
+# Manual trigger (NOT dry run — actually enriches)
+curl -s "https://enrichment-trigger-f7p3g7f6ya-wl.a.run.app/?date=YYYY-MM-DD" | python3 -m json.tool
+```
+
+**Common causes**:
+- Missing dependencies in enrichment-trigger (Session 216: missing google-cloud-firestore)
+- Scheduler job paused or misconfigured
+- No props scraped yet (check if it's before 18:00 UTC)
+- BettingPros/OddsAPI scraper failures upstream
+
+**Reference**: Session 216 (enrichment-trigger failing since Feb 7, fixed requirements), Session 217 (added this check)
 
 ### Phase 0.8: Grading Completeness Check (Session 77)
 

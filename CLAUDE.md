@@ -230,6 +230,8 @@ PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py --name "PROD_V2
 | phase3-to-phase4-orchestrator | Pub/Sub: `nba-phase3-analytics-complete` | Phase transition |
 | phase4-to-phase5-orchestrator | Pub/Sub: `nba-phase4-precompute-complete` | Phase transition |
 | phase5-to-phase6-orchestrator | Pub/Sub: `nba-phase5-predictions-complete` | Phase transition |
+| enrichment-trigger | HTTP (Cloud Scheduler 18:40 UTC) | Enriches predictions with prop lines |
+| daily-health-check | HTTP (Cloud Scheduler 9 AM ET) | Daily pipeline health check + Slack alerts |
 
 phase2-to-phase3-orchestrator REMOVED (Session 205).
 
