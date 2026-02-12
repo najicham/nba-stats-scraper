@@ -2982,13 +2982,18 @@ WHERE game_date = DATE('${GAME_DATE}')"
 - `player_game_summary`: ~200-300 records per night (varies by games)
 - `team_offense_game_summary`: 2 × number of games (home + away)
 
-#### 2B. Phase 3 Completion Status (MUST BE 5/5)
+#### 2B. Phase 3 Completion Status (Mode-Aware Validation - Session 208)
 
-Check that Phase 3 processors completed.
+Check that Phase 3 processors completed **based on orchestration mode**.
 
-**Timing Note (Session 128)**: Phase 3 now runs same-evening using boxscore fallback when gamebook isn't available yet. Check today's date for completion status.
+**IMPORTANT (Session 208)**: Firestore may show "incomplete" even when working correctly due to:
+1. **Mode-aware orchestration** (different modes need different processors)
+2. **Backfill mode processors** (skip Firestore updates by design)
+3. **Late processors** (complete after Phase 4 already triggered)
 
-**CRITICAL**: Phase 3 has **5 expected processors**. Anything less than 5/5 is a WARNING or CRITICAL.
+**Always check `_triggered` and `_trigger_reason` instead of just counting processors.**
+
+**Reference:** See `docs/02-operations/phase3-completion-tracking.md` for detailed explanation.
 
 ```bash
 python3 << 'EOF'
@@ -2996,8 +3001,26 @@ from google.cloud import firestore
 from datetime import datetime
 import sys
 
-EXPECTED_PROCESSORS = 5  # Phase 3 has 5 processors
-EXPECTED_PROCESSOR_NAMES = [
+# Mode-specific requirements (from orchestrator code)
+MODE_REQUIREMENTS = {
+    'overnight': {
+        'expected': 5,
+        'critical': {'player_game_summary', 'upcoming_player_game_context'},
+        'optional': {'team_defense_game_summary', 'team_offense_game_summary', 'upcoming_team_game_context'}
+    },
+    'same_day': {
+        'expected': 1,
+        'critical': {'upcoming_player_game_context'},
+        'optional': {'upcoming_team_game_context'}
+    },
+    'tomorrow': {
+        'expected': 1,
+        'critical': {'upcoming_player_game_context'},
+        'optional': {'upcoming_team_game_context'}
+    }
+}
+
+ALL_PROCESSORS = [
     'player_game_summary',
     'team_offense_game_summary',
     'team_defense_game_summary',
@@ -3006,41 +3029,107 @@ EXPECTED_PROCESSOR_NAMES = [
 ]
 
 db = firestore.Client()
-# Phase 3 runs after midnight, so check TODAY's completion record
 processing_date = datetime.now().strftime('%Y-%m-%d')
 doc = db.collection('phase3_completion').document(processing_date).get()
 
 if doc.exists:
     data = doc.to_dict()
-    # Count completed processors (exclude metadata fields starting with _)
+
+    # Get completion status
     completed = [k for k in data.keys() if not k.startswith('_')]
     completed_count = len(completed)
-    triggered = data.get('_triggered', False)
+    completed_set = set(completed)
 
-    print(f"Phase 3 Status for {processing_date}:")
-    print(f"  Processors complete: {completed_count}/{EXPECTED_PROCESSORS}")
-    print(f"  Phase 4 triggered: {triggered}")
+    # Get metadata
+    triggered = data.get('_triggered', False)
+    trigger_reason = data.get('_trigger_reason', 'N/A')
+    mode = data.get('_mode', 'unknown')
+    triggered_at = data.get('_triggered_at', 'N/A')
+
+    print(f"=== Phase 3 Status for {processing_date} ===")
+    print(f"Mode: {mode}")
+    print(f"Processors complete: {completed_count}")
+    print(f"Phase 4 triggered: {triggered}")
+    print(f"Trigger reason: {trigger_reason}")
+    if triggered:
+        print(f"Triggered at: {triggered_at}")
 
     # Show completed processors
-    for proc in completed:
-        status_info = data.get(proc, {})
-        status = status_info.get('status', 'unknown') if isinstance(status_info, dict) else str(status_info)
-        print(f"    - {proc}: {status}")
+    print(f"\nCompleted processors:")
+    for proc in sorted(completed):
+        print(f"  ✓ {proc}")
 
     # Check for missing processors
-    missing = set(EXPECTED_PROCESSOR_NAMES) - set(completed)
+    missing = set(ALL_PROCESSORS) - completed_set
     if missing:
-        print(f"\n  MISSING PROCESSORS: {', '.join(missing)}")
+        print(f"\nMissing processors:")
+        for proc in sorted(missing):
+            print(f"  ✗ {proc}")
 
-    # Severity classification
-    if completed_count < EXPECTED_PROCESSORS:
-        if completed_count <= 2:
-            print(f"\n  STATUS: CRITICAL - Only {completed_count}/{EXPECTED_PROCESSORS} processors complete")
-            sys.exit(1)
+    # Mode-aware validation
+    if mode in MODE_REQUIREMENTS:
+        req = MODE_REQUIREMENTS[mode]
+        expected_min = req['expected']
+        critical_procs = req['critical']
+
+        has_critical = critical_procs.issubset(completed_set)
+
+        print(f"\n=== Mode-Aware Validation ({mode}) ===")
+        print(f"Expected minimum: {expected_min} processor(s)")
+        print(f"Critical processors: {', '.join(sorted(critical_procs))}")
+        print(f"Has all critical: {has_critical}")
+
+        # Determine status
+        if triggered:
+            # Phase 4 triggered - check if it was appropriate
+            if trigger_reason == "all_complete":
+                if completed_count >= expected_min:
+                    print(f"\n✅ STATUS: OK")
+                    print(f"   Trigger was appropriate (all_complete: {completed_count} >= {expected_min})")
+                else:
+                    print(f"\n⚠️  STATUS: UNEXPECTED")
+                    print(f"   Triggered with 'all_complete' but {completed_count} < {expected_min}")
+                    print(f"   May indicate orchestrator logic issue")
+            elif trigger_reason == "critical_plus_majority_60pct":
+                if has_critical:
+                    print(f"\n✅ STATUS: OK (Graceful Degradation)")
+                    print(f"   Triggered with critical processors + 60% threshold")
+                else:
+                    print(f"\n🔴 STATUS: CRITICAL")
+                    print(f"   Triggered without all critical processors!")
+                    sys.exit(1)
+            else:
+                print(f"\n⚠️  STATUS: REVIEW")
+                print(f"   Unusual trigger reason: {trigger_reason}")
         else:
-            print(f"\n  STATUS: WARNING - {completed_count}/{EXPECTED_PROCESSORS} processors complete")
+            # Phase 4 NOT triggered - check if it should have
+            if completed_count >= expected_min and has_critical:
+                print(f"\n🔴 STATUS: CRITICAL - Should have triggered but didn't")
+                print(f"   {completed_count} processors complete (>= {expected_min})")
+                print(f"   All critical processors present")
+                print(f"   ACTION: Manually trigger Phase 4")
+                sys.exit(1)
+            else:
+                print(f"\n⏳ STATUS: Waiting")
+                print(f"   {completed_count}/{expected_min} processors (waiting for more)")
     else:
-        print(f"\n  STATUS: OK - All {EXPECTED_PROCESSORS} processors complete")
+        # Unknown mode - use legacy validation
+        print(f"\n⚠️  Unknown mode '{mode}' - using legacy validation")
+        if completed_count < 5:
+            if completed_count <= 2:
+                print(f"  STATUS: CRITICAL - Only {completed_count}/5 processors complete")
+                sys.exit(1)
+            else:
+                print(f"  STATUS: WARNING - {completed_count}/5 processors complete")
+        else:
+            print(f"  STATUS: OK - All 5 processors complete")
+
+    # Note about backfill processors
+    if missing and triggered:
+        print(f"\n💡 Note: Missing processors may be running in backfill mode")
+        print(f"   Backfill processors intentionally skip Firestore updates")
+        print(f"   Check BigQuery tables to verify if data exists")
+        print(f"   Reference: docs/02-operations/phase3-completion-tracking.md")
 else:
     print(f"No Phase 3 completion record for {processing_date}")
     print("  STATUS: CRITICAL - No completion record found")
@@ -3048,17 +3137,27 @@ else:
 EOF
 ```
 
-**Expected**: **5/5 processors complete** and `_triggered = True`
+**Expected Outcomes by Mode:**
 
-**Severity Thresholds**:
-- **5/5 complete**: OK
-- **3-4/5 complete**: WARNING - Phase 4 may have incomplete data
-- **0-2/5 complete**: CRITICAL - Major pipeline failure
+| Mode | Expected Min | Critical Processors | Trigger Threshold |
+|------|--------------|---------------------|-------------------|
+| **overnight** | 5 | player_game_summary + upcoming_player_game_context | 5 complete OR critical + 60% |
+| **same_day** | 1 | upcoming_player_game_context only | 1+ complete |
+| **tomorrow** | 1 | upcoming_player_game_context only | 1+ complete |
 
-**If incomplete (e.g., 2/5)**:
-1. Check which processors are missing from the list
-2. Check Cloud Run logs for those processors: `gcloud run services logs read nba-phase3-analytics-processors --limit=50`
-3. Look for errors: timeout, quota exceeded, ModuleNotFoundError
+**Status Interpretation:**
+
+- ✅ **OK**: Phase 4 triggered appropriately for the mode
+- ✅ **OK (Graceful Degradation)**: Critical processors + 60% threshold met
+- ⏳ **Waiting**: Not enough processors yet (expected)
+- ⚠️ **REVIEW**: Unusual situation, investigate
+- 🔴 **CRITICAL**: Should have triggered but didn't, or triggered inappropriately
+
+**If incomplete but triggered:**
+- Check `_mode` and `_trigger_reason` fields
+- Verify critical processors for that mode are present
+- Missing processors may be in backfill mode (check BigQuery for data)
+- See `docs/02-operations/phase3-completion-tracking.md` for common scenarios
 
 #### 2B.1: Evening Analytics Validation (Session 128)
 
@@ -4220,7 +4319,7 @@ Key fields:
 | **Usage Rate Coverage** | ≥90% | 80-89% | <80% |
 | **Prediction Coverage** | ≥90% | 70-89% | <70% |
 | **Game Context Coverage** | 100% | 95-99% | <95% |
-| **Phase 3 Completion** | 5/5 | 3-4/5 | 0-2/5 |
+| **Phase 3 Completion** | _triggered=True + appropriate reason | _triggered=False when should trigger | No completion record |
 | **DNP Pollution (Session 113+)** | 0% | 0.1-1% | >1% |
 | **ML Feature Match Rate (Session 113+)** | ≥95% | 90-94% | <90% |
 | **Team Pace Outliers (Session 113+)** | 0 | 1-5 | >5 |
