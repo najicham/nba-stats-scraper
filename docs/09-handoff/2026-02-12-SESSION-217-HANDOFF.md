@@ -1,103 +1,120 @@
-# Session 217 Handoff — game_id Format Mismatch Fix
+# Session 217 Handoff — Infrastructure Recovery Complete
 
 **Date:** 2026-02-12
-**Session:** 217
-**Status:** Complete — Pipeline recovered for Feb 11, fix deployed
+**Session:** 217 (continuation of 217a game_id fix + 217b infrastructure cleanup)
+**Status:** All Session 216 tasks completed. Clean state.
 
-## What Happened
+## TL;DR
 
-Feb 12 morning: Phase 3 was stuck in a retry storm for Feb 11 data. Only 105 early predictions existed for Feb 12. The entire pipeline was blocked.
+Completed all 5 tasks from Session 216 handoff: fixed enrichment-trigger (missing firestore dep), fixed daily-health-check (build retry + Slack secrets), added 3 validation skill improvements, fixed bigquery-daily-backup (gsutil→gcloud storage), paused broken br-rosters scheduler. One pre-existing issue found: live-export Cloud Build trigger misconfigured (Gen1 vs Gen2).
 
-## Root Cause
+## What Was Done
 
-**game_id format mismatch** in the boxscore completeness check (`main_analytics_service.py:262-332`):
+### 1. enrichment-trigger Fixed (was CRITICAL)
 
-- `nbac_schedule` uses numeric game_ids: `0022500775`
-- `nbac_gamebook_player_stats` uses date format: `20260211_MIL_ORL`
+**Problem:** `cannot import name 'firestore' from 'google.cloud'` — function was deployed without `google-cloud-firestore` in requirements.
+**Root cause:** `shared/clients/__init__.py` imports `firestore_pool.py` which requires the package. Any import from `shared.clients` triggers the chain.
+**Fix:** Added all transitive deps (firestore, pubsub, storage, logging, pandas, requests, pytz) matching the proven pattern from other Cloud Functions.
+**Status:** Build SUCCESS, dry_run test returns valid JSON.
 
-The code compared these directly (`if nba_game_id not in boxscore_game_ids`), which NEVER matches. Result: all 14 games reported as "missing" despite 100% coverage. This caused:
+### 2. daily-health-check Fixed + Slack Secrets Wired
 
-1. Phase 3 returned HTTP 500 (boxscore "incomplete")
-2. Pub/Sub retried up to 5 times, then sent to DLQ
-3. Each retry triggered redundant re-scrape of gamebook data
-4. Phase 3 never advanced to Phase 4/5/6
+**Problem:** Build 8c64d26f failed with 409 "unable to queue the operation" (deploy conflict).
+**Fix:** Retried build — succeeded. Then wired Slack webhook secrets:
+- `SLACK_WEBHOOK_URL` → `slack-webhook-url:latest` (#daily-orchestration)
+- `SLACK_WEBHOOK_URL_ERROR` → `slack-webhook-monitoring-error:latest` (#app-error-alerts)
+- `SLACK_WEBHOOK_URL_WARNING` → `slack-webhook-monitoring-warning:latest` (#nba-alerts)
 
-**Origin:** Session 198 switched from BDL (same game_id format as schedule) to NBA.com gamebook (different format) but didn't update the comparison logic.
+**Note:** Had to first `--remove-env-vars=SLACK_WEBHOOK_URL` because it existed as an empty string env var (can't replace env var with secret of same name).
 
-## Fix Applied
+### 3. Validation Skill Improvements (3 New Checks)
 
-**Commit:** `3b7f0ab9` — Match games by (away_team, home_team) pairs instead of game_id.
+**validate-daily:**
+- **Phase 0.477**: Boxscore trigger fallback validation — queries `primary_source_used` field, cross-checks gamebook vs boxscore data availability per game
+- **Phase 0.478**: Phase 3→4 message format validation — checks execution_log for 5 per-table messages, detects missing `source_table` 400 errors
+- **Phase 0.71**: Enrichment pipeline health check — queries `current_points_line` coverage, tests enrichment-trigger dry_run, checks scheduler status
 
-### File 1: `data_processors/analytics/main_analytics_service.py`
-- Parse gamebook game_ids (`YYYYMMDD_AWAY_HOME`) into team pairs
-- Compare schedule games against team pairs instead of raw game_ids
-- Comment documents the format difference
+**reconcile-yesterday:**
+- **Phase 6.5**: Enrichment completeness check with line_source breakdown
+- **Phase 2 bug fix**: `game_id` format mismatch in boxscore arrival query (schedule uses numeric `0022500775`, analytics uses `20260211_MIL_ORL`). Changed JOIN to use team pair matching.
+- Updated output format to include Enrichment row
 
-### File 2: `orchestration/cloud_functions/phase3_to_phase4/main.py`
-- Same format mismatch in coverage check (EXCEPT query between schedule and analytics)
-- Fixed with LEFT JOIN on team tricodes instead of game_id EXCEPT
-- Note: This was a cosmetic/logging bug only — the count-based coverage check worked correctly
+### 4. bigquery-daily-backup Fixed
 
-## Deployment
+**Problem:** `gsutil: command not found` — Cloud Functions Python 3.11 runtime doesn't include gsutil.
+**Fix:** Replaced all 5 gsutil calls with `gcloud storage` equivalents in both copies of the script:
+- `gsutil cp` → `gcloud storage cp`
+- `gsutil ls` → `gcloud storage ls`
+- `gsutil mb` → `gcloud storage buckets create`
+- `gsutil lifecycle set` → `gcloud storage buckets update --lifecycle-file`
+**Deployed:** Manually via `gcloud functions deploy` (no Cloud Build trigger exists for this function).
 
-Cloud Build auto-deploy had Docker layer caching that served stale code. Fixed with `./bin/hot-deploy.sh nba-phase3-analytics-processors` which forced a fresh image build.
+### 5. br-rosters-batch-daily Paused
 
-**Lesson:** Cloud Build triggers deploying doc-only commits may use cached layers for code files. Hot-deploy is the reliable fallback.
+**Problem:** Scheduler sends `{"teamAbbr":"all"}` but scraper rejects non-team codes (`ALL` not in valid list).
+**Fix:** Paused the job. Daily all-team roster scrapes aren't needed (rosters rarely change mid-season).
+**Future:** To re-enable, either add "ALL" support to `br_season_roster.py` or use the `/batch` endpoint.
 
-## Recovery Steps
+### 6. CLAUDE.md Updated
 
-1. Hot-deployed Phase 3 service (revision `00269-nq7`)
-2. Manually triggered Phase 3 for Feb 11 via `/process-date-range` with `backfill_mode: true`
-3. Phase 3 completeness check now PASSES: "14/14 games"
-4. Manually triggered Phase 4 for Feb 11 and Feb 12
+Added `enrichment-trigger` and `daily-health-check` to Cloud Functions table in Deployment section.
 
-## Systemic Findings
+## Commits (this sub-session)
 
-### game_id Format Mismatch Audit (3 agents)
-
-The codebase has two game_id formats:
-- **Schedule (`nbac_schedule`):** 10-digit numeric (e.g., `0022500775`)
-- **Analytics/Predictions:** `YYYYMMDD_AWAY_HOME` (e.g., `20260211_MIL_ORL`)
-
-A `GameIdConverter` utility exists at `shared/utils/game_id_converter.py` but isn't used consistently.
-
-| Location | Status |
-|----------|--------|
-| Boxscore completeness check | FIXED (this session) |
-| Phase 3→4 orchestrator coverage | FIXED (this session) |
-| Game coverage alert | Already handled (constructs pred format) |
-| Shared CTEs | Already handled (CONCAT conversion) |
-| BDB arrival trigger | RISKY but BDL disabled |
-| `trace_entity.py` | Needs verification |
-
-### Validation Gaps
-
-None of the current validation tools would have caught this bug:
-- `validate-daily`: No game_id format alignment check
-- `reconcile-yesterday`: Direct game_id JOIN (would false alarm but not explain WHY)
-- `validate-phase3-season`: Count-based only
-- Pre-commit hooks: Only check code structure, not runtime data
-
-**Recommendation:** Add a game_id format alignment check to `validate-daily` that verifies schedule vs boxscore game_ids can be matched by team pairs.
-
-### Phase 3 Pub/Sub Retry
-
-- Subscription: `nba-phase3-analytics-sub`, max 5 delivery attempts, DLQ: `nba-phase2-raw-complete-dlq`
-- Retry storm was bounded (max 5 retries → DLQ)
-- However, re-scrape triggers created new Phase 2 completion messages, perpetuating the cycle
-
-## Follow-Up Items
-
-- [ ] Investigate Docker layer caching in Cloud Build — may need `--no-cache` for code-changing commits
-- [ ] Add game_id format validation to `validate-daily` skill
-- [ ] Verify `trace_entity.py` handles game_id format differences
-- [ ] Monitor Feb 12 predictions — should increase once Phase 4/5 complete
-- [ ] Phase 4 completion publish has "Missing required field: game_date" error — investigate
-
-## CLAUDE.md Updates
-
-Add to Common Issues table:
 ```
-| game_id format mismatch | "Missing: N games" but 100% coverage | Schedule uses numeric, gamebook uses YYYYMMDD_AWAY_HOME. Match by team pairs. |
-| Cloud Build Docker cache | Old code deployed despite new commit | Use `./bin/hot-deploy.sh` to force fresh build |
+4d307f41 fix: Replace gsutil with gcloud storage in backup scripts
+dca327a2 feat: Add validation skill improvements from Session 216 findings
+16cf2fb2 fix: Add all shared/ transitive deps to enrichment-trigger requirements
 ```
+
+## Known Issues
+
+### live-export Cloud Build Trigger (P2)
+
+The `deploy-live-export` trigger fails on every push:
+```
+ERROR: Function already exists in 1st gen, can't change the environment.
+```
+The trigger uses `cloudbuild-functions.yaml` which includes `--gen2`, but `live-export` is a Gen1 function.
+
+**Fix options:**
+1. Delete trigger and recreate without `--gen2` (if keeping Gen1)
+2. Migrate `live-export` to Gen2 first, then trigger works as-is
+3. Create a separate `cloudbuild-functions-gen1.yaml` template
+
+### bigquery-backup Has No Cloud Build Trigger
+
+Deployed manually this session. Future changes to `cloud_functions/bigquery_backup/` won't auto-deploy. Could create a trigger, but directory structure differs from other functions (`cloud_functions/` vs `orchestration/cloud_functions/`).
+
+### daily-health-check Reports Pre-existing Warnings
+
+The health check returns:
+- 2 "failures": prediction-coordinator and admin-dashboard lack `/ready` endpoints
+- 4 warnings: analytics/precompute processors return 503 on `/ready` (normal when idle)
+
+These are expected and don't need fixes.
+
+## Next Session Priorities
+
+1. **Fix live-export trigger** (P2) — Delete and recreate, or migrate to Gen2
+2. **Q43 shadow model monitoring** — 29/50 edge 3+ picks, 48.3% HR, 100% UNDER bias, advantage over champion narrowing
+3. **Monthly retrain** — Champion is 33+ days stale, Q43 showing promise but needs more data
+4. **Create Cloud Build trigger for bigquery-backup** — Optional, prevents future manual deploys
+
+## Morning Quick Check
+
+```bash
+# 1. Verify both Cloud Functions healthy
+curl -s "https://enrichment-trigger-f7p3g7f6ya-wl.a.run.app/?date=$(date +%Y-%m-%d)&dry_run=true" | python3 -m json.tool
+curl -s "https://daily-health-check-756957797294.us-west2.run.app/" | python3 -m json.tool
+
+# 2. Check Q43 progress
+PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_q43_train1102_0131 --days 7
+
+# 3. Verify bigquery backup ran (should be after 2 AM PST)
+gcloud scheduler jobs describe bigquery-daily-backup --location=us-west2 --project=nba-props-platform --format="yaml(status,lastAttemptTime)"
+```
+
+---
+
+**Session completed:** 2026-02-12 ~8:00 AM PT
