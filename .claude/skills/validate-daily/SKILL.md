@@ -2579,6 +2579,168 @@ EOF
 
 **Reference**: Session 212 (discovered 30/129 jobs failing silently)
 
+### Phase 0.68: Zero-Invocation Detection (Session 212 - NEW)
+
+**IMPORTANT**: Detect Cloud Run services that are targets of Pub/Sub push subscriptions but received **zero requests** in the last 24 hours. This catches the gap between "IAM is correct" (Phase 0.6 Check 5) and "service actually receives traffic."
+
+**Why this matters**: A service can pass IAM checks and scheduler checks but still receive zero invocations if:
+- Pub/Sub topic was deleted or misconfigured
+- Subscription was removed (Phase 0.65 only catches duplicates, not missing subs)
+- Upstream phase never publishes completion messages
+- Network/routing issues between Pub/Sub and Cloud Run
+
+**Performance**: ~30-50 seconds (one `gcloud logging read --limit=1` per service). Acceptable for daily validation.
+
+**What to check**:
+
+```bash
+# Detect Pub/Sub-targeted Cloud Run services with zero invocations in last 24h
+python3 << 'EOF'
+import subprocess
+import json
+import sys
+import re
+import concurrent.futures
+
+print("\n=== Zero-Invocation Detection (Pub/Sub Targets) ===\n")
+
+# Known-OK patterns: services expected to have 0 invocations sometimes
+KNOWN_SEASONAL = {'mlb-', 'bdl-'}  # MLB off-season, BDL disabled
+KNOWN_MANUAL = {
+    'nba-admin-dashboard', 'unified-dashboard',
+    'prediction-coordinator-dev'
+}
+
+# Step 1: Discover services targeted by Pub/Sub push subscriptions
+result = subprocess.run(
+    ['gcloud', 'pubsub', 'subscriptions', 'list',
+     '--project=nba-props-platform', '--format=json'],
+    capture_output=True, text=True, timeout=30)
+
+if result.returncode != 0:
+    print("❌ Failed to list Pub/Sub subscriptions")
+    sys.exit(1)
+
+subs = json.loads(result.stdout)
+
+# Extract unique services from push endpoints
+pubsub_targets = {}  # service -> list of topics
+for sub in subs:
+    endpoint = sub.get('pushConfig', {}).get('pushEndpoint', '')
+    if not endpoint:
+        continue
+    topic = sub.get('topic', '').split('/')[-1]
+    match = re.match(r'https://([a-z0-9-]+)-[a-z0-9]+-[a-z]+\.a\.run\.app', endpoint)
+    if match:
+        svc = match.group(1)
+        if svc not in pubsub_targets:
+            pubsub_targets[svc] = []
+        pubsub_targets[svc].append(topic)
+
+# Filter out known-manual and seasonal services
+check_services = {}
+skipped_seasonal = 0
+skipped_manual = 0
+for svc, topics in pubsub_targets.items():
+    if svc in KNOWN_MANUAL:
+        skipped_manual += 1
+        continue
+    if any(svc.startswith(prefix) for prefix in KNOWN_SEASONAL):
+        skipped_seasonal += 1
+        continue
+    check_services[svc] = topics
+
+print(f"  Discovered {len(pubsub_targets)} Pub/Sub target services")
+print(f"  Checking {len(check_services)} (skipped {skipped_seasonal} seasonal, {skipped_manual} manual)\n")
+
+# Step 2: Check each service for recent invocations via Cloud Logging
+def check_invocations(svc):
+    """Returns (service_name, has_invocations, error)"""
+    try:
+        result = subprocess.run(
+            ['gcloud', 'logging', 'read',
+             f'resource.type="cloud_run_revision" AND resource.labels.service_name="{svc}"',
+             '--project=nba-props-platform', '--freshness=24h',
+             '--limit=1', '--format=value(timestamp)'],
+            capture_output=True, text=True, timeout=15)
+        has_traffic = bool(result.stdout.strip())
+        return (svc, has_traffic, None)
+    except subprocess.TimeoutExpired:
+        return (svc, None, 'timeout')
+    except Exception as e:
+        return (svc, None, str(e))
+
+# Run checks (sequential to avoid API rate limits)
+zero_invocation = []
+has_invocation = []
+errors = []
+
+for svc in sorted(check_services.keys()):
+    svc_name, has_traffic, error = check_invocations(svc)
+    if error:
+        errors.append((svc_name, error))
+        print(f"  ⚠️ {svc_name}: check failed ({error})")
+    elif has_traffic:
+        has_invocation.append(svc_name)
+    else:
+        topics = check_services[svc_name]
+        zero_invocation.append((svc_name, topics))
+        print(f"  🔴 {svc_name}: ZERO invocations in 24h (topics: {', '.join(topics)})")
+
+# Step 3: Report
+print(f"\n{'='*50}")
+print(f"  {len(has_invocation)} services receiving traffic ✅")
+print(f"  {len(zero_invocation)} services with ZERO invocations")
+if errors:
+    print(f"  {len(errors)} services failed to check")
+
+if zero_invocation:
+    print(f"\n🟠 WARNING: {len(zero_invocation)} Pub/Sub target(s) received zero requests in 24h\n")
+    print(f"   This MAY indicate a broken pipeline link. Investigate if:")
+    print(f"   - It's a game day (off-days may have legitimately low traffic)")
+    print(f"   - The upstream topic should be publishing messages")
+    print(f"   - The service's subscription still exists (check Phase 0.65)\n")
+    print(f"   Affected services:")
+    for svc, topics in zero_invocation:
+        print(f"   - {svc} (listening on: {', '.join(topics)})")
+    print(f"\n   Quick diagnosis:")
+    print(f"   # Check if topic has recent messages:")
+    print(f"   gcloud logging read 'resource.type=\"pubsub_topic\" AND resource.labels.topic_id=\"TOPIC\"' \\")
+    print(f"     --project=nba-props-platform --freshness=24h --limit=5")
+else:
+    print(f"\n✅ All {len(has_invocation)} Pub/Sub-targeted services received invocations in last 24h")
+
+sys.exit(0)
+EOF
+```
+
+**Expected Result**: All Pub/Sub-targeted services show invocations in last 24h
+
+**Interpreting results**:
+
+| Zero-Invocation Count | Game Day? | Severity | Action |
+|----------------------|-----------|----------|--------|
+| 0 services | Any | ✅ OK | All healthy |
+| 1-3 services | No games | ℹ️ INFO | Likely normal (no pipeline activity) |
+| 1-3 services | Game day | ⚠️ WARNING | Investigate — possible broken link |
+| 4+ services | Game day | 🔴 CRITICAL | Systemic issue — check IAM (Check 5) first |
+
+**Note on no-game days**: Many pipeline services (Phase 2-6) only receive traffic when games are played. Zero invocations on off-days is expected. The check reports findings as WARNING (not CRITICAL) to allow human judgment. Cross-reference with game schedule:
+```sql
+SELECT game_date, COUNT(*) as games
+FROM nba_reference.nba_schedule
+WHERE game_date >= CURRENT_DATE() - 1 AND game_date <= CURRENT_DATE()
+AND game_status = 3
+GROUP BY 1;
+```
+
+**Relationship to other checks**:
+- Phase 0.6 Check 5 verifies IAM → "Can the service be invoked?"
+- Phase 0.67 verifies scheduler status → "Did the scheduler try to invoke?"
+- **Phase 0.68 verifies actual traffic → "Did the service actually receive requests?"**
+
+**Reference**: Session 212 (8 services with 0 invocations due to broken IAM, undetected for weeks)
+
 ### Phase 0.7: Vegas Line Coverage Check (Session 77)
 
 **Purpose**: Monitor Vegas line availability to detect coverage regressions early.
