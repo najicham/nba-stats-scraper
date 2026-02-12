@@ -251,7 +251,10 @@ class BestBetsExporter(BaseExporter):
                     ABS(p.predicted_points - p.current_points_line) as edge,
                     h.historical_accuracy as player_historical_accuracy,
                     h.sample_size as player_sample_size,
-                    f.fatigue_score
+                    f.fatigue_score,
+                    p.quality_alert_level,
+                    p.feature_quality_score,
+                    p.default_feature_count
                 FROM `nba-props-platform.nba_predictions.player_prop_predictions` p
                 LEFT JOIN player_history h ON p.player_lookup = h.player_lookup
                 LEFT JOIN player_names pn ON p.player_lookup = pn.player_lookup
@@ -305,7 +308,9 @@ class BestBetsExporter(BaseExporter):
                 SELECT
                     player_lookup,
                     game_date,
-                    quality_alert_level
+                    quality_alert_level,
+                    feature_quality_score,
+                    default_feature_count
                 FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
                 WHERE game_date = @target_date
             ),
@@ -328,7 +333,9 @@ class BestBetsExporter(BaseExporter):
                     h.historical_accuracy as player_historical_accuracy,
                     h.sample_size as player_sample_size,
                     f.fatigue_score,
-                    q.quality_alert_level  -- Session 209: Quality filter
+                    q.quality_alert_level,  -- Session 209: Quality filter
+                    q.feature_quality_score,
+                    q.default_feature_count
                 FROM `nba-props-platform.nba_predictions.prediction_accuracy` p
                 LEFT JOIN player_history h ON p.player_lookup = h.player_lookup
                 LEFT JOIN player_names pn ON p.player_lookup = pn.player_lookup
@@ -463,7 +470,10 @@ class BestBetsExporter(BaseExporter):
                 'rationale': rationale,
                 'result': result,
                 'actual': pick['actual_points'],
-                'error': safe_float(pick['absolute_error'])
+                'error': safe_float(pick['absolute_error']),
+                'quality_alert_level': pick.get('quality_alert_level'),
+                'feature_quality_score': safe_float(pick.get('feature_quality_score')),
+                'default_feature_count': pick.get('default_feature_count', 0)
             })
 
         return formatted

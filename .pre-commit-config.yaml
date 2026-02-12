@@ -129,6 +129,24 @@ repos:
         files: ^schemas/bigquery/predictions/.*\.sql$
         verbose: true
 
+      - id: validate-python-syntax
+        name: Validate Python syntax in deploy directories
+        description: Catches syntax errors that would break Cloud Function deploys (Session 213)
+        entry: python .pre-commit-hooks/validate_python_syntax.py
+        language: python
+        pass_filenames: false
+        files: ^(bin/|shared/|data_processors/|predictions/|backfill_jobs/).*\.py$
+        verbose: true
+
+      - id: validate-deploy-safety
+        name: Check for dangerous --set-env-vars
+        description: Prevents accidental env var wipes from --set-env-vars (Session 81/213)
+        entry: python .pre-commit-hooks/validate_deploy_safety.py
+        language: python
+        pass_filenames: false
+        files: ^(bin/deploy/|cloudbuild).*\.(sh|yaml)$
+        verbose: true
+
   # Standard pre-commit hooks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v4.5.0

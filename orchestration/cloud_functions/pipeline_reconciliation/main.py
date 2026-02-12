@@ -446,7 +446,17 @@ def reconcile_pipeline(request):
         # Get date to check (default: yesterday)
         now = datetime.now(ET)
         yesterday = (now - timedelta(days=1)).strftime('%Y-%m-%d')
-        date = request.args.get('date', yesterday)
+        date_str = request.args.get('date', yesterday)
+
+        # Resolve special date keywords
+        if date_str.upper() == 'TODAY':
+            date = now.strftime('%Y-%m-%d')
+        elif date_str.upper() == 'YESTERDAY':
+            date = yesterday
+        elif date_str.upper() == 'TOMORROW':
+            date = (now + timedelta(days=1)).strftime('%Y-%m-%d')
+        else:
+            date = date_str
 
         logger.info(f"R-007: Pipeline reconciliation triggered for {date}")
 
@@ -482,7 +492,17 @@ def reconcile_pipeline_event(cloud_event):
         # Get date from message or use yesterday
         now = datetime.now(ET)
         yesterday = (now - timedelta(days=1)).strftime('%Y-%m-%d')
-        date = data.get('date', yesterday)
+        date_str = data.get('date', yesterday)
+
+        # Resolve special date keywords
+        if date_str.upper() == 'TODAY':
+            date = now.strftime('%Y-%m-%d')
+        elif date_str.upper() == 'YESTERDAY':
+            date = yesterday
+        elif date_str.upper() == 'TOMORROW':
+            date = (now + timedelta(days=1)).strftime('%Y-%m-%d')
+        else:
+            date = date_str
 
         logger.info(f"R-007: Pipeline reconciliation triggered (event) for {date}")
 

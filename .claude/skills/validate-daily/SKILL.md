@@ -2574,10 +2574,10 @@ EOF
 | INVALID_ARGUMENT (3) | ℹ️ LOW | Bad request payload | Usually expected (disabled services) |
 
 **Known-OK patterns** (excluded from alerts):
-- `bdl-*` jobs: BDL intentionally disabled, INVALID_ARGUMENT expected
-- `mlb-*` jobs: MLB off-season (April-October), PERMISSION_DENIED expected in winter
+- `bdl-*` jobs: BDL intentionally disabled, INVALID_ARGUMENT expected. Session 213 deleted 4 dead BDL jobs.
+- `mlb-*` jobs: MLB off-season (April-October). Session 213 paused 9 MLB jobs. Resume in April.
 
-**Reference**: Session 212 (discovered 30/129 jobs failing silently)
+**Reference**: Session 212 (discovered 30/129 jobs failing silently), Session 213 (deleted 4 BDL, paused 9 MLB, fixed 2 validation auth)
 
 ### Phase 0.68: Zero-Invocation Detection (Session 212 - NEW)
 
@@ -2740,6 +2740,127 @@ GROUP BY 1;
 - **Phase 0.68 verifies actual traffic → "Did the service actually receive requests?"**
 
 **Reference**: Session 212 (8 services with 0 invocations due to broken IAM, undetected for weeks)
+
+### Phase 0.69: Cloud Build Trigger Health (Session 213 - NEW)
+
+**IMPORTANT**: Detect Cloud Build triggers that are stuck deploying stale code. Session 213 discovered the phase6-export trigger was deploying from commit `b5e5c5c` (2+ weeks old) despite 5 successful-looking builds. The trigger was auto-firing but using a cached source revision.
+
+**Why this matters**: Cloud Build triggers that deploy stale code create a false sense of deployment health. Services appear to be auto-deploying but are actually running outdated code. This bypasses all other drift detection since the trigger "succeeded."
+
+**What to check**:
+
+```bash
+# Verify Cloud Build triggers are deploying current code
+python3 << 'EOF'
+import subprocess
+import json
+import sys
+
+print("\n=== Cloud Build Trigger Health Check ===\n")
+
+# Get current HEAD commit
+head = subprocess.run(['git', 'rev-parse', '--short=7', 'HEAD'],
+    capture_output=True, text=True).stdout.strip()
+print(f"  Current HEAD: {head}\n")
+
+# Get all triggers
+result = subprocess.run(
+    ['gcloud', 'builds', 'triggers', 'list',
+     '--region=us-west2', '--project=nba-props-platform', '--format=json'],
+    capture_output=True, text=True, timeout=30)
+
+if result.returncode != 0:
+    print("❌ Failed to list Cloud Build triggers")
+    sys.exit(1)
+
+triggers = json.loads(result.stdout)
+print(f"  Found {len(triggers)} Cloud Build triggers\n")
+
+# For each trigger, check latest build
+stale = []
+healthy = []
+no_builds = []
+
+for trigger in triggers:
+    name = trigger.get('name', '?')
+    disabled = trigger.get('disabled', False)
+    trigger_id = trigger.get('id', '')
+
+    if disabled:
+        print(f"  ⏸️  {name}: DISABLED (skipped)")
+        continue
+
+    # Get latest build for this trigger
+    builds_result = subprocess.run(
+        ['gcloud', 'builds', 'list',
+         '--region=us-west2', '--project=nba-props-platform',
+         f'--filter=buildTriggerId={trigger_id}',
+         '--limit=1', '--format=json'],
+        capture_output=True, text=True, timeout=15)
+
+    if builds_result.returncode != 0 or not builds_result.stdout.strip():
+        no_builds.append(name)
+        print(f"  ⚠️ {name}: No builds found")
+        continue
+
+    builds = json.loads(builds_result.stdout)
+    if not builds:
+        no_builds.append(name)
+        print(f"  ⚠️ {name}: No builds found")
+        continue
+
+    build = builds[0]
+    build_sha = build.get('substitutions', {}).get('SHORT_SHA', '?')
+    status = build.get('status', '?')
+    create_time = build.get('createTime', '?')[:19]
+
+    if status != 'SUCCESS':
+        stale.append((name, f"Last build {status} at {create_time}"))
+        print(f"  🔴 {name}: Last build {status} (SHA: {build_sha}, {create_time})")
+    elif build_sha != head:
+        # Check if trigger's watched files changed since last build
+        stale.append((name, f"Deployed {build_sha}, HEAD is {head}"))
+        print(f"  ⚠️ {name}: SHA {build_sha} (HEAD: {head}, built: {create_time})")
+    else:
+        healthy.append(name)
+        print(f"  ✅ {name}: {build_sha} (current)")
+
+# Summary
+print(f"\n{'='*50}")
+print(f"  {len(healthy)} triggers at HEAD ✅")
+if stale:
+    print(f"  {len(stale)} triggers behind HEAD ⚠️")
+if no_builds:
+    print(f"  {len(no_builds)} triggers with no builds")
+
+if any(status.startswith("Last build FAILURE") for _, status in stale):
+    print(f"\n🔴 CRITICAL: Some Cloud Build triggers have failing builds!")
+    print(f"   Run: gcloud builds list --region=us-west2 --limit=10")
+    sys.exit(1)
+elif stale:
+    print(f"\n⚠️ NOTE: {len(stale)} trigger(s) behind HEAD.")
+    print(f"   This is normal if only unrelated files changed since last build.")
+    print(f"   Investigate if a trigger hasn't built in >7 days.")
+
+sys.exit(0)
+EOF
+```
+
+**Expected Result**: All triggers at HEAD or recent builds. No FAILURE status.
+
+**When to investigate**:
+- Any trigger with FAILURE status: Check build logs
+- A trigger >7 days behind HEAD despite relevant file changes: Recreate the trigger
+- All triggers at same old SHA: Check GitHub connection
+
+**Fix for stuck triggers** (Session 213 pattern):
+```bash
+# Delete and recreate the trigger
+gcloud builds triggers delete TRIGGER_NAME --region=us-west2 --project=nba-props-platform --quiet
+# Then recreate with same config (see cloudbuild-functions.yaml)
+```
+
+**Reference**: Session 213 (phase6-export trigger stuck deploying b5e5c5c for 2+ weeks)
 
 ### Phase 0.7: Vegas Line Coverage Check (Session 77)
 

@@ -375,6 +375,8 @@ ORDER BY 1 DESC;
 | Shadow model gap | Shadow model 0 predictions | **Auto-healed by pipeline canary** (Session 210). Also detected by `reconcile-yesterday` Phase 9 and `validate-daily` Phase 0.486. If auto-heal fails, manual: `/start` with BACKFILL mode. |
 | BDL scraper not running | 0 BDL records | EXPECTED: BDL intentionally disabled. 60-70% minutes coverage is normal. |
 | Orchestrator not triggering | Phase 2 complete, `_triggered=False` | NOT a bug. Phase 3 uses direct Pub/Sub, not orchestrator. |
+| Cloud Build trigger stale | Trigger deploys old commit SHA | Delete and recreate trigger (`gcloud builds triggers delete/create`). Session 213 fix. |
+| Scheduler jobs failing | Jobs return non-SUCCESS status | Run `validate-daily` Phase 0.67. Session 213: deleted 4 BDL, paused 9 MLB, fixed 2 validation auth. |
 
 **Full troubleshooting:** See `docs/02-operations/session-learnings.md`
 
@@ -382,8 +384,11 @@ ORDER BY 1 DESC;
 
 ### Pre-commit Hooks
 ```yaml
-- id: validate-schema-fields
-  entry: python .pre-commit-hooks/validate_schema_fields.py
+- id: validate-schema-fields       # BigQuery schema alignment
+- id: validate-python-syntax        # Syntax errors break Cloud Function deploys (Session 213)
+- id: validate-deploy-safety        # Detects dangerous --set-env-vars (Session 81/213)
+- id: validate-dockerfile-imports   # Missing COPY dirs cause ModuleNotFoundError
+- id: validate-pipeline-patterns    # Invalid enum, processor name gaps
 ```
 
 ### Dependency Lock Files
