@@ -179,11 +179,20 @@ class BestBetsExporter(BaseExporter):
         - Strong: 3-5 edge (74-79% hit rate)
         - Value: <3 edge (63-69% hit rate)
         """
-        from datetime import datetime
+        from datetime import datetime, timedelta
         target = datetime.strptime(target_date, '%Y-%m-%d').date()
-        today = datetime.now().date()
 
-        # Explicit boolean flag for table selection (Opus: not string matching)
+        # Use Pacific time with 1 AM cutover to match live-export game-day boundary
+        try:
+            from zoneinfo import ZoneInfo
+            pt_tz = ZoneInfo('America/Los_Angeles')
+        except ImportError:
+            import pytz
+            pt_tz = pytz.timezone('America/Los_Angeles')
+        pt_now = datetime.now(pt_tz)
+        today = (pt_now.date() - timedelta(days=1)) if pt_now.hour < 1 else pt_now.date()
+
+        # Use predictions table for current/future dates, historical table for past dates
         use_predictions_table = target >= today
 
         # Build query based on table selection
