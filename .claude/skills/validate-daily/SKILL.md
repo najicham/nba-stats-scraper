@@ -1159,6 +1159,112 @@ python bin/monitoring/check_betting_line_sources.py --days 7
 
 **Reference**: Session 152, complements `check_vegas_line_coverage.sh`
 
+### Phase 0.486: Cross-Model Prediction Coverage Parity (Session 210)
+
+**IMPORTANT**: Verify all enabled shadow models produced predictions. Session 209 discovered Q43/Q45 had **zero predictions** for 2 days with no alert — total count looked fine because the champion was producing normally.
+
+**Why this matters**: Shadow models share the same pipeline but quality gate bugs or config errors can silently block individual models. Only a cross-model comparison catches this.
+
+**When to run**: After predictions have been generated for today (or check yesterday if today's haven't run yet).
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Cross-model prediction coverage parity
+-- Check yesterday first (most complete), then today if available
+WITH target AS (
+  SELECT MAX(game_date) as check_date
+  FROM nba_predictions.player_prop_predictions
+  WHERE game_date >= CURRENT_DATE() - 1
+    AND system_id = 'catboost_v9'
+    AND is_active = TRUE
+),
+model_counts AS (
+  SELECT system_id, COUNT(*) as predictions
+  FROM nba_predictions.player_prop_predictions, target t
+  WHERE game_date = t.check_date
+    AND system_id LIKE 'catboost_v9%'
+    AND is_active = TRUE
+  GROUP BY 1
+),
+champion AS (
+  SELECT predictions as champion_count
+  FROM model_counts
+  WHERE system_id = 'catboost_v9'
+)
+SELECT
+  (SELECT check_date FROM target) as check_date,
+  m.system_id,
+  m.predictions,
+  c.champion_count,
+  ROUND(100.0 * m.predictions / NULLIF(c.champion_count, 0), 1) as pct_of_champion,
+  CASE
+    WHEN m.predictions = 0 THEN 'CRITICAL - Zero predictions'
+    WHEN 100.0 * m.predictions / NULLIF(c.champion_count, 0) < 50 THEN 'CRITICAL - Below 50%'
+    WHEN 100.0 * m.predictions / NULLIF(c.champion_count, 0) < 80 THEN 'WARNING - Below 80%'
+    ELSE 'OK'
+  END as status
+FROM model_counts m
+CROSS JOIN champion c
+ORDER BY pct_of_champion ASC
+"
+```
+
+**Also check for completely absent models** (active in recent days but missing today):
+
+```bash
+bq query --use_legacy_sql=false "
+-- Find enabled models with NO predictions for checked date
+WITH target AS (
+  SELECT MAX(game_date) as check_date
+  FROM nba_predictions.player_prop_predictions
+  WHERE game_date >= CURRENT_DATE() - 1
+    AND system_id = 'catboost_v9' AND is_active = TRUE
+),
+known_models AS (
+  SELECT DISTINCT system_id
+  FROM nba_predictions.player_prop_predictions
+  WHERE game_date >= CURRENT_DATE() - 7
+    AND system_id LIKE 'catboost_v9_%'
+),
+current_models AS (
+  SELECT DISTINCT system_id
+  FROM nba_predictions.player_prop_predictions, target t
+  WHERE game_date = t.check_date
+    AND system_id LIKE 'catboost_v9_%'
+)
+SELECT k.system_id as missing_model, 'CRITICAL - No predictions' as status
+FROM known_models k
+LEFT JOIN current_models c ON k.system_id = c.system_id
+WHERE c.system_id IS NULL
+"
+```
+
+**Expected Results**:
+| Metric | Good | Warning | Action |
+|--------|------|---------|--------|
+| All models >= 80% of champion | Yes | No | Check quality gate logs, worker logs |
+| Any model at 0 | No | Yes | CRITICAL: Quality gate may be blocking. Check coordinator logs |
+| Models absent vs last 7 days | 0 | > 0 | Model may be disabled or config error |
+
+**If CRITICAL or WARNING found**:
+
+Present cross-model coverage table and provide backfill command:
+```
+Backfill command (safe — only generates for models missing predictions):
+  COORDINATOR_URL="https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app"
+  TOKEN=$(gcloud auth print-identity-token)
+  curl -X POST "${COORDINATOR_URL}/start" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{"game_date":"YYYY-MM-DD","prediction_run_mode":"BACKFILL","skip_completeness_check":true}'
+```
+
+**Do NOT use `/regenerate-with-supersede`** — it supersedes existing champion predictions unnecessarily.
+
+**Reference**: Session 209 discovery, Session 192 quality gate fix, Session 210 validation addition
+
 ### Phase 0.487: Training Data Contamination Check (Session 158 - CRITICAL)
 
 **IMPORTANT**: Verify the V9 training window has low default contamination.

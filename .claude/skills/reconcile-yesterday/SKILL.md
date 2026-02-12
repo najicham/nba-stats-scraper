@@ -276,6 +276,102 @@ Remediation: Backfill predictions for date
 
 ---
 
+## Phase 9: Cross-Model Prediction Coverage (Session 210)
+
+**IMPORTANT**: Verify all enabled shadow models produced predictions at the same rate as the champion. Session 209 discovered Q43/Q45 had **zero predictions** for 2 days with no alert.
+
+**Why this matters**: Shadow models share the same pipeline but quality gate bugs or config errors can silently block them. Total prediction count looks fine because the champion is producing normally — only a cross-model comparison catches this.
+
+```bash
+bq query --use_legacy_sql=false "
+-- Cross-model prediction coverage parity for ${RECON_DATE}
+WITH model_counts AS (
+  SELECT system_id, COUNT(*) as predictions
+  FROM nba_predictions.player_prop_predictions
+  WHERE game_date = '${RECON_DATE}'
+    AND system_id LIKE 'catboost_v9%'
+    AND is_active = TRUE
+  GROUP BY 1
+),
+champion AS (
+  SELECT predictions as champion_count
+  FROM model_counts
+  WHERE system_id = 'catboost_v9'
+)
+SELECT
+  m.system_id,
+  m.predictions,
+  c.champion_count,
+  ROUND(100.0 * m.predictions / NULLIF(c.champion_count, 0), 1) as pct_of_champion,
+  CASE
+    WHEN m.predictions = 0 THEN 'CRITICAL - Zero predictions'
+    WHEN 100.0 * m.predictions / NULLIF(c.champion_count, 0) < 50 THEN 'CRITICAL - Below 50%'
+    WHEN 100.0 * m.predictions / NULLIF(c.champion_count, 0) < 80 THEN 'WARNING - Below 80%'
+    ELSE 'OK'
+  END as status
+FROM model_counts m
+CROSS JOIN champion c
+ORDER BY pct_of_champion ASC
+"
+```
+
+**Also check for models that are completely absent** (0 rows = not even in model_counts):
+
+```bash
+bq query --use_legacy_sql=false "
+-- Find enabled models with NO predictions at all for ${RECON_DATE}
+-- Uses LIKE 'catboost_v9_%' to auto-discover shadow models from recent days
+WITH known_models AS (
+  SELECT DISTINCT system_id
+  FROM nba_predictions.player_prop_predictions
+  WHERE game_date >= DATE_SUB('${RECON_DATE}', INTERVAL 7 DAY)
+    AND system_id LIKE 'catboost_v9_%'
+),
+recon_models AS (
+  SELECT DISTINCT system_id
+  FROM nba_predictions.player_prop_predictions
+  WHERE game_date = '${RECON_DATE}'
+    AND system_id LIKE 'catboost_v9_%'
+)
+SELECT k.system_id as missing_model, 'CRITICAL - No predictions at all' as status
+FROM known_models k
+LEFT JOIN recon_models r ON k.system_id = r.system_id
+WHERE r.system_id IS NULL
+"
+```
+
+**Expected**: All shadow models within 80-100% of champion count. Small variations are normal (quality gate may filter differently per model).
+
+**If CRITICAL or WARNING found**:
+
+Present a table like this:
+```
+### Cross-Model Coverage Check — ${RECON_DATE}
+
+| Model | Predictions | vs Champion | Status |
+|-------|-------------|-------------|--------|
+| catboost_v9 (champion) | 110 | — | OK |
+| catboost_v9_train1102_0108 | 54 | 49.1% | CRITICAL |
+| catboost_v9_q43_train1102_0131 | 0 | 0.0% | CRITICAL |
+
+CRITICAL: N model(s) have zero or low predictions
+```
+
+Then provide the backfill command:
+```
+Backfill command (generates predictions for models that are missing, does NOT supersede existing):
+  COORDINATOR_URL="https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app"
+  TOKEN=$(gcloud auth print-identity-token)
+  curl -X POST "${COORDINATOR_URL}/start" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d '{"game_date":"${RECON_DATE}","prediction_run_mode":"BACKFILL","skip_completeness_check":true}'
+```
+
+**Do NOT use `/regenerate-with-supersede`** — that would supersede existing champion predictions unnecessarily.
+
+---
+
 ## Output Format
 
 Present results as a summary table:
@@ -288,6 +384,7 @@ Boxscores:    [OK/GAP] X/X games
 Cache:        [OK/GAP] X players cached, X miss rate
 Features:     [OK/GAP] X featured, X% quality-ready
 Predictions:  [OK/GAP] X active, X actionable
+Cross-Model:  [OK/GAP] X models checked, X below 80%
 ==========================================
 Gaps Found:   X players played but not predicted
   - HIGH_IMPACT: X (>20 pts scored)

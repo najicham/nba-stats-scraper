@@ -11,6 +11,7 @@ Usage:
 Sends alerts to #canary-alerts when validation fails.
 """
 
+import json
 import logging
 import os
 import sys
@@ -251,6 +252,66 @@ CANARY_CHECKS = [
         description="Detects days with scheduled games but no predictions generated"
     ),
 
+    # Session 210: Cross-model prediction coverage parity
+    # Session 209 discovered Q43/Q45 had 0 predictions for 2 days undetected.
+    # This check catches when shadow models silently stop producing predictions.
+    CanaryCheck(
+        name="Phase 5 - Shadow Model Coverage",
+        phase="phase5_shadow_coverage",
+        query="""
+        WITH champion AS (
+            SELECT COUNT(*) as champion_count
+            FROM `nba-props-platform.nba_predictions.player_prop_predictions`
+            WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+              AND system_id = 'catboost_v9'
+              AND is_active = TRUE
+        ),
+        known_models AS (
+            SELECT DISTINCT system_id
+            FROM `nba-props-platform.nba_predictions.player_prop_predictions`
+            WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+              AND system_id LIKE 'catboost_v9_%'
+        ),
+        yesterday_models AS (
+            SELECT system_id, COUNT(*) as predictions
+            FROM `nba-props-platform.nba_predictions.player_prop_predictions`
+            WHERE game_date = DATE_SUB(CURRENT_DATE(), INTERVAL 1 DAY)
+              AND system_id LIKE 'catboost_v9_%'
+              AND is_active = TRUE
+            GROUP BY 1
+        )
+        SELECT
+            c.champion_count,
+            (SELECT COUNT(*) FROM known_models) as known_shadow_models,
+            (SELECT COUNT(*) FROM yesterday_models) as active_shadow_models,
+            (SELECT COUNT(*) FROM known_models k
+             LEFT JOIN yesterday_models y ON k.system_id = y.system_id
+             WHERE y.system_id IS NULL) as missing_models,
+            (SELECT COUNT(*) FROM yesterday_models y, champion c2
+             WHERE c2.champion_count > 0
+               AND 100.0 * y.predictions / c2.champion_count < 50) as critical_models,
+            CASE
+                WHEN c.champion_count = 0 THEN 0
+                WHEN EXISTS(
+                    SELECT 1 FROM known_models k
+                    LEFT JOIN yesterday_models y ON k.system_id = y.system_id
+                    WHERE y.system_id IS NULL
+                ) THEN 1
+                WHEN EXISTS(
+                    SELECT 1 FROM yesterday_models y
+                    WHERE 100.0 * y.predictions / c.champion_count < 50
+                ) THEN 1
+                ELSE 0
+            END as shadow_gap_detected
+        FROM champion c
+        """,
+        thresholds={
+            'shadow_gap_detected': {'max': 0},  # FAIL if any model missing or <50%
+            'missing_models': {'max': 0},  # FAIL if known models completely absent
+        },
+        description="Detects shadow models with zero or critically low prediction counts vs champion"
+    ),
+
     CanaryCheck(
         name="Phase 6 - Publishing",
         phase="phase6_publishing",
@@ -389,6 +450,65 @@ def format_canary_results(results: List[Tuple[CanaryCheck, bool, Dict, Optional[
     return "\n".join(lines)
 
 
+def auto_backfill_shadow_models(target_date: str) -> bool:
+    """
+    Auto-heal shadow model prediction gaps by triggering BACKFILL.
+
+    Session 210: Safe because /start with BACKFILL only generates predictions
+    for models that don't already have them. Champion predictions are untouched.
+
+    Args:
+        target_date: Date string (YYYY-MM-DD) to backfill
+
+    Returns:
+        True if backfill was triggered successfully
+    """
+    import google.auth
+    import google.auth.transport.requests
+
+    coordinator_url = os.environ.get(
+        "COORDINATOR_URL",
+        "https://prediction-coordinator-f7p3g7f6ya-wl.a.run.app"
+    )
+
+    try:
+        # Get identity token for Cloud Run auth
+        credentials, _ = google.auth.default()
+        auth_req = google.auth.transport.requests.Request()
+        credentials.refresh(auth_req)
+
+        # Use ID token for Cloud Run
+        from google.oauth2 import id_token
+        token = id_token.fetch_id_token(auth_req, coordinator_url)
+
+        import urllib.request
+        payload = json.dumps({
+            "game_date": target_date,
+            "prediction_run_mode": "BACKFILL",
+            "skip_completeness_check": True
+        }).encode()
+
+        req = urllib.request.Request(
+            f"{coordinator_url}/start",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json"
+            },
+            method="POST"
+        )
+
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode())
+            batch_id = result.get("batch_id", "unknown")
+            logger.info(f"Shadow model backfill triggered for {target_date}: batch={batch_id}")
+            return True
+
+    except Exception as e:
+        logger.error(f"Failed to trigger shadow model backfill for {target_date}: {e}")
+        return False
+
+
 def main():
     """Main entry point."""
     logger.info("Starting pipeline canary queries")
@@ -406,6 +526,28 @@ def main():
             logger.warning(f"  Error: {error}")
 
         results.append((check, passed, metrics, error))
+
+    # Session 210: Auto-heal shadow model gaps
+    for check, passed, metrics, error in results:
+        if check.phase == "phase5_shadow_coverage" and not passed:
+            yesterday = (date.today() - timedelta(days=1)).isoformat()
+            logger.info(f"Shadow model gap detected — auto-triggering BACKFILL for {yesterday}")
+
+            backfill_ok = auto_backfill_shadow_models(yesterday)
+
+            heal_msg = (
+                f"Auto-heal {'triggered' if backfill_ok else 'FAILED'}: "
+                f"BACKFILL for {yesterday} "
+                f"(missing_models={metrics.get('missing_models', '?')}, "
+                f"critical_models={metrics.get('critical_models', '?')})"
+            )
+            logger.info(heal_msg)
+
+            send_slack_alert(
+                message=f"{'🔧' if backfill_ok else '🚨'} *Shadow Model Auto-Heal*\n{heal_msg}",
+                channel="#nba-alerts",
+                alert_type="SHADOW_MODEL_AUTO_HEAL"
+            )
 
     # Check if any failures
     failures = [r for r in results if not r[1]]
