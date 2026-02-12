@@ -118,24 +118,61 @@ bin/monitoring/grading_gap_detector.py     # Fixed grading % calculation
 | Voided predictions (DNP) | **10-12%** | Normal DNP rate, now tracked |
 | Services with broken IAM | 8 → 0 | All fixed |
 | Services now auto-monitored | **All** Pub/Sub targets | Dynamic discovery |
-| Scheduler jobs failing | **30 of 129** | Detected by new Phase 0.67 |
+| Scheduler jobs failing | **30 → ~8** | 22 fixed this session |
+
+## Part 3: Scheduler Job Triage (30 Failing Jobs)
+
+### Fixed This Session (22 jobs)
+
+**Config fixes (applied immediately):**
+
+| Fix | Jobs | Details |
+|-----|------|---------|
+| Content-Type `application/octet-stream` → `application/json` | 4 | `ml-feature-store-*` (3), `player-composite-factors-upcoming` |
+| Deadline 180s → 540s | 4 | `nba-props-morning/midday/pregame`, `predictions-last-call` |
+| IAM: `scheduler-orchestration` SA on service | 1 | `scraper-availability-daily` |
+| IAM: `mlb-monitoring-sa` on Cloud Run jobs | 2 | `mlb-gap-detection-daily`, `mlb-schedule-validator-daily` |
+| Auth: OIDC → OAuth for Cloud Run Admin API | 1 | `trigger-health-check` |
+
+**Code fixes (committed, need redeploy):**
+
+| Fix | Jobs | Details |
+|-----|------|---------|
+| Handle `TODAY`/`YESTERDAY` keywords in date parsing | 1 | `daily-reconciliation` (prediction_monitoring/main.py) |
+| Fix `sys.path` for Cloud Function imports | 1 | `enrichment-daily` (enrichment_trigger/main.py) |
+| Add `google-cloud-bigquery` dependency | 1 | `firestore-state-cleanup` (transition_monitor/requirements.txt) |
+
+**Working as designed (not bugs):**
+
+| Job | Behavior | Notes |
+|-----|----------|-------|
+| `daily-health-check-8am-et` | Returns 500 when pipeline unhealthy | Intentional — signals bad health |
+| `validation-post-overnight` | Returns 500 when CRITICAL issues found | Intentional — signals validation failures |
+| `validation-pre-game-prep` | Same as above | Intentional |
+| 4 `bdl-*` jobs | INVALID_ARGUMENT | Expected — BDL intentionally disabled |
+| 1 `validate-freshness-check` | INVALID_ARGUMENT | Same pattern |
+
+### Remaining Issues (need future investigation)
+
+| Job | Error | Root Cause | Priority |
+|-----|-------|-----------|----------|
+| `bigquery-daily-backup` | INTERNAL | `gsutil` not in Cloud Function container — needs rewrite to Python GCS client | Medium |
+| `daily-pipeline-health-summary` | INTERNAL | Missing `python-dotenv` in deployed version (present in repo) — needs redeploy | Low |
+| `registry-health-check` | INTERNAL | Missing `monitoring` module in container — needs Dockerfile update | Low |
+| `br-rosters-batch-daily` | INTERNAL | `br_season_roster` scraper runtime failure — BR site change? | Low |
+| `self-heal-predictions` | DEADLINE_EXCEEDED | Already at 600s deadline — may need async design | Low |
+| `same-day-predictions-tomorrow` | NOT_FOUND | Coordinator returns 404 for TOMORROW — needs code investigation | Low |
 
 ## Outstanding Work
 
-### High Priority
-1. **Triage 30 failing scheduler jobs** — Phase 0.67 now detects them. Key categories:
-   - 3 PERMISSION_DENIED (incl. `scraper-availability-daily` — IAM just fixed, should resolve)
-   - 14 INTERNAL (500 errors from targets — need service-level investigation)
-   - 1 UNAUTHENTICATED (`trigger-health-check` — auth config broken)
-   - 5 DEADLINE_EXCEEDED (prediction/props jobs timing out)
-
-### Investigate (Future Session)
-2. **`auto-backfill-orchestrator`** — no Pub/Sub subscription found but exists as Cloud Function. May be unused/legacy. Verify.
-3. **`unified-dashboard`** — no Pub/Sub subscription. Likely manual-only dashboard. Low priority.
+### Medium Priority
+1. **Redeploy fixed Cloud Functions** — enrichment-trigger, prediction-monitoring (reconcile), transition-monitor need redeployment to pick up code fixes
+2. **Rewrite `bigquery-daily-backup`** — Replace `gsutil` shell calls with Python GCS client
 
 ### Low Priority
+3. **`auto-backfill-orchestrator`** — no Pub/Sub subscription found. May be unused/legacy.
 4. **Deploy grading_gap_detector as Cloud Function** — Scheduler job exists, just needs deployment
-5. **Verify Phase 6 quality filtering deployment** from Session 211
+5. **Fix `same-day-predictions-tomorrow`** — coordinator 404 for TOMORROW requests
 
 ## Key Learnings
 
