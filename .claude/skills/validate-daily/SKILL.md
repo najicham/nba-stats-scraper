@@ -486,7 +486,12 @@ ORDER BY count DESC
 **Expected filter_reasons**:
 - `low_edge`: Edge < 3 predictions
 - `confidence_tier_88_90`: 88-90% confidence tier (lower hit rate)
-- `star_under_bias_suspect`: High-edge UNDERs on star players
+- `stale_model_under_dampening`: Champion UNDER with edge < 5 (Session 211 — bridge until Q43 promotion)
+- `star_under_bias_suspect`: High-edge UNDERs on star players (exempts quantile `_q4` models, Session 211)
+- `role_player_under_low_edge`: Role player (8-16 avg) UNDER with edge < 5
+- `hot_streak_under_risk`: UNDER on players with L5 > season + 3
+- `not_quality_ready`: Feature quality gate failure
+- `has_default_features`: Required features using defaults
 
 **If FAIL (actionable low-edge predictions found)**:
 
@@ -1473,34 +1478,40 @@ SELECT
   skew_category,
   volume_category,
   daily_signal,
-  signal_explanation
+  signal_explanation,
+  slate_size
 FROM \`nba-props-platform.nba_predictions.daily_prediction_signals\`
 WHERE game_date = CURRENT_DATE()
   AND system_id = 'catboost_v9'
 ORDER BY system_id"
 ```
 
-**Expected**: Signal data exists for today
+**Expected**: Signal data exists for today, `slate_size` populated (Session 211)
 
 **Signal Interpretation**:
 
-| Signal | pct_over | Meaning | Historical Performance |
-|--------|----------|---------|----------------------|
-| 🟢 **GREEN** | 25-40% | Balanced predictions | 82% hit rate on high-edge picks |
-| 🟡 **YELLOW** | >40% OR <3 high-edge picks | Unusual skew or low volume | Monitor closely |
-| 🔴 **RED** | <25% | Heavy UNDER skew | 54% hit rate - barely above breakeven |
+| Signal | Trigger | Meaning | Historical Performance |
+|--------|---------|---------|----------------------|
+| 🔴 **RED** | `slate_size <= 4` | Light slate (1-4 games) | 20.6% HR — skip day (Session 211) |
+| 🔴 **RED** | `pct_over < 25%` | Heavy UNDER skew | 54% hit rate - barely above breakeven |
+| 🟡 **YELLOW** | `>40% pct_over` OR `<3 high-edge` | Unusual skew or low volume | Monitor closely |
+| 🟢 **GREEN** | 25-40% pct_over, normal volume | Balanced predictions | 82% hit rate on high-edge picks |
 
 **Thresholds**:
 - **GREEN**: Normal operation, full confidence in picks
 - **YELLOW**: Caution - monitor performance closely
 - **RED**: Warning - reduce bet sizing or skip day
+- **RED (light slate)**: Skip day entirely — 20.6% HR on 1-4 game slates
 
 **If RED signal detected**:
-1. ⚠️ P2 WARNING: Model showing heavy UNDER skew
-2. Impact: High-edge picks historically 54% vs 82% on balanced days
-3. Recommendation: Reduce bet sizing by 50% or skip high-edge picks today
-4. Note: This is a pre-game indicator, not a hard failure
-5. Track actual performance tonight to validate signal
+1. Check `slate_size` first — if <= 4, this is the light slate override (Session 211)
+2. If light slate: ⚠️ P2 WARNING: Skip day, 20.6% HR historically on light slates
+3. If UNDER skew: ⚠️ P2 WARNING: High-edge picks historically 54% vs 82% on balanced days
+4. Recommendation: Reduce bet sizing by 50% or skip high-edge picks today
+5. Note: This is a pre-game indicator, not a hard failure
+6. Track actual performance tonight to validate signal
+
+**If `slate_size` is NULL**: Signal was calculated before Session 211 deployment. Not an error for historical data.
 
 **If signal data missing**:
 1. Check if predictions exist for today: `bq query "SELECT COUNT(*) FROM nba_predictions.player_prop_predictions WHERE game_date = CURRENT_DATE() AND system_id = 'catboost_v9'"`
