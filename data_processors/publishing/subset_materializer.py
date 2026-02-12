@@ -26,6 +26,7 @@ from google.cloud import bigquery
 from shared.clients.bigquery_pool import get_bigquery_client
 from shared.config.gcp_config import get_project_id
 from shared.config.subset_public_names import get_public_name
+from shared.utils.quality_filter import should_include_prediction  # Session 209
 
 logger = logging.getLogger(__name__)
 
@@ -376,12 +377,10 @@ class SubsetMaterializer:
                 if pct_over_max is not None and pct_over > float(pct_over_max):
                     continue
 
-            # Quality filter (Session 209: Opus agent recommendation)
+            # Session 209: Quality filter using shared utility
             # Predictions with yellow/red quality alerts have 12.1% hit rate vs 50.3% for green
-            require_quality = subset.get('require_quality_ready')
-            if require_quality:
-                if pred.get('quality_alert_level') != 'green':
-                    continue
+            if not should_include_prediction(pred, subset):
+                continue
 
             filtered.append(pred)
 

@@ -1,6 +1,9 @@
 -- Dynamic Subset Performance Tracking View
 -- Session 83 (2026-02-02)
 -- Tracks performance of dynamic subsets with signal-based filtering
+-- @quality-filter: applied
+-- Session 209: Filters by quality_alert_level = 'green' when require_quality_ready = TRUE
+-- Quality filtering prevents contaminated metrics (12.1% vs 50.3% hit rate)
 
 CREATE OR REPLACE VIEW `nba-props-platform.nba_predictions.v_dynamic_subset_performance` AS
 
@@ -12,7 +15,8 @@ WITH subset_definitions AS (
     top_n,
     signal_condition,
     min_edge,
-    min_confidence
+    min_confidence,
+    require_quality_ready  -- Session 209: Quality filter
   FROM `nba-props-platform.nba_predictions.dynamic_subset_definitions`
   WHERE is_active = TRUE
 ),
@@ -30,7 +34,8 @@ base_predictions AS (
     (ABS(p.predicted_points - p.current_points_line) * 10) + (p.confidence_score * 0.5) as composite_score,
     pgs.points as actual_points,
     s.daily_signal,
-    s.pct_over
+    s.pct_over,
+    p.quality_alert_level  -- Session 209: Quality filter
   FROM `nba-props-platform.nba_predictions.player_prop_predictions` p
   LEFT JOIN `nba-props-platform.nba_analytics.player_game_summary` pgs
     ON p.player_lookup = pgs.player_lookup AND p.game_date = pgs.game_date
@@ -46,6 +51,7 @@ ranked_predictions AS (
     d.use_ranking,
     d.top_n,
     d.signal_condition,
+    d.require_quality_ready,  -- Session 209: Quality filter
     p.*,
     ROW_NUMBER() OVER (
       PARTITION BY d.subset_id, p.game_date
@@ -73,6 +79,8 @@ filtered_predictions AS (
     daily_signal,
     pct_over,
     daily_rank,
+    quality_alert_level,  -- Session 209: Quality filter
+    require_quality_ready,  -- Session 209: Quality filter
     -- Determine if pick should be included based on signal condition
     CASE
       WHEN signal_condition = 'ANY' THEN TRUE
@@ -95,6 +103,12 @@ final_picks AS (
   FROM filtered_predictions
   WHERE rank_qualifies = TRUE
     AND signal_match = TRUE
+    -- Session 209: Quality filter (12.1% vs 50.3% hit rate)
+    AND (
+      require_quality_ready IS NULL
+      OR require_quality_ready = FALSE
+      OR quality_alert_level = 'green'
+    )
 ),
 
 performance_by_subset AS (

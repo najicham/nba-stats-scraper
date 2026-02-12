@@ -333,6 +333,80 @@ CANARY_CHECKS = [
         },
         description="Validates prediction publishing and signals"
     ),
+
+    # Session 209: Quality filtering validation checks
+    CanaryCheck(
+        name="Filter Consistency - Quality Required Subsets",
+        phase="quality_filtering",
+        query="""
+        -- For subsets with require_quality_ready=TRUE, verify zero non-green picks
+        -- Query materialized picks (not aggregated view) to validate filter application
+        SELECT COUNT(*) as non_green_count
+        FROM `nba-props-platform.nba_predictions.current_subset_picks` csp
+        JOIN `nba-props-platform.nba_predictions.dynamic_subset_definitions` d USING (subset_id)
+        WHERE d.require_quality_ready = TRUE
+          AND csp.quality_alert_level != 'green'
+          AND csp.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+          AND csp.version_id = (
+              SELECT MAX(version_id)
+              FROM `nba-props-platform.nba_predictions.current_subset_picks`
+              WHERE game_date = csp.game_date
+          )
+        """,
+        thresholds={
+            'non_green_count': {'max': 0}  # FAIL if any non-green predictions in quality-required subsets
+        },
+        description="Session 209: Validates quality filtering applied to quality-required subsets (12.1% vs 50.3% hit rate)"
+    ),
+
+    CanaryCheck(
+        name="Phase 4 - Category Quality Breakdown",
+        phase="phase4_quality",
+        query="""
+        -- Track category-level quality (not just aggregate)
+        -- Session 132 lesson: aggregate feature_quality_score hid component failure
+        SELECT
+            ROUND(AVG(matchup_quality_pct), 1) as avg_matchup_quality,
+            ROUND(AVG(player_history_quality_pct), 1) as avg_player_history_quality,
+            ROUND(AVG(vegas_quality_pct), 1) as avg_vegas_quality,
+            COUNTIF(matchup_quality_pct < 40) as low_matchup_count,
+            COUNTIF(player_history_quality_pct < 40) as low_player_history_count,
+            COUNTIF(vegas_quality_pct < 40) as low_vegas_count
+        FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+        WHERE game_date = CURRENT_DATE()
+        """,
+        thresholds={
+            'avg_matchup_quality': {'min': 40},
+            'avg_player_history_quality': {'min': 40},
+            'avg_vegas_quality': {'min': 40}
+        },
+        description="Session 209: Tracks category-level quality to catch component failures hidden by aggregates"
+    ),
+
+    CanaryCheck(
+        name="Filter Coverage - Quality Distribution",
+        phase="quality_distribution",
+        query="""
+        -- Verify exported data contains only green predictions
+        -- Session 209: Critical gap - exporters should never publish non-green quality
+        SELECT
+            COUNT(*) as total_picks,
+            COUNTIF(quality_alert_level = 'green') as green_picks,
+            COUNTIF(quality_alert_level != 'green') as non_green_picks
+        FROM `nba-props-platform.nba_predictions.current_subset_picks`
+        WHERE game_date = CURRENT_DATE()
+          AND version_id = (
+              SELECT MAX(version_id)
+              FROM `nba-props-platform.nba_predictions.current_subset_picks`
+              WHERE game_date = CURRENT_DATE()
+          )
+        """,
+        thresholds={
+            'non_green_picks': {'max': 0},  # FAIL if any non-green in exported picks
+            'total_picks': {'min': 1}  # At least some picks
+        },
+        description="Session 209: Validates exported subset picks contain only green quality predictions"
+    ),
 ]
 
 

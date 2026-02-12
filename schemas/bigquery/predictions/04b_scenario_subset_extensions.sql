@@ -57,6 +57,10 @@ ADD COLUMN IF NOT EXISTS validation_period STRING;  -- e.g., "2025-11-01 to 2026
 ALTER TABLE `nba-props-platform.nba_predictions.dynamic_subset_definitions`
 ADD COLUMN IF NOT EXISTS last_validated_at TIMESTAMP;
 
+-- Session 209: Add quality filtering requirement
+ALTER TABLE `nba-props-platform.nba_predictions.dynamic_subset_definitions`
+ADD COLUMN IF NOT EXISTS require_quality_ready BOOLEAN;
+
 -- ============================================================================
 -- Step 2: Create supporting reference tables
 -- ============================================================================
@@ -99,6 +103,9 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.opponent_betting_
 -- ============================================================================
 -- Step 3: Create performance tracking view
 -- ============================================================================
+-- @quality-filter: applied
+-- Session 209: Filters by quality_alert_level = 'green' when require_quality_ready = TRUE
+-- Quality filtering prevents contaminated metrics (12.1% vs 50.3% hit rate)
 
 CREATE OR REPLACE VIEW `nba-props-platform.nba_predictions.v_scenario_subset_performance` AS
 WITH subset_defs AS (
@@ -117,12 +124,16 @@ picks_with_results AS (
     pa.confidence_score,
     pa.actual_points,
     pa.prediction_correct,
-    pa.opponent_tricode,
+    pa.opponent_team_abbr as opponent_tricode,  -- Session 209: Normalize field name
     dps.daily_signal,
-    dps.pct_over
+    dps.pct_over,
+    COALESCE(fs.quality_alert_level, 'unknown') as quality_alert_level  -- Session 209: Quality filter
   FROM `nba-props-platform.nba_predictions.prediction_accuracy` pa
   LEFT JOIN `nba-props-platform.nba_predictions.daily_prediction_signals` dps
     ON pa.game_date = dps.game_date AND pa.system_id = dps.system_id
+  LEFT JOIN `nba-props-platform.nba_predictions.ml_feature_store_v2` fs
+    ON pa.player_lookup = fs.player_lookup
+    AND pa.game_date = fs.game_date
   WHERE pa.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 60 DAY)
     AND pa.game_date < CURRENT_DATE()
     AND pa.prediction_correct IS NOT NULL
@@ -173,6 +184,12 @@ WHERE
     OR (d.signal_condition = 'GREEN_OR_YELLOW' AND p.daily_signal IN ('GREEN', 'YELLOW'))
     OR (d.signal_condition = 'RED' AND p.daily_signal = 'RED')
   )
-GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11
+  -- Session 209: Quality filter (12.1% vs 50.3% hit rate)
+  AND (
+    d.require_quality_ready IS NULL
+    OR d.require_quality_ready = FALSE
+    OR (d.require_quality_ready = TRUE AND p.quality_alert_level = 'green')
+  )
+GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 14, 15
 HAVING COUNT(*) >= 5
 ORDER BY actual_hit_rate DESC;

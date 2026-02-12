@@ -258,6 +258,8 @@ class BestBetsExporter(BaseExporter):
                   AND p.predicted_points < 25     -- Stars less predictable
                   AND NOT (p.confidence_score >= 0.88 AND p.confidence_score < 0.90)  -- Exclude broken tier
                   AND p.current_points_line IS NOT NULL    -- Must have real betting line
+                  -- Session 209: Quality filter (12.1% vs 50.3% hit rate)
+                  AND p.quality_alert_level = 'green'
             ),"""
         else:
             # Historical: Use graded predictions
@@ -288,6 +290,15 @@ class BestBetsExporter(BaseExporter):
                 FROM `nba-props-platform.nba_precompute.player_composite_factors`
                 WHERE game_date = @target_date
             ),
+            quality_data AS (
+                -- Session 209: Get quality data for historical predictions
+                SELECT
+                    player_lookup,
+                    game_date,
+                    quality_alert_level
+                FROM `nba-props-platform.nba_predictions.ml_feature_store_v2`
+                WHERE game_date = @target_date
+            ),
             predictions AS (
                 SELECT
                     p.player_lookup,
@@ -306,11 +317,13 @@ class BestBetsExporter(BaseExporter):
                     ABS(p.predicted_points - p.line_value) as edge,
                     h.historical_accuracy as player_historical_accuracy,
                     h.sample_size as player_sample_size,
-                    f.fatigue_score
+                    f.fatigue_score,
+                    q.quality_alert_level  -- Session 209: Quality filter
                 FROM `nba-props-platform.nba_predictions.prediction_accuracy` p
                 LEFT JOIN player_history h ON p.player_lookup = h.player_lookup
                 LEFT JOIN player_names pn ON p.player_lookup = pn.player_lookup
                 LEFT JOIN fatigue_data f ON p.player_lookup = f.player_lookup
+                LEFT JOIN quality_data q ON p.player_lookup = q.player_lookup AND p.game_date = q.game_date
                 WHERE p.game_date = @target_date
                   AND p.system_id = 'catboost_v9'  -- CRITICAL: Only catboost_v9
                   -- VALIDATED FILTERS per CRITICAL-DATA-AUDIT-2026-01-14.md:
@@ -319,6 +332,8 @@ class BestBetsExporter(BaseExporter):
                   AND NOT (p.confidence_score >= 0.88 AND p.confidence_score < 0.90)  -- Exclude broken tier
                   AND p.line_value IS NOT NULL    -- Must have real betting line
                   AND p.line_value != 20          -- Exclude fake line=20 data from pre-v3.2 worker
+                  -- Session 209: Quality filter (12.1% vs 50.3% hit rate)
+                  AND COALESCE(q.quality_alert_level, 'unknown') = 'green'
             ),"""
 
         # Append shared scoring/ranking CTEs (same for both branches)
