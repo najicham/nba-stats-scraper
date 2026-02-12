@@ -116,11 +116,15 @@ class AllSubsetsPicksExporter(BaseExporter):
           csp.current_points_line,
           csp.recommendation,
           csp.composite_score,
-          p.created_at as prediction_created_at
+          p.created_at as prediction_created_at,
+          pgs.points as actual_points
         FROM `nba_predictions.current_subset_picks` csp
         LEFT JOIN `nba_predictions.player_prop_predictions` p
           ON csp.prediction_id = p.prediction_id
           AND csp.game_date = p.game_date
+        LEFT JOIN `nba_analytics.player_game_summary` pgs
+          ON csp.player_lookup = pgs.player_lookup
+          AND csp.game_date = pgs.game_date
         WHERE csp.game_date = @target_date
           AND csp.version_id = (
             SELECT MAX(version_id)
@@ -195,6 +199,23 @@ class AllSubsetsPicksExporter(BaseExporter):
                         pick_data['created_at'] = created_at.isoformat()
                     elif created_at:
                         pick_data['created_at'] = str(created_at)
+
+                    # Add actual/result if game has been played
+                    actual = pick.get('actual_points')
+                    line = pick.get('current_points_line')
+                    direction = pick.get('recommendation')
+                    if actual is not None:
+                        pick_data['actual'] = int(actual)
+                        if direction == 'OVER':
+                            pick_data['result'] = 'hit' if actual > line else ('push' if actual == line else 'miss')
+                        elif direction == 'UNDER':
+                            pick_data['result'] = 'hit' if actual < line else ('push' if actual == line else 'miss')
+                        else:
+                            pick_data['result'] = None
+                    else:
+                        pick_data['actual'] = None
+                        pick_data['result'] = None
+
                     clean_picks.append(pick_data)
 
                 clean_subsets.append({
@@ -284,6 +305,23 @@ class AllSubsetsPicksExporter(BaseExporter):
                         pick_data['created_at'] = created_at.isoformat()
                     elif created_at:
                         pick_data['created_at'] = str(created_at)
+
+                    # Add actual/result if game has been played
+                    actual = pick.get('actual_points')
+                    line = pick.get('current_points_line')
+                    direction = pick.get('recommendation')
+                    if actual is not None:
+                        pick_data['actual'] = int(actual)
+                        if direction == 'OVER':
+                            pick_data['result'] = 'hit' if actual > line else ('push' if actual == line else 'miss')
+                        elif direction == 'UNDER':
+                            pick_data['result'] = 'hit' if actual < line else ('push' if actual == line else 'miss')
+                        else:
+                            pick_data['result'] = None
+                    else:
+                        pick_data['actual'] = None
+                        pick_data['result'] = None
+
                     clean_picks.append(pick_data)
 
                 clean_subsets.append({
@@ -378,7 +416,8 @@ class AllSubsetsPicksExporter(BaseExporter):
           ABS(p.predicted_points - p.current_points_line) as edge,
           (ABS(p.predicted_points - p.current_points_line) * 10) + (p.confidence_score * 0.5) as composite_score,
           COALESCE(f.feature_quality_score, 0) as feature_quality_score,
-          p.created_at as prediction_created_at
+          p.created_at as prediction_created_at,
+          pgs.points as actual_points
         FROM `nba_predictions.player_prop_predictions` p
         LEFT JOIN player_names pn
           ON p.player_lookup = pn.player_lookup

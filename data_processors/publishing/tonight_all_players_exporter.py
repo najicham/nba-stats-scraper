@@ -107,9 +107,9 @@ class TonightAllPlayersExporter(BaseExporter):
             -- Format game time as "7:30 PM ET" for frontend lock time calculation
             LTRIM(FORMAT_TIMESTAMP('%I:%M %p ET', game_date_est, 'America/New_York')) as game_time,
             game_date_est,
-            -- Scores (only for final games)
-            CASE WHEN game_status = 3 THEN home_team_score ELSE NULL END as home_team_score,
-            CASE WHEN game_status = 3 THEN away_team_score ELSE NULL END as away_team_score
+            -- Scores (for in-progress and final games)
+            CASE WHEN game_status >= 2 THEN home_team_score ELSE NULL END as home_team_score,
+            CASE WHEN game_status >= 2 THEN away_team_score ELSE NULL END as away_team_score
         FROM `nba-props-platform.nba_raw.nbac_schedule`
         WHERE game_date = @target_date
         ORDER BY game_date_est, game_id

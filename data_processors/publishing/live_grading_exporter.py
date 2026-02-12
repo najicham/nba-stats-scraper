@@ -449,21 +449,33 @@ class LiveGradingExporter(BaseExporter):
                 graded_pred['minutes'] = live.get('minutes')
                 graded_pred['error'] = round(predicted - actual, 1) if predicted else None
 
-                if line is not None and recommendation in ('OVER', 'UNDER'):
+                # Compute margin_vs_line whenever we have actual and line
+                if line is not None:
                     margin_vs_line = actual - line
                     graded_pred['margin_vs_line'] = round(margin_vs_line, 1)
+                else:
+                    graded_pred['margin_vs_line'] = None
 
-                    # Determine if prediction is correct
-                    # For in-progress games, show "pending" unless clear
+                # Determine effective direction for grading
+                # OVER/UNDER use explicit recommendation; PASS/NO_LINE infer from predicted vs line
+                if recommendation in ('OVER', 'UNDER'):
+                    effective_direction = recommendation
+                elif line is not None and predicted:
+                    effective_direction = 'OVER' if predicted > line else 'UNDER'
+                else:
+                    effective_direction = None
+
+                if line is not None and effective_direction:
+                    # Grade using effective direction
                     if live.get('game_status') == 'final':
-                        if recommendation == 'OVER':
+                        if effective_direction == 'OVER':
                             is_correct = actual > line
                         else:  # UNDER
                             is_correct = actual < line
                         graded_pred['status'] = 'correct' if is_correct else 'incorrect'
                     else:
                         # In progress - show trending status
-                        if recommendation == 'OVER':
+                        if effective_direction == 'OVER':
                             if actual > line:
                                 graded_pred['status'] = 'trending_correct'
                             elif actual < line - 5:  # Significantly under
@@ -478,7 +490,7 @@ class LiveGradingExporter(BaseExporter):
                             else:
                                 graded_pred['status'] = 'in_progress'
                 else:
-                    # NO_LINE or PASS - still show grading based on prediction accuracy
+                    # No line to grade against
                     if live.get('game_status') == 'final':
                         graded_pred['status'] = 'graded'
                     else:

@@ -93,10 +93,12 @@ class SeasonSubsetPicksExporter(BaseExporter):
         season_start, season_label = self._get_season_bounds(today)
 
         # Get all picks with results for the season (all models)
-        all_picks = self._query_season_picks(season_start.isoformat(), today.isoformat())
+        # Use tomorrow as exclusive upper bound to include today's picks
+        end_date = (today + timedelta(days=1)).isoformat()
+        all_picks = self._query_season_picks(season_start.isoformat(), end_date)
 
         # Get daily signals for the season
-        signals = self._query_season_signals(season_start.isoformat(), today.isoformat())
+        signals = self._query_season_signals(season_start.isoformat(), end_date)
 
         # Get W-L records per subset (uses performance view)
         records = self._query_records(season_start, today)

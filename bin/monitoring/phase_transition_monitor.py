@@ -243,15 +243,6 @@ class PhaseTransitionMonitor:
         p3_status = self._get_phase_status("phase3_completion", game_date)
         p4_status = self._get_phase_status("phase4_completion", game_date)
 
-        # Phase 3 → 4 transition (removed Phase 2→3 check)
-                        f"Phase 2→3 delayed for {game_date}: {minutes_waiting} min",
-                        {
-                            "game_date": game_date,
-                            "phase": "2→3",
-                            "minutes_waiting": minutes_waiting
-                        }
-                    )
-
         # Phase 3 → 4 transition
         if p3_status.get('_triggered') and not p4_status:
             triggered_at = p3_status.get('_first_completion_at')

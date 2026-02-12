@@ -95,6 +95,17 @@ def run_live_export(target_date: str, include_grading: bool = True, include_stat
             result['errors'].append(f"live-grading: {str(e)}")
             logger.error(f"Live grading export failed: {e}", exc_info=True)
 
+    # Refresh tonight/all-players.json with updated scores and game status
+    try:
+        from data_processors.publishing.tonight_all_players_exporter import TonightAllPlayersExporter
+        exporter = TonightAllPlayersExporter()
+        path = exporter.export(target_date)
+        result['paths']['tonight'] = path
+        logger.info(f"Tonight refresh completed: {path}")
+    except Exception as e:
+        # Tonight refresh failure shouldn't fail the whole export
+        logger.warning(f"Tonight refresh failed (non-critical): {e}")
+
     # Export status.json for frontend visibility
     if include_status:
         try:
@@ -111,7 +122,76 @@ def run_live_export(target_date: str, include_grading: bool = True, include_stat
     if result['errors']:
         result['status'] = 'partial' if result['paths'] else 'failed'
 
+    # Check if all games are final — trigger one-time post-game re-export
+    _check_and_trigger_post_game_export(target_date, result)
+
     return result
+
+
+def _check_and_trigger_post_game_export(target_date: str, result: dict) -> None:
+    """
+    After all games go final, publish a one-time Pub/Sub message to
+    nba-phase6-export-trigger to re-export picks/best-bets/season with actuals.
+
+    Uses a GCS marker file to avoid redundant re-exports on subsequent ticks.
+    """
+    try:
+        from google.cloud import bigquery as bq
+        from google.cloud import storage, pubsub_v1
+
+        # Check for marker first (cheap GCS HEAD request)
+        storage_client = storage.Client()
+        bucket = storage_client.bucket(GCS_BUCKET)
+        marker_path = f'v1/live/post-game-{target_date}.done'
+        marker_blob = bucket.blob(marker_path)
+        if marker_blob.exists():
+            return  # Already triggered for this date
+
+        # Check if all games are final
+        client = bq.Client()
+        query = """
+        SELECT
+            COUNT(*) as total_games,
+            COUNTIF(game_status = 3) as final_games
+        FROM `nba-props-platform.nba_raw.nbac_schedule`
+        WHERE game_date = @target_date
+        """
+        params = [bq.ScalarQueryParameter('target_date', 'DATE', target_date)]
+        job = client.query(query, job_config=bq.QueryJobConfig(query_parameters=params))
+        rows = list(job.result())
+
+        if not rows or rows[0].total_games == 0:
+            return  # No games
+
+        total = rows[0].total_games
+        final = rows[0].final_games
+        if final < total:
+            return  # Games still in progress
+
+        # All games final — publish re-export trigger
+        logger.info(f"All {total} games final for {target_date}, triggering post-game re-export")
+
+        publisher = pubsub_v1.PublisherClient()
+        topic_path = publisher.topic_path(PROJECT_ID, 'nba-phase6-export-trigger')
+        message = {
+            'export_types': ['best-bets', 'subset-picks', 'season-subsets', 'tonight'],
+            'target_date': target_date,
+            'trigger_source': 'post-game-refresh',
+            'update_latest': True,
+        }
+        publisher.publish(topic_path, json.dumps(message).encode('utf-8'))
+        logger.info(f"Published post-game re-export message for {target_date}")
+
+        # Write marker to prevent re-triggering
+        marker_blob.upload_from_string(
+            f'triggered at {datetime.now(timezone.utc).isoformat()}',
+            content_type='text/plain'
+        )
+        result['post_game_export_triggered'] = True
+
+    except Exception as e:
+        # Non-critical — don't fail the live export
+        logger.warning(f"Post-game export check failed (non-critical): {e}")
 
 
 @functions_framework.http

@@ -234,13 +234,20 @@ class BestBetsExporter(BaseExporter):
                     gc.team_abbr,
                     gc.opponent_team_abbr,
                     p.predicted_points,
-                    NULL as actual_points,  -- Not graded yet
+                    pgs.points as actual_points,
                     p.current_points_line as line_value,
                     p.recommendation,
-                    NULL as prediction_correct,  -- Not graded yet
+                    CASE
+                        WHEN pgs.points IS NULL THEN NULL
+                        WHEN p.recommendation = 'OVER' AND pgs.points > p.current_points_line THEN TRUE
+                        WHEN p.recommendation = 'UNDER' AND pgs.points < p.current_points_line THEN TRUE
+                        WHEN p.recommendation IN ('OVER', 'UNDER') AND pgs.points = p.current_points_line THEN NULL
+                        WHEN p.recommendation IN ('OVER', 'UNDER') THEN FALSE
+                        ELSE NULL
+                    END as prediction_correct,
                     p.confidence_score,
-                    NULL as absolute_error,  -- Not graded yet
-                    NULL as signed_error,  -- Not graded yet
+                    CASE WHEN pgs.points IS NOT NULL THEN ABS(p.predicted_points - pgs.points) ELSE NULL END as absolute_error,
+                    CASE WHEN pgs.points IS NOT NULL THEN p.predicted_points - pgs.points ELSE NULL END as signed_error,
                     ABS(p.predicted_points - p.current_points_line) as edge,
                     h.historical_accuracy as player_historical_accuracy,
                     h.sample_size as player_sample_size,
@@ -250,6 +257,9 @@ class BestBetsExporter(BaseExporter):
                 LEFT JOIN player_names pn ON p.player_lookup = pn.player_lookup
                 LEFT JOIN fatigue_data f ON p.player_lookup = f.player_lookup
                 LEFT JOIN game_context gc ON p.player_lookup = gc.player_lookup AND p.game_id = gc.game_id
+                LEFT JOIN `nba-props-platform.nba_analytics.player_game_summary` pgs
+                    ON p.player_lookup = pgs.player_lookup
+                    AND p.game_date = pgs.game_date
                 WHERE p.game_date = @target_date
                   AND p.system_id = 'catboost_v9'  -- CRITICAL: Only catboost_v9
                   AND p.is_active = TRUE  -- Only active predictions
