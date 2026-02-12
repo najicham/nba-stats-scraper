@@ -75,6 +75,18 @@ All 8 services had `roles/run.invoker` added for `756957797294-compute@developer
 - Check 1: Per-day grading completeness (per model, most recent game date)
 - Check 2: Grading Cloud Function deployment state (ACTIVE check)
 
+**Phase 0.67** (Cloud Scheduler Execution Health):
+- Lists all ENABLED scheduler jobs, checks `status.code` from last execution
+- Severity-classified: CRITICAL (PERMISSION_DENIED, UNAUTHENTICATED), HIGH (INTERNAL, UNAVAILABLE), MEDIUM (DEADLINE_EXCEEDED, NOT_FOUND), LOW (known-OK like BDL/MLB)
+- Found 30/129 jobs failing silently on first run
+
+**Phase 0.68** (Zero-Invocation Detection):
+- Discovers all Cloud Run services targeted by Pub/Sub push subscriptions
+- Queries Cloud Logging (`--limit=1 --freshness=24h`) for each to verify actual traffic
+- Flags services with 0 requests as WARNING (not CRITICAL — may be normal on no-game days)
+- Excludes known seasonal (mlb-*, bdl-*) and manual-only services (dashboards)
+- Fills the gap: Check 5 verifies "can be invoked" → Phase 0.68 verifies "was actually invoked"
+
 **Phase 0.65** updated with comments about expected grading subscription counts.
 
 ## What Changed
@@ -82,7 +94,8 @@ All 8 services had `roles/run.invoker` added for `756957797294-compute@developer
 ### Code Changes
 ```
 .claude/skills/validate-daily/SKILL.md     # Dynamic IAM check (Check 5), Phase 0.66 grading health,
-                                           # Phase 0.67 scheduler health, Phase 0.65 comments
+                                           # Phase 0.67 scheduler health, Phase 0.68 invocation check,
+                                           # Phase 0.65 comments
 bin/monitoring/grading_gap_detector.py     # Fixed grading % calculation
 ```
 
@@ -133,6 +146,22 @@ bin/monitoring/grading_gap_detector.py     # Fixed grading % calculation
 3. **Backup mechanisms mask failures** — Grading had backup polling + scheduled queries, so IAM failure caused partial gaps (12/29 ungraded) instead of total failure. This made the problem look like a minor data quality issue rather than an infrastructure break.
 
 4. **Audit broadly, fix surgically** — When you find one instance of a systemic issue, check ALL instances before fixing. The initial plan was to fix 2 grading services; the audit revealed 6 more.
+
+5. **Defense in depth for infrastructure monitoring** — No single check catches everything:
+   - Check 5 (IAM) answers: "Can the service be invoked?"
+   - Phase 0.67 (Scheduler) answers: "Did the scheduler try to invoke?"
+   - Phase 0.68 (Invocations) answers: "Did the service actually receive requests?"
+   - Each catches a different failure mode. Together they form a complete detection chain.
+
+## New Validation Phases Summary
+
+| Phase | What It Checks | Catches |
+|-------|---------------|---------|
+| 0.6 Check 5 | IAM on all Pub/Sub/Scheduler targets | Missing `roles/run.invoker` |
+| 0.65 | Duplicate Pub/Sub subscriptions | Orphan Eventarc triggers |
+| 0.66 | Grading completeness + function state | Grading gaps, broken functions |
+| 0.67 | Scheduler job execution status | Failed/auth-broken scheduler jobs |
+| 0.68 | Cloud Run zero-invocation detection | Services never receiving traffic |
 
 ## Related Documentation
 
