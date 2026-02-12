@@ -1,3 +1,6 @@
+-- @quality-filter: exempt
+-- Reason: Staging table DDL for publishing pipeline
+
 -- ============================================================================
 -- Published Picks Tracking Table
 -- ============================================================================

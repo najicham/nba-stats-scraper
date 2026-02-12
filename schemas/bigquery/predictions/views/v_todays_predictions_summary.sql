@@ -1,3 +1,6 @@
+-- @quality-filter: exempt
+-- Reason: Daily summary view, shows all predictions for pipeline health monitoring
+
 -- Path: schemas/bigquery/predictions/views/v_todays_predictions_summary.sql
 -- ============================================================================
 -- View: todays_predictions_summary

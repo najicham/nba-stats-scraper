@@ -1,3 +1,6 @@
+-- @quality-filter: exempt
+-- Reason: Model comparison view for today, shows all predictions for analysis
+
 -- Path: schemas/bigquery/predictions/views/v_system_comparison_today.sql
 -- ============================================================================
 -- View: system_comparison_today

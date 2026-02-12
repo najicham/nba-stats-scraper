@@ -1,3 +1,6 @@
+-- @quality-filter: exempt
+-- Reason: Vegas line coverage analysis, needs all predictions regardless of quality
+
 -- ============================================================================
 -- Vegas Line Source Coverage View (Session 152)
 -- Shows daily distribution of which scrapers provided vegas line data.

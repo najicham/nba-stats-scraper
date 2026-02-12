@@ -1,3 +1,6 @@
+-- @quality-filter: exempt
+-- Reason: Validation monitoring view, shows all predictions for completeness checking
+
 -- Path: schemas/bigquery/predictions/views/v_daily_validation_summary.sql
 -- ============================================================================
 -- View: daily_validation_summary

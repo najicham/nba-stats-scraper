@@ -1,3 +1,6 @@
+-- @quality-filter: exempt
+-- Reason: Table creation DDL, not a query view
+
 -- ============================================================================
 -- Table: ml_feature_store_v2 (UPDATED with Dependency Tracking)
 -- File: schemas/bigquery/predictions/04_ml_feature_store_v2.sql

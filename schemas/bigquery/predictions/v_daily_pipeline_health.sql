@@ -1,3 +1,6 @@
+-- @quality-filter: exempt
+-- Reason: Pipeline health monitoring, needs complete picture including low-quality predictions
+
 -- Session 152: Daily pipeline health dashboard view
 --
 -- Single view combining predictions, line sources, and feature quality

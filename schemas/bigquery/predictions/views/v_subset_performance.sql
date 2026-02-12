@@ -1,3 +1,6 @@
+-- @quality-filter: exempt
+-- Reason: Subset performance inherits quality filtering from subset definitions (Session 152 design)
+
 -- ============================================================================
 -- Pick Subset Performance View
 -- ============================================================================

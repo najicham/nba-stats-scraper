@@ -1,3 +1,6 @@
+-- @quality-filter: exempt
+-- Reason: Cross-model agreement analysis, needs all predictions for comparison
+
 -- Path: schemas/bigquery/predictions/views/v_system_agreement.sql
 -- ============================================================================
 -- View: system_agreement

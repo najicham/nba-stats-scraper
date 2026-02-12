@@ -1,3 +1,6 @@
+-- @quality-filter: exempt
+-- Reason: Model performance comparison, needs complete dataset including low-quality for fair comparison
+
 -- Path: schemas/bigquery/predictions/views/v_system_performance_comparison.sql
 -- ============================================================================
 -- View: system_performance_comparison

@@ -1,3 +1,6 @@
+-- @quality-filter: exempt
+-- Reason: Debug view for pipeline monitoring, intentionally shows all predictions including low-quality
+
 -- View: nba_predictions.v_prediction_coverage_gaps
 -- Purpose: Track players with betting lines but no predictions made
 --

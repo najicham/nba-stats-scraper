@@ -1,3 +1,6 @@
+-- @quality-filter: exempt
+-- Reason: Historical raw predictions table, preserves all data for analysis
+
 -- ============================================================================
 -- Table: ml_model_predictions
 -- File: 12_ml_model_predictions.sql
