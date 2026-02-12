@@ -139,6 +139,7 @@ class PlayerProfileExporter(BaseExporter):
             'generated_at': self.get_generated_at(),
             'recent_news': recent_news,
             'summary': {
+                'player_name': summary.get('player_full_name', player_lookup),
                 'team': summary.get('team_abbr'),
                 'team_abbr': summary.get('team_abbr'),
                 'games_predicted': summary['games_predicted'],

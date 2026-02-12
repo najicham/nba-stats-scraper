@@ -166,7 +166,7 @@ GET /v1/player/stephen-curry/game-report/2024-12-17
     "prediction": {
       "predicted_points": 29.2,
       "recommendation": "OVER",
-      "confidence": 0.72,
+      "confidence": 72,
       "edge": 2.7
     },
 
@@ -533,20 +533,20 @@ Returns prediction accuracy statistics.
   "data": {
     "period": "30d",
     "filters_applied": {
-      "confidence_min": 0.70
+      "confidence_min": 70
     },
     "summary": {
       "total_predictions": 194,
       "hits": 142,
       "misses": 52,
       "hit_rate": 0.732,
-      "avg_confidence": 0.76,
+      "avg_confidence": 76,
       "avg_margin": 2.8
     },
     "by_confidence_tier": [
       {
         "tier": "high",
-        "confidence_range": [0.70, 1.0],
+        "confidence_range": [70, 100],
         "predictions": 194,
         "hits": 142,
         "hit_rate": 0.732
@@ -585,7 +585,7 @@ Returns prediction track record for a specific player.
         "actual_points": 31,
         "recommendation": "OVER",
         "hit": true,
-        "confidence": 0.72
+        "confidence": 72
       }
     ]
   }

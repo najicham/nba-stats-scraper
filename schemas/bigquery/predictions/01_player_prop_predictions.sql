@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.player_prop_predi
   
   -- Core Prediction (4 fields - added has_prop_line in v3.2)
   predicted_points NUMERIC(5,1) NOT NULL,           -- Predicted points
-  confidence_score NUMERIC(5,2) NOT NULL,           -- Confidence (0.0-1.0 scale)
+  confidence_score NUMERIC(5,2) NOT NULL,           -- Confidence (0-100 scale)
   recommendation STRING NOT NULL,                   -- 'OVER', 'UNDER', 'PASS', 'NO_LINE' (v3.2)
   has_prop_line BOOLEAN DEFAULT TRUE,               -- TRUE if player had betting line when prediction was made (v3.2)
   
