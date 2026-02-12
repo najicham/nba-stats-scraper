@@ -59,61 +59,96 @@ JOIN (
 WHERE ppc.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
 ORDER BY ppc.game_date DESC" 2>/dev/null
 
-# 4. Check Phase 3 completion state (Firestore) with 5/5 validation
+# 4. Check Phase 3 completion state (Firestore) with mode-aware validation
 echo ""
 echo "PHASE 3 COMPLETION STATE:"
-EXPECTED_PHASE3="${EXPECTED_PHASE3_PROCESSORS}" python3 << EOF
+python3 << EOF
 from google.cloud import firestore
 import sys
-import os
 
-# Get expected processors from environment (set from centralized config)
-EXPECTED_PROCESSORS = int(os.environ.get('EXPECTED_PHASE3', 5))
-EXPECTED_NAMES = [
-    'player_game_summary',
-    'team_offense_game_summary',
-    'team_defense_game_summary',
-    'upcoming_player_game_context',
-    'upcoming_team_game_context'
-]
+# Mode-specific expectations (Session 209: Mode-aware Phase 3 visibility)
+MODE_EXPECTATIONS = {
+    'overnight': {
+        'count': 5,
+        'processors': [
+            'player_game_summary',
+            'team_offense_game_summary',
+            'team_defense_game_summary',
+            'upcoming_player_game_context',
+            'upcoming_team_game_context'
+        ]
+    },
+    'same_day': {
+        'count': 3,
+        'processors': [
+            'team_offense_game_summary',
+            'team_defense_game_summary',
+            'upcoming_player_game_context'
+        ]
+    },
+    'evening': {
+        'count': 4,
+        'processors': [
+            'player_game_summary',
+            'team_offense_game_summary',
+            'team_defense_game_summary',
+            'upcoming_player_game_context'
+        ]
+    }
+}
 
-db = firestore.Client()
+db = firestore.Client(project='nba-props-platform')
 doc = db.collection('phase3_completion').document('$DATE').get()
+
 if doc.exists:
     data = doc.to_dict()
-    completed = [k for k in data if not k.startswith('_')]
-    triggered = data.get('_triggered', False)
+    completed = [k for k in data.keys() if not k.startswith('_')]
     count = len(completed)
+    triggered = data.get('_triggered', False)
+    mode = data.get('_mode', 'unknown')
 
-    # Determine status
-    if count == EXPECTED_PROCESSORS:
+    # Get mode-specific expectations
+    mode_config = MODE_EXPECTATIONS.get(mode, MODE_EXPECTATIONS['overnight'])
+    expected_count = mode_config['count']
+    expected_processors = mode_config['processors']
+
+    # Determine status based on mode expectations
+    if count >= expected_count:
         status = "OK"
         icon = "✅"
-    elif count >= 3:
+    elif count >= expected_count - 1:
         status = "WARNING"
         icon = "⚠️"
     else:
         status = "CRITICAL"
         icon = "❌"
 
-    print(f"   {icon} Processors complete: {count}/{EXPECTED_PROCESSORS} ({status})")
+    # Print enhanced output
+    print(f"   Mode: {mode}")
+    print(f"   {icon} Processors complete: {count}/{expected_count} ({status})")
     print(f"   Phase 4 triggered: {triggered}")
+    print()
 
-    # Show completed processors
-    for k in completed:
-        print(f"     - {k}")
+    # List completed processors
+    print("   Completed processors:")
+    for proc in sorted(completed):
+        print(f"     ✓ {proc}")
 
-    # Show missing processors
-    missing = set(EXPECTED_NAMES) - set(completed)
+    # List missing processors (only those expected for this mode)
+    missing = set(expected_processors) - set(completed)
     if missing:
-        print(f"   ⚠️  MISSING: {', '.join(missing)}")
+        print()
+        print(f"   ⚠️  MISSING ({len(missing)} expected for {mode} mode):")
+        for proc in sorted(missing):
+            print(f"     ✗ {proc}")
 
-    # Exit with error if incomplete
-    if count < EXPECTED_PROCESSORS:
-        print(f"\n   ACTION REQUIRED: {EXPECTED_PROCESSORS - count} processor(s) did not complete!")
+    # Action required only if truly incomplete for this mode
+    if count < expected_count:
+        print()
+        print(f"   ⚠️  ACTION REQUIRED: {expected_count - count} processor(s) did not complete for {mode} mode!")
 else:
-    print("   ❌ No completion data yet (CRITICAL)")
-    print("   Phase 3 processors may not have run!")
+    print("   ❌ No completion record found")
+    print("   Phase 3 processors may not have run yet for $DATE")
 EOF
 
 # 5. Check ML Feature Store

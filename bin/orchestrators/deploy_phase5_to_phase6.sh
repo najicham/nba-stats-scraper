@@ -145,6 +145,17 @@ rsync -aL --exclude='__pycache__' --exclude='*.pyc' --exclude='tests/' \
 
 echo -e "${GREEN}✓ Build directory created: $BUILD_DIR${NC}"
 echo -e "${GREEN}✓ Shared modules included (utils, clients, validation, config)${NC}"
+echo ""
+
+# Capture build metadata (Session 209: Cloud Function deployment tracking)
+BUILD_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+echo -e "${YELLOW}Build metadata:${NC}"
+echo "  BUILD_COMMIT:    $BUILD_COMMIT"
+echo "  BUILD_TIMESTAMP: $BUILD_TIMESTAMP"
+echo ""
+
 echo -e "${YELLOW}Deploying from build directory...${NC}"
 echo ""
 
@@ -155,7 +166,8 @@ gcloud functions deploy $FUNCTION_NAME \
     --source $BUILD_DIR \
     --entry-point $ENTRY_POINT \
     --trigger-topic $TRIGGER_TOPIC \
-    --update-env-vars GCP_PROJECT=$PROJECT_ID \
+    --update-env-vars GCP_PROJECT=$PROJECT_ID,BUILD_COMMIT=$BUILD_COMMIT,BUILD_TIMESTAMP=$BUILD_TIMESTAMP \
+    --update-labels commit-sha=$BUILD_COMMIT \
     --memory $MEMORY \
     --timeout $TIMEOUT \
     --max-instances $MAX_INSTANCES \

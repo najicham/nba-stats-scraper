@@ -1,0 +1,98 @@
+{
+  "schema": [
+    {
+      "name": "report_date",
+      "type": "DATE",
+      "mode": "REQUIRED",
+      "description": "Date of the feature quality report"
+    },
+    {
+      "name": "total_players",
+      "type": "INTEGER",
+      "description": "Total number of players in feature store for this date"
+    },
+    {
+      "name": "quality_ready_count",
+      "type": "INTEGER",
+      "description": "Number of players passing quality readiness check (is_quality_ready=true)"
+    },
+    {
+      "name": "quality_ready_pct",
+      "type": "NUMERIC",
+      "description": "Percentage of players that are quality ready"
+    },
+    {
+      "name": "avg_feature_quality_score",
+      "type": "NUMERIC",
+      "description": "Average feature quality score across all players"
+    },
+    {
+      "name": "red_alert_count",
+      "type": "INTEGER",
+      "description": "Number of players with red quality alerts"
+    },
+    {
+      "name": "yellow_alert_count",
+      "type": "INTEGER",
+      "description": "Number of players with yellow quality alerts"
+    },
+    {
+      "name": "green_alert_count",
+      "type": "INTEGER",
+      "description": "Number of players with green quality alerts"
+    },
+    {
+      "name": "avg_matchup_quality_pct",
+      "type": "NUMERIC",
+      "description": "Average matchup category quality percentage"
+    },
+    {
+      "name": "avg_player_history_quality_pct",
+      "type": "NUMERIC",
+      "description": "Average player history category quality percentage"
+    },
+    {
+      "name": "avg_team_context_quality_pct",
+      "type": "NUMERIC",
+      "description": "Average team context category quality percentage"
+    },
+    {
+      "name": "avg_vegas_quality_pct",
+      "type": "NUMERIC",
+      "description": "Average vegas category quality percentage"
+    },
+    {
+      "name": "avg_game_context_quality_pct",
+      "type": "NUMERIC",
+      "description": "Average game context category quality percentage"
+    },
+    {
+      "name": "players_with_defaults",
+      "type": "INTEGER",
+      "description": "Number of players with any default features"
+    },
+    {
+      "name": "avg_default_feature_count",
+      "type": "NUMERIC",
+      "description": "Average number of default features per player"
+    },
+    {
+      "name": "top_missing_processors",
+      "type": "JSON",
+      "description": "JSON array of most common missing processor patterns"
+    },
+    {
+      "name": "computation_timestamp",
+      "type": "TIMESTAMP",
+      "description": "When this trend record was computed"
+    }
+  ],
+  "timePartitioning": {
+    "type": "DAY",
+    "field": "report_date"
+  },
+  "clustering": {
+    "fields": ["report_date"]
+  },
+  "description": "Daily feature quality metrics for trend tracking. Session 209: Priority 2 - Historical tracking to answer 'Is quality improving or declining?'"
+}

@@ -85,7 +85,9 @@ steps:
       - '${_TRIGGER_TOPIC}'
       - '--service-account=756957797294-compute@developer.gserviceaccount.com'
       - '--update-env-vars'
-      - 'GCP_PROJECT=nba-props-platform'
+      - 'GCP_PROJECT=nba-props-platform,BUILD_COMMIT=${SHORT_SHA},BUILD_TIMESTAMP=${_BUILD_TIMESTAMP}'
+      - '--update-labels'
+      - 'commit-sha=${SHORT_SHA}'
       - '--memory'
       - '${_MEMORY}'
       - '--timeout'
@@ -135,6 +137,7 @@ substitutions:
   _TRIGGER_TOPIC: ''
   _MEMORY: '1Gi'
   _TIMEOUT: '300s'
+  _BUILD_TIMESTAMP: '${BUILD_TIMESTAMP:-unknown}'  # Set by Cloud Build trigger
 
 timeout: 600s
 

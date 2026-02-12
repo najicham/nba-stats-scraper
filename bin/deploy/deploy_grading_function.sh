@@ -166,6 +166,15 @@ echo "Deployment package contents:"
 ls -la "$DEPLOY_DIR/"
 echo ""
 
+# Capture build metadata (Session 209: Cloud Function deployment tracking)
+BUILD_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+echo -e "${YELLOW}Build metadata:${NC}"
+echo "  BUILD_COMMIT:    $BUILD_COMMIT"
+echo "  BUILD_TIMESTAMP: $BUILD_TIMESTAMP"
+echo ""
+
 if $DRY_RUN; then
     echo -e "${YELLOW}[DRY RUN] Would deploy function: $FUNCTION_NAME${NC}"
     rm -rf "$DEPLOY_DIR"
@@ -186,7 +195,8 @@ gcloud functions deploy $FUNCTION_NAME \
     --entry-point $ENTRY_POINT \
     --trigger-topic $TRIGGER_TOPIC \
     --service-account=$SERVICE_ACCOUNT \
-    --set-env-vars GCP_PROJECT=$PROJECT_ID \
+    --set-env-vars GCP_PROJECT=$PROJECT_ID,BUILD_COMMIT=$BUILD_COMMIT,BUILD_TIMESTAMP=$BUILD_TIMESTAMP \
+    --update-labels commit-sha=$BUILD_COMMIT \
     --memory $MEMORY \
     --timeout $TIMEOUT \
     --max-instances $MAX_INSTANCES \

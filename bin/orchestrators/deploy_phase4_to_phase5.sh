@@ -150,11 +150,22 @@ rsync -aL --exclude='__pycache__' --exclude='*.pyc' --exclude='tests/' \
 
 echo -e "${GREEN}✓ Build directory created: $BUILD_DIR${NC}"
 echo -e "${GREEN}✓ Shared modules included (utils, clients, validation, config)${NC}"
+echo ""
+
+# Capture build metadata (Session 209: Cloud Function deployment tracking)
+BUILD_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+echo -e "${YELLOW}Build metadata:${NC}"
+echo "  BUILD_COMMIT:    $BUILD_COMMIT"
+echo "  BUILD_TIMESTAMP: $BUILD_TIMESTAMP"
+echo ""
+
 echo -e "${YELLOW}Deploying from build directory...${NC}"
 echo ""
 
 # Build env vars string
-ENV_VARS="GCP_PROJECT=$PROJECT_ID,PREDICTION_COORDINATOR_URL=$PREDICTION_COORDINATOR_URL"
+ENV_VARS="GCP_PROJECT=$PROJECT_ID,PREDICTION_COORDINATOR_URL=$PREDICTION_COORDINATOR_URL,BUILD_COMMIT=$BUILD_COMMIT,BUILD_TIMESTAMP=$BUILD_TIMESTAMP"
 if [ -n "$SLACK_WEBHOOK_URL" ]; then
     ENV_VARS="$ENV_VARS,SLACK_WEBHOOK_URL=$SLACK_WEBHOOK_URL"
     echo -e "${GREEN}✓ SLACK_WEBHOOK_URL configured for timeout alerts${NC}"
@@ -168,6 +179,7 @@ gcloud functions deploy $FUNCTION_NAME \
     --entry-point $ENTRY_POINT \
     --trigger-topic $TRIGGER_TOPIC \
     --update-env-vars "$ENV_VARS" \
+    --update-labels commit-sha=$BUILD_COMMIT \
     --memory $MEMORY \
     --timeout $TIMEOUT \
     --max-instances $MAX_INSTANCES \
