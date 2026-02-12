@@ -493,6 +493,13 @@ class AllSubsetsPicksExporter(BaseExporter):
                 if pct_over_max is not None and pct_over > float(pct_over_max):
                     continue
 
+            # Quality filter (Session 209: Opus agent recommendation)
+            # Predictions with yellow/red quality alerts have 12.1% hit rate vs 50.3% for green
+            require_quality = subset.get('require_quality_ready')
+            if require_quality:
+                if pred.get('quality_alert_level') != 'green':
+                    continue
+
             filtered.append(pred)
 
         # Apply ranking and limit if specified

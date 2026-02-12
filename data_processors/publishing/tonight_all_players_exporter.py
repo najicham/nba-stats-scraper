@@ -213,8 +213,6 @@ class TonightAllPlayersExporter(BaseExporter):
                 game_date,
                 -- Matchup features
                 matchup_quality_pct,
-                feature_13_value as opponent_def_rating,
-                feature_14_value as opponent_pace,
                 -- Quality tracking
                 feature_quality_score,
                 default_feature_count
@@ -275,8 +273,6 @@ class TonightAllPlayersExporter(BaseExporter):
             bo.under_odds,
 
             -- Feature data
-            fd.opponent_def_rating,
-            fd.opponent_pace,
             fd.matchup_quality_pct
 
         FROM game_context gc
@@ -412,15 +408,7 @@ class TonightAllPlayersExporter(BaseExporter):
             elif edge >= 3:
                 factors.append(f"Solid model edge ({edge:.1f} points)")
 
-        # 2. MATCHUP - Only if supports recommendation
-        opp_def_rating = feature_data.get('opponent_def_rating')
-        if opp_def_rating:
-            if opp_def_rating > 115 and rec == 'OVER':
-                factors.append("Weak opposing defense favors scoring")
-            elif opp_def_rating < 105 and rec == 'UNDER':
-                factors.append("Elite opposing defense limits scoring")
-
-        # 3. HISTORICAL TREND - Only if supports
+        # 2. HISTORICAL TREND - Only if supports
         if last_10_record:
             try:
                 overs, unders = map(int, last_10_record.split('-'))
@@ -572,8 +560,6 @@ class TonightAllPlayersExporter(BaseExporter):
 
                     # Build feature data dict
                     player_feature_data = {
-                        'opponent_def_rating': p.get('opponent_def_rating'),
-                        'opponent_pace': p.get('opponent_pace'),
                         'matchup_quality_pct': p.get('matchup_quality_pct'),
                     }
 
