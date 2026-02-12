@@ -77,6 +77,8 @@ from data_processors.publishing.all_subsets_picks_exporter import AllSubsetsPick
 from data_processors.publishing.subset_materializer import SubsetMaterializer
 # Season subset picks (Session 158)
 from data_processors.publishing.season_subset_picks_exporter import SeasonSubsetPicksExporter
+# Calendar widget (Sprint 3)
+from data_processors.publishing.calendar_exporter import CalendarExporter
 
 # Configure logging
 logging.basicConfig(
@@ -91,6 +93,7 @@ PROJECT_ID = 'nba-props-platform'
 EXPORT_TYPES = [
     'results', 'performance', 'best-bets', 'predictions',
     'tonight', 'tonight-players', 'streaks',
+    'calendar',  # Sprint 3 - Date navigation
     # Trends v2
     'trends-hot-cold', 'trends-bounce-back', 'trends-what-matters',
     'trends-team', 'trends-quick-hits', 'trends-deep-dive',
@@ -214,6 +217,17 @@ def export_date(
         except Exception as e:
             result['errors'].append(f"streaks: {e}")
             logger.error(f"  Streaks error: {e}")
+
+    # Calendar game counts (Sprint 3 - Date navigation)
+    if 'calendar' in export_types:
+        try:
+            exporter = CalendarExporter()
+            path = exporter.export(days_back=30)
+            result['paths']['calendar'] = path
+            logger.info(f"  Calendar: {path}")
+        except Exception as e:
+            result['errors'].append(f"calendar: {e}")
+            logger.error(f"  Calendar error: {e}")
 
     # === PHASE 6 SUBSET EXPORTS (Session 90) ===
     # Moved before tonight-players to ensure these fast, critical exports

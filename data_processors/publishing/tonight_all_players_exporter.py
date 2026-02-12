@@ -654,18 +654,27 @@ class TonightAllPlayersExporter(BaseExporter):
         """
         Generate and upload tonight's all players JSON.
 
+        Outputs TWO files:
+        - tonight/all-players.json (always latest, short cache)
+        - tonight/YYYY-MM-DD.json (date-specific, long cache)
+
         Args:
             target_date: Date string in YYYY-MM-DD format
 
         Returns:
-            GCS path of the exported file
+            GCS path of the date-specific exported file
         """
         logger.info(f"Exporting tonight all players for {target_date}")
 
         json_data = self.generate_json(target_date)
 
-        # Upload with short cache (lines can change)
-        path = 'tonight/all-players.json'
-        gcs_path = self.upload_to_gcs(json_data, path, 'public, max-age=300')
+        # Current: tonight/all-players.json (always latest)
+        latest_path = 'tonight/all-players.json'
+        self.upload_to_gcs(json_data, latest_path, 'public, max-age=300')
 
+        # New: tonight/YYYY-MM-DD.json (date-specific, cacheable)
+        date_path = f'tonight/{target_date}.json'
+        gcs_path = self.upload_to_gcs(json_data, date_path, 'public, max-age=86400')
+
+        logger.info(f"Exported to {latest_path} and {date_path}")
         return gcs_path
