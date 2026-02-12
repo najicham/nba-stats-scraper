@@ -81,15 +81,19 @@ All 8 services had `roles/run.invoker` added for `756957797294-compute@developer
 
 ### Code Changes
 ```
-.claude/skills/validate-daily/SKILL.md                                 # Dynamic IAM check, Phase 0.66, Phase 0.65 comments
-bin/monitoring/grading_gap_detector.py                                  # Fixed grading % calculation
-data_processors/grading/prediction_accuracy/prediction_accuracy_processor.py  # Grade DNP as voided (100% coverage)
-docs/08-projects/current/session-212-grading-coverage/ROOT-CAUSE-ANALYSIS.md # Updated with DNP fix
+.claude/skills/validate-daily/SKILL.md     # Dynamic IAM check (Check 5), Phase 0.66 grading health,
+                                           # Phase 0.67 scheduler health, Phase 0.65 comments
+bin/monitoring/grading_gap_detector.py     # Fixed grading % calculation
 ```
 
 ### Infrastructure Changes
 ```
 8 Cloud Run services: added roles/run.invoker IAM binding
+  - phase3-to-grading, grading-coverage-monitor (grading pipeline)
+  - realtime-completeness-checker, backfill-trigger (Phase 2 monitoring)
+  - auto-retry-processor, deployment-drift-monitor (operational monitoring)
+  - scraper-availability-monitor (scraper monitoring)
+  - bdb-retry-processor (low priority, BDL disabled)
 ```
 
 ## Key Metrics
@@ -101,16 +105,24 @@ docs/08-projects/current/session-212-grading-coverage/ROOT-CAUSE-ANALYSIS.md # U
 | Voided predictions (DNP) | **10-12%** | Normal DNP rate, now tracked |
 | Services with broken IAM | 8 → 0 | All fixed |
 | Services now auto-monitored | **All** Pub/Sub targets | Dynamic discovery |
+| Scheduler jobs failing | **30 of 129** | Detected by new Phase 0.67 |
 
 ## Outstanding Work
 
+### High Priority
+1. **Triage 30 failing scheduler jobs** — Phase 0.67 now detects them. Key categories:
+   - 3 PERMISSION_DENIED (incl. `scraper-availability-daily` — IAM just fixed, should resolve)
+   - 14 INTERNAL (500 errors from targets — need service-level investigation)
+   - 1 UNAUTHENTICATED (`trigger-health-check` — auth config broken)
+   - 5 DEADLINE_EXCEEDED (prediction/props jobs timing out)
+
 ### Investigate (Future Session)
-1. **`auto-backfill-orchestrator`** — no Pub/Sub subscription found but exists as Cloud Function. May be unused/legacy. Verify.
-2. **`unified-dashboard`** — no Pub/Sub subscription. Likely manual-only dashboard. Low priority.
+2. **`auto-backfill-orchestrator`** — no Pub/Sub subscription found but exists as Cloud Function. May be unused/legacy. Verify.
+3. **`unified-dashboard`** — no Pub/Sub subscription. Likely manual-only dashboard. Low priority.
 
 ### Low Priority
-3. **Deploy grading_gap_detector as Cloud Function** — Scheduler job exists, just needs deployment
-4. **Verify Phase 6 quality filtering deployment** from Session 211
+4. **Deploy grading_gap_detector as Cloud Function** — Scheduler job exists, just needs deployment
+5. **Verify Phase 6 quality filtering deployment** from Session 211
 
 ## Key Learnings
 
