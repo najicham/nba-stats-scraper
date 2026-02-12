@@ -22,6 +22,7 @@ from typing import Dict, List, Any, Optional
 from google.cloud import bigquery
 from google.cloud import storage
 from google.api_core.exceptions import (
+    Conflict,
     ServiceUnavailable,
     DeadlineExceeded,
     InternalServerError,
@@ -281,7 +282,7 @@ class BaseExporter(ABC):
             self._upload_blob_with_retry(blob, json_str, cache_control)
             # Record success with circuit breaker
             cb._record_success()
-        except (ServiceUnavailable, DeadlineExceeded, InternalServerError) as e:
+        except (ServiceUnavailable, DeadlineExceeded, InternalServerError, Conflict) as e:
             # Record failure with circuit breaker for GCS-specific errors
             cb._record_failure(e)
 
@@ -302,16 +303,20 @@ class BaseExporter(ABC):
         max_attempts=3,
         base_delay=1.0,
         max_delay=10.0,
-        exceptions=(ServiceUnavailable, DeadlineExceeded, InternalServerError)
+        exceptions=(ServiceUnavailable, DeadlineExceeded, InternalServerError, Conflict)
     )
     def _upload_blob_with_retry(self, blob, json_str: str, cache_control: str) -> None:
-        """Upload blob with retry on transient GCS errors."""
+        """Upload blob with retry on transient GCS errors.
+
+        Sets cache_control BEFORE upload so metadata is included in the single
+        upload request. This avoids 409 Conflict errors from a separate patch()
+        call racing with concurrent writers.
+        """
+        blob.cache_control = cache_control
         blob.upload_from_string(
             json_str,
             content_type='application/json'
         )
-        blob.cache_control = cache_control
-        blob.patch()
 
     def _json_serializer(self, obj: Any) -> Any:
         """Custom JSON serializer for types not handled by default."""
