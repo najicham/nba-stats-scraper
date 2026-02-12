@@ -2424,6 +2424,161 @@ EOF
 
 **Reference**: Session 212 (grading IAM discovery, infrastructure validation)
 
+### Phase 0.67: Cloud Scheduler Execution Health (Session 212 - NEW)
+
+**IMPORTANT**: Detect Cloud Scheduler jobs that are failing silently. Session 212 found **30 of 129 ENABLED scheduler jobs returning non-zero status codes**, including PERMISSION_DENIED, INTERNAL, DEADLINE_EXCEEDED, and UNAUTHENTICATED errors.
+
+**Why this matters**: Scheduler jobs drive backup mechanisms (grading retries, data quality alerts, monitoring). When they fail silently, multiple safety nets go down simultaneously. The scheduler marks attempts as "completed" even on 4xx/5xx responses, so jobs appear to run but accomplish nothing.
+
+**What to check**:
+
+```bash
+# Check all ENABLED Cloud Scheduler jobs for execution failures
+python3 << 'EOF'
+import subprocess
+import json
+import sys
+
+RPC_CODES = {
+    0: 'OK', 1: 'CANCELLED', 2: 'UNKNOWN', 3: 'INVALID_ARGUMENT',
+    4: 'DEADLINE_EXCEEDED', 5: 'NOT_FOUND', 7: 'PERMISSION_DENIED',
+    8: 'RESOURCE_EXHAUSTED', 13: 'INTERNAL', 14: 'UNAVAILABLE',
+    16: 'UNAUTHENTICATED'
+}
+
+# Severity classification
+CRITICAL_CODES = {7, 16}       # PERMISSION_DENIED, UNAUTHENTICATED — IAM/auth broken
+HIGH_CODES = {13, 14}          # INTERNAL, UNAVAILABLE — service errors
+MEDIUM_CODES = {4, 5}          # DEADLINE_EXCEEDED, NOT_FOUND — operational issues
+LOW_CODES = {3}                # INVALID_ARGUMENT — likely expected (e.g., BDL disabled)
+
+# Known-OK patterns (jobs expected to fail)
+KNOWN_FAILING = {
+    'bdl-',           # BDL intentionally disabled
+    'mlb-',           # MLB off-season
+}
+
+print("\n=== Cloud Scheduler Execution Health Check ===\n")
+
+result = subprocess.run(
+    ['gcloud', 'scheduler', 'jobs', 'list',
+     '--project=nba-props-platform', '--location=us-west2', '--format=json'],
+    capture_output=True, text=True, timeout=30)
+
+if result.returncode != 0:
+    print("❌ Failed to list scheduler jobs")
+    sys.exit(1)
+
+jobs = json.loads(result.stdout)
+
+critical = []
+high = []
+medium = []
+low = []
+ok_count = 0
+skipped = 0
+
+for j in jobs:
+    name = j.get('name', '').split('/')[-1]
+    state = j.get('state', '?')
+
+    if state != 'ENABLED':
+        skipped += 1
+        continue
+
+    status = j.get('status', {})
+    code = status.get('code', 0)
+    last = j.get('lastAttemptTime', 'NEVER')
+
+    if code == 0:
+        ok_count += 1
+        continue
+
+    # Skip known-failing patterns
+    if any(name.startswith(prefix) for prefix in KNOWN_FAILING):
+        low.append((name, code, RPC_CODES.get(code, f'CODE_{code}'), last[:19] if last != 'NEVER' else last))
+        continue
+
+    entry = (name, code, RPC_CODES.get(code, f'CODE_{code}'), last[:19] if last != 'NEVER' else last)
+    if code in CRITICAL_CODES:
+        critical.append(entry)
+    elif code in HIGH_CODES:
+        high.append(entry)
+    elif code in MEDIUM_CODES:
+        medium.append(entry)
+    else:
+        low.append(entry)
+
+# Report
+total_enabled = ok_count + len(critical) + len(high) + len(medium) + len(low)
+print(f"  Checked {total_enabled} ENABLED jobs ({skipped} paused/skipped)\n")
+
+if critical:
+    print(f"  🔴 CRITICAL ({len(critical)} jobs) — IAM/Auth broken, services unreachable:")
+    for name, code, code_name, last in critical:
+        print(f"     {name}: {code_name} (last attempt: {last})")
+    print()
+
+if high:
+    print(f"  🟠 HIGH ({len(high)} jobs) — Service errors (500/503):")
+    for name, code, code_name, last in high:
+        print(f"     {name}: {code_name} (last attempt: {last})")
+    print()
+
+if medium:
+    print(f"  ⚠️ MEDIUM ({len(medium)} jobs) — Timeouts or missing endpoints:")
+    for name, code, code_name, last in medium:
+        print(f"     {name}: {code_name} (last attempt: {last})")
+    print()
+
+if low:
+    print(f"  ℹ️ LOW/KNOWN ({len(low)} jobs) — Expected failures or disabled services:")
+    for name, code, code_name, last in low:
+        print(f"     {name}: {code_name} (last attempt: {last})")
+    print()
+
+# Summary
+if critical:
+    print(f"🔴 P1 CRITICAL: {len(critical)} scheduler job(s) have auth/permission failures!")
+    print(f"   These jobs are running but CANNOT reach their targets.")
+    print(f"   Fix: Check IAM on target services (Phase 0.6 Check 5)")
+    print(f"         or re-authenticate scheduler service account.")
+    sys.exit(1)
+elif high:
+    print(f"🟠 HIGH: {len(high)} jobs returning INTERNAL/UNAVAILABLE errors.")
+    print(f"   Target services may be crashing or misconfigured.")
+    print(f"   Check Cloud Run logs for affected services.")
+    sys.exit(1)
+elif medium:
+    print(f"⚠️ WARNING: {len(medium)} jobs with timeouts or missing endpoints.")
+    print(f"   May need timeout increases or endpoint URL updates.")
+else:
+    print(f"✅ All {ok_count} scheduler jobs executing successfully")
+
+sys.exit(0)
+EOF
+```
+
+**Expected Result**: No CRITICAL or HIGH severity failures
+
+**Severity Guide**:
+
+| Status Code | Severity | Meaning | Action |
+|-------------|----------|---------|--------|
+| PERMISSION_DENIED (7) | 🔴 CRITICAL | IAM broken on target | Fix IAM (Phase 0.6 Check 5) |
+| UNAUTHENTICATED (16) | 🔴 CRITICAL | Scheduler auth broken | Re-auth service account |
+| INTERNAL (13) | 🟠 HIGH | Target returning 500 | Check service logs |
+| UNAVAILABLE (14) | 🟠 HIGH | Target not responding | Check service deployment |
+| DEADLINE_EXCEEDED (4) | ⚠️ MEDIUM | Timeout | Increase `attemptDeadline` |
+| NOT_FOUND (5) | ⚠️ MEDIUM | Endpoint URL wrong | Update scheduler job URL |
+| INVALID_ARGUMENT (3) | ℹ️ LOW | Bad request payload | Usually expected (disabled services) |
+
+**Known-OK patterns** (excluded from alerts):
+- `bdl-*` jobs: BDL intentionally disabled, INVALID_ARGUMENT expected
+- `mlb-*` jobs: MLB off-season (April-October), PERMISSION_DENIED expected in winter
+
+**Reference**: Session 212 (discovered 30/129 jobs failing silently)
+
 ### Phase 0.7: Vegas Line Coverage Check (Session 77)
 
 **Purpose**: Monitor Vegas line availability to detect coverage regressions early.
