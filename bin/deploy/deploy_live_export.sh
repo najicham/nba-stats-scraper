@@ -63,8 +63,9 @@ if [ "$DEPLOY_FUNCTION" = true ]; then
     mkdir -p "$FUNC_SRC/data_processors"
     mkdir -p "$FUNC_SRC/shared"
 
-    # Copy entire directories
+    # Copy entire directories (base_exporter needs shared.clients, shared.utils, shared.config)
     cp -r "$PROJECT_ROOT/data_processors/publishing" "$FUNC_SRC/data_processors/"
+    cp -r "$PROJECT_ROOT/shared/clients" "$FUNC_SRC/shared/"
     cp -r "$PROJECT_ROOT/shared/utils" "$FUNC_SRC/shared/"
     cp -r "$PROJECT_ROOT/shared/config" "$FUNC_SRC/shared/"
 
