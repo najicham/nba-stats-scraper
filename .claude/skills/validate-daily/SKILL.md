@@ -1143,17 +1143,20 @@ WHERE game_date = CURRENT_DATE()"
 2. Check if `player-composite-factors-upcoming` job ran at 5 AM ET
 3. Manually trigger composite factors processor:
    ```bash
+   # Note (Session 220): strict_mode: false is no longer needed for same-day requests.
+   # Phase 4 defensive checks now auto-skip when analysis_date >= today.
+   # Keeping skip_dependency_check: true as a safety override.
    curl -X POST "https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app/process-date" \
      -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
      -H "Content-Type: application/json" \
-     -d '{"processors": ["PlayerCompositeFactorsProcessor"], "analysis_date": "TODAY", "strict_mode": false, "skip_dependency_check": true}'
+     -d '{"processors": ["PlayerCompositeFactorsProcessor"], "analysis_date": "TODAY"}'
    ```
 4. Then refresh ML Feature Store:
    ```bash
    curl -X POST "https://nba-phase4-precompute-processors-f7p3g7f6ya-wl.a.run.app/process-date" \
      -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
      -H "Content-Type: application/json" \
-     -d '{"processors": ["MLFeatureStoreProcessor"], "analysis_date": "TODAY", "strict_mode": false, "skip_dependency_check": true}'
+     -d '{"processors": ["MLFeatureStoreProcessor"], "analysis_date": "TODAY"}'
    ```
 
 **Check matchup data status (legacy) + quality in predictions**:
@@ -1791,6 +1794,64 @@ ORDER BY 1 DESC"
 - **Best**: Switch to quantile regression
 
 **Reference**: Session 161 model eval methodology, Session 101 handoff
+
+### Phase 0.56: Champion Model Decay Detection (Session 220 - NEW)
+
+**IMPORTANT**: Detect when the champion model's edge 3+ hit rate drops below breakeven (52.4%). Session 220 confirmed champion decayed from 71.2% → 39.9% over 35+ days of staleness. This phase provides early warning before severe decay.
+
+**Why this matters**: A decaying champion loses money on every bet. The model was trained through Jan 8 and performance started declining mid-January. Without monitoring, decay was only noticed when manually investigated. This automated check ensures we catch decline early.
+
+**When to run**: ALWAYS (automated)
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Champion model decay detection (rolling windows)
+WITH rolling AS (
+  SELECT
+    game_date,
+    COUNT(*) as total_picks,
+    COUNTIF(prediction_correct) as wins,
+    ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) as hit_rate
+  FROM nba_predictions.prediction_accuracy
+  WHERE system_id = 'catboost_v9'
+    AND ABS(predicted_points - line_value) >= 3  -- edge 3+
+    AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 14 DAY)
+    AND actual_points IS NOT NULL
+  GROUP BY 1
+)
+SELECT
+  '7-day' as window,
+  SUM(CASE WHEN game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) THEN total_picks END) as picks,
+  ROUND(100.0 * SUM(CASE WHEN game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) THEN wins END) /
+    NULLIF(SUM(CASE WHEN game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY) THEN total_picks END), 0), 1) as hit_rate
+FROM rolling
+UNION ALL
+SELECT
+  '14-day',
+  SUM(total_picks),
+  ROUND(100.0 * SUM(wins) / NULLIF(SUM(total_picks), 0), 1)
+FROM rolling"
+```
+
+**Thresholds**:
+
+| Window | PASS | WARNING | CRITICAL |
+|--------|------|---------|----------|
+| 7-day edge 3+ HR | ≥55% | 52.4-55% | <52.4% (below breakeven) |
+| 14-day edge 3+ HR | ≥55% | 52.4-55% | <52.4% (below breakeven) |
+
+**If CRITICAL (below breakeven)**:
+1. Check training data staleness: `How many days since training end date?`
+   - Champion trained through 2026-01-08. >30 days stale = likely cause.
+2. Run `/compare-models` to check shadow challengers (Q43, Q45)
+3. If challenger outperforms AND has 50+ edge 3+ graded picks, consider promotion
+4. If no challenger ready, start fresh retrain: `PYTHONPATH=. python ml/experiments/quick_retrain.py --name "V9_MONTH_RETRAIN" --train-start 2025-11-02 --train-end YYYY-MM-DD`
+
+**Current status (Session 220)**: Champion at 39.9% edge 3+ HR (CRITICAL). Q43 at 48.3% (29/50 picks, not ready). Monthly retrain warranted.
+
+**Reference**: Session 220 model decay investigation, CLAUDE.md MODEL section
 
 ### Phase 0.6: Orchestrator Health (CRITICAL)
 
@@ -3103,6 +3164,45 @@ gcloud builds triggers delete TRIGGER_NAME --region=us-west2 --project=nba-props
 
 **Reference**: Session 213 (phase6-export trigger stuck deploying b5e5c5c for 2+ weeks)
 
+### Phase 0.695: Auto-Retry Queue Health (Session 220 - NEW)
+
+**IMPORTANT**: Detect runaway auto-retry loops in the failed processor queue. Session 220 discovered 322 retry attempts in 6 hours caused by the auto-retry processor sending wrong message format (Pub/Sub envelope to `/process` instead of JSON to `/process-date`). The fix (commit `6fa33e2c`) corrects the endpoint and marks 4xx errors as `failed_permanent` to break loops.
+
+**Why this matters**: Without this check, a misconfigured retry processor silently hammers downstream services hundreds of times, wasting compute and potentially causing rate limiting (RESOURCE_EXHAUSTED errors).
+
+**What to check**:
+
+```bash
+bq query --use_legacy_sql=false "
+-- Auto-retry queue health: detect runaway retries and stale entries
+SELECT
+  status,
+  COUNT(*) as entries,
+  MIN(inserted_at) as oldest_entry,
+  MAX(retry_count) as max_retries,
+  COUNTIF(retry_count > 10) as excessive_retries
+FROM nba_orchestration.failed_processor_queue
+WHERE inserted_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 48 HOUR)
+GROUP BY 1
+ORDER BY entries DESC"
+```
+
+**Thresholds**:
+
+| Metric | PASS | WARNING | CRITICAL |
+|--------|------|---------|----------|
+| `pending` entries older than 24h | 0 | 1-3 | 4+ (stuck loop) |
+| `max_retries` for any entry | <5 | 5-10 | >10 (infinite loop) |
+| Total `pending` entries | <5 | 5-15 | >15 (systemic issue) |
+
+**If CRITICAL**:
+1. Check what processor is failing: look at `processor_name` and `error_message` columns
+2. Check if the target endpoint is correct (`/process-date` for Phase 4, `/start` for Phase 5)
+3. Mark stuck entries as failed: `UPDATE nba_orchestration.failed_processor_queue SET status = 'failed_permanent' WHERE status = 'pending' AND inserted_at < TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 24 HOUR)`
+4. Investigate root cause in auto-retry processor logs
+
+**Reference**: Session 220 (discovered 322 retries/6h, fixed endpoint + added permanent failure handling)
+
 ### Phase 0.7: Vegas Line Coverage Check (Session 77)
 
 **Purpose**: Monitor Vegas line availability to detect coverage regressions early.
@@ -3643,18 +3743,18 @@ YESTERDAY=$(date -d "yesterday" +%Y-%m-%d)
 echo "=== Phase 6 Export Health ==="
 
 # Check picks files
-gsutil ls -lh gs://nba-props-platform-api/v1/picks/${YESTERDAY}.json 2>/dev/null && \
+gcloud storage ls -l gs://nba-props-platform-api/v1/picks/${YESTERDAY}.json 2>/dev/null && \
   echo "✅ Yesterday picks exist" || echo "🔴 Yesterday picks MISSING"
 
-gsutil ls -lh gs://nba-props-platform-api/v1/signals/${YESTERDAY}.json 2>/dev/null && \
+gcloud storage ls -l gs://nba-props-platform-api/v1/signals/${YESTERDAY}.json 2>/dev/null && \
   echo "✅ Yesterday signals exist" || echo "🔴 Yesterday signals MISSING"
 
 # Check performance file freshness
-PERF_TIME=$(gsutil stat gs://nba-props-platform-api/v1/subsets/performance.json 2>/dev/null | grep "Update time" | cut -d: -f2-)
+PERF_TIME=$(gcloud storage stat gs://nba-props-platform-api/v1/subsets/performance.json 2>/dev/null | grep "Update time" | cut -d: -f2-)
 echo "Performance file updated: ${PERF_TIME:-NOT FOUND}"
 
 # Check definitions file exists
-gsutil ls gs://nba-props-platform-api/v1/systems/subsets.json 2>/dev/null && \
+gcloud storage ls gs://nba-props-platform-api/v1/systems/subsets.json 2>/dev/null && \
   echo "✅ Subset definitions exist" || echo "🔴 Subset definitions MISSING"
 ```
 

@@ -1704,6 +1704,52 @@ If service already ran and failed, wait for next scheduled run or manually trigg
 - Infrastructure health checks: `docs/02-operations/infrastructure-health-checks.md`
 - GCP IAM roles: https://cloud.google.com/iam/docs/understanding-roles
 
+### 6.7 - Cloud Scheduler Jobs Failing (Sessions 219-220)
+
+**Symptom:** Cloud Scheduler shows INTERNAL (code 13), UNAVAILABLE (code 14), or other non-zero status codes.
+
+**Common Causes (in order of frequency):**
+
+| Root Cause | Fix | Sessions |
+|-----------|-----|----------|
+| Reporter function returns 500 for data findings | Change to always return 200 | 219 |
+| Missing `shared/` module in CF deploy | Use `rsync -aL shared/ deploy_dir/shared/` | 219 |
+| Gen2 entry point mismatch | Add `main = func` alias | 219 |
+| Missing IAM (run.invoker) on target | Grant SA roles/run.invoker | 216B |
+| CLI tools in CF runtime | Use Python client libraries | 218B |
+| Stale deployment (code fixed but not deployed) | Redeploy function | 219 |
+
+**Diagnosis:**
+```bash
+# Quick count of failing jobs
+gcloud scheduler jobs list --project=nba-props-platform --location=us-west2 --format=json > /tmp/sched.json && python3 -c "
+import json
+with open('/tmp/sched.json') as f: jobs = json.load(f)
+failing = [(j['name'].split('/')[-1], j.get('status',{}).get('code',0))
+           for j in jobs if j.get('state')=='ENABLED' and j.get('status',{}).get('code',0) != 0]
+print(f'Failing: {len(failing)}')
+for n,c in sorted(failing): print(f'  {n}: code {c}')
+"
+```
+
+**References:** Session 219 handoff (all 15 jobs fixed), validate-daily Phase 0.67/0.675
+
+### 6.8 - Auto-Retry Queue Runaway (Session 220)
+
+**Symptom:** High CPU/request count on Phase 4 service, or RESOURCE_EXHAUSTED errors from Cloud Scheduler.
+
+**Cause:** Auto-retry processor sends wrong message format, target returns 4xx, entry stays `pending` → retried infinitely.
+
+**Diagnosis:**
+```sql
+SELECT status, COUNT(*), MAX(retry_count), MIN(inserted_at)
+FROM nba_orchestration.failed_processor_queue
+WHERE inserted_at >= TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 48 HOUR)
+GROUP BY 1
+```
+
+**Fix:** Mark stuck entries as `failed_permanent`. If retry processor itself is misconfigured, fix endpoint in `auto_retry_processor/main.py`.
+
 ---
 
 ## Section 8: Quick Reference - All Health Checks

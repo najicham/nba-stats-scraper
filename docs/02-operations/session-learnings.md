@@ -239,6 +239,80 @@ gcloud logging read \
 
 ---
 
+### Cloud Function CLI Tool Unavailability (Session 218B)
+
+**Symptom**: Cloud Function fails with `gsutil: command not found` or `gcloud: command not found`
+
+**Cause**: Cloud Functions Python runtime does NOT include CLI tools (gcloud, gsutil, bq). Shell scripts calling these tools will always fail.
+
+**Real Example**: `bigquery-daily-backup` used a bash script with `bq extract` and `gsutil cp` commands. Worked locally but failed in CF runtime. Session 217 fixed `gsutil` → `gcloud storage` but that also doesn't exist in CF.
+
+**Fix**: Rewrite to use Python client libraries (`google-cloud-bigquery`, `google-cloud-storage`) instead of shell commands. Session 218B rewrote the entire backup function in Python.
+
+**Rule**: NEVER use subprocess/shell calls to gcloud/gsutil/bq in Cloud Functions. Always use Python client libraries.
+
+---
+
+### Cloud Function Reporter Pattern (Sessions 219-220)
+
+**Symptom**: Cloud Scheduler shows INTERNAL (code 13) errors for monitoring/alerting jobs
+
+**Cause**: Reporter Cloud Functions returned HTTP 500 when they detected data quality issues. Cloud Scheduler interprets non-200 as "job failed."
+
+**Real Example**: `daily-health-check` returned 500 when finding CRITICAL pipeline issues. `validate-freshness` returned 400 for stale data. Scheduler logged these as failures.
+
+**Fix**: Reporter/monitoring functions should ALWAYS return 200. Put findings in the response body, not the HTTP status code. Only return 500 for actual infrastructure failures (can't connect to BigQuery, etc.).
+
+**Applied to**: daily-health-check, validation-runner, reconcile, validate-freshness, pipeline-health-summary, live-freshness-monitor
+
+---
+
+### Gen2 Cloud Function Entry Point Immutability (Session 219)
+
+**Symptom**: Re-deploying a Gen2 Cloud Function with `--entry-point=new_func` still uses the old entry point
+
+**Cause**: Gen2 Cloud Functions' entry point is set at creation time and ignored on re-deploys.
+
+**Workaround**: Add `main = actual_entry_point` alias at end of main.py. Example:
+```python
+# Gen2 functions may have "main" as immutable entry point
+main = backup_bigquery_tables
+```
+
+**Alternative**: Delete and recreate the function (loses invocation history).
+
+---
+
+### Docker Layer Cache Staleness (Session 220)
+
+**Symptom**: Service deployed from latest commit but runs old code. `check-deployment-drift.sh` shows correct SHA.
+
+**Cause**: Cloud Build Docker layer cache serves stale code layers when only docs/config changed (code layer hash unchanged because ADD/COPY of unchanged files).
+
+**Fix**: Added `--no-cache` to Docker build steps in `cloudbuild.yaml` and `bin/hot-deploy.sh`. Trade-off: slower builds (~1-2 min) but guaranteed fresh code.
+
+---
+
+### Phase 4 Same-Day Defensive Check Bypass (Session 220)
+
+**Symptom**: Phase 4 processors fail with "0% game summary coverage" for today's games
+
+**Cause**: Defensive checks expected `player_game_summary` data for today, but games haven't been played yet.
+
+**Fix**: `defensive_check_mixin.py` now auto-skips dependency checks when `analysis_date >= today`. `strict_mode: false` override is no longer needed for same-day requests.
+
+---
+
+### Auto-Retry Infinite Loop (Session 220)
+
+**Symptom**: 322 retry attempts in 6 hours for the same failed processor
+
+**Cause**: (1) Auto-retry processor sent requests to `/process` (expects Pub/Sub envelope) instead of `/process-date` (accepts JSON). (2) 4xx errors left entries as `pending` forever.
+
+**Fix**: (1) Changed Phase 4 retry endpoint to `/process-date`. (2) 4xx responses now mark entries as `failed_permanent`.
+
+---
+
 ## Deployment Issues
 
 ### Deployment Drift (Session 58)

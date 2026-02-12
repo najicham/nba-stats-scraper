@@ -39,7 +39,7 @@ SELECT
   pa.recommendation
 FROM `nba-props-platform.nba_predictions.prediction_accuracy` pa
 WHERE pa.player_lookup = @player_lookup
-  AND pa.system_id = 'catboost_v8'
+  AND pa.system_id = 'catboost_v9'
   AND pa.game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
 ORDER BY pa.game_date DESC
 LIMIT 20
@@ -59,7 +59,7 @@ SELECT
   COUNTIF(confidence_score >= 0.90) as high_conf_total
 FROM `nba-props-platform.nba_predictions.prediction_accuracy`
 WHERE player_lookup = @player_lookup
-  AND system_id = 'catboost_v8'
+  AND system_id = 'catboost_v9'
   AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
   AND prediction_correct IS NOT NULL
 GROUP BY 1
@@ -81,7 +81,7 @@ FROM `nba-props-platform.nba_predictions.player_prop_predictions`
 WHERE player_lookup = @player_lookup
   AND game_date = CURRENT_DATE()
   AND is_active = TRUE
-  AND system_id = 'catboost_v8'
+  AND system_id = 'catboost_v9'
 ```
 
 ## Rolling Performance Query
@@ -95,7 +95,7 @@ WITH rolling_stats AS (
     ROW_NUMBER() OVER (ORDER BY game_date DESC) as game_num
   FROM `nba-props-platform.nba_predictions.prediction_accuracy`
   WHERE player_lookup = @player_lookup
-    AND system_id = 'catboost_v8'
+    AND system_id = 'catboost_v9'
     AND prediction_correct IS NOT NULL
   ORDER BY game_date DESC
 )
@@ -152,4 +152,4 @@ Recent Games:
 
 - `player`: Player lookup name (e.g., "lebron-james", "jayson-tatum")
 - `days`: Lookback period (default: 30)
-- `system_id`: Model version (default: catboost_v8)
+- `system_id`: Model version (default: catboost_v9)

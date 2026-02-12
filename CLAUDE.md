@@ -119,13 +119,15 @@ nba-stats-scraper/
 | System ID | `catboost_v9` |
 | Production Model | `catboost_v9_33features_20260201_011018` |
 | Training | 2025-11-02 to 2026-01-08 |
-| **Medium Quality (3+ edge)** | **71.2% hit rate** |
-| **High Quality (5+ edge)** | **79.0% hit rate, +50.9% ROI** |
+| **Medium Quality (3+ edge)** | **71.2% hit rate** (at launch; see decay note) |
+| **High Quality (5+ edge)** | **79.0% hit rate, +50.9% ROI** (at launch) |
 | MAE | 4.82 |
 | SHA256 (prefix) | `5b3a187b1b6d` |
-| Status | PRODUCTION (since 2026-02-08) |
+| Status | PRODUCTION (since 2026-02-08) — **DECAYING** |
 
 **CRITICAL:** Use edge >= 3 filter. 73% of predictions have edge < 3 and lose money.
+
+**MODEL DECAY (Session 220):** Champion has decayed from 71.2% → 39.9% edge 3+ HR (35+ days stale). Well below 52.4% breakeven. Q43 quantile challenger at 48.3% (29/50 picks, not ready for promotion). Monthly retrain warranted. Monitor with `validate-daily` Phase 0.56.
 
 ### Model Governance
 
@@ -386,12 +388,18 @@ ORDER BY 1 DESC;
 | BDL scraper not running | 0 BDL records | EXPECTED: BDL intentionally disabled. 60-70% minutes coverage is normal. |
 | Orchestrator not triggering | Phase 2 complete, `_triggered=False` | NOT a bug. Phase 3 uses direct Pub/Sub, not orchestrator. |
 | Cloud Build trigger stale | Trigger deploys old commit SHA | Delete and recreate trigger (`gcloud builds triggers delete/create`). Session 213 fix. |
-| Scheduler jobs failing | Jobs return non-SUCCESS status | Run `validate-daily` Phase 0.67. Session 213: deleted 4 BDL, paused 9 MLB, fixed 2 validation auth. |
+| Scheduler jobs failing | Jobs return non-SUCCESS status | Run `validate-daily` Phase 0.67/0.675. Session 219: fixed all 15 failing → 0. Common: reporter 500→200, missing shared/, Gen2 entry point. |
 | game_id format mismatch | "Missing: N games" but 100% coverage | Schedule uses numeric game_ids, gamebook/analytics use `YYYYMMDD_AWAY_HOME`. Match by team pairs. Session 217. |
 | Cloud Build Docker cache | Old code deployed despite new commit | Use `./bin/hot-deploy.sh SERVICE` to force fresh build without Docker layer cache. Session 217. |
 | UPCG race condition | Games with 0 predictions/lines | UPCG props readiness check now BLOCKING (raises 500, Pub/Sub retries). Validate with Phase 0.715. Session 218. |
 | Out players with predictions | Injured-out players shown in API | Enrichment trigger (18:40 UTC) now rechecks injuries and deactivates. Validate with Phase 0.72. Session 218. |
 | Tonight export incomplete | Some games missing from export | Check `is_active = TRUE` filter (Session 218), then UPCG prop coverage. Validate with Phase 0.975. |
+| CF runtime no CLI tools | `gcloud: command not found` in Cloud Function | Use Python client libraries (`google-cloud-bigquery`, `google-cloud-storage`), NOT shell commands. Session 218B. |
+| Scheduler INTERNAL errors | Reporter CFs return 500 for data findings | Reporter functions MUST return 200. Put findings in response body. Session 219. |
+| Gen2 entry point stuck | Re-deployed CF still uses old entry point | Gen2 entry point is immutable. Add `main = func` alias at end of main.py. Session 219. |
+| Phase 4 same-day failure | 0% coverage for today's games | FIXED: Defensive checks auto-skip for `analysis_date >= today`. No longer need `strict_mode: false`. Session 220. |
+| Auto-retry infinite loop | 100s of retries for same processor | Check `failed_processor_queue`. 4xx now marks `failed_permanent`. Validate with Phase 0.695. Session 220. |
+| Champion model decay | Hit rate below breakeven (52.4%) | Monitor with validate-daily Phase 0.56. Champion at 39.9% (35+ days stale). Consider retrain. Session 220. |
 
 **Full troubleshooting:** See `docs/02-operations/session-learnings.md`
 
@@ -413,6 +421,13 @@ cd <service-dir>
 docker run --rm -v $(pwd):/app -w /app python:3.11-slim bash -c \
   "pip install --quiet --upgrade pip && pip install --quiet -r requirements.txt && pip freeze > requirements-lock.txt"
 ```
+
+### Cloud Function Deploy Patterns (Session 219)
+- **Use `rsync -aL`** not `cp -r` when copying shared/ (cp misses symlinked files)
+- **Gen2 entry point is immutable** — add `main = actual_func` alias at end of main.py
+- **Functions Framework doesn't route paths** — add `if request.path == '/route':` in entry point
+- **Reporter functions MUST return 200** — scheduler treats non-200 as job failure
+- **No CLI tools in CF runtime** — use Python client libraries, not gcloud/gsutil/bq
 
 ### Health Checks
 - `/health/deep` endpoint validates critical imports and connectivity

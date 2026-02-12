@@ -874,7 +874,7 @@ Step 1: EXPERIMENT (this skill)
   - Script prints ready-to-paste MONTHLY_MODELS config snippet
 
 Step 2: SHADOW DEPLOY (requires user approval)
-  - Upload to GCS: gsutil cp model.cbm gs://nba-props-platform-models/catboost/v9/monthly/
+  - Upload to GCS: gcloud storage cp model.cbm gs://nba-props-platform-models/catboost/v9/monthly/
   - Add config snippet to catboost_monthly.py MONTHLY_MODELS dict
   - Push to main (auto-deploys worker)
   - Model runs in shadow mode — no impact on user-facing picks or alerts

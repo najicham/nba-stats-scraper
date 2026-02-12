@@ -44,13 +44,13 @@ Check what raw data exists in GCS (scraped but maybe not processed):
 
 ```bash
 # Game lines
-gsutil ls "gs://nba-scraped-data/odds-api/game-lines/" | grep "2025-"
+gcloud storage ls "gs://nba-scraped-data/odds-api/game-lines/" | grep "2025-"
 
 # Player props
-gsutil ls "gs://nba-scraped-data/odds-api/player-props/" | grep "2025-"
+gcloud storage ls "gs://nba-scraped-data/odds-api/player-props/" | grep "2025-"
 
 # BettingPros
-gsutil ls "gs://nba-scraped-data/bettingpros/" | grep "2025-"
+gcloud storage ls "gs://nba-scraped-data/bettingpros/" | grep "2025-"
 ```
 
 This distinguishes between:
