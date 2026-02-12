@@ -1,86 +1,131 @@
 # Next Session Start Prompt — 2026-02-13
 
-## What Happened (Sessions 215–220 on Feb 12)
+## What Happened (Sessions 215–223 on Feb 12)
 
-Eight sessions of infrastructure recovery, scheduler cleanup, and pipeline fixes:
+Ten sessions of infrastructure recovery, model analysis, and experiments:
 
-- **Session 215**: Recovered Feb 11 pipeline (14 games stuck due to SAS@GSW status bug)
-- **Session 216**: Fixed enrichment-trigger + daily-health-check Cloud Functions
-- **Session 216B**: Found and fixed **23 Cloud Run services missing IAM**
-- **Session 217**: Fixed game_id format mismatch in boxscore completeness check
-- **Session 218/218B**: Rewrote bigquery-daily-backup in Python (CLI tools not in CF runtime), migrated live-export Gen1→Gen2, fixed scheduler 500→200 responses
-- **Session 219/219B**: **Fixed ALL 15 failing scheduler jobs → 0 failures.** Key patterns: reporter 400/500 returns, missing shared/, Gen2 entry point immutability, Functions Framework path routing.
-- **Session 220**: Fixed Phase 4 same-day bypass (defensive checks blocked unplayed games), auto-retry endpoint + infinite loop, Docker cache busting. Recovered Feb 12 to 337 predictions. Champion model confirmed in severe decay (39.9% edge 3+ HR).
+- **Sessions 215–219B**: Infrastructure recovery — fixed 15→0 scheduler failures, 23 IAM fixes, deployment drift 0/16
+- **Session 220**: Phase 4 fixes, recovered Feb 12 to 337 predictions, champion decay confirmed (39.9% edge 3+ HR)
+- **Session 221**: Deploy sweep (4 deploys), all systems green
+- **Session 222**: Deep model decay analysis — 96 prior experiments reviewed, 5 failure modes identified, 5 experiments proposed. See `docs/08-projects/current/model-improvement-analysis/01-SESSION-222-MODEL-ANALYSIS.md`
+- **Session 222B (lost context)**: Ran **16 experiments** testing different params. Key finding: **Q43 + 14d recency = 55.4% HR on 92 picks** (best result). OVER specialist models catastrophic (18-45% HR).
+- **Session 223**: Recovered lost context, documented all 16 experiment results in handoff
 
 ## Morning Checklist
 
-### 1. Verify scheduler jobs still healthy (was 15 failing, fixed to 0)
-
+### 1. Check scheduler health
 ```bash
 gcloud scheduler jobs list --project=nba-props-platform --location=us-west2 --format=json > /tmp/sched.json && python3 << 'EOF'
 import json
 with open("/tmp/sched.json") as f:
     jobs = json.load(f)
-failing = []
-for j in jobs:
-    if j.get("state") != "ENABLED": continue
-    c = j.get("status",{}).get("code",0)
-    if c != 0:
-        failing.append((j.get("name","").split("/")[-1], c))
-print(f"Failing: {len(failing)} (was 0 on Feb 12 after Session 219B)")
-for name, code in sorted(failing):
-    print(f"  {name}: code {code}")
-if not failing:
-    print("  ALL PASSING!")
+failing = [(j.get("name","").split("/")[-1], j.get("status",{}).get("code",0)) for j in jobs if j.get("state") == "ENABLED" and j.get("status",{}).get("code",0) != 0]
+print(f"Failing: {len(failing)} (was 0 on Feb 12)")
+for name, code in sorted(failing): print(f"  {name}: code {code}")
+if not failing: print("  ALL PASSING!")
 EOF
 ```
 
-### 2. Verify Phase 4 populated all games
-
-```bash
-bq query --nouse_legacy_sql "
-SELECT game_date, COUNT(DISTINCT game_id) as games, COUNT(DISTINCT player_lookup) as players
-FROM nba_predictions.ml_feature_store_v2
-WHERE game_date >= CURRENT_DATE() - 2
-GROUP BY 1 ORDER BY 1 DESC"
-```
-
-### 3. Check predictions and grading
-
+### 2. Check predictions and grading
 ```bash
 bq query --nouse_legacy_sql "SELECT game_date, COUNT(*) as predictions FROM nba_predictions.player_prop_predictions WHERE game_date >= CURRENT_DATE() - 2 GROUP BY 1 ORDER BY 1 DESC"
 bq query --nouse_legacy_sql "SELECT game_date, COUNT(*) as graded FROM nba_predictions.prediction_accuracy WHERE game_date >= CURRENT_DATE() - 3 GROUP BY 1 ORDER BY 1 DESC"
 ```
 
-### 4. Run daily validation
-
+### 3. Run daily validation
 ```bash
 /validate-daily
 ```
 
-## Pending Tasks (Priority Order)
+## Primary Task — Model Experiments
 
-1. **Add scheduler health phase to `/validate-daily` skill** — automate what we did manually
-2. **Create `bin/deploy-function.sh`** — standardize Cloud Function deploys (rsync shared/, handle entry points)
-3. **Add Cloud Build triggers** for: transition-monitor, pipeline-health-summary, nba-grading-alerts, live-freshness-monitor
-4. **`grading-readiness-monitor`** Cloud Function in FAILED state — needs investigation
-5. **`br-rosters-batch-daily`** year param 2025 → 2026
-6. **Q43 shadow model monitoring** (48.3% edge 3+ HR at n=29, needs 50+ for promotion decision)
-7. **Monthly retrain consideration** (champion 35+ days stale)
+The champion is at 39.9% edge 3+ HR (35+ days stale, far below 52.4% breakeven). **No model passes governance gates** (60% edge 3+ HR). February is structurally hard (trade deadline, scoring shift).
 
-## Deploy Lessons Learned (Session 219)
+### Best Results from 16 Experiments (Session 222B)
 
-- **Use `rsync -aL`** not `cp -rL` when copying shared/ (cp misses files silently)
-- **Gen2 entry point is immutable** — add `main = actual_func` alias at end of main.py
-- **Functions Framework doesn't route paths** — add `if request.path == '/route':` in entry point
-- **Reporter functions must return 200** — scheduler treats non-200 as job failure
+| Rank | Experiment | Edge 3+ HR | N | Key Finding |
+|------|-----------|-----------|---|-------------|
+| 1 | **Perf Boost** (perf 2x, vegas 0.5x) | **55.6%** | 45 | UNDER-only 58.8% (n=34) |
+| 2 | **Q43 + 14d recency** | **55.4%** | 92 | Best volume+accuracy. Starters UNDER 67% |
+| 3 | **Q40** (aggressive quantile) | **53.7%** | 136 | Most volume. Starters UNDER 60.5% |
+| 4 | **Q42** | **53.6%** | 84 | Stars UNDER 67% (n=12) |
+| 5 | **Vegas30** (vegas dampened 30%) | **52.8%** | 36 | Stars 80%, High lines 73% |
 
-## Session Handoffs
+### Experiments to Run Next
 
-- `docs/09-handoff/2026-02-12-SESSION-220-HANDOFF.md` — Pipeline recovery, Phase 4 fixes, model decay
-- `docs/09-handoff/2026-02-12-SESSION-219-HANDOFF.md` — Scheduler job triage (15→0)
-- `docs/09-handoff/2026-02-12-SESSION-218B-HANDOFF.md` — Backup rewrite, live-export Gen2
-- `docs/09-handoff/2026-02-12-SESSION-218-HANDOFF.md` — Morning checklist + scheduler audit
-- `docs/09-handoff/2026-02-12-SESSION-217-HANDOFF.md` — game_id format mismatch fix
-- `docs/09-handoff/2026-02-12-SESSION-216B-HANDOFF.md` — IAM sweep + Cloud Function deploys
-- `docs/09-handoff/2026-02-12-SESSION-215-HANDOFF.md` — Pipeline recovery
+**1. Multi-season training (HIGHEST PRIORITY — untested)**
+```bash
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "V9_MULTISZN_Q43" \
+    --quantile-alpha 0.43 \
+    --train-start 2023-10-01 \
+    --train-end 2026-02-10 \
+    --recency-weight 120 \
+    --walkforward --force
+```
+We use only 13% of available data (8.4K of 63K rows). More data may fix generalization.
+
+**2. Q43 + 14d recency with latest data**
+```bash
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "V9_Q43_R14_LATEST" \
+    --quantile-alpha 0.43 \
+    --recency-weight 14 \
+    --train-start 2025-11-02 \
+    --train-end 2026-02-11 \
+    --walkforward --force
+```
+
+**3. Multi-season + Performance boost combo**
+```bash
+PYTHONPATH=. python ml/experiments/quick_retrain.py \
+    --name "V9_MULTISZN_PERF" \
+    --quantile-alpha 0.43 \
+    --train-start 2023-10-01 \
+    --train-end 2026-02-10 \
+    --recency-weight 120 \
+    --category-weight "recent_performance=2.0,matchup=1.5,vegas=0.5" \
+    --walkforward --force
+```
+
+**4. Simulate direction filter (SQL-only, no training)**
+```sql
+-- Test: suppress Role Player UNDER picks from champion
+SELECT
+  CASE WHEN predicted_direction = 'UNDER' AND player_tier IN ('Role', 'Bench')
+       THEN 'FILTERED_OUT' ELSE 'KEPT' END as status,
+  COUNT(*) as picks, COUNTIF(is_correct) as correct,
+  ROUND(100.0 * COUNTIF(is_correct) / COUNT(*), 1) as hr
+FROM nba_predictions.prediction_accuracy
+WHERE system_id = 'catboost_v9' AND game_date >= '2026-02-01' AND edge >= 3
+GROUP BY 1;
+```
+
+**5. Simulate stale+fresh ensemble (SQL-only)**
+```sql
+-- Test: champion OVER + Q43 UNDER as combined strategy
+-- Check if agreement between models improves confidence
+```
+
+### Untested Ideas from Session 222 Analysis
+- **`star_teammate_out` feature** — When star sits, role players get +5-10 PPG usage boost. Model doesn't know this. HIGH impact but HIGH effort.
+- **V10 feature set** — Features 33-38 exist in BigQuery but aren't used: `dnp_rate`, `pts_slope_10g`, `pts_vs_season_zscore`
+- **Shorter training window** (60 days vs 90 days) — The V9_FEB_RETRAIN_Q43 used Dec 7-Feb 4 (60 days) and got 51.4% HR. Baseline experiments used Nov 2-Jan 31 (90 days). Compare.
+
+### Dead Ends (Don't Revisit)
+- OVER specialist models (Q55=45%, Q57=18%) — market already adjusts lines
+- Baseline/tuned retrains — too few edge picks (4-5 out of 1000+)
+- Q43 + Vegas dampening combo — dilutes signal
+- Residual modeling, two-stage pipeline, grow policy, CHAOS+quantile
+
+## Also Pending (Lower Priority)
+
+- `br-rosters-batch-daily` — teamAbbr: "all" not supported, needs scraper enhancement
+- Q43 shadow model at n=31 edge 3+ graded (need 50+ for promotion, ~6 more days)
+- `registry-health-check` scheduler job paused (stale gcr.io image)
+
+## Key Reference Docs
+
+- `docs/08-projects/current/model-improvement-analysis/01-SESSION-222-MODEL-ANALYSIS.md` — Deep decay analysis + feature gaps
+- `docs/09-handoff/2026-02-12-SESSION-223-HANDOFF.md` — All 16 experiment results
+- `docs/09-handoff/2026-02-12-SESSION-221-HANDOFF.md` — Infrastructure status (all green)
