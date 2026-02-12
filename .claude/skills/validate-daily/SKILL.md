@@ -2131,9 +2131,103 @@ EOF
 
 **Reference**: Session 205 handoff
 
-**If ALL Phase 0.6 checks pass**: Continue to Phase 0.7
+**If ALL Phase 0.6 checks pass**: Continue to Phase 0.65
 
 **If ANY Phase 0.6 check fails**: STOP, report issue with P1 CRITICAL severity, do NOT continue to Phase 1
+
+### Phase 0.65: Duplicate Pub/Sub Subscription Detection (Session 211 - NEW)
+
+**IMPORTANT**: Check for orphan Eventarc subscriptions that cause duplicate processing.
+
+**Why this matters**: Sessions 210-211 discovered orphan Pub/Sub subscriptions from old Cloud Function deployments causing duplicate phase triggers. In Session 210, duplicate Phase 5→6 subscriptions caused GCS 409 race conditions and partial export failures. Session 211 found 4 more orphans across Phase 3→4, Phase 4→5, and grading topics. `gcloud functions deploy` with Eventarc does NOT clean up old triggers when a function is renamed.
+
+**What to check**:
+
+```bash
+# Find topics with multiple push subscriptions (potential duplicates)
+python3 << 'EOF'
+import subprocess
+import json
+
+result = subprocess.run(
+    ['gcloud', 'pubsub', 'subscriptions', 'list',
+     '--project=nba-props-platform', '--format=json'],
+    capture_output=True, text=True, timeout=15)
+
+subs = json.loads(result.stdout)
+
+# Group push subscriptions by topic (exclude DLQ monitors and pull subs)
+topic_push_subs = {}
+for sub in subs:
+    topic = sub.get('topic', '').split('/')[-1]
+    endpoint = sub.get('pushConfig', {}).get('pushEndpoint', '')
+    name = sub.get('name', '').split('/')[-1]
+
+    # Skip pull subscriptions (no push endpoint) and DLQ topics
+    if not endpoint or '-dlq' in topic:
+        continue
+
+    if topic not in topic_push_subs:
+        topic_push_subs[topic] = []
+    topic_push_subs[topic].append({
+        'name': name,
+        'endpoint': endpoint.split('?')[0]  # Strip query params
+    })
+
+# Flag topics with >1 push subscription (excluding known legitimate multi-sub topics)
+# nba-phase3-analytics-complete legitimately has 2: orchestrator + grading trigger
+KNOWN_MULTI = {
+    'nba-phase3-analytics-complete': 2,  # orchestrator + phase3-to-grading
+    'nba-phase2-raw-complete': 2,  # phase3-analytics + realtime-completeness-checker
+}
+
+issues = []
+for topic, push_subs in sorted(topic_push_subs.items()):
+    expected = KNOWN_MULTI.get(topic, 1)
+    if len(push_subs) > expected:
+        issues.append((topic, push_subs, expected))
+
+if issues:
+    print(f"🔴 DUPLICATE SUBSCRIPTIONS DETECTED on {len(issues)} topic(s)!\n")
+    for topic, push_subs, expected in issues:
+        print(f"  Topic: {topic} ({len(push_subs)} push subs, expected {expected})")
+        for s in push_subs:
+            print(f"    - {s['name']}")
+            print(f"      → {s['endpoint']}")
+        print()
+    print("Action: Identify orphan Eventarc triggers and delete them:")
+    print("  gcloud eventarc triggers list --location=us-west2 --project=nba-props-platform")
+    print("  gcloud eventarc triggers delete TRIGGER_NAME --location=LOCATION --project=nba-props-platform")
+else:
+    print("✅ No duplicate push subscriptions detected")
+    print(f"   Checked {len(topic_push_subs)} topics, all have expected subscription counts")
+EOF
+```
+
+**Expected Result**: `✅ No duplicate push subscriptions detected`
+
+**If duplicates found**:
+
+| Duplicate Count | Severity | Impact |
+|-----------------|----------|--------|
+| 2 subs (expected 1) | P1 HIGH | Double processing, race conditions |
+| 3+ subs | P0 CRITICAL | Triple+ processing, likely causing failures |
+
+**Root cause**: `gcloud functions deploy` with Eventarc triggers creates new triggers but does NOT remove old ones when:
+- A function is renamed (e.g., `phase4-to-phase5` → `phase4-to-phase5-orchestrator`)
+- A function is redeployed to a different region
+- A function is deleted but its Eventarc trigger is not
+
+**Fix**: Delete orphan Eventarc triggers (this auto-removes their managed Pub/Sub subscriptions):
+```bash
+gcloud eventarc triggers delete TRIGGER_NAME --location=LOCATION --project=nba-props-platform
+```
+
+**Known legitimate multi-subscription topics**:
+- `nba-phase3-analytics-complete`: 2 subs (phase3-to-phase4-orchestrator + phase3-to-grading)
+- `nba-phase2-raw-complete`: 2 subs (nba-phase3-analytics-sub + realtime-completeness-checker)
+
+**Reference**: Session 210 (Phase 5→6 duplicate fix), Session 211 (full audit, 4 orphans cleaned)
 
 ### Phase 0.7: Vegas Line Coverage Check (Session 77)
 
@@ -4444,6 +4538,7 @@ Key fields:
 | **Phase 4 Daily Cache** | ≥50 records | 1-49 records | 0 records |
 | **Phase Trigger Status** | _triggered=True | N/A | _triggered=False when complete |
 | **Phase Execution Logs** | All phases logged | 1-2 missing | No logs found |
+| **Duplicate Subscriptions** | 0 extra subs | N/A | Any topic with extra push subs |
 | **Weekly Hit Rate** | ≥65% | 55-64% | <55% |
 | **Model Bias** | ±2 pts | ±3-5 pts | >±5 pts |
 | **Vegas Edge** | >0.5 pts | 0-0.5 pts | <0 pts |
@@ -4509,6 +4604,7 @@ Provide a clear, concise summary structured like this:
 | Phase 4 (Precompute) | ✅/⚠️/❌ | [feature count] |
 | Phase 5 (Predictions) | ✅/⚠️/❌ | [prediction count] |
 | Session 97 Quality Gate | ✅/⚠️/❌ | Working/Blocked/Bypassed |
+| Duplicate Subscriptions | ✅/⚠️/❌ | [X] topics clean / duplicates found |
 | Spot Checks | ✅/⚠️/❌ | [accuracy %] |
 | Model Drift | ✅/⚠️/❌ | [4-week trend, tier breakdown] |
 | BDB Coverage | ✅/⚠️/❌ | [X]% (pending: [Y] games) |
