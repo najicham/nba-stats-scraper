@@ -1703,6 +1703,19 @@ class MLFeatureStoreProcessor(
         # ============================================================
         record.update(quality_fields)
 
+        # ============================================================
+        # INDIVIDUAL FEATURE VALUE COLUMNS (Session 235 - Phase 1)
+        # Dual-write: array stays for backward compat, individual columns
+        # enable proper NULLs (no fake defaults) and per-model gating.
+        # Rule: source == 'default' → NULL, otherwise → actual value.
+        # ============================================================
+        for i, val in enumerate(features):
+            source = feature_sources.get(i, 'unknown')
+            if source == 'default':
+                record[f'feature_{i}_value'] = None
+            else:
+                record[f'feature_{i}_value'] = val
+
         return record
     
     def _extract_all_features(self, phase4_data: Dict, phase3_data: Dict,
