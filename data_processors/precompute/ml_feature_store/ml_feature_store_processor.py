@@ -1707,11 +1707,11 @@ class MLFeatureStoreProcessor(
         # INDIVIDUAL FEATURE VALUE COLUMNS (Session 235 - Phase 1)
         # Dual-write: array stays for backward compat, individual columns
         # enable proper NULLs (no fake defaults) and per-model gating.
-        # Rule: source == 'default' → NULL, otherwise → actual value.
+        # Rule: source in (default, missing, fallback) → NULL, otherwise → actual value.
         # ============================================================
         for i, val in enumerate(features):
             source = feature_sources.get(i, 'unknown')
-            if source == 'default':
+            if source in ('default', 'missing', 'fallback'):
                 record[f'feature_{i}_value'] = None
             else:
                 record[f'feature_{i}_value'] = val
@@ -1910,24 +1910,24 @@ class MLFeatureStoreProcessor(
 
         # Feature 39: days_rest (from UPCG)
         days_rest_val = self.feature_extractor.get_days_rest_float(player_lookup) if player_lookup else None
-        features.append(float(days_rest_val) if days_rest_val is not None else 1.0)
-        feature_sources[39] = 'phase3' if days_rest_val is not None else 'default'
+        features.append(float(days_rest_val) if days_rest_val is not None else float('nan'))
+        feature_sources[39] = 'phase3' if days_rest_val is not None else 'missing'
 
         # Feature 40: minutes_load_last_7d (from UPCG)
         mins_7d = self.feature_extractor.get_minutes_load_last_7d(player_lookup) if player_lookup else None
-        features.append(float(mins_7d) if mins_7d is not None else 80.0)
-        feature_sources[40] = 'phase3' if mins_7d is not None else 'default'
+        features.append(float(mins_7d) if mins_7d is not None else float('nan'))
+        feature_sources[40] = 'phase3' if mins_7d is not None else 'missing'
 
-        # Feature 41: spread_magnitude — dead feature, always default 5.0
+        # Feature 41: spread_magnitude (from UPCG)
         game_spread = self.feature_extractor.get_game_spread(player_lookup) if player_lookup else None
         if game_spread is not None:
             features.append(abs(float(game_spread)))
             feature_sources[41] = 'phase3'
         else:
-            features.append(5.0)
-            feature_sources[41] = 'default'
+            features.append(float('nan'))
+            feature_sources[41] = 'missing'
 
-        # Feature 42: implied_team_total — dead feature, always default 112.0
+        # Feature 42: implied_team_total
         # (game_total ± spread) / 2 based on home/away
         if game_total is not None and game_spread is not None:
             gt = float(game_total)
@@ -1940,60 +1940,60 @@ class MLFeatureStoreProcessor(
             features.append(implied_tt)
             feature_sources[42] = 'phase3'
         else:
-            features.append(112.0)
-            feature_sources[42] = 'default'
+            features.append(float('nan'))
+            feature_sources[42] = 'missing'
 
         # Features 43-46, 48-49: from rolling stats query
         rolling_stats = self.feature_extractor.get_player_rolling_stats(player_lookup) if player_lookup else {}
 
         # Feature 43: points_avg_last_3
         pts_l3 = rolling_stats.get('points_avg_last_3')
-        features.append(float(pts_l3) if pts_l3 is not None else 10.0)
-        feature_sources[43] = 'calculated' if pts_l3 is not None else 'default'
+        features.append(float(pts_l3) if pts_l3 is not None else float('nan'))
+        feature_sources[43] = 'calculated' if pts_l3 is not None else 'missing'
 
         # Feature 44: scoring_trend_slope
         slope = rolling_stats.get('scoring_trend_slope')
-        features.append(float(slope) if slope is not None else 0.0)
-        feature_sources[44] = 'calculated' if slope is not None else 'default'
+        features.append(float(slope) if slope is not None else float('nan'))
+        feature_sources[44] = 'calculated' if slope is not None else 'missing'
 
         # Feature 45: deviation_from_avg_last3
         dev = rolling_stats.get('deviation_from_avg_last3')
-        features.append(float(dev) if dev is not None else 0.0)
-        feature_sources[45] = 'calculated' if dev is not None else 'default'
+        features.append(float(dev) if dev is not None else float('nan'))
+        feature_sources[45] = 'calculated' if dev is not None else 'missing'
 
         # Feature 46: consecutive_games_below_avg
         consec = rolling_stats.get('consecutive_games_below_avg')
-        features.append(float(consec) if consec is not None else 0.0)
-        feature_sources[46] = 'calculated' if consec is not None else 'default'
+        features.append(float(consec) if consec is not None else float('nan'))
+        feature_sources[46] = 'calculated' if consec is not None else 'missing'
 
-        # Feature 47: teammate_usage_available — dead feature, always 0.0
-        features.append(0.0)
-        feature_sources[47] = 'default'
+        # Feature 47: teammate_usage_available — dead feature, NaN
+        features.append(float('nan'))
+        feature_sources[47] = 'missing'
 
         # Feature 48: usage_rate_last_5
         usage = rolling_stats.get('usage_rate_last_5')
-        features.append(float(usage) if usage is not None else 20.0)
-        feature_sources[48] = 'calculated' if usage is not None else 'default'
+        features.append(float(usage) if usage is not None else float('nan'))
+        feature_sources[48] = 'calculated' if usage is not None else 'missing'
 
         # Feature 49: games_since_structural_change
         gsc = rolling_stats.get('games_since_structural_change')
-        features.append(float(gsc) if gsc is not None else 30.0)
-        feature_sources[49] = 'calculated' if gsc is not None else 'default'
+        features.append(float(gsc) if gsc is not None else float('nan'))
+        feature_sources[49] = 'calculated' if gsc is not None else 'missing'
 
-        # Feature 50: multi_book_line_std — dead feature, always 0.5
-        features.append(0.5)
-        feature_sources[50] = 'default'
+        # Feature 50: multi_book_line_std — dead feature, NaN
+        features.append(float('nan'))
+        feature_sources[50] = 'missing'
 
         # Feature 51: prop_over_streak (from UPCG)
         streaks = self.feature_extractor.get_prop_streaks(player_lookup) if player_lookup else {}
         over_streak = streaks.get('prop_over_streak')
-        features.append(float(over_streak) if over_streak is not None else 0.0)
-        feature_sources[51] = 'phase3' if over_streak is not None else 'default'
+        features.append(float(over_streak) if over_streak is not None else float('nan'))
+        feature_sources[51] = 'phase3' if over_streak is not None else 'missing'
 
         # Feature 52: prop_under_streak (from UPCG)
         under_streak = streaks.get('prop_under_streak')
-        features.append(float(under_streak) if under_streak is not None else 0.0)
-        feature_sources[52] = 'phase3' if under_streak is not None else 'default'
+        features.append(float(under_streak) if under_streak is not None else float('nan'))
+        feature_sources[52] = 'phase3' if under_streak is not None else 'missing'
 
         # Feature 53: line_vs_season_avg (calculated from vegas_line - season_avg)
         # features[25] = vegas_points_line, features[2] = points_avg_season
@@ -2003,8 +2003,8 @@ class MLFeatureStoreProcessor(
             features.append(float(vegas_line_val) - float(season_avg_val))
             feature_sources[53] = 'calculated'
         else:
-            features.append(0.0)
-            feature_sources[53] = 'default'
+            features.append(float('nan'))
+            feature_sources[53] = 'missing'
 
         return features, feature_sources
     

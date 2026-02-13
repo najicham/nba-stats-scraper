@@ -140,7 +140,7 @@ DEFAULT_FALLBACK_REASONS = {
 # Session 145: Optional features - not counted in zero-tolerance gating
 # Vegas lines unavailable for ~60% of players (bench players without published lines)
 # Still tracked as defaults for visibility, but don't block predictions
-OPTIONAL_FEATURES = {25, 26, 27, 38, 41, 42, 47, 50, 51, 52, 53}  # Vegas, game_total, dead features, streaks, line_vs_avg
+OPTIONAL_FEATURES = {25, 26, 27, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53}  # Vegas, game_total, all V12 features (39-53)
 
 # Training quality threshold per feature
 TRAINING_QUALITY_THRESHOLD = 85.0
@@ -224,13 +224,20 @@ class QualityScorer:
 
         num_features = len(feature_sources)
 
+        # Exclude optional features that are 'missing' from the average.
+        # Optional features (vegas, V12) shouldn't penalize the score when
+        # genuinely unavailable — they're optional precisely for this reason.
         total_weight = 0.0
+        counted = 0
         for feature_idx in range(num_features):
             source = feature_sources.get(feature_idx, 'default')
+            if source == 'missing' and feature_idx in OPTIONAL_FEATURES:
+                continue  # Don't penalize optional missing features
             weight = SOURCE_WEIGHTS.get(source, 40)
             total_weight += weight
+            counted += 1
 
-        quality_score = total_weight / float(num_features)
+        quality_score = total_weight / float(counted) if counted > 0 else 0.0
 
         # Session 157: Cap score when required (non-vegas) defaults exist.
         # The weighted average masks individual defaults — a record with 5 defaults
