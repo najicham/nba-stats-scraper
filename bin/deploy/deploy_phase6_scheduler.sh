@@ -143,6 +143,7 @@ if $DELETE; then
     delete_job "phase6-tonight-picks"
     delete_job "phase6-player-profiles"
     delete_job "phase6-hourly-trends"
+    delete_job "phase6-season-game-counts"
     echo ""
     echo "Done! All Phase 6 scheduler jobs deleted."
     exit 0
@@ -185,16 +186,24 @@ create_job "phase6-hourly-trends" \
     '{"export_types": ["trends-hot-cold", "trends-bounce-back", "tonight-trend-plays"], "target_date": "today"}' \
     "Hourly trends refresh for Trends page (6 AM - 11 PM ET)"
 
+# Job 5: Season Game Counts Export
+# Runs daily at 6 AM ET for calendar widget and break detection
+create_job "phase6-season-game-counts" \
+    "0 6 * * *" \
+    '{"export_types": ["season-game-counts"]}' \
+    "Export full season game counts for calendar widget (6 AM ET daily)"
+
 echo ""
 echo "============================================"
 echo "Deployment Complete!"
 echo "============================================"
 echo ""
 echo "Created scheduler jobs:"
-echo "  - phase6-daily-results    (5 AM ET daily)"
-echo "  - phase6-tonight-picks    (1 PM ET daily)"
-echo "  - phase6-player-profiles  (6 AM ET Sundays)"
-echo "  - phase6-hourly-trends    (6 AM - 11 PM ET hourly)"
+echo "  - phase6-daily-results        (5 AM ET daily)"
+echo "  - phase6-tonight-picks        (1 PM ET daily)"
+echo "  - phase6-player-profiles      (6 AM ET Sundays)"
+echo "  - phase6-hourly-trends        (6 AM - 11 PM ET hourly)"
+echo "  - phase6-season-game-counts   (6 AM ET daily)"
 echo ""
 echo "To test manually:"
 echo "  gcloud scheduler jobs run phase6-daily-results --location=$REGION"

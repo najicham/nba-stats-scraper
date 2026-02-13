@@ -79,6 +79,8 @@ from data_processors.publishing.subset_materializer import SubsetMaterializer
 from data_processors.publishing.season_subset_picks_exporter import SeasonSubsetPicksExporter
 # Calendar widget (Sprint 3)
 from data_processors.publishing.calendar_exporter import CalendarExporter
+# Season game counts for calendar and break detection
+from data_processors.publishing.season_game_counts_exporter import SeasonGameCountsExporter
 # Consolidated trends tonight (Session 226)
 from data_processors.publishing.trends_tonight_exporter import TrendsTonightExporter
 
@@ -96,6 +98,7 @@ EXPORT_TYPES = [
     'results', 'performance', 'best-bets', 'predictions',
     'tonight', 'tonight-players', 'streaks',
     'calendar',  # Sprint 3 - Date navigation
+    'season-game-counts',  # Full season game counts for calendar and break detection
     # Trends v2
     'trends-hot-cold', 'trends-bounce-back', 'trends-what-matters',
     'trends-team', 'trends-quick-hits', 'trends-deep-dive',
@@ -232,6 +235,17 @@ def export_date(
         except Exception as e:
             result['errors'].append(f"calendar: {e}")
             logger.error(f"  Calendar error: {e}")
+
+    # Season game counts (full season for calendar and break detection)
+    if 'season-game-counts' in export_types:
+        try:
+            exporter = SeasonGameCountsExporter()
+            path = exporter.export(season_start="2025-10-01")
+            result['paths']['season_game_counts'] = path
+            logger.info(f"  Season Game Counts: {path}")
+        except Exception as e:
+            result['errors'].append(f"season-game-counts: {e}")
+            logger.error(f"  Season Game Counts error: {e}")
 
     # === PHASE 6 SUBSET EXPORTS (Session 90) ===
     # Moved before tonight-players to ensure these fast, critical exports
