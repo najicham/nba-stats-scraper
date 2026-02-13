@@ -333,6 +333,26 @@ V12_CONTRACT = ModelFeatureContract(
 )
 
 
+# -----------------------------------------------------------------------------
+# V12 No-Vegas Contract (50 features - production deployment)
+# V12 trained WITHOUT vegas features (indices 25-28 excluded)
+# Used by CatBoostV12 prediction system in production
+# -----------------------------------------------------------------------------
+
+V12_NOVEG_FEATURE_NAMES: List[str] = [
+    name for name in V12_FEATURE_NAMES if name not in (
+        "vegas_points_line", "vegas_opening_line", "vegas_line_move", "has_vegas_line"
+    )
+]
+
+V12_NOVEG_CONTRACT = ModelFeatureContract(
+    model_version="v12_noveg",
+    feature_count=50,
+    feature_names=V12_NOVEG_FEATURE_NAMES,
+    description="CatBoost V12 No-Vegas - 50 features (54 minus 4 vegas), MAE loss, independent predictions"
+)
+
+
 # =============================================================================
 # CONTRACT REGISTRY
 # =============================================================================
@@ -343,11 +363,12 @@ MODEL_CONTRACTS: Dict[str, ModelFeatureContract] = {
     "v10": V10_CONTRACT,
     "v11": V11_CONTRACT,
     "v12": V12_CONTRACT,
+    "v12_noveg": V12_NOVEG_CONTRACT,
     "catboost_v8": V8_CONTRACT,
     "catboost_v9": V9_CONTRACT,
     "catboost_v10": V10_CONTRACT,
     "catboost_v11": V11_CONTRACT,
-    "catboost_v12": V12_CONTRACT,
+    "catboost_v12": V12_NOVEG_CONTRACT,
 }
 
 
@@ -361,7 +382,9 @@ def get_contract(model_version: str) -> ModelFeatureContract:
         version = "v8"
     if version.startswith("v11_"):
         version = "v11"
-    if version.startswith("v12_"):
+    if version.startswith("v12_noveg"):
+        version = "v12_noveg"
+    elif version.startswith("v12_"):
         version = "v12"
 
     if version not in MODEL_CONTRACTS:
@@ -400,7 +423,7 @@ FEATURES_FROM_PHASE3_V11 = [37, 38]
 # game_total_line (38) depends on odds data availability.
 # These features are still tracked as defaults for visibility, but don't block predictions.
 # Scraper health monitoring separately alerts when star players are missing lines.
-FEATURES_OPTIONAL = set(FEATURES_VEGAS) | {38, 50, 51, 52, 53}
+FEATURES_OPTIONAL = set(FEATURES_VEGAS) | {38, 41, 42, 47, 50, 51, 52, 53}
 
 # Session 152: Vegas line source values
 # Stored in ml_feature_store_v2.vegas_line_source and player_prop_predictions.vegas_line_source

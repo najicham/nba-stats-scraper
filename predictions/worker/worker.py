@@ -135,6 +135,7 @@ if TYPE_CHECKING:
     from prediction_systems.catboost_v8 import CatBoostV8  # v8 ML model (historical)
     from prediction_systems.catboost_v9 import CatBoostV9  # v9 ML model (current season)
     from prediction_systems.catboost_monthly import CatBoostMonthly  # monthly retrained models
+    from prediction_systems.catboost_v12 import CatBoostV12  # V12 no-vegas model (shadow)
     from prediction_systems.ensemble_v1 import EnsembleV1
     from prediction_systems.ensemble_v1_1 import EnsembleV1_1
     from data_loaders import PredictionDataLoader, normalize_confidence, validate_features
@@ -203,6 +204,7 @@ _monthly_models: Optional[list] = None  # List of CatBoostMonthly instances
 _staging_writer: Optional['BatchStagingWriter'] = None
 _injury_filter: Optional['InjuryFilter'] = None
 _breakout_classifier = None  # Session 128: Breakout classifier for shadow mode
+_catboost_v12 = None  # Session 230: CatBoost V12 no-vegas shadow model
 
 def get_data_loader() -> 'PredictionDataLoader':
     """Lazy-load data loader on first use"""
@@ -328,10 +330,27 @@ def get_prediction_systems() -> tuple:
         #   Re-enable after V3 model trained with proper features.
         # global _breakout_classifier
 
+        # Session 230: CatBoost V12 no-vegas shadow model
+        # Try/except so V12 failure doesn't break other systems
+        global _catboost_v12
+        try:
+            v12_model_path = os.environ.get('CATBOOST_V12_MODEL_PATH')
+            if v12_model_path:
+                from prediction_systems.catboost_v12 import CatBoostV12
+                logger.info("Loading CatBoost V12 (no-vegas shadow model)...")
+                _catboost_v12 = CatBoostV12()
+                logger.info(f"CatBoost V12 loaded: {_catboost_v12.get_model_info()}")
+            else:
+                logger.info("CATBOOST_V12_MODEL_PATH not set — V12 shadow disabled")
+        except Exception as e:
+            logger.warning(f"CatBoost V12 failed to load (non-fatal): {e}", exc_info=True)
+            _catboost_v12 = None
+
         catboost_version = "V9" if CATBOOST_VERSION == 'v9' else "V8"
         monthly_count = len(_monthly_models) if _monthly_models else 0
-        total_systems = 7 + monthly_count
-        logger.info(f"All prediction systems initialized ({total_systems} systems: XGBoost V1, CatBoost {catboost_version}, {monthly_count} monthly models, Ensemble V1, Ensemble V1.1, + 3 others)")
+        v12_loaded = _catboost_v12 is not None
+        total_systems = 7 + monthly_count + (1 if v12_loaded else 0)
+        logger.info(f"All prediction systems initialized ({total_systems} systems: XGBoost V1, CatBoost {catboost_version}, {monthly_count} monthly models, V12={'YES' if v12_loaded else 'NO'}, Ensemble V1, Ensemble V1.1, + 3 others)")
     return _moving_average, _zone_matchup, _similarity, _xgboost, _catboost, _ensemble, _ensemble_v1_1
 
 _circuit_breaker: Optional['SystemCircuitBreaker'] = None
@@ -556,7 +575,8 @@ def index():
             'xgboost_v1': str(_xgboost),
             CATBOOST_SYSTEM_ID: str(_catboost),
             'ensemble': str(_ensemble),
-            'ensemble_v1_1': str(_ensemble_v1_1)
+            'ensemble_v1_1': str(_ensemble_v1_1),
+            'catboost_v12': str(_catboost_v12) if _catboost_v12 is not None else 'not loaded',
         }
     else:
         systems_info = {'status': 'not yet loaded (will lazy-load on first prediction)'}
@@ -1849,6 +1869,52 @@ def process_player_predictions(
                     metadata['systems_failed'].append(system_id)
                     metadata['system_errors'][system_id] = error_msg
                     system_predictions[system_id] = None
+
+        # Session 230: CatBoost V12 No-Vegas Shadow Model
+        # Runs alongside champion V9 — separate system_id, graded independently
+        if _catboost_v12 is not None:
+            system_id = 'catboost_v12'
+            metadata['systems_attempted'].append(system_id)
+            try:
+                state, skip_reason = circuit_breaker.check_circuit(system_id)
+                if state == 'OPEN':
+                    logger.warning(f"Circuit breaker OPEN for {system_id}: {skip_reason}")
+                    metadata['circuit_breaker_triggered'] = True
+                    metadata['circuits_opened'].append(system_id)
+                    metadata['systems_failed'].append(system_id)
+                    metadata['system_errors'][system_id] = f'Circuit breaker open: {skip_reason}'
+                    system_predictions[system_id] = None
+                else:
+                    result = _catboost_v12.predict(
+                        player_lookup=player_lookup,
+                        features=features,
+                        betting_line=line_value,
+                        game_date=game_date,
+                    )
+
+                    if result and result.get('predicted_points') is not None:
+                        circuit_breaker.record_success(system_id)
+                        metadata['systems_succeeded'].append(system_id)
+
+                        system_predictions['catboost_v12'] = {
+                            'predicted_points': result['predicted_points'],
+                            'confidence': result['confidence_score'],
+                            'recommendation': result['recommendation'],
+                            'system_type': 'dict',
+                            'metadata': result
+                        }
+                    else:
+                        logger.warning(f"CatBoost V12 returned None for {player_lookup}")
+                        metadata['systems_failed'].append(system_id)
+                        metadata['system_errors'][system_id] = 'Prediction returned None'
+                        system_predictions[system_id] = None
+            except Exception as e:
+                error_msg = str(e)
+                circuit_breaker.record_failure(system_id, error_msg, type(e).__name__)
+                logger.error(f"CatBoost V12 failed for {player_lookup}: {e}", exc_info=True)
+                metadata['systems_failed'].append(system_id)
+                metadata['system_errors'][system_id] = error_msg
+                system_predictions[system_id] = None
 
         # Session 128: Breakout Classifier (Shadow Mode)
         # Runs for all predictions but does NOT filter - just logs for validation
