@@ -166,9 +166,16 @@ class AllSubsetsPicksExporter(BaseExporter):
         records = records or {}
 
         # Group picks by system_id -> subset_id
+        # Session 226: Deduplicate by player_lookup within each (system_id, subset_id)
+        # to handle historical data with UNION ALL duplication bug
         picks_by_model = defaultdict(lambda: defaultdict(list))
+        seen_keys = set()
         for pick in materialized_picks:
             system_id = pick.get('system_id') or CHAMPION_SYSTEM_ID
+            dedup_key = (system_id, pick['subset_id'], pick['player_lookup'])
+            if dedup_key in seen_keys:
+                continue
+            seen_keys.add(dedup_key)
             picks_by_model[system_id][pick['subset_id']].append(pick)
 
         # Build model_groups

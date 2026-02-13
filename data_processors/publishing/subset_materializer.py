@@ -244,14 +244,27 @@ class SubsetMaterializer:
           QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY season DESC) = 1
         ),
         -- Session 191: Fall back to upcoming_player_game_context for pre-game dates
+        -- Session 226: Use ROW_NUMBER to deduplicate — UNION ALL caused 2x duplication
+        -- when player exists in both player_game_summary AND upcoming_player_game_context
         team_info AS (
           SELECT player_lookup, team_abbr, opponent_team_abbr, game_date
-          FROM `nba_analytics.player_game_summary`
-          WHERE game_date = @game_date
-          UNION ALL
-          SELECT player_lookup, team_abbr, opponent_team_abbr, game_date
-          FROM `nba_analytics.upcoming_player_game_context`
-          WHERE game_date = @game_date
+          FROM (
+            SELECT player_lookup, team_abbr, opponent_team_abbr, game_date,
+                   ROW_NUMBER() OVER (PARTITION BY player_lookup, game_date
+                                      ORDER BY source_priority) as rn
+            FROM (
+              SELECT player_lookup, team_abbr, opponent_team_abbr, game_date,
+                     1 as source_priority
+              FROM `nba_analytics.player_game_summary`
+              WHERE game_date = @game_date
+              UNION ALL
+              SELECT player_lookup, team_abbr, opponent_team_abbr, game_date,
+                     2 as source_priority
+              FROM `nba_analytics.upcoming_player_game_context`
+              WHERE game_date = @game_date
+            )
+          )
+          WHERE rn = 1
         )
         SELECT
           p.prediction_id,
