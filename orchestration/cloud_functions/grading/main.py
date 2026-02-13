@@ -261,7 +261,7 @@ def validate_grading_prerequisites(target_date: str) -> Dict:
         # VALIDATION THRESHOLDS
         MIN_PLAYER_COVERAGE = 70.0  # At least 70% of predictions must have matching actuals
         MIN_GAME_COVERAGE = 80.0    # At least 80% of games must have actuals
-        MIN_PREDICTIONS = 50        # Need at least 50 predictions to be worth grading
+        # MIN_PREDICTIONS removed - grade regardless of count (Session 232)
 
         # Check: No predictions at all
         if total_gradable == 0:
@@ -302,26 +302,9 @@ def validate_grading_prerequisites(target_date: str) -> Dict:
                 'can_auto_heal': True  # Can trigger Phase 3 analytics
             }
 
-        # Check: Below minimum predictions threshold
-        if total_gradable < MIN_PREDICTIONS:
-            logger.warning(
-                f"Insufficient predictions for {target_date}: "
-                f"{total_gradable} < {MIN_PREDICTIONS} minimum"
-            )
-            return {
-                'ready': False,
-                'predictions_count': total_gradable,
-                'actuals_count': total_actuals,
-                'coverage_pct': round(player_coverage_pct, 1),
-                'player_coverage_pct': round(player_coverage_pct, 1),
-                'game_coverage_pct': round(game_coverage_pct, 1),
-                'predictions_with_actuals': predictions_with_actuals,
-                'games_with_actuals': games_with_actuals,
-                'total_games': total_games,
-                'missing_reason': 'insufficient_predictions',
-                'message': f'Only {total_gradable} predictions, need at least {MIN_PREDICTIONS}',
-                'can_auto_heal': False
-            }
+        # Session 232: Minimum prediction threshold REMOVED
+        # Grade regardless of prediction count (including small slates)
+        # Rationale: NBA schedule has 1-5 game nights frequently, need grading for all
 
         # Check: Player coverage below threshold
         if player_coverage_pct < MIN_PLAYER_COVERAGE:
