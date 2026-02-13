@@ -63,6 +63,25 @@ def get_today_date() -> str:
     return game_date.isoformat()
 
 
+def _check_games_in_progress(target_date: str) -> bool:
+    """Check if any games are in-progress for the target date."""
+    try:
+        from google.cloud import bigquery as bq
+        client = bq.Client()
+        query = """
+        SELECT COUNTIF(game_status = 2) as in_progress
+        FROM `nba-props-platform.nba_raw.nbac_schedule`
+        WHERE game_date = @target_date
+        """
+        params = [bq.ScalarQueryParameter('target_date', 'DATE', target_date)]
+        job = client.query(query, job_config=bq.QueryJobConfig(query_parameters=params))
+        rows = list(job.result())
+        return rows[0].in_progress > 0 if rows else False
+    except Exception as e:
+        logger.warning(f"Failed to check game status, assuming in-progress: {e}")
+        return True  # Safe default: run live scores if we can't check
+
+
 def run_live_export(target_date: str, include_grading: bool = True, include_status: bool = True) -> dict:
     """
     Run live scores, grading, and status exports.
@@ -88,15 +107,22 @@ def run_live_export(target_date: str, include_grading: bool = True, include_stat
         'errors': []
     }
 
-    # Export live scores
-    try:
-        exporter = LiveScoresExporter()
-        path = exporter.export(target_date, update_latest=True)
-        result['paths']['live'] = path
-        logger.info(f"Live scores export completed: {path}")
-    except Exception as e:
-        result['errors'].append(f"live: {str(e)}")
-        logger.error(f"Live scores export failed: {e}", exc_info=True)
+    # Only run LiveScoresExporter when games are in-progress (BDL API is
+    # ephemeral — returns empty for final games, and retry delays can burn
+    # the entire Cloud Function timeout budget)
+    has_live_games = _check_games_in_progress(target_date)
+
+    if has_live_games:
+        try:
+            exporter = LiveScoresExporter()
+            path = exporter.export(target_date, update_latest=True)
+            result['paths']['live'] = path
+            logger.info(f"Live scores export completed: {path}")
+        except Exception as e:
+            result['errors'].append(f"live: {str(e)}")
+            logger.error(f"Live scores export failed: {e}", exc_info=True)
+    else:
+        logger.info(f"No in-progress games for {target_date}, skipping LiveScoresExporter")
 
     # Export live grading (prediction accuracy during games)
     if include_grading:

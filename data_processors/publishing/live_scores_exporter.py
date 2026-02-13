@@ -162,9 +162,9 @@ class LiveScoresExporter(BaseExporter):
             return []
 
     @retry_with_jitter(
-        max_attempts=5,
-        base_delay=60,  # Start with 60s delay (BDL API rate limits)
-        max_delay=1800,  # Max 30 minutes delay
+        max_attempts=3,
+        base_delay=2,  # Short delays for Cloud Function (120s timeout)
+        max_delay=15,
         exceptions=(requests.RequestException, requests.Timeout, ConnectionError)
     )
     def _fetch_bdl_page_with_retry(self, headers: Dict[str, str], cursor: Optional[str]) -> Dict[str, Any]:
@@ -172,12 +172,8 @@ class LiveScoresExporter(BaseExporter):
         Fetch a single page from BDL live API with automatic retry on transient failures.
 
         Retry strategy:
-        - 5 attempts with exponential backoff + jitter
-        - Handles: Network errors, timeouts, API rate limits (429), server errors (5xx)
-        - Total retry window: ~30 minutes worst case
-
-        This prevents live export failures during games (runs every 2-5 minutes).
-        Same retry logic as BDL box score scraper which prevented 40% of weekly failures.
+        - 3 attempts with short exponential backoff (CF has 120s timeout)
+        - Handles: Network errors, timeouts, server errors (5xx)
 
         Args:
             headers: HTTP headers including API key
