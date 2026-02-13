@@ -62,6 +62,8 @@ from shared.ml.feature_contract import (
     V9_FEATURE_NAMES,
     V10_CONTRACT,
     V10_FEATURE_NAMES,
+    V11_CONTRACT,
+    V11_FEATURE_NAMES,
     FEATURE_DEFAULTS,
     get_contract,
     validate_all_contracts,
@@ -184,8 +186,8 @@ def parse_args():
     parser.add_argument('--eval-days', type=int, default=7, help='Days of eval (default: 7)')
 
     # Feature set selection
-    parser.add_argument('--feature-set', choices=['v9', 'v10'], default='v9',
-                       help='Feature set to use (v9=33 features, v10=37 features)')
+    parser.add_argument('--feature-set', choices=['v9', 'v10', 'v11'], default='v9',
+                       help='Feature set to use (v9=33, v10=37, v11=39 features)')
 
     # Line source for evaluation
     parser.add_argument('--use-production-lines', action='store_true', default=True,
@@ -240,7 +242,8 @@ def parse_args():
                        help='CatBoost loss function (e.g., "Huber:delta=5", "LogCosh", "RMSE", "MAE")')
     parser.add_argument('--monotone-constraints', type=str, default=None,
                        help='Comma-separated -1/0/1 per feature for CatBoost monotone_constraints. '
-                            'Example for V9 (33 features): "0,1,0,0,0,-1,0,0,0,0,0,0,0,-1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0"')
+                            'Example for V9 (33): "0,1,0,...,1,0". '
+                            'V11 (39): append ",1,1" for star_teammates_out(+1), game_total_line(+1)')
 
     parser.add_argument('--dry-run', action='store_true', help='Show plan only')
     parser.add_argument('--skip-register', action='store_true', help='Skip ml_experiments')
@@ -257,6 +260,23 @@ def get_dates(args):
             'eval_start': args.eval_start,
             'eval_end': args.eval_end,
         }
+
+    if args.train_start and args.train_end:
+        # Auto-calculate eval dates from train-end
+        train_end_dt = datetime.strptime(args.train_end, '%Y-%m-%d').date()
+        eval_start = train_end_dt + timedelta(days=1)
+        eval_end = eval_start + timedelta(days=args.eval_days - 1)
+        print(f"  [dates] Train dates explicit, auto-calculating eval: {eval_start} to {eval_end} ({args.eval_days} days)")
+        return {
+            'train_start': args.train_start,
+            'train_end': args.train_end,
+            'eval_start': eval_start.strftime('%Y-%m-%d'),
+            'eval_end': eval_end.strftime('%Y-%m-%d'),
+        }
+
+    # Full auto-calculation fallback
+    if args.train_start or args.train_end or args.eval_start or args.eval_end:
+        print(f"  [WARNING] Partial explicit dates ignored — provide both train-start and train-end, or all four dates.")
 
     yesterday = date.today() - timedelta(days=1)
     eval_end = yesterday
@@ -422,7 +442,7 @@ def load_eval_data_from_production(client, start, end, system_id='catboost_v9'):
             ORDER BY line_value DESC
         ) = 1
     )
-    SELECT mf.features, mf.feature_names,
+    SELECT mf.player_lookup, mf.features, mf.feature_names,
            CAST(pl.actual_points AS FLOAT64) as actual_points,
            CAST(pl.line_value AS FLOAT64) as vegas_line,
            mf.game_date
@@ -473,7 +493,7 @@ def load_eval_data(client, start, end, line_source='draftkings'):
         AND game_date BETWEEN '{start}' AND '{end}'
       QUALIFY ROW_NUMBER() OVER (PARTITION BY game_date, player_lookup ORDER BY processed_at DESC) = 1
     )
-    SELECT mf.features, mf.feature_names, pgs.points as actual_points, l.line as vegas_line,
+    SELECT mf.player_lookup, mf.features, mf.feature_names, pgs.points as actual_points, l.line as vegas_line,
            mf.game_date
     FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
     JOIN `{PROJECT_ID}.nba_analytics.player_game_summary` pgs
@@ -485,6 +505,90 @@ def load_eval_data(client, start, end, line_source='draftkings'):
       AND (l.line - FLOOR(l.line)) IN (0, 0.5)
     """
     return client.query(query).to_dataframe()
+
+
+def augment_v11_features(client, df):
+    """
+    Augment training/eval DataFrame with V11 features from Phase 3.
+
+    For historical data where the feature store arrays don't contain
+    star_teammates_out or game_total_line, this function LEFT JOINs
+    upstream_player_game_context to inject these columns.
+
+    The augmented columns are injected into each row's features/feature_names
+    arrays so prepare_features() can extract them by name.
+
+    Args:
+        client: BigQuery client
+        df: DataFrame with player_lookup, game_date, features, feature_names columns
+
+    Returns:
+        DataFrame with V11 features injected into features/feature_names arrays
+    """
+    if df.empty:
+        return df
+
+    if 'player_lookup' not in df.columns:
+        print("  WARNING: No player_lookup column — skipping V11 augmentation")
+        return df
+
+    # Get date range for efficient query
+    min_date = df['game_date'].min()
+    max_date = df['game_date'].max()
+
+    query = f"""
+    SELECT
+        player_lookup,
+        game_date,
+        COALESCE(star_teammates_out, 0) as star_teammates_out,
+        game_total as game_total_line
+    FROM `{PROJECT_ID}.nba_analytics.upcoming_player_game_context`
+    WHERE game_date BETWEEN '{min_date}' AND '{max_date}'
+    """
+    v11_data = client.query(query).to_dataframe()
+
+    if v11_data.empty:
+        print(f"  WARNING: No V11 data found for {min_date} to {max_date}")
+        return df
+
+    # Build lookup: (player_lookup, game_date) -> {star_teammates_out, game_total_line}
+    v11_lookup = {}
+    for _, row in v11_data.iterrows():
+        key = (row['player_lookup'], str(row['game_date']))
+        v11_lookup[key] = {
+            'star_teammates_out': row['star_teammates_out'],
+            'game_total_line': row['game_total_line'],
+        }
+
+    # Inject V11 features into each row's features/feature_names arrays
+    augmented_count = 0
+    for idx in range(len(df)):
+        row = df.iloc[idx]
+        features = list(row['features'])
+        feature_names = list(row['feature_names'])
+        game_date_str = str(row['game_date'])
+        key = (row['player_lookup'], game_date_str)
+
+        v11 = v11_lookup.get(key, {})
+
+        # Only inject if not already present
+        if 'star_teammates_out' not in feature_names:
+            star_out = v11.get('star_teammates_out', 0.0)
+            game_total = v11.get('game_total_line')
+
+            features.append(float(star_out) if star_out is not None else 0.0)
+            feature_names.append('star_teammates_out')
+            features.append(float(game_total) if game_total is not None else np.nan)
+            feature_names.append('game_total_line')
+
+            df.at[df.index[idx], 'features'] = features
+            df.at[df.index[idx], 'feature_names'] = feature_names
+
+            if v11:
+                augmented_count += 1
+
+    print(f"  V11 augmentation: {augmented_count}/{len(df)} rows matched ({100*augmented_count/len(df):.0f}%)")
+    return df
 
 
 def prepare_features(df, contract=V9_CONTRACT, exclude_features=None):
@@ -988,7 +1092,10 @@ def main():
     exp_id = str(uuid.uuid4())[:8]
 
     # Select feature contract based on --feature-set
-    if args.feature_set == 'v10':
+    if args.feature_set == 'v11':
+        selected_contract = V11_CONTRACT
+        selected_feature_names = V11_FEATURE_NAMES
+    elif args.feature_set == 'v10':
         selected_contract = V10_CONTRACT
         selected_feature_names = V10_FEATURE_NAMES
     else:
@@ -1122,6 +1229,14 @@ def main():
         print(f"  Using raw {args.line_source} lines")
         df_eval = load_eval_data(client, dates['eval_start'], dates['eval_end'], args.line_source)
     print(f"  {len(df_eval):,} samples")
+
+    # V11: Augment feature arrays with star_teammates_out + game_total_line
+    # Historical data doesn't have these in the feature store arrays,
+    # so we JOIN from upstream_player_game_context at training time
+    if args.feature_set == 'v11':
+        print("\nAugmenting with V11 features (star_teammates_out, game_total_line)...")
+        df_train = augment_v11_features(client, df_train)
+        df_eval = augment_v11_features(client, df_eval)
 
     if len(df_train) < 1000 or len(df_eval) < 100:
         print("ERROR: Not enough data")
