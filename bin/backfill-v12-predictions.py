@@ -60,11 +60,12 @@ def parse_args():
 
 
 def query_features_and_lines(client, start_date, end_date):
-    """Query features from feature store and production lines from V9 predictions.
+    """Query ALL feature store players and LEFT JOIN V9 lines.
+
+    Predicts for ALL quality-ready players, not just those with prop lines.
+    This enables MAE evaluation on all players, not just those with lines.
 
     Uses individual feature columns (feature_N_value) for NULL-aware reads.
-    NULLs in individual columns correctly represent missing features (NaN for CatBoost).
-
     Excludes player-dates that already have V12 predictions (per-player dedup).
     """
     # Build individual column list for NULL-aware feature reads
@@ -72,16 +73,14 @@ def query_features_and_lines(client, start_date, end_date):
         f'mf.feature_{i}_value' for i in range(FEATURE_STORE_FEATURE_COUNT)
     )
     query = f"""
-    WITH prod_lines AS (
+    WITH v9_lines AS (
         SELECT player_lookup, game_date, game_id, current_points_line,
                universal_player_id, line_source, sportsbook,
-               scoring_tier, injury_status_at_prediction,
-               feature_quality_score as prod_quality_score
+               scoring_tier, injury_status_at_prediction
         FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
         WHERE system_id = 'catboost_v9'
           AND game_date BETWEEN '{start_date}' AND '{end_date}'
           AND is_active = TRUE
-          AND current_points_line IS NOT NULL
         QUALIFY ROW_NUMBER() OVER (
             PARTITION BY player_lookup, game_date
             ORDER BY created_at DESC
@@ -106,16 +105,17 @@ def query_features_and_lines(client, start_date, end_date):
         mf.quality_alert_level,
         mf.matchup_quality_pct,
         mf.is_quality_ready,
-        pl.game_id,
-        pl.universal_player_id,
-        CAST(pl.current_points_line AS FLOAT64) as vegas_line,
-        pl.line_source,
-        pl.sportsbook,
-        pl.scoring_tier,
-        pl.injury_status_at_prediction
+        mf.game_id as fs_game_id,
+        COALESCE(v9.game_id, mf.game_id) as game_id,
+        COALESCE(v9.universal_player_id, mf.universal_player_id) as universal_player_id,
+        CAST(v9.current_points_line AS FLOAT64) as vegas_line,
+        v9.line_source,
+        v9.sportsbook,
+        v9.scoring_tier,
+        v9.injury_status_at_prediction
     FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
-    JOIN prod_lines pl
-        ON mf.player_lookup = pl.player_lookup AND mf.game_date = pl.game_date
+    LEFT JOIN v9_lines v9
+        ON mf.player_lookup = v9.player_lookup AND mf.game_date = v9.game_date
     LEFT JOIN existing_v12 ev
         ON mf.player_lookup = ev.player_lookup AND mf.game_date = ev.game_date
     WHERE mf.game_date BETWEEN '{start_date}' AND '{end_date}'
@@ -201,7 +201,12 @@ def compute_v12_confidence(features_dict):
 
 
 def generate_predictions(model, df, model_file_name, model_sha256):
-    """Generate V12 predictions for all rows and return list of BQ records."""
+    """Generate V12 predictions for all rows and return list of BQ records.
+
+    Handles players with AND without prop lines:
+    - With line: generates OVER/UNDER/PASS recommendation + edge
+    - Without line: generates NO_LINE recommendation, still predicts points for MAE
+    """
     records = []
 
     # Build feature matrix
@@ -210,15 +215,29 @@ def generate_predictions(model, df, model_file_name, model_sha256):
 
     for i, (_, row) in enumerate(df.iterrows()):
         pred = float(max(0, min(60, predicted_points_raw[i])))
-        line = float(row['vegas_line'])
-        edge = pred - line
 
-        if edge >= 1.0:
-            recommendation = 'OVER'
-        elif edge <= -1.0:
-            recommendation = 'UNDER'
+        # Handle line: may be NULL for players without prop lines
+        raw_line = row.get('vegas_line')
+        has_line = raw_line is not None and not (isinstance(raw_line, float) and pd.isna(raw_line))
+
+        if has_line:
+            line = float(raw_line)
+            edge = pred - line
+            if edge >= 1.0:
+                recommendation = 'OVER'
+            elif edge <= -1.0:
+                recommendation = 'UNDER'
+            else:
+                recommendation = 'PASS'
+            line_margin = round(edge, 2)
+            has_prop_line = True
+            line_source = row.get('line_source') or 'ACTUAL_PROP'
         else:
-            recommendation = 'PASS'
+            line = None
+            line_margin = None
+            recommendation = 'NO_LINE'
+            has_prop_line = False
+            line_source = 'NO_PROP_LINE'
 
         # Build features dict for confidence calculation
         feature_values = row['features']
@@ -228,13 +247,14 @@ def generate_predictions(model, df, model_file_name, model_sha256):
         features_dict['feature_quality_score'] = row.get('feature_quality_score')
 
         confidence = compute_v12_confidence(features_dict)
-        is_actionable = abs(edge) >= ACTIONABLE_EDGE
 
-        # Filter reason for non-actionable
+        # Actionable only if we have a line and sufficient edge
+        is_actionable = has_line and abs(pred - line) >= ACTIONABLE_EDGE
         filter_reason = None
-        if not is_actionable:
-            if abs(edge) < ACTIONABLE_EDGE:
-                filter_reason = 'low_edge'
+        if has_line and not is_actionable:
+            filter_reason = 'low_edge'
+        elif not has_line:
+            filter_reason = 'no_prop_line'
         if recommendation == 'PASS':
             is_actionable = False
             filter_reason = 'low_edge'
@@ -256,13 +276,13 @@ def generate_predictions(model, df, model_file_name, model_sha256):
             'predicted_points': round(pred, 2),
             'adjusted_points': round(pred, 2),
             'current_points_line': line,
-            'line_margin': round(edge, 2),
+            'line_margin': line_margin,
             'confidence_score': confidence,
             'recommendation': recommendation,
             'is_active': True,
             'is_actionable': is_actionable,
             'filter_reason': filter_reason,
-            'has_prop_line': True,
+            'has_prop_line': has_prop_line,
             'model_version': SYSTEM_ID,
             'model_file_name': model_file_name,
             'model_training_start_date': TRAIN_START,
@@ -278,7 +298,7 @@ def generate_predictions(model, df, model_file_name, model_sha256):
             'matchup_quality_pct': float(row['matchup_quality_pct']) if pd.notna(row.get('matchup_quality_pct')) else None,
             'is_quality_ready': bool(row['is_quality_ready']) if pd.notna(row.get('is_quality_ready')) else True,
             'features_snapshot': features_snapshot,
-            'line_source': row.get('line_source'),
+            'line_source': line_source,
             'sportsbook': row.get('sportsbook'),
             'scoring_tier': row.get('scoring_tier'),
             'injury_status_at_prediction': row.get('injury_status_at_prediction'),
@@ -333,32 +353,34 @@ def main():
     print(f"  Mode:         Post-training only (training dates excluded)")
 
     if args.dry_run:
-        # In dry-run, query how many player-dates need backfill (per-player dedup)
-        print(f"\n  Checking for gaps (per-player dedup)...")
+        # In dry-run, query how many player-dates need backfill (all quality-ready players)
+        print(f"\n  Checking for gaps (all quality-ready players)...")
         count_query = f"""
-        WITH prod_lines AS (
-            SELECT player_lookup, game_date
-            FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
-            WHERE system_id = 'catboost_v9'
-              AND game_date BETWEEN '{start_date}' AND '{end_date}'
-              AND is_active = TRUE AND current_points_line IS NOT NULL
-        ),
-        existing_v12 AS (
+        WITH existing_v12 AS (
             SELECT DISTINCT player_lookup, game_date
             FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
             WHERE system_id = '{SYSTEM_ID}'
               AND game_date BETWEEN '{start_date}' AND '{end_date}'
+        ),
+        v9_lines AS (
+            SELECT DISTINCT player_lookup, game_date
+            FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions`
+            WHERE system_id = 'catboost_v9'
+              AND game_date BETWEEN '{start_date}' AND '{end_date}'
+              AND is_active = TRUE AND current_points_line IS NOT NULL
         )
         SELECT
             COUNT(*) as total_rows,
             COUNT(DISTINCT mf.game_date) as dates,
             MIN(mf.game_date) as earliest,
-            MAX(mf.game_date) as latest
+            MAX(mf.game_date) as latest,
+            COUNTIF(v9.player_lookup IS NOT NULL) as with_lines,
+            COUNTIF(v9.player_lookup IS NULL) as without_lines
         FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
-        JOIN prod_lines pl
-            ON mf.player_lookup = pl.player_lookup AND mf.game_date = pl.game_date
         LEFT JOIN existing_v12 ev
             ON mf.player_lookup = ev.player_lookup AND mf.game_date = ev.game_date
+        LEFT JOIN v9_lines v9
+            ON mf.player_lookup = v9.player_lookup AND mf.game_date = v9.game_date
         WHERE mf.game_date BETWEEN '{start_date}' AND '{end_date}'
           AND ARRAY_LENGTH(mf.features) >= 54
           AND COALESCE(mf.required_default_count, mf.default_feature_count, 0) = 0
@@ -368,8 +390,10 @@ def main():
         counts = client.query(count_query).to_dataframe()
         r = counts.iloc[0]
         print(f"\n  DRY RUN — would backfill:")
-        print(f"    Dates:   {int(r['dates'])} ({r['earliest']} to {r['latest']})")
-        print(f"    Players: {int(r['total_rows'])} (after per-player dedup)")
+        print(f"    Dates:       {int(r['dates'])} ({r['earliest']} to {r['latest']})")
+        print(f"    Players:     {int(r['total_rows'])} total")
+        print(f"    With lines:  {int(r['with_lines'])}")
+        print(f"    No lines:    {int(r['without_lines'])} (NO_PROP_LINE — still predicted for MAE)")
         print(f"\n  Run without --dry-run to execute.")
         return
 
@@ -396,22 +420,29 @@ def main():
 
     # Summary stats
     preds = np.array([r['predicted_points'] for r in records])
-    lines = np.array([r['current_points_line'] for r in records])
-    edges = preds - lines
+    with_line = [r for r in records if r['has_prop_line']]
+    without_line = [r for r in records if not r['has_prop_line']]
     n_actionable = sum(1 for r in records if r['is_actionable'])
     n_over = sum(1 for r in records if r['recommendation'] == 'OVER')
     n_under = sum(1 for r in records if r['recommendation'] == 'UNDER')
     n_pass = sum(1 for r in records if r['recommendation'] == 'PASS')
+    n_no_line = sum(1 for r in records if r['recommendation'] == 'NO_LINE')
 
     game_dates = sorted(set(r['game_date'] for r in records))
     print(f"\n  Summary:")
     print(f"    Game dates:          {len(game_dates)} ({game_dates[0]} to {game_dates[-1]})")
     print(f"    Total predictions:   {len(records)}")
+    print(f"    With prop line:      {len(with_line)}")
+    print(f"    Without prop line:   {len(without_line)} (NO_LINE — for MAE evaluation)")
     print(f"    Actionable (edge 3+): {n_actionable} ({100*n_actionable/len(records):.1f}%)")
-    print(f"    Direction:           {n_over} OVER, {n_under} UNDER, {n_pass} PASS")
+    print(f"    Direction:           {n_over} OVER, {n_under} UNDER, {n_pass} PASS, {n_no_line} NO_LINE")
     print(f"    Avg predicted:       {np.mean(preds):.1f}")
-    print(f"    Avg edge:            {np.mean(edges):+.2f}")
-    print(f"    Avg |edge|:          {np.mean(np.abs(edges)):.2f}")
+    if with_line:
+        lined_preds = np.array([r['predicted_points'] for r in with_line])
+        lined_lines = np.array([r['current_points_line'] for r in with_line])
+        edges = lined_preds - lined_lines
+        print(f"    Avg edge (w/line):   {np.mean(edges):+.2f}")
+        print(f"    Avg |edge| (w/line): {np.mean(np.abs(edges)):.2f}")
 
     # Write to BQ
     print(f"\n  Writing to BigQuery...")
