@@ -104,6 +104,9 @@ class StatusExporter(BaseExporter):
             live_status, tonight_status, grading_status, predictions_status
         )
 
+        # Check for active schedule breaks (All-Star, holidays, etc.)
+        active_break = self._check_active_break()
+
         return {
             'updated_at': now.isoformat(),
             'overall_status': overall_status,
@@ -114,7 +117,8 @@ class StatusExporter(BaseExporter):
                 'predictions': predictions_status
             },
             'known_issues': known_issues,
-            'maintenance_windows': self._get_maintenance_windows()
+            'maintenance_windows': self._get_maintenance_windows(),
+            'active_break': active_break
         }
 
     def _check_live_data_status(self) -> Dict[str, Any]:
@@ -321,6 +325,115 @@ class StatusExporter(BaseExporter):
                     })
 
         return issues
+
+    def _check_active_break(self) -> Optional[Dict[str, str]]:
+        """
+        Check if currently in a multi-day schedule break (All-Star, holidays, etc.).
+
+        Returns:
+            Dict with break info if in a break, None otherwise.
+            {
+                "headline": "All-Star Break",
+                "message": "Games resume Thursday, Feb 19",
+                "resume_date": "2026-02-19",
+                "last_game_date": "2026-02-12"
+            }
+        """
+        try:
+            from zoneinfo import ZoneInfo
+            et = ZoneInfo('America/New_York')
+            today = datetime.now(et).date()
+            today_str = today.strftime('%Y-%m-%d')
+
+            # Query schedule for last and next game dates
+            query = """
+            WITH game_dates AS (
+                SELECT DISTINCT game_date
+                FROM `nba_raw.nbac_schedule`
+                WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+                  AND game_date <= DATE_ADD(CURRENT_DATE(), INTERVAL 14 DAY)
+                ORDER BY game_date
+            )
+            SELECT
+                MAX(CASE WHEN game_date <= CURRENT_DATE() THEN game_date END) as last_game_date,
+                MIN(CASE WHEN game_date > CURRENT_DATE() THEN game_date END) as next_game_date
+            FROM game_dates
+            """
+
+            result = list(self._get_bq_client().query(query))
+            if not result:
+                return None
+
+            row = result[0]
+            last_game_date = row.last_game_date
+            next_game_date = row.next_game_date
+
+            # If either is None, we're not in a break
+            if not last_game_date or not next_game_date:
+                return None
+
+            # Check if we're between games (in a break)
+            if not (last_game_date < today < next_game_date):
+                return None
+
+            # Calculate gap in days
+            gap_days = (next_game_date - last_game_date).days
+
+            # Only show breaks for 3+ day gaps (excludes normal off-days)
+            if gap_days < 3:
+                return None
+
+            # Determine break type and format message
+            last_date_str = last_game_date.strftime('%Y-%m-%d')
+            next_date_str = next_game_date.strftime('%Y-%m-%d')
+
+            # Determine break name based on date or gap length
+            headline = self._get_break_headline(last_game_date, next_game_date, gap_days)
+
+            # Format resume message with day of week
+            resume_day = next_game_date.strftime('%A, %b %-d')
+            message = f"Games resume {resume_day}"
+
+            return {
+                'headline': headline,
+                'message': message,
+                'resume_date': next_date_str,
+                'last_game_date': last_date_str
+            }
+
+        except Exception as e:
+            logger.error(f"Error checking active break: {e}", exc_info=True)
+            return None
+
+    def _get_break_headline(self, last_date, next_date, gap_days: int) -> str:
+        """
+        Determine the break headline based on dates and gap length.
+
+        Args:
+            last_date: Date object of last games
+            next_date: Date object of next games
+            gap_days: Number of days in the gap
+
+        Returns:
+            Break headline string
+        """
+        # All-Star Break is typically mid-February
+        if last_date.month == 2 and 10 <= last_date.day <= 18:
+            return "All-Star Break"
+
+        # Christmas break (late Dec)
+        if last_date.month == 12 and last_date.day >= 24:
+            return "Holiday Break"
+
+        # Thanksgiving (late Nov)
+        if last_date.month == 11 and 22 <= last_date.day <= 28:
+            return "Thanksgiving Break"
+
+        # Generic for other long breaks
+        if gap_days >= 5:
+            return "Extended Break"
+        else:
+            return "Schedule Break"
 
     def _get_maintenance_windows(self) -> List[Dict[str, Any]]:
         """Get any scheduled maintenance windows."""
