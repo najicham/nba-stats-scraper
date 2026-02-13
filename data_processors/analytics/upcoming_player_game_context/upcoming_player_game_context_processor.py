@@ -37,7 +37,7 @@ Input: Phase 2 raw tables only
   - nba_raw.nbac_gamebook_player_stats (DRIVER - ALL players with games)
   - nba_raw.odds_api_player_points_props (props info - LEFT JOIN)
   - nba_raw.bettingpros_player_points_props (props fallback - LEFT JOIN)
-  - nba_raw.nbac_gamebook_player_stats (PRIMARY - historical performance)
+  - nba_raw.bdl_player_boxscores (PRIMARY - historical performance)
   - nba_raw.nbac_schedule (game timing and context)
   - nba_raw.odds_api_game_lines (spreads, totals)
   - nba_raw.espn_team_rosters (optional - current team)
@@ -378,7 +378,7 @@ class UpcomingPlayerGameContextProcessor(
                 'critical': False,  # Not critical - processor works without props (all-player mode)
                 'check_type': 'date_match'
             },
-            'nba_raw.nbac_gamebook_player_stats': {
+            'nba_raw.bdl_player_boxscores': {
                 'field_prefix': 'source_boxscore',
                 'description': 'Historical player performance (last 30 days)',
                 'critical': True,
@@ -698,8 +698,10 @@ class UpcomingPlayerGameContextProcessor(
         """
         Extract historical boxscores for all players (last 30 days).
 
-        Source: nba_raw.nbac_gamebook_player_stats (PRIMARY)
-        Note: BDL sources intentionally disabled (unreliable)
+        Priority:
+        1. nba_raw.bdl_player_boxscores (PRIMARY)
+        2. nba_raw.nbac_player_boxscores (fallback)
+        3. nba_raw.nbac_gamebook_player_stats (last resort)
         """
         # Delegate to game data loader
         game_loader = self._get_game_data_loader()

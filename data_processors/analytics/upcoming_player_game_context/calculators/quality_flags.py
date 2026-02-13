@@ -74,7 +74,7 @@ class QualityFlagsCalculator:
         if games_count < 3:
             issues.append(f'thin_sample:{games_count}/3')
 
-        primary_source = 'nbac_gamebook_player_stats'
+        primary_source = 'bdl_player_boxscores'
 
         quality_cols = build_quality_columns_with_legacy(
             tier=tier,
