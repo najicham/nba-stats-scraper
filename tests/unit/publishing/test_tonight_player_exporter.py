@@ -48,7 +48,10 @@ class TestJsonGeneration:
                     'opponent_team_abbr': 'GSW',
                     'home_game': False,
                     'days_rest': 2,
-                    'back_to_back': False
+                    'back_to_back': False,
+                    'opening_points_line': None,
+                    'current_points_line': None,
+                    'line_movement': None
                 })
                 exporter._query_prediction = Mock(return_value=None)
                 exporter._query_fatigue = Mock(return_value={'score': 85, 'level': 'normal', 'context': None})
@@ -70,6 +73,80 @@ class TestJsonGeneration:
                 assert 'tonights_factors' in result
                 assert 'recent_form' in result
                 assert 'prediction' in result
+                assert 'opponent_defense' in result
+                assert 'line_movement' in result
+
+    def test_json_has_opponent_defense_from_tier(self):
+        """Test that opponent_defense is populated from defense tier data"""
+        with patch('google.cloud.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
+                exporter = TonightPlayerExporter()
+
+                exporter._query_game_context = Mock(return_value={
+                    'player_lookup': 'lebronjames',
+                    'player_full_name': 'LeBron James',
+                    'game_id': '20250115_LAL_GSW',
+                    'team_abbr': 'LAL',
+                    'opponent_team_abbr': 'GSW',
+                    'home_game': False,
+                    'days_rest': 2,
+                    'back_to_back': False,
+                    'opening_points_line': None,
+                    'current_points_line': None,
+                    'line_movement': None
+                })
+                exporter._query_prediction = Mock(return_value=None)
+                exporter._query_fatigue = Mock(return_value={'score': 85, 'level': 'normal', 'context': None})
+                exporter._query_recent_form = Mock(return_value=[])
+                exporter._query_quick_numbers = Mock(return_value={'games_played': 30})
+                exporter._query_relevant_splits = Mock(return_value={})
+                exporter._query_defense_tier = Mock(return_value={
+                    'rank': 5,
+                    'tier_label': 'elite',
+                    'ppg_allowed': 106.2,
+                    'def_rating': 108.5
+                })
+
+                result = exporter.generate_json('lebronjames', '2025-01-15')
+
+                assert result['opponent_defense'] is not None
+                assert result['opponent_defense']['rating'] == 108.5
+                assert result['opponent_defense']['rank'] == 5
+
+    def test_days_rest_fallback_from_recent_form(self):
+        """Test days_rest computed from recent_form when UPCG has null"""
+        with patch('google.cloud.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
+                exporter = TonightPlayerExporter()
+
+                exporter._query_game_context = Mock(return_value={
+                    'player_lookup': 'bobbyportis',
+                    'player_full_name': 'Bobby Portis',
+                    'game_id': '20250115_MIL_CHI',
+                    'team_abbr': 'MIL',
+                    'opponent_team_abbr': 'CHI',
+                    'home_game': False,
+                    'days_rest': None,  # null from UPCG
+                    'back_to_back': False,
+                    'opening_points_line': None,
+                    'current_points_line': None,
+                    'line_movement': None
+                })
+                exporter._query_prediction = Mock(return_value=None)
+                exporter._query_fatigue = Mock(return_value={'score': 85, 'level': 'normal', 'context': None})
+                exporter._query_recent_form = Mock(return_value=[
+                    {'game_date': '2025-01-13', 'opponent': 'BOS', 'points': 18, 'is_dnp': False,
+                     'over_under': 'OVER', 'line': 15.5, 'margin': 3}
+                ])
+                exporter._query_quick_numbers = Mock(return_value={'games_played': 30})
+                exporter._query_relevant_splits = Mock(return_value={})
+                exporter._query_defense_tier = Mock(return_value=None)
+
+                result = exporter.generate_json('bobbyportis', '2025-01-15')
+
+                assert result['game_context']['days_rest'] == 2  # Jan 15 - Jan 13
 
     def test_empty_response_when_no_game(self):
         """Test empty response when player has no game"""
@@ -133,6 +210,38 @@ class TestFatigueScoring:
                 result = exporter._query_fatigue('player1', '2025-01-15')
 
                 assert result['level'] == 'tired'
+
+    def test_fatigue_context_json_string_parsed(self):
+        """Test that fatigue_context_json string is parsed to dict"""
+        with patch('google.cloud.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
+                exporter = TonightPlayerExporter()
+
+                mock_result = [{'fatigue_score': 80, 'fatigue_context_json': '{"days_rest": 0, "back_to_back": false}'}]
+                exporter.query_to_list = Mock(return_value=mock_result)
+
+                result = exporter._query_fatigue('player1', '2025-01-15')
+
+                assert isinstance(result['context'], dict)
+                assert result['context']['days_rest'] == 0
+                assert result['context']['back_to_back'] is False
+
+    def test_fatigue_context_already_dict(self):
+        """Test that fatigue_context_json dict is passed through"""
+        with patch('google.cloud.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
+                exporter = TonightPlayerExporter()
+
+                ctx = {"days_rest": 2, "back_to_back": False}
+                mock_result = [{'fatigue_score': 90, 'fatigue_context_json': ctx}]
+                exporter.query_to_list = Mock(return_value=mock_result)
+
+                result = exporter._query_fatigue('player1', '2025-01-15')
+
+                assert isinstance(result['context'], dict)
+                assert result['context']['days_rest'] == 2
 
 
 class TestStreakComputation:
@@ -266,6 +375,70 @@ class TestTonightsFactors:
                 assert def_factor is not None
                 assert def_factor['direction'] == 'negative'
                 assert def_factor['defense_tier'] == 'elite'
+
+
+class TestLineMovementFormatting:
+    """Test suite for line movement formatting"""
+
+    def test_line_movement_with_data(self):
+        """Test line movement when opening and current lines exist"""
+        with patch('google.cloud.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
+                exporter = TonightPlayerExporter()
+
+                context = {'opening_points_line': 26.5, 'current_points_line': 25.5, 'line_movement': -1.0}
+                prediction = {'recommendation': 'OVER'}
+
+                result = exporter._format_line_movement(context, prediction)
+
+                assert result is not None
+                assert result['opened'] == 26.5
+                assert result['current'] == 25.5
+                assert result['movement'] == -1.0
+                assert result['favorable'] is True  # Line dropped, we say OVER
+
+    def test_line_movement_unfavorable(self):
+        """Test line movement marked unfavorable when moving against recommendation"""
+        with patch('google.cloud.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
+                exporter = TonightPlayerExporter()
+
+                context = {'opening_points_line': 20.5, 'current_points_line': 23.5, 'line_movement': 3.0}
+                prediction = {'recommendation': 'OVER'}
+
+                result = exporter._format_line_movement(context, prediction)
+
+                assert result['favorable'] is False  # Line rose, we say OVER = harder
+
+    def test_line_movement_null_when_no_opening(self):
+        """Test line movement returns null when opening line missing"""
+        with patch('google.cloud.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
+                exporter = TonightPlayerExporter()
+
+                context = {'opening_points_line': None, 'current_points_line': 25.5, 'line_movement': None}
+
+                result = exporter._format_line_movement(context, None)
+
+                assert result is None
+
+    def test_line_movement_no_movement(self):
+        """Test line movement when line hasn't moved"""
+        with patch('google.cloud.bigquery.Client'):
+            with patch('data_processors.publishing.base_exporter.storage.Client'):
+                from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
+                exporter = TonightPlayerExporter()
+
+                context = {'opening_points_line': 25.5, 'current_points_line': 25.5, 'line_movement': 0.0}
+                prediction = {'recommendation': 'OVER'}
+
+                result = exporter._format_line_movement(context, prediction)
+
+                assert result['movement'] == 0.0
+                assert result['favorable'] is None  # No movement = no direction
 
 
 class TestPredictionFormatting:

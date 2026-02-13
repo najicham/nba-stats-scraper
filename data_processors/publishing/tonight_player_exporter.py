@@ -5,9 +5,10 @@ Exports detailed tonight data for a specific player.
 Used for the "Tonight" tab in the player detail panel (~3-5 KB per player).
 """
 
+import json
 import logging
 from typing import Dict, List, Any, Optional
-from datetime import date
+from datetime import date, datetime
 
 from google.cloud import bigquery
 
@@ -80,6 +81,17 @@ class TonightPlayerExporter(BaseExporter):
         opponent_abbr = context.get('opponent_team_abbr')
         defense_tier = self._query_defense_tier(opponent_abbr, target_date) if opponent_abbr else None
 
+        # Compute days_rest fallback from recent_form if UPCG didn't have it
+        if context.get('days_rest') is None and recent_form:
+            last_game_str = recent_form[0].get('game_date')
+            if last_game_str:
+                try:
+                    last_game_date = datetime.strptime(last_game_str, '%Y-%m-%d').date()
+                    target = datetime.strptime(target_date, '%Y-%m-%d').date()
+                    context['days_rest'] = (target - last_game_date).days
+                except (ValueError, TypeError):
+                    pass
+
         # Build tonight's factors (only relevant ones)
         tonights_factors = self._build_tonights_factors(context, fatigue, splits, defense_tier)
 
@@ -119,6 +131,8 @@ class TonightPlayerExporter(BaseExporter):
                 'injury_reason': context.get('injury_reason'),
             },
             'quick_numbers': quick_numbers,
+            'opponent_defense': self._format_opponent_defense(defense_tier),
+            'line_movement': self._format_line_movement(context, prediction),
             'fatigue': fatigue,
             'current_streak': streak,
             'tonights_factors': tonights_factors,
@@ -137,7 +151,10 @@ class TonightPlayerExporter(BaseExporter):
                 gc.opponent_team_abbr,
                 gc.home_game,
                 gc.days_rest,
-                gc.back_to_back
+                gc.back_to_back,
+                gc.opening_points_line,
+                gc.current_points_line,
+                gc.line_movement
             FROM `nba-props-platform.nba_analytics.upcoming_player_game_context` gc
             WHERE gc.player_lookup = @player_lookup
               AND gc.game_date = @target_date
@@ -227,10 +244,18 @@ class TonightPlayerExporter(BaseExporter):
                 level = 'normal'
                 score = None
 
+            # Parse fatigue_context_json if it's a string
+            ctx = r.get('fatigue_context_json')
+            if isinstance(ctx, str):
+                try:
+                    ctx = json.loads(ctx)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
             return {
                 'score': safe_float(score),
                 'level': level,
-                'context': r.get('fatigue_context_json')  # JSON with factor breakdown
+                'context': ctx
             }
 
         return {'score': None, 'level': 'normal', 'context': None}
@@ -537,6 +562,51 @@ class TonightPlayerExporter(BaseExporter):
             }
 
         return None
+
+    def _format_opponent_defense(self, defense_tier: Optional[Dict]) -> Optional[Dict]:
+        """Format opponent defense data for the response."""
+        if not defense_tier:
+            return None
+
+        return {
+            'rating': defense_tier.get('def_rating'),
+            'rank': defense_tier.get('rank'),
+            'position_ppg_allowed': None,  # Not yet tracked at position level
+            'position_ppg_rank': None,
+        }
+
+    def _format_line_movement(
+        self,
+        context: Dict,
+        prediction: Optional[Dict]
+    ) -> Optional[Dict]:
+        """Format line movement data for the response.
+
+        Returns null when opening line data isn't available (common for
+        older dates or low-volume players). Frontend hides the card.
+        """
+        opened = context.get('opening_points_line')
+        current = context.get('current_points_line')
+
+        if opened is None or current is None:
+            return None
+
+        movement = safe_float(context.get('line_movement')) or round(current - opened, 1)
+
+        # Determine if movement is favorable relative to our recommendation
+        rec = prediction.get('recommendation') if prediction else None
+        favorable = None
+        if rec and movement != 0:
+            # Line dropped + we say OVER = favorable (market coming our way)
+            # Line rose + we say UNDER = favorable
+            favorable = (movement < 0 and rec == 'OVER') or (movement > 0 and rec == 'UNDER')
+
+        return {
+            'opened': safe_float(opened),
+            'current': safe_float(current),
+            'movement': movement,
+            'favorable': favorable,
+        }
 
     def _build_tonights_factors(
         self,
