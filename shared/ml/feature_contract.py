@@ -87,11 +87,11 @@ FEATURE_STORE_NAMES: List[str] = [
     "pts_vs_season_zscore",
     "breakout_flag",
 
-    # 37: Breakout Risk (added Session 126)
-    "breakout_risk_score",
+    # 37: Star Teammates Out (V11 - Injury Context, replaces disabled breakout_risk_score)
+    "star_teammates_out",
 
-    # 38: Composite Breakout Signal (added Session 126)
-    "composite_breakout_signal",
+    # 38: Game Total Line (V11 - Game Environment, replaces disabled composite_breakout_signal)
+    "game_total_line",
 ]
 
 # Validate feature store list length matches expected count
@@ -265,6 +265,74 @@ V10_CONTRACT = ModelFeatureContract(
 )
 
 
+# -----------------------------------------------------------------------------
+# V11 Model Contract (39 features with star_teammates_out + game_total_line)
+# Adds injury context and game environment features
+# -----------------------------------------------------------------------------
+
+V11_FEATURE_NAMES: List[str] = V10_FEATURE_NAMES + [
+    # 37: Injury Context (V11)
+    "star_teammates_out",
+
+    # 38: Game Environment (V11)
+    "game_total_line",
+]
+
+V11_CONTRACT = ModelFeatureContract(
+    model_version="v11",
+    feature_count=39,
+    feature_names=V11_FEATURE_NAMES,
+    description="CatBoost V11 - 39 features, adds star_teammates_out + game_total_line"
+)
+
+
+# -----------------------------------------------------------------------------
+# V12 Model Contract (54 features - V2 architecture experiment)
+# Adds fatigue, trend, team context, and market signals
+# Experiment-only: does NOT change feature store schema
+# -----------------------------------------------------------------------------
+
+V12_FEATURE_NAMES: List[str] = V11_FEATURE_NAMES + [
+    # 39: Fatigue / Rest
+    "days_rest",                      # From UPCG.days_rest
+
+    # 40: Workload
+    "minutes_load_last_7d",           # From UPCG.minutes_in_last_7_days
+
+    # 41-42: Game Environment (derived from spread/total)
+    "spread_magnitude",               # abs(UPCG.game_spread)
+    "implied_team_total",             # (game_total +/- spread) / 2
+
+    # 43-46: Scoring Trends
+    "points_avg_last_3",              # Ultra-short average
+    "scoring_trend_slope",            # OLS slope last 7 games
+    "deviation_from_avg_last3",       # Z-score: (avg_L3 - season_avg) / std
+    "consecutive_games_below_avg",    # Cold streak counter
+
+    # 47-48: Usage / Team Context
+    "teammate_usage_available",       # SUM(usage_rate) for OUT teammates
+    "usage_rate_last_5",              # Recent usage rate average
+
+    # 49: Structural Change
+    "games_since_structural_change",  # Games since trade/ASB/return
+
+    # 50: Market Signal
+    "multi_book_line_std",            # Std dev across sportsbooks
+
+    # 51-53: Prop Line History
+    "prop_over_streak",               # Consecutive games over prop line
+    "prop_under_streak",              # Consecutive games under prop line
+    "line_vs_season_avg",             # vegas_line - season_avg
+]
+
+V12_CONTRACT = ModelFeatureContract(
+    model_version="v12",
+    feature_count=54,
+    feature_names=V12_FEATURE_NAMES,
+    description="CatBoost V12 - 54 features, adds fatigue/trend/team/market signals for V2 architecture"
+)
+
+
 # =============================================================================
 # CONTRACT REGISTRY
 # =============================================================================
@@ -273,9 +341,13 @@ MODEL_CONTRACTS: Dict[str, ModelFeatureContract] = {
     "v8": V8_CONTRACT,
     "v9": V9_CONTRACT,
     "v10": V10_CONTRACT,
+    "v11": V11_CONTRACT,
+    "v12": V12_CONTRACT,
     "catboost_v8": V8_CONTRACT,
     "catboost_v9": V9_CONTRACT,
     "catboost_v10": V10_CONTRACT,
+    "catboost_v11": V11_CONTRACT,
+    "catboost_v12": V12_CONTRACT,
 }
 
 
@@ -287,6 +359,10 @@ def get_contract(model_version: str) -> ModelFeatureContract:
         version = "v9"
     if version.startswith("v8_"):
         version = "v8"
+    if version.startswith("v11_"):
+        version = "v11"
+    if version.startswith("v12_"):
+        version = "v12"
 
     if version not in MODEL_CONTRACTS:
         raise ValueError(f"Unknown model version: {model_version}")
@@ -316,11 +392,15 @@ FEATURES_VEGAS = [25, 26, 27]
 # Features from shot zone analysis
 FEATURES_SHOT_ZONE = [18, 19, 20]
 
+# V11 features from Phase 3
+FEATURES_FROM_PHASE3_V11 = [37, 38]
+
 # Session 145: Optional features - not counted in zero-tolerance gating
 # Vegas lines are unavailable for ~60% of players (bench players without published lines).
+# game_total_line (38) depends on odds data availability.
 # These features are still tracked as defaults for visibility, but don't block predictions.
 # Scraper health monitoring separately alerts when star players are missing lines.
-FEATURES_OPTIONAL = set(FEATURES_VEGAS)  # {25, 26, 27}
+FEATURES_OPTIONAL = set(FEATURES_VEGAS) | {38, 50, 51, 52, 53}
 
 # Session 152: Vegas line source values
 # Stored in ml_feature_store_v2.vegas_line_source and player_prop_predictions.vegas_line_source
@@ -343,6 +423,23 @@ for _idx in FEATURES_VEGAS:
     FEATURE_SOURCE_MAP[_idx] = 'vegas'
 for _idx in FEATURES_SHOT_ZONE:
     FEATURE_SOURCE_MAP[_idx] = 'shot_zone'
+for _idx in FEATURES_FROM_PHASE3_V11:
+    FEATURE_SOURCE_MAP[_idx] = 'phase3'
+
+# V12 feature source mappings (experiment-only)
+FEATURES_FROM_UPCG_V12 = [39, 40, 51, 52]
+FEATURES_COMPUTED_V12 = [41, 42, 43, 44, 45, 46, 48, 49, 53]
+FEATURES_FROM_ODDS_V12 = [50]
+FEATURES_FROM_INJURY_V12 = [47]
+
+for _idx in FEATURES_FROM_UPCG_V12:
+    FEATURE_SOURCE_MAP[_idx] = 'phase3'
+for _idx in FEATURES_COMPUTED_V12:
+    FEATURE_SOURCE_MAP[_idx] = 'calculated'
+for _idx in FEATURES_FROM_ODDS_V12:
+    FEATURE_SOURCE_MAP[_idx] = 'vegas'
+for _idx in FEATURES_FROM_INJURY_V12:
+    FEATURE_SOURCE_MAP[_idx] = 'calculated'
 
 
 # =============================================================================
@@ -406,6 +503,27 @@ FEATURE_DEFAULTS: Dict[str, float] = {
     "pts_slope_10g": 0.0,
     "pts_vs_season_zscore": 0.0,
     "breakout_flag": 0.0,
+
+    # V11 features
+    "star_teammates_out": 0.0,  # 0 = no stars out (common case, valid default)
+    "game_total_line": 224.0,   # League average game total
+
+    # V12 features (experiment-only)
+    "days_rest": 1.0,
+    "minutes_load_last_7d": 80.0,
+    "spread_magnitude": 5.0,
+    "implied_team_total": 112.0,
+    "points_avg_last_3": 10.0,
+    "scoring_trend_slope": 0.0,
+    "deviation_from_avg_last3": 0.0,
+    "consecutive_games_below_avg": 0.0,
+    "teammate_usage_available": 0.0,
+    "usage_rate_last_5": 20.0,
+    "games_since_structural_change": 30.0,
+    "multi_book_line_std": 0.5,
+    "prop_over_streak": 0.0,
+    "prop_under_streak": 0.0,
+    "line_vs_season_avg": 0.0,
 }
 
 
@@ -429,6 +547,24 @@ def validate_all_contracts() -> bool:
                 f"store has '{store_name}', V9 expects '{v9_name}'"
             )
     print(f"  ✓ Feature store aligned with V9 (first 33 features)")
+
+    # Validate V11 alignment with feature store (all 39 features)
+    for i, (store_name, v11_name) in enumerate(zip(FEATURE_STORE_NAMES, V11_FEATURE_NAMES)):
+        if store_name != v11_name:
+            raise ValueError(
+                f"Feature store position {i} mismatch: "
+                f"store has '{store_name}', V11 expects '{v11_name}'"
+            )
+    print(f"  ✓ Feature store aligned with V11 (all 39 features)")
+
+    # Validate V12 extends V11 (first 39 features must match)
+    for i, (v11_name, v12_name) in enumerate(zip(V11_FEATURE_NAMES, V12_FEATURE_NAMES[:39])):
+        if v11_name != v12_name:
+            raise ValueError(
+                f"V12 position {i} mismatch: "
+                f"V11 has '{v11_name}', V12 has '{v12_name}'"
+            )
+    print(f"  ✓ V12 extends V11 (first 39 features match, +{V12_CONTRACT.feature_count - 39} new)")
 
     print("All contracts valid!")
     return True

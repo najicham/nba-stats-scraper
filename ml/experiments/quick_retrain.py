@@ -64,6 +64,8 @@ from shared.ml.feature_contract import (
     V10_FEATURE_NAMES,
     V11_CONTRACT,
     V11_FEATURE_NAMES,
+    V12_CONTRACT,
+    V12_FEATURE_NAMES,
     FEATURE_DEFAULTS,
     get_contract,
     validate_all_contracts,
@@ -186,8 +188,8 @@ def parse_args():
     parser.add_argument('--eval-days', type=int, default=7, help='Days of eval (default: 7)')
 
     # Feature set selection
-    parser.add_argument('--feature-set', choices=['v9', 'v10', 'v11'], default='v9',
-                       help='Feature set to use (v9=33, v10=37, v11=39 features)')
+    parser.add_argument('--feature-set', choices=['v9', 'v10', 'v11', 'v12'], default='v9',
+                       help='Feature set to use (v9=33, v10=37, v11=39, v12=54 features)')
 
     # Line source for evaluation
     parser.add_argument('--use-production-lines', action='store_true', default=True,
@@ -588,6 +590,379 @@ def augment_v11_features(client, df):
                 augmented_count += 1
 
     print(f"  V11 augmentation: {augmented_count}/{len(df)} rows matched ({100*augmented_count/len(df):.0f}%)")
+    return df
+
+
+def augment_v12_features(client, df):
+    """
+    Augment training/eval DataFrame with V12 features (15 new features, indices 39-53).
+
+    Queries three upstream sources:
+    1. UPCG: days_rest, minutes_load, spread, total, prop streaks
+    2. player_game_summary: scoring trends, usage, structural changes
+    3. odds_api: multi-book line std
+
+    Then computes derived features (implied_team_total, line_vs_season_avg)
+    and injects all 15 features into each row's features/feature_names arrays.
+
+    Args:
+        client: BigQuery client
+        df: DataFrame with player_lookup, game_date, features, feature_names columns
+            (must already have V11 features augmented)
+
+    Returns:
+        DataFrame with V12 features injected into features/feature_names arrays
+    """
+    if df.empty:
+        return df
+
+    if 'player_lookup' not in df.columns:
+        print("  WARNING: No player_lookup column — skipping V12 augmentation")
+        return df
+
+    min_date = df['game_date'].min()
+    max_date = df['game_date'].max()
+
+    # --- Sub-query 1: UPCG data (Tier 1 features) ---
+    upcg_query = f"""
+    SELECT
+        player_lookup,
+        game_date,
+        COALESCE(days_rest, 1) as days_rest,
+        COALESCE(minutes_in_last_7_days, 80.0) as minutes_load_last_7d,
+        COALESCE(game_spread, 0.0) as game_spread,
+        COALESCE(game_total, 224.0) as game_total,
+        COALESCE(home_game, FALSE) as home_game,
+        COALESCE(prop_over_streak, 0) as prop_over_streak,
+        COALESCE(prop_under_streak, 0) as prop_under_streak
+    FROM `{PROJECT_ID}.nba_analytics.upcoming_player_game_context`
+    WHERE game_date BETWEEN '{min_date}' AND '{max_date}'
+    """
+    print("  V12: Querying UPCG data...")
+    upcg_data = client.query(upcg_query).to_dataframe()
+
+    # Build UPCG lookup
+    upcg_lookup = {}
+    for _, row in upcg_data.iterrows():
+        key = (row['player_lookup'], str(row['game_date']))
+        spread = float(row['game_spread'])
+        total = float(row['game_total'])
+        is_home = bool(row['home_game'])
+        # implied_team_total: home = (total - spread) / 2, away = (total + spread) / 2
+        # game_spread is HOME perspective (negative = home favored)
+        if is_home:
+            implied_tt = (total - spread) / 2.0
+        else:
+            implied_tt = (total + spread) / 2.0
+
+        upcg_lookup[key] = {
+            'days_rest': float(row['days_rest']),
+            'minutes_load_last_7d': float(row['minutes_load_last_7d']),
+            'spread_magnitude': abs(spread),
+            'implied_team_total': implied_tt,
+            'prop_over_streak': float(row['prop_over_streak']),
+            'prop_under_streak': float(row['prop_under_streak']),
+        }
+    print(f"  V12: UPCG lookup built ({len(upcg_lookup)} rows)")
+
+    # --- Sub-query 2: Player stats (Tier 2 features) ---
+    # We need a wider date window to compute rolling stats
+    lookback_date = (pd.to_datetime(str(min_date)) - pd.Timedelta(days=60)).strftime('%Y-%m-%d')
+
+    stats_query = f"""
+    WITH player_games AS (
+        SELECT
+            player_lookup,
+            game_date,
+            points,
+            usage_rate,
+            team_abbr,
+            ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as rn_all,
+            LAG(game_date) OVER (PARTITION BY player_lookup ORDER BY game_date) as prev_game_date,
+            LAG(team_abbr) OVER (PARTITION BY player_lookup ORDER BY game_date) as prev_team_abbr
+        FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+        WHERE game_date BETWEEN '{lookback_date}' AND '{max_date}'
+          AND points IS NOT NULL
+          AND minutes_played > 0
+    ),
+    season_stats AS (
+        SELECT
+            player_lookup,
+            AVG(points) as season_avg,
+            STDDEV(points) as season_std
+        FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+        WHERE game_date BETWEEN '2025-10-22' AND '{max_date}'
+          AND points IS NOT NULL
+          AND minutes_played > 0
+        GROUP BY player_lookup
+    ),
+    rolling AS (
+        SELECT
+            pg.player_lookup,
+            pg.game_date,
+            pg.points,
+            pg.usage_rate,
+            pg.team_abbr,
+            pg.prev_game_date,
+            pg.prev_team_abbr,
+            ss.season_avg,
+            ss.season_std,
+            -- Last 3 average
+            AVG(pg2.points) as avg_last_3,
+            COUNT(pg2.points) as cnt_last_3
+        FROM player_games pg
+        JOIN season_stats ss ON pg.player_lookup = ss.player_lookup
+        LEFT JOIN (
+            SELECT player_lookup, game_date, points,
+                   ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY game_date DESC) as rn
+            FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+            WHERE game_date BETWEEN '{lookback_date}' AND '{max_date}'
+              AND points IS NOT NULL AND minutes_played > 0
+        ) pg2 ON pg.player_lookup = pg2.player_lookup
+             AND pg2.game_date < pg.game_date
+             AND pg2.rn <= pg.rn_all + 3
+        WHERE pg.game_date BETWEEN '{min_date}' AND '{max_date}'
+        GROUP BY pg.player_lookup, pg.game_date, pg.points, pg.usage_rate,
+                 pg.team_abbr, pg.prev_game_date, pg.prev_team_abbr,
+                 ss.season_avg, ss.season_std
+    )
+    SELECT * FROM rolling
+    """
+    # The rolling join above is complex; let's use a simpler approach with arrays
+    stats_query_v2 = f"""
+    WITH target_players AS (
+        SELECT DISTINCT player_lookup
+        FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
+        WHERE game_date BETWEEN '{min_date}' AND '{max_date}'
+    ),
+    all_games AS (
+        SELECT
+            pgs.player_lookup,
+            pgs.game_date,
+            pgs.points,
+            pgs.usage_rate,
+            pgs.team_abbr
+        FROM `{PROJECT_ID}.nba_analytics.player_game_summary` pgs
+        JOIN target_players tp ON pgs.player_lookup = tp.player_lookup
+        WHERE pgs.game_date BETWEEN '{lookback_date}' AND '{max_date}'
+          AND pgs.points IS NOT NULL
+          AND pgs.minutes_played > 0
+        ORDER BY pgs.player_lookup, pgs.game_date
+    ),
+    season_stats AS (
+        SELECT
+            player_lookup,
+            AVG(points) as season_avg,
+            STDDEV(points) as season_std
+        FROM all_games
+        GROUP BY player_lookup
+    ),
+    per_game_with_context AS (
+        SELECT
+            ag.player_lookup,
+            ag.game_date,
+            ag.points,
+            ag.usage_rate,
+            ag.team_abbr,
+            ss.season_avg,
+            ss.season_std,
+            LAG(ag.game_date) OVER (PARTITION BY ag.player_lookup ORDER BY ag.game_date) as prev_game_date,
+            LAG(ag.team_abbr) OVER (PARTITION BY ag.player_lookup ORDER BY ag.game_date) as prev_team_abbr,
+            -- Arrays for rolling computations (last 10 games before this one)
+            ARRAY_AGG(COALESCE(ag.points, 0.0)) OVER (
+                PARTITION BY ag.player_lookup ORDER BY ag.game_date
+                ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
+            ) as prev_points,
+            ARRAY_AGG(COALESCE(ag.usage_rate, 0.0)) OVER (
+                PARTITION BY ag.player_lookup ORDER BY ag.game_date
+                ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+            ) as prev_usage_rates
+        FROM all_games ag
+        JOIN season_stats ss ON ag.player_lookup = ss.player_lookup
+    )
+    SELECT *
+    FROM per_game_with_context
+    WHERE game_date BETWEEN '{min_date}' AND '{max_date}'
+    """
+
+    print("  V12: Querying player stats...")
+    stats_data = client.query(stats_query_v2).to_dataframe()
+
+    # Build stats lookup
+    stats_lookup = {}
+    for _, row in stats_data.iterrows():
+        key = (row['player_lookup'], str(row['game_date']))
+        prev_points = list(row['prev_points']) if row['prev_points'] is not None else []
+        prev_usage = list(row['prev_usage_rates']) if row['prev_usage_rates'] is not None else []
+        season_avg = float(row['season_avg']) if row['season_avg'] is not None else 10.0
+        season_std = float(row['season_std']) if row['season_std'] is not None and row['season_std'] > 0 else 5.0
+
+        # points_avg_last_3: need at least 2 prev games
+        if len(prev_points) >= 2:
+            last_3 = prev_points[-3:] if len(prev_points) >= 3 else prev_points
+            points_avg_last_3 = float(np.mean(last_3))
+        else:
+            points_avg_last_3 = season_avg
+
+        # scoring_trend_slope: OLS on last 7, need at least 4
+        recent_7 = prev_points[-7:] if len(prev_points) >= 4 else None
+        if recent_7 is not None and len(recent_7) >= 4:
+            n = len(recent_7)
+            # x = 1 (oldest) to n (most recent)
+            x = np.arange(1, n + 1, dtype=float)
+            y = np.array(recent_7, dtype=float)
+            # OLS slope: (n*sum(xy) - sum(x)*sum(y)) / (n*sum(x^2) - (sum(x))^2)
+            sum_x = x.sum()
+            sum_y = y.sum()
+            sum_xy = (x * y).sum()
+            sum_x2 = (x * x).sum()
+            denom = n * sum_x2 - sum_x * sum_x
+            scoring_trend_slope = float((n * sum_xy - sum_x * sum_y) / denom) if denom != 0 else 0.0
+        else:
+            scoring_trend_slope = 0.0
+
+        # deviation_from_avg_last3: z-score
+        deviation_from_avg_last3 = (points_avg_last_3 - season_avg) / season_std
+
+        # consecutive_games_below_avg: count from most recent going back
+        consecutive_below = 0
+        for pts in reversed(prev_points):
+            if pts < season_avg:
+                consecutive_below += 1
+            else:
+                break
+
+        # usage_rate_last_5: need at least 3
+        valid_usage = [u for u in prev_usage if u is not None]
+        if len(valid_usage) >= 3:
+            usage_rate_last_5 = float(np.mean(valid_usage[-5:]))
+        else:
+            usage_rate_last_5 = 20.0
+
+        # games_since_structural_change: detect team change or >14-day gap
+        games_since_change = 30.0  # default
+        prev_date = row['prev_game_date']
+        prev_team = row['prev_team_abbr']
+        current_team = row['team_abbr']
+
+        if prev_date is not None and prev_team is not None:
+            days_gap = (pd.to_datetime(str(row['game_date'])) - pd.to_datetime(str(prev_date))).days
+            if current_team != prev_team:
+                games_since_change = 0.0
+            elif days_gap > 14:
+                games_since_change = 0.0
+            else:
+                # Simple approximation: count games since start of season
+                # A proper implementation would track across all prior games
+                games_since_change = min(len(prev_points), 30.0)
+
+        # Check for ASB 2026 (Feb 14-19)
+        game_dt = pd.to_datetime(str(row['game_date']))
+        asb_end = pd.Timestamp('2026-02-19')
+        asb_start = pd.Timestamp('2026-02-14')
+        if game_dt > asb_end:
+            days_since_asb = (game_dt - asb_end).days
+            if days_since_asb < games_since_change:
+                games_since_change = float(days_since_asb)
+
+        stats_lookup[key] = {
+            'points_avg_last_3': points_avg_last_3,
+            'scoring_trend_slope': scoring_trend_slope,
+            'deviation_from_avg_last3': float(deviation_from_avg_last3),
+            'consecutive_games_below_avg': float(consecutive_below),
+            'usage_rate_last_5': usage_rate_last_5,
+            'games_since_structural_change': float(games_since_change),
+        }
+    print(f"  V12: Stats lookup built ({len(stats_lookup)} rows)")
+
+    # --- Sub-query 3: Multi-book line std ---
+    odds_query = f"""
+    SELECT
+        player_lookup,
+        game_date,
+        STDDEV(points_line) as line_std,
+        COUNT(DISTINCT bookmaker) as n_books
+    FROM `{PROJECT_ID}.nba_raw.odds_api_player_points_props`
+    WHERE game_date BETWEEN '{min_date}' AND '{max_date}'
+      AND points_line IS NOT NULL
+    GROUP BY player_lookup, game_date
+    HAVING COUNT(DISTINCT bookmaker) >= 3
+    """
+    print("  V12: Querying multi-book line std...")
+    odds_data = client.query(odds_query).to_dataframe()
+
+    odds_lookup = {}
+    for _, row in odds_data.iterrows():
+        key = (row['player_lookup'], str(row['game_date']))
+        odds_lookup[key] = float(row['line_std']) if row['line_std'] is not None else np.nan
+    print(f"  V12: Odds lookup built ({len(odds_lookup)} rows)")
+
+    # --- Inject V12 features into each row ---
+    augmented_counts = {
+        'upcg': 0, 'stats': 0, 'odds': 0
+    }
+    for idx in range(len(df)):
+        row = df.iloc[idx]
+        features = list(row['features'])
+        feature_names = list(row['feature_names'])
+        game_date_str = str(row['game_date'])
+        key = (row['player_lookup'], game_date_str)
+
+        # Skip if V12 features already present
+        if 'days_rest' in feature_names:
+            continue
+
+        upcg = upcg_lookup.get(key, {})
+        stats = stats_lookup.get(key, {})
+        odds_std = odds_lookup.get(key, np.nan)
+
+        if upcg:
+            augmented_counts['upcg'] += 1
+        if stats:
+            augmented_counts['stats'] += 1
+        if key in odds_lookup:
+            augmented_counts['odds'] += 1
+
+        # Compute line_vs_season_avg from existing features in the row
+        features_dict = dict(zip(feature_names, features))
+        vegas_line = features_dict.get('vegas_points_line')
+        season_avg = features_dict.get('points_avg_season', 10.0)
+        if vegas_line is not None and vegas_line > 0:
+            line_vs_season_avg = float(vegas_line) - float(season_avg)
+        else:
+            line_vs_season_avg = 0.0
+
+        # Append all 15 V12 features in order (indices 39-53)
+        v12_features = [
+            ('days_rest', upcg.get('days_rest', 1.0)),
+            ('minutes_load_last_7d', upcg.get('minutes_load_last_7d', 80.0)),
+            ('spread_magnitude', upcg.get('spread_magnitude', 5.0)),
+            ('implied_team_total', upcg.get('implied_team_total', 112.0)),
+            ('points_avg_last_3', stats.get('points_avg_last_3', 10.0)),
+            ('scoring_trend_slope', stats.get('scoring_trend_slope', 0.0)),
+            ('deviation_from_avg_last3', stats.get('deviation_from_avg_last3', 0.0)),
+            ('consecutive_games_below_avg', stats.get('consecutive_games_below_avg', 0.0)),
+            ('teammate_usage_available', 0.0),  # Default for now (complex query)
+            ('usage_rate_last_5', stats.get('usage_rate_last_5', 20.0)),
+            ('games_since_structural_change', stats.get('games_since_structural_change', 30.0)),
+            ('multi_book_line_std', odds_std),
+            ('prop_over_streak', upcg.get('prop_over_streak', 0.0)),
+            ('prop_under_streak', upcg.get('prop_under_streak', 0.0)),
+            ('line_vs_season_avg', line_vs_season_avg),
+        ]
+
+        for fname, fval in v12_features:
+            feature_names.append(fname)
+            features.append(float(fval) if fval is not None and not (isinstance(fval, float) and np.isnan(fval)) else np.nan)
+
+        df.at[df.index[idx], 'features'] = features
+        df.at[df.index[idx], 'feature_names'] = feature_names
+
+    total = len(df)
+    print(f"  V12 augmentation coverage:")
+    print(f"    UPCG (Tier 1):  {augmented_counts['upcg']}/{total} ({100*augmented_counts['upcg']/total:.0f}%)")
+    print(f"    Stats (Tier 2): {augmented_counts['stats']}/{total} ({100*augmented_counts['stats']/total:.0f}%)")
+    print(f"    Odds (Tier 3):  {augmented_counts['odds']}/{total} ({100*augmented_counts['odds']/total:.0f}%)")
     return df
 
 
@@ -1092,7 +1467,10 @@ def main():
     exp_id = str(uuid.uuid4())[:8]
 
     # Select feature contract based on --feature-set
-    if args.feature_set == 'v11':
+    if args.feature_set == 'v12':
+        selected_contract = V12_CONTRACT
+        selected_feature_names = V12_FEATURE_NAMES
+    elif args.feature_set == 'v11':
         selected_contract = V11_CONTRACT
         selected_feature_names = V11_FEATURE_NAMES
     elif args.feature_set == 'v10':
@@ -1237,6 +1615,15 @@ def main():
         print("\nAugmenting with V11 features (star_teammates_out, game_total_line)...")
         df_train = augment_v11_features(client, df_train)
         df_eval = augment_v11_features(client, df_eval)
+
+    # V12: First augment with V11 (V12 extends V11), then add 15 new V12 features
+    if args.feature_set == 'v12':
+        print("\nAugmenting with V11 features (star_teammates_out, game_total_line)...")
+        df_train = augment_v11_features(client, df_train)
+        df_eval = augment_v11_features(client, df_eval)
+        print("\nAugmenting with V12 features (15 new features)...")
+        df_train = augment_v12_features(client, df_train)
+        df_eval = augment_v12_features(client, df_eval)
 
     if len(df_train) < 1000 or len(df_eval) < 100:
         print("ERROR: Not enough data")
