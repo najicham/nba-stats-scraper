@@ -510,6 +510,33 @@ def load_eval_data(client, start, end, line_source='draftkings'):
     return client.query(query).to_dataframe()
 
 
+def load_eval_data_all_players(client, start, end):
+    """Load eval data for ALL quality-ready players regardless of prop lines.
+
+    Used for full-population MAE measurement. Includes players without prop
+    lines so we can measure prediction accuracy on all players, not just those
+    with betting lines.
+
+    Returns DataFrame with: player_lookup, features, feature_names, actual_points, game_date
+    (no vegas_line column — not all players have lines)
+    """
+    from shared.ml.training_data_loader import get_quality_where_clause
+
+    quality_clause = get_quality_where_clause("mf")
+
+    query = f"""
+    SELECT mf.player_lookup, mf.features, mf.feature_names, pgs.points as actual_points,
+           mf.game_date
+    FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
+    JOIN `{PROJECT_ID}.nba_analytics.player_game_summary` pgs
+      ON mf.player_lookup = pgs.player_lookup AND mf.game_date = pgs.game_date
+    WHERE mf.game_date BETWEEN '{start}' AND '{end}'
+      AND {quality_clause}
+      AND pgs.points IS NOT NULL
+    """
+    return client.query(query).to_dataframe()
+
+
 def augment_v11_features(client, df):
     """
     Augment training/eval DataFrame with V11 features from Phase 3.
@@ -557,7 +584,7 @@ def augment_v11_features(client, df):
     # Build lookup: (player_lookup, game_date) -> {star_teammates_out, game_total_line}
     v11_lookup = {}
     for _, row in v11_data.iterrows():
-        key = (row['player_lookup'], str(row['game_date']))
+        key = (row['player_lookup'], pd.to_datetime(row['game_date']).strftime('%Y-%m-%d'))
         v11_lookup[key] = {
             'star_teammates_out': row['star_teammates_out'],
             'game_total_line': row['game_total_line'],
@@ -569,7 +596,7 @@ def augment_v11_features(client, df):
         row = df.iloc[idx]
         features = list(row['features'])
         feature_names = list(row['feature_names'])
-        game_date_str = str(row['game_date'])
+        game_date_str = pd.to_datetime(row['game_date']).strftime('%Y-%m-%d')
         key = (row['player_lookup'], game_date_str)
 
         v11 = v11_lookup.get(key, {})
@@ -645,7 +672,7 @@ def augment_v12_features(client, df):
     # Build UPCG lookup
     upcg_lookup = {}
     for _, row in upcg_data.iterrows():
-        key = (row['player_lookup'], str(row['game_date']))
+        key = (row['player_lookup'], pd.to_datetime(row['game_date']).strftime('%Y-%m-%d'))
         spread = float(row['game_spread'])
         total = float(row['game_total'])
         is_home = bool(row['home_game'])
@@ -1937,7 +1964,37 @@ def main():
 
     mae_diff = mae - V9_BASELINE['mae']
     mae_emoji = "✅" if mae_diff < 0 else "❌" if mae_diff > 0.2 else "⚠️"
-    print(f"MAE: {mae:.4f} vs {V9_BASELINE['mae']:.4f} ({mae_diff:+.4f}) {mae_emoji}")
+    print(f"MAE (w/lines): {mae:.4f} vs {V9_BASELINE['mae']:.4f} ({mae_diff:+.4f}) {mae_emoji}  (n={len(y_eval)})")
+
+    # Full-population MAE: ALL quality-ready players regardless of prop lines
+    # This measures point prediction accuracy across the full player pool
+    full_pop_mae = None
+    full_pop_n = 0
+    try:
+        print("\nComputing full-population MAE (all players, no line requirement)...")
+        df_all = load_eval_data_all_players(client, dates['eval_start'], dates['eval_end'])
+        if len(df_all) > 0:
+            feature_names_all = df_all.iloc[0]['feature_names']
+            X_all = pd.DataFrame(
+                df_all['features'].tolist(),
+                columns=feature_names_all[:len(df_all['features'].iloc[0])]
+            )
+            # Use same active features as training
+            missing_cols = set(active_feature_names) - set(X_all.columns)
+            for col in missing_cols:
+                X_all[col] = np.nan
+            X_all_filtered = X_all[active_feature_names]
+            y_all = df_all['actual_points']
+
+            all_preds = model.predict(X_all_filtered)
+            full_pop_mae = mean_absolute_error(y_all, all_preds)
+            full_pop_n = len(y_all)
+            full_pop_emoji = "✅" if full_pop_mae < V9_BASELINE['mae'] else "⚠️"
+            print(f"MAE (all players): {full_pop_mae:.4f} {full_pop_emoji}  (n={full_pop_n}, includes {full_pop_n - len(y_eval)} without lines)")
+        else:
+            print("  No all-player eval data found")
+    except Exception as e:
+        print(f"  Full-population MAE failed: {e}")
     print()
 
     hr_all_str, hr_all_better = compare("Hit Rate (all)", hr_all, V9_BASELINE['hit_rate_all'], bets_all)
@@ -2142,6 +2199,8 @@ def main():
                 'eval_period': {'start_date': dates['eval_start'], 'end_date': dates['eval_end'], 'samples': len(df_eval)},
                 'results_json': json.dumps({
                     'mae': round(mae, 4),
+                    'mae_all_players': round(full_pop_mae, 4) if full_pop_mae is not None else None,
+                    'n_all_players': full_pop_n,
                     'hit_rate_all': hr_all, 'bets_all': bets_all,
                     'hit_rate_edge_3plus': hr_edge3, 'bets_edge_3plus': bets_edge3,
                     'hit_rate_edge_5plus': hr_edge5, 'bets_edge_5plus': bets_edge5,

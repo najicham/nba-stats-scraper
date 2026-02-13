@@ -675,7 +675,10 @@ Training CatBoost...
 ======================================================================
  RESULTS vs V9 BASELINE
 ======================================================================
-MAE: 5.10 vs 5.14 (-0.04)
+MAE (w/lines): 5.10 vs 5.14 (-0.04)  (n=1245)
+
+Computing full-population MAE (all players, no line requirement)...
+MAE (all players): 5.22  (n=2890, includes 1645 without lines)
 
 Hit Rate (all): 55.1% vs 54.53% (+0.57%)
 Hit Rate (edge 3+): 64.2% vs 63.72% (+0.48%)
