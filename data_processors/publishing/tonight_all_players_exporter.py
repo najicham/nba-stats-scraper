@@ -13,7 +13,7 @@ from collections import defaultdict
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
-from .exporter_utils import safe_float, safe_int, safe_odds
+from .exporter_utils import safe_float, safe_int, safe_odds, compute_display_confidence
 
 logger = logging.getLogger(__name__)
 
@@ -582,7 +582,12 @@ class TonightAllPlayersExporter(BaseExporter):
 
                     player_data['prediction'] = {
                         'predicted': safe_float(p.get('predicted_points')),
-                        'confidence': safe_float(p.get('confidence_score')),
+                        'confidence': compute_display_confidence(
+                            p.get('predicted_points'),
+                            p.get('current_points_line'),
+                            p.get('confidence_score'),
+                            p.get('recommendation')
+                        ),
                         'recommendation': p.get('recommendation'),
                         'factors': factors
                     }

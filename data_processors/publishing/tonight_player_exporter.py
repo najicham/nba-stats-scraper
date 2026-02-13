@@ -13,7 +13,7 @@ from datetime import date, datetime
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
-from .exporter_utils import safe_float
+from .exporter_utils import safe_float, compute_display_confidence
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +91,10 @@ class TonightPlayerExporter(BaseExporter):
                     context['days_rest'] = (target - last_game_date).days
                 except (ValueError, TypeError):
                     pass
+
+        # Fallback to fatigue context for days_rest
+        if context.get('days_rest') is None and fatigue and isinstance(fatigue.get('context'), dict):
+            context['days_rest'] = fatigue['context'].get('days_rest')
 
         # Build tonight's factors (only relevant ones)
         tonights_factors = self._build_tonights_factors(context, fatigue, splits, defense_tier)
@@ -246,6 +250,12 @@ class TonightPlayerExporter(BaseExporter):
 
             # Parse fatigue_context_json if it's a string
             ctx = r.get('fatigue_context_json')
+            if isinstance(ctx, str):
+                try:
+                    ctx = json.loads(ctx)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            # Handle double-serialization (json.dumps applied twice in pipeline)
             if isinstance(ctx, str):
                 try:
                     ctx = json.loads(ctx)
@@ -569,7 +579,7 @@ class TonightPlayerExporter(BaseExporter):
             return None
 
         return {
-            'rating': defense_tier.get('def_rating'),
+            'rating': defense_tier.get('ppg_allowed'),
             'rank': defense_tier.get('rank'),
             'position_ppg_allowed': None,  # Not yet tracked at position level
             'position_ppg_rank': None,
@@ -741,7 +751,12 @@ class TonightPlayerExporter(BaseExporter):
         """Format prediction data for output."""
         return {
             'predicted_points': safe_float(prediction.get('predicted_points')),
-            'confidence_score': safe_float(prediction.get('confidence_score')),
+            'confidence_score': compute_display_confidence(
+                prediction.get('predicted_points'),
+                prediction.get('current_points_line'),
+                prediction.get('confidence_score'),
+                prediction.get('recommendation')
+            ),
             'recommendation': prediction.get('recommendation'),
             'line': safe_float(prediction.get('current_points_line')),
             'edge': safe_float(prediction.get('line_margin')),

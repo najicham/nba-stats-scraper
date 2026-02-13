@@ -1,16 +1,18 @@
 """
 Live Grading Exporter for Phase 6 Publishing
 
-Exports live prediction grading results during games.
-Combines tonight's predictions with live scores to show real-time accuracy.
+Multi-source live prediction grading: real-time during games, confirmed after.
 
-This exporter:
-1. Queries tonight's predictions from BigQuery
-2. Fetches live player scores from BDL API
-3. Computes live grading metrics (correct/incorrect, error, etc.)
-4. Exports to GCS as /live-grading/{date}.json
+Score Sources:
+  1. BDL Live API — real-time stats for in-progress games (ephemeral, drops off after final)
+  2. BigQuery (NBA.com) — confirmed official stats for final games (authoritative)
 
-Designed to run alongside LiveScoresExporter every 2-5 minutes during games.
+Resolution order per player:
+  - Final games: always use BigQuery (nba_analytics.player_game_summary)
+  - In-progress games: prefer BDL live API, fall back to BigQuery if BDL unavailable
+  - Each prediction carries a `score_source` field for transparency
+
+Designed to run every 2-5 minutes during games via Cloud Scheduler.
 """
 
 import logging
@@ -23,6 +25,7 @@ from collections import defaultdict
 from google.cloud import bigquery
 
 from .base_exporter import BaseExporter
+from .exporter_utils import compute_display_confidence
 
 # Retry logic for API resilience (prevents live grading failures during games)
 try:
@@ -79,7 +82,8 @@ class LiveGradingExporter(BaseExporter):
                 "status": "pending",  // pending | correct | incorrect
                 "error": -7.5,
                 "margin_vs_line": -4.5,
-                "confidence": 0.72
+                "confidence": 72,
+                "score_source": "nba_official"  // nba_official | bdl_live | null
             }
         ]
     }
@@ -91,35 +95,58 @@ class LiveGradingExporter(BaseExporter):
 
     def generate_json(self, target_date: str) -> Dict[str, Any]:
         """
-        Generate JSON for live prediction grading.
+        Generate JSON for live prediction grading using multi-source scores.
 
-        Args:
-            target_date: Date string in YYYY-MM-DD format
+        Source strategy:
+        - Final games → BigQuery (NBA.com official stats, authoritative)
+        - In-progress games → BDL live API (real-time), BigQuery fallback
+        - Scheduled games → no scores yet (pending)
 
-        Returns:
-            Dictionary ready for JSON serialization
+        Each graded prediction includes `score_source` for transparency.
         """
-        # Fetch tonight's predictions from BigQuery
         predictions = self._query_predictions(target_date)
-
         if not predictions:
             logger.info(f"No predictions found for {target_date}")
             return self._empty_response(target_date)
 
-        # Build player lookup mapping for BDL
-        self._build_player_lookup_cache()
+        # 1. Check game statuses from schedule (cheap, always available)
+        game_status_counts = self._query_game_statuses(target_date)
+        games_final = game_status_counts.get('final', 0)
+        games_in_progress = game_status_counts.get('in_progress', 0)
 
-        # Fetch live scores from BDL API
-        live_data = self._fetch_live_box_scores()
+        # 2. Source A: BigQuery for confirmed final game stats (authoritative)
+        bq_scores = {}
+        if games_final > 0 or games_in_progress > 0:
+            bq_scores, game_status_counts = self._fetch_bigquery_scores(target_date)
+            logger.info(f"BigQuery (NBA.com): {len(bq_scores)} players")
 
-        # Build live scores lookup by player_lookup (filtered by target date)
-        live_scores = self._build_live_scores_map(live_data, target_date)
+        # 3. Source B: BDL live API for real-time in-progress stats
+        bdl_scores = {}
+        live_data = []  # Raw BDL response (kept for compatibility)
+        if games_in_progress > 0:
+            try:
+                self._build_player_lookup_cache()
+                live_data = self._fetch_live_box_scores()
+                bdl_scores = self._build_live_scores_map(live_data, target_date)
+                logger.info(f"BDL live API: {len(bdl_scores)} players matched")
+            except Exception as e:
+                logger.warning(f"BDL live API failed (BigQuery will cover): {e}")
 
-        # Grade predictions against live scores
-        graded_predictions = self._grade_predictions(predictions, live_scores)
+        # 4. Merge: BDL for in-progress, BigQuery for final + fallback
+        merged_scores = self._merge_scores(bdl_scores, bq_scores)
+        logger.info(
+            f"Merged scores: {len(merged_scores)} players "
+            f"(BDL: {sum(1 for s in merged_scores.values() if s.get('score_source') == 'bdl_live')}, "
+            f"NBA.com: {sum(1 for s in merged_scores.values() if s.get('score_source') == 'nba_official')})"
+        )
 
-        # Compute summary statistics
+        # 5. Grade and summarize
+        graded_predictions = self._grade_predictions(predictions, merged_scores)
         summary = self._compute_summary(graded_predictions, live_data)
+
+        # Use schedule-derived game counts (more reliable than BDL)
+        summary['games_final'] = game_status_counts.get('final', 0)
+        summary['games_in_progress'] = game_status_counts.get('in_progress', 0)
 
         return {
             'updated_at': self.get_generated_at(),
@@ -215,7 +242,16 @@ class LiveGradingExporter(BaseExporter):
             return []
 
     def _build_player_lookup_cache(self) -> None:
-        """Build mapping of BDL player IDs to player_lookup values."""
+        """
+        Build mapping of BDL player IDs to player_lookup values.
+
+        Uses full season of historical data (not just 30 days) so the cache
+        works even when BDL scrapers are disabled. BDL player IDs are stable
+        across a season, so historical mappings remain valid.
+
+        The name-based fallback in _add_player_to_map handles any players
+        not found in the cache.
+        """
         if self._player_lookup_cache:
             return
 
@@ -225,7 +261,7 @@ class LiveGradingExporter(BaseExporter):
             player_lookup
         FROM `nba_raw.bdl_player_boxscores`
         WHERE bdl_player_id IS NOT NULL
-          AND game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 30 DAY)
+          AND game_date >= '2025-10-01'
         """
 
         try:
@@ -236,7 +272,7 @@ class LiveGradingExporter(BaseExporter):
                     self._player_lookup_cache[bdl_id] = row.get('player_lookup')
             logger.info(f"Built player lookup cache with {len(self._player_lookup_cache)} players")
         except Exception as e:
-            logger.error(f"Failed to build player lookup cache: {e}", exc_info=True)
+            logger.warning(f"BDL lookup cache unavailable (name fallback will be used): {e}")
 
     def _fetch_live_box_scores(self) -> List[Dict]:
         """Fetch live box scores from BallDontLie API with retry logic."""
@@ -367,6 +403,162 @@ class LiveGradingExporter(BaseExporter):
 
         return live_scores
 
+    def _query_game_statuses(self, target_date: str) -> Dict[str, int]:
+        """Query game statuses from schedule to determine if games have started."""
+        query = """
+        SELECT
+            COUNTIF(game_status = 1) as scheduled,
+            COUNTIF(game_status = 2) as in_progress,
+            COUNTIF(game_status = 3) as final
+        FROM `nba-props-platform.nba_raw.nbac_schedule`
+        WHERE game_date = @target_date
+        """
+        params = [
+            bigquery.ScalarQueryParameter("target_date", "DATE", target_date)
+        ]
+        try:
+            results = self.query_to_list(query, params)
+            if results:
+                row = results[0]
+                return {
+                    'scheduled': row.get('scheduled', 0) or 0,
+                    'in_progress': row.get('in_progress', 0) or 0,
+                    'final': row.get('final', 0) or 0,
+                }
+        except Exception as e:
+            logger.error(f"Failed to query game statuses: {e}", exc_info=True)
+        return {}
+
+    def _merge_scores(
+        self,
+        bdl_scores: Dict[str, Dict],
+        bq_scores: Dict[str, Dict]
+    ) -> Dict[str, Dict]:
+        """
+        Merge scores from multiple sources with clear precedence.
+
+        Rules:
+        - Final games: always use BigQuery (NBA.com official, authoritative)
+        - In-progress games: prefer BDL (real-time), fall back to BigQuery
+        - Each entry tagged with score_source for transparency
+
+        This design makes it easy to add more sources later — just add
+        another source dict and update the merge logic.
+        """
+        merged = {}
+
+        # Start with all BigQuery scores (covers final + in-progress)
+        for player, data in bq_scores.items():
+            merged[player] = {**data, 'score_source': 'nba_official'}
+
+        # Overlay BDL for in-progress games only (real-time is more current)
+        for player, data in bdl_scores.items():
+            if data.get('game_status') == 'in_progress':
+                merged[player] = {**data, 'score_source': 'bdl_live'}
+            elif player not in merged:
+                # BDL has data that BigQuery doesn't — use it
+                merged[player] = {**data, 'score_source': 'bdl_live'}
+
+        return merged
+
+    def _fetch_bigquery_scores(self, target_date: str) -> Tuple[Dict[str, Dict], Dict[str, int]]:
+        """
+        Fallback: fetch actual player scores from BigQuery when BDL API is unavailable.
+
+        Uses nba_analytics.player_game_summary for actual stats and
+        nba_raw.nbac_schedule for game status.
+
+        Returns:
+            Tuple of (live_scores_map, game_status_counts)
+        """
+        query = """
+        WITH game_statuses AS (
+            SELECT
+                CONCAT(
+                    FORMAT_DATE('%Y%m%d', game_date), '_',
+                    away_team_tricode, '_',
+                    home_team_tricode
+                ) as game_id,
+                game_status,
+                home_team_tricode,
+                away_team_tricode
+            FROM `nba-props-platform.nba_raw.nbac_schedule`
+            WHERE game_date = @target_date
+        ),
+        player_stats AS (
+            SELECT
+                pgs.player_lookup,
+                pgs.points,
+                pgs.minutes_played,
+                pgs.team_abbr,
+                pgs.game_id
+            FROM `nba-props-platform.nba_analytics.player_game_summary` pgs
+            WHERE pgs.game_date = @target_date
+              AND pgs.is_dnp = FALSE
+        )
+        SELECT
+            ps.player_lookup,
+            ps.points,
+            ps.minutes_played,
+            ps.team_abbr,
+            ps.game_id,
+            gs.game_status as game_status_code
+        FROM player_stats ps
+        LEFT JOIN game_statuses gs ON ps.game_id = gs.game_id
+        """
+
+        params = [
+            bigquery.ScalarQueryParameter("target_date", "DATE", target_date)
+        ]
+
+        live_scores = {}
+        game_status_counts = {'final': 0, 'in_progress': 0, 'scheduled': 0}
+
+        try:
+            results = self.query_to_list(query, params)
+
+            # Count unique game statuses
+            seen_games = set()
+            for row in results:
+                game_id = row.get('game_id')
+                status_code = row.get('game_status_code')
+
+                # Map numeric status to string
+                if status_code == 3:
+                    game_status = 'final'
+                elif status_code == 2:
+                    game_status = 'in_progress'
+                else:
+                    game_status = 'scheduled'
+
+                # Count unique games
+                if game_id and game_id not in seen_games:
+                    seen_games.add(game_id)
+                    game_status_counts[game_status] = game_status_counts.get(game_status, 0) + 1
+
+                player_lookup = row.get('player_lookup')
+                if player_lookup:
+                    minutes_raw = row.get('minutes_played')
+                    if isinstance(minutes_raw, (int, float)):
+                        minutes_str = f"{int(minutes_raw)}:00"
+                    else:
+                        minutes_str = str(minutes_raw) if minutes_raw else "0:00"
+
+                    live_scores[player_lookup] = {
+                        'points': row.get('points') or 0,
+                        'minutes': minutes_str,
+                        'team': row.get('team_abbr'),
+                        'game_status': game_status,
+                        'score_source': 'nba_official',
+                    }
+
+            logger.info(f"BigQuery scores: {len(live_scores)} players, {len(seen_games)} games")
+
+        except Exception as e:
+            logger.error(f"Failed to fetch BigQuery scores: {e}", exc_info=True)
+
+        return live_scores, game_status_counts
+
     def _add_player_to_map(
         self,
         live_scores: Dict,
@@ -401,7 +593,8 @@ class LiveGradingExporter(BaseExporter):
                 'team': team_abbr,
                 'period': period,
                 'time_remaining': time_remaining,
-                'game_status': game_status
+                'game_status': game_status,
+                'score_source': 'bdl_live',
             }
 
     def _grade_predictions(
@@ -433,9 +626,15 @@ class LiveGradingExporter(BaseExporter):
                 'predicted': pred.get('predicted_points'),
                 'line': pred.get('line_value'),
                 'recommendation': pred.get('recommendation'),
-                'confidence': pred.get('confidence_score'),
+                'confidence': compute_display_confidence(
+                    pred.get('predicted_points'),
+                    pred.get('line_value'),
+                    pred.get('confidence_score'),
+                    pred.get('recommendation')
+                ),
                 'has_line': pred.get('has_prop_line', False),
                 'line_source': pred.get('line_source'),
+                'score_source': live.get('score_source') if live else None,
             }
 
             if live and live.get('game_status') != 'scheduled':

@@ -232,6 +232,67 @@ def format_timestamp(ts: Any) -> Optional[str]:
     return str(ts)
 
 
+def compute_display_confidence(
+    predicted: Any,
+    line: Any,
+    model_confidence: Any,
+    recommendation: Optional[str] = None
+) -> Optional[float]:
+    """
+    Compute a meaningful 0-100 confidence score for frontend display.
+
+    The model's internal confidence (75 + quality + consistency = 79-95) has only
+    4 unique values and doesn't incorporate edge size. This function produces a
+    wider range that reflects both model quality and prediction edge.
+
+    Components:
+    - Edge size (0-50): Primary driver. Larger edge = higher confidence.
+    - Model quality (0-30): Data quality and player consistency from model.
+    - Base (15): Minimum for having a valid prediction.
+
+    PASS picks are capped at 40 to avoid contradicting the recommendation.
+
+    Args:
+        predicted: Predicted points value
+        line: Betting line value
+        model_confidence: Model's internal confidence score (79-95 range)
+        recommendation: OVER, UNDER, PASS, or NO_LINE
+
+    Returns:
+        Display confidence 5-98, or None if inputs are invalid
+    """
+    pred_f = safe_float(predicted)
+    line_f = safe_float(line)
+    conf_f = safe_float(model_confidence)
+
+    if pred_f is None or line_f is None:
+        # No line available - return low confidence from model quality alone
+        if conf_f is not None:
+            quality = max(0, min(30, (conf_f - 75) * 1.5))
+            return max(5, min(50, round(15 + quality)))
+        return None
+
+    edge = abs(pred_f - line_f)
+
+    # Edge component: primary driver (0-50 range)
+    # 0 edge → 0, 2 edge → 14, 3 edge → 21, 5 edge → 35, 7+ edge → 50
+    edge_component = min(50, edge * 7)
+
+    # Model quality component (0-30 range)
+    # Normalize model's 79-95 range to 0-30
+    quality_component = 0
+    if conf_f is not None:
+        quality_component = max(0, min(30, (conf_f - 75) * 1.5))
+
+    confidence = 15 + edge_component + quality_component
+
+    # PASS picks: cap at 40 so they don't contradict the recommendation
+    if recommendation == 'PASS':
+        confidence = min(confidence, 40)
+
+    return max(5, min(98, round(confidence)))
+
+
 def calculate_edge(predicted: Any, line: Any) -> Optional[float]:
     """
     Calculate prediction edge (predicted - line).

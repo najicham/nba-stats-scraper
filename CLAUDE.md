@@ -135,7 +135,10 @@ nba-stats-scraper/
 **NEVER deploy a model without explicit user approval at each step.**
 **Training is NOT deploying.** Use `/model-experiment` to train. Deployment requires separate user sign-off.
 
-**Key lesson:** Lower MAE does NOT mean better betting. A retrain with better MAE (4.12) crashed hit rate to 51.2% due to systematic UNDER bias.
+**Key lessons:**
+- Lower MAE does NOT mean better betting. A retrain with better MAE (4.12) crashed hit rate to 51.2% due to systematic UNDER bias.
+- **NEVER use a model's in-sample predictions as training data for a second model.** In-sample predictions have artificially high accuracy (~88% hit rate vs ~56% real-world), making downstream classifiers useless. Always use out-of-fold (OOF) predictions via temporal cross-validation. (Session 230)
+- **Edge Classifier (Model 2) does not add value.** Pre-game features cannot predict which edges will hit (AUC < 0.50). Use Model 1 + edge threshold instead. (Session 230)
 
 **Governance gates** (enforced in `quick_retrain.py`):
 1. Duplicate check: blocks if same training dates exist
@@ -176,7 +179,9 @@ Shadow challengers run alongside champion. Each gets own `system_id`, graded ind
 **Key finding:** Quantile alpha=0.43 achieves 65.8% HR 3+ when fresh (vs 33.3% baseline). First model to solve retrain paradox. Champion decaying (71.2% → 47.9%, 33+ days stale).
 **Session 210 results (Feb 8-10):** Q43 60.0% edge 3+ HR (10 picks), Q45 60.0% (5 picks), vs champion 38.1% (21 picks). Awaiting 50+ edge 3+ graded for promotion decision.
 
-**Dead ends (don't revisit):** Grow policy, NO_VEG+quantile, CHAOS+quantile, residual mode, two-stage pipeline.
+**Dead ends (don't revisit):** Grow policy, NO_VEG+quantile, CHAOS+quantile, residual mode, two-stage pipeline, **Edge Classifier (Model 2)** (Session 230: AUC < 0.50, pre-game features cannot discriminate winning edges from losing ones).
+
+**V12 Model 1 (Session 228-230):** Vegas-free CatBoost, 50 features, MAE loss. Avg 67% HR edge 3+ across 4 eval windows. Best: 78.7% Jan 2026. Ready for production deployment. See `docs/08-projects/current/model-improvement-analysis/22-PHASE1B-RESULTS.md`.
 
 ```bash
 PYTHONPATH=. python bin/compare-model-performance.py catboost_v9_q43_train1102_0131 --days 7  # Monitor

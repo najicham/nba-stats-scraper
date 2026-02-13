@@ -111,7 +111,7 @@ class TestJsonGeneration:
                 result = exporter.generate_json('lebronjames', '2025-01-15')
 
                 assert result['opponent_defense'] is not None
-                assert result['opponent_defense']['rating'] == 108.5
+                assert result['opponent_defense']['rating'] == 106.2
                 assert result['opponent_defense']['rank'] == 5
 
     def test_days_rest_fallback_from_recent_form(self):
@@ -445,7 +445,7 @@ class TestPredictionFormatting:
     """Test suite for prediction formatting"""
 
     def test_format_prediction(self):
-        """Test prediction data formatting"""
+        """Test prediction data formatting with display confidence"""
         with patch('google.cloud.bigquery.Client'):
             with patch('data_processors.publishing.base_exporter.storage.Client'):
                 from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
@@ -453,7 +453,7 @@ class TestPredictionFormatting:
 
                 prediction = {
                     'predicted_points': 25.5,
-                    'confidence_score': 0.72,
+                    'confidence_score': 90.0,
                     'recommendation': 'OVER',
                     'current_points_line': 23.5,
                     'line_margin': 2.0,
@@ -464,39 +464,31 @@ class TestPredictionFormatting:
                 result = exporter._format_prediction(prediction)
 
                 assert result['predicted_points'] == 25.5
-                assert result['confidence_score'] == 0.72
+                # Display confidence: edge=2.0 → 14 + quality=(90-75)*1.5=22.5 + base=15 = 52
+                assert result['confidence_score'] == 52
                 assert result['recommendation'] == 'OVER'
                 assert result['line'] == 23.5
                 assert result['edge'] == 2.0
 
 
 class TestSafeFloat:
-    """Test suite for safe float conversion"""
+    """Test suite for safe float conversion (module-level utility)"""
 
     def test_safe_float_with_valid_number(self):
         """Test safe float with valid number"""
-        with patch('google.cloud.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
-                exporter = TonightPlayerExporter()
+        from data_processors.publishing.exporter_utils import safe_float
 
-                assert exporter._safe_float(5.555) == 5.55  # banker's rounding to 2 decimals
-                assert exporter._safe_float(10) == 10.0
+        assert safe_float(5.555) == 5.55  # Python banker's rounding
+        assert safe_float(10) == 10.0
 
     def test_safe_float_with_none(self):
         """Test safe float with None"""
-        with patch('google.cloud.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
-                exporter = TonightPlayerExporter()
+        from data_processors.publishing.exporter_utils import safe_float
 
-                assert exporter._safe_float(None) is None
+        assert safe_float(None) is None
 
     def test_safe_float_with_nan(self):
         """Test safe float with NaN"""
-        with patch('google.cloud.bigquery.Client'):
-            with patch('data_processors.publishing.base_exporter.storage.Client'):
-                from data_processors.publishing.tonight_player_exporter import TonightPlayerExporter
-                exporter = TonightPlayerExporter()
+        from data_processors.publishing.exporter_utils import safe_float
 
-                assert exporter._safe_float(float('nan')) is None
+        assert safe_float(float('nan')) is None
