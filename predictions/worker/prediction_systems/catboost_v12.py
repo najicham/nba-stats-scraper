@@ -7,14 +7,14 @@ Session 230: V12 deploys a no-vegas CatBoost model (54 features minus 4 vegas = 
 Validated at 67% avg HR edge 3+ across 4 eval windows (+8.7pp over V9).
 
 Key Differences from V9:
-- No vegas features (25-28 excluded) — predictions are independent of market
+- No vegas features (25-28 excluded) -- predictions are independent of market
 - 50 features (15 new: fatigue, trends, usage, streaks, structural changes)
-- V12 features (39-53) computed at prediction time from UPCG + player_game_summary
+- All 50 features read from ml_feature_store_v2 by name (no augmentation queries)
 - MAE loss function (not quantile)
 
-Feature augmentation at prediction time:
-- Features 0-24, 29-38 from ml_feature_store_v2 (skip vegas 25-28)
-- Features 39-53 from BigQuery batch queries, cached per game_date
+Session 230 update: Removed V12FeatureAugmenter. Features 39-53 are now computed
+in Phase 4 (ml_feature_store_processor) and stored in the feature store. V12
+reads all features by name from the store dict, same pattern as V8/V9.
 
 Usage:
     from predictions.worker.prediction_systems.catboost_v12 import CatBoostV12
@@ -26,10 +26,8 @@ Usage:
 import hashlib
 import logging
 import os
-import time
-from datetime import date, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 
 import numpy as np
 
@@ -91,7 +89,7 @@ V12_NOVEG_FEATURES = [
     # 37-38: V11
     "star_teammates_out",
     "game_total_line",
-    # 39-53: V12 augmented features
+    # 39-53: V12 features (now from feature store)
     "days_rest",
     "minutes_load_last_7d",
     "spread_magnitude",
@@ -121,302 +119,13 @@ def _compute_file_sha256(file_path: str) -> str:
     return sha256.hexdigest()[:16]
 
 
-class V12FeatureAugmenter:
-    """
-    Batch-loads V12 augmentation features (indices 39-53) from BigQuery.
-
-    Caches per game_date to avoid redundant queries across players on the same date.
-    Queries UPCG and player_game_summary for the 15 new V12 features.
-    """
-
-    def __init__(self, project_id: str):
-        self._project_id = project_id
-        self._cache: Dict[str, Dict[str, Dict[str, float]]] = {}  # date -> player -> features
-        self._cache_date: Optional[str] = None
-
-    def get_v12_features(
-        self,
-        player_lookup: str,
-        game_date: date,
-        features_dict: Dict[str, float],
-        line_value: Optional[float] = None,
-    ) -> Dict[str, float]:
-        """
-        Get V12 augmentation features for a player.
-
-        Args:
-            player_lookup: Player identifier
-            game_date: Game date
-            features_dict: Existing feature store features (for season_avg, etc.)
-            line_value: Betting line value (for line_vs_season_avg)
-
-        Returns:
-            Dict of V12 feature name -> value (indices 39-53)
-        """
-        date_str = str(game_date)
-
-        # Load batch data for this date if not cached
-        if self._cache_date != date_str:
-            self._load_batch_data(game_date)
-            self._cache_date = date_str
-
-        player_features = self._cache.get(date_str, {}).get(player_lookup, {})
-
-        # Compute derived features that need both store + augmented data
-        season_avg = features_dict.get('points_avg_season', 10.0)
-
-        # line_vs_season_avg: use betting line (from coordinator) minus season avg
-        if line_value is not None and line_value > 0:
-            line_vs_season_avg = float(line_value) - float(season_avg)
-        else:
-            line_vs_season_avg = 0.0
-
-        # Merge with defaults for any missing features
-        from shared.ml.feature_contract import FEATURE_DEFAULTS
-
-        result = {
-            'days_rest': player_features.get('days_rest', FEATURE_DEFAULTS.get('days_rest', 1.0)),
-            'minutes_load_last_7d': player_features.get('minutes_load_last_7d', FEATURE_DEFAULTS.get('minutes_load_last_7d', 80.0)),
-            'spread_magnitude': player_features.get('spread_magnitude', FEATURE_DEFAULTS.get('spread_magnitude', 5.0)),
-            'implied_team_total': player_features.get('implied_team_total', FEATURE_DEFAULTS.get('implied_team_total', 112.0)),
-            'points_avg_last_3': player_features.get('points_avg_last_3', FEATURE_DEFAULTS.get('points_avg_last_3', 10.0)),
-            'scoring_trend_slope': player_features.get('scoring_trend_slope', FEATURE_DEFAULTS.get('scoring_trend_slope', 0.0)),
-            'deviation_from_avg_last3': player_features.get('deviation_from_avg_last3', FEATURE_DEFAULTS.get('deviation_from_avg_last3', 0.0)),
-            'consecutive_games_below_avg': player_features.get('consecutive_games_below_avg', FEATURE_DEFAULTS.get('consecutive_games_below_avg', 0.0)),
-            'teammate_usage_available': 0.0,  # Dead feature (always 0)
-            'usage_rate_last_5': player_features.get('usage_rate_last_5', FEATURE_DEFAULTS.get('usage_rate_last_5', 20.0)),
-            'games_since_structural_change': player_features.get('games_since_structural_change', FEATURE_DEFAULTS.get('games_since_structural_change', 30.0)),
-            'multi_book_line_std': 0.5,  # Dead feature (default 0.5)
-            'prop_over_streak': player_features.get('prop_over_streak', 0.0),
-            'prop_under_streak': player_features.get('prop_under_streak', 0.0),
-            'line_vs_season_avg': line_vs_season_avg,
-        }
-        return result
-
-    def _load_batch_data(self, game_date: date):
-        """Load UPCG + player stats data for all players on a game date."""
-        from shared.clients import get_bigquery_client
-
-        date_str = str(game_date)
-        client = get_bigquery_client(self._project_id)
-
-        # Initialize cache for this date
-        self._cache[date_str] = {}
-
-        # Clear old dates from cache (keep only current)
-        old_dates = [d for d in self._cache if d != date_str]
-        for d in old_dates:
-            del self._cache[d]
-
-        load_start = time.time()
-
-        # Query 1: UPCG data (days_rest, minutes_load, spread, total, streaks)
-        try:
-            self._load_upcg_data(client, game_date, date_str)
-        except Exception as e:
-            logger.warning(f"V12 UPCG query failed for {date_str}: {e}")
-
-        # Query 2: Player stats (scoring trends, usage, structural changes)
-        try:
-            self._load_stats_data(client, game_date, date_str)
-        except Exception as e:
-            logger.warning(f"V12 stats query failed for {date_str}: {e}")
-
-        load_duration = time.time() - load_start
-        player_count = len(self._cache.get(date_str, {}))
-        logger.info(f"V12 augmentation loaded for {date_str}: {player_count} players in {load_duration:.2f}s")
-
-    def _load_upcg_data(self, client, game_date: date, date_str: str):
-        """Load UPCG features: days_rest, minutes_load, spread/total, streaks."""
-        query = f"""
-        SELECT
-            player_lookup,
-            COALESCE(days_rest, 1) as days_rest,
-            COALESCE(minutes_in_last_7_days, 80.0) as minutes_load_last_7d,
-            COALESCE(game_spread, 0.0) as game_spread,
-            COALESCE(game_total, 224.0) as game_total,
-            COALESCE(home_game, FALSE) as home_game,
-            COALESCE(prop_over_streak, 0) as prop_over_streak,
-            COALESCE(prop_under_streak, 0) as prop_under_streak
-        FROM `{self._project_id}.nba_analytics.upcoming_player_game_context`
-        WHERE game_date = '{date_str}'
-        """
-        rows = client.query(query).result()
-
-        for row in rows:
-            player = row['player_lookup']
-            spread = float(row['game_spread'])
-            total = float(row['game_total'])
-            is_home = bool(row['home_game'])
-
-            if is_home:
-                implied_tt = (total - spread) / 2.0
-            else:
-                implied_tt = (total + spread) / 2.0
-
-            if player not in self._cache[date_str]:
-                self._cache[date_str][player] = {}
-
-            self._cache[date_str][player].update({
-                'days_rest': float(row['days_rest']),
-                'minutes_load_last_7d': float(row['minutes_load_last_7d']),
-                'spread_magnitude': abs(spread),
-                'implied_team_total': implied_tt,
-                'prop_over_streak': float(row['prop_over_streak']),
-                'prop_under_streak': float(row['prop_under_streak']),
-            })
-
-    def _load_stats_data(self, client, game_date: date, date_str: str):
-        """Load player stats features: scoring trends, usage, structural changes."""
-        lookback_date = (game_date - timedelta(days=60)).isoformat()
-
-        query = f"""
-        WITH target_players AS (
-            SELECT DISTINCT player_lookup
-            FROM `{self._project_id}.nba_analytics.upcoming_player_game_context`
-            WHERE game_date = '{date_str}'
-        ),
-        all_games AS (
-            SELECT
-                pgs.player_lookup,
-                pgs.game_date,
-                pgs.points,
-                pgs.usage_rate,
-                pgs.team_abbr
-            FROM `{self._project_id}.nba_analytics.player_game_summary` pgs
-            JOIN target_players tp ON pgs.player_lookup = tp.player_lookup
-            WHERE pgs.game_date BETWEEN '{lookback_date}' AND '{date_str}'
-              AND pgs.points IS NOT NULL
-              AND pgs.minutes_played > 0
-            ORDER BY pgs.player_lookup, pgs.game_date
-        ),
-        season_stats AS (
-            SELECT
-                player_lookup,
-                AVG(points) as season_avg,
-                STDDEV(points) as season_std
-            FROM all_games
-            GROUP BY player_lookup
-        ),
-        per_game AS (
-            SELECT
-                ag.player_lookup,
-                ag.game_date,
-                ag.points,
-                ag.usage_rate,
-                ag.team_abbr,
-                ss.season_avg,
-                ss.season_std,
-                LAG(ag.game_date) OVER (PARTITION BY ag.player_lookup ORDER BY ag.game_date) as prev_game_date,
-                LAG(ag.team_abbr) OVER (PARTITION BY ag.player_lookup ORDER BY ag.game_date) as prev_team_abbr,
-                ARRAY_AGG(ag.points) OVER (
-                    PARTITION BY ag.player_lookup ORDER BY ag.game_date
-                    ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
-                ) as prev_points,
-                ARRAY_AGG(ag.usage_rate) OVER (
-                    PARTITION BY ag.player_lookup ORDER BY ag.game_date
-                    ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
-                ) as prev_usage_rates
-            FROM all_games ag
-            JOIN season_stats ss ON ag.player_lookup = ss.player_lookup
-        )
-        SELECT *
-        FROM per_game
-        WHERE game_date = '{date_str}'
-        """
-        rows = client.query(query).result()
-
-        for row in rows:
-            player = row['player_lookup']
-            prev_points = list(row['prev_points']) if row['prev_points'] else []
-            prev_usage = list(row['prev_usage_rates']) if row['prev_usage_rates'] else []
-            season_avg = float(row['season_avg']) if row['season_avg'] is not None else 10.0
-            season_std = float(row['season_std']) if row['season_std'] is not None and row['season_std'] > 0 else 5.0
-
-            # points_avg_last_3
-            if len(prev_points) >= 2:
-                last_3 = prev_points[-3:] if len(prev_points) >= 3 else prev_points
-                points_avg_last_3 = float(np.mean(last_3))
-            else:
-                points_avg_last_3 = season_avg
-
-            # scoring_trend_slope: OLS on last 7, need at least 4
-            recent_7 = prev_points[-7:] if len(prev_points) >= 4 else None
-            if recent_7 is not None and len(recent_7) >= 4:
-                n = len(recent_7)
-                x = np.arange(1, n + 1, dtype=float)
-                y = np.array(recent_7, dtype=float)
-                sum_x = x.sum()
-                sum_y = y.sum()
-                sum_xy = (x * y).sum()
-                sum_x2 = (x * x).sum()
-                denom = n * sum_x2 - sum_x * sum_x
-                scoring_trend_slope = float((n * sum_xy - sum_x * sum_y) / denom) if denom != 0 else 0.0
-            else:
-                scoring_trend_slope = 0.0
-
-            # deviation_from_avg_last3
-            deviation_from_avg_last3 = (points_avg_last_3 - season_avg) / season_std
-
-            # consecutive_games_below_avg
-            consecutive_below = 0
-            for pts in reversed(prev_points):
-                if pts < season_avg:
-                    consecutive_below += 1
-                else:
-                    break
-
-            # usage_rate_last_5
-            valid_usage = [u for u in prev_usage if u is not None]
-            if len(valid_usage) >= 3:
-                usage_rate_last_5 = float(np.mean(valid_usage[-5:]))
-            else:
-                usage_rate_last_5 = 20.0
-
-            # games_since_structural_change
-            games_since_change = 30.0
-            prev_date = row['prev_game_date']
-            prev_team = row['prev_team_abbr']
-            current_team = row['team_abbr']
-
-            if prev_date is not None and prev_team is not None:
-                days_gap = (game_date - prev_date).days if hasattr(prev_date, 'days') else (game_date - prev_date.date() if hasattr(prev_date, 'date') else 30)
-                try:
-                    days_gap = (game_date - prev_date).days
-                except TypeError:
-                    from datetime import datetime as dt
-                    if hasattr(prev_date, 'date'):
-                        days_gap = (game_date - prev_date.date()).days
-                    else:
-                        days_gap = (game_date - dt.strptime(str(prev_date), '%Y-%m-%d').date()).days
-
-                if current_team != prev_team:
-                    games_since_change = 0.0
-                elif days_gap > 14:
-                    games_since_change = 0.0
-                else:
-                    games_since_change = min(float(len(prev_points)), 30.0)
-
-            if player not in self._cache[date_str]:
-                self._cache[date_str][player] = {}
-
-            self._cache[date_str][player].update({
-                'points_avg_last_3': points_avg_last_3,
-                'scoring_trend_slope': scoring_trend_slope,
-                'deviation_from_avg_last3': float(deviation_from_avg_last3),
-                'consecutive_games_below_avg': float(consecutive_below),
-                'usage_rate_last_5': usage_rate_last_5,
-                'games_since_structural_change': float(games_since_change),
-            })
-
-
 class CatBoostV12:
     """
     CatBoost V12 - Vegas-Free 50-Feature Model
 
     Independent of market lines, generates predictions using player performance,
-    matchup context, and augmented features. Builds its own 50-feature vector
-    from the feature store (35 features) + batch-loaded V12 features (15 features).
+    matchup context, and V12 features. All 50 features read by name from the
+    feature store (same pattern as V8/V9).
     """
 
     SYSTEM_ID = "catboost_v12"
@@ -428,7 +137,6 @@ class CatBoostV12:
         self._model_file_name = None
         self._model_sha256 = None
         self._model_version = None
-        self._augmenter: Optional[V12FeatureAugmenter] = None
 
         if model_path:
             self._load_model_from_path(model_path)
@@ -442,13 +150,6 @@ class CatBoostV12:
     @property
     def model_version(self) -> str:
         return self._model_version or "v12_unknown"
-
-    def _get_augmenter(self) -> V12FeatureAugmenter:
-        """Lazy-load the feature augmenter."""
-        if self._augmenter is None:
-            from shared.config.gcp_config import get_project_id
-            self._augmenter = V12FeatureAugmenter(get_project_id())
-        return self._augmenter
 
     def _load_model_from_default_location(self):
         """Load V12 model: env var first, then local, then default GCS."""
@@ -531,17 +232,18 @@ class CatBoostV12:
         player_lookup: str,
         features: Dict,
         betting_line: Optional[float] = None,
-        game_date: Optional[date] = None,
         **kwargs,
     ) -> Dict:
         """
         Generate prediction using CatBoost V12 model.
 
+        All 50 features are read by name from the feature store dict.
+        No augmentation queries needed -- features 39-53 are now in the store.
+
         Args:
             player_lookup: Player identifier
             features: Feature store features dict (with feature arrays)
             betting_line: Current over/under line
-            game_date: Game date (for V12 augmentation queries)
 
         Returns:
             Dict with predicted_points, confidence_score, recommendation, metadata
@@ -549,13 +251,8 @@ class CatBoostV12:
         if self.model is None:
             raise ModelLoadError("CatBoost V12 model is not loaded")
 
-        # Build 50-feature vector
-        feature_vector = self._prepare_feature_vector(
-            player_lookup=player_lookup,
-            features=features,
-            betting_line=betting_line,
-            game_date=game_date,
-        )
+        # Build 50-feature vector from feature store by name
+        feature_vector = self._prepare_feature_vector(features)
 
         if feature_vector is None:
             return self._fallback_prediction(player_lookup, features, betting_line)
@@ -609,60 +306,20 @@ class CatBoostV12:
             },
         }
 
-    def _prepare_feature_vector(
-        self,
-        player_lookup: str,
-        features: Dict,
-        betting_line: Optional[float],
-        game_date: Optional[date],
-    ) -> Optional[np.ndarray]:
-        """Build 50-feature vector from feature store + V12 augmentation."""
+    def _prepare_feature_vector(self, features: Dict) -> Optional[np.ndarray]:
+        """Build 50-feature vector from feature store by name.
+
+        All features (including V12 39-53) are now in the feature store.
+        Simply look up each feature name from the features dict.
+        """
         try:
-            # Extract base features from feature store (by name, not position)
-            season_avg = features.get('points_avg_season', 10.0)
-
-            # Get V12 augmented features
-            v12_features = {}
-            if game_date is not None:
-                try:
-                    augmenter = self._get_augmenter()
-                    v12_features = augmenter.get_v12_features(
-                        player_lookup=player_lookup,
-                        game_date=game_date,
-                        features_dict=features,
-                        line_value=betting_line,
-                    )
-                except Exception as e:
-                    logger.warning(f"V12 augmentation failed for {player_lookup}: {e}")
-
-            # If no augmentation, compute line_vs_season_avg directly
-            if 'line_vs_season_avg' not in v12_features:
-                if betting_line is not None and betting_line > 0:
-                    v12_features['line_vs_season_avg'] = float(betting_line) - float(season_avg)
-                else:
-                    v12_features['line_vs_season_avg'] = 0.0
-
-            # Merge all feature sources into one dict
-            all_features = {}
-
-            # Feature store features (by name)
-            for name in V12_NOVEG_FEATURES[:35]:  # 0-24 + 29-38 (35 features from store)
-                val = features.get(name)
-                if val is not None:
-                    all_features[name] = float(val)
-                # Shot zone features can be NaN (CatBoost handles natively)
-                elif name in ('pct_paint', 'pct_mid_range', 'pct_three'):
-                    all_features[name] = np.nan
-
-            # V12 augmented features (indices 39-53)
-            all_features.update(v12_features)
-
-            # Build vector in exact order
             from shared.ml.feature_contract import FEATURE_DEFAULTS
+
             vector = []
             for name in V12_NOVEG_FEATURES:
-                if name in all_features and all_features[name] is not None:
-                    vector.append(float(all_features[name]))
+                val = features.get(name)
+                if val is not None:
+                    vector.append(float(val))
                 elif name in ('pct_paint', 'pct_mid_range', 'pct_three'):
                     vector.append(np.nan)  # CatBoost handles NaN natively
                 elif name in FEATURE_DEFAULTS and FEATURE_DEFAULTS[name] is not None:

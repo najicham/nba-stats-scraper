@@ -14,6 +14,7 @@ MODEL_CODENAMES = {
     'catboost_v9_202602': 'phoenix-b',  # Feb 2026 retrain (deprecated)
     'catboost_v9_q43_train1102_0131': 'aurora',
     'catboost_v9_q45_train1102_0131': 'summit',
+    'catboost_v12': 'nova',  # V12 no-vegas model (shadow mode)
     'catboost_v8': 'atlas',  # Legacy
     'ensemble_v1': 'echo',
     'similarity_v1': 'drift',

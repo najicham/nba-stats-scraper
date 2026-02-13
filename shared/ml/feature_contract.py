@@ -22,8 +22,8 @@ from dataclasses import dataclass
 # FEATURE STORE CONFIGURATION
 # =============================================================================
 
-CURRENT_FEATURE_STORE_VERSION = "v2_39features"
-FEATURE_STORE_FEATURE_COUNT = 39
+CURRENT_FEATURE_STORE_VERSION = "v2_54features"
+FEATURE_STORE_FEATURE_COUNT = 54
 
 # Canonical feature names in the feature store, IN ORDER
 # Position matters! New features must be APPENDED, never inserted.
@@ -92,6 +92,23 @@ FEATURE_STORE_NAMES: List[str] = [
 
     # 38: Game Total Line (V11 - Game Environment, replaces disabled composite_breakout_signal)
     "game_total_line",
+
+    # 39-53: V12 Features (Session 230 - Feature Store Extension)
+    "days_rest",
+    "minutes_load_last_7d",
+    "spread_magnitude",
+    "implied_team_total",
+    "points_avg_last_3",
+    "scoring_trend_slope",
+    "deviation_from_avg_last3",
+    "consecutive_games_below_avg",
+    "teammate_usage_available",
+    "usage_rate_last_5",
+    "games_since_structural_change",
+    "multi_book_line_std",
+    "prop_over_streak",
+    "prop_under_streak",
+    "line_vs_season_avg",
 ]
 
 # Validate feature store list length matches expected count
@@ -571,14 +588,23 @@ def validate_all_contracts() -> bool:
             )
     print(f"  ✓ Feature store aligned with V9 (first 33 features)")
 
-    # Validate V11 alignment with feature store (all 39 features)
-    for i, (store_name, v11_name) in enumerate(zip(FEATURE_STORE_NAMES, V11_FEATURE_NAMES)):
+    # Validate V11 alignment with feature store (first 39 features)
+    for i, (store_name, v11_name) in enumerate(zip(FEATURE_STORE_NAMES[:39], V11_FEATURE_NAMES)):
         if store_name != v11_name:
             raise ValueError(
                 f"Feature store position {i} mismatch: "
                 f"store has '{store_name}', V11 expects '{v11_name}'"
             )
-    print(f"  ✓ Feature store aligned with V11 (all 39 features)")
+    print(f"  ✓ Feature store aligned with V11 (first 39 features)")
+
+    # Validate V12 alignment with feature store (all 54 features)
+    for i, (store_name, v12_name) in enumerate(zip(FEATURE_STORE_NAMES, V12_FEATURE_NAMES)):
+        if store_name != v12_name:
+            raise ValueError(
+                f"Feature store position {i} mismatch: "
+                f"store has '{store_name}', V12 expects '{v12_name}'"
+            )
+    print(f"  ✓ Feature store aligned with V12 (all 54 features)")
 
     # Validate V12 extends V11 (first 39 features must match)
     for i, (v11_name, v12_name) in enumerate(zip(V11_FEATURE_NAMES, V12_FEATURE_NAMES[:39])):

@@ -84,10 +84,13 @@ PHASE4_MAX_STALENESS_HOURS = 6
 # - Composite 0-100 score predicting role player breakout probability
 # v2_39features: Added composite_breakout_signal (Session 126 - Feb 2026)
 # - 0-5 score combining top predictive factors (37% breakout rate at 4+)
-# TEMPORARY ROLLBACK (Session 131): Reverted to v2_37features for model compatibility
-# Models expect 37 features, need to retrain on 39 features before re-enabling
-FEATURE_VERSION = 'v2_37features'
-FEATURE_COUNT = 37
+# v2_39features (Session 226): Replaced disabled breakout features (37-38) with
+# star_teammates_out and game_total_line for V11 experiments.
+# V9/V10 models are unaffected (name-based extraction ignores extra features).
+# v2_54features (Session 230): Extended with 15 V12 features (39-53) for
+# scoring trends, usage, fatigue, streaks, structural changes.
+FEATURE_VERSION = 'v2_54features'
+FEATURE_COUNT = 54
 
 FEATURE_NAMES = [
     # Recent Performance (0-4)
@@ -127,12 +130,26 @@ FEATURE_NAMES = [
     'pts_vs_season_zscore', # Z-score of L5 avg vs season avg
     'breakout_flag',        # 1.0 if L5 > season_avg + 1.5*std
 
-    # REMOVED (Session 131): Temporarily disabled for model compatibility
-    # # Breakout Risk (37) - Session 126 composite breakout prediction
-    # 'breakout_risk_score',  # 0-100 score predicting role player breakout probability
-    #
-    # # Composite Breakout Signal (38) - Session 126 simple factor count
-    # 'composite_breakout_signal',  # 0-5 score, 4+ = 37% breakout rate
+    # V11 Features (37-38) - Session 226 (replaces disabled breakout features)
+    'star_teammates_out',   # Count of star teammates OUT/DOUBTFUL (18+ PPG / 28+ MPG / 25%+ usage)
+    'game_total_line',      # Game total over/under line from odds API
+
+    # V12 Features (39-53) - Session 230 (feature store extension)
+    'days_rest',                      # 39: From UPCG.days_rest
+    'minutes_load_last_7d',           # 40: From UPCG.minutes_in_last_7_days
+    'spread_magnitude',               # 41: abs(UPCG.game_spread) — dead feature, default 5.0
+    'implied_team_total',             # 42: (game_total ± spread)/2 — dead feature, default 112.0
+    'points_avg_last_3',              # 43: Ultra-short average from rolling stats
+    'scoring_trend_slope',            # 44: OLS slope last 7 games
+    'deviation_from_avg_last3',       # 45: Z-score of L3 avg vs 60-day avg
+    'consecutive_games_below_avg',    # 46: Cold streak counter
+    'teammate_usage_available',       # 47: Dead feature, always 0.0
+    'usage_rate_last_5',              # 48: Recent usage rate average
+    'games_since_structural_change',  # 49: Games since trade/ASB/return
+    'multi_book_line_std',            # 50: Dead feature, always 0.5
+    'prop_over_streak',               # 51: Consecutive games over prop line
+    'prop_under_streak',              # 52: Consecutive games under prop line
+    'line_vs_season_avg',             # 53: vegas_line - season_avg (or 0.0)
 ]
 
 # ============================================================================
@@ -201,12 +218,26 @@ ML_FEATURE_RANGES = {
     35: (-4, 4, False, 'pts_vs_season_zscore'),
     36: (0, 1, False, 'breakout_flag'),
 
-    # REMOVED (Session 131): Temporarily disabled for model compatibility
-    # # Breakout Risk (37) - Session 126
-    # 37: (0, 100, False, 'breakout_risk_score'),
-    #
-    # # Composite Breakout Signal (38) - Session 126
-    # 38: (0, 5, False, 'composite_breakout_signal'),
+    # V11 Features (37-38) - Session 226
+    37: (0, 5, False, 'star_teammates_out'),     # 0-5 star teammates out
+    38: (180, 280, False, 'game_total_line'),     # Typical game totals 200-260
+
+    # V12 Features (39-53) - Session 230
+    39: (0, 10, False, 'days_rest'),              # 0-10 days rest
+    40: (0, 250, False, 'minutes_load_last_7d'),  # 0-250 minutes in 7 days
+    41: (0, 25, False, 'spread_magnitude'),        # abs(spread), 0-25
+    42: (90, 140, False, 'implied_team_total'),    # (total +/- spread)/2
+    43: (0, 70, False, 'points_avg_last_3'),       # Ultra-short average
+    44: (-5, 5, False, 'scoring_trend_slope'),     # OLS slope
+    45: (-4, 4, False, 'deviation_from_avg_last3'),# Z-score
+    46: (0, 20, False, 'consecutive_games_below_avg'), # Cold streak
+    47: (0, 0, False, 'teammate_usage_available'), # Dead feature (always 0)
+    48: (0, 40, False, 'usage_rate_last_5'),       # Usage %
+    49: (0, 60, False, 'games_since_structural_change'), # Games since change
+    50: (0, 5, False, 'multi_book_line_std'),      # Dead feature (always 0.5)
+    51: (0, 20, False, 'prop_over_streak'),        # Consecutive overs
+    52: (0, 20, False, 'prop_under_streak'),       # Consecutive unders
+    53: (-30, 30, False, 'line_vs_season_avg'),    # Line - season avg
 }
 
 
@@ -1677,17 +1708,17 @@ class MLFeatureStoreProcessor(
     def _extract_all_features(self, phase4_data: Dict, phase3_data: Dict,
                                player_lookup: str = None, opponent: str = None) -> tuple:
         """
-        Extract all 37 features with Phase 4 → Phase 3 → Default fallback.
+        Extract all 54 features with Phase 4 → Phase 3 → Default fallback.
 
         Args:
             phase4_data: Dict with Phase 4 table data
             phase3_data: Dict with Phase 3 table data
-            player_lookup: Player identifier (for V8 features)
-            opponent: Opponent team abbreviation (for V8 features)
+            player_lookup: Player identifier (for V8+ features)
+            opponent: Opponent team abbreviation (for V8+ features)
 
         Returns:
             tuple: (features_list, feature_sources_dict)
-                features_list: List of 37 float values
+                features_list: List of 54 float values
                 feature_sources_dict: Dict mapping feature index to source
         """
         features = []
@@ -1840,36 +1871,127 @@ class MLFeatureStoreProcessor(
         feature_sources[36] = 'calculated'
 
         # ============================================================
-        # BREAKOUT RISK SCORE (37) - Session 126
-        # Composite 0-100 score for role player breakout prediction
-        # Session 127: Added real injured_teammates_ppg calculation
+        # V11 FEATURES (37-38) - Session 226
+        # Replaces disabled breakout features (Session 131)
         # ============================================================
 
-        # REMOVED (Session 131): Temporarily disabled for model compatibility
-        # Get team context with injured teammates PPG
-        # team_abbr = phase4_data.get('team_abbr') or phase3_data.get('team_abbr')
-        # game_date_obj = datetime.strptime(game_date, '%Y-%m-%d').date() if isinstance(game_date, str) else game_date
-        # injured_ppg = self._get_injured_teammates_ppg(team_abbr, game_date_obj) if team_abbr else 0.0
-        #
-        # team_context = {
-        #     'injured_teammates_ppg': injured_ppg
-        # }
+        # Feature 37: Star Teammates Out (Injury Context)
+        # Count of star teammates OUT/DOUBTFUL (18+ PPG / 28+ MPG / 25%+ usage)
+        # Default 0.0 is valid (means no stars out, the common case)
+        star_out = self.feature_extractor.get_star_teammates_out(player_lookup) if player_lookup else None
+        features.append(float(star_out) if star_out is not None else 0.0)
+        feature_sources[37] = 'phase3' if star_out is not None else 'default'
 
-        # REMOVED (Session 131): Temporarily disabled for model compatibility
-        # # Feature 37: Breakout risk score
-        # breakout_risk_score, _ = self.breakout_risk_calculator.calculate_breakout_risk_score(
-        #     phase4_data, phase3_data, team_context=team_context
-        # )
-        # features.append(breakout_risk_score)
-        # feature_sources[37] = 'calculated'
-        #
-        # # Feature 38: Composite breakout signal (0-5)
-        # # Session 126: Simple factor count - 4+ factors = 37% breakout rate
-        # composite_signal, _ = self.breakout_risk_calculator.calculate_composite_breakout_signal(
-        #     phase4_data, phase3_data, game_context=None  # TODO: Add game_context for starter/home
-        # )
-        # features.append(float(composite_signal))
-        # feature_sources[38] = 'calculated'
+        # Feature 38: Game Total Line (Game Environment)
+        # Game total over/under line from odds API
+        # Optional feature (like vegas 25-27) - depends on odds data availability
+        game_total = self.feature_extractor.get_game_total(player_lookup) if player_lookup else None
+        features.append(float(game_total) if game_total is not None else None)
+        feature_sources[38] = 'phase3' if game_total is not None else 'missing'
+
+        # ============================================================
+        # V12 FEATURES (39-53) - Session 230 Feature Store Extension
+        # Previously computed at prediction time by V12FeatureAugmenter.
+        # Now computed in Phase 4 for quality visibility + zero-tolerance.
+        # ============================================================
+
+        # Feature 39: days_rest (from UPCG)
+        days_rest_val = self.feature_extractor.get_days_rest_float(player_lookup) if player_lookup else None
+        features.append(float(days_rest_val) if days_rest_val is not None else 1.0)
+        feature_sources[39] = 'phase3' if days_rest_val is not None else 'default'
+
+        # Feature 40: minutes_load_last_7d (from UPCG)
+        mins_7d = self.feature_extractor.get_minutes_load_last_7d(player_lookup) if player_lookup else None
+        features.append(float(mins_7d) if mins_7d is not None else 80.0)
+        feature_sources[40] = 'phase3' if mins_7d is not None else 'default'
+
+        # Feature 41: spread_magnitude — dead feature, always default 5.0
+        game_spread = self.feature_extractor.get_game_spread(player_lookup) if player_lookup else None
+        if game_spread is not None:
+            features.append(abs(float(game_spread)))
+            feature_sources[41] = 'phase3'
+        else:
+            features.append(5.0)
+            feature_sources[41] = 'default'
+
+        # Feature 42: implied_team_total — dead feature, always default 112.0
+        # (game_total ± spread) / 2 based on home/away
+        if game_total is not None and game_spread is not None:
+            gt = float(game_total)
+            gs = float(game_spread)
+            is_home = phase3_data.get('home_game')
+            if is_home:
+                implied_tt = (gt - gs) / 2.0
+            else:
+                implied_tt = (gt + gs) / 2.0
+            features.append(implied_tt)
+            feature_sources[42] = 'phase3'
+        else:
+            features.append(112.0)
+            feature_sources[42] = 'default'
+
+        # Features 43-46, 48-49: from rolling stats query
+        rolling_stats = self.feature_extractor.get_player_rolling_stats(player_lookup) if player_lookup else {}
+
+        # Feature 43: points_avg_last_3
+        pts_l3 = rolling_stats.get('points_avg_last_3')
+        features.append(float(pts_l3) if pts_l3 is not None else 10.0)
+        feature_sources[43] = 'calculated' if pts_l3 is not None else 'default'
+
+        # Feature 44: scoring_trend_slope
+        slope = rolling_stats.get('scoring_trend_slope')
+        features.append(float(slope) if slope is not None else 0.0)
+        feature_sources[44] = 'calculated' if slope is not None else 'default'
+
+        # Feature 45: deviation_from_avg_last3
+        dev = rolling_stats.get('deviation_from_avg_last3')
+        features.append(float(dev) if dev is not None else 0.0)
+        feature_sources[45] = 'calculated' if dev is not None else 'default'
+
+        # Feature 46: consecutive_games_below_avg
+        consec = rolling_stats.get('consecutive_games_below_avg')
+        features.append(float(consec) if consec is not None else 0.0)
+        feature_sources[46] = 'calculated' if consec is not None else 'default'
+
+        # Feature 47: teammate_usage_available — dead feature, always 0.0
+        features.append(0.0)
+        feature_sources[47] = 'default'
+
+        # Feature 48: usage_rate_last_5
+        usage = rolling_stats.get('usage_rate_last_5')
+        features.append(float(usage) if usage is not None else 20.0)
+        feature_sources[48] = 'calculated' if usage is not None else 'default'
+
+        # Feature 49: games_since_structural_change
+        gsc = rolling_stats.get('games_since_structural_change')
+        features.append(float(gsc) if gsc is not None else 30.0)
+        feature_sources[49] = 'calculated' if gsc is not None else 'default'
+
+        # Feature 50: multi_book_line_std — dead feature, always 0.5
+        features.append(0.5)
+        feature_sources[50] = 'default'
+
+        # Feature 51: prop_over_streak (from UPCG)
+        streaks = self.feature_extractor.get_prop_streaks(player_lookup) if player_lookup else {}
+        over_streak = streaks.get('prop_over_streak')
+        features.append(float(over_streak) if over_streak is not None else 0.0)
+        feature_sources[51] = 'phase3' if over_streak is not None else 'default'
+
+        # Feature 52: prop_under_streak (from UPCG)
+        under_streak = streaks.get('prop_under_streak')
+        features.append(float(under_streak) if under_streak is not None else 0.0)
+        feature_sources[52] = 'phase3' if under_streak is not None else 'default'
+
+        # Feature 53: line_vs_season_avg (calculated from vegas_line - season_avg)
+        # features[25] = vegas_points_line, features[2] = points_avg_season
+        vegas_line_val = features[25]  # May be None if no vegas
+        season_avg_val = features[2]
+        if vegas_line_val is not None and season_avg_val is not None:
+            features.append(float(vegas_line_val) - float(season_avg_val))
+            feature_sources[53] = 'calculated'
+        else:
+            features.append(0.0)
+            feature_sources[53] = 'default'
 
         return features, feature_sources
     

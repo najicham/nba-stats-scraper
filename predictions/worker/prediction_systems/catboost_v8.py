@@ -574,9 +574,9 @@ class CatBoostV8:
         feature_version = features.get('feature_version')
         # Accept v2_33features, v2_37features, or v2_39features (model extracts 33 features by name)
         # v2_39features adds breakout features (37-38) which this model doesn't use, but that's OK
-        if feature_version not in ('v2_33features', 'v2_37features', 'v2_39features'):
+        if feature_version not in ('v2_33features', 'v2_37features', 'v2_39features', 'v2_54features'):
             raise ValueError(
-                f"CatBoost V8 requires feature_version='v2_33features', 'v2_37features', or 'v2_39features', got '{feature_version}'. "
+                f"CatBoost V8 requires feature_version in (v2_33features, v2_37features, v2_39features, v2_54features), got '{feature_version}'. "
                 f"This model is trained on 33 features from ML Feature Store v2. "
                 f"Ensure ml_feature_store_processor.py is upgraded to one of these versions."
             )

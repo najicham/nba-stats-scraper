@@ -67,13 +67,13 @@ SOURCE_TYPE_CANONICAL = {
 }
 
 # Feature categories for quality grouping
-# Total: 6 + 13 + 3 + 4 + 11 = 37
+# Total: 6 + 20 + 3 + 4 + 21 = 54
 FEATURE_CATEGORIES = {
     'matchup': [5, 6, 7, 8, 13, 14],
-    'player_history': [0, 1, 2, 3, 4, 29, 30, 31, 32, 33, 34, 35, 36],
+    'player_history': [0, 1, 2, 3, 4, 29, 30, 31, 32, 33, 34, 35, 36, 37, 43, 44, 45, 46, 48, 49],
     'team_context': [22, 23, 24],
     'vegas': [25, 26, 27, 28],
-    'game_context': [9, 10, 11, 12, 15, 16, 17, 18, 19, 20, 21],
+    'game_context': [9, 10, 11, 12, 15, 16, 17, 18, 19, 20, 21, 38, 39, 40, 41, 42, 47, 50, 51, 52, 53],
 }
 
 # Critical features - Session 132 issue area
@@ -104,6 +104,14 @@ FEATURE_UPSTREAM_TABLES = {
     29: 'player_game_summary', 30: 'player_game_summary',
     31: 'player_daily_cache', 32: 'player_daily_cache',
     33: 'calculated', 34: 'calculated', 35: 'calculated', 36: 'calculated',
+    37: 'upcoming_player_game_context', 38: 'upcoming_player_game_context',
+    # V12 features (39-53)
+    39: 'upcoming_player_game_context', 40: 'upcoming_player_game_context',
+    41: 'upcoming_player_game_context', 42: 'calculated',
+    43: 'calculated', 44: 'calculated', 45: 'calculated', 46: 'calculated',
+    47: 'default', 48: 'calculated', 49: 'calculated',
+    50: 'default', 51: 'upcoming_player_game_context', 52: 'upcoming_player_game_context',
+    53: 'calculated',
 }
 
 # Default fallback reasons per feature (when source is default/fallback/missing)
@@ -117,12 +125,22 @@ DEFAULT_FALLBACK_REASONS = {
     27: 'vegas_line_unavailable',
     29: 'no_opponent_history', 30: 'no_opponent_history',
     31: 'minutes_ppm_unavailable', 32: 'minutes_ppm_unavailable',
+    37: 'star_teammates_out_unavailable', 38: 'game_total_line_unavailable',
+    # V12 features (39-53)
+    39: 'days_rest_unavailable', 40: 'minutes_load_unavailable',
+    41: 'spread_unavailable', 42: 'implied_team_total_unavailable',
+    43: 'rolling_stats_unavailable', 44: 'rolling_stats_unavailable',
+    45: 'rolling_stats_unavailable', 46: 'rolling_stats_unavailable',
+    47: 'dead_feature', 48: 'rolling_stats_unavailable',
+    49: 'rolling_stats_unavailable', 50: 'dead_feature',
+    51: 'prop_streaks_unavailable', 52: 'prop_streaks_unavailable',
+    53: 'line_vs_season_unavailable',
 }
 
 # Session 145: Optional features - not counted in zero-tolerance gating
 # Vegas lines unavailable for ~60% of players (bench players without published lines)
 # Still tracked as defaults for visibility, but don't block predictions
-OPTIONAL_FEATURES = {25, 26, 27}  # Vegas line, opening line, line movement
+OPTIONAL_FEATURES = {25, 26, 27, 38, 41, 42, 47, 50, 51, 52, 53}  # Vegas, game_total, dead features, streaks, line_vs_avg
 
 # Training quality threshold per feature
 TRAINING_QUALITY_THRESHOLD = 85.0
@@ -131,7 +149,7 @@ TRAINING_QUALITY_THRESHOLD = 85.0
 QUALITY_SCHEMA_VERSION = 'v1_hybrid_20260205'
 
 # Total feature count
-FEATURE_COUNT = 37
+FEATURE_COUNT = 54
 
 
 # ============================================================================

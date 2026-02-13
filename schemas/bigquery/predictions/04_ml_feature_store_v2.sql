@@ -183,7 +183,7 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.ml_feature_store_
   ),
 
   -- Section 2: Category Quality (18 fields)
-  -- 5 categories covering all 37 features: matchup(6), player_history(13), team_context(3), vegas(4), game_context(11)
+  -- 5 categories covering all 54 features: matchup(6), player_history(20), team_context(3), vegas(4), game_context(19)
   matchup_quality_pct FLOAT64 OPTIONS(
     description='Quality % for matchup features (5-8, 13-14). 0=all defaults, 100=all high quality.'
   ),
@@ -242,8 +242,8 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.ml_feature_store_
     description='Game context category tier: gold, silver, bronze, poor, critical. Derived from game_context_quality_pct.'
   ),
 
-  -- Section 3: Per-Feature Quality Scores (37 fields)
-  -- Quality score 0-100 for each of 37 features. Direct column access for fast debugging.
+  -- Section 3: Per-Feature Quality Scores (54 fields)
+  -- Quality score 0-100 for each of 54 features. Direct column access for fast debugging.
   -- Feature names match FEATURE_NAMES in ml_feature_store_processor.py (source of truth)
   feature_0_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 0 (points_avg_last_5)'),
   feature_1_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 1 (points_avg_last_10)'),
@@ -282,8 +282,25 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.ml_feature_store_
   feature_34_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 34 (pts_slope_10g)'),
   feature_35_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 35 (pts_vs_season_zscore)'),
   feature_36_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 36 (breakout_flag)'),
+  feature_37_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 37 (star_teammates_out)'),
+  feature_38_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 38 (game_total_line)'),
+  feature_39_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 39 (days_rest)'),
+  feature_40_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 40 (minutes_load_last_7d)'),
+  feature_41_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 41 (spread_magnitude)'),
+  feature_42_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 42 (implied_team_total)'),
+  feature_43_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 43 (points_avg_last_3)'),
+  feature_44_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 44 (scoring_trend_slope)'),
+  feature_45_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 45 (deviation_from_avg_last3)'),
+  feature_46_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 46 (consecutive_games_below_avg)'),
+  feature_47_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 47 (teammate_usage_available)'),
+  feature_48_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 48 (usage_rate_last_5)'),
+  feature_49_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 49 (games_since_structural_change)'),
+  feature_50_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 50 (multi_book_line_std)'),
+  feature_51_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 51 (prop_over_streak)'),
+  feature_52_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 52 (prop_under_streak)'),
+  feature_53_quality FLOAT64 OPTIONS(description='Quality 0-100 for feature 53 (line_vs_season_avg)'),
 
-  -- Section 4: Per-Feature Sources (37 fields)
+  -- Section 4: Per-Feature Sources (54 fields)
   -- Source type for each feature. Direct column access for fast debugging.
   feature_0_source STRING OPTIONS(description='Source for feature 0 (points_avg_last_5): phase4, phase3, calculated, default'),
   feature_1_source STRING OPTIONS(description='Source for feature 1 (points_avg_last_10): phase4, phase3, calculated, default'),
@@ -322,6 +339,23 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.ml_feature_store_
   feature_34_source STRING OPTIONS(description='Source for feature 34 (pts_slope_10g): phase4, phase3, calculated, default'),
   feature_35_source STRING OPTIONS(description='Source for feature 35 (pts_vs_season_zscore): phase4, phase3, calculated, default'),
   feature_36_source STRING OPTIONS(description='Source for feature 36 (breakout_flag): phase4, phase3, calculated, default'),
+  feature_37_source STRING OPTIONS(description='Source for feature 37 (star_teammates_out): phase4, phase3, calculated, default'),
+  feature_38_source STRING OPTIONS(description='Source for feature 38 (game_total_line): phase4, phase3, calculated, default'),
+  feature_39_source STRING OPTIONS(description='Source for feature 39 (days_rest): phase4, phase3, calculated, default'),
+  feature_40_source STRING OPTIONS(description='Source for feature 40 (minutes_load_last_7d): phase4, phase3, calculated, default'),
+  feature_41_source STRING OPTIONS(description='Source for feature 41 (spread_magnitude): phase4, phase3, calculated, default'),
+  feature_42_source STRING OPTIONS(description='Source for feature 42 (implied_team_total): phase4, phase3, calculated, default'),
+  feature_43_source STRING OPTIONS(description='Source for feature 43 (points_avg_last_3): phase4, phase3, calculated, default'),
+  feature_44_source STRING OPTIONS(description='Source for feature 44 (scoring_trend_slope): phase4, phase3, calculated, default'),
+  feature_45_source STRING OPTIONS(description='Source for feature 45 (deviation_from_avg_last3): phase4, phase3, calculated, default'),
+  feature_46_source STRING OPTIONS(description='Source for feature 46 (consecutive_games_below_avg): phase4, phase3, calculated, default'),
+  feature_47_source STRING OPTIONS(description='Source for feature 47 (teammate_usage_available): phase4, phase3, calculated, default'),
+  feature_48_source STRING OPTIONS(description='Source for feature 48 (usage_rate_last_5): phase4, phase3, calculated, default'),
+  feature_49_source STRING OPTIONS(description='Source for feature 49 (games_since_structural_change): phase4, phase3, calculated, default'),
+  feature_50_source STRING OPTIONS(description='Source for feature 50 (multi_book_line_std): phase4, phase3, calculated, default'),
+  feature_51_source STRING OPTIONS(description='Source for feature 51 (prop_over_streak): phase4, phase3, calculated, default'),
+  feature_52_source STRING OPTIONS(description='Source for feature 52 (prop_under_streak): phase4, phase3, calculated, default'),
+  feature_53_source STRING OPTIONS(description='Source for feature 53 (line_vs_season_avg): phase4, phase3, calculated, default'),
 
   -- Section 5: Per-Feature Details JSON (6 fields)
   -- Additional per-feature attributes as JSON strings. Used for deep investigation (~10% of queries).
@@ -661,7 +695,7 @@ ADD COLUMN IF NOT EXISTS matchup_quality_tier STRING
 ADD COLUMN IF NOT EXISTS game_context_quality_tier STRING
   OPTIONS (description='Game context category tier');
 
--- Per-feature quality scores (37 fields)
+-- Per-feature quality scores (54 fields)
 ALTER TABLE `nba-props-platform.nba_predictions.ml_feature_store_v2`
 ADD COLUMN IF NOT EXISTS feature_0_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 0 (points_avg_last_5)'),
 ADD COLUMN IF NOT EXISTS feature_1_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 1 (points_avg_last_10)'),
@@ -699,9 +733,26 @@ ADD COLUMN IF NOT EXISTS feature_32_quality FLOAT64 OPTIONS (description='Qualit
 ADD COLUMN IF NOT EXISTS feature_33_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 33 (dnp_rate)'),
 ADD COLUMN IF NOT EXISTS feature_34_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 34 (pts_slope_10g)'),
 ADD COLUMN IF NOT EXISTS feature_35_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 35 (pts_vs_season_zscore)'),
-ADD COLUMN IF NOT EXISTS feature_36_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 36 (breakout_flag)');
+ADD COLUMN IF NOT EXISTS feature_36_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 36 (breakout_flag)'),
+ADD COLUMN IF NOT EXISTS feature_37_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 37 (star_teammates_out)'),
+ADD COLUMN IF NOT EXISTS feature_38_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 38 (game_total_line)'),
+ADD COLUMN IF NOT EXISTS feature_39_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 39 (days_rest)'),
+ADD COLUMN IF NOT EXISTS feature_40_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 40 (minutes_load_last_7d)'),
+ADD COLUMN IF NOT EXISTS feature_41_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 41 (spread_magnitude)'),
+ADD COLUMN IF NOT EXISTS feature_42_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 42 (implied_team_total)'),
+ADD COLUMN IF NOT EXISTS feature_43_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 43 (points_avg_last_3)'),
+ADD COLUMN IF NOT EXISTS feature_44_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 44 (scoring_trend_slope)'),
+ADD COLUMN IF NOT EXISTS feature_45_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 45 (deviation_from_avg_last3)'),
+ADD COLUMN IF NOT EXISTS feature_46_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 46 (consecutive_games_below_avg)'),
+ADD COLUMN IF NOT EXISTS feature_47_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 47 (teammate_usage_available)'),
+ADD COLUMN IF NOT EXISTS feature_48_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 48 (usage_rate_last_5)'),
+ADD COLUMN IF NOT EXISTS feature_49_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 49 (games_since_structural_change)'),
+ADD COLUMN IF NOT EXISTS feature_50_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 50 (multi_book_line_std)'),
+ADD COLUMN IF NOT EXISTS feature_51_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 51 (prop_over_streak)'),
+ADD COLUMN IF NOT EXISTS feature_52_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 52 (prop_under_streak)'),
+ADD COLUMN IF NOT EXISTS feature_53_quality FLOAT64 OPTIONS (description='Quality 0-100 for feature 53 (line_vs_season_avg)');
 
--- Per-feature sources (37 fields)
+-- Per-feature sources (54 fields)
 ALTER TABLE `nba-props-platform.nba_predictions.ml_feature_store_v2`
 ADD COLUMN IF NOT EXISTS feature_0_source STRING OPTIONS (description='Source for feature 0 (points_avg_last_5): phase4, phase3, calculated, default'),
 ADD COLUMN IF NOT EXISTS feature_1_source STRING OPTIONS (description='Source for feature 1 (points_avg_last_10): phase4, phase3, calculated, default'),
@@ -739,7 +790,24 @@ ADD COLUMN IF NOT EXISTS feature_32_source STRING OPTIONS (description='Source f
 ADD COLUMN IF NOT EXISTS feature_33_source STRING OPTIONS (description='Source for feature 33 (dnp_rate): phase4, phase3, calculated, default'),
 ADD COLUMN IF NOT EXISTS feature_34_source STRING OPTIONS (description='Source for feature 34 (pts_slope_10g): phase4, phase3, calculated, default'),
 ADD COLUMN IF NOT EXISTS feature_35_source STRING OPTIONS (description='Source for feature 35 (pts_vs_season_zscore): phase4, phase3, calculated, default'),
-ADD COLUMN IF NOT EXISTS feature_36_source STRING OPTIONS (description='Source for feature 36 (breakout_flag): phase4, phase3, calculated, default');
+ADD COLUMN IF NOT EXISTS feature_36_source STRING OPTIONS (description='Source for feature 36 (breakout_flag): phase4, phase3, calculated, default'),
+ADD COLUMN IF NOT EXISTS feature_37_source STRING OPTIONS (description='Source for feature 37 (star_teammates_out): phase4, phase3, calculated, default'),
+ADD COLUMN IF NOT EXISTS feature_38_source STRING OPTIONS (description='Source for feature 38 (game_total_line): phase4, phase3, calculated, default'),
+ADD COLUMN IF NOT EXISTS feature_39_source STRING OPTIONS (description='Source for feature 39 (days_rest): phase4, phase3, calculated, default'),
+ADD COLUMN IF NOT EXISTS feature_40_source STRING OPTIONS (description='Source for feature 40 (minutes_load_last_7d): phase4, phase3, calculated, default'),
+ADD COLUMN IF NOT EXISTS feature_41_source STRING OPTIONS (description='Source for feature 41 (spread_magnitude): phase4, phase3, calculated, default'),
+ADD COLUMN IF NOT EXISTS feature_42_source STRING OPTIONS (description='Source for feature 42 (implied_team_total): phase4, phase3, calculated, default'),
+ADD COLUMN IF NOT EXISTS feature_43_source STRING OPTIONS (description='Source for feature 43 (points_avg_last_3): phase4, phase3, calculated, default'),
+ADD COLUMN IF NOT EXISTS feature_44_source STRING OPTIONS (description='Source for feature 44 (scoring_trend_slope): phase4, phase3, calculated, default'),
+ADD COLUMN IF NOT EXISTS feature_45_source STRING OPTIONS (description='Source for feature 45 (deviation_from_avg_last3): phase4, phase3, calculated, default'),
+ADD COLUMN IF NOT EXISTS feature_46_source STRING OPTIONS (description='Source for feature 46 (consecutive_games_below_avg): phase4, phase3, calculated, default'),
+ADD COLUMN IF NOT EXISTS feature_47_source STRING OPTIONS (description='Source for feature 47 (teammate_usage_available): phase4, phase3, calculated, default'),
+ADD COLUMN IF NOT EXISTS feature_48_source STRING OPTIONS (description='Source for feature 48 (usage_rate_last_5): phase4, phase3, calculated, default'),
+ADD COLUMN IF NOT EXISTS feature_49_source STRING OPTIONS (description='Source for feature 49 (games_since_structural_change): phase4, phase3, calculated, default'),
+ADD COLUMN IF NOT EXISTS feature_50_source STRING OPTIONS (description='Source for feature 50 (multi_book_line_std): phase4, phase3, calculated, default'),
+ADD COLUMN IF NOT EXISTS feature_51_source STRING OPTIONS (description='Source for feature 51 (prop_over_streak): phase4, phase3, calculated, default'),
+ADD COLUMN IF NOT EXISTS feature_52_source STRING OPTIONS (description='Source for feature 52 (prop_under_streak): phase4, phase3, calculated, default'),
+ADD COLUMN IF NOT EXISTS feature_53_source STRING OPTIONS (description='Source for feature 53 (line_vs_season_avg): phase4, phase3, calculated, default');
 
 -- Per-feature details JSON (6 fields)
 ALTER TABLE `nba-props-platform.nba_predictions.ml_feature_store_v2`

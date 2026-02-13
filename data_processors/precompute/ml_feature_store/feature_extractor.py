@@ -60,6 +60,9 @@ class FeatureExtractor:
         # Tracks total games available per player for bootstrap detection
         self._total_games_available_lookup: Dict[str, int] = {}
 
+        # V12 Feature Store Extension: rolling stats for scoring trends/usage
+        self._player_rolling_stats_lookup: Dict[str, Dict] = {}
+
         # Data Provenance Tracking (Session 99 - Feb 2026)
         # Track which sources were used and why fallbacks occurred
         self._fallback_reasons: List[str] = []
@@ -322,6 +325,8 @@ class FeatureExtractor:
             ('vegas_lines', timed_task('vegas_lines', lambda: self._batch_extract_vegas_lines(game_date, all_players, backfill_mode))),
             ('opponent_history', timed_task('opponent_history', lambda: self._batch_extract_opponent_history(game_date, players_with_games))),
             ('minutes_ppm', timed_task('minutes_ppm', lambda: self._batch_extract_minutes_ppm(game_date, all_players))),
+            # V12 Feature Store Extension
+            ('rolling_stats', timed_task('rolling_stats', lambda: self._batch_extract_player_rolling_stats(game_date))),
         ]
 
         # Auto-retry logic for transient network/BigQuery errors
@@ -336,7 +341,7 @@ class FeatureExtractor:
                     self._clear_batch_cache()
                     self._batch_cache_date = game_date
 
-                with ThreadPoolExecutor(max_workers=11) as executor:
+                with ThreadPoolExecutor(max_workers=12) as executor:
                     futures = {executor.submit(task[1]): task[0] for task in extraction_tasks}
                     for future in as_completed(futures):
                         task_name = futures[future]
@@ -413,6 +418,8 @@ class FeatureExtractor:
         self._vegas_lines_lookup = {}
         self._opponent_history_lookup = {}
         self._minutes_ppm_lookup = {}
+        # V12 rolling stats
+        self._player_rolling_stats_lookup = {}
         # Historical Completeness Tracking
         self._total_games_available_lookup = {}
 
@@ -647,7 +654,11 @@ class FeatureExtractor:
         logger.debug(f"Batch team_defense: {len(self._team_defense_lookup)} rows")
 
     def _batch_extract_player_context(self, game_date: date) -> None:
-        """Batch extract upcoming_player_game_context for all players."""
+        """Batch extract upcoming_player_game_context for all players.
+
+        V12 Extension: Also fetches minutes_in_last_7_days, game_spread,
+        prop_over_streak, prop_under_streak for V12 features 39-53.
+        """
         query = f"""
         SELECT
             player_lookup,
@@ -661,7 +672,13 @@ class FeatureExtractor:
             days_rest,
             player_status,
             opponent_days_rest,
-            games_in_last_7_days
+            games_in_last_7_days,
+            star_teammates_out,
+            game_total,
+            minutes_in_last_7_days,
+            game_spread,
+            prop_over_streak,
+            prop_under_streak
         FROM `{self.project_id}.nba_analytics.upcoming_player_game_context`
         WHERE game_date = '{game_date}'
         """
@@ -1224,6 +1241,181 @@ class FeatureExtractor:
     def get_minutes_ppm(self, player_lookup: str) -> Dict:
         """Get cached minutes/PPM data for a player."""
         return self._minutes_ppm_lookup.get(player_lookup, {})
+
+    def get_star_teammates_out(self, player_lookup: str) -> Optional[float]:
+        """Get star_teammates_out count from player context cache."""
+        context = self._player_context_lookup.get(player_lookup, {})
+        return context.get('star_teammates_out')
+
+    def get_game_total(self, player_lookup: str) -> Optional[float]:
+        """Get game total line from player context cache."""
+        context = self._player_context_lookup.get(player_lookup, {})
+        return context.get('game_total')
+
+    def get_days_rest_float(self, player_lookup: str) -> Optional[float]:
+        """Get days_rest as float from player context cache."""
+        context = self._player_context_lookup.get(player_lookup, {})
+        val = context.get('days_rest')
+        return float(val) if val is not None else None
+
+    def get_minutes_load_last_7d(self, player_lookup: str) -> Optional[float]:
+        """Get minutes_in_last_7_days from player context cache."""
+        context = self._player_context_lookup.get(player_lookup, {})
+        val = context.get('minutes_in_last_7_days')
+        return float(val) if val is not None else None
+
+    def get_game_spread(self, player_lookup: str) -> Optional[float]:
+        """Get game_spread from player context cache."""
+        context = self._player_context_lookup.get(player_lookup, {})
+        val = context.get('game_spread')
+        return float(val) if val is not None else None
+
+    def get_prop_streaks(self, player_lookup: str) -> Dict:
+        """Get prop_over_streak and prop_under_streak from player context cache."""
+        context = self._player_context_lookup.get(player_lookup, {})
+        return {
+            'prop_over_streak': context.get('prop_over_streak'),
+            'prop_under_streak': context.get('prop_under_streak'),
+        }
+
+    def get_player_rolling_stats(self, player_lookup: str) -> Dict:
+        """Get cached V12 rolling stats for a player."""
+        return self._player_rolling_stats_lookup.get(player_lookup, {})
+
+    # ========================================================================
+    # V12 ROLLING STATS EXTRACTION
+    # ========================================================================
+
+    def _batch_extract_player_rolling_stats(self, game_date: date) -> None:
+        """
+        Batch extract rolling stats for V12 features (scoring trends, usage, structural changes).
+
+        Queries player_game_summary for the last 60 days and computes per-player:
+        - points_avg_last_3: ultra-short scoring average
+        - scoring_trend_slope: OLS slope over last 7 games
+        - deviation_from_avg_last3: z-score of L3 avg vs 60-day avg
+        - consecutive_games_below_avg: cold streak counter
+        - usage_rate_last_5: recent usage rate average
+        - games_since_structural_change: games since team trade or long gap
+
+        Stores results in _player_rolling_stats_lookup dict.
+        """
+        import numpy as np
+
+        lookback_date = game_date - timedelta(days=60)
+
+        query = f"""
+        SELECT
+            player_lookup,
+            game_date,
+            points,
+            usage_rate,
+            team_abbr
+        FROM `{self.project_id}.nba_analytics.player_game_summary`
+        WHERE game_date >= '{lookback_date}'
+          AND game_date < '{game_date}'
+          AND points IS NOT NULL
+          AND minutes_played > 0
+        ORDER BY player_lookup, game_date
+        """
+        result = self._safe_query(query, "batch_extract_rolling_stats")
+
+        if result.empty:
+            logger.warning(f"No rolling stats data found for {game_date}")
+            return
+
+        for player_lookup, group_df in result.groupby('player_lookup'):
+            games = group_df.to_dict('records')
+            if not games:
+                continue
+
+            points_list = [float(g['points']) for g in games if g.get('points') is not None]
+            if not points_list:
+                continue
+
+            # points_avg_last_3
+            last_3 = points_list[-3:] if len(points_list) >= 3 else points_list
+            points_avg_last_3 = sum(last_3) / len(last_3)
+
+            # scoring_trend_slope: OLS on last 7, need at least 4
+            recent_7 = points_list[-7:] if len(points_list) >= 4 else None
+            if recent_7 is not None and len(recent_7) >= 4:
+                n = len(recent_7)
+                x = np.arange(1, n + 1, dtype=float)
+                y = np.array(recent_7, dtype=float)
+                sum_x = x.sum()
+                sum_y = y.sum()
+                sum_xy = (x * y).sum()
+                sum_x2 = (x * x).sum()
+                denom = n * sum_x2 - sum_x * sum_x
+                scoring_trend_slope = float((n * sum_xy - sum_x * sum_y) / denom) if denom != 0 else 0.0
+            else:
+                scoring_trend_slope = 0.0
+
+            # deviation_from_avg_last3: z-score
+            season_avg = sum(points_list) / len(points_list)
+            if len(points_list) >= 2:
+                season_std = (sum((p - season_avg) ** 2 for p in points_list) / (len(points_list) - 1)) ** 0.5
+            else:
+                season_std = 5.0
+            if season_std > 0:
+                deviation_from_avg_last3 = (points_avg_last_3 - season_avg) / season_std
+            else:
+                deviation_from_avg_last3 = 0.0
+
+            # consecutive_games_below_avg
+            consecutive_below = 0
+            for pts in reversed(points_list):
+                if pts < season_avg:
+                    consecutive_below += 1
+                else:
+                    break
+
+            # usage_rate_last_5
+            usage_rates = [float(g['usage_rate']) for g in games if g.get('usage_rate') is not None]
+            if len(usage_rates) >= 3:
+                usage_rate_last_5 = sum(usage_rates[-5:]) / len(usage_rates[-5:])
+            else:
+                usage_rate_last_5 = 20.0
+
+            # games_since_structural_change: detect team change or 14+ day gap
+            games_since_change = min(float(len(games)), 30.0)
+            for i in range(len(games) - 1, 0, -1):
+                curr_team = games[i].get('team_abbr')
+                prev_team = games[i - 1].get('team_abbr')
+                curr_date = games[i].get('game_date')
+                prev_date = games[i - 1].get('game_date')
+
+                # Team trade detection
+                if curr_team != prev_team:
+                    games_since_change = float(len(games) - 1 - i)
+                    break
+
+                # Long gap detection (14+ days = ASB or injury return)
+                if curr_date is not None and prev_date is not None:
+                    # Handle Timestamp vs date
+                    if hasattr(curr_date, 'date'):
+                        curr_date = curr_date.date()
+                    if hasattr(prev_date, 'date'):
+                        prev_date = prev_date.date()
+                    try:
+                        gap = (curr_date - prev_date).days
+                        if gap > 14:
+                            games_since_change = float(len(games) - 1 - i)
+                            break
+                    except (TypeError, AttributeError):
+                        pass
+
+            self._player_rolling_stats_lookup[player_lookup] = {
+                'points_avg_last_3': points_avg_last_3,
+                'scoring_trend_slope': scoring_trend_slope,
+                'deviation_from_avg_last3': deviation_from_avg_last3,
+                'consecutive_games_below_avg': float(consecutive_below),
+                'usage_rate_last_5': usage_rate_last_5,
+                'games_since_structural_change': games_since_change,
+            }
+
+        logger.debug(f"Batch rolling_stats: {len(self._player_rolling_stats_lookup)} players")
 
     # ========================================================================
     # HISTORICAL COMPLETENESS TRACKING (Data Cascade Architecture - Jan 2026)
