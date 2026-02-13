@@ -67,6 +67,7 @@ from shared.ml.feature_contract import (
     V12_CONTRACT,
     V12_FEATURE_NAMES,
     FEATURE_DEFAULTS,
+    FEATURE_STORE_NAMES,
     get_contract,
     validate_all_contracts,
 )
@@ -976,6 +977,10 @@ def prepare_features(df, contract=V9_CONTRACT, exclude_features=None):
     Session 179: Added exclude_features to support --no-vegas, --two-stage,
     and --exclude-features experiment modes.
 
+    Session 238: Prefers individual feature_N_value columns (NULL-aware).
+    NULL → np.nan → CatBoost handles natively (no more fake defaults).
+    Falls back to array-based extraction for older data without individual columns.
+
     Args:
         df: DataFrame with 'features' and 'feature_names' columns
         contract: ModelFeatureContract defining expected features (default V9)
@@ -988,33 +993,73 @@ def prepare_features(df, contract=V9_CONTRACT, exclude_features=None):
     exclude_set = set(exclude_features or [])
     active_features = [f for f in contract.feature_names if f not in exclude_set]
 
+    # Session 238: Build name→column_index mapping for individual columns
+    store_name_to_idx = {name: i for i, name in enumerate(FEATURE_STORE_NAMES)}
+    use_individual_columns = 'feature_0_value' in df.columns
+
     rows = []
     for _, row in df.iterrows():
-        feature_values = row['features']
-        feature_names = row['feature_names']
-
-        # Convert parallel arrays to dictionary
-        if len(feature_values) != len(feature_names):
-            min_len = min(len(feature_values), len(feature_names))
-            feature_values = feature_values[:min_len]
-            feature_names = feature_names[:min_len]
-
-        features_dict = dict(zip(feature_names, feature_values))
-
-        # Extract features BY NAME in contract order, skipping excluded
         row_data = {}
-        for name in active_features:
-            if name in features_dict and features_dict[name] is not None:
-                row_data[name] = float(features_dict[name])
-            elif name in FEATURE_DEFAULTS and FEATURE_DEFAULTS[name] is not None:
-                row_data[name] = float(FEATURE_DEFAULTS[name])
-            else:
-                row_data[name] = np.nan  # Will be filled by median
+
+        if use_individual_columns:
+            # New path: prefer individual columns (NULL-aware).
+            # NULL means no real data → np.nan (CatBoost handles natively).
+            # Fallback to array for features where individual column is NULL
+            # but array has a value (handles backfill gap for pre-source-tracking rows).
+            arr_dict = {}
+            feature_values = row.get('features')
+            feature_names_arr = row.get('feature_names')
+            if feature_values is not None and feature_names_arr is not None:
+                min_len = min(len(feature_values), len(feature_names_arr))
+                arr_dict = dict(zip(feature_names_arr[:min_len], feature_values[:min_len]))
+
+            for name in active_features:
+                idx = store_name_to_idx.get(name)
+                if idx is not None:
+                    val = row.get(f'feature_{idx}_value')
+                    if val is not None and not pd.isna(val):
+                        row_data[name] = float(val)
+                    elif name in arr_dict and arr_dict[name] is not None:
+                        # Backfill gap: column NULL but array has value.
+                        # Zero-tolerance ensures required features are real.
+                        row_data[name] = float(arr_dict[name])
+                    else:
+                        row_data[name] = np.nan
+                else:
+                    row_data[name] = np.nan
+        else:
+            # Legacy path: read from arrays (backward compat for older data)
+            feature_values = row['features']
+            feature_names = row['feature_names']
+
+            if len(feature_values) != len(feature_names):
+                min_len = min(len(feature_values), len(feature_names))
+                feature_values = feature_values[:min_len]
+                feature_names = feature_names[:min_len]
+
+            features_dict = dict(zip(feature_names, feature_values))
+
+            for name in active_features:
+                if name in features_dict and features_dict[name] is not None:
+                    row_data[name] = float(features_dict[name])
+                elif name in FEATURE_DEFAULTS and FEATURE_DEFAULTS[name] is not None:
+                    row_data[name] = float(FEATURE_DEFAULTS[name])
+                else:
+                    row_data[name] = np.nan
 
         rows.append(row_data)
 
     X = pd.DataFrame(rows, columns=active_features)
-    X = X.fillna(X.median())
+
+    if use_individual_columns:
+        # CatBoost handles NaN natively — no imputation needed for new data.
+        # For rows with array fallback, values are real (zero-tolerance enforced).
+        nan_pct = X.isna().mean().mean() * 100
+        if nan_pct > 0:
+            print(f"  Feature matrix: {X.shape[0]} rows x {X.shape[1]} cols, {nan_pct:.1f}% NaN (CatBoost native)")
+    else:
+        X = X.fillna(X.median())
+
     y = df['actual_points'].astype(float)
     return X, y
 

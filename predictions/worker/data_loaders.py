@@ -28,6 +28,8 @@ from datetime import date, datetime
 import logging
 import os
 import random
+
+from shared.ml.feature_contract import FEATURE_STORE_NAMES, FEATURE_STORE_FEATURE_COUNT
 import time
 
 from shared.utils.query_cache import QueryCache, get_query_cache
@@ -897,9 +899,17 @@ class PredictionDataLoader:
         # Cache miss - execute query
         logger.debug(f"Query cache MISS for features batch on {game_date}")
 
+        # Session 238: Read individual feature_N_value columns instead of features array.
+        # NULL = no real data (was a hardcoded default), value = real data.
+        # This gives proper NULL semantics — CatBoost handles NaN natively.
+        feature_value_columns = ', '.join(
+            f'feature_{i}_value' for i in range(FEATURE_STORE_FEATURE_COUNT)
+        )
+
         query = """
         SELECT
             player_lookup,
+            {feature_value_columns},
             features,
             feature_names,
             feature_quality_score,
@@ -932,7 +942,11 @@ class PredictionDataLoader:
         WHERE player_lookup IN UNNEST(@player_lookups)
           AND game_date = @game_date
           AND feature_version = @feature_version
-        """.format(project=self.project_id, predictions_dataset=self.predictions_dataset)
+        """.format(
+            feature_value_columns=feature_value_columns,
+            project=self.project_id,
+            predictions_dataset=self.predictions_dataset
+        )
 
         job_config = bigquery.QueryJobConfig(
             query_parameters=[
@@ -960,24 +974,26 @@ class PredictionDataLoader:
             player_features: Dict[str, Dict] = {}
 
             for row in results:
-                # Convert arrays to dict with named features
-                feature_array = row.features
-                feature_names = row.feature_names
+                # Session 238: Build feature dict from individual columns (NULL-aware).
+                # NULL columns are excluded so .get() defaults in prediction systems work.
+                # This replaces array-based extraction which couldn't distinguish
+                # real values from hardcoded defaults.
+                features = {}
+                feature_array = row.features  # Keep for backward compat
+                has_individual_columns = getattr(row, 'feature_0_value', 'MISSING') != 'MISSING'
 
-                # Handle length mismatch gracefully - truncate to shorter length
-                # This can happen if feature generation adds extra elements
-                if len(feature_array) != len(feature_names):
-                    min_len = min(len(feature_array), len(feature_names))
-                    logger.warning(
-                        f"Feature array length mismatch for {row.player_lookup}: "
-                        f"features={len(feature_array)}, names={len(feature_names)}. "
-                        f"Truncating to {min_len} elements."
-                    )
-                    feature_array = feature_array[:min_len]
-                    feature_names = feature_names[:min_len]
-
-                # Build feature dict
-                features = dict(zip(feature_names, feature_array))
+                if has_individual_columns:
+                    for i, name in enumerate(FEATURE_STORE_NAMES):
+                        val = getattr(row, f'feature_{i}_value', None)
+                        if val is not None:
+                            features[name] = float(val)
+                        # else: leave out of dict — .get() defaults will apply
+                else:
+                    # Fallback: use array (for rows without individual columns)
+                    feature_names = row.feature_names
+                    if feature_array and feature_names:
+                        min_len = min(len(feature_array), len(feature_names))
+                        features = dict(zip(feature_names[:min_len], feature_array[:min_len]))
 
                 # Add feature name aliases for backward compatibility with prediction systems
                 # Some systems expect different names than what ml_feature_store_v2 provides
@@ -1001,11 +1017,11 @@ class PredictionDataLoader:
                             features[alias] = features[source_name]
 
                 # Add metadata
-                features['feature_count'] = len(feature_array)
+                features['feature_count'] = len(feature_array) if feature_array else len(features)
                 features['feature_version'] = feature_version
                 features['data_source'] = row.data_source
                 features['feature_quality_score'] = float(row.feature_quality_score)
-                features['features_array'] = feature_array
+                features['features_array'] = feature_array  # Backward compat
 
                 # Add row-level fields that prediction systems need
                 features['days_rest'] = int(row.days_rest) if row.days_rest is not None else 1

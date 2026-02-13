@@ -34,6 +34,8 @@ from typing import Optional
 from google.cloud import bigquery
 import pandas as pd
 
+from shared.ml.feature_contract import FEATURE_STORE_FEATURE_COUNT
+
 logger = logging.getLogger(__name__)
 
 PROJECT_ID = "nba-props-platform"
@@ -189,12 +191,19 @@ def load_clean_training_data(
         points_select = ""
         points_where = ""
 
+    # Session 238: Include individual feature_N_value columns for NULL-aware training.
+    # NULL = no real data (CatBoost handles natively), value = real data.
+    feature_value_columns = ',\n      '.join(
+        f'mf.feature_{i}_value' for i in range(FEATURE_STORE_FEATURE_COUNT)
+    )
+
     query = f"""
     SELECT
       mf.player_lookup,
       mf.game_date,
       mf.features,
       mf.feature_names,
+      {feature_value_columns},
       mf.feature_quality_score,
       mf.required_default_count,
       mf.default_feature_count{points_select}{extra_select}
