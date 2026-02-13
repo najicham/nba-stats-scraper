@@ -79,6 +79,8 @@ from data_processors.publishing.subset_materializer import SubsetMaterializer
 from data_processors.publishing.season_subset_picks_exporter import SeasonSubsetPicksExporter
 # Calendar widget (Sprint 3)
 from data_processors.publishing.calendar_exporter import CalendarExporter
+# Consolidated trends tonight (Session 226)
+from data_processors.publishing.trends_tonight_exporter import TrendsTonightExporter
 
 # Configure logging
 logging.basicConfig(
@@ -103,6 +105,8 @@ EXPORT_TYPES = [
     'live', 'live-grading',
     # Phase 6 Subset Exports (Session 90)
     'subset-picks', 'daily-signals', 'subset-performance', 'subset-definitions', 'season-subsets',
+    # Consolidated trends
+    'trends-tonight',
     # Shorthand groups
     'trends-daily', 'trends-weekly', 'trends-all'
 ]
@@ -323,13 +327,14 @@ def export_date(
 
     # Expand shorthand groups
     if 'trends-daily' in export_types:
-        export_types.extend(['trends-hot-cold', 'trends-bounce-back', 'tonight-trend-plays'])
+        export_types.extend(['trends-hot-cold', 'trends-bounce-back', 'tonight-trend-plays', 'trends-tonight'])
     if 'trends-weekly' in export_types:
         export_types.extend(['trends-what-matters', 'trends-team', 'trends-quick-hits'])
     if 'trends-all' in export_types:
         export_types.extend([
             'trends-hot-cold', 'trends-bounce-back', 'trends-what-matters',
-            'trends-team', 'trends-quick-hits', 'trends-deep-dive', 'tonight-trend-plays'
+            'trends-team', 'trends-quick-hits', 'trends-deep-dive', 'tonight-trend-plays',
+            'trends-tonight'
         ])
 
     # Who's Hot/Cold (daily)
@@ -397,6 +402,17 @@ def export_date(
         except Exception as e:
             result['errors'].append(f"trends-deep-dive: {e}")
             logger.error(f"  Trends Deep Dive error: {e}")
+
+    # Consolidated Trends Tonight (Session 226 - single endpoint for Trends page)
+    if 'trends-tonight' in export_types:
+        try:
+            exporter = TrendsTonightExporter()
+            path = exporter.export(target_date)
+            result['paths']['trends_tonight'] = path
+            logger.info(f"  Trends Tonight: {path}")
+        except Exception as e:
+            result['errors'].append(f"trends-tonight: {e}")
+            logger.error(f"  Trends Tonight error: {e}")
 
     # === FRONTEND API BACKEND EXPORTERS (Session 143) ===
 
