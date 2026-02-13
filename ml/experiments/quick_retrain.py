@@ -60,6 +60,8 @@ import catboost as cb
 from shared.ml.feature_contract import (
     V9_CONTRACT,
     V9_FEATURE_NAMES,
+    V10_CONTRACT,
+    V10_FEATURE_NAMES,
     FEATURE_DEFAULTS,
     get_contract,
     validate_all_contracts,
@@ -181,6 +183,10 @@ def parse_args():
     parser.add_argument('--train-days', type=int, default=60, help='Days of training (default: 60)')
     parser.add_argument('--eval-days', type=int, default=7, help='Days of eval (default: 7)')
 
+    # Feature set selection
+    parser.add_argument('--feature-set', choices=['v9', 'v10'], default='v9',
+                       help='Feature set to use (v9=33 features, v10=37 features)')
+
     # Line source for evaluation
     parser.add_argument('--use-production-lines', action='store_true', default=True,
                        help='Use production lines from prediction_accuracy (default: True)')
@@ -232,6 +238,9 @@ def parse_args():
                        help='Split score noise multiplier (default 1). Higher = more split diversity.')
     parser.add_argument('--loss-function', default=None,
                        help='CatBoost loss function (e.g., "Huber:delta=5", "LogCosh", "RMSE", "MAE")')
+    parser.add_argument('--monotone-constraints', type=str, default=None,
+                       help='Comma-separated -1/0/1 per feature for CatBoost monotone_constraints. '
+                            'Example for V9 (33 features): "0,1,0,0,0,-1,0,0,0,0,0,0,0,-1,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,1,0"')
 
     parser.add_argument('--dry-run', action='store_true', help='Show plan only')
     parser.add_argument('--skip-register', action='store_true', help='Skip ml_experiments')
@@ -978,11 +987,19 @@ def main():
     dates = get_dates(args)
     exp_id = str(uuid.uuid4())[:8]
 
+    # Select feature contract based on --feature-set
+    if args.feature_set == 'v10':
+        selected_contract = V10_CONTRACT
+        selected_feature_names = V10_FEATURE_NAMES
+    else:
+        selected_contract = V9_CONTRACT
+        selected_feature_names = V9_FEATURE_NAMES
+
     # Validate feature contract BEFORE doing anything (Session 107)
     print("Validating feature contracts...")
     try:
         validate_all_contracts()
-        print(f"  Using {V9_CONTRACT.model_version} contract: {V9_CONTRACT.feature_count} features")
+        print(f"  Using {selected_contract.model_version} contract: {selected_contract.feature_count} features")
     except Exception as e:
         print(f"❌ Feature contract validation FAILED: {e}")
         print("   Fix shared/ml/feature_contract.py before training!")
@@ -999,6 +1016,7 @@ def main():
     print("=" * 70)
     print(f" QUICK RETRAIN: {args.name}")
     print("=" * 70)
+    print(f"Feature Set: {args.feature_set} ({selected_contract.feature_count} features)")
     print(f"Training:   {dates['train_start']} to {dates['train_end']} ({train_days_actual} days)")
     print(f"Evaluation: {dates['eval_start']} to {dates['eval_end']} ({eval_days_actual} days)")
     line_source_desc = "production (prediction_accuracy)" if args.use_production_lines else args.line_source
@@ -1024,6 +1042,8 @@ def main():
         print(f"Feature Weights: {args.feature_weights}")
     if args.category_weight:
         print(f"Category Weights: {args.category_weight}")
+    if args.monotone_constraints:
+        print(f"Monotone Constraints: {args.monotone_constraints}")
     print()
 
     # DATE OVERLAP GUARD (Session 176: 90%+ hit rates were caused by training on eval data)
@@ -1044,6 +1064,7 @@ def main():
 
     if args.dry_run:
         print("DRY RUN - would train on above dates")
+        print(f"  Feature set: {args.feature_set} ({selected_contract.feature_count} features)")
         print(f"  Flags: recency_weight={args.recency_weight}, tune={args.tune}, walkforward={args.walkforward}")
         print(f"  Modes: no_vegas={args.no_vegas}, residual={args.residual}, "
               f"two_stage={args.two_stage}, quantile_alpha={args.quantile_alpha}")
@@ -1053,6 +1074,8 @@ def main():
             print(f"  Feature weights: {args.feature_weights}")
         if args.category_weight:
             print(f"  Category weights: {args.category_weight}")
+        if args.monotone_constraints:
+            print(f"  Monotone constraints: {args.monotone_constraints}")
         return
 
     client = bigquery.Client(project=PROJECT_ID)
@@ -1121,11 +1144,11 @@ def main():
     # so we prepare full features first, then handle residual target separately.
     if args.residual:
         # Residual needs full features (including vegas) for training
-        X_train_full, y_train_full = prepare_features(df_train)
-        X_eval_full, y_eval = prepare_features(df_eval)
+        X_train_full, y_train_full = prepare_features(df_train, contract=selected_contract)
+        X_eval_full, y_eval = prepare_features(df_eval, contract=selected_contract)
     else:
-        X_train_full, y_train_full = prepare_features(df_train, exclude_features=exclude_features)
-        X_eval_full, y_eval = prepare_features(df_eval, exclude_features=exclude_features)
+        X_train_full, y_train_full = prepare_features(df_train, contract=selected_contract, exclude_features=exclude_features)
+        X_eval_full, y_eval = prepare_features(df_eval, contract=selected_contract, exclude_features=exclude_features)
 
     lines = df_eval['vegas_line'].values
     active_feature_names = list(X_train_full.columns)
@@ -1249,6 +1272,21 @@ def main():
         print(f"\n  Feature weights applied ({len(feature_weights_map)} features):")
         for idx, weight in sorted(feature_weights_map.items()):
             print(f"    [{idx:2d}] {active_feature_names[idx]:<30s} = {weight}")
+
+    # Monotone constraints: enforce directional relationships (Session 225)
+    if args.monotone_constraints:
+        constraints = [int(x) for x in args.monotone_constraints.split(',')]
+        if len(constraints) != len(active_feature_names):
+            print(f"\n❌ ERROR: monotone_constraints length ({len(constraints)}) != feature count ({len(active_feature_names)})")
+            print(f"  Active features: {len(active_feature_names)}")
+            print(f"  Expected format: comma-separated list of {len(active_feature_names)} values (-1/0/1)")
+            return
+        hp['monotone_constraints'] = constraints
+        print(f"\n  Monotone constraints applied ({len(constraints)} features):")
+        for idx, constraint in enumerate(constraints):
+            if constraint != 0:
+                direction = "↑ increasing" if constraint == 1 else "↓ decreasing"
+                print(f"    [{idx:2d}] {active_feature_names[idx]:<30s} = {constraint:+2d} ({direction})")
 
     model = cb.CatBoostRegressor(**hp)
     model.fit(X_train, y_train, eval_set=(X_val, y_val), sample_weight=w_train, verbose=100)
@@ -1538,7 +1576,8 @@ def main():
                 'hypothesis': args.hypothesis or f'Monthly retrain {train_days_actual}d train, {eval_days_actual}d eval',
                 'config_json': json.dumps({
                     'train_days': train_days_actual, 'eval_days': eval_days_actual,
-                    'features': n_features, 'line_source': 'production' if args.use_production_lines else args.line_source,
+                    'features': n_features, 'feature_set': args.feature_set,
+                    'line_source': 'production' if args.use_production_lines else args.line_source,
                     'recency_weight': args.recency_weight,
                     'tuned': args.tune, 'tuned_params': tuned_params,
                     'hyperparameters': {k: v for k, v in hp.items() if k != 'verbose'},
@@ -1550,6 +1589,7 @@ def main():
                     'feature_weights': args.feature_weights,
                     'category_weight': args.category_weight,
                     'feature_weights_resolved': {active_feature_names[k]: v for k, v in feature_weights_map.items()} if feature_weights_map else None,
+                    'monotone_constraints': args.monotone_constraints,
                 }),
                 'train_period': {'start_date': dates['train_start'], 'end_date': dates['train_end'], 'samples': len(df_train)},
                 'eval_period': {'start_date': dates['eval_start'], 'end_date': dates['eval_end'], 'samples': len(df_eval)},
