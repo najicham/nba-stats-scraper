@@ -616,7 +616,7 @@ def get_active_system_ids() -> List[str]:
     Returns:
         List of system_ids: ['catboost_v9', 'catboost_v9_q43_train1102_0131', ...]
     """
-    active_systems = ['catboost_v9']  # Champion always active
+    active_systems = ['catboost_v9', 'catboost_v12']  # Champion + V12 shadow (Session 238)
 
     # Add enabled shadow models from MONTHLY_MODELS
     for model_id, config in MONTHLY_MODELS.items():
