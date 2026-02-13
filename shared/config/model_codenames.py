@@ -53,6 +53,13 @@ MODEL_DISPLAY_INFO = {
         'description': 'Conservative specialist engine',
         'strengths': 'Selective, high-conviction picks',
     },
+    'catboost_v12': {
+        'codename': 'nova',
+        'display_name': 'Nova',
+        'model_type': 'specialist',
+        'description': 'Next-generation prediction engine',
+        'strengths': 'Independent analysis without market influence',
+    },
 }
 
 

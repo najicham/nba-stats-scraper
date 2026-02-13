@@ -26,6 +26,15 @@ SUBSET_PUBLIC_NAMES = {
     # QUANT Q45 subsets (Session 188)
     'q45_under_top3': {'id': '12', 'name': 'Q45 UNDER Top 3'},
     'q45_all_picks': {'id': '13', 'name': 'Q45 All Picks'},
+    # Nova (V12) subsets (Session 232)
+    'nova_top_pick': {'id': '14', 'name': 'Nova Top Pick'},
+    'nova_top_3': {'id': '15', 'name': 'Nova Top 3'},
+    'nova_top_5': {'id': '16', 'name': 'Nova Top 5'},
+    'nova_high_edge_over': {'id': '17', 'name': 'Nova High Edge OVER'},
+    'nova_high_edge_all': {'id': '18', 'name': 'Nova High Edge All'},
+    'nova_ultra_high_edge': {'id': '19', 'name': 'Nova Ultra High Edge'},
+    'nova_green_light': {'id': '20', 'name': 'Nova Green Light'},
+    'nova_all_picks': {'id': '21', 'name': 'Nova All Picks'},
 }
 
 # Reverse lookup
