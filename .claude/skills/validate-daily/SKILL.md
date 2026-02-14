@@ -1296,9 +1296,9 @@ python bin/monitoring/check_betting_line_sources.py --days 7
 
 **Reference**: Session 152, complements `check_vegas_line_coverage.sh`
 
-### Phase 0.486: Cross-Model Prediction Coverage Parity (Session 210)
+### Phase 0.486: Cross-Model Prediction Coverage Parity (Session 210, Updated Session 240)
 
-**IMPORTANT**: Verify all enabled shadow models produced predictions. Session 209 discovered Q43/Q45 had **zero predictions** for 2 days with no alert — total count looked fine because the champion was producing normally.
+**IMPORTANT**: Verify all enabled CatBoost models (v9, v9 challengers, v12) produced predictions. Session 209 discovered Q43/Q45 had **zero predictions** for 2 days with no alert — total count looked fine because the champion was producing normally. Updated Session 240 to monitor V12 shadow model.
 
 **Why this matters**: Shadow models share the same pipeline but quality gate bugs or config errors can silently block individual models. Only a cross-model comparison catches this.
 
@@ -1321,7 +1321,7 @@ model_counts AS (
   SELECT system_id, COUNT(*) as predictions
   FROM nba_predictions.player_prop_predictions, target t
   WHERE game_date = t.check_date
-    AND system_id LIKE 'catboost_v9%'
+    AND system_id LIKE 'catboost_v%'
     AND is_active = TRUE
   GROUP BY 1
 ),
@@ -1363,13 +1363,13 @@ known_models AS (
   SELECT DISTINCT system_id
   FROM nba_predictions.player_prop_predictions
   WHERE game_date >= CURRENT_DATE() - 7
-    AND system_id LIKE 'catboost_v9_%'
+    AND system_id LIKE 'catboost_v_%'
 ),
 current_models AS (
   SELECT DISTINCT system_id
   FROM nba_predictions.player_prop_predictions, target t
   WHERE game_date = t.check_date
-    AND system_id LIKE 'catboost_v9_%'
+    AND system_id LIKE 'catboost_v_%'
 )
 SELECT k.system_id as missing_model, 'CRITICAL - No predictions' as status
 FROM known_models k

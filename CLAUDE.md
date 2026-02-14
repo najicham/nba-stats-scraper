@@ -487,6 +487,10 @@ Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
 | GCS API Base URL | `https://storage.googleapis.com/nba-props-platform-api/v1/` |
 | Frontend Domain | `playerprops.io` |
 
+**Key API Endpoints** (auto-generated daily, 6 AM ET):
+- `v1/schedule/game-counts.json` - Season game counts for calendar
+- `v1/status.json` - System status + active break detection (All-Star, holidays)
+
 ## Documentation Index [Keyword: DOCS]
 
 | Topic | Location |
