@@ -148,11 +148,12 @@ def check_grading_coverage(target_date: str) -> Dict:
         AND invalidation_reason IS NULL
     """
 
-    # Query graded predictions
+    # Query graded predictions (exclude NO_PROP_LINE - graded for MAE only, not hit rate)
     graded_query = f"""
     SELECT COUNT(*) as graded_count
     FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
     WHERE game_date = '{target_date}'
+        AND COALESCE(line_source, 'ACTUAL_PROP') != 'NO_PROP_LINE'
     """
 
     try:

@@ -283,60 +283,28 @@ class AllSubsetsPicksExporter(BaseExporter):
 
         model_groups = []
         for system_id, model_subsets in subsets_by_model.items():
-            predictions = self._query_all_predictions(target_date, system_id)
+            # Split subsets into quality-filtered (regular) vs unfiltered (all_predictions)
+            regular_subsets = [s for s in model_subsets if 'all_predictions' not in s['subset_id']]
+            unfiltered_subsets = [s for s in model_subsets if 'all_predictions' in s['subset_id']]
+
             display = get_model_display_info(system_id)
-
             clean_subsets = []
-            for subset in model_subsets:
-                subset_picks = self._filter_picks_for_subset(
-                    predictions, subset, daily_signal
-                )
-                public = get_public_name(subset['subset_id'])
-                subset_record = records.get(subset['subset_id'])
-                if subset_record is None:
-                    subset_record = None
 
-                clean_picks = []
-                for pick in subset_picks:
-                    pick_data = {
-                        'player_lookup': pick['player_lookup'],
-                        'player': pick['player_name'],
-                        'team': pick['team'],
-                        'opponent': pick['opponent'],
-                        'prediction': round(pick['predicted_points'], 1),
-                        'line': round(pick['current_points_line'], 1),
-                        'direction': pick['recommendation'],
-                    }
-                    created_at = pick.get('prediction_created_at')
-                    if created_at and hasattr(created_at, 'isoformat'):
-                        pick_data['created_at'] = created_at.isoformat()
-                    elif created_at:
-                        pick_data['created_at'] = str(created_at)
+            # Regular subsets: quality >= 85 filter (existing behavior)
+            if regular_subsets:
+                predictions = self._query_all_predictions(target_date, system_id)
+                for subset in regular_subsets:
+                    clean_subsets.append(
+                        self._build_subset_json(subset, predictions, daily_signal, records)
+                    )
 
-                    # Add actual/result if game has been played
-                    actual = pick.get('actual_points')
-                    line = pick.get('current_points_line')
-                    direction = pick.get('recommendation')
-                    if actual is not None:
-                        pick_data['actual'] = int(actual)
-                        if direction == 'OVER':
-                            pick_data['result'] = 'hit' if actual > line else ('push' if actual == line else 'miss')
-                        elif direction == 'UNDER':
-                            pick_data['result'] = 'hit' if actual < line else ('push' if actual == line else 'miss')
-                        else:
-                            pick_data['result'] = None
-                    else:
-                        pick_data['actual'] = None
-                        pick_data['result'] = None
-
-                    clean_picks.append(pick_data)
-
-                clean_subsets.append({
-                    'id': public['id'],
-                    'name': public['name'],
-                    'record': subset_record,
-                    'picks': clean_picks,
-                })
+            # All Predictions subsets: no quality filter
+            if unfiltered_subsets:
+                all_preds = self._query_all_predictions(target_date, system_id, min_quality=0)
+                for subset in unfiltered_subsets:
+                    clean_subsets.append(
+                        self._build_subset_json(subset, all_preds, daily_signal, records)
+                    )
 
             clean_subsets.sort(key=lambda x: int(x['id']) if x['id'].isdigit() else 999)
 
@@ -392,17 +360,20 @@ class AllSubsetsPicksExporter(BaseExporter):
     # and hit at 51.9% vs 56.8% for high quality (85%+)
     MIN_FEATURE_QUALITY_SCORE = 85.0
 
-    def _query_all_predictions(self, target_date: str, system_id: str = CHAMPION_SYSTEM_ID) -> List[Dict[str, Any]]:
+    def _query_all_predictions(self, target_date: str, system_id: str = CHAMPION_SYSTEM_ID, min_quality: float = None) -> List[Dict[str, Any]]:
         """
         Query all predictions for a specific date and model (fallback path).
 
         Args:
             target_date: Date string in YYYY-MM-DD format
             system_id: Model system_id to query
+            min_quality: Minimum feature quality score. Defaults to MIN_FEATURE_QUALITY_SCORE (85).
+                         Pass 0 for unfiltered "all predictions" subsets.
 
         Returns:
             List of prediction dictionaries
         """
+        min_quality = min_quality if min_quality is not None else self.MIN_FEATURE_QUALITY_SCORE
         query = """
         WITH player_names AS (
           -- Get player full names from registry
@@ -447,7 +418,7 @@ class AllSubsetsPicksExporter(BaseExporter):
         params = [
             bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
             bigquery.ScalarQueryParameter('system_id', 'STRING', system_id),
-            bigquery.ScalarQueryParameter('min_quality', 'FLOAT64', self.MIN_FEATURE_QUALITY_SCORE),
+            bigquery.ScalarQueryParameter('min_quality', 'FLOAT64', min_quality),
         ]
 
         return self.query_to_list(query, params)
@@ -480,6 +451,60 @@ class AllSubsetsPicksExporter(BaseExporter):
 
         results = self.query_to_list(query, params)
         return results[0] if results else None
+
+    def _build_subset_json(
+        self,
+        subset: Dict[str, Any],
+        predictions: List[Dict[str, Any]],
+        daily_signal: Optional[Dict[str, Any]],
+        records: Dict[str, Dict],
+    ) -> Dict[str, Any]:
+        """Build a single subset's JSON output from predictions."""
+        subset_picks = self._filter_picks_for_subset(predictions, subset, daily_signal)
+        public = get_public_name(subset['subset_id'])
+        subset_record = records.get(subset['subset_id'])
+
+        clean_picks = []
+        for pick in subset_picks:
+            pick_data = {
+                'player_lookup': pick['player_lookup'],
+                'player': pick['player_name'],
+                'team': pick['team'],
+                'opponent': pick['opponent'],
+                'prediction': round(pick['predicted_points'], 1),
+                'line': round(pick['current_points_line'], 1),
+                'direction': pick['recommendation'],
+            }
+            created_at = pick.get('prediction_created_at')
+            if created_at and hasattr(created_at, 'isoformat'):
+                pick_data['created_at'] = created_at.isoformat()
+            elif created_at:
+                pick_data['created_at'] = str(created_at)
+
+            # Add actual/result if game has been played
+            actual = pick.get('actual_points')
+            line = pick.get('current_points_line')
+            direction = pick.get('recommendation')
+            if actual is not None:
+                pick_data['actual'] = int(actual)
+                if direction == 'OVER':
+                    pick_data['result'] = 'hit' if actual > line else ('push' if actual == line else 'miss')
+                elif direction == 'UNDER':
+                    pick_data['result'] = 'hit' if actual < line else ('push' if actual == line else 'miss')
+                else:
+                    pick_data['result'] = None
+            else:
+                pick_data['actual'] = None
+                pick_data['result'] = None
+
+            clean_picks.append(pick_data)
+
+        return {
+            'id': public['id'],
+            'name': public['name'],
+            'record': subset_record,
+            'picks': clean_picks,
+        }
 
     def _filter_picks_for_subset(
         self,

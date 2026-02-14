@@ -370,6 +370,93 @@ V12_NOVEG_CONTRACT = ModelFeatureContract(
 )
 
 
+# -----------------------------------------------------------------------------
+# V13 Model Contract (60 features - V12 + shooting efficiency features)
+# Adds FG% rolling averages, relative efficiency, and cold streak detection
+# Experiment-only: does NOT change feature store schema
+# -----------------------------------------------------------------------------
+
+V13_FEATURE_NAMES: List[str] = V12_FEATURE_NAMES + [
+    # 54-55: FG% Rolling Averages
+    "fg_pct_last_3",                  # Mean FG% last 3 games (5+ FGA filter)
+    "fg_pct_last_5",                  # Mean FG% last 5 games (5+ FGA filter)
+
+    # 56: Relative Shooting Efficiency
+    "fg_pct_vs_season_avg",           # FG% L3 minus season FG% (10+ games)
+
+    # 57-58: 3PT Rolling Averages
+    "three_pct_last_3",               # Mean 3PT% last 3 games (2+ 3PA filter)
+    "three_pct_last_5",               # Mean 3PT% last 5 games (2+ 3PA filter)
+
+    # 59: FG% Cold Streak Counter
+    "fg_cold_streak",                 # Consecutive games < 40% FG% (5+ FGA)
+]
+
+V13_CONTRACT = ModelFeatureContract(
+    model_version="v13",
+    feature_count=60,
+    feature_names=V13_FEATURE_NAMES,
+    description="CatBoost V13 - 60 features, adds FG%/3PT% shooting efficiency signals"
+)
+
+V13_NOVEG_FEATURE_NAMES: List[str] = [
+    name for name in V13_FEATURE_NAMES if name not in (
+        "vegas_points_line", "vegas_opening_line", "vegas_line_move", "has_vegas_line"
+    )
+]
+
+V13_NOVEG_CONTRACT = ModelFeatureContract(
+    model_version="v13_noveg",
+    feature_count=56,
+    feature_names=V13_NOVEG_FEATURE_NAMES,
+    description="CatBoost V13 No-Vegas - 56 features (60 minus 4 vegas), with shooting efficiency"
+)
+
+
+# -----------------------------------------------------------------------------
+# V14 Model Contract (65 features - V13 + engineered FG% features)
+# Transforms raw FG% into CatBoost-usable signals: z-scores, interactions, acceleration
+# Experiment-only: does NOT change feature store schema
+# -----------------------------------------------------------------------------
+
+V14_FEATURE_NAMES: List[str] = V13_FEATURE_NAMES + [
+    # 60: Personalized FG% Z-Score (cold relative to THIS player's normal)
+    "fg_cold_z_score",                # (fg_pct_L3 - season_fg_pct) / season_fg_std
+
+    # 61: Volume-Adjusted Expected Points from shooting
+    "expected_pts_from_shooting",     # fg_pct_L3 * fga_L3 * 2 + three_pct_L3 * tpa_L3
+
+    # 62: FG% Acceleration (trend direction)
+    "fg_pct_acceleration",            # fg_pct_L3 - fg_pct_L5
+
+    # 63: Fatigue-Cold Interaction
+    "fatigue_cold_signal",            # minutes_load_last_7d * (1 - fg_pct_L3)
+
+    # 64: 3PT% Variance (shooting inconsistency)
+    "three_pct_std_last_5",           # Std dev of 3PT% last 5 games
+]
+
+V14_CONTRACT = ModelFeatureContract(
+    model_version="v14",
+    feature_count=65,
+    feature_names=V14_FEATURE_NAMES,
+    description="CatBoost V14 - 65 features, adds engineered FG% signals (z-score, interactions, acceleration)"
+)
+
+V14_NOVEG_FEATURE_NAMES: List[str] = [
+    name for name in V14_FEATURE_NAMES if name not in (
+        "vegas_points_line", "vegas_opening_line", "vegas_line_move", "has_vegas_line"
+    )
+]
+
+V14_NOVEG_CONTRACT = ModelFeatureContract(
+    model_version="v14_noveg",
+    feature_count=61,
+    feature_names=V14_NOVEG_FEATURE_NAMES,
+    description="CatBoost V14 No-Vegas - 61 features (65 minus 4 vegas), with engineered FG% signals"
+)
+
+
 # =============================================================================
 # CONTRACT REGISTRY
 # =============================================================================
@@ -381,11 +468,17 @@ MODEL_CONTRACTS: Dict[str, ModelFeatureContract] = {
     "v11": V11_CONTRACT,
     "v12": V12_CONTRACT,
     "v12_noveg": V12_NOVEG_CONTRACT,
+    "v13": V13_CONTRACT,
+    "v13_noveg": V13_NOVEG_CONTRACT,
+    "v14": V14_CONTRACT,
+    "v14_noveg": V14_NOVEG_CONTRACT,
     "catboost_v8": V8_CONTRACT,
     "catboost_v9": V9_CONTRACT,
     "catboost_v10": V10_CONTRACT,
     "catboost_v11": V11_CONTRACT,
     "catboost_v12": V12_NOVEG_CONTRACT,
+    "catboost_v13": V13_NOVEG_CONTRACT,
+    "catboost_v14": V14_NOVEG_CONTRACT,
 }
 
 
@@ -399,6 +492,14 @@ def get_contract(model_version: str) -> ModelFeatureContract:
         version = "v8"
     if version.startswith("v11_"):
         version = "v11"
+    if version.startswith("v14_noveg"):
+        version = "v14_noveg"
+    elif version.startswith("v14_"):
+        version = "v14"
+    if version.startswith("v13_noveg"):
+        version = "v13_noveg"
+    elif version.startswith("v13_"):
+        version = "v13"
     if version.startswith("v12_noveg"):
         version = "v12_noveg"
     elif version.startswith("v12_"):
@@ -564,6 +665,14 @@ FEATURE_DEFAULTS: Dict[str, float] = {
     "prop_over_streak": 0.0,
     "prop_under_streak": 0.0,
     "line_vs_season_avg": 0.0,
+
+    # V13 features (experiment-only - shooting efficiency)
+    "fg_pct_last_3": 0.45,       # League average FG%
+    "fg_pct_last_5": 0.45,
+    "fg_pct_vs_season_avg": 0.0,  # Neutral (no deviation)
+    "three_pct_last_3": 0.36,    # League average 3PT%
+    "three_pct_last_5": 0.36,
+    "fg_cold_streak": 0.0,       # Not cold by default
 }
 
 

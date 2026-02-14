@@ -97,6 +97,12 @@ class SeasonSubsetPicksExporter(BaseExporter):
         end_date = (today + timedelta(days=1)).isoformat()
         all_picks = self._query_season_picks(season_start.isoformat(), end_date)
 
+        if not all_picks:
+            logger.warning(
+                f"No current_subset_picks data found for season {season_label} "
+                f"({season_start} to {end_date}). season.json will have empty model_groups."
+            )
+
         # Get daily signals for the season
         signals = self._query_season_signals(season_start.isoformat(), end_date)
 
@@ -195,9 +201,11 @@ class SeasonSubsetPicksExporter(BaseExporter):
         ]
 
         try:
-            return self.query_to_list(query, params)
+            results = self.query_to_list(query, params)
+            logger.info(f"Season picks query returned {len(results)} rows for {start_date} to {end_date}")
+            return results
         except Exception as e:
-            logger.error(f"Failed to query season picks: {e}")
+            logger.error(f"Failed to query season picks: {e}", exc_info=True)
             return []
 
     def _query_season_signals(self, start_date: str, end_date: str) -> Dict[str, str]:
@@ -223,7 +231,7 @@ class SeasonSubsetPicksExporter(BaseExporter):
                 for r in results
             }
         except Exception as e:
-            logger.warning(f"Failed to query season signals: {e}")
+            logger.warning(f"Failed to query season signals: {e}", exc_info=True)
             return {}
 
     def _query_subset_definitions(self) -> List[Dict]:
@@ -277,8 +285,9 @@ class SeasonSubsetPicksExporter(BaseExporter):
 
         try:
             results = self.query_to_list(query, params)
+            logger.info(f"Records query returned {len(results)} subsets")
         except Exception as e:
-            logger.warning(f"Failed to query records: {e}")
+            logger.warning(f"Failed to query records: {e}", exc_info=True)
             return {}
 
         records = {}
@@ -387,6 +396,12 @@ class SeasonSubsetPicksExporter(BaseExporter):
     def export(self, **kwargs) -> str:
         """Generate and upload season subset picks to GCS."""
         json_data = self.generate_json()
+
+        if not json_data.get('model_groups'):
+            logger.warning(
+                "season.json has empty model_groups — no subset picks found for this season. "
+                "Check current_subset_picks table and dynamic_subset_definitions."
+            )
 
         gcs_path = self.upload_to_gcs(
             json_data=json_data,

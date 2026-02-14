@@ -539,11 +539,12 @@ class PredictionAccuracyProcessor:
                 -- PHASE 1 FIX: Exclude placeholder lines from grading
                 -- v3.8: Added BETTINGPROS as valid line source (fallback when odds_api unavailable)
                 -- v4.1 FIX: Removed has_prop_line filter - line_source is authoritative
-                -- The has_prop_line field has data inconsistencies (can be FALSE even when
-                -- line_source='ACTUAL_PROP'). Use line_source as the source of truth.
-                AND current_points_line IS NOT NULL
-                AND current_points_line != 20.0
-                AND line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
+                -- v5.2: Include NO_PROP_LINE for MAE grading (predicted vs actual points)
+                -- Hit rate grading still requires a line (prediction_correct = NULL for NO_PROP_LINE)
+                AND (
+                    (line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS') AND current_points_line IS NOT NULL AND current_points_line != 20.0)
+                    OR line_source = 'NO_PROP_LINE'
+                )
                 -- v3.5: Skip invalidated predictions (postponed/cancelled games)
                 -- These predictions should not be graded as they would skew accuracy metrics
                 AND invalidation_reason IS NULL

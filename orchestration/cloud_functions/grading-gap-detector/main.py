@@ -75,6 +75,8 @@ def detect_grading_gaps(client, lookback_days: int = 14) -> List[Dict]:
             COUNT(DISTINCT system_id) as models_graded
         FROM `nba-props-platform.nba_predictions.prediction_accuracy`
         WHERE game_date IN (SELECT game_date FROM completed_dates)
+          -- v5.2: Exclude NO_PROP_LINE from grading count (graded for MAE only, not hit rate)
+          AND COALESCE(line_source, 'ACTUAL_PROP') != 'NO_PROP_LINE'
         GROUP BY game_date
     )
     SELECT

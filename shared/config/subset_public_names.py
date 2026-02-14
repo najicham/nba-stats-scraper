@@ -35,6 +35,11 @@ SUBSET_PUBLIC_NAMES = {
     'nova_ultra_high_edge': {'id': '19', 'name': 'Nova Ultra High Edge'},
     'nova_green_light': {'id': '20', 'name': 'Nova Green Light'},
     'nova_all_picks': {'id': '21', 'name': 'Nova All Picks'},
+    # "All Predictions" subsets — unfiltered, no quality gate (Session 242)
+    'v9_all_predictions': {'id': '22', 'name': 'All Predictions'},
+    'q43_all_predictions': {'id': '23', 'name': 'All Predictions'},
+    'q45_all_predictions': {'id': '24', 'name': 'All Predictions'},
+    'nova_all_predictions': {'id': '25', 'name': 'All Predictions'},
 }
 
 # Reverse lookup

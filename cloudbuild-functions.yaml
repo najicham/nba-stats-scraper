@@ -8,7 +8,8 @@
 # Used by: phase5b-grading, phase6-export, grading-gap-detector, phase3→4/4→5/5→6 orchestrators,
 #          enrichment-trigger, daily-health-check, live-export,
 #          transition-monitor, pipeline-health-summary, nba-grading-alerts,
-#          live-freshness-monitor, self-heal-predictions, grading-readiness-monitor
+#          live-freshness-monitor, self-heal-predictions, grading-readiness-monitor,
+#          post-grading-export
 #
 # Substitution variables:
 #   _FUNCTION_NAME: Cloud Function name (e.g., phase5b-grading)

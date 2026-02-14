@@ -66,6 +66,10 @@ from shared.ml.feature_contract import (
     V11_FEATURE_NAMES,
     V12_CONTRACT,
     V12_FEATURE_NAMES,
+    V13_CONTRACT,
+    V13_FEATURE_NAMES,
+    V14_CONTRACT,
+    V14_FEATURE_NAMES,
     FEATURE_DEFAULTS,
     FEATURE_STORE_NAMES,
     get_contract,
@@ -189,8 +193,8 @@ def parse_args():
     parser.add_argument('--eval-days', type=int, default=7, help='Days of eval (default: 7)')
 
     # Feature set selection
-    parser.add_argument('--feature-set', choices=['v9', 'v10', 'v11', 'v12'], default='v9',
-                       help='Feature set to use (v9=33, v10=37, v11=39, v12=54 features)')
+    parser.add_argument('--feature-set', choices=['v9', 'v10', 'v11', 'v12', 'v13', 'v14'], default='v9',
+                       help='Feature set to use (v9=33, v10=37, v11=39, v12=54, v13=60 features)')
 
     # Line source for evaluation
     parser.add_argument('--use-production-lines', action='store_true', default=True,
@@ -651,6 +655,7 @@ def augment_v11_features(client, df):
 
     # Inject V11 features into each row's features/feature_names arrays
     augmented_count = 0
+
     for idx in range(len(df)):
         row = df.iloc[idx]
         features = list(row['features'])
@@ -659,22 +664,30 @@ def augment_v11_features(client, df):
         key = (row['player_lookup'], game_date_str)
 
         v11 = v11_lookup.get(key, {})
+        if not v11:
+            continue
 
-        # Only inject if not already present
+        augmented_count += 1
+        changed = False
+
         if 'star_teammates_out' not in feature_names:
-            star_out = v11.get('star_teammates_out', 0.0)
-            game_total = v11.get('game_total_line')
-
-            features.append(float(star_out) if star_out is not None else 0.0)
+            # Append mode (V9-only data without V11 slots)
+            features.append(float(v11.get('star_teammates_out', 0.0)))
             feature_names.append('star_teammates_out')
-            features.append(float(game_total) if game_total is not None else np.nan)
+            features.append(float(v11['game_total_line']) if v11.get('game_total_line') is not None else np.nan)
             feature_names.append('game_total_line')
+            changed = True
+        else:
+            # Replace mode (feature store already has V11 slots)
+            sto_idx = feature_names.index('star_teammates_out')
+            features[sto_idx] = float(v11.get('star_teammates_out', 0.0))
+            gtl_idx = feature_names.index('game_total_line')
+            features[gtl_idx] = float(v11['game_total_line']) if v11.get('game_total_line') is not None else np.nan
+            changed = True
 
+        if changed:
             df.at[df.index[idx], 'features'] = features
             df.at[df.index[idx], 'feature_names'] = feature_names
-
-            if v11:
-                augmented_count += 1
 
     print(f"  V11 augmentation: {augmented_count}/{len(df)} rows matched ({100*augmented_count/len(df):.0f}%)")
     return df
@@ -878,7 +891,7 @@ def augment_v12_features(client, df):
     # Build stats lookup
     stats_lookup = {}
     for _, row in stats_data.iterrows():
-        key = (row['player_lookup'], str(row['game_date']))
+        key = (row['player_lookup'], pd.to_datetime(row['game_date']).strftime('%Y-%m-%d'))
         prev_points = list(row['prev_points']) if row['prev_points'] is not None else []
         prev_usage = list(row['prev_usage_rates']) if row['prev_usage_rates'] is not None else []
         season_avg = float(row['season_avg']) if row['season_avg'] is not None else 10.0
@@ -980,7 +993,7 @@ def augment_v12_features(client, df):
 
     odds_lookup = {}
     for _, row in odds_data.iterrows():
-        key = (row['player_lookup'], str(row['game_date']))
+        key = (row['player_lookup'], pd.to_datetime(row['game_date']).strftime('%Y-%m-%d'))
         odds_lookup[key] = float(row['line_std']) if row['line_std'] is not None else np.nan
     print(f"  V12: Odds lookup built ({len(odds_lookup)} rows)")
 
@@ -992,12 +1005,8 @@ def augment_v12_features(client, df):
         row = df.iloc[idx]
         features = list(row['features'])
         feature_names = list(row['feature_names'])
-        game_date_str = str(row['game_date'])
+        game_date_str = pd.to_datetime(row['game_date']).strftime('%Y-%m-%d')
         key = (row['player_lookup'], game_date_str)
-
-        # Skip if V12 features already present
-        if 'days_rest' in feature_names:
-            continue
 
         upcg = upcg_lookup.get(key, {})
         stats = stats_lookup.get(key, {})
@@ -1019,7 +1028,7 @@ def augment_v12_features(client, df):
         else:
             line_vs_season_avg = 0.0
 
-        # Append all 15 V12 features in order (indices 39-53)
+        # V12 features in order (indices 39-53)
         v12_features = [
             ('days_rest', upcg.get('days_rest', 1.0)),
             ('minutes_load_last_7d', upcg.get('minutes_load_last_7d', 80.0)),
@@ -1038,9 +1047,16 @@ def augment_v12_features(client, df):
             ('line_vs_season_avg', line_vs_season_avg),
         ]
 
-        for fname, fval in v12_features:
-            feature_names.append(fname)
-            features.append(float(fval) if fval is not None and not (isinstance(fval, float) and np.isnan(fval)) else np.nan)
+        if 'days_rest' in feature_names:
+            # Replace mode: feature store already has V12 slots, overwrite with fresh BQ data
+            for fname, fval in v12_features:
+                fidx = feature_names.index(fname)
+                features[fidx] = float(fval) if fval is not None and not (isinstance(fval, float) and np.isnan(fval)) else np.nan
+        else:
+            # Append mode: V9/V11-only data without V12 slots
+            for fname, fval in v12_features:
+                feature_names.append(fname)
+                features.append(float(fval) if fval is not None and not (isinstance(fval, float) and np.isnan(fval)) else np.nan)
 
         df.at[df.index[idx], 'features'] = features
         df.at[df.index[idx], 'feature_names'] = feature_names
@@ -1050,6 +1066,416 @@ def augment_v12_features(client, df):
     print(f"    UPCG (Tier 1):  {augmented_counts['upcg']}/{total} ({100*augmented_counts['upcg']/total:.0f}%)")
     print(f"    Stats (Tier 2): {augmented_counts['stats']}/{total} ({100*augmented_counts['stats']/total:.0f}%)")
     print(f"    Odds (Tier 3):  {augmented_counts['odds']}/{total} ({100*augmented_counts['odds']/total:.0f}%)")
+    return df
+
+
+def augment_v13_features(client, df):
+    """
+    Augment training/eval DataFrame with V13 shooting efficiency features (6 new, indices 54-59).
+
+    Queries nbac_gamebook_player_stats for FG% and 3PT% data, then computes:
+    - fg_pct_last_3/5: Rolling FG% (5+ FGA filter)
+    - fg_pct_vs_season_avg: Deviation from personal season FG%
+    - three_pct_last_3/5: Rolling 3PT% (2+ 3PA filter)
+    - fg_cold_streak: Consecutive games < 40% FG%
+
+    Uses NaN for missing data (never defaults). Pattern matches V12 augmentation.
+
+    Args:
+        client: BigQuery client
+        df: DataFrame with player_lookup, game_date, features, feature_names columns
+            (must already have V12 features augmented)
+
+    Returns:
+        DataFrame with V13 features injected into features/feature_names arrays
+    """
+    if df.empty:
+        return df
+
+    if 'player_lookup' not in df.columns:
+        print("  WARNING: No player_lookup column — skipping V13 augmentation")
+        return df
+
+    min_date = df['game_date'].min()
+    max_date = df['game_date'].max()
+
+    # Need wider lookback for rolling windows
+    lookback_date = (pd.to_datetime(str(min_date)) - pd.Timedelta(days=60)).strftime('%Y-%m-%d')
+
+    fg_query = f"""
+    WITH target_players AS (
+        SELECT DISTINCT player_lookup
+        FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
+        WHERE game_date BETWEEN '{min_date}' AND '{max_date}'
+    ),
+    player_fg AS (
+        SELECT
+            raw.player_lookup,
+            raw.game_date,
+            raw.field_goals_made,
+            raw.field_goals_attempted,
+            SAFE_DIVIDE(raw.field_goals_made, raw.field_goals_attempted) as fg_pct,
+            raw.three_pointers_made,
+            raw.three_pointers_attempted,
+            SAFE_DIVIDE(raw.three_pointers_made, raw.three_pointers_attempted) as three_pct
+        FROM `{PROJECT_ID}.nba_raw.nbac_gamebook_player_stats` raw
+        JOIN target_players tp ON raw.player_lookup = tp.player_lookup
+        WHERE raw.game_date BETWEEN '{lookback_date}' AND '{max_date}'
+          AND raw.minutes_decimal > 0
+        ORDER BY raw.player_lookup, raw.game_date
+    ),
+    with_arrays AS (
+        SELECT
+            player_lookup,
+            game_date,
+            fg_pct,
+            three_pct,
+            field_goals_attempted,
+            three_pointers_attempted,
+            -- Arrays for rolling computations (games before this one)
+            ARRAY_AGG(STRUCT(fg_pct AS fg, field_goals_attempted AS fga,
+                             three_pct AS tp, three_pointers_attempted AS tpa))
+                OVER (PARTITION BY player_lookup ORDER BY game_date
+                      ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING) as prev_games,
+            -- Season FG% (all games before this one, 5+ FGA only)
+            AVG(IF(field_goals_attempted >= 5, fg_pct, NULL))
+                OVER (PARTITION BY player_lookup ORDER BY game_date
+                      ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) as season_fg_pct,
+            COUNT(IF(field_goals_attempted >= 5, 1, NULL))
+                OVER (PARTITION BY player_lookup ORDER BY game_date
+                      ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) as season_game_count
+        FROM player_fg
+    )
+    SELECT *
+    FROM with_arrays
+    WHERE game_date BETWEEN '{min_date}' AND '{max_date}'
+    """
+
+    print("  V13: Querying FG% data...")
+    fg_data = client.query(fg_query).to_dataframe()
+
+    # Build FG% lookup
+    fg_lookup = {}
+    for _, row in fg_data.iterrows():
+        key = (row['player_lookup'], pd.to_datetime(row['game_date']).strftime('%Y-%m-%d'))
+        prev_games = row['prev_games'] if row['prev_games'] is not None else []
+        season_fg_pct = float(row['season_fg_pct']) if row['season_fg_pct'] is not None else None
+        season_count = int(row['season_game_count']) if row['season_game_count'] is not None else 0
+
+        # Filter for FG% (5+ FGA)
+        fg_eligible = [g for g in prev_games if g.get('fga') is not None and g['fga'] >= 5 and g.get('fg') is not None]
+        # Filter for 3PT% (2+ 3PA)
+        three_eligible = [g for g in prev_games if g.get('tpa') is not None and g['tpa'] >= 2 and g.get('tp') is not None]
+
+        # fg_pct_last_3
+        if len(fg_eligible) >= 3:
+            fg_pct_last_3 = float(np.mean([g['fg'] for g in fg_eligible[-3:]]))
+        elif len(fg_eligible) >= 2:
+            fg_pct_last_3 = float(np.mean([g['fg'] for g in fg_eligible]))
+        else:
+            fg_pct_last_3 = np.nan
+
+        # fg_pct_last_5
+        if len(fg_eligible) >= 5:
+            fg_pct_last_5 = float(np.mean([g['fg'] for g in fg_eligible[-5:]]))
+        elif len(fg_eligible) >= 3:
+            fg_pct_last_5 = float(np.mean([g['fg'] for g in fg_eligible]))
+        else:
+            fg_pct_last_5 = np.nan
+
+        # fg_pct_vs_season_avg
+        if fg_pct_last_3 is not np.nan and season_fg_pct is not None and season_count >= 10:
+            fg_pct_vs_season_avg = fg_pct_last_3 - season_fg_pct
+        else:
+            fg_pct_vs_season_avg = np.nan
+
+        # three_pct_last_3
+        if len(three_eligible) >= 3:
+            three_pct_last_3 = float(np.mean([g['tp'] for g in three_eligible[-3:]]))
+        elif len(three_eligible) >= 2:
+            three_pct_last_3 = float(np.mean([g['tp'] for g in three_eligible]))
+        else:
+            three_pct_last_3 = np.nan
+
+        # three_pct_last_5
+        if len(three_eligible) >= 5:
+            three_pct_last_5 = float(np.mean([g['tp'] for g in three_eligible[-5:]]))
+        elif len(three_eligible) >= 3:
+            three_pct_last_5 = float(np.mean([g['tp'] for g in three_eligible]))
+        else:
+            three_pct_last_5 = np.nan
+
+        # fg_cold_streak: consecutive games < 40% FG% going backwards (5+ FGA)
+        fg_cold_streak = 0
+        for g in reversed(fg_eligible):
+            if g['fg'] < 0.40:
+                fg_cold_streak += 1
+            else:
+                break
+
+        fg_lookup[key] = {
+            'fg_pct_last_3': fg_pct_last_3,
+            'fg_pct_last_5': fg_pct_last_5,
+            'fg_pct_vs_season_avg': fg_pct_vs_season_avg,
+            'three_pct_last_3': three_pct_last_3,
+            'three_pct_last_5': three_pct_last_5,
+            'fg_cold_streak': float(fg_cold_streak),
+        }
+    print(f"  V13: FG% lookup built ({len(fg_lookup)} rows)")
+
+    # Inject V13 features into each row
+    matched = 0
+    for idx in range(len(df)):
+        row = df.iloc[idx]
+        features = list(row['features'])
+        feature_names = list(row['feature_names'])
+        game_date_str = pd.to_datetime(row['game_date']).strftime('%Y-%m-%d')
+        key = (row['player_lookup'], game_date_str)
+
+        fg = fg_lookup.get(key, {})
+        if fg:
+            matched += 1
+
+        v13_features = [
+            ('fg_pct_last_3', fg.get('fg_pct_last_3', np.nan)),
+            ('fg_pct_last_5', fg.get('fg_pct_last_5', np.nan)),
+            ('fg_pct_vs_season_avg', fg.get('fg_pct_vs_season_avg', np.nan)),
+            ('three_pct_last_3', fg.get('three_pct_last_3', np.nan)),
+            ('three_pct_last_5', fg.get('three_pct_last_5', np.nan)),
+            ('fg_cold_streak', fg.get('fg_cold_streak', 0.0)),
+        ]
+
+        if 'fg_pct_last_3' in feature_names:
+            # Replace mode: feature store already has V13 slots
+            for fname, fval in v13_features:
+                fidx = feature_names.index(fname)
+                features[fidx] = float(fval) if fval is not None and not (isinstance(fval, float) and np.isnan(fval)) else np.nan
+        else:
+            # Append mode
+            for fname, fval in v13_features:
+                feature_names.append(fname)
+                features.append(float(fval) if fval is not None and not (isinstance(fval, float) and np.isnan(fval)) else np.nan)
+
+        df.at[df.index[idx], 'features'] = features
+        df.at[df.index[idx], 'feature_names'] = feature_names
+
+    total = len(df)
+    print(f"  V13 augmentation: {matched}/{total} ({100*matched/total:.0f}%) rows matched FG% data")
+    return df
+
+
+def augment_v14_features(client, df):
+    """
+    Augment training/eval DataFrame with V14 engineered FG% features (5 new, indices 60-64).
+
+    Transforms raw V13 FG% features into CatBoost-usable signals:
+    - fg_cold_z_score: Personalized cold detection (std devs below personal mean)
+    - expected_pts_from_shooting: Volume-adjusted expected points from FG%/3PT%
+    - fg_pct_acceleration: FG% trend direction (L3 - L5)
+    - fatigue_cold_signal: Interaction of minutes load and cold shooting
+    - three_pct_std_last_5: 3PT% variance (shooting inconsistency)
+
+    Requires V13 features already augmented.
+
+    Args:
+        client: BigQuery client
+        df: DataFrame with V13 features already injected
+
+    Returns:
+        DataFrame with V14 features injected into features/feature_names arrays
+    """
+    if df.empty:
+        return df
+
+    if 'player_lookup' not in df.columns:
+        print("  WARNING: No player_lookup column — skipping V14 augmentation")
+        return df
+
+    min_date = df['game_date'].min()
+    max_date = df['game_date'].max()
+    lookback_date = (pd.to_datetime(str(min_date)) - pd.Timedelta(days=60)).strftime('%Y-%m-%d')
+
+    # Query for season FG% std dev and recent volume (FGA, 3PA per game)
+    v14_query = f"""
+    WITH target_players AS (
+        SELECT DISTINCT player_lookup
+        FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2`
+        WHERE game_date BETWEEN '{min_date}' AND '{max_date}'
+    ),
+    player_fg AS (
+        SELECT
+            raw.player_lookup,
+            raw.game_date,
+            raw.field_goals_made,
+            raw.field_goals_attempted,
+            SAFE_DIVIDE(raw.field_goals_made, raw.field_goals_attempted) as fg_pct,
+            raw.three_pointers_made,
+            raw.three_pointers_attempted,
+            SAFE_DIVIDE(raw.three_pointers_made, raw.three_pointers_attempted) as three_pct
+        FROM `{PROJECT_ID}.nba_raw.nbac_gamebook_player_stats` raw
+        JOIN target_players tp ON raw.player_lookup = tp.player_lookup
+        WHERE raw.game_date BETWEEN '{lookback_date}' AND '{max_date}'
+          AND raw.minutes_decimal > 0
+          AND raw.field_goals_attempted >= 5
+        ORDER BY raw.player_lookup, raw.game_date
+    ),
+    with_rolling AS (
+        SELECT
+            player_lookup,
+            game_date,
+            fg_pct,
+            three_pct,
+            field_goals_attempted,
+            three_pointers_attempted,
+            -- Season FG% std dev (for z-score)
+            STDDEV_POP(fg_pct) OVER (
+                PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+            ) as season_fg_std,
+            -- Season FG% mean
+            AVG(fg_pct) OVER (
+                PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+            ) as season_fg_pct,
+            COUNT(*) OVER (
+                PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+            ) as season_game_count,
+            -- Rolling FG% last 3 and 5
+            AVG(fg_pct) OVER (
+                PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING
+            ) as fg_pct_l3,
+            AVG(fg_pct) OVER (
+                PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+            ) as fg_pct_l5,
+            -- Rolling 3PT% last 3
+            AVG(CASE WHEN three_pointers_attempted >= 2 THEN three_pct END) OVER (
+                PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING
+            ) as three_pct_l3,
+            -- Rolling FGA and 3PA last 3 (for volume-adjusted expected points)
+            AVG(field_goals_attempted) OVER (
+                PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING
+            ) as fga_l3,
+            AVG(CASE WHEN three_pointers_attempted >= 1 THEN three_pointers_attempted END) OVER (
+                PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING
+            ) as tpa_l3,
+            -- 3PT% std dev last 5 (shooting inconsistency)
+            STDDEV_POP(CASE WHEN three_pointers_attempted >= 2 THEN three_pct END) OVER (
+                PARTITION BY player_lookup ORDER BY game_date
+                ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+            ) as three_pct_std_l5
+        FROM player_fg
+    )
+    SELECT *
+    FROM with_rolling
+    WHERE game_date BETWEEN '{min_date}' AND '{max_date}'
+    """
+
+    print("  V14: Querying engineered FG% features...")
+    v14_data = client.query(v14_query).to_dataframe()
+
+    # Build V14 lookup
+    v14_lookup = {}
+    for _, row in v14_data.iterrows():
+        key = (row['player_lookup'], pd.to_datetime(row['game_date']).strftime('%Y-%m-%d'))
+
+        season_fg_pct = float(row['season_fg_pct']) if row['season_fg_pct'] is not None else None
+        season_fg_std = float(row['season_fg_std']) if row['season_fg_std'] is not None else None
+        season_count = int(row['season_game_count']) if row['season_game_count'] is not None else 0
+        fg_pct_l3 = float(row['fg_pct_l3']) if row['fg_pct_l3'] is not None else None
+        fg_pct_l5 = float(row['fg_pct_l5']) if row['fg_pct_l5'] is not None else None
+        three_pct_l3 = float(row['three_pct_l3']) if row['three_pct_l3'] is not None else None
+        fga_l3 = float(row['fga_l3']) if row['fga_l3'] is not None else None
+        tpa_l3 = float(row['tpa_l3']) if row['tpa_l3'] is not None else None
+        three_pct_std_l5 = float(row['three_pct_std_l5']) if row['three_pct_std_l5'] is not None else None
+
+        # Feature 60: fg_cold_z_score = (fg_pct_L3 - season_fg_pct) / season_fg_std
+        if fg_pct_l3 is not None and season_fg_pct is not None and season_fg_std is not None and season_fg_std > 0 and season_count >= 10:
+            fg_cold_z_score = (fg_pct_l3 - season_fg_pct) / season_fg_std
+        else:
+            fg_cold_z_score = np.nan
+
+        # Feature 61: expected_pts_from_shooting = fg_pct_L3 * fga_L3 * 2 + three_pct_L3 * tpa_L3
+        if fg_pct_l3 is not None and fga_l3 is not None:
+            expected_pts = fg_pct_l3 * fga_l3 * 2
+            if three_pct_l3 is not None and tpa_l3 is not None:
+                expected_pts += three_pct_l3 * tpa_l3
+        else:
+            expected_pts = np.nan
+
+        # Feature 62: fg_pct_acceleration = fg_pct_L3 - fg_pct_L5
+        if fg_pct_l3 is not None and fg_pct_l5 is not None:
+            fg_pct_acceleration = fg_pct_l3 - fg_pct_l5
+        else:
+            fg_pct_acceleration = np.nan
+
+        # Feature 63: fatigue_cold_signal = minutes_load_last_7d * (1 - fg_pct_L3)
+        # minutes_load_last_7d comes from existing V9 features, so we'll pull it from df row
+        # Here we just store fg_pct_l3 for the interaction
+        fatigue_cold_fg_component = (1 - fg_pct_l3) if fg_pct_l3 is not None else None
+
+        # Feature 64: three_pct_std_last_5
+        three_pct_std_val = three_pct_std_l5 if three_pct_std_l5 is not None else np.nan
+
+        v14_lookup[key] = {
+            'fg_cold_z_score': fg_cold_z_score,
+            'expected_pts_from_shooting': expected_pts,
+            'fg_pct_acceleration': fg_pct_acceleration,
+            'fatigue_cold_fg_component': fatigue_cold_fg_component,
+            'three_pct_std_last_5': three_pct_std_val,
+        }
+    print(f"  V14: Lookup built ({len(v14_lookup)} rows)")
+
+    # Inject V14 features into each row
+    matched = 0
+    for idx in range(len(df)):
+        row = df.iloc[idx]
+        features = list(row['features'])
+        feature_names = list(row['feature_names'])
+        game_date_str = pd.to_datetime(row['game_date']).strftime('%Y-%m-%d')
+        key = (row['player_lookup'], game_date_str)
+
+        v14 = v14_lookup.get(key, {})
+        if v14:
+            matched += 1
+
+        # Get minutes_load_last_7d from existing features for fatigue interaction
+        fatigue_cold_signal = np.nan
+        if 'minutes_load_last_7d' in feature_names and v14.get('fatigue_cold_fg_component') is not None:
+            min_load_idx = feature_names.index('minutes_load_last_7d')
+            min_load_val = features[min_load_idx]
+            if min_load_val is not None and not (isinstance(min_load_val, float) and np.isnan(min_load_val)):
+                fatigue_cold_signal = float(min_load_val) * v14['fatigue_cold_fg_component']
+
+        v14_features = [
+            ('fg_cold_z_score', v14.get('fg_cold_z_score', np.nan)),
+            ('expected_pts_from_shooting', v14.get('expected_pts_from_shooting', np.nan)),
+            ('fg_pct_acceleration', v14.get('fg_pct_acceleration', np.nan)),
+            ('fatigue_cold_signal', fatigue_cold_signal),
+            ('three_pct_std_last_5', v14.get('three_pct_std_last_5', np.nan)),
+        ]
+
+        if 'fg_cold_z_score' in feature_names:
+            # Replace mode: feature store already has V14 slots
+            for fname, fval in v14_features:
+                fidx = feature_names.index(fname)
+                features[fidx] = float(fval) if fval is not None and not (isinstance(fval, float) and np.isnan(fval)) else np.nan
+        else:
+            # Append mode
+            for fname, fval in v14_features:
+                feature_names.append(fname)
+                features.append(float(fval) if fval is not None and not (isinstance(fval, float) and np.isnan(fval)) else np.nan)
+
+        df.at[df.index[idx], 'features'] = features
+        df.at[df.index[idx], 'feature_names'] = feature_names
+
+    total = len(df)
+    print(f"  V14 augmentation: {matched}/{total} ({100*matched/total:.0f}%) rows matched V14 data")
     return df
 
 
@@ -1598,7 +2024,13 @@ def main():
     exp_id = str(uuid.uuid4())[:8]
 
     # Select feature contract based on --feature-set
-    if args.feature_set == 'v12':
+    if args.feature_set == 'v14':
+        selected_contract = V14_CONTRACT
+        selected_feature_names = V14_FEATURE_NAMES
+    elif args.feature_set == 'v13':
+        selected_contract = V13_CONTRACT
+        selected_feature_names = V13_FEATURE_NAMES
+    elif args.feature_set == 'v12':
         selected_contract = V12_CONTRACT
         selected_feature_names = V12_FEATURE_NAMES
     elif args.feature_set == 'v11':
@@ -1764,6 +2196,33 @@ def main():
         print("\nAugmenting with V12 features (15 new features)...")
         df_train = augment_v12_features(client, df_train)
         df_eval = augment_v12_features(client, df_eval)
+
+    # V13: V12 augmentation first, then add 6 FG% shooting efficiency features
+    if args.feature_set == 'v13':
+        print("\nAugmenting with V11 features (star_teammates_out, game_total_line)...")
+        df_train = augment_v11_features(client, df_train)
+        df_eval = augment_v11_features(client, df_eval)
+        print("\nAugmenting with V12 features (15 new features)...")
+        df_train = augment_v12_features(client, df_train)
+        df_eval = augment_v12_features(client, df_eval)
+        print("\nAugmenting with V13 features (6 FG% shooting efficiency features)...")
+        df_train = augment_v13_features(client, df_train)
+        df_eval = augment_v13_features(client, df_eval)
+
+    # V14: V13 augmentation first, then add 5 engineered FG% features
+    if args.feature_set == 'v14':
+        print("\nAugmenting with V11 features (star_teammates_out, game_total_line)...")
+        df_train = augment_v11_features(client, df_train)
+        df_eval = augment_v11_features(client, df_eval)
+        print("\nAugmenting with V12 features (15 new features)...")
+        df_train = augment_v12_features(client, df_train)
+        df_eval = augment_v12_features(client, df_eval)
+        print("\nAugmenting with V13 features (6 FG% shooting efficiency features)...")
+        df_train = augment_v13_features(client, df_train)
+        df_eval = augment_v13_features(client, df_eval)
+        print("\nAugmenting with V14 features (5 engineered FG% signals)...")
+        df_train = augment_v14_features(client, df_train)
+        df_eval = augment_v14_features(client, df_eval)
 
     if len(df_train) < 1000 or len(df_eval) < 100:
         print("ERROR: Not enough data")

@@ -108,65 +108,38 @@ class SubsetMaterializer:
         total_predictions_available = 0
 
         for system_id, model_subsets in subsets_by_model.items():
-            predictions = self._query_all_predictions(game_date, system_id)
-            if not predictions:
-                logger.info(f"No predictions for {game_date} from {system_id}")
-                continue
+            # Split subsets into quality-filtered (regular) vs unfiltered (all_predictions)
+            regular_subsets = [s for s in model_subsets if 'all_predictions' not in s['subset_id']]
+            unfiltered_subsets = [s for s in model_subsets if 'all_predictions' in s['subset_id']]
 
-            total_predictions_available += len(predictions)
+            # Regular subsets: quality >= 85 filter (existing behavior, unchanged)
+            if regular_subsets:
+                predictions = self._query_all_predictions(game_date, system_id)
+                if predictions:
+                    total_predictions_available += len(predictions)
+                    for subset in regular_subsets:
+                        self._process_subset(
+                            subset, predictions, daily_signal, signal_value, pct_over_value,
+                            game_date, system_id, version_id, computed_at, trigger_source,
+                            batch_id, rows, subsets_summary,
+                        )
+                else:
+                    logger.info(f"No predictions for {game_date} from {system_id}")
 
-            for subset in model_subsets:
-                subset_id = subset['subset_id']
-                filtered = self._filter_picks_for_subset(predictions, subset, daily_signal)
-
-                public = get_public_name(subset_id)
-
-                for pick in filtered:
-                    rows.append({
-                        'game_date': game_date,
-                        'subset_id': subset_id,
-                        'player_lookup': pick['player_lookup'],
-                        'prediction_id': pick.get('prediction_id'),
-                        'game_id': pick.get('game_id'),
-                        'rank_in_subset': pick.get('rank_in_subset'),
-                        'system_id': system_id,
-                        'version_id': version_id,
-                        'computed_at': computed_at.isoformat(),
-                        'trigger_source': trigger_source,
-                        'batch_id': batch_id,
-                        # Denormalized pick data
-                        'player_name': pick['player_name'],
-                        'team': pick['team'],
-                        'opponent': pick['opponent'],
-                        'predicted_points': pick['predicted_points'],
-                        'current_points_line': pick['current_points_line'],
-                        'recommendation': pick['recommendation'],
-                        'confidence_score': pick['confidence_score'],
-                        'edge': pick['edge'],
-                        'composite_score': pick['composite_score'],
-                        # Data quality provenance
-                        'feature_quality_score': pick['feature_quality_score'],
-                        'default_feature_count': pick.get('default_feature_count'),
-                        'line_source': pick.get('line_source'),
-                        'prediction_run_mode': pick.get('prediction_run_mode'),
-                        'prediction_made_before_game': pick.get('prediction_made_before_game'),
-                        'quality_alert_level': pick.get('quality_alert_level'),
-                        # Subset metadata
-                        'subset_name': public['name'],
-                        'min_edge': float(subset['min_edge']) if subset.get('min_edge') else None,
-                        'min_confidence': float(subset['min_confidence']) if subset.get('min_confidence') else None,
-                        'top_n': int(subset['top_n']) if subset.get('top_n') else None,
-                        # Version-level context
-                        'daily_signal': signal_value,
-                        'pct_over': pct_over_value,
-                        'total_predictions_available': len(predictions),
-                    })
-
-                subsets_summary[subset_id] = {
-                    'name': public['name'],
-                    'picks': len(filtered),
-                    'system_id': system_id,
-                }
+            # All Predictions subsets: no quality filter (min_quality=0)
+            if unfiltered_subsets:
+                all_preds = self._query_all_predictions(game_date, system_id, min_quality=0)
+                if all_preds:
+                    if not regular_subsets:
+                        total_predictions_available += len(all_preds)
+                    for subset in unfiltered_subsets:
+                        self._process_subset(
+                            subset, all_preds, daily_signal, signal_value, pct_over_value,
+                            game_date, system_id, version_id, computed_at, trigger_source,
+                            batch_id, rows, subsets_summary,
+                        )
+                else:
+                    logger.info(f"No unfiltered predictions for {game_date} from {system_id}")
 
         # 5. Write to BigQuery (append-only, no deletes or updates)
         if rows:
@@ -231,12 +204,19 @@ class SubsetMaterializer:
         result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
         return [dict(row) for row in result]
 
-    def _query_all_predictions(self, game_date: str, system_id: str = CHAMPION_SYSTEM_ID) -> List[Dict[str, Any]]:
+    def _query_all_predictions(self, game_date: str, system_id: str = CHAMPION_SYSTEM_ID, min_quality: float = None) -> List[Dict[str, Any]]:
         """
         Query all active predictions for a date and model with full provenance.
 
         Includes data quality fields from predictions for subset-level tracking.
+
+        Args:
+            game_date: Date string in YYYY-MM-DD format
+            system_id: Model system_id to query
+            min_quality: Minimum feature quality score. Defaults to MIN_FEATURE_QUALITY_SCORE (85).
+                         Pass 0 for unfiltered "all predictions" subsets.
         """
+        min_quality = min_quality if min_quality is not None else MIN_FEATURE_QUALITY_SCORE
         query = """
         WITH player_names AS (
           SELECT player_lookup, player_name
@@ -316,7 +296,7 @@ class SubsetMaterializer:
             query_parameters=[
                 bigquery.ScalarQueryParameter('game_date', 'DATE', game_date),
                 bigquery.ScalarQueryParameter('system_id', 'STRING', system_id),
-                bigquery.ScalarQueryParameter('min_quality', 'FLOAT64', MIN_FEATURE_QUALITY_SCORE),
+                bigquery.ScalarQueryParameter('min_quality', 'FLOAT64', min_quality),
             ]
         )
         result = self.bq_client.query(query, job_config=job_config).result(timeout=60)
@@ -406,3 +386,72 @@ class SubsetMaterializer:
             pick['rank_in_subset'] = i + 1
 
         return filtered
+
+    def _process_subset(
+        self,
+        subset: Dict[str, Any],
+        predictions: List[Dict[str, Any]],
+        daily_signal: Optional[Dict[str, Any]],
+        signal_value: Optional[str],
+        pct_over_value: Optional[float],
+        game_date: str,
+        system_id: str,
+        version_id: str,
+        computed_at: datetime,
+        trigger_source: str,
+        batch_id: Optional[str],
+        rows: List[Dict[str, Any]],
+        subsets_summary: Dict[str, Any],
+    ) -> None:
+        """Filter predictions for a subset and append materialized rows."""
+        subset_id = subset['subset_id']
+        filtered = self._filter_picks_for_subset(predictions, subset, daily_signal)
+
+        public = get_public_name(subset_id)
+
+        for pick in filtered:
+            rows.append({
+                'game_date': game_date,
+                'subset_id': subset_id,
+                'player_lookup': pick['player_lookup'],
+                'prediction_id': pick.get('prediction_id'),
+                'game_id': pick.get('game_id'),
+                'rank_in_subset': pick.get('rank_in_subset'),
+                'system_id': system_id,
+                'version_id': version_id,
+                'computed_at': computed_at.isoformat(),
+                'trigger_source': trigger_source,
+                'batch_id': batch_id,
+                # Denormalized pick data
+                'player_name': pick['player_name'],
+                'team': pick['team'],
+                'opponent': pick['opponent'],
+                'predicted_points': pick['predicted_points'],
+                'current_points_line': pick['current_points_line'],
+                'recommendation': pick['recommendation'],
+                'confidence_score': pick['confidence_score'],
+                'edge': pick['edge'],
+                'composite_score': pick['composite_score'],
+                # Data quality provenance
+                'feature_quality_score': pick['feature_quality_score'],
+                'default_feature_count': pick.get('default_feature_count'),
+                'line_source': pick.get('line_source'),
+                'prediction_run_mode': pick.get('prediction_run_mode'),
+                'prediction_made_before_game': pick.get('prediction_made_before_game'),
+                'quality_alert_level': pick.get('quality_alert_level'),
+                # Subset metadata
+                'subset_name': public['name'],
+                'min_edge': float(subset['min_edge']) if subset.get('min_edge') else None,
+                'min_confidence': float(subset['min_confidence']) if subset.get('min_confidence') else None,
+                'top_n': int(subset['top_n']) if subset.get('top_n') else None,
+                # Version-level context
+                'daily_signal': signal_value,
+                'pct_over': pct_over_value,
+                'total_predictions_available': len(predictions),
+            })
+
+        subsets_summary[subset_id] = {
+            'name': public['name'],
+            'picks': len(filtered),
+            'system_id': system_id,
+        }

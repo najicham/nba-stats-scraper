@@ -245,6 +245,7 @@ PYTHONPATH=. python ml/experiments/breakout_experiment_runner.py --name "PROD_V2
 | live-freshness-monitor | HTTP (Cloud Scheduler) | Live game data freshness monitoring |
 | self-heal-predictions | HTTP (Cloud Scheduler) | Auto-heal stalled/missing predictions |
 | grading-readiness-monitor | HTTP (Cloud Scheduler) | Post-game grading readiness monitor |
+| post-grading-export | Pub/Sub: `nba-grading-complete` | Re-exports picks with actuals after grading |
 
 phase2-to-phase3-orchestrator REMOVED (Session 205).
 

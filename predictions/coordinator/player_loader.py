@@ -319,7 +319,7 @@ class PlayerLoader:
             current_points_line  -- v3.2: Pass through actual betting line if available
         FROM `{project}.{dataset}.upcoming_player_game_context`
         WHERE game_date = @game_date
-          AND (avg_minutes_per_game_last_7 >= @min_minutes OR has_prop_line = TRUE)  -- v3.7: Include players with prop lines even if returning from injury
+          AND (avg_minutes_per_game_last_7 >= @min_minutes OR has_prop_line = TRUE OR is_production_ready = TRUE)  -- v3.7+v3.12: Include all production-ready players (quality gate handles filtering)
           AND (player_status IS NULL OR player_status NOT IN ('OUT', 'DOUBTFUL'))
           AND (is_production_ready = TRUE OR has_prop_line = TRUE)  -- v3.11: Allow players with prop lines even if data incomplete - sportsbooks validated they'll play
         QUALIFY ROW_NUMBER() OVER (PARTITION BY player_lookup ORDER BY created_at DESC) = 1
