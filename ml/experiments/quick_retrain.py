@@ -248,6 +248,10 @@ def parse_args():
                             'Example for V9 (33): "0,1,0,...,1,0". '
                             'V11 (39): append ",1,1" for star_teammates_out(+1), game_total_line(+1)')
 
+    parser.add_argument('--include-no-line', action='store_true',
+                       help='Report line coverage stats in training data. Training already includes '
+                            'all quality-ready players regardless of lines. This flag adds line '
+                            'coverage diagnostics and forces full-population eval.')
     parser.add_argument('--dry-run', action='store_true', help='Show plan only')
     parser.add_argument('--skip-register', action='store_true', help='Skip ml_experiments')
     parser.add_argument('--force', action='store_true', help='Force retrain even if duplicate training dates exist')
@@ -535,6 +539,61 @@ def load_eval_data_all_players(client, start, end):
       AND pgs.points IS NOT NULL
     """
     return client.query(query).to_dataframe()
+
+
+def analyze_training_line_coverage(client, start, end):
+    """Analyze what fraction of training data has prop lines.
+
+    Training data already includes all quality-ready players (not just those
+    with lines). This function reports the line coverage breakdown.
+
+    Args:
+        client: BigQuery client
+        start: Start date (YYYY-MM-DD)
+        end: End date (YYYY-MM-DD)
+
+    Returns:
+        Dict with coverage stats
+    """
+    from shared.ml.training_data_loader import get_quality_where_clause
+    quality_clause = get_quality_where_clause("mf")
+
+    query = f"""
+    WITH training_players AS (
+        SELECT mf.player_lookup, mf.game_date
+        FROM `{PROJECT_ID}.nba_predictions.ml_feature_store_v2` mf
+        JOIN `{PROJECT_ID}.nba_analytics.player_game_summary` pgs
+          ON mf.player_lookup = pgs.player_lookup AND mf.game_date = pgs.game_date
+        WHERE mf.game_date BETWEEN '{start}' AND '{end}'
+          AND {quality_clause}
+          AND pgs.points IS NOT NULL
+          AND pgs.minutes_played > 0
+    ),
+    lines AS (
+        SELECT DISTINCT player_lookup, game_date
+        FROM `{PROJECT_ID}.nba_raw.odds_api_player_points_props`
+        WHERE game_date BETWEEN '{start}' AND '{end}'
+          AND points_line IS NOT NULL
+    )
+    SELECT
+        COUNT(*) as total_players,
+        COUNTIF(l.player_lookup IS NOT NULL) as with_lines,
+        COUNTIF(l.player_lookup IS NULL) as without_lines
+    FROM training_players tp
+    LEFT JOIN lines l ON tp.player_lookup = l.player_lookup AND tp.game_date = l.game_date
+    """
+    result = client.query(query).to_dataframe()
+    r = result.iloc[0]
+    total = int(r['total_players'])
+    with_lines = int(r['with_lines'])
+    without_lines = int(r['without_lines'])
+    pct_with = 100.0 * with_lines / total if total > 0 else 0
+    return {
+        'total': total,
+        'with_lines': with_lines,
+        'without_lines': without_lines,
+        'pct_with_lines': pct_with,
+    }
 
 
 def augment_v11_features(client, df):
@@ -1666,6 +1725,15 @@ def main():
     print("\nLoading training data (with quality filter >= 70)...")
     df_train = load_train_data(client, dates['train_start'], dates['train_end'])
     print(f"  {len(df_train):,} samples")
+
+    # --include-no-line: show line coverage stats for training data
+    if args.include_no_line:
+        print("\n  Line coverage in training data (--include-no-line):")
+        coverage = analyze_training_line_coverage(client, dates['train_start'], dates['train_end'])
+        print(f"    Total players:    {coverage['total']:,}")
+        print(f"    With prop lines:  {coverage['with_lines']:,} ({coverage['pct_with_lines']:.1f}%)")
+        print(f"    Without lines:    {coverage['without_lines']:,} ({100 - coverage['pct_with_lines']:.1f}%)")
+        print(f"    NOTE: Training already includes ALL quality-ready players (lines not required).")
 
     print("Loading evaluation data...")
     if args.use_production_lines:

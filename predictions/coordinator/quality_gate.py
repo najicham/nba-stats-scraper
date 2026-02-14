@@ -4,7 +4,7 @@ Quality Gate System for Predictions (Session 95, overhauled Session 139)
 
 Implements "Predict Once, Never Replace" strategy:
 - Only predict when feature quality is high enough
-- Never replace existing predictions
+- Never replace existing predictions (except LINE_UPDATE mode)
 - HARD FLOOR: Never predict with red alerts or matchup_quality < 50% (any mode)
 - Self-heal via QualityHealer when processors are missing
 - BACKFILL mode for next-day record-keeping predictions
@@ -15,6 +15,7 @@ Modes:
 - FINAL_RETRY: Last quality-gated attempt, accept 80%
 - LAST_CALL: 4 PM ET - accept 70% (was 0%, Session 139 overhaul)
 - BACKFILL: Next-day record-keeping, accept 70%
+- LINE_UPDATE: Session 241 - Re-predict V9 when lines arrive (bypasses already_has_prediction)
 """
 
 import logging
@@ -36,6 +37,7 @@ class PredictionMode(Enum):
     LAST_CALL = "LAST_CALL"   # 4 PM ET - 70% threshold (Session 139: was 0%)
     BACKFILL = "BACKFILL"     # Next-day record-keeping - 70% threshold
     LINE_CHECK = "LINE_CHECK"  # Session 152: Hourly line check - 85% threshold
+    LINE_UPDATE = "LINE_UPDATE"  # Session 241: Re-predict V9 when lines arrive via enrichment
 
 
 # Quality thresholds by mode
@@ -46,6 +48,7 @@ QUALITY_THRESHOLDS = {
     PredictionMode.LAST_CALL: 70.0,   # Session 139: was 0.0 (forced all)
     PredictionMode.BACKFILL: 70.0,     # Session 139: next-day record-keeping
     PredictionMode.LINE_CHECK: 85.0,   # Session 152: Hourly line check
+    PredictionMode.LINE_UPDATE: 85.0,  # Session 241: Re-predict when lines arrive
 }
 
 # Session 139: Hard floor - NEVER predict regardless of mode
@@ -287,8 +290,9 @@ class QualityGate:
                 else:
                     stats['low'] += 1
 
-            # Rule 1: Never replace existing predictions
-            if has_existing:
+            # Rule 1: Never replace existing predictions (except LINE_UPDATE mode)
+            # LINE_UPDATE: Re-predict V9 when lines arrive — supersedes NO_PROP_LINE predictions
+            if has_existing and mode != PredictionMode.LINE_UPDATE:
                 results.append(QualityGateResult(
                     player_lookup=player_lookup,
                     should_predict=False,
@@ -666,6 +670,7 @@ def parse_prediction_mode(mode_str: str) -> PredictionMode:
         'LAST_CALL': PredictionMode.LAST_CALL,
         'BACKFILL': PredictionMode.BACKFILL,
         'LINE_CHECK': PredictionMode.LINE_CHECK,  # Session 152: Hourly line check
+        'LINE_UPDATE': PredictionMode.LINE_UPDATE,  # Session 241: Re-predict when lines arrive
         # Legacy mappings
         'EARLY': PredictionMode.FIRST,
         'OVERNIGHT': PredictionMode.RETRY,

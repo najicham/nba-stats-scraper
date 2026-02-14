@@ -1895,6 +1895,99 @@ def check_lines():
         return jsonify({'status': 'error', 'error': str(e)}), 500
 
 
+@app.route('/line-update', methods=['POST'])
+@require_api_key
+def line_update():
+    """
+    Session 241: Re-predict V9 when lines arrive via enrichment.
+
+    Called by the enrichment trigger after prop lines are added to predictions.
+    V9 uses vegas_points_line (feature #25) — when a line arrives, the prediction
+    changes. Supersedes old NO_PROP_LINE predictions and generates new ones.
+
+    Request body:
+    {
+        "game_date": "2026-02-13",       // required
+        "player_lookups": ["lebron.."],   // required — players that just got lines
+        "dry_run": false                  // optional
+    }
+    """
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+
+        game_date_str = data.get('game_date')
+        if not game_date_str:
+            return jsonify({'status': 'error', 'error': 'game_date is required'}), 400
+
+        game_date = datetime.strptime(game_date_str, '%Y-%m-%d').date()
+        player_lookups = data.get('player_lookups', [])
+        dry_run = data.get('dry_run', False)
+
+        if not player_lookups:
+            return jsonify({
+                'status': 'no_players',
+                'game_date': str(game_date),
+                'message': 'No player_lookups provided'
+            }), 200
+
+        logger.info(
+            f"Line update: {len(player_lookups)} players on {game_date} "
+            f"(dry_run={dry_run})"
+        )
+
+        if dry_run:
+            return jsonify({
+                'status': 'dry_run',
+                'game_date': str(game_date),
+                'players': len(player_lookups),
+                'player_lookups': player_lookups[:20],
+            }), 200
+
+        # Supersede old predictions for affected players
+        superseded_count = _mark_predictions_superseded_for_players(
+            game_date=game_date_str,
+            player_lookups=player_lookups,
+            reason='line_update',
+            metadata={
+                'trigger': 'enrichment',
+                'count': len(player_lookups),
+            }
+        )
+
+        # Generate new predictions with real lines
+        gen_result = _generate_predictions_for_players(
+            game_date=game_date_str,
+            player_lookups=player_lookups,
+            reason='line_update',
+            metadata={
+                'trigger': 'enrichment',
+                'count': len(player_lookups),
+            },
+            prediction_run_mode='LINE_UPDATE'
+        )
+
+        batch_id = gen_result.get('batch_id')
+
+        logger.info(
+            f"Line update complete: superseded={superseded_count}, "
+            f"published={gen_result.get('requests_published', 0)}, "
+            f"batch_id={batch_id}"
+        )
+
+        return jsonify({
+            'status': 'success',
+            'game_date': str(game_date),
+            'players': len(player_lookups),
+            'superseded_count': superseded_count,
+            'requests_published': gen_result.get('requests_published', 0),
+            'batch_id': batch_id,
+        }), 200
+
+    except Exception as e:
+        logger.error(f"Line update failed: {e}", exc_info=True)
+        return jsonify({'status': 'error', 'error': str(e)}), 500
+
+
 @app.route('/morning-summary', methods=['POST'])
 @require_api_key
 def morning_summary():
@@ -2479,7 +2572,8 @@ def _generate_predictions_for_players(
     game_date: str,
     player_lookups: List[str],
     reason: str,
-    metadata: dict
+    metadata: dict,
+    prediction_run_mode: str = 'LINE_CHECK'
 ) -> dict:
     """
     Session 152: Generate predictions for SPECIFIC players only.
@@ -2610,7 +2704,7 @@ def _generate_predictions_for_players(
             batch_id=batch_id,
             batch_historical_games=batch_historical_games,
             dataset_prefix='',
-            prediction_run_mode='LINE_CHECK'
+            prediction_run_mode=prediction_run_mode
         )
 
         if published_count == 0:

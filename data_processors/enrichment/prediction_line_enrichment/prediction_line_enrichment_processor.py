@@ -203,6 +203,7 @@ class PredictionLineEnrichmentProcessor:
             'props_available': len(props),
             'predictions_enriched': updated_count,
             'predictions_still_missing': len(still_missing),
+            'enriched_players': [e['player_lookup'] for e in enrichable],
             'dry_run': dry_run
         }
 
@@ -304,6 +305,58 @@ class PredictionLineEnrichmentProcessor:
         except Exception as e:
             logger.error(f"Error fixing recommendations: {e}")
             raise
+
+    def get_v9_players_needing_reprediction(self, game_date: date, enriched_players: List[str]) -> List[Dict]:
+        """Get V9 players that just got lines enriched and need re-prediction.
+
+        Session 241: V9 uses vegas_points_line (feature #25). When a line arrives,
+        the prediction changes. Returns player_lookups with their new lines so
+        the coordinator can trigger targeted re-predictions.
+
+        Only returns players whose V9 prediction has line_source='NO_PROP_LINE'
+        (i.e., was predicted without a line and now has one).
+
+        Args:
+            game_date: The game date
+            enriched_players: List of player_lookups that were just enriched
+
+        Returns:
+            List of dicts with player_lookup, game_id, points_line for re-prediction
+        """
+        if not enriched_players:
+            return []
+
+        lookups_str = ", ".join(f"'{p}'" for p in enriched_players)
+
+        query = f"""
+        SELECT
+            p.player_lookup,
+            p.game_id,
+            p.current_points_line as points_line,
+            p.sportsbook
+        FROM `{self.predictions_table}` p
+        WHERE p.game_date = '{game_date}'
+          AND p.system_id = 'catboost_v9'
+          AND p.is_active = TRUE
+          AND p.player_lookup IN ({lookups_str})
+          AND p.prediction_run_mode != 'LINE_UPDATE'
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY p.player_lookup
+            ORDER BY p.created_at DESC
+        ) = 1
+        """
+
+        try:
+            result = self.bq_client.query(query).to_dataframe()
+            players = result.to_dict('records')
+            logger.info(
+                f"Found {len(players)} V9 players needing re-prediction "
+                f"(out of {len(enriched_players)} enriched)"
+            )
+            return players
+        except Exception as e:
+            logger.error(f"Error querying V9 players for re-prediction: {e}")
+            return []
 
     def recheck_injuries(self, game_date: date, dry_run: bool = False) -> Dict:
         """

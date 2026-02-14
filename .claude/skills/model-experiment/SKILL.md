@@ -189,6 +189,7 @@ AND mf.feature_quality_score >= 70
 | `--force` | False | Force retrain even if duplicate training dates exist |
 | `--dry-run` | False | Show plan without executing |
 | `--skip-register` | False | Skip ml_experiments table |
+| `--include-no-line` | False | Report line coverage stats in training data (training already includes all players) |
 | `--no-vegas` | False | Drop vegas features (25-28) from training |
 | `--residual` | False | Train on residuals (actual - vegas_line) instead of absolute points |
 | `--two-stage` | False | Train without vegas features, compute edge as pred - vegas at eval |
