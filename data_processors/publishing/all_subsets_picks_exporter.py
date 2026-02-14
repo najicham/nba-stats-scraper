@@ -117,7 +117,8 @@ class AllSubsetsPicksExporter(BaseExporter):
           csp.recommendation,
           csp.composite_score,
           p.created_at as prediction_created_at,
-          pgs.points as actual_points
+          pgs.points as actual_points,
+          gb.player_status as gamebook_status
         FROM `nba_predictions.current_subset_picks` csp
         LEFT JOIN `nba_predictions.player_prop_predictions` p
           ON csp.prediction_id = p.prediction_id
@@ -125,6 +126,9 @@ class AllSubsetsPicksExporter(BaseExporter):
         LEFT JOIN `nba_analytics.player_game_summary` pgs
           ON csp.player_lookup = pgs.player_lookup
           AND csp.game_date = pgs.game_date
+        LEFT JOIN `nba_raw.nbac_gamebook_player_stats` gb
+          ON csp.player_lookup = gb.player_lookup
+          AND csp.game_date = gb.game_date
         WHERE csp.game_date = @target_date
           AND csp.version_id = (
             SELECT MAX(version_id)
@@ -211,6 +215,7 @@ class AllSubsetsPicksExporter(BaseExporter):
                     actual = pick.get('actual_points')
                     line = pick.get('current_points_line')
                     direction = pick.get('recommendation')
+                    gamebook_status = pick.get('gamebook_status')
                     if actual is not None:
                         pick_data['actual'] = int(actual)
                         if direction == 'OVER':
@@ -219,6 +224,9 @@ class AllSubsetsPicksExporter(BaseExporter):
                             pick_data['result'] = 'hit' if actual < line else ('push' if actual == line else 'miss')
                         else:
                             pick_data['result'] = None
+                    elif gamebook_status in ('dnp', 'inactive'):
+                        pick_data['actual'] = None
+                        pick_data['result'] = 'dnp'
                     else:
                         pick_data['actual'] = None
                         pick_data['result'] = None
@@ -485,6 +493,7 @@ class AllSubsetsPicksExporter(BaseExporter):
             actual = pick.get('actual_points')
             line = pick.get('current_points_line')
             direction = pick.get('recommendation')
+            gamebook_status = pick.get('gamebook_status')
             if actual is not None:
                 pick_data['actual'] = int(actual)
                 if direction == 'OVER':
@@ -493,6 +502,9 @@ class AllSubsetsPicksExporter(BaseExporter):
                     pick_data['result'] = 'hit' if actual < line else ('push' if actual == line else 'miss')
                 else:
                     pick_data['result'] = None
+            elif gamebook_status in ('dnp', 'inactive'):
+                pick_data['actual'] = None
+                pick_data['result'] = 'dnp'
             else:
                 pick_data['actual'] = None
                 pick_data['result'] = None

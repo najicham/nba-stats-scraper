@@ -180,7 +180,8 @@ class SeasonSubsetPicksExporter(BaseExporter):
           ROUND(csp.current_points_line, 1) as current_points_line,
           csp.recommendation,
           pgs.points as actual_points,
-          p.created_at as prediction_created_at
+          p.created_at as prediction_created_at,
+          gb.player_status as gamebook_status
         FROM `nba_predictions.current_subset_picks` csp
         JOIN latest_versions lv
           ON csp.game_date = lv.game_date AND csp.version_id = lv.version_id
@@ -190,6 +191,9 @@ class SeasonSubsetPicksExporter(BaseExporter):
         LEFT JOIN `nba_predictions.player_prop_predictions` p
           ON csp.prediction_id = p.prediction_id
           AND csp.game_date = p.game_date
+        LEFT JOIN `nba_raw.nbac_gamebook_player_stats` gb
+          ON csp.player_lookup = gb.player_lookup
+          AND csp.game_date = gb.game_date
         WHERE csp.game_date >= @start_date
           AND csp.game_date < @end_date
         ORDER BY csp.game_date DESC, csp.system_id, csp.subset_id, csp.composite_score DESC
@@ -382,9 +386,13 @@ class SeasonSubsetPicksExporter(BaseExporter):
                 clean_pick['created_at'] = str(created_at)
 
             # Only include actual/result for graded games
+            gamebook_status = pick.get('gamebook_status')
             if actual is not None:
                 clean_pick['actual'] = int(actual)
                 clean_pick['result'] = result or 'push'
+            elif gamebook_status in ('dnp', 'inactive'):
+                clean_pick['actual'] = None
+                clean_pick['result'] = 'dnp'
             else:
                 clean_pick['actual'] = None
                 clean_pick['result'] = None
