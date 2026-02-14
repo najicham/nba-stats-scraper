@@ -140,7 +140,7 @@ DEFAULT_FALLBACK_REASONS = {
 # Session 145: Optional features - not counted in zero-tolerance gating
 # Vegas lines unavailable for ~60% of players (bench players without published lines)
 # Still tracked as defaults for visibility, but don't block predictions
-OPTIONAL_FEATURES = {25, 26, 27, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53}  # Vegas, game_total, all V12 features (39-53)
+OPTIONAL_FEATURES = {25, 26, 27, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53}  # Vegas, star_teammates_out, game_total, all V12 features (38-53)
 
 # Training quality threshold per feature
 TRAINING_QUALITY_THRESHOLD = 85.0
