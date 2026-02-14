@@ -583,6 +583,54 @@ def auto_backfill_shadow_models(target_date: str) -> bool:
         return False
 
 
+def check_scheduler_health() -> Tuple[bool, Dict, Optional[str]]:
+    """
+    Check Cloud Scheduler job health (Session 242).
+
+    Counts jobs with non-success last execution status.
+    Alert threshold: > 3 failing jobs (Session 219 baseline was 0).
+    Excludes NOT_FOUND (expected on no-game days for prediction jobs).
+
+    Returns:
+        Tuple of (passed, metrics, error_message)
+    """
+    try:
+        from google.cloud import scheduler_v1
+
+        scheduler_client = scheduler_v1.CloudSchedulerClient()
+        parent = f"projects/{PROJECT_ID}/locations/us-west2"
+
+        failing_jobs = []
+        total_jobs = 0
+
+        for job in scheduler_client.list_jobs(parent=parent):
+            total_jobs += 1
+            status_code = job.status.code if job.status else None
+            # Code 0 = OK, Code 5 = NOT_FOUND (expected on off-days for prediction jobs)
+            if status_code is not None and status_code not in (0, 5):
+                failing_jobs.append(f"{job.name.split('/')[-1]} (code={status_code})")
+
+        metrics = {
+            'total_jobs': total_jobs,
+            'failing_jobs': len(failing_jobs),
+            'failing_job_names': failing_jobs[:10],  # Cap at 10 for readability
+        }
+
+        threshold = 3
+        if len(failing_jobs) > threshold:
+            error_msg = (
+                f"failing_jobs: {len(failing_jobs)} > {threshold} (max)\n"
+                f"  Failing: {', '.join(failing_jobs[:10])}"
+            )
+            return False, metrics, error_msg
+
+        return True, metrics, None
+
+    except Exception as e:
+        logger.error(f"Error checking scheduler health: {e}")
+        return False, {}, f"Scheduler health check error: {e}"
+
+
 def main():
     """Main entry point."""
     logger.info("Starting pipeline canary queries")
@@ -600,6 +648,21 @@ def main():
             logger.warning(f"  Error: {error}")
 
         results.append((check, passed, metrics, error))
+
+    # Session 242: Check Cloud Scheduler job health
+    scheduler_check = CanaryCheck(
+        name="Scheduler Health",
+        phase="scheduler_health",
+        query="",  # Not a BQ query — uses Cloud Scheduler API
+        thresholds={'failing_jobs': {'max': 3}},
+        description="Detects Cloud Scheduler job failures (regression from Session 219 baseline of 0)"
+    )
+    sched_passed, sched_metrics, sched_error = check_scheduler_health()
+    sched_status = "✅ PASS" if sched_passed else "❌ FAIL"
+    logger.info(f"Scheduler Health: {sched_status}")
+    if not sched_passed:
+        logger.warning(f"  Error: {sched_error}")
+    results.append((scheduler_check, sched_passed, sched_metrics, sched_error))
 
     # Session 210: Auto-heal shadow model gaps
     for check, passed, metrics, error in results:

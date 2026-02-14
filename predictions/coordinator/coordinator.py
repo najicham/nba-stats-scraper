@@ -1040,7 +1040,17 @@ def start_prediction_batch():
         )
 
         if not requests:
-            logger.error(f"No prediction requests created for {game_date}", exc_info=True)
+            # Distinguish "no games scheduled" from "games exist but no eligible players"
+            total_games = summary_stats.get('total_games', 0) if summary_stats else 0
+            if total_games == 0:
+                logger.info(f"No games scheduled for {game_date} — returning success with 0 predictions")
+                return jsonify({
+                    'status': 'no_games_scheduled',
+                    'message': f'No games scheduled for {game_date}',
+                    'game_date': str(game_date),
+                    'summary': summary_stats
+                }), 200
+            logger.error(f"No prediction requests created for {game_date} despite {total_games} games", exc_info=True)
             return jsonify({
                 'status': 'error',
                 'message': f'No players found for {game_date}',
