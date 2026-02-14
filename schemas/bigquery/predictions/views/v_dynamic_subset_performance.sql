@@ -43,6 +43,7 @@ base_predictions AS (
     ON p.game_date = s.game_date AND p.system_id = s.system_id
   WHERE p.is_active = TRUE
     AND p.current_points_line IS NOT NULL
+    AND p.recommendation IN ('OVER', 'UNDER')  -- Session 242: Exclude PASS/HOLD from performance metrics
 ),
 
 ranked_predictions AS (
