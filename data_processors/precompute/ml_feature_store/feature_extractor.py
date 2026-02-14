@@ -883,7 +883,7 @@ class FeatureExtractor:
         for g in played_games:
             gd = _normalize_date(g.get('game_date'))
             if gd is not None:
-                mins = g.get('minutes_played', 0) or 0
+                mins = float(g.get('minutes_played', 0) or 0)
                 if gd >= seven_days_ago:
                     games_in_7d += 1
                     minutes_in_7d += mins
