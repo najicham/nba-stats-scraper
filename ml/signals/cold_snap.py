@@ -33,6 +33,10 @@ class ColdSnapSignal(BaseSignal):
         if prediction.get('recommendation') != 'OVER':
             return self._no_qualify()
 
+        # HOME-ONLY: 93.3% home vs 31.3% away (Session 257)
+        if not prediction.get('is_home', False):
+            return self._no_qualify()
+
         stats = supplemental['streak_stats']
         prev_over = stats.get('prev_over', [])
 

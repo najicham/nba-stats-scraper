@@ -32,6 +32,12 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.signal_best_bets_
   composite_score NUMERIC(6, 4),        -- Aggregator ranking score
   rank INT64,                           -- 1-based daily rank (1 = best pick)
 
+  -- Combo registry fields (Session 259)
+  matched_combo_id STRING,               -- Best matching combo from registry
+  combo_classification STRING,           -- SYNERGISTIC | ANTI_PATTERN | NEUTRAL
+  combo_hit_rate FLOAT64,                -- Historical hit rate of matched combo
+  warning_tags ARRAY<STRING>,            -- ['redundancy_trap', 'contradictory_signals', ...]
+
   -- Outcome (populated after grading)
   actual_points INT64,
   prediction_correct BOOLEAN,

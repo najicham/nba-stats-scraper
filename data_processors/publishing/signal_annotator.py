@@ -26,6 +26,7 @@ from shared.config.gcp_config import get_project_id
 from shared.config.subset_public_names import get_public_name
 from ml.signals.registry import build_default_registry
 from ml.signals.aggregator import BestBetsAggregator
+from ml.signals.combo_registry import load_combo_registry, match_combo
 from ml.signals.model_health import BREAKEVEN_HR
 from ml.signals.supplemental_data import (
     query_model_health,
@@ -96,6 +97,7 @@ class SignalAnnotator:
 
         # 3. Evaluate signals on every prediction
         registry = build_default_registry()
+        combo_registry = load_combo_registry(bq_client=self.bq_client)
         rows_to_write: List[Dict[str, Any]] = []
         signal_results_map: Dict[str, List] = {}  # for aggregator bridge
 
@@ -114,6 +116,9 @@ class SignalAnnotator:
             key = f"{pred['player_lookup']}::{pred['game_id']}"
             signal_results_map[key] = all_results
 
+            # Match combo from registry for annotation
+            matched = match_combo(qualifying_tags, combo_registry) if qualifying_tags else None
+
             rows_to_write.append({
                 'game_date': target_date,
                 'player_lookup': pred['player_lookup'],
@@ -121,6 +126,9 @@ class SignalAnnotator:
                 'game_id': pred.get('game_id'),
                 'signal_tags': qualifying_tags,  # [] not None (ARRAY cannot be NULL)
                 'signal_count': len(qualifying_tags),
+                'matched_combo_id': matched.combo_id if matched else None,
+                'combo_classification': matched.classification if matched else None,
+                'combo_hit_rate': matched.hit_rate if matched else None,
                 'model_health_status': health_status,
                 'model_health_hr_7d': hr_7d,
                 'evaluated_at': datetime.now(timezone.utc).isoformat(),
@@ -136,7 +144,7 @@ class SignalAnnotator:
         if health_status != 'blocked':
             signal_picks_count = self._bridge_signal_picks(
                 predictions, signal_results_map, target_date,
-                version_id, health_status,
+                version_id, health_status, combo_registry,
             )
 
         logger.info(
@@ -184,13 +192,14 @@ class SignalAnnotator:
         target_date: str,
         version_id: Optional[str],
         health_status: str,
+        combo_registry=None,
     ) -> int:
         """Bridge aggregator's top picks into current_subset_picks as Signal Picks subset.
 
         Returns:
             Number of signal picks written.
         """
-        aggregator = BestBetsAggregator()
+        aggregator = BestBetsAggregator(combo_registry=combo_registry)
         top_picks = aggregator.aggregate(predictions, signal_results_map)
 
         if not top_picks:
@@ -202,6 +211,7 @@ class SignalAnnotator:
 
         subset_rows = []
         for pick in top_picks:
+            warning_tags = pick.get('warning_tags', [])
             subset_rows.append({
                 'game_date': target_date,
                 'subset_id': SIGNAL_PICKS_SUBSET_ID,
@@ -209,6 +219,7 @@ class SignalAnnotator:
                 'prediction_id': None,
                 'game_id': pick.get('game_id'),
                 'rank_in_subset': pick.get('rank'),
+                'warning_tags': warning_tags,
                 'system_id': pick.get('system_id', SYSTEM_ID),
                 'version_id': version_id or f"v_{computed_at.strftime('%Y%m%d_%H%M%S')}",
                 'computed_at': computed_at.isoformat(),

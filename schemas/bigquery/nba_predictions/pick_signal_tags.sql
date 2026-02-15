@@ -24,6 +24,11 @@ CREATE TABLE IF NOT EXISTS `nba-props-platform.nba_predictions.pick_signal_tags`
   model_health_status STRING,            -- 'healthy', 'watch', 'blocked', 'unknown'
   model_health_hr_7d NUMERIC(5, 1),      -- Rolling 7d hit rate
 
+  -- Combo registry fields (Session 259)
+  matched_combo_id STRING,               -- Best matching combo from registry
+  combo_classification STRING,           -- SYNERGISTIC | ANTI_PATTERN | NEUTRAL
+  combo_hit_rate FLOAT64,                -- Historical hit rate of matched combo
+
   -- Metadata
   evaluated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP(),
   version_id STRING                      -- Matches current_subset_picks version_id

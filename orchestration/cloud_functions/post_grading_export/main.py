@@ -235,6 +235,27 @@ def main(cloud_event):
         )
         results['signal_backfill_error'] = str(e)
 
+    # 4. Compute signal health for the graded date (Session 259)
+    try:
+        from ml.signals.signal_health import compute_signal_health, write_health_rows
+        from shared.clients.bigquery_pool import get_bigquery_client as _get_bq
+
+        bq = _get_bq(project_id=PROJECT_ID)
+        health_rows = compute_signal_health(bq, target_date)
+        if health_rows:
+            written = write_health_rows(bq, health_rows)
+            results['signal_health'] = written
+            logger.info(
+                f"[{correlation_id}] Computed signal health for {target_date}: "
+                f"{written} signals"
+            )
+    except Exception as e:
+        logger.error(
+            f"[{correlation_id}] Failed to compute signal health for {target_date}: {e}",
+            exc_info=True
+        )
+        results['signal_health_error'] = str(e)
+
     duration = (datetime.now(timezone.utc) - start_time).total_seconds()
     logger.info(
         f"[{correlation_id}] Post-grading export complete for {target_date} "

@@ -18,6 +18,7 @@ from google.cloud import bigquery
 
 from ml.signals.registry import build_default_registry
 from ml.signals.aggregator import BestBetsAggregator
+from ml.signals.combo_registry import load_combo_registry, match_combo
 from ml.signals.model_health import BREAKEVEN_HR
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -169,7 +170,7 @@ def load_date_data(client: bigquery.Client, target_date: str) -> List[Dict]:
     return [dict(row) for row in rows]
 
 
-def evaluate_and_build(rows: List[Dict], registry) -> Tuple[
+def evaluate_and_build(rows: List[Dict], registry, combo_reg=None) -> Tuple[
     List[Dict],   # tag rows for pick_signal_tags
     List[Dict],   # best bets picks
     str,          # health status
@@ -261,6 +262,9 @@ def evaluate_and_build(rows: List[Dict], registry) -> Tuple[
         key = f"{pred['player_lookup']}::{pred['game_id']}"
         signal_results_map[key] = all_results
 
+        # Match combo from registry
+        matched = match_combo(qualifying_tags, combo_reg) if (qualifying_tags and combo_reg) else None
+
         tag_rows.append({
             'game_date': str(pred['game_date']),
             'player_lookup': pred['player_lookup'],
@@ -268,6 +272,9 @@ def evaluate_and_build(rows: List[Dict], registry) -> Tuple[
             'game_id': pred.get('game_id'),
             'signal_tags': qualifying_tags,
             'signal_count': len(qualifying_tags),
+            'matched_combo_id': matched.combo_id if matched else None,
+            'combo_classification': matched.classification if matched else None,
+            'combo_hit_rate': matched.hit_rate if matched else None,
             'model_health_status': health_status,
             'model_health_hr_7d': hr_7d,
             'evaluated_at': now,
@@ -277,7 +284,7 @@ def evaluate_and_build(rows: List[Dict], registry) -> Tuple[
     # Build best bets (only if model healthy)
     best_bets_rows = []
     if health_status != 'blocked':
-        aggregator = BestBetsAggregator()
+        aggregator = BestBetsAggregator(combo_registry=combo_reg)
         top_picks = aggregator.aggregate(predictions, signal_results_map)
 
         for pick in top_picks:
@@ -297,6 +304,10 @@ def evaluate_and_build(rows: List[Dict], registry) -> Tuple[
                 'signal_tags': pick.get('signal_tags', []),
                 'signal_count': pick.get('signal_count', 0),
                 'composite_score': pick.get('composite_score'),
+                'matched_combo_id': pick.get('matched_combo_id'),
+                'combo_classification': pick.get('combo_classification'),
+                'combo_hit_rate': pick.get('combo_hit_rate'),
+                'warning_tags': pick.get('warning_tags', []),
                 'rank': pick.get('rank'),
                 'actual_points': pick.get('actual_points'),
                 'prediction_correct': pick.get('prediction_correct'),
@@ -327,6 +338,7 @@ def main():
 
     client = bigquery.Client(project=PROJECT_ID)
     registry = build_default_registry()
+    combo_reg = load_combo_registry(bq_client=client)
 
     # Get list of game dates
     dates_q = f"""
@@ -354,7 +366,7 @@ def main():
     for i, date_str in enumerate(dates):
         rows = load_date_data(client, date_str)
 
-        tag_rows, bets_rows, health = evaluate_and_build(rows, registry)
+        tag_rows, bets_rows, health = evaluate_and_build(rows, registry, combo_reg=combo_reg)
         with_signals = sum(1 for r in tag_rows if r['signal_count'] > 0)
 
         status = f"[{i+1}/{len(dates)}] {date_str}: {len(rows)} preds, " \

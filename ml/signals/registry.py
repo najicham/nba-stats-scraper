@@ -34,11 +34,16 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.cold_snap import ColdSnapSignal
     from ml.signals.blowout_recovery import BlowoutRecoverySignal
 
+    # Combo signals (Session 258)
+    from ml.signals.combo_he_ms import HighEdgeMinutesSurgeComboSignal
+    from ml.signals.combo_3way import ThreeWayComboSignal
+    # ESO re-registered for anti-pattern detection in aggregator (Session 258)
+    from ml.signals.edge_spread_optimal import EdgeSpreadOptimalSignal
+
     # Prototype signals - Batch 1 (Session 255)
     from ml.signals.hot_streak_3 import HotStreak3Signal
     from ml.signals.cold_continuation_2 import ColdContinuation2Signal
     from ml.signals.b2b_fatigue_under import B2BFatigueUnderSignal
-    # EdgeSpreadOptimalSignal REMOVED — 47.4% HR, -9.4% ROI (Session 255)
     from ml.signals.rest_advantage_2d import RestAdvantage2DSignal
 
     # Prototype signals - Batch 2 (Session 255)
@@ -63,11 +68,16 @@ def build_default_registry() -> SignalRegistry:
     registry.register(ColdSnapSignal())
     registry.register(BlowoutRecoverySignal())
 
+    # Combo signals (Session 258)
+    registry.register(HighEdgeMinutesSurgeComboSignal())
+    registry.register(ThreeWayComboSignal())
+    # ESO: 47.4% standalone, but needed for anti-pattern detection in aggregator
+    registry.register(EdgeSpreadOptimalSignal())
+
     # Prototype signals - Batch 1
     registry.register(HotStreak3Signal())
     registry.register(ColdContinuation2Signal())
     registry.register(B2BFatigueUnderSignal())
-    # EdgeSpreadOptimalSignal removed (47.4% HR)
     registry.register(RestAdvantage2DSignal())
 
     # Prototype signals - Batch 2

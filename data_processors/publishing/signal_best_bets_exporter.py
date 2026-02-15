@@ -21,7 +21,9 @@ from google.cloud import bigquery
 from data_processors.publishing.base_exporter import BaseExporter
 from ml.signals.registry import build_default_registry
 from ml.signals.aggregator import BestBetsAggregator
+from ml.signals.combo_registry import load_combo_registry
 from ml.signals.model_health import BREAKEVEN_HR
+from ml.signals.signal_health import get_signal_health_summary
 from ml.signals.supplemental_data import (
     query_model_health,
     query_predictions_with_supplements,
@@ -119,11 +121,15 @@ class SignalBestBetsExporter(BaseExporter):
                 results_for_pred.append(result)
             signal_results[key] = results_for_pred
 
-        # Step 5: Aggregate to top picks
-        aggregator = BestBetsAggregator()
+        # Step 5: Aggregate to top picks (with combo registry)
+        combo_registry = load_combo_registry(bq_client=self.bq_client)
+        aggregator = BestBetsAggregator(combo_registry=combo_registry)
         top_picks = aggregator.aggregate(predictions, signal_results)
 
-        # Step 6: Format for JSON
+        # Step 6: Get signal health summary (non-blocking — empty if table doesn't exist yet)
+        signal_health = get_signal_health_summary(self.bq_client, target_date)
+
+        # Step 7: Format for JSON
         picks_json = []
         for pick in top_picks:
             picks_json.append({
@@ -141,6 +147,10 @@ class SignalBestBetsExporter(BaseExporter):
                 'signals': pick.get('signal_tags', []),
                 'signal_count': pick.get('signal_count', 0),
                 'composite_score': pick.get('composite_score'),
+                'matched_combo_id': pick.get('matched_combo_id'),
+                'combo_classification': pick.get('combo_classification'),
+                'combo_hit_rate': pick.get('combo_hit_rate'),
+                'warnings': pick.get('warning_tags', []),
                 'actual': None,
                 'result': None,
             })
@@ -148,11 +158,13 @@ class SignalBestBetsExporter(BaseExporter):
         return {
             'date': target_date,
             'generated_at': self.get_generated_at(),
+            'min_signal_count': BestBetsAggregator.MIN_SIGNAL_COUNT,
             'model_health': {
                 'status': health_status,
                 'hit_rate_7d': hr_7d,
                 'graded_count': model_health.get('graded_count', 0),
             },
+            'signal_health': signal_health,
             'picks': picks_json,
             'total_picks': len(picks_json),
             'signals_evaluated': [
@@ -176,12 +188,23 @@ class SignalBestBetsExporter(BaseExporter):
         if json_data['picks']:
             self._write_to_bigquery(target_date, json_data['picks'])
 
-        # Upload to GCS
+        # Upload to GCS (date-specific)
         gcs_path = self.upload_to_gcs(
             json_data=json_data,
             path=f'signal-best-bets/{target_date}.json',
             cache_control='public, max-age=300',
         )
+
+        # Also write latest.json for stable frontend URL
+        try:
+            self.upload_to_gcs(
+                json_data=json_data,
+                path='signal-best-bets/latest.json',
+                cache_control='public, max-age=60',
+            )
+            logger.info("Wrote signal-best-bets/latest.json")
+        except Exception as e:
+            logger.warning(f"Failed to write latest.json (non-fatal): {e}")
 
         logger.info(
             f"Exported {json_data['total_picks']} signal best bets for {target_date} "
@@ -226,6 +249,10 @@ class SignalBestBetsExporter(BaseExporter):
                 'signal_tags': pick.get('signals', []),
                 'signal_count': pick.get('signal_count', 0),
                 'composite_score': pick.get('composite_score'),
+                'matched_combo_id': pick.get('matched_combo_id'),
+                'combo_classification': pick.get('combo_classification'),
+                'combo_hit_rate': pick.get('combo_hit_rate'),
+                'warning_tags': pick.get('warnings', []),
                 'rank': pick.get('rank'),
                 'created_at': datetime.now(timezone.utc).isoformat(),
             })

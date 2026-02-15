@@ -87,6 +87,7 @@ def query_predictions_with_supplements(
         player_lookup,
         game_date,
         minutes_played,
+        position,
         AVG(SAFE_DIVIDE(three_pt_makes, NULLIF(three_pt_attempts, 0)))
           OVER (PARTITION BY player_lookup ORDER BY game_date
                 ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING) AS three_pct_last_3,
@@ -164,6 +165,7 @@ def query_predictions_with_supplements(
       ls.minutes_avg_last_3,
       ls.minutes_avg_season,
       ls.minutes_played AS prev_minutes,
+      ls.position,
       DATE_DIFF(@target_date, ls.game_date, DAY) AS rest_days,
       lsk.prev_over_1, lsk.prev_over_2, lsk.prev_over_3,
       lsk.prev_over_4, lsk.prev_over_5
@@ -200,9 +202,19 @@ def query_predictions_with_supplements(
             'edge': row_dict['edge'],
             'confidence_score': row_dict['confidence_score'],
         }
+
+        # Derive is_home from game_id format: YYYYMMDD_AWAY_HOME
+        game_id = row_dict.get('game_id', '')
+        parts = game_id.split('_') if game_id else []
+        pred['is_home'] = (len(parts) >= 3 and pred['team_abbr'] == parts[2])
         predictions.append(pred)
 
         supp: Dict[str, Any] = {}
+
+        # Player context (position)
+        supp['player_context'] = {
+            'position': row_dict.get('position', ''),
+        }
 
         if row_dict.get('three_pct_last_3') is not None:
             supp['three_pt_stats'] = {

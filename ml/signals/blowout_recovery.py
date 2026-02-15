@@ -20,6 +20,18 @@ class BlowoutRecoverySignal(BaseSignal):
         if prediction.get('recommendation') != 'OVER':
             return self._no_qualify()
 
+        # Exclude Centers: 20.0% HR (Session 257)
+        player_ctx = supplemental.get('player_context', {})
+        pos = (player_ctx.get('position') or '').upper()
+        if pos and 'C' in pos.split('-'):
+            return self._no_qualify()
+
+        # Exclude B2B: 46.2% HR (Session 257)
+        rest_stats = supplemental.get('rest_stats', {})
+        rest_days = rest_stats.get('rest_days')
+        if rest_days is not None and rest_days < 2:
+            return self._no_qualify()
+
         stats = supplemental['recovery_stats']
         prev_minutes = stats.get('prev_minutes')
         avg_minutes = stats.get('minutes_avg_season')
