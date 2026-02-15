@@ -1,0 +1,393 @@
+"""
+Signal Best Bets Exporter for Phase 6 Publishing
+
+Runs the Signal Discovery Framework against today's predictions and exports
+a curated list of up to 5 best bets to GCS. Also writes picks to
+the `signal_best_bets_picks` BigQuery table for grading.
+
+Pipeline: Phase 5 → Phase 6 Export → signal-best-bets
+Output: v1/signal-best-bets/{date}.json
+
+Version: 1.0
+Created: 2026-02-14 (Session 254)
+"""
+
+import logging
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+from google.cloud import bigquery
+
+from data_processors.publishing.base_exporter import BaseExporter
+from ml.signals.registry import build_default_registry
+from ml.signals.aggregator import BestBetsAggregator
+from ml.signals.model_health import BREAKEVEN_HR
+
+logger = logging.getLogger(__name__)
+
+PROJECT_ID = 'nba-props-platform'
+SYSTEM_ID = 'catboost_v9'
+
+# Signals that require supplemental data (skip if data unavailable)
+SUPPLEMENTAL_SIGNALS = {'3pt_bounce', 'minutes_surge', 'dual_agree', 'pace_up'}
+
+
+class SignalBestBetsExporter(BaseExporter):
+    """
+    Export signal-curated best bets to GCS and BigQuery.
+
+    Steps:
+    1. Query model health (rolling 7d HR)
+    2. If model healthy, query today's predictions + supplemental data
+    3. Run all signals via registry
+    4. Aggregate to top 5 picks
+    5. Write to BigQuery `signal_best_bets_picks`
+    6. Export to GCS `v1/signal-best-bets/{date}.json`
+    """
+
+    def generate_json(self, target_date: str, **kwargs) -> Dict[str, Any]:
+        """Generate signal best bets JSON for a specific date."""
+        # Step 1: Query model health
+        model_health = self._query_model_health()
+        hr_7d = model_health.get('hit_rate_7d_edge3')
+
+        health_status = 'unknown'
+        if hr_7d is not None:
+            if hr_7d < BREAKEVEN_HR:
+                health_status = 'blocked'
+            elif hr_7d < 58.0:
+                health_status = 'watch'
+            else:
+                health_status = 'healthy'
+
+        # Step 2: Check if model health gate blocks all picks
+        if health_status == 'blocked':
+            logger.warning(
+                f"Model health gate BLOCKED for {target_date}: "
+                f"HR 7d = {hr_7d:.1f}% < {BREAKEVEN_HR}% breakeven"
+            )
+            return {
+                'date': target_date,
+                'generated_at': self.get_generated_at(),
+                'model_health': {
+                    'status': health_status,
+                    'hit_rate_7d': hr_7d,
+                    'graded_count': model_health.get('graded_count', 0),
+                },
+                'picks': [],
+                'total_picks': 0,
+                'signals_evaluated': [],
+                'blocked_reason': 'model_decay',
+            }
+
+        # Step 3: Query predictions and supplemental data
+        predictions, supplemental_map = self._query_predictions_and_supplements(
+            target_date
+        )
+
+        if not predictions:
+            logger.info(f"No predictions found for {target_date}")
+            return {
+                'date': target_date,
+                'generated_at': self.get_generated_at(),
+                'model_health': {
+                    'status': health_status,
+                    'hit_rate_7d': hr_7d,
+                    'graded_count': model_health.get('graded_count', 0),
+                },
+                'picks': [],
+                'total_picks': 0,
+                'signals_evaluated': [],
+            }
+
+        # Step 4: Evaluate all signals
+        registry = build_default_registry()
+        signal_results = {}
+
+        for pred in predictions:
+            key = f"{pred['player_lookup']}::{pred['game_id']}"
+            supplements = supplemental_map.get(pred['player_lookup'], {})
+            # Inject model health into supplemental for the gate signal
+            supplements['model_health'] = {
+                'hit_rate_7d_edge3': hr_7d,
+            }
+
+            results_for_pred = []
+            for signal in registry.all():
+                result = signal.evaluate(pred, features=None, supplemental=supplements)
+                results_for_pred.append(result)
+            signal_results[key] = results_for_pred
+
+        # Step 5: Aggregate to top picks
+        aggregator = BestBetsAggregator()
+        top_picks = aggregator.aggregate(predictions, signal_results)
+
+        # Step 6: Format for JSON
+        picks_json = []
+        for pick in top_picks:
+            picks_json.append({
+                'rank': pick['rank'],
+                'player': pick.get('player_name', ''),
+                'player_lookup': pick['player_lookup'],
+                'game_id': pick.get('game_id', ''),
+                'team': pick.get('team_abbr', ''),
+                'opponent': pick.get('opponent_team_abbr', ''),
+                'prediction': pick.get('predicted_points'),
+                'line': pick.get('line_value'),
+                'direction': pick.get('recommendation', ''),
+                'edge': pick.get('edge'),
+                'confidence': pick.get('confidence_score'),
+                'signals': pick.get('signal_tags', []),
+                'signal_count': pick.get('signal_count', 0),
+                'composite_score': pick.get('composite_score'),
+                'actual': None,
+                'result': None,
+            })
+
+        return {
+            'date': target_date,
+            'generated_at': self.get_generated_at(),
+            'model_health': {
+                'status': health_status,
+                'hit_rate_7d': hr_7d,
+                'graded_count': model_health.get('graded_count', 0),
+            },
+            'picks': picks_json,
+            'total_picks': len(picks_json),
+            'signals_evaluated': [
+                s.tag for s in registry.all() if s.tag != 'model_health'
+            ],
+        }
+
+    def export(self, target_date: str) -> str:
+        """
+        Generate signal best bets, write to BigQuery, and upload to GCS.
+
+        Args:
+            target_date: Date string in YYYY-MM-DD format
+
+        Returns:
+            GCS path where file was uploaded
+        """
+        json_data = self.generate_json(target_date)
+
+        # Write picks to BigQuery for grading tracking
+        if json_data['picks']:
+            self._write_to_bigquery(target_date, json_data['picks'])
+
+        # Upload to GCS
+        gcs_path = self.upload_to_gcs(
+            json_data=json_data,
+            path=f'signal-best-bets/{target_date}.json',
+            cache_control='public, max-age=300',
+        )
+
+        logger.info(
+            f"Exported {json_data['total_picks']} signal best bets for {target_date} "
+            f"(health={json_data['model_health']['status']}) to {gcs_path}"
+        )
+
+        return gcs_path
+
+    # ── Private helpers ──────────────────────────────────────────────────
+
+    def _query_model_health(self) -> Dict[str, Any]:
+        """Query rolling 7-day hit rate for edge 3+ picks."""
+        query = f"""
+        SELECT
+          COUNTIF(prediction_correct) as wins,
+          COUNT(*) as graded_count,
+          ROUND(100.0 * COUNTIF(prediction_correct) / NULLIF(COUNT(*), 0), 1)
+            AS hit_rate_7d_edge3
+        FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+        WHERE game_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)
+          AND game_date < CURRENT_DATE()
+          AND system_id = '{SYSTEM_ID}'
+          AND ABS(predicted_points - line_value) >= 3.0
+          AND prediction_correct IS NOT NULL
+          AND is_voided IS NOT TRUE
+        """
+
+        results = self.query_to_list(query)
+        if results and results[0].get('graded_count', 0) > 0:
+            return results[0]
+
+        return {'hit_rate_7d_edge3': None, 'graded_count': 0}
+
+    def _query_predictions_and_supplements(
+        self, target_date: str
+    ) -> tuple:
+        """
+        Query today's active predictions with supplemental signal data.
+
+        Returns:
+            Tuple of (predictions list, supplemental_map keyed by player_lookup)
+        """
+        query = f"""
+        WITH preds AS (
+          SELECT
+            p.player_lookup,
+            p.game_id,
+            p.game_date,
+            p.system_id,
+            p.player_name,
+            p.team_abbr,
+            p.opponent_team_abbr,
+            CAST(p.predicted_points AS FLOAT64) AS predicted_points,
+            CAST(p.line_value AS FLOAT64) AS line_value,
+            p.recommendation,
+            CAST(p.predicted_points - p.line_value AS FLOAT64) AS edge,
+            CAST(p.confidence_score AS FLOAT64) AS confidence_score
+          FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
+          WHERE p.game_date = @target_date
+            AND p.system_id = '{SYSTEM_ID}'
+            AND p.is_active = TRUE
+            AND p.recommendation IN ('OVER', 'UNDER')
+            AND p.line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
+        ),
+
+        -- Rolling stats for 3PT and minutes signals
+        game_stats AS (
+          SELECT
+            player_lookup,
+            game_date,
+            -- 3PT rolling (exclude current game via 1 PRECEDING)
+            AVG(SAFE_DIVIDE(three_pt_makes, NULLIF(three_pt_attempts, 0)))
+              OVER (PARTITION BY player_lookup ORDER BY game_date
+                    ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING) AS three_pct_last_3,
+            AVG(SAFE_DIVIDE(three_pt_makes, NULLIF(three_pt_attempts, 0)))
+              OVER (PARTITION BY player_lookup ORDER BY game_date
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS three_pct_season,
+            STDDEV(SAFE_DIVIDE(three_pt_makes, NULLIF(three_pt_attempts, 0)))
+              OVER (PARTITION BY player_lookup ORDER BY game_date
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS three_pct_std,
+            AVG(CAST(three_pt_attempts AS FLOAT64))
+              OVER (PARTITION BY player_lookup ORDER BY game_date
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS three_pa_per_game,
+            -- Minutes rolling
+            AVG(minutes_played)
+              OVER (PARTITION BY player_lookup ORDER BY game_date
+                    ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING) AS minutes_avg_last_3,
+            AVG(minutes_played)
+              OVER (PARTITION BY player_lookup ORDER BY game_date
+                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS minutes_avg_season
+          FROM `{PROJECT_ID}.nba_analytics.player_game_summary`
+          WHERE game_date >= '2025-10-22'
+            AND minutes_played > 0
+        ),
+
+        latest_stats AS (
+          SELECT gs.*
+          FROM game_stats gs
+          INNER JOIN preds p ON gs.player_lookup = p.player_lookup
+          WHERE gs.game_date < @target_date
+          QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY gs.player_lookup ORDER BY gs.game_date DESC
+          ) = 1
+        )
+
+        SELECT
+          p.*,
+          ls.three_pct_last_3,
+          ls.three_pct_season,
+          ls.three_pct_std,
+          ls.three_pa_per_game,
+          ls.minutes_avg_last_3,
+          ls.minutes_avg_season
+        FROM preds p
+        LEFT JOIN latest_stats ls ON ls.player_lookup = p.player_lookup
+        ORDER BY p.player_lookup
+        """
+
+        params = [
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+
+        rows = self.query_to_list(query, params)
+
+        predictions = []
+        supplemental_map: Dict[str, Dict] = {}
+
+        for row in rows:
+            pred = {
+                'player_lookup': row['player_lookup'],
+                'game_id': row['game_id'],
+                'game_date': row['game_date'],
+                'system_id': row['system_id'],
+                'player_name': row.get('player_name', ''),
+                'team_abbr': row.get('team_abbr', ''),
+                'opponent_team_abbr': row.get('opponent_team_abbr', ''),
+                'predicted_points': row['predicted_points'],
+                'line_value': row['line_value'],
+                'recommendation': row['recommendation'],
+                'edge': row['edge'],
+                'confidence_score': row['confidence_score'],
+            }
+            predictions.append(pred)
+
+            # Build supplemental data
+            supp: Dict[str, Any] = {}
+
+            if row.get('three_pct_last_3') is not None:
+                supp['three_pt_stats'] = {
+                    'three_pct_last_3': float(row['three_pct_last_3']),
+                    'three_pct_season': float(row.get('three_pct_season') or 0),
+                    'three_pct_std': float(row.get('three_pct_std') or 0),
+                    'three_pa_per_game': float(row.get('three_pa_per_game') or 0),
+                }
+
+            if row.get('minutes_avg_last_3') is not None:
+                supp['minutes_stats'] = {
+                    'minutes_avg_last_3': float(row['minutes_avg_last_3']),
+                    'minutes_avg_season': float(row.get('minutes_avg_season') or 0),
+                }
+
+            supplemental_map[row['player_lookup']] = supp
+
+        return predictions, supplemental_map
+
+    def _write_to_bigquery(self, target_date: str, picks: List[Dict]) -> None:
+        """Write signal best bets to BigQuery for grading tracking."""
+        table_ref = f'{PROJECT_ID}.nba_predictions.signal_best_bets_picks'
+
+        rows_to_insert = []
+        for pick in picks:
+            rows_to_insert.append({
+                'player_lookup': pick['player_lookup'],
+                'game_id': pick.get('game_id', ''),
+                'game_date': target_date,
+                'system_id': SYSTEM_ID,
+                'player_name': pick.get('player', ''),
+                'team_abbr': pick.get('team', ''),
+                'opponent_team_abbr': pick.get('opponent', ''),
+                'predicted_points': pick.get('prediction'),
+                'line_value': pick.get('line'),
+                'recommendation': pick.get('direction', ''),
+                'edge': pick.get('edge'),
+                'confidence_score': pick.get('confidence'),
+                'signal_tags': pick.get('signals', []),
+                'signal_count': pick.get('signal_count', 0),
+                'composite_score': pick.get('composite_score'),
+                'rank': pick.get('rank'),
+                'created_at': datetime.now(timezone.utc).isoformat(),
+            })
+
+        if not rows_to_insert:
+            return
+
+        try:
+            errors = self.bq_client.insert_rows_json(table_ref, rows_to_insert)
+            if errors:
+                logger.error(
+                    f"BigQuery insert errors for signal_best_bets_picks: {errors}"
+                )
+            else:
+                logger.info(
+                    f"Inserted {len(rows_to_insert)} rows into {table_ref} "
+                    f"for {target_date}"
+                )
+        except Exception as e:
+            logger.error(
+                f"Failed to write signal best bets to BigQuery: {e}",
+                exc_info=True,
+            )

@@ -17,9 +17,11 @@ Receives messages with:
 Actions on success:
 1. Re-export picks/{date}.json with actuals via AllSubsetsPicksExporter
 2. Refresh subsets/season.json via SeasonSubsetPicksExporter
+3. Backfill actuals into signal_best_bets_picks table
 
-Version: 1.0
+Version: 1.1
 Created: 2026-02-13 (Session 242)
+Updated: 2026-02-14 (Session 254) - Added signal best bets grading backfill
 """
 
 import base64
@@ -73,6 +75,67 @@ def get_season_exporter():
             logger.error(f"Failed to initialize SeasonSubsetPicksExporter: {e}", exc_info=True)
             raise
     return _season_exporter
+
+
+def backfill_signal_best_bets(target_date: str) -> int:
+    """
+    Backfill actual_points and prediction_correct into signal_best_bets_picks
+    from prediction_accuracy after grading completes.
+
+    Args:
+        target_date: Date that was graded (YYYY-MM-DD)
+
+    Returns:
+        Number of rows updated
+    """
+    from google.cloud import bigquery
+    from shared.clients.bigquery_pool import get_bigquery_client
+
+    bq_client = get_bigquery_client(project_id=PROJECT_ID)
+
+    # Check if any signal best bets exist for this date
+    check_query = f"""
+    SELECT COUNT(*) as cnt
+    FROM `{PROJECT_ID}.nba_predictions.signal_best_bets_picks`
+    WHERE game_date = @target_date
+    """
+    check_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+    )
+    check_result = bq_client.query(check_query, job_config=check_config).result()
+    row = next(check_result, None)
+    if not row or row.cnt == 0:
+        logger.info(f"No signal best bets found for {target_date}, skipping backfill")
+        return 0
+
+    # Update with actuals from prediction_accuracy
+    update_query = f"""
+    UPDATE `{PROJECT_ID}.nba_predictions.signal_best_bets_picks` sbp
+    SET
+      actual_points = pa.actual_points,
+      prediction_correct = pa.prediction_correct
+    FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy` pa
+    WHERE sbp.player_lookup = pa.player_lookup
+      AND sbp.game_id = pa.game_id
+      AND sbp.game_date = pa.game_date
+      AND pa.system_id = sbp.system_id
+      AND sbp.game_date = @target_date
+      AND pa.prediction_correct IS NOT NULL
+    """
+    update_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('target_date', 'DATE', target_date),
+        ]
+    )
+
+    job = bq_client.query(update_query, job_config=update_config)
+    job.result(timeout=60)
+    rows_updated = job.num_dml_affected_rows or 0
+
+    logger.info(f"Backfilled {rows_updated} signal best bets for {target_date}")
+    return rows_updated
 
 
 def parse_pubsub_message(cloud_event) -> Dict:
@@ -157,6 +220,20 @@ def main(cloud_event):
             exc_info=True
         )
         results['season_error'] = str(e)
+
+    # 3. Backfill actuals into signal_best_bets_picks
+    try:
+        backfilled = backfill_signal_best_bets(target_date)
+        results['signal_backfill'] = backfilled
+        logger.info(
+            f"[{correlation_id}] Backfilled {backfilled} signal best bets for {target_date}"
+        )
+    except Exception as e:
+        logger.error(
+            f"[{correlation_id}] Failed to backfill signal best bets for {target_date}: {e}",
+            exc_info=True
+        )
+        results['signal_backfill_error'] = str(e)
 
     duration = (datetime.now(timezone.utc) - start_time).total_seconds()
     logger.info(

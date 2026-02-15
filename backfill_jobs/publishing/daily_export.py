@@ -83,6 +83,8 @@ from data_processors.publishing.calendar_exporter import CalendarExporter
 from data_processors.publishing.season_game_counts_exporter import SeasonGameCountsExporter
 # Consolidated trends tonight (Session 226)
 from data_processors.publishing.trends_tonight_exporter import TrendsTonightExporter
+# Signal best bets (Session 254)
+from data_processors.publishing.signal_best_bets_exporter import SignalBestBetsExporter
 
 # Configure logging
 logging.basicConfig(
@@ -108,6 +110,8 @@ EXPORT_TYPES = [
     'live', 'live-grading',
     # Phase 6 Subset Exports (Session 90)
     'subset-picks', 'daily-signals', 'subset-performance', 'subset-definitions', 'season-subsets',
+    # Signal best bets (Session 254)
+    'signal-best-bets',
     # Consolidated trends
     'trends-tonight',
     # Shorthand groups
@@ -320,6 +324,17 @@ def export_date(
         except Exception as e:
             result['errors'].append(f"season-subsets: {e}")
             logger.error(f"  Season Subsets error: {e}")
+
+    # Signal best bets exporter (Session 254 - curated picks via Signal Framework)
+    if 'signal-best-bets' in export_types:
+        try:
+            exporter = SignalBestBetsExporter()
+            path = exporter.export(target_date)
+            result['paths']['signal_best_bets'] = path
+            logger.info(f"  Signal Best Bets: {path}")
+        except Exception as e:
+            result['errors'].append(f"signal-best-bets: {e}")
+            logger.error(f"  Signal Best Bets error: {e}")
 
     # === SLOW EXPORTS (tonight-players processes 200+ individual files) ===
 
