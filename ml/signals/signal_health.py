@@ -265,7 +265,7 @@ def get_signal_health_summary(
         Dict keyed by signal_tag with hr_7d, hr_season, regime, status.
     """
     query = f"""
-    SELECT signal_tag, hr_7d, hr_season, regime, status
+    SELECT signal_tag, hr_7d, hr_season, regime, status, is_model_dependent
     FROM `{TABLE_ID}`
     WHERE game_date = @target_date
     """
@@ -283,6 +283,7 @@ def get_signal_health_summary(
                 'hr_season': row.hr_season,
                 'regime': row.regime,
                 'status': row.status,
+                'is_model_dependent': row.is_model_dependent,
             }
             for row in rows
         }

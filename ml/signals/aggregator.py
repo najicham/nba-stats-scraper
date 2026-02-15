@@ -11,6 +11,11 @@ Session 260: Signal health weighting (LIVE).
     - COLD regime signals get 0.5x weight multiplier
     - NORMAL regime signals unchanged (1.0x)
     - Multiplier applied to each signal's contribution to signal_multiplier
+
+Session 264: COLD model-dependent signals → 0.0x weight.
+    - Model-dependent signals (high_edge, edge_spread_optimal, etc.) are
+      downstream of model predictions — broken model means broken signals.
+    - COLD behavioral signals (minutes_surge, cold_snap, etc.) keep 0.5x.
 """
 
 import logging
@@ -18,6 +23,7 @@ from typing import Any, Dict, List, Optional
 
 from ml.signals.base_signal import SignalResult
 from ml.signals.combo_registry import ComboEntry, load_combo_registry, match_combo
+from ml.signals.signal_health import MODEL_DEPENDENT_SIGNALS
 from shared.config.model_selection import get_min_confidence
 
 logger = logging.getLogger(__name__)
@@ -178,12 +184,27 @@ class BestBetsAggregator:
         """Get health-based weight multiplier for a signal.
 
         Returns:
-            1.2 for HOT, 1.0 for NORMAL/unknown, 0.5 for COLD.
+            1.2 for HOT, 1.0 for NORMAL/unknown, 0.5 for COLD behavioral,
+            0.0 for COLD model-dependent (Session 264).
         """
         health = self._signal_health.get(signal_tag)
         if not health:
             return 1.0
         regime = health.get('regime', 'NORMAL')
+
+        if regime == 'COLD':
+            # Model-dependent signals are downstream of predictions —
+            # broken model means broken signal. Zero them out.
+            is_model_dep = health.get('is_model_dependent')
+            if is_model_dep is None:
+                # Fallback: use static set if BQ field missing
+                is_model_dep = signal_tag in MODEL_DEPENDENT_SIGNALS
+            if is_model_dep:
+                logger.debug(
+                    f"Signal '{signal_tag}' zeroed: COLD + model-dependent"
+                )
+                return 0.0
+
         mult = HEALTH_MULTIPLIERS.get(regime, 1.0)
         if mult != 1.0:
             logger.debug(
