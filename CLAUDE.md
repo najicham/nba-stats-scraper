@@ -51,7 +51,7 @@ Phases connected via **Pub/Sub event triggers**. Daily workflow starts ~6 AM ET.
 ## Quick Start [Keyword: START]
 
 ```bash
-ls -la docs/09-handoff/ | tail -5          # 1. Read latest handoff
+/daily-steering                             # 1. Morning steering report
 /validate-daily                             # 2. Run daily validation
 ./bin/check-deployment-drift.sh --verbose   # 3. Check deployment drift
 ```

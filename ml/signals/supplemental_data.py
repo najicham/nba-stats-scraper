@@ -81,13 +81,10 @@ def query_predictions_with_supplements(
         p.game_id,
         p.game_date,
         p.system_id,
-        p.player_name,
-        p.team_abbr,
-        p.opponent_team_abbr,
         CAST(p.predicted_points AS FLOAT64) AS predicted_points,
-        CAST(p.line_value AS FLOAT64) AS line_value,
+        CAST(p.current_points_line AS FLOAT64) AS line_value,
         p.recommendation,
-        CAST(p.predicted_points - p.line_value AS FLOAT64) AS edge,
+        CAST(p.predicted_points - p.current_points_line AS FLOAT64) AS edge,
         CAST(p.confidence_score AS FLOAT64) AS confidence_score
       FROM `{PROJECT_ID}.nba_predictions.player_prop_predictions` p
       WHERE p.game_date = @target_date
@@ -103,7 +100,9 @@ def query_predictions_with_supplements(
         player_lookup,
         game_date,
         minutes_played,
-        position,
+        player_full_name,
+        team_abbr,
+        opponent_team_abbr,
         AVG(SAFE_DIVIDE(three_pt_makes, NULLIF(three_pt_attempts, 0)))
           OVER (PARTITION BY player_lookup ORDER BY game_date
                 ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING) AS three_pct_last_3,
@@ -174,6 +173,9 @@ def query_predictions_with_supplements(
 
     SELECT
       p.*,
+      ls.player_full_name,
+      ls.team_abbr,
+      ls.opponent_team_abbr,
       ls.three_pct_last_3,
       ls.three_pct_season,
       ls.three_pct_std,
@@ -181,7 +183,6 @@ def query_predictions_with_supplements(
       ls.minutes_avg_last_3,
       ls.minutes_avg_season,
       ls.minutes_played AS prev_minutes,
-      ls.position,
       DATE_DIFF(@target_date, ls.game_date, DAY) AS rest_days,
       lsk.prev_over_1, lsk.prev_over_2, lsk.prev_over_3,
       lsk.prev_over_4, lsk.prev_over_5
@@ -204,32 +205,40 @@ def query_predictions_with_supplements(
 
     for row in rows:
         row_dict = dict(row)
+        # Derive team/opponent from game_id (YYYYMMDD_AWAY_HOME)
+        game_id = row_dict.get('game_id', '')
+        parts = game_id.split('_') if game_id else []
+        team_abbr = row_dict.get('team_abbr', '')
+        if len(parts) >= 3:
+            away_team, home_team = parts[1], parts[2]
+            is_home = (team_abbr == home_team)
+            opponent = away_team if is_home else home_team
+        else:
+            is_home = False
+            opponent = ''
+
         pred = {
             'player_lookup': row_dict['player_lookup'],
-            'game_id': row_dict['game_id'],
+            'game_id': game_id,
             'game_date': row_dict['game_date'],
             'system_id': row_dict['system_id'],
-            'player_name': row_dict.get('player_name', ''),
-            'team_abbr': row_dict.get('team_abbr', ''),
-            'opponent_team_abbr': row_dict.get('opponent_team_abbr', ''),
+            'player_name': row_dict.get('player_full_name', ''),
+            'team_abbr': team_abbr,
+            'opponent_team_abbr': opponent,
             'predicted_points': row_dict['predicted_points'],
             'line_value': row_dict['line_value'],
             'recommendation': row_dict['recommendation'],
             'edge': row_dict['edge'],
             'confidence_score': row_dict['confidence_score'],
+            'is_home': is_home,
         }
-
-        # Derive is_home from game_id format: YYYYMMDD_AWAY_HOME
-        game_id = row_dict.get('game_id', '')
-        parts = game_id.split('_') if game_id else []
-        pred['is_home'] = (len(parts) >= 3 and pred['team_abbr'] == parts[2])
         predictions.append(pred)
 
         supp: Dict[str, Any] = {}
 
-        # Player context (position)
+        # Player context
         supp['player_context'] = {
-            'position': row_dict.get('position', ''),
+            'position': '',  # Not available in player_game_summary
         }
 
         if row_dict.get('three_pct_last_3') is not None:
