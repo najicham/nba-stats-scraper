@@ -38,7 +38,7 @@ PROJECT_ID = get_project_id()
 TABLE_ID = f'{PROJECT_ID}.nba_predictions.pick_signal_tags'
 SUBSET_TABLE_ID = f'{PROJECT_ID}.nba_predictions.current_subset_picks'
 SYSTEM_ID = 'catboost_v9'
-SIGNAL_PICKS_SUBSET_ID = 'signal_picks'
+SIGNAL_PICKS_SUBSET_ID = 'best_bets'
 
 
 class SignalAnnotator:

@@ -76,12 +76,54 @@ v12_preds AS (
   ) = 1
 ),
 
+-- Streak data: prior prediction outcomes for hot_streak / cold_snap signals
+streak_data AS (
+  SELECT
+    player_lookup,
+    game_date,
+    -- Prior model correctness (for hot_streak)
+    LAG(CAST(prediction_correct AS INT64), 1) OVER w AS prev_correct_1,
+    LAG(CAST(prediction_correct AS INT64), 2) OVER w AS prev_correct_2,
+    LAG(CAST(prediction_correct AS INT64), 3) OVER w AS prev_correct_3,
+    LAG(CAST(prediction_correct AS INT64), 4) OVER w AS prev_correct_4,
+    LAG(CAST(prediction_correct AS INT64), 5) OVER w AS prev_correct_5,
+    -- Prior actual over/under line (for cold_snap)
+    LAG(CASE WHEN actual_points > line_value THEN 1 ELSE 0 END, 1) OVER w AS prev_over_1,
+    LAG(CASE WHEN actual_points > line_value THEN 1 ELSE 0 END, 2) OVER w AS prev_over_2,
+    LAG(CASE WHEN actual_points > line_value THEN 1 ELSE 0 END, 3) OVER w AS prev_over_3,
+    LAG(CASE WHEN actual_points > line_value THEN 1 ELSE 0 END, 4) OVER w AS prev_over_4,
+    LAG(CASE WHEN actual_points > line_value THEN 1 ELSE 0 END, 5) OVER w AS prev_over_5
+  FROM (
+    SELECT *
+    FROM `nba-props-platform.nba_predictions.prediction_accuracy`
+    WHERE game_date >= '2025-10-22'
+      AND system_id = 'catboost_v9'
+      AND recommendation IN ('OVER', 'UNDER')
+      AND prediction_correct IS NOT NULL
+      AND is_voided IS NOT TRUE
+      AND line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
+    QUALIFY ROW_NUMBER() OVER (
+      PARTITION BY player_lookup, game_id ORDER BY graded_at DESC
+    ) = 1
+  )
+  WINDOW w AS (PARTITION BY player_lookup ORDER BY game_date)
+),
+
 feature_data AS (
   SELECT
     fs.player_lookup,
     fs.game_date,
     fs.feature_14_value AS opponent_pace,
-    fs.feature_22_value AS team_pace
+    fs.feature_22_value AS team_pace,
+    fs.feature_2_value AS points_avg_season,  -- For player tier classification
+    -- Player tier: elite (>25 ppg), stars (20-25), starters (15-20), role (10-15), bench (<10)
+    CASE
+      WHEN fs.feature_2_value > 25 THEN 'elite'
+      WHEN fs.feature_2_value >= 20 THEN 'stars'
+      WHEN fs.feature_2_value >= 15 THEN 'starters'
+      WHEN fs.feature_2_value >= 10 THEN 'role'
+      ELSE 'bench'
+    END as player_tier
   FROM `nba-props-platform.nba_predictions.ml_feature_store_v2` fs
   WHERE fs.game_date BETWEEN @start_date AND @end_date
   QUALIFY ROW_NUMBER() OVER (
@@ -116,7 +158,13 @@ game_stats AS (
             ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING) AS minutes_avg_last_3,
     AVG(minutes_played)
       OVER (PARTITION BY player_lookup ORDER BY game_date
-            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS minutes_avg_season
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS minutes_avg_season,
+    -- Rest days and previous game minutes (for rest_advantage, blowout_recovery)
+    DATE_DIFF(game_date,
+      LAG(game_date, 1) OVER (PARTITION BY player_lookup ORDER BY game_date),
+      DAY) AS rest_days,
+    LAG(minutes_played, 1)
+      OVER (PARTITION BY player_lookup ORDER BY game_date) AS prev_minutes
   FROM `nba-props-platform.nba_analytics.player_game_summary`
   WHERE game_date >= '2025-10-22'
     AND minutes_played > 0
@@ -140,12 +188,20 @@ SELECT
   v12.v12_correct,
   fd.opponent_pace,
   fd.team_pace,
+  fd.points_avg_season,
+  fd.player_tier,
   gs.three_pct_last_3,
   gs.three_pct_season,
   gs.three_pct_std,
   gs.three_pa_per_game,
   gs.minutes_avg_last_3,
   gs.minutes_avg_season,
+  gs.rest_days,
+  gs.prev_minutes,
+  sd.prev_correct_1, sd.prev_correct_2, sd.prev_correct_3,
+  sd.prev_correct_4, sd.prev_correct_5,
+  sd.prev_over_1, sd.prev_over_2, sd.prev_over_3,
+  sd.prev_over_4, sd.prev_over_5,
   pt.opp_pace_top5,
   pt.team_pace_bottom15
 FROM v9_preds v9
@@ -155,6 +211,8 @@ LEFT JOIN feature_data fd
   ON fd.player_lookup = v9.player_lookup AND fd.game_date = v9.game_date
 LEFT JOIN game_stats gs
   ON gs.player_lookup = v9.player_lookup AND gs.game_date = v9.game_date
+LEFT JOIN streak_data sd
+  ON sd.player_lookup = v9.player_lookup AND sd.game_date = v9.game_date
 CROSS JOIN pace_thresholds pt
 ORDER BY v9.game_date, v9.player_lookup
 """
@@ -198,6 +256,9 @@ def evaluate_signals(rows: List[Dict], registry) -> Tuple[
             'actual_points': row['actual_points'],
             'prediction_correct': row['prediction_correct'],
             'confidence_score': float(row['confidence_score'] or 0),
+            'rest_days': row.get('rest_days'),  # For context-aware signals
+            'player_tier': row.get('player_tier', 'unknown'),  # For context-aware signals
+            'points_avg_season': float(row.get('points_avg_season') or 0),
         }
         predictions.append(pred)
 
@@ -239,6 +300,73 @@ def evaluate_signals(rows: List[Dict], registry) -> Tuple[
             supplemental['pace_thresholds'] = {
                 'opp_pace_top5': float(row['opp_pace_top5']),
                 'team_pace_bottom15': float(row['team_pace_bottom15']),
+            }
+
+        # Streak stats (for hot_streak, cold_snap, cold_continuation)
+        if row.get('prev_correct_1') is not None:
+            prev_correct = [
+                row.get('prev_correct_1'),
+                row.get('prev_correct_2'),
+                row.get('prev_correct_3'),
+                row.get('prev_correct_4'),
+                row.get('prev_correct_5'),
+            ]
+            prev_over = [
+                row.get('prev_over_1'),
+                row.get('prev_over_2'),
+                row.get('prev_over_3'),
+                row.get('prev_over_4'),
+                row.get('prev_over_5'),
+            ]
+
+            # Calculate consecutive line beats (from most recent backwards)
+            consecutive_beats = 0
+            for val in prev_correct:
+                if val == 1:
+                    consecutive_beats += 1
+                else:
+                    break
+
+            # Calculate consecutive line misses (from most recent backwards)
+            consecutive_misses = 0
+            last_miss_direction = None
+            for i, val in enumerate(prev_correct):
+                if val == 0:
+                    consecutive_misses += 1
+                    # Determine if last miss was OVER or UNDER
+                    if i < len(prev_over) and prev_over[i] is not None:
+                        last_miss_direction = 'OVER' if prev_over[i] == 1 else 'UNDER'
+                else:
+                    break
+
+            # Store both formats for backwards compatibility
+            player_game_key = f"{pred['player_lookup']}::{pred['game_date']}"
+            supplemental['streak_data'] = {
+                player_game_key: {
+                    'consecutive_line_beats': consecutive_beats,
+                    'consecutive_line_misses': consecutive_misses,
+                    'last_miss_direction': last_miss_direction,
+                }
+            }
+            supplemental['streak_stats'] = {
+                'prev_correct': prev_correct,
+                'prev_over': prev_over,
+                'consecutive_line_beats': consecutive_beats,
+                'consecutive_line_misses': consecutive_misses,
+            }
+
+        # Rest stats (for rest_advantage)
+        if row.get('rest_days') is not None:
+            supplemental['rest_stats'] = {
+                'rest_days': int(row['rest_days']),
+            }
+
+        # Recovery stats (for blowout_recovery)
+        if (row.get('prev_minutes') is not None
+                and row.get('minutes_avg_season') is not None):
+            supplemental['recovery_stats'] = {
+                'prev_minutes': float(row['prev_minutes']),
+                'minutes_avg_season': float(row['minutes_avg_season']),
             }
 
         # Evaluate each signal

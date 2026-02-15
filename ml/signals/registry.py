@@ -31,6 +31,27 @@ def build_default_registry() -> SignalRegistry:
     from ml.signals.minutes_surge import MinutesSurgeSignal
     from ml.signals.pace_mismatch import PaceMismatchSignal
     from ml.signals.model_health import ModelHealthSignal
+    from ml.signals.cold_snap import ColdSnapSignal
+    from ml.signals.blowout_recovery import BlowoutRecoverySignal
+
+    # Prototype signals - Batch 1 (Session 255)
+    from ml.signals.hot_streak_3 import HotStreak3Signal
+    from ml.signals.cold_continuation_2 import ColdContinuation2Signal
+    from ml.signals.b2b_fatigue_under import B2BFatigueUnderSignal
+    # EdgeSpreadOptimalSignal REMOVED — 47.4% HR, -9.4% ROI (Session 255)
+    from ml.signals.rest_advantage_2d import RestAdvantage2DSignal
+
+    # Prototype signals - Batch 2 (Session 255)
+    from ml.signals.hot_streak_2 import HotStreak2Signal
+    from ml.signals.points_surge_3 import PointsSurge3Signal
+    from ml.signals.home_dog import HomeDogSignal
+    # PropValueGapExtremeSignal REMOVED — 12.5% HR, -76.1% ROI (Session 255)
+    from ml.signals.minutes_surge_5 import MinutesSurge5Signal
+    from ml.signals.three_pt_volume_surge import ThreePtVolumeSurgeSignal
+    from ml.signals.model_consensus_v9_v12 import ModelConsensusV9V12Signal
+    from ml.signals.fg_cold_continuation import FGColdContinuationSignal
+    from ml.signals.triple_stack import TripleStackSignal
+    from ml.signals.scoring_acceleration import ScoringAccelerationSignal
 
     registry = SignalRegistry()
     registry.register(ModelHealthSignal())
@@ -39,4 +60,26 @@ def build_default_registry() -> SignalRegistry:
     registry.register(ThreePtBounceSignal())
     registry.register(MinutesSurgeSignal())
     registry.register(PaceMismatchSignal())
+    registry.register(ColdSnapSignal())
+    registry.register(BlowoutRecoverySignal())
+
+    # Prototype signals - Batch 1
+    registry.register(HotStreak3Signal())
+    registry.register(ColdContinuation2Signal())
+    registry.register(B2BFatigueUnderSignal())
+    # EdgeSpreadOptimalSignal removed (47.4% HR)
+    registry.register(RestAdvantage2DSignal())
+
+    # Prototype signals - Batch 2
+    registry.register(HotStreak2Signal())
+    registry.register(PointsSurge3Signal())
+    registry.register(HomeDogSignal())
+    # PropValueGapExtremeSignal removed (12.5% HR)
+    registry.register(MinutesSurge5Signal())
+    registry.register(ThreePtVolumeSurgeSignal())
+    registry.register(ModelConsensusV9V12Signal())
+    registry.register(FGColdContinuationSignal())
+    registry.register(TripleStackSignal())
+    registry.register(ScoringAccelerationSignal())
+
     return registry

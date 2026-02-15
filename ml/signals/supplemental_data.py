@@ -86,6 +86,7 @@ def query_predictions_with_supplements(
       SELECT
         player_lookup,
         game_date,
+        minutes_played,
         AVG(SAFE_DIVIDE(three_pt_makes, NULLIF(three_pt_attempts, 0)))
           OVER (PARTITION BY player_lookup ORDER BY game_date
                 ROWS BETWEEN 3 PRECEDING AND 1 PRECEDING) AS three_pct_last_3,
@@ -117,6 +118,41 @@ def query_predictions_with_supplements(
       QUALIFY ROW_NUMBER() OVER (
         PARTITION BY gs.player_lookup ORDER BY gs.game_date DESC
       ) = 1
+    ),
+
+    -- Streak data: prior actual over/under outcomes (for cold_snap signal)
+    streak_data AS (
+      SELECT
+        player_lookup,
+        game_date,
+        LAG(CASE WHEN actual_points > line_value THEN 1 ELSE 0 END, 1) OVER w AS prev_over_1,
+        LAG(CASE WHEN actual_points > line_value THEN 1 ELSE 0 END, 2) OVER w AS prev_over_2,
+        LAG(CASE WHEN actual_points > line_value THEN 1 ELSE 0 END, 3) OVER w AS prev_over_3,
+        LAG(CASE WHEN actual_points > line_value THEN 1 ELSE 0 END, 4) OVER w AS prev_over_4,
+        LAG(CASE WHEN actual_points > line_value THEN 1 ELSE 0 END, 5) OVER w AS prev_over_5
+      FROM (
+        SELECT *
+        FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy`
+        WHERE game_date >= '2025-10-22'
+          AND system_id = '{SYSTEM_ID}'
+          AND prediction_correct IS NOT NULL
+          AND is_voided IS NOT TRUE
+          AND line_source IN ('ACTUAL_PROP', 'ODDS_API', 'BETTINGPROS')
+        QUALIFY ROW_NUMBER() OVER (
+          PARTITION BY player_lookup, game_id ORDER BY graded_at DESC
+        ) = 1
+      )
+      WINDOW w AS (PARTITION BY player_lookup ORDER BY game_date)
+    ),
+
+    latest_streak AS (
+      SELECT sd.*
+      FROM streak_data sd
+      INNER JOIN preds p ON sd.player_lookup = p.player_lookup
+      WHERE sd.game_date < @target_date
+      QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY sd.player_lookup ORDER BY sd.game_date DESC
+      ) = 1
     )
 
     SELECT
@@ -126,9 +162,14 @@ def query_predictions_with_supplements(
       ls.three_pct_std,
       ls.three_pa_per_game,
       ls.minutes_avg_last_3,
-      ls.minutes_avg_season
+      ls.minutes_avg_season,
+      ls.minutes_played AS prev_minutes,
+      DATE_DIFF(@target_date, ls.game_date, DAY) AS rest_days,
+      lsk.prev_over_1, lsk.prev_over_2, lsk.prev_over_3,
+      lsk.prev_over_4, lsk.prev_over_5
     FROM preds p
     LEFT JOIN latest_stats ls ON ls.player_lookup = p.player_lookup
+    LEFT JOIN latest_streak lsk ON lsk.player_lookup = p.player_lookup
     ORDER BY p.player_lookup
     """
 
@@ -177,6 +218,172 @@ def query_predictions_with_supplements(
                 'minutes_avg_season': float(row_dict.get('minutes_avg_season') or 0),
             }
 
+        # Streak stats (for cold_snap)
+        if row_dict.get('prev_over_1') is not None:
+            supp['streak_stats'] = {
+                'prev_correct': [],  # not available in production query
+                'prev_over': [
+                    row_dict.get('prev_over_1'),
+                    row_dict.get('prev_over_2'),
+                    row_dict.get('prev_over_3'),
+                    row_dict.get('prev_over_4'),
+                    row_dict.get('prev_over_5'),
+                ],
+            }
+
+        # Recovery stats (for blowout_recovery)
+        if (row_dict.get('prev_minutes') is not None
+                and row_dict.get('minutes_avg_season') is not None):
+            supp['recovery_stats'] = {
+                'prev_minutes': float(row_dict['prev_minutes']),
+                'minutes_avg_season': float(row_dict['minutes_avg_season']),
+            }
+
+        # Rest stats (for future signals)
+        if row_dict.get('rest_days') is not None:
+            supp['rest_stats'] = {
+                'rest_days': int(row_dict['rest_days']),
+            }
+
         supplemental_map[row_dict['player_lookup']] = supp
 
     return predictions, supplemental_map
+
+
+def query_streak_data(
+    bq_client: bigquery.Client,
+    start_date: str,
+    end_date: str
+) -> Dict[str, Dict]:
+    """Query consecutive line beats/misses for each player-game.
+
+    Returns:
+        Dict keyed by 'player_lookup::game_date' with streak information.
+    """
+    query = f"""
+    WITH graded_predictions AS (
+      SELECT
+        pa.player_lookup,
+        pa.game_date,
+        pa.prediction_correct,
+        pa.actual_points,
+        pa.line_value,
+        CASE
+          WHEN pa.actual_points > pa.line_value THEN 'OVER'
+          WHEN pa.actual_points < pa.line_value THEN 'UNDER'
+          ELSE 'PUSH'
+        END as actual_direction
+      FROM `{PROJECT_ID}.nba_predictions.prediction_accuracy` pa
+      WHERE pa.game_date BETWEEN DATE_SUB(@start_date, INTERVAL 30 DAY) AND @end_date
+        AND pa.system_id = '{SYSTEM_ID}'
+        AND pa.prediction_correct IS NOT NULL
+        AND pa.is_voided IS NOT TRUE
+      QUALIFY ROW_NUMBER() OVER (
+        PARTITION BY pa.player_lookup, pa.game_id
+        ORDER BY pa.graded_at DESC
+      ) = 1
+    ),
+
+    streak_calc AS (
+      SELECT
+        player_lookup,
+        game_date,
+        prediction_correct,
+        actual_direction,
+
+        -- Count consecutive beats (looking back, excluding current game)
+        SUM(CASE WHEN prediction_correct THEN 1 ELSE 0 END)
+          OVER (
+            PARTITION BY player_lookup
+            ORDER BY game_date
+            ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
+          ) as total_beats_last_10,
+
+        -- Count consecutive misses (looking back, excluding current game)
+        SUM(CASE WHEN NOT prediction_correct THEN 1 ELSE 0 END)
+          OVER (
+            PARTITION BY player_lookup
+            ORDER BY game_date
+            ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
+          ) as total_misses_last_10,
+
+        -- Get last 10 results as array to calculate true consecutive streaks
+        ARRAY_AGG(prediction_correct)
+          OVER (
+            PARTITION BY player_lookup
+            ORDER BY game_date
+            ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
+          ) as last_10_results,
+
+        ARRAY_AGG(actual_direction)
+          OVER (
+            PARTITION BY player_lookup
+            ORDER BY game_date
+            ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
+          ) as last_10_directions
+
+      FROM graded_predictions
+    )
+
+    SELECT
+      player_lookup,
+      game_date,
+      total_beats_last_10,
+      total_misses_last_10,
+      last_10_results,
+      last_10_directions
+    FROM streak_calc
+    WHERE game_date >= @start_date
+    ORDER BY player_lookup, game_date
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter('start_date', 'DATE', start_date),
+            bigquery.ScalarQueryParameter('end_date', 'DATE', end_date),
+        ]
+    )
+
+    rows = bq_client.query(query, job_config=job_config).result(timeout=60)
+
+    streak_map: Dict[str, Dict] = {}
+
+    for row in rows:
+        row_dict = dict(row)
+        key = f"{row_dict['player_lookup']}::{row_dict['game_date']}"
+
+        # Calculate consecutive streaks from the arrays
+        last_10_results = row_dict.get('last_10_results', [])
+        last_10_directions = row_dict.get('last_10_directions', [])
+
+        # Count consecutive beats (from most recent backwards)
+        consecutive_beats = 0
+        if last_10_results:
+            for result in reversed(last_10_results):
+                if result is True:
+                    consecutive_beats += 1
+                else:
+                    break
+
+        # Count consecutive misses (from most recent backwards)
+        consecutive_misses = 0
+        last_miss_direction = None
+        if last_10_results and last_10_directions:
+            for i, result in enumerate(reversed(last_10_results)):
+                if result is False:
+                    consecutive_misses += 1
+                    if i < len(last_10_directions):
+                        last_miss_direction = list(reversed(last_10_directions))[i]
+                else:
+                    break
+
+        streak_map[key] = {
+            'consecutive_line_beats': consecutive_beats,
+            'consecutive_line_misses': consecutive_misses,
+            'last_miss_direction': last_miss_direction,
+            'total_beats_last_10': row_dict.get('total_beats_last_10', 0),
+            'total_misses_last_10': row_dict.get('total_misses_last_10', 0)
+        }
+
+    logger.info(f"Loaded streak data for {len(streak_map)} player-games")
+    return streak_map

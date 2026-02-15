@@ -485,6 +485,68 @@ ORDER BY roi DESC
 - Phase 6 architecture review (Session 91)
 ---
 
+## Signal Discovery Framework & Best Bets
+
+**Implemented:** Sessions 253-255 (Feb 14, 2026)
+**Purpose:** Curate a daily "Best Bets" list (up to 5 picks) by evaluating independent signal sources on top of CatBoost V9 predictions.
+
+### Architecture
+
+Two-layer system:
+1. **Signal Annotation** — Every prediction is evaluated against all registered signals. Results stored in `pick_signal_tags`.
+2. **Best Bets Curation** — Top 5 picks by composite score (signal count + edge), gated by model health. Stored in `signal_best_bets_picks`.
+
+### Production Signals
+
+| Signal | Tag | Logic | Backtest HR |
+|--------|-----|-------|------------|
+| Model Health Gate | `model_health` | Blocks all picks if 7d edge 3+ HR < 52.4% | N/A (gate) |
+| High Edge | `high_edge` | Edge >= 5 points | 66.7% |
+| 3PT Bounce | `3pt_bounce` | Cold 3PT shooter (below avg - 1 std), high volume | 74.9% |
+| Minutes Surge | `minutes_surge` | Recent minutes 3+ above season avg | 53.7% |
+| Cold Snap | `cold_snap` | Player UNDER line 3+ consecutive games, regression to mean | 64.3% |
+| Blowout Recovery | `blowout_recovery` | Previous game minutes 6+ below season avg, bounce back | 56.4% |
+
+### BQ Tables
+
+| Table | Purpose |
+|-------|---------|
+| `nba_predictions.pick_signal_tags` | Signal annotations on ALL predictions |
+| `nba_predictions.signal_best_bets_picks` | Curated top 5 best bets per day |
+| `nba_predictions.v_signal_performance` | View: per-signal hit rate and ROI (30d rolling) |
+
+### Subset Definition
+
+Best Bets is subset `best_bets` (public ID 26, name "Best Bets") in `dynamic_subset_definitions`.
+
+### Performance Monitoring
+
+```sql
+-- Best Bets daily performance
+SELECT game_date, COUNT(*) AS picks,
+  COUNTIF(prediction_correct) AS wins,
+  ROUND(100.0 * COUNTIF(prediction_correct) / COUNT(*), 1) AS hit_rate
+FROM nba_predictions.signal_best_bets_picks
+WHERE prediction_correct IS NOT NULL
+GROUP BY game_date ORDER BY game_date;
+
+-- Per-signal performance (30d rolling)
+SELECT * FROM nba_predictions.v_signal_performance ORDER BY hit_rate DESC;
+```
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `ml/signals/registry.py` | Signal registration |
+| `ml/signals/supplemental_data.py` | Production data queries for signals |
+| `data_processors/publishing/signal_annotator.py` | Production annotator + Best Bets writer |
+| `ml/experiments/signal_backtest.py` | Backtest harness |
+
+**References:** `docs/08-projects/current/signal-discovery-framework/`
+
+---
+
 ## Deep Health Checks & Smoke Tests
 
 **Implemented:** Session 129 (Feb 5, 2026)

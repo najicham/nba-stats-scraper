@@ -256,6 +256,14 @@ def parse_args():
                        help='Report line coverage stats in training data. Training already includes '
                             'all quality-ready players regardless of lines. This flag adds line '
                             'coverage diagnostics and forces full-population eval.')
+
+    # Player tier and training population filters (Session 253)
+    parser.add_argument('--min-ppg', type=float, default=None,
+                       help='Filter training data: only players with points_avg_season >= N')
+    parser.add_argument('--max-ppg', type=float, default=None,
+                       help='Filter training data: only players with points_avg_season < N')
+    parser.add_argument('--lines-only-train', action='store_true',
+                       help='Filter training data: only players who have a prop line for that game')
     parser.add_argument('--dry-run', action='store_true', help='Show plan only')
     parser.add_argument('--skip-register', action='store_true', help='Skip ml_experiments')
     parser.add_argument('--force', action='store_true', help='Force retrain even if duplicate training dates exist')
@@ -394,18 +402,23 @@ def check_duplicate_model(client, train_start, train_end):
     return result.to_dict('records') if len(result) > 0 else []
 
 
-def load_train_data(client, start, end, min_quality_score=70):
+def load_train_data(client, start, end, min_quality_score=70,
+                    min_ppg=None, max_ppg=None, lines_only_train=False):
     """
     Load training data from feature store with quality filters.
 
     Uses shared.ml.training_data_loader for enforced zero-tolerance quality gates.
     Session 157: Migrated to shared loader to prevent contamination bugs.
+    Session 253: Added min_ppg, max_ppg, lines_only_train for tier/population experiments.
 
     Args:
         client: BigQuery client
         start: Start date (YYYY-MM-DD)
         end: End date (YYYY-MM-DD)
         min_quality_score: Minimum feature_quality_score (default 70)
+        min_ppg: Only include players with points_avg_season >= N
+        max_ppg: Only include players with points_avg_season < N
+        lines_only_train: Only include players with a prop line for that game
     """
     from shared.ml.training_data_loader import load_clean_training_data
 
@@ -413,10 +426,33 @@ def load_train_data(client, start, end, min_quality_score=70):
     # shows the player should be higher. These are cold start errors (only 15 records total).
     bad_default_filter = "NOT (mf.features[OFFSET(0)] = 10.0 AND mf.features[OFFSET(1)] > 15)"
 
+    # Session 253: Build additional WHERE clauses for tier/population filtering
+    where_parts = [bad_default_filter]
+    if min_ppg is not None:
+        # features[OFFSET(2)] = points_avg_season
+        where_parts.append(f"mf.features[OFFSET(2)] >= {min_ppg}")
+    if max_ppg is not None:
+        where_parts.append(f"mf.features[OFFSET(2)] < {max_ppg}")
+
+    additional_where = " AND ".join(where_parts)
+
+    # Session 253: lines-only-train requires JOIN with prop lines table
+    additional_joins = ""
+    if lines_only_train:
+        additional_joins = (
+            f"JOIN (SELECT DISTINCT player_lookup, game_date "
+            f"FROM `{PROJECT_ID}.nba_raw.odds_api_player_points_props` "
+            f"WHERE game_date BETWEEN '{start}' AND '{end}' "
+            f"AND points_line IS NOT NULL) prop_lines "
+            f"ON mf.player_lookup = prop_lines.player_lookup "
+            f"AND mf.game_date = prop_lines.game_date"
+        )
+
     return load_clean_training_data(
         client, start, end,
         min_quality_score=min_quality_score,
-        additional_where=bad_default_filter,
+        additional_where=additional_where,
+        additional_joins=additional_joins,
     )
 
 
@@ -2092,6 +2128,13 @@ def main():
         print(f"Category Weights: {args.category_weight}")
     if args.monotone_constraints:
         print(f"Monotone Constraints: {args.monotone_constraints}")
+    # Session 253: Tier/population filters
+    if args.min_ppg is not None:
+        print(f"Training Filter: min PPG >= {args.min_ppg}")
+    if args.max_ppg is not None:
+        print(f"Training Filter: max PPG < {args.max_ppg}")
+    if args.lines_only_train:
+        print(f"Training Filter: lines-only (players with prop lines)")
     print()
 
     # DATE OVERLAP GUARD (Session 176: 90%+ hit rates were caused by training on eval data)
@@ -2124,6 +2167,12 @@ def main():
             print(f"  Category weights: {args.category_weight}")
         if args.monotone_constraints:
             print(f"  Monotone constraints: {args.monotone_constraints}")
+        if args.min_ppg is not None:
+            print(f"  Min PPG filter: >= {args.min_ppg}")
+        if args.max_ppg is not None:
+            print(f"  Max PPG filter: < {args.max_ppg}")
+        if args.lines_only_train:
+            print(f"  Lines-only training: True")
         return
 
     client = bigquery.Client(project=PROJECT_ID)
@@ -2154,8 +2203,20 @@ def main():
         return
 
     # Load data
-    print("\nLoading training data (with quality filter >= 70)...")
-    df_train = load_train_data(client, dates['train_start'], dates['train_end'])
+    filter_desc = []
+    if args.min_ppg is not None:
+        filter_desc.append(f"min_ppg>={args.min_ppg}")
+    if args.max_ppg is not None:
+        filter_desc.append(f"max_ppg<{args.max_ppg}")
+    if args.lines_only_train:
+        filter_desc.append("lines-only")
+    filter_str = f" [{', '.join(filter_desc)}]" if filter_desc else ""
+    print(f"\nLoading training data (with quality filter >= 70){filter_str}...")
+    df_train = load_train_data(
+        client, dates['train_start'], dates['train_end'],
+        min_ppg=args.min_ppg, max_ppg=args.max_ppg,
+        lines_only_train=args.lines_only_train,
+    )
     print(f"  {len(df_train):,} samples")
 
     # --include-no-line: show line coverage stats for training data

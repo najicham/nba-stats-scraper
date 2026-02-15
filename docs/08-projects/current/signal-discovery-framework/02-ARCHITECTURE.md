@@ -36,9 +36,9 @@ Signals are a property of a prediction, not a subset. LeBron's `high_edge + minu
 
 **Schema:** `schemas/bigquery/nba_predictions/pick_signal_tags.sql`
 
-### Layer 2: "Signal Picks" Subset — Curated Top 5
+### Layer 2: "Best Bets" Subset — Curated Top 5
 
-The `BestBetsAggregator` selects top 5 picks (scored by edge * signal overlap multiplier) and bridges them into `current_subset_picks` as subset_id `signal_picks` (public id=26, name="Signal Picks").
+The `BestBetsAggregator` selects top 5 picks (scored by edge * signal overlap multiplier) and bridges them into `current_subset_picks` as subset_id `best_bets` (public id=26, name="Best Bets").
 
 - Graded automatically via existing `SubsetGradingProcessor`
 - Appears in frontend alongside Top Pick, Top 3, etc.
@@ -94,7 +94,7 @@ SELECT * FROM nba_predictions.v_signal_performance;
 daily_export.py 'subset-picks' handler:
   1. SubsetMaterializer.materialize()           → current_subset_picks (existing subsets)
   2. SignalAnnotator.annotate()                  → pick_signal_tags (ALL predictions)
-     └── _bridge_signal_picks()                  → current_subset_picks (Signal Picks subset)
+     └── _bridge_signal_picks()                  → current_subset_picks (Best Bets subset)
   3. AllSubsetsPicksExporter.export()            → picks/{date}.json (LEFT JOIN signal tags)
 
 daily_export.py 'signal-best-bets' handler:
@@ -122,10 +122,11 @@ Post-grading:
 
 ## Pre-Production Checklist
 
-- [ ] Create `pick_signal_tags` table in BigQuery (run DDL)
-- [ ] Create `signal_best_bets_picks` table in BigQuery (run DDL)
-- [ ] Create `v_signal_performance` view in BigQuery (run DDL)
-- [ ] Add `signal_picks` row to `dynamic_subset_definitions` table
+- [x] Create `pick_signal_tags` table in BigQuery (Session 255)
+- [x] Create `signal_best_bets_picks` table in BigQuery (Session 255)
+- [x] Create `v_signal_performance` view in BigQuery (Session 255)
+- [x] Add `best_bets` row to `dynamic_subset_definitions` table (Session 255)
+- [x] Backfill 35 dates of signal annotations (Session 255)
 - [ ] Push to main (triggers Cloud Build auto-deploy)
 - [ ] Redeploy Cloud Functions (post_grading_export, phase5_to_phase6)
 - [ ] Trigger Phase 6 manually, verify signal badges in `picks/{date}.json`
