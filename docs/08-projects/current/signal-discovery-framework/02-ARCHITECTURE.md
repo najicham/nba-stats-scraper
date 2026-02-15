@@ -1,52 +1,53 @@
 # Signal Discovery Framework — Architecture
 
-**Session:** 253-254
+**Sessions:** 253-254
 **Date:** 2026-02-14
+**Status:** Code complete, pending BQ table creation + deployment
 
 ## Pipeline Integration
 
-Signals are computed in Phase 6 during the export step. No new Cloud Run service required.
+Signals are computed in Phase 6 during the subset-picks export step. No new Cloud Run service required.
 
 ```
 Phase 5 (predictions) → Phase 5→6 Orchestrator → Phase 6 Export
-                                                    ├── tonight        (existing)
-                                                    ├── best-bets      (existing)
-                                                    ├── subset-picks   (existing)
-                                                    ├── daily-signals  (existing)
-                                                    ├── signal-best-bets (NEW) ← signals computed here
+                                                    ├── subset-picks (existing)
+                                                    │   ├── Step 1: SubsetMaterializer (existing)
+                                                    │   ├── Step 2: SignalAnnotator (NEW)
+                                                    │   │   ├── Evaluates signals on ALL predictions
+                                                    │   │   ├── Writes pick_signal_tags (BQ)
+                                                    │   │   └── Bridges top 5 → current_subset_picks as "Signal Picks"
+                                                    │   └── Step 3: AllSubsetsPicksExporter (modified)
+                                                    │       └── LEFT JOINs signal tags → every pick has signals
+                                                    ├── signal-best-bets (NEW) — curated JSON to GCS
                                                     └── ...other exports
 ```
 
-**Why Phase 6:**
-- Runs after Phase 5 predictions complete (all data available)
-- Signal computation is filtering/tagging, not ML inference
-- No new infrastructure needed — existing Cloud Function handles routing
-- All data available: predictions in BQ, features in feature store, rolling stats via SQL
+## Two-Layer Architecture
 
-## Storage Design
+### Layer 1: Signal Annotations on ALL Picks — `pick_signal_tags`
 
-### `signal_best_bets_picks` Table (Dedicated)
+Every active prediction gets signal-evaluated. Tags stored at the **prediction grain** (not subset grain):
 
-**Decision:** Signals stored in their own table, NOT added to `player_prop_predictions`.
+```
+(game_date, player_lookup, system_id) → signal_tags[], signal_count, model_health_status
+```
 
-| Field | Type | Purpose |
-|-------|------|---------|
-| `player_lookup` | STRING | Primary key |
-| `game_id` | STRING | Primary key |
-| `game_date` | DATE | Partition key |
-| `system_id` | STRING | Model reference |
-| `signal_tags` | ARRAY<STRING> | Qualifying signals |
-| `signal_count` | INT64 | Number of signals |
-| `composite_score` | NUMERIC | Aggregator ranking score |
-| `rank` | INT64 | 1-based daily rank |
-| `actual_points` | INT64 | Populated after grading |
-| `prediction_correct` | BOOLEAN | Populated after grading |
+Signals are a property of a prediction, not a subset. LeBron's `high_edge + minutes_surge` tags don't change whether he's in "Top Pick" or "All Picks". One evaluation per prediction, JOINed to any subset at export time.
 
-**Rationale:**
-- `player_prop_predictions` stays pure ML output
-- Signals are business logic overlays — separate concern
-- Append-only writes avoid 90-min DML locks
-- Can iterate on signals without touching prediction table
+**Schema:** `schemas/bigquery/nba_predictions/pick_signal_tags.sql`
+
+### Layer 2: "Signal Picks" Subset — Curated Top 5
+
+The `BestBetsAggregator` selects top 5 picks (scored by edge * signal overlap multiplier) and bridges them into `current_subset_picks` as subset_id `signal_picks` (public id=26, name="Signal Picks").
+
+- Graded automatically via existing `SubsetGradingProcessor`
+- Appears in frontend alongside Top Pick, Top 3, etc.
+- Same API endpoint (`picks/{date}.json`)
+- Model health gate blocks all signal picks when HR < 52.4%
+
+### `signal_best_bets_picks` Table — Detailed Signal Analysis
+
+Parallel table with signal-specific columns (`signal_tags`, `composite_score`, `rank`) for debugging and iterating on the framework. Post-grading backfill updates actuals.
 
 **Schema:** `schemas/bigquery/nba_predictions/signal_best_bets_picks.sql`
 
@@ -61,87 +62,71 @@ Phase 5 (predictions) → Phase 5→6 Orchestrator → Phase 6 Export
 | `3pt_bounce` | Pick signal | `ThreePtBounceSignal` | `ml/signals/three_pt_bounce.py` |
 | `minutes_surge` | Pick signal | `MinutesSurgeSignal` | `ml/signals/minutes_surge.py` |
 
-### Deferred Signals
+### Deferred/Dropped Signals
 
-| Signal | Class | Reason |
-|--------|-------|--------|
-| `dual_agree` | `DualAgreeSignal` | V12 needs 30+ days of data |
-| `consensus` | (not built) | Need independent models |
-| `pace_up` | `PaceMismatchSignal` | 0 qualifying picks — thresholds too restrictive |
+| Signal | Status | Reason |
+|--------|--------|--------|
+| `dual_agree` | DEFER | V12 needs 30+ days of data |
+| `consensus` | DEFER | Need independent models |
+| `pace_up` | DROP | 0 qualifying picks — thresholds too restrictive |
 
-## Grading Integration
+### Adding a New Signal
 
-After games complete, the existing grading pipeline grades `prediction_accuracy`. The `post-grading-export` Cloud Function then:
+1. Create `ml/signals/my_signal.py` extending `BaseSignal`
+2. Add to `ml/signals/registry.py` `build_default_registry()`
+3. If it needs supplemental data, add the query to `ml/signals/supplemental_data.py`
+4. Run backtest: `PYTHONPATH=. python ml/experiments/signal_backtest.py`
 
-1. Re-exports `picks/{date}.json` with actuals (existing behavior)
-2. **NEW:** Updates `signal_best_bets_picks` with `actual_points` and `prediction_correct`
+## Performance Monitoring
+
+**Per-signal hit rates:** `v_signal_performance` view (JOINs `pick_signal_tags` x `prediction_accuracy`)
 
 ```sql
-UPDATE signal_best_bets_picks sbp
-SET actual_points = pa.actual_points,
-    prediction_correct = pa.prediction_correct
-FROM prediction_accuracy pa
-WHERE sbp.player_lookup = pa.player_lookup
-  AND sbp.game_id = pa.game_id
-  AND sbp.game_date = pa.game_date
-  AND pa.system_id = sbp.system_id
-  AND sbp.game_date = @target_date
+SELECT * FROM nba_predictions.v_signal_performance;
+-- signal_tag | total_picks | wins | hit_rate | roi | avg_edge
 ```
 
-## GCS Export
+**Signal Picks W-L record:** Via existing `SubsetGradingProcessor` → `subset_grading_results`
 
-Output path: `v1/signal-best-bets/{date}.json`
+## Data Flow
 
-```json
-{
-  "date": "2026-02-14",
-  "generated_at": "2026-02-14T18:30:00Z",
-  "model_health": {
-    "status": "healthy",
-    "hit_rate_7d": 65.2,
-    "graded_count": 45
-  },
-  "picks": [
-    {
-      "rank": 1,
-      "player": "LeBron James",
-      "player_lookup": "lebron_james",
-      "team": "LAL",
-      "opponent": "BOS",
-      "prediction": 26.1,
-      "line": 24.5,
-      "direction": "OVER",
-      "edge": 1.6,
-      "signals": ["high_edge", "minutes_surge"],
-      "signal_count": 2,
-      "composite_score": 0.75,
-      "actual": null,
-      "result": null
-    }
-  ],
-  "total_picks": 3,
-  "signals_evaluated": ["model_health", "high_edge", "3pt_bounce", "minutes_surge"]
-}
 ```
+daily_export.py 'subset-picks' handler:
+  1. SubsetMaterializer.materialize()           → current_subset_picks (existing subsets)
+  2. SignalAnnotator.annotate()                  → pick_signal_tags (ALL predictions)
+     └── _bridge_signal_picks()                  → current_subset_picks (Signal Picks subset)
+  3. AllSubsetsPicksExporter.export()            → picks/{date}.json (LEFT JOIN signal tags)
 
-## Data Requirements Per Signal
+daily_export.py 'signal-best-bets' handler:
+  4. SignalBestBetsExporter.export()              → signal_best_bets_picks (BQ) + GCS JSON
 
-| Signal | Data Source | Query |
-|--------|-----------|-------|
-| `model_health` | `prediction_accuracy` | Rolling 7d HR for edge 3+ picks |
-| `high_edge` | Prediction dict | `abs(edge) >= 5.0` (no external data) |
-| `3pt_bounce` | `player_game_summary` | Rolling 3PT%, season avg, std dev, attempts |
-| `minutes_surge` | `player_game_summary` | Rolling minutes last 3, season avg |
+Post-grading:
+  5. Re-export picks/{date}.json with actuals    (existing)
+  6. Backfill signal_best_bets_picks actuals      (UPDATE, safe — batch load initial write)
+```
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `ml/signals/model_health.py` | Model health gate signal |
-| `ml/signals/registry.py` | Signal registration |
-| `ml/signals/aggregator.py` | Top-5 pick selection |
-| `data_processors/publishing/signal_best_bets_exporter.py` | Phase 6 exporter |
-| `backfill_jobs/publishing/daily_export.py` | Export type routing |
-| `orchestration/cloud_functions/phase5_to_phase6/main.py` | Tonight export types list |
-| `orchestration/cloud_functions/post_grading_export/main.py` | Grading backfill |
-| `schemas/bigquery/nba_predictions/signal_best_bets_picks.sql` | BQ schema |
+| `ml/signals/` | Signal framework (base, registry, aggregator, all signals) |
+| `ml/signals/supplemental_data.py` | Shared BQ queries for signal evaluation |
+| `data_processors/publishing/signal_annotator.py` | Annotates ALL picks + bridges Signal Picks subset |
+| `data_processors/publishing/signal_best_bets_exporter.py` | Curated top 5 → BQ + GCS |
+| `data_processors/publishing/all_subsets_picks_exporter.py` | Modified: LEFT JOINs signal tags |
+| `backfill_jobs/publishing/daily_export.py` | Wiring: materializer → annotator → exporter |
+| `shared/config/subset_public_names.py` | Signal Picks = id 26 |
+| `schemas/bigquery/nba_predictions/pick_signal_tags.sql` | Signal annotation table schema |
+| `schemas/bigquery/nba_predictions/signal_best_bets_picks.sql` | Detailed signal picks schema |
+| `schemas/bigquery/nba_predictions/v_signal_performance.sql` | Per-signal performance view |
+
+## Pre-Production Checklist
+
+- [ ] Create `pick_signal_tags` table in BigQuery (run DDL)
+- [ ] Create `signal_best_bets_picks` table in BigQuery (run DDL)
+- [ ] Create `v_signal_performance` view in BigQuery (run DDL)
+- [ ] Add `signal_picks` row to `dynamic_subset_definitions` table
+- [ ] Push to main (triggers Cloud Build auto-deploy)
+- [ ] Redeploy Cloud Functions (post_grading_export, phase5_to_phase6)
+- [ ] Trigger Phase 6 manually, verify signal badges in `picks/{date}.json`
+- [ ] After games complete, verify grading backfill works
