@@ -34,9 +34,11 @@ WIN_PAYOUT = 100
 class ReplayEngine:
     """Core replay simulation engine."""
 
-    def __init__(self, bq_client: bigquery.Client, min_edge: float = 3.0):
+    def __init__(self, bq_client: bigquery.Client, min_edge: float = 3.0,
+                 min_confidence: Optional[float] = None):
         self.bq_client = bq_client
         self.min_edge = min_edge
+        self.min_confidence = min_confidence
         self._data_cache: Optional[Dict] = None
 
     def run(self, strategy: DecisionStrategy,
@@ -162,7 +164,11 @@ class ReplayEngine:
         # Need 30 days of lookback for rolling metrics
         window_start = start - timedelta(days=30)
 
-        query = """
+        confidence_filter = ""
+        if self.min_confidence is not None:
+            confidence_filter = "AND confidence_score >= @min_confidence"
+
+        query = f"""
         SELECT
           game_date,
           system_id AS model_id,
@@ -172,22 +178,28 @@ class ReplayEngine:
           line_value,
           actual_points,
           player_lookup,
-          recommendation
+          recommendation,
+          confidence_score
         FROM `nba-props-platform.nba_predictions.prediction_accuracy`
         WHERE game_date BETWEEN @window_start AND @end_date
           AND ABS(predicted_points - line_value) >= @min_edge
           AND system_id IN UNNEST(@model_ids)
+          {confidence_filter}
         ORDER BY game_date, system_id
         """
 
-        job_config = bigquery.QueryJobConfig(
-            query_parameters=[
-                bigquery.ScalarQueryParameter('window_start', 'DATE', window_start),
-                bigquery.ScalarQueryParameter('end_date', 'DATE', end),
-                bigquery.ScalarQueryParameter('min_edge', 'FLOAT64', self.min_edge),
-                bigquery.ArrayQueryParameter('model_ids', 'STRING', model_ids),
-            ]
-        )
+        params = [
+            bigquery.ScalarQueryParameter('window_start', 'DATE', window_start),
+            bigquery.ScalarQueryParameter('end_date', 'DATE', end),
+            bigquery.ScalarQueryParameter('min_edge', 'FLOAT64', self.min_edge),
+            bigquery.ArrayQueryParameter('model_ids', 'STRING', model_ids),
+        ]
+        if self.min_confidence is not None:
+            params.append(
+                bigquery.ScalarQueryParameter('min_confidence', 'FLOAT64', self.min_confidence)
+            )
+
+        job_config = bigquery.QueryJobConfig(query_parameters=params)
 
         rows = list(self.bq_client.query(query, job_config=job_config).result())
         logger.info(f"Loaded {len(rows)} edge 3+ picks across {len(model_ids)} models")

@@ -131,7 +131,24 @@ def build_alert_payload(models: List[Dict], transitions: List[Dict],
     has_transitions = len(transitions) > 0
     best_bets_unhealthy = best_bets_state in ('WATCH', 'DEGRADING', 'BLOCKED')
 
-    if not has_transitions and not best_bets_unhealthy:
+    # Check if any challenger outperforms champion by 5+ points with N >= 30
+    best_bets_hr = None
+    for m in models:
+        if m['model_id'] == best_bets_model:
+            best_bets_hr = m.get('rolling_hr_7d')
+            break
+    challenger_outperforming = False
+    if best_bets_hr is not None:
+        for m in models:
+            if m['model_id'] == best_bets_model:
+                continue
+            c_hr = m.get('rolling_hr_7d')
+            c_n = m.get('rolling_n_7d', 0)
+            if c_hr is not None and c_n >= 30 and c_hr - best_bets_hr >= 5.0:
+                challenger_outperforming = True
+                break
+
+    if not has_transitions and not best_bets_unhealthy and not challenger_outperforming:
         return None
 
     game_date = models[0]['game_date'] if models else 'unknown'
@@ -232,6 +249,35 @@ def build_alert_payload(models: List[Dict], transitions: List[Dict],
                     'text': '*No viable alternative model above breakeven.* Consider retraining.'
                 }
             })
+
+    # Challenger outperformance alert (even when champion is HEALTHY/WATCH)
+    best_bets_hr = None
+    for m in models:
+        if m['model_id'] == best_bets_model:
+            best_bets_hr = m.get('rolling_hr_7d')
+            break
+
+    if best_bets_hr is not None:
+        for m in models:
+            if m['model_id'] == best_bets_model:
+                continue
+            challenger_hr = m.get('rolling_hr_7d')
+            challenger_n = m.get('rolling_n_7d', 0)
+            if (challenger_hr is not None
+                    and challenger_n >= 30
+                    and challenger_hr - best_bets_hr >= 5.0):
+                margin = round(challenger_hr - best_bets_hr, 1)
+                blocks.append({
+                    'type': 'section',
+                    'text': {
+                        'type': 'mrkdwn',
+                        'text': (
+                            f"📈 *Challenger `{m['model_id']}` outperforming by "
+                            f"{margin}pp* ({challenger_hr:.1f}% vs {best_bets_hr:.1f}%, "
+                            f"N={challenger_n}). Consider promotion."
+                        )
+                    }
+                })
 
     # Timestamp
     blocks.append({

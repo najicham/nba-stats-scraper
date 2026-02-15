@@ -150,13 +150,15 @@ def main():
     parser.add_argument('--output', type=str, help='Output directory for JSON results')
     parser.add_argument('--max-picks', type=int, default=5,
                         help='Max picks per day (default: 5)')
+    parser.add_argument('--min-confidence', type=float, default=None,
+                        help='Minimum confidence score filter (0-1 scale, e.g. 0.90)')
 
     args = parser.parse_args()
     model_ids = [m.strip() for m in args.models.split(',')]
     challengers = [m for m in model_ids if m != args.champion]
 
     bq_client = bigquery.Client(project='nba-props-platform')
-    engine = ReplayEngine(bq_client)
+    engine = ReplayEngine(bq_client, min_confidence=args.min_confidence)
 
     if args.compare:
         # Compare all strategies

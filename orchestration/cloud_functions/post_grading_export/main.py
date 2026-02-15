@@ -19,9 +19,10 @@ Actions on success:
 2. Refresh subsets/season.json via SeasonSubsetPicksExporter
 3. Backfill actuals into signal_best_bets_picks table
 
-Version: 1.1
+Version: 1.2
 Created: 2026-02-13 (Session 242)
 Updated: 2026-02-14 (Session 254) - Added signal best bets grading backfill
+Updated: 2026-02-15 (Session 263) - Added model_performance_daily computation
 """
 
 import base64
@@ -255,6 +256,28 @@ def main(cloud_event):
             exc_info=True
         )
         results['signal_health_error'] = str(e)
+
+    # 5. Compute model performance daily metrics (Session 263)
+    try:
+        from datetime import date as date_type
+        from ml.analysis.model_performance import compute_for_date as compute_perf, write_rows as write_perf_rows
+        from shared.clients.bigquery_pool import get_bigquery_client as _get_bq2
+
+        bq2 = _get_bq2(project_id=PROJECT_ID)
+        perf_rows = compute_perf(bq2, date_type.fromisoformat(target_date))
+        if perf_rows:
+            written = write_perf_rows(bq2, perf_rows)
+            results['model_performance'] = written
+            logger.info(
+                f"[{correlation_id}] Computed model performance for {target_date}: "
+                f"{written} models"
+            )
+    except Exception as e:
+        logger.error(
+            f"[{correlation_id}] Failed to compute model performance for {target_date}: {e}",
+            exc_info=True
+        )
+        results['model_performance_error'] = str(e)
 
     duration = (datetime.now(timezone.utc) - start_time).total_seconds()
     logger.info(
